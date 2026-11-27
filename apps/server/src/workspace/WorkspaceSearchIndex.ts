@@ -299,11 +299,9 @@ function buildWholeWordPattern(query: string, caseSensitive: boolean): string {
 // fff's ranges for that pattern are not used: the JS word check decides, on every hit in the line.
 function findWordRanges(
   line: string,
-  word: string,
-  caseSensitive: boolean,
+  word: RegExp,
 ): Array<{ readonly start: number; readonly end: number }> {
-  // No `u` flag: with it, `i` would fold `ſ` and `K` onto ASCII letters.
-  return Array.from(line.matchAll(new RegExp(word, caseSensitive ? "g" : "gi")), (match) => ({
+  return Array.from(line.matchAll(word), (match) => ({
     start: match.index,
     end: match.index + match[0].length,
   }));
@@ -1381,6 +1379,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     let { searchQuery, regexMode } = wholeWordPrefilter
       ? { searchQuery: buildWholeWordPattern(input.query, input.caseSensitive), regexMode: true }
       : buildContentSearchQuery(input);
+    // No `u` flag: with it, `i` would fold `ſ` and `K` onto ASCII letters.
+    const wholeWordPattern = wholeWordPrefilter
+      ? new RegExp(input.query, input.caseSensitive ? "g" : "gi")
+      : null;
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
     const rawPageSize = input.wholeWord
@@ -1414,9 +1416,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       for (const match of result.items) {
         if (isIgnoredPath(ignoredPaths, match.relativePath, hostIsWindows)) continue;
         const matchRanges = (
-          wholeWordPrefilter
-            ? findWordRanges(match.lineContent, input.query, input.caseSensitive)
-            : mapContentMatchRanges(match.lineContent, match.matchRanges)
+          wholeWordPattern === null
+            ? mapContentMatchRanges(match.lineContent, match.matchRanges)
+            : findWordRanges(match.lineContent, wholeWordPattern)
         ).filter((range) => !input.wholeWord || isWholeWordRange(match.lineContent, range));
         // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
         if (input.wholeWord && matchRanges.length === 0) continue;
