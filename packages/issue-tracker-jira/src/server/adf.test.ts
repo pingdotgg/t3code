@@ -11,7 +11,7 @@ const MARKDOWN = [
   "- [x] shipped\n- [ ] review",
   "## Release \\#",
   "Line one\\\nline two, [go](https://a.test/a\\)b) and [docs](<https://a.test/a b>)",
-  "- first\n\n  second",
+  "- first\n\n  second\n\n  2. third",
   "| a | b |\n| --- | --- |\n| 1 | 2 |",
   "---",
   // Jira text that only looks like markdown stays literal.
@@ -113,6 +113,11 @@ describe("adf", () => {
     });
     expect(hasUnwritableContent(table(cell(paragraph("alpha"))))).toBe(false);
     expect(hasUnwritableContent(table(cell(paragraph("alpha"), paragraph("beta"))))).toBe(true);
+    const bullets = {
+      type: "bulletList",
+      content: [{ type: "listItem", content: [paragraph("a")] }],
+    };
+    expect(hasUnwritableContent(table(cell(bullets)))).toBe(true);
   });
 
   it("writes a reference link as the inline link its first definition names", () => {

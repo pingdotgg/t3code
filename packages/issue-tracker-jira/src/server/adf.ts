@@ -116,12 +116,17 @@ function list(node: AdfNode, marker: (index: number) => string): string {
   return children(node)
     .map((item, index) => {
       const lead = marker(index);
-      // Paragraphs keep a blank line between them, or they read back as one.
+      // Paragraphs keep a blank line between them, or they read back as one; so does a nested
+      // ordered list not starting at 1, which markdown would read as the paragraph's next line.
       const body = children(item)
         .map((child, at, all) => {
           const text = block(child);
           const next = all[at + 1];
-          return next === undefined ? text : `${text}${next.type === "paragraph" ? "\n\n" : "\n"}`;
+          if (next === undefined) return text;
+          const loose =
+            next.type === "paragraph" ||
+            (next.type === "orderedList" && (Number(next.attrs?.["order"]) || 1) !== 1);
+          return `${text}${loose ? "\n\n" : "\n"}`;
         })
         .join("");
       return lead + indent(body, " ".repeat(lead.length)).slice(lead.length);
@@ -243,7 +248,8 @@ export function hasUnwritableContent(document: unknown): boolean {
     merged(document) ||
     // A table cell is written back as one paragraph.
     ((document.type === "tableCell" || document.type === "tableHeader") &&
-      children(document).length > 1) ||
+      (children(document).length > 1 ||
+        children(document).some((child) => child.type !== "paragraph"))) ||
     // A checklist is written back flat, so one nested in another would be lost.
     (document.type === "taskList" &&
       children(document).some((child) => child.type === "taskList")) ||
