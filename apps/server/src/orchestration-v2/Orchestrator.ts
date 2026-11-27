@@ -8058,6 +8058,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
+      const targetRunId = dispatchMode.targetRunId;
       yield* ensureGoalCommandSupported(command, command, modelSelection.instanceId);
       yield* dispatchSteerIntoRun({
         command,
@@ -8067,11 +8068,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         modelSelection:
           delegatedCompletion === undefined && notification === undefined
             ? modelSelection
-            : (projection.runs.find((run) => run.id === dispatchMode.targetRunId)?.modelSelection ??
+            : (projection.runs.find((run) => run.id === targetRunId)?.modelSelection ??
               modelSelection),
         delegatedCompletion,
         ...(notification === undefined ? {} : { notification }),
-        targetRunId: dispatchMode.targetRunId,
+        targetRunId,
         messageId: command.messageId,
         text: dispatchText,
         ...(command.context ? { context: command.context } : {}),
@@ -8119,6 +8120,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode.type === "start_immediately" ||
       dispatchMode.type === "queue_after_active";
     const shouldQueue = queueBehindRun !== undefined && startsOrQueuesRun;
+    // An idle worktree launch prepares its checkout in the background; hold an incoming
+    // message in preparing state until preparation binds the worktree and releases it.
+    if (
+      !shouldQueue &&
+      (dispatchMode.type === "start_immediately" || dispatchMode.type === "queue_after_active")
+    ) {
+      const workspaceStrategy = yield* worktreeSetupTracker.heldWorkspaceStrategy(command.threadId);
+      if (workspaceStrategy !== null) {
+        dispatchMode = { type: "defer_start", workspaceStrategy };
+      }
+    }
     // An explicit pick queued ahead reaches the thread only when its run starts. A goal or
     // restart command that stops the active run goes first, so nothing queued applies before it.
     // Buffered provider wakes drain output their own provider already produced.

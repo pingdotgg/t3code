@@ -4335,3 +4335,379 @@ it.effect("replays an accepted send after the project disables the instance", ()
     }
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
 });
+
+it.effect(
+  "defers a message sent to an idle worktree launch until the worktree is bound and releases it",
+  () => {
+    let allowWorktree: Deferred.Deferred<void> | null = null;
+    const harness = makeHarness({
+      createWorktree: (input) =>
+        Effect.suspend(() => Deferred.await(allowWorktree!)).pipe(
+          Effect.as({
+            worktree: {
+              path: "/repo-worktrees/idle-send",
+              refName: input.newRefName,
+              headSha: "abc123",
+            },
+          } as never),
+        ),
+    });
+    return Effect.gen(function* () {
+      allowWorktree = yield* Deferred.make<void>();
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const workspace = {
+        type: "worktree" as const,
+        baseRef: "main",
+        branch: "feature/idle-send",
+      };
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:idle-send",
+          thread: "thread:launch:idle-send",
+          workspace,
+        }),
+      );
+
+      // The hold is active as soon as launch() returns, before any message can race it.
+      assert.isTrue(yield* tracker.workspaceIsHeld(launched.threadId));
+      assert.isNull(launched.projection.thread.worktreePath);
+
+      const first = yield* threads.sendToThread({
+        projectId,
+        commandId: CommandId.make("command:launch:idle-send:msg-1"),
+        threadId: launched.threadId,
+        messageId: MessageId.make("message:launch:idle-send:msg-1"),
+        text: "Work in the new worktree",
+        attachments: [],
+        mode: "auto",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      assert.equal(first.delivery, "started");
+      assert.equal(first.run.status, "preparing");
+      assert.deepStrictEqual(first.run.workspacePreparation, workspace);
+      assert.isFalse(
+        first.dispatch.storedEvents.some(
+          (stored) => stored.event.type === "provider-session.detached",
+        ),
+      );
+
+      const second = yield* threads.sendToThread({
+        projectId,
+        commandId: CommandId.make("command:launch:idle-send:msg-2"),
+        threadId: launched.threadId,
+        messageId: MessageId.make("message:launch:idle-send:msg-2"),
+        text: "Follow-up message",
+        attachments: [],
+        mode: "auto",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      assert.equal(second.delivery, "queued");
+      assert.equal(second.run.status, "queued");
+
+      const beforeRelease = yield* threads.getThreadProjection(launched.threadId);
+      assert.isNull(beforeRelease.thread.worktreePath);
+      assert.equal(beforeRelease.runs[0]?.status, "preparing");
+      assert.equal(beforeRelease.runs[1]?.status, "queued");
+
+      yield* Deferred.succeed(allowWorktree, undefined);
+      const events = yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.takeUntil(
+          (stored) =>
+            stored.event.type === "run.updated" &&
+            stored.event.payload.id === first.run.id &&
+            stored.event.payload.status === "starting",
+        ),
+        Stream.runCollect,
+      );
+
+      const afterRelease = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(afterRelease.thread.worktreePath, "/repo-worktrees/idle-send");
+      assert.equal(afterRelease.thread.branch, "feature/idle-send");
+      assert.equal(afterRelease.runs[0]?.status, "starting");
+      assert.equal(afterRelease.runs[1]?.status, "queued");
+      assert.isFalse(yield* tracker.workspaceIsHeld(launched.threadId));
+      assert.isFalse(
+        Array.from(events).some((stored) => stored.event.type === "provider-session.detached"),
+        "binding the worktree must not detach any session because no turn started in root",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect(
+  "fails a message deferred behind an idle worktree launch when worktree preparation fails",
+  () => {
+    let allowFail: Deferred.Deferred<void> | null = null;
+    const harness = makeHarness({
+      createWorktree: () =>
+        Effect.suspend(() => Deferred.await(allowFail!)).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new GitCommandError({
+                operation: "GitVcsDriver.createWorktree",
+                command: "git",
+                cwd: project.workspaceRoot,
+                detail: "Branch creation failed.",
+                exitCode: 128,
+              }),
+            ),
+          ),
+        ),
+    });
+    return Effect.gen(function* () {
+      allowFail = yield* Deferred.make<void>();
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const workspace = {
+        type: "worktree" as const,
+        baseRef: "main",
+        branch: "feature/idle-fail",
+      };
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:idle-fail",
+          thread: "thread:launch:idle-fail",
+          workspace,
+        }),
+      );
+
+      const first = yield* threads.sendToThread({
+        projectId,
+        commandId: CommandId.make("command:launch:idle-fail:msg-1"),
+        threadId: launched.threadId,
+        messageId: MessageId.make("message:launch:idle-fail:msg-1"),
+        text: "Start once ready",
+        attachments: [],
+        mode: "auto",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      assert.equal(first.run.status, "preparing");
+
+      yield* Deferred.succeed(allowFail, undefined);
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "run.updated" &&
+            stored.event.payload.id === first.run.id &&
+            stored.event.payload.status === "failed",
+        ),
+        Stream.runHead,
+      );
+
+      const afterFailure = yield* threads.getThreadProjection(launched.threadId);
+      assert.isFalse(yield* tracker.workspaceIsHeld(launched.threadId));
+      assert.isNull(afterFailure.thread.worktreePath);
+      assert.equal(afterFailure.runs[0]?.status, "failed");
+      assert.deepStrictEqual(afterFailure.runs[0]?.workspacePreparation, workspace);
+
+      const followUp = yield* threads.sendToThread({
+        projectId,
+        commandId: CommandId.make("command:launch:idle-fail:msg-2"),
+        threadId: launched.threadId,
+        messageId: MessageId.make("message:launch:idle-fail:msg-2"),
+        text: "Another message after failure",
+        attachments: [],
+        mode: "auto",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.equal(followUp.delivery, "queued");
+      assert.equal(followUp.run.status, "queued");
+      assert.isTrue(followUp.run.queueHeld);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("fails a deferred message when an idle worktree launch is cancelled", () => {
+  let setupEntered: Deferred.Deferred<void> | null = null;
+  const harness = makeHarness({
+    runSetup: () =>
+      Effect.suspend(() => Deferred.succeed(setupEntered!, undefined)).pipe(
+        Effect.andThen(Effect.never),
+      ),
+  });
+  return Effect.gen(function* () {
+    setupEntered = yield* Deferred.make<void>();
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:idle-cancel",
+        thread: "thread:launch:idle-cancel",
+        workspace: { type: "worktree", baseRef: "main", branch: "feature/idle-cancel" },
+      }),
+    );
+    yield* Deferred.await(setupEntered);
+
+    const deferred = yield* threads.sendToThread({
+      projectId,
+      commandId: CommandId.make("command:launch:idle-cancel:msg-1"),
+      threadId: launched.threadId,
+      messageId: MessageId.make("message:launch:idle-cancel:msg-1"),
+      text: "Wait for setup",
+      attachments: [],
+      mode: "auto",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    assert.equal(deferred.run.status, "preparing");
+
+    assert.isTrue(yield* tracker.cancel(launched.threadId));
+    yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "run.updated" &&
+          stored.event.payload.id === deferred.run.id &&
+          stored.event.payload.status === "failed",
+      ),
+      Stream.runHead,
+    );
+
+    const afterCancel = yield* threads.getThreadProjection(launched.threadId);
+    assert.isFalse(yield* tracker.workspaceIsHeld(launched.threadId));
+    assert.isNull(afterCancel.thread.worktreePath);
+    assert.equal(afterCancel.runs[0]?.status, "failed");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect(
+  "completes idle worktree setup cleanly when a deferred message is interrupted before release",
+  () => {
+    let allowWorktree: Deferred.Deferred<void> | null = null;
+    const harness = makeHarness({
+      createWorktree: (input) =>
+        Effect.suspend(() => Deferred.await(allowWorktree!)).pipe(
+          Effect.as({
+            worktree: {
+              path: "/repo-worktrees/idle-stop",
+              refName: input.newRefName,
+              headSha: "abc123",
+            },
+          } as never),
+        ),
+    });
+    return Effect.gen(function* () {
+      allowWorktree = yield* Deferred.make<void>();
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:idle-stop",
+          thread: "thread:launch:idle-stop",
+          workspace: { type: "worktree", baseRef: "main", branch: "feature/idle-stop" },
+        }),
+      );
+
+      const deferred = yield* threads.sendToThread({
+        projectId,
+        commandId: CommandId.make("command:launch:idle-stop:msg-1"),
+        threadId: launched.threadId,
+        messageId: MessageId.make("message:launch:idle-stop:msg-1"),
+        text: "Cancel me before setup finishes",
+        attachments: [],
+        mode: "auto",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.equal(deferred.run.status, "preparing");
+
+      yield* threads.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("command:launch:idle-stop:interrupt"),
+        threadId: launched.threadId,
+        runId: deferred.run.id,
+      });
+
+      yield* Deferred.succeed(allowWorktree, undefined);
+      yield* tracker.stream(launched.threadId).pipe(
+        Stream.filter((snapshot) => snapshot?.phase === "done"),
+        Stream.runHead,
+      );
+
+      const afterSetup = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(afterSetup.thread.worktreePath, "/repo-worktrees/idle-stop");
+      assert.equal(afterSetup.runs[0]?.status, "interrupted");
+      assert.isFalse(yield* tracker.workspaceIsHeld(launched.threadId));
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect(
+  "does not orphan a preparing run when a message arrives during rollback of a stopped initial-message launch",
+  () => {
+    let setupEntered: Deferred.Deferred<void> | null = null;
+    let rollbackEntered: Deferred.Deferred<void> | null = null;
+    let allowRollback: Deferred.Deferred<void> | null = null;
+    const harness = makeHarness({
+      runSetup: () =>
+        Effect.suspend(() => Deferred.succeed(setupEntered!, undefined)).pipe(
+          Effect.andThen(Effect.never),
+        ),
+      git: {
+        removeWorktree: () =>
+          Effect.suspend(() => Deferred.succeed(rollbackEntered!, undefined)).pipe(
+            Effect.andThen(Deferred.await(allowRollback!)),
+          ),
+      },
+    });
+    return Effect.gen(function* () {
+      setupEntered = yield* Deferred.make<void>();
+      rollbackEntered = yield* Deferred.make<void>();
+      allowRollback = yield* Deferred.make<void>();
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:stop-during-rollback",
+          thread: "thread:launch:stop-during-rollback",
+          message: "Initial message",
+          workspace: { type: "worktree", baseRef: "main", branch: "feature/stop-rollback" },
+        }),
+      );
+      yield* Deferred.await(setupEntered);
+
+      // Stop after the worktree is bound, so preparation enters rollback while holding the workspace.
+      yield* threads.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("command:launch:stop-during-rollback:interrupt"),
+        threadId: launched.threadId,
+        runId: launched.projection.runs[0]!.id,
+      });
+      yield* Deferred.await(rollbackEntered);
+      assert.isTrue(yield* tracker.workspaceIsHeld(launched.threadId));
+      assert.isNull(yield* tracker.heldWorkspaceStrategy(launched.threadId));
+
+      const duringRollback = yield* threads.sendToThread({
+        projectId,
+        commandId: CommandId.make("command:launch:stop-during-rollback:send"),
+        threadId: launched.threadId,
+        messageId: MessageId.make("message:launch:stop-during-rollback:send"),
+        text: "Message during rollback",
+        attachments: [],
+        mode: "auto",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.notEqual(
+        duringRollback.run.status,
+        "preparing",
+        "must not attach a preparing run to a non-idle launch hold that will never release it",
+      );
+
+      yield* Deferred.succeed(allowRollback, undefined);
+      yield* tracker.stream(launched.threadId).pipe(
+        Stream.filter((snapshot) => snapshot?.phase === "cancelled"),
+        Stream.runHead,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  },
+);

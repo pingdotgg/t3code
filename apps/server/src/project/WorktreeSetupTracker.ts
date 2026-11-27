@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ThreadId,
   WorktreeSetupSnapshot,
   WorktreeSetupStage,
@@ -60,9 +61,19 @@ export class WorktreeSetupTracker extends Context.Service<
     /** Call just before dispatch so late cancellation cannot roll back a started agent's thread. */
     readonly markUncancellable: (threadId: ThreadId) => Effect.Effect<void>;
     readonly cancel: (threadId: ThreadId) => Effect.Effect<boolean>;
-    /** Holds a newly allocated workspace through blocking preparation and any rollback. */
-    readonly holdWorkspace: (threadId: ThreadId) => Effect.Effect<Effect.Effect<void>>;
+    /**
+     * Holds a thread's worktree preparation through blocking setup and any rollback.
+     * Pass `workspaceStrategy` only for idle launches (no initial preparing run) so
+     * an incoming message defers until the preparation fiber releases or fails it.
+     */
+    readonly holdWorkspace: (
+      threadId: ThreadId,
+      workspaceStrategy?: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+    ) => Effect.Effect<Effect.Effect<void>>;
     readonly workspaceIsHeld: (threadId: ThreadId) => Effect.Effect<boolean>;
+    readonly heldWorkspaceStrategy: (
+      threadId: ThreadId,
+    ) => Effect.Effect<OrchestrationV2ThreadLaunchWorkspaceStrategy | null>;
     readonly get: (threadId: ThreadId) => Effect.Effect<WorktreeSetupSnapshot | null>;
     readonly stream: (threadId: ThreadId) => Stream.Stream<WorktreeSetupSnapshot | null>;
   }
@@ -101,7 +112,10 @@ function emptyStage(id: WorktreeSetupStageId): WorktreeSetupStage {
 
 export const make = Effect.gen(function* () {
   const setups = yield* Ref.make(new Map<ThreadId, TrackedSetup>());
-  const workspaceHolds = new Map<ThreadId, number>();
+  const workspaceHolds = new Map<
+    ThreadId,
+    Set<{ readonly strategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | null }>
+  >();
   const changes = yield* PubSub.unbounded<{
     readonly threadId: ThreadId;
     readonly snapshot: WorktreeSetupSnapshot | null;
@@ -302,20 +316,44 @@ export const make = Effect.gen(function* () {
   const get: WorktreeSetupTracker["Service"]["get"] = (threadId) =>
     Ref.get(setups).pipe(Effect.map((current) => current.get(threadId)?.snapshot ?? null));
 
-  const holdWorkspace = (threadId: ThreadId) =>
+  const holdWorkspace: WorktreeSetupTracker["Service"]["holdWorkspace"] = (
+    threadId,
+    workspaceStrategy,
+  ) =>
     Effect.sync(() => {
-      workspaceHolds.set(threadId, (workspaceHolds.get(threadId) ?? 0) + 1);
+      const hold = { strategy: workspaceStrategy ?? null };
+      let holds = workspaceHolds.get(threadId);
+      if (holds === undefined) {
+        holds = new Set();
+        workspaceHolds.set(threadId, holds);
+      }
+      holds.add(hold);
       let released = false;
       return Effect.sync(() => {
         if (released) return;
         released = true;
-        const count = workspaceHolds.get(threadId) ?? 1;
-        if (count === 1) workspaceHolds.delete(threadId);
-        else workspaceHolds.set(threadId, count - 1);
+        const current = workspaceHolds.get(threadId);
+        if (current === undefined) return;
+        current.delete(hold);
+        if (current.size === 0) workspaceHolds.delete(threadId);
       });
     });
 
-  const workspaceIsHeld = (threadId: ThreadId) => Effect.sync(() => workspaceHolds.has(threadId));
+  const workspaceIsHeld = (threadId: ThreadId) =>
+    Effect.sync(() => (workspaceHolds.get(threadId)?.size ?? 0) > 0);
+
+  const heldWorkspaceStrategy: WorktreeSetupTracker["Service"]["heldWorkspaceStrategy"] = (
+    threadId,
+  ) =>
+    Effect.sync(() => {
+      const holds = workspaceHolds.get(threadId);
+      if (holds === undefined) return null;
+      let latest: OrchestrationV2ThreadLaunchWorkspaceStrategy | null = null;
+      for (const hold of holds) {
+        if (hold.strategy !== null) latest = hold.strategy;
+      }
+      return latest;
+    });
 
   // One-slot sliding mailboxes bound slow WebSockets to the newest setup snapshot.
   const stream: WorktreeSetupTracker["Service"]["stream"] = (threadId) =>
@@ -353,6 +391,7 @@ export const make = Effect.gen(function* () {
     cancel,
     holdWorkspace,
     workspaceIsHeld,
+    heldWorkspaceStrategy,
     get,
     stream,
   });

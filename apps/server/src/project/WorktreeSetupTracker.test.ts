@@ -160,4 +160,30 @@ describe("WorktreeSetupTracker", () => {
       expect(final?.error).toBe(`${"e".repeat(998)}\u2026`);
     }),
   );
+
+  it.effect(
+    "tracks held workspace strategies across overlapping holds and idempotent releases",
+    () =>
+      Effect.gen(function* () {
+        const tracker = yield* WorktreeSetupTracker.make;
+        const strategy = { type: "worktree" as const, baseRef: "main", branch: "feature/hold" };
+
+        expect(yield* tracker.workspaceIsHeld(threadId)).toBe(false);
+        expect(yield* tracker.heldWorkspaceStrategy(threadId)).toBeNull();
+
+        const releaseFirst = yield* tracker.holdWorkspace(threadId, strategy);
+        expect(yield* tracker.workspaceIsHeld(threadId)).toBe(true);
+        expect(yield* tracker.heldWorkspaceStrategy(threadId)).toEqual(strategy);
+
+        const releaseSecond = yield* tracker.holdWorkspace(threadId);
+        yield* releaseFirst;
+        yield* releaseFirst;
+        expect(yield* tracker.workspaceIsHeld(threadId)).toBe(true);
+        expect(yield* tracker.heldWorkspaceStrategy(threadId)).toBeNull();
+
+        yield* releaseSecond;
+        expect(yield* tracker.workspaceIsHeld(threadId)).toBe(false);
+        expect(yield* tracker.heldWorkspaceStrategy(threadId)).toBeNull();
+      }),
+  );
 });
