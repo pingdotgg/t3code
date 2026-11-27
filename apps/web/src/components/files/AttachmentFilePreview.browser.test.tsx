@@ -73,6 +73,8 @@ vi.mock(import("./office/WordDocument"), async () => {
 });
 
 import { __setClientSettingsForTests, getClientSettings } from "~/hooks/useSettings";
+import { refreshTheme, setAppearanceMode } from "~/hooks/useTheme";
+import { THEME_APPEARANCE_MODE_STORAGE_KEY } from "~/themePalette";
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import LargeTextViewer from "./LargeTextViewer";
 import VirtualTablePreview from "./VirtualTablePreview";
@@ -1725,6 +1727,18 @@ it.each(["archive", "sqlite"] as const)(
 );
 
 it("loads a font attachment through the lazy preview", async () => {
+  const previousAppearanceMode = window.localStorage.getItem(THEME_APPEARANCE_MODE_STORAGE_KEY);
+  using _theme = {
+    [Symbol.dispose]() {
+      if (previousAppearanceMode === null) {
+        window.localStorage.removeItem(THEME_APPEARANCE_MODE_STORAGE_KEY);
+      } else {
+        window.localStorage.setItem(THEME_APPEARANCE_MODE_STORAGE_KEY, previousAppearanceMode);
+      }
+      refreshTheme();
+    },
+  };
+  setAppearanceMode("light");
   const { loadBundledFontBytes, resolveBundledFamilyFace } = await import("@betteroffice/fonts");
   const bytes = await loadBundledFontBytes(resolveBundledFamilyFace("Carlito", false, false)!);
   const file = new Blob([bytes], { type: "font/ttf" });
@@ -1746,6 +1760,18 @@ it("loads a font attachment through the lazy preview", async () => {
     },
     { timeout: 10_000 },
   );
+  const rootBackground = () =>
+    getComputedStyle(document.documentElement).getPropertyValue("--background");
+  const frameBackground = () =>
+    screen.container.querySelector("iframe")?.srcdoc.match(/background:([^;}]+)/)?.[1];
+  const lightBackground = rootBackground();
+  expect(frameBackground()).toBe(lightBackground);
+  await act(() => {
+    setAppearanceMode("dark");
+  });
+  const darkBackground = rootBackground();
+  expect(darkBackground).not.toBe(lightBackground);
+  await vi.waitFor(() => expect(frameBackground()).toBe(darkBackground));
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
 });
 
