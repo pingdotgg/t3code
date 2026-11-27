@@ -276,6 +276,13 @@ it.effect(
         expect(idleTitled.launched).toHaveLength(0);
       }
 
+      // Clients that fill every optional field send a blank `message`: the thread starts idle.
+      for (const message of ["", " \n "]) {
+        const idle = yield* launchWith("full-access", "full-access", { title: "Fix", message });
+        expect(idle.launched).toHaveLength(1);
+        expect(idle.launched[0]?.initialMessage).toBeUndefined();
+      }
+
       const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", {
         title: "Fix",
         hostedAppUrl: "https://t3.example.com",
