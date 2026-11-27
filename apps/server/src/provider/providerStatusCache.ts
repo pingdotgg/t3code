@@ -11,9 +11,24 @@ import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 
-const decodeProviderStatusCache = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(ServerProviderSchema),
-);
+// Caches from before `agentMode` mark the agent's own mode with `role: "mode"`, which the
+// contract drops. Keep the marker so a hydrated snapshot still guards mode picks.
+const withLegacyAgentMode = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(withLegacyAgentMode);
+  if (typeof value !== "object" || value === null) return value;
+  const object = Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, withLegacyAgentMode(entry)]),
+  );
+  if (object.role !== "mode") return object;
+  const { role: _role, ...descriptor } = object;
+  return { ...descriptor, agentMode: true };
+};
+
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeProviderSnapshot = Schema.decodeUnknownEffect(ServerProviderSchema);
+
+const decodeProviderStatusCache = (raw: string) =>
+  decodeJson(raw).pipe(Effect.map(withLegacyAgentMode), Effect.flatMap(decodeProviderSnapshot));
 
 const mergeProviderModels = (
   fallbackModels: ReadonlyArray<ServerProvider["models"][number]>,

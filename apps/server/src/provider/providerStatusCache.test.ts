@@ -7,8 +7,14 @@ import {
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 
-import { hydrateCachedProvider, isCachedProviderCorrelated } from "./providerStatusCache.ts";
+import {
+  hydrateCachedProvider,
+  isCachedProviderCorrelated,
+  readProviderStatusCache,
+} from "./providerStatusCache.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
@@ -208,4 +214,41 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       fallbackCodex,
     );
   });
+
+  it.effect("keeps the agent-mode marker of a cache written before agentMode", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped();
+      const filePath = `${dir}/codex.json`;
+      const modeOption = {
+        id: "approvals",
+        label: "Approvals",
+        type: "select" as const,
+        options: [{ id: "ask", label: "Ask" }],
+        role: "mode",
+      };
+      yield* fs.writeFileString(
+        filePath,
+        JSON.stringify(
+          makeProvider(CODEX_DRIVER, {
+            models: [
+              {
+                slug: "gpt",
+                name: "GPT",
+                isCustom: false,
+                capabilities: createModelCapabilities({ optionDescriptors: [] }),
+              },
+            ],
+          }),
+        ).replace('"optionDescriptors":[]', `"optionDescriptors":[${JSON.stringify(modeOption)}]`),
+      );
+
+      const cached = yield* readProviderStatusCache(filePath);
+
+      const { role: _role, ...rest } = modeOption;
+      assert.deepStrictEqual(cached?.models[0]?.capabilities?.optionDescriptors, [
+        { ...rest, agentMode: true },
+      ]);
+    }).pipe(Effect.scoped),
+  );
 });
