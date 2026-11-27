@@ -65,9 +65,19 @@ export function createSidebarCollisionDetection(
       const previousY = previousPointerY ?? pointer.y;
       previousPointerY = pointer.y;
       if (pointer.x >= boundary.left && pointer.x <= boundary.right) {
-        if (pointer.y < previousY && pointer.y <= boundary.bottom) boundarySection = "pinned";
+        const workingAtTop = isWorkingShelfAboveActive(items);
+        const workingTop = workingAtTop
+          ? args.droppableContainers
+              .find((container) => container.id === sidebarMarkerId("working-header"))
+              ?.node.current?.getBoundingClientRect().top
+          : undefined;
+        if (workingTop != null && pointer.y >= workingTop && pointer.y < boundary.top) {
+          return collisions.filter((collision) => collision.id === args.active.id);
+        }
+        const pinnedThreshold = workingTop ?? boundary.bottom;
+        if (pointer.y < previousY && pointer.y <= pinnedThreshold) boundarySection = "pinned";
         else if (pointer.y > previousY && pointer.y >= boundary.top) boundarySection = "active";
-        const activeBottomMarkers = isWorkingShelfAboveActive(items)
+        const activeBottomMarkers = workingAtTop
           ? (["snoozed-header", "settled-header"] as const)
           : (["working-header", "snoozed-header", "settled-header"] as const);
         const nextHeader = activeBottomMarkers
