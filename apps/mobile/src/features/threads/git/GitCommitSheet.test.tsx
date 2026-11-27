@@ -12,12 +12,17 @@ type PressProps = {
   accessibilityState?: { checked?: boolean };
   onPress: () => void;
 };
+type InputProps = {
+  value?: string;
+  onChangeText?: (text: string) => void;
+};
 const state = vi.hoisted(() => ({
   refName: "main" as string | null,
   cwd: "/repo",
   result: null as object | null,
   pressables: [] as PressProps[],
   buttons: [] as PressProps[],
+  inputs: [] as InputProps[],
   ran: [] as object[],
   createdBranch: undefined as string | undefined,
   waitBeforeProgress: null as Promise<void> | null,
@@ -38,7 +43,10 @@ vi.mock("../../../components/ui/FitSheet", () => ({
 vi.mock("../../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../../components/ui/AppText", () => ({
   AppText: () => null,
-  AppTextInput: () => null,
+  AppTextInput: (props: InputProps) => {
+    state.inputs.push(props);
+    return null;
+  },
 }));
 vi.mock("../../../components/ui/Button", () => ({
   Button: (props: PressProps) => {
@@ -104,6 +112,7 @@ function openSheet() {
   const render = () => {
     state.pressables = [];
     state.buttons = [];
+    state.inputs = [];
     root.render(
       <GitCommitSheet route={{ params: { environmentId: "environment", threadId: "thread" } }} />,
     );
@@ -113,6 +122,8 @@ function openSheet() {
   return {
     isIncluded: (path: string) => row(path).accessibilityState?.checked,
     toggle: (path: string) => act(() => row(path).onPress()),
+    message: () => state.inputs.at(-1)?.value,
+    setMessage: (text: string) => act(() => state.inputs.at(-1)?.onChangeText?.(text)),
     refresh: () => act(render),
     // The sheet closes on submit, so it unmounts once the commit settles.
     commit: async (label = "Commit changes") => {
@@ -123,27 +134,40 @@ function openSheet() {
   };
 }
 
-it("keeps excluded files after a failed commit until a commit succeeds", async () => {
+it("keeps excluded files and commit message after a failed commit until a commit succeeds", async () => {
   state.refName = "main";
   state.result = null;
   state.ran = [];
 
   const first = openSheet();
   first.toggle("later.ts");
+  first.setMessage("  fix: preserve commit message  ");
   await first.commit();
 
   const retry = openSheet();
   expect(retry.isIncluded("later.ts")).toBe(false);
   expect(retry.isIncluded("include.ts")).toBe(true);
+  expect(retry.message()).toBe("  fix: preserve commit message  ");
   state.result = { commit: { status: "created" } };
   await retry.commit();
   expect(state.ran).toEqual([
-    { action: "commit", featureBranch: false, filePaths: ["include.ts"] },
-    { action: "commit", featureBranch: false, filePaths: ["include.ts"] },
+    {
+      action: "commit",
+      featureBranch: false,
+      commitMessage: "fix: preserve commit message",
+      filePaths: ["include.ts"],
+    },
+    {
+      action: "commit",
+      featureBranch: false,
+      commitMessage: "fix: preserve commit message",
+      filePaths: ["include.ts"],
+    },
   ]);
 
   const afterSuccess = openSheet();
   expect(afterSuccess.isIncluded("later.ts")).toBe(true);
+  expect(afterSuccess.message()).toBe("");
   afterSuccess.close();
 });
 
@@ -238,7 +262,7 @@ it.each([
   });
 });
 
-it("clears inherited exclusions on success with stale branch status", async () => {
+it("clears inherited exclusions and message on success with stale branch status", async () => {
   state.cwd = "/repo/pending/success";
   state.refName = "main";
   state.result = { commit: { status: "created" } };
@@ -248,13 +272,16 @@ it("clears inherited exclusions on success with stale branch status", async () =
 
   const first = openSheet();
   first.toggle("later.ts");
+  first.setMessage("fix: stale branch commit");
   await first.commit("Commit on a new branch");
 
   const reopened = openSheet();
   expect(reopened.isIncluded("later.ts")).toBe(false);
+  expect(reopened.message()).toBe("fix: stale branch commit");
   await act(async () => success.resolve());
   state.waitBeforeProgress = null;
 
   expect(reopened.isIncluded("later.ts")).toBe(true);
+  expect(reopened.message()).toBe("");
   reopened.close();
 });

@@ -2823,7 +2823,7 @@
   "91e832d25ff2aba9": "{term, select, mr {병합 요청} cr {변경 요청} other {풀 리퀘스트}} {number}",
   "bbb7d40a7ad7ab71": "비공개",
   "37f84b2c7830febb": "스택 {size}개 중 {position}번째",
-  "0469747f4bb9caac": "추가 {additions}개, 삭제 {deletions}개",
+  "3920accacc91683e": "추가 {additions}개, 삭제 {deletions}개",
   "4e3cdb7e814e8962": "두 번 탭하여 엽니다. 길게 누르면 빠른 작업을 볼 수 있습니다.",
   "d50c8bcf494b1158": "첨부 파일 보기: {caption}",
   "868d7f357f06cdd2": "병합하려면 다시 연결하세요.",
