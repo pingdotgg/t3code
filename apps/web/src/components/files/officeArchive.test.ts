@@ -178,6 +178,17 @@ describe("Word preview limits", () => {
     expect(await result.part("word/document.xml")).toContain("Before");
     expect(await result.part("word/media/image1.svg")).toBe(svg);
   });
+
+  it("keeps a VML picture whose imagedata carries a shape id before r:id", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>';
+    const body = `<w:p><w:r><w:pict><v:shape><v:imagedata id="_x0000_i1025" r:id="image"/></v:shape></w:pict></w:r></w:p>`;
+    const result = await prepared(
+      await wordFile(body, {}, "", relationship("image", "media/image1.svg"), {
+        "word/media/image1.svg": svg,
+      }),
+    );
+    expect(await result.part("word/media/image1.svg")).toBe(svg);
+  });
 });
 
 async function workbookFile(
