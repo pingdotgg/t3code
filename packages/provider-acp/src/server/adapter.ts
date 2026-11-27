@@ -5512,10 +5512,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* closeTextStream(context, "reasoning");
           yield* closeTextStream(context, "user");
           const previous = context.tools.get(incoming.toolCallId);
-          // A brand-new tool call turns any earlier assistant text into pre-tool commentary.
-          if (previous === undefined && projectedStatus === undefined) {
-            context.closingAssistant = null;
-          }
           const merged = mergeToolCallState(previous, incoming);
           const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(normalized);
@@ -5572,6 +5568,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             projectedStatus === undefined &&
             flavor.isProvisionalSubagentTool?.(toolCall)
           ) {
+            if (previous === undefined && !context.subagents.has(toolCall.toolCallId)) {
+              context.closingAssistant = null;
+            }
             yield* rearmDeferredFinalize(context);
             return;
           }
@@ -5673,6 +5672,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const subagentUpdate = hydratedRegisteredMonitor
             ? undefined
             : extractSubagentUpdate(toolCall);
+          const isExistingSubagentUpdate =
+            subagentUpdate !== undefined &&
+            subagentUpdate.suppressNormalTool !== false &&
+            (context.subagents.has(subagentUpdate.nativeTaskId) ||
+              (subagentUpdate.childSessionId !== null &&
+                context.subagentsBySessionId.has(subagentUpdate.childSessionId)));
+          // A brand-new tool call turns any earlier assistant text into pre-tool commentary.
+          if (
+            previous === undefined &&
+            projectedStatus === undefined &&
+            !isExistingSubagentUpdate
+          ) {
+            context.closingAssistant = null;
+          }
           if (subagentUpdate !== undefined) {
             yield* emitSubagent(
               context,

@@ -10870,6 +10870,203 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect(
+    "keeps final_answer on a continuation reply when a carried-over subagent completes before usage_update",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* bundledMockAgentPath;
+        const instanceId = ProviderInstanceId.make("acp-test");
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        let subagentPhase: "spawn" | "complete" = "spawn";
+        const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
+          [];
+        const promptSettled = yield* Deferred.make<void>();
+        const adapter = yield* makeAcpAdapterV2({
+          testHooks: {
+            afterPromptSettledWithBackgroundWork: () =>
+              Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
+          },
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            deferFinalizeForBackgroundWork: true,
+            enablePostSettleContinuation: true,
+            replyEndsWithUsageUpdate: true,
+            extractSubagentUpdate: (toolCall) =>
+              toolCall.toolCallId !== "tool-call-generic-1"
+                ? undefined
+                : subagentPhase === "spawn"
+                  ? {
+                      nativeTaskId: "task-generic-1",
+                      prompt: "background subagent",
+                      title: "background subagent",
+                      model: null,
+                      status: "running",
+                      childSessionId: null,
+                      result: null,
+                    }
+                  : {
+                      nativeTaskId: "task-generic-1",
+                      prompt: "",
+                      title: null,
+                      model: null,
+                      status: "completed",
+                      childSessionId: null,
+                      result: "SUB_DONE",
+                    },
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdateHandler = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              }),
+            }),
+          },
+          selfInvocation,
+          continuationRequests: {
+            offer: (request) =>
+              Effect.sync(() => {
+                continuationRequests.push(request);
+              }),
+          },
+        });
+        const threadId = ThreadId.make("thread-acp-carryover-final-answer");
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-carryover-final-answer"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+        );
+        yield* Deferred.await(promptSettled);
+
+        const firstProviderTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+        });
+        yield* runtime.interruptTurn({ providerThread, providerTurnId: firstProviderTurnId });
+        while (true) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal" && event.providerTurnId === firstProviderTurnId) break;
+        }
+        assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
+
+        const continuationReply = "Continuation reply before carried-over subagent completion.";
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: continuationReply },
+          },
+        });
+        yield* Effect.yieldNow;
+        assert.lengthOf(continuationRequests, 1);
+
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+            messageText: "Background task completed.",
+          }),
+        );
+        yield* Effect.yieldNow;
+
+        subagentPhase = "complete";
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-generic-1",
+            title: "background subagent",
+            kind: "other",
+            status: "completed",
+            rawOutput: { content: "SUB_DONE" },
+          },
+        });
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "usage_update",
+            used: 1200,
+            size: 100000,
+          },
+        });
+        yield* TestClock.adjust("3 seconds");
+
+        const continuationProviderTurnId = idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:2"),
+        });
+        const continuationEvents: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        while (true) {
+          const event = yield* Queue.take(events);
+          continuationEvents.push(event);
+          if (
+            event.type === "turn.terminal" &&
+            event.providerTurnId === continuationProviderTurnId
+          ) {
+            break;
+          }
+        }
+        const subagentItem = continuationEvents.findLast(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "subagent",
+        );
+        assert.equal(
+          subagentItem?.type === "turn_item.updated" && subagentItem.turnItem.type === "subagent"
+            ? subagentItem.turnItem.status
+            : null,
+          "completed",
+        );
+        const replyItem = continuationEvents.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === continuationReply,
+        );
+        assert.equal(
+          replyItem?.type === "turn_item.updated" && replyItem.turnItem.type === "assistant_message"
+            ? replyItem.turnItem.phase
+            : null,
+          "final_answer",
+        );
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
     "preserveRuntimeOnSettledInterrupt keeps the process alive and carries subagents through a settled steering interrupt",
     () =>
       Effect.gen(function* () {
