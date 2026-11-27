@@ -5,6 +5,7 @@ import { DEFAULT_TERMINAL_ID } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 
 import {
+  basename,
   nextOpenTerminalId,
   previousLiveTerminalId,
   resolveProjectScriptTerminalId,
@@ -86,5 +87,16 @@ describe("resolveProjectScriptTerminalId", () => {
       uniqueSuffix: "783c91cc-a413-47c7-8312-c2a5a1f05e40",
     });
     expect(terminalId).not.toBe(DEFAULT_TERMINAL_ID);
+  });
+});
+
+describe("basename", () => {
+  it.each([
+    ["C:\\wt\\repo\\", "repo"],
+    ["/home/u/repo/", "repo"],
+    ["/home/u/team\\repo", "team\\repo"],
+    ["/", "/"],
+  ])("names %s as %s", (input, expected) => {
+    expect(basename(input)).toBe(expected);
   });
 });

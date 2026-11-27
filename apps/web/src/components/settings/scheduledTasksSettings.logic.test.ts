@@ -18,6 +18,7 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  changeDraftProject,
   scheduledTaskDefaultModel,
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
@@ -175,6 +176,21 @@ describe("editing scheduled task branch settings", () => {
   it("leaves the base automatic when a task without a worktree switches to one", () => {
     const draft = taskToDraft({ ...legacyTask, workspaceStrategy: { type: "root" } });
     expect(draft.baseRef).toBe("");
+  });
+
+  it("clears the old project's base branch and checkout when the project changes", () => {
+    const worktree = taskToDraft(legacyTask);
+    expect(changeDraftProject(worktree, legacyTask.projectId)).toBe(worktree);
+    expect(changeDraftProject(worktree, "other")).toMatchObject({
+      projectId: "other",
+      workspaceMode: "worktree",
+      baseRef: "",
+    });
+    const checkout = taskToDraft({
+      ...legacyTask,
+      workspaceStrategy: { type: "existing_worktree", worktreePath: "/work/project" },
+    });
+    expect(changeDraftProject(checkout, "other").existingWorktreePath).toBe("");
   });
 });
 

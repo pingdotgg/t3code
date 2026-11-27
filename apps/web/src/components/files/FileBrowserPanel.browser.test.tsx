@@ -1,6 +1,6 @@
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { commands, page, userEvent } from "vite-plus/test/browser";
 
 import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
 import { RightPanelSheet } from "~/components/RightPanelSheet";
@@ -110,25 +110,37 @@ describe("FileBrowserPanel", () => {
     );
     using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
     using clipboard = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
-    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
-    findTreeRow("README.md")!.dispatchEvent(
-      new MouseEvent("contextmenu", {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        button: 2,
-      }),
-    );
-    const action = page.getByRole("menuitem", { name: "Copy mention", exact: true });
-    await expect.element(action).toBeVisible();
-    await userEvent.click(action);
+
+    async function openRowMenu(path: string) {
+      await vi.waitFor(() => expect(findTreeRow(path)).not.toBeNull());
+      findTreeRow(path)!.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          button: 2,
+        }),
+      );
+    }
+
+    await openRowMenu("src/");
+    const copyPath = page.getByRole("menuitem", { name: "Copy path", exact: true });
+    await userEvent.click(copyPath);
+    await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("/repo/src"));
+
+    await openRowMenu("README.md");
+    const copyMention = page.getByRole("menuitem", { name: "Copy mention", exact: true });
+    await expect.element(copyMention).toBeVisible();
+    await userEvent.click(copyMention);
     await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("[README.md](README.md)"));
 
+    // Hover can take focus when the keyboard menu reopens under the pointer.
+    await commands.resetPointer();
     const row = findTreeRow("README.md")!;
     await userEvent.keyboard("{Tab}");
     row.focus();
     await userEvent.keyboard("{Shift>}{F10}{/Shift}");
-    await expect.element(action).toHaveFocus();
+    await expect.element(copyPath).toHaveFocus();
     await userEvent.keyboard("{Escape}");
     await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
   });

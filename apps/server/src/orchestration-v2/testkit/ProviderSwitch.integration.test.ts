@@ -143,6 +143,7 @@ function makeTestAdapter(input: {
   // ACP cannot truncate, so its rollback answers with a fresh, empty native session.
   readonly rollback?: "truncates" | "replaces_native_thread";
   readonly beforeForcedNativeThread?: Effect.Effect<void>;
+  readonly unloadThread?: ProviderAdapter.ProviderAdapterV2SessionRuntime["unloadThread"];
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -185,6 +186,7 @@ function makeTestAdapter(input: {
           providerSessionId: sessionInput.providerSessionId,
           providerSession,
           events: Stream.fromPubSub(events),
+          ...(input.unloadThread === undefined ? {} : { unloadThread: input.unloadThread }),
           ...(input.backgroundTasksEndWithProcess === undefined
             ? {}
             : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
@@ -3977,10 +3979,17 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
-  it.live("resumes a queued account switch without requiring a portable handoff", () =>
+  it.live.each([
+    {
+      name: "resumes a queued account switch without requiring a portable handoff",
+      released: true,
+    },
+    { name: "rejects a queued account switch when the old writer does not close", released: false },
+  ])("$name", ({ released }) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("queued-account-switch");
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const destinationSessions = yield* Ref.make<ReadonlyArray<string>>([]);
       const started = yield* Deferred.make<void>();
       const alternateSelection: ModelSelection = {
         ...CODEX_MODEL_SELECTION,
@@ -3999,6 +4008,15 @@ describe("orchestration v2 provider switching", () => {
           responseByRunOrdinal: {},
           capturedTurns,
           holdFirstTurn: started,
+          unloadThread: ({ awaitClosed }) =>
+            !released && awaitClosed
+              ? Effect.fail(
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CODEX_DRIVER,
+                    detail: "The source thread never closed.",
+                  }),
+                )
+              : Effect.void,
         }),
         makeTestAdapter({
           instanceId: alternateSelection.instanceId,
@@ -4007,6 +4025,7 @@ describe("orchestration v2 provider switching", () => {
           modelSelection: alternateSelection,
           responseByRunOrdinal: { 2: "Alternate account complete" },
           capturedTurns,
+          runtimeStarts: destinationSessions,
         }),
       ];
       const layerRegistry = Layer.succeed(
@@ -4043,6 +4062,7 @@ describe("orchestration v2 provider switching", () => {
       const projection = yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         yield* orchestrator.dispatch({
           type: "thread.create",
@@ -4113,11 +4133,21 @@ describe("orchestration v2 provider switching", () => {
             (event) =>
               event.event.type === "run.updated" &&
               event.event.runId === queued.runs[1]?.id &&
-              event.event.payload.status === "completed",
+              event.event.payload.status === (released ? "completed" : "failed"),
           ),
           Stream.runHead,
         );
         yield* worker.drain();
+        const effects = yield* outbox.listByCommandId(
+          CommandId.make(`command:system:start-queued:${queued.runs[1]!.id}`),
+        );
+        const detach = effects.find((effect) => effect.request.type === "provider-session.detach");
+        assert.deepEqual(
+          detach?.request.type === "provider-session.detach"
+            ? detach.request.handoffProviderThread?.nativeThreadRef
+            : undefined,
+          sourceNativeRef,
+        );
         const delivered = yield* orchestrator.getThreadProjection(queuedThreadId);
         const targetNativeRef = delivered.providerThreads.find(
           (providerThread) => providerThread.id === delivered.runs[1]?.providerThreadId,
@@ -4147,14 +4177,15 @@ describe("orchestration v2 provider switching", () => {
         projection.runs.map((run) => [run.providerInstanceId, run.status]),
         [
           [CODEX_MODEL_SELECTION.instanceId, "completed"],
-          [alternateSelection.instanceId, "completed"],
+          [alternateSelection.instanceId, released ? "completed" : "failed"],
         ],
       );
       assert.lengthOf(projection.contextHandoffs, 0);
       assert.deepEqual(
         (yield* Ref.get(capturedTurns)).map((turn) => turn.text),
-        ["First account turn", "Alternate account turn"],
+        released ? ["First account turn", "Alternate account turn"] : ["First account turn"],
       );
+      assert.lengthOf(yield* Ref.get(destinationSessions), released ? 1 : 0);
     }),
   );
 
@@ -6703,6 +6734,98 @@ describe("orchestration v2 provider switching", () => {
           ProviderReplayHarness.layerWithRegistry(
             {
               name: `dropped-handoff-${variant}`,
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect("resends a stopped request the provider dropped once its session closed", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("stopped-request-dropped");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: { 1: "hello", 2: "", 3: "Answer." },
+          capturedTurns,
+          interruptedRunOrdinals: new Set([2]),
+          // Stopped before its first checkpoint: the provider never kept run 2.
+          nativeTurnKept: (nativeTurnId) => !nativeTurnId.endsWith(":2"),
+        }),
+      ]);
+
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const testThreadId = ThreadId.make("thread:stopped-request-dropped");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:stopped-request-dropped:create"),
+          threadId: testThreadId,
+          projectId,
+          title: "Stopped request dropped",
+          modelSelection: CODEX_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        let step = 0;
+        const send = (text: string) =>
+          Effect.gen(function* () {
+            step += 1;
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:stopped-request-dropped:msg-${step}`),
+              threadId: testThreadId,
+              messageId: MessageId.make(`message:stopped-request-dropped:${step}`),
+              text,
+              attachments: [],
+              modelSelection: CODEX_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            yield* waitForIdle(testThreadId);
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(testThreadId);
+          });
+
+        yield* send("Say hello");
+        const afterStop = yield* send("List every prime number below 300");
+        const stopped = afterStop.runs.find((run) => run.ordinal === 2)!;
+        assert.equal(stopped.status, "interrupted");
+
+        const afterNext = yield* send("Did I ask you anything about math?");
+        const nextTurn = (yield* Ref.get(capturedTurns)).at(-1)!;
+        assert.include(nextTurn.text, "List every prime number below 300");
+        const stoppedTurn = afterNext.providerTurns.find(
+          (turn) => turn.runAttemptId === stopped.activeAttemptId,
+        );
+        assert.equal(stoppedTurn?.promptDropped, true);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "stopped-request-dropped",
               runtimePolicyOverride: {
                 cwd,
                 approvalPolicy: "never",

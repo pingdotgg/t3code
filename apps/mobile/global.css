@@ -17,7 +17,7 @@
 
 /* ─── Typography ────────────────────────────────────────────────────── */
 @theme {
-  /* Keep these native family names aligned with app.config.ts. */
+  /* Defaults only: the font preference swaps these at runtime (src/lib/fontFamilies.ts). */
   --font-sans: "DMSans-Regular";
   --font-medium: "DMSans-Medium";
   --font-bold: "DMSans-Bold";
@@ -46,6 +46,7 @@
 /* ─── Custom utilities ──────────────────────────────────────────────── */
 @utility font-t3-medium {
   font-family: var(--font-medium);
+  font-weight: 500;
 }
 
 @utility font-t3-bold {
