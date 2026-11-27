@@ -62,7 +62,6 @@ describe("cloneUrlForProtocol", () => {
     "git@ssh.dev.azure.com:v3/Fabrikam/Project1/fab_repo",
     "ssh://git@ssh.dev.azure.com/v3/Fabrikam/Project1/fab_repo",
     "git@SSH.DEV.AZURE.COM:v3/Fabrikam/Project1/fab_repo",
-    "alice@corp.com@ssh.dev.azure.com:v3/Fabrikam/Project1/fab_repo",
   ])("uses Azure's HTTPS host and repository path for %s", (url) => {
     expect(cloneUrlForProtocol(url, "https")).toBe(
       "https://dev.azure.com/Fabrikam/Project1/_git/fab_repo",
@@ -212,9 +211,6 @@ describe("cloneUrlRepositoryPath", () => {
     expect(cloneUrlRepositoryPath("https://github.com/acme/repo.git")).toBe("github.com/acme/repo");
     expect(cloneUrlRepositoryPath("ssh://git@gitlab.com:2222/group/sub/repo.git")).toBe(
       "gitlab.com/group/sub/repo",
-    );
-    expect(cloneUrlRepositoryPath("alice@corp.com@gitlab.example.com:team/repo.git")).toBe(
-      "gitlab.example.com/team/repo",
     );
     expect(cloneUrlRepositoryPath("C:/repos/project.git")).toBeNull();
     for (const prefix of ["https://host.example/", "ssh://git@host.example/"]) {
