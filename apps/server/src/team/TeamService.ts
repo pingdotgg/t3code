@@ -2058,36 +2058,41 @@ const make = Effect.gen(function* () {
       updatedAt: nowIso,
     };
 
-    yield* repository
-      .initializeWorkspace({
-        team,
-        owner,
-        ownerSessionId: input.sessionId,
-      })
-      .pipe(
-        Effect.catchTags({
-          TeamAlreadyConfiguredError: (error) =>
-            Effect.fail(
-              new TeamOperationError({
-                code: "already_configured",
-                message: error.message,
+    const defaultEnvironment = yield* withMembershipMutationGate(
+      withRemoteRevocationBarrier(
+        Effect.gen(function* () {
+          yield* repository
+            .initializeWorkspace({
+              team,
+              owner,
+              ownerSessionId: input.sessionId,
+            })
+            .pipe(
+              Effect.catchTags({
+                TeamAlreadyConfiguredError: (error) =>
+                  Effect.fail(
+                    new TeamOperationError({
+                      code: "already_configured",
+                      message: error.message,
+                    }),
+                  ),
+                TeamPseudoAlreadyTakenError: (error) =>
+                  Effect.fail(
+                    new TeamOperationError({
+                      code: "pseudo_taken",
+                      message: error.message,
+                    }),
+                  ),
+                TeamRepositoryError: (error) =>
+                  Effect.logWarning("TeamService.initializeTeam failed", { cause: error }).pipe(
+                    Effect.andThen(Effect.fail(toInternalError(error))),
+                  ),
               }),
-            ),
-          TeamPseudoAlreadyTakenError: (error) =>
-            Effect.fail(
-              new TeamOperationError({
-                code: "pseudo_taken",
-                message: error.message,
-              }),
-            ),
-          TeamRepositoryError: (error) =>
-            Effect.logWarning("TeamService.initializeTeam failed", { cause: error }).pipe(
-              Effect.andThen(Effect.fail(toInternalError(error))),
-            ),
+            );
+          return yield* ensureDefaultEnvironmentForTeam(team);
         }),
-      );
-
-    const defaultEnvironment = yield* ensureDefaultEnvironmentForTeam(team);
+      ),
+    );
 
     yield* publish({ version: 1, type: "teamUpdated", payload: team });
     yield* publish({ version: 1, type: "memberUpserted", payload: owner });
@@ -2230,7 +2235,9 @@ const make = Effect.gen(function* () {
       }
       if (requestedIds.size === 0) return;
       const members = yield* repository.listMembers(teamId).pipe(Effect.mapError(toInternalError));
-      const validIds = new Set(members.map((member) => member.id));
+      const validIds = new Set(
+        members.filter((member) => member.status !== "removed").map((member) => member.id),
+      );
       for (const memberId of requestedIds) {
         if (!validIds.has(memberId)) {
           return yield* new TeamOperationError({

@@ -4575,6 +4575,25 @@ describe("TeamService", () => {
             }),
         } as never;
 
+        // Departed member IDs must be rejected by attachEnvironment ACL validation.
+        const departedMemberAttachExit = yield* Effect.exit(
+          team.attachEnvironment({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              environmentId: EnvironmentId.make("env-departed-acl-test"),
+              name: "Departed ACL Runner",
+              accessRule: { roles: ["owner"], memberIds: [bobJoined.member.id] },
+            },
+          }),
+        );
+        expect(departedMemberAttachExit._tag).toBe("Failure");
+        if (departedMemberAttachExit._tag === "Failure") {
+          expect(Cause.squash(departedMemberAttachExit.cause)).toMatchObject({
+            _tag: "TeamOperationError",
+            code: "invalid_input",
+          });
+        }
+
         // Simulate an offline peer link during deleteTeam so we verify pending remote revocations
         // survive workspace deletion and still drain once the peer comes back online.
         const offlinePeerEnvId = EnvironmentId.make("env-offline-peer-1");
@@ -4667,6 +4686,49 @@ describe("TeamService", () => {
 
         // Dana's session ID was revoked (unused variable silence check).
         expect(danaSession.sessionId).toBeTruthy();
+
+        // Verify initializeTeam serializes against in-flight personal-mode remote pairing so a
+        // workspace cannot be initialized mid-pairing under withRemotePairingPermit.
+        const pairingEntered = yield* Deferred.make<void>();
+        const releasePairing = yield* Deferred.make<void>();
+        const raceEnvId = EnvironmentId.make("env-race-peer-1");
+        let sawWorkspaceDuringPairing = false;
+        const racePeerClientPairing = {
+          revokeSubject: () => Effect.succeed({ ok: true as const }),
+          request: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(pairingEntered, undefined);
+              yield* Deferred.await(releasePairing);
+              const wsNow = yield* team.getState(aliceSession.sessionId);
+              sawWorkspaceDuringPairing = wsNow.team !== null;
+              return { type: "credential" as const };
+            }),
+        } as never;
+        const pairingFiber = yield* team
+          .pairRemoteEnvironmentForSession({
+            sessionId: aliceSession.sessionId,
+            scopes: AuthStandardClientScopes,
+            pairingInput: { environmentId: raceEnvId } as never,
+            peerClientPairing: racePeerClientPairing,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(pairingEntered);
+        // Attempt to initialize a replacement team while personal-mode pairing holds the permit;
+        // initializeTeam must wait for the remote revocation barrier until pairing finishes.
+        const replacementInitFiber = yield* team
+          .initializeTeam({
+            sessionId: aliceSession.sessionId,
+            payload: { name: "Replacement Team", ownerPseudo: "alice" },
+          })
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust(Duration.millis(10));
+        expect((yield* team.getState(aliceSession.sessionId)).team).toBeNull();
+        yield* Deferred.succeed(releasePairing, undefined);
+        const pairingResult = yield* Fiber.join(pairingFiber);
+        expect(pairingResult).toEqual({ type: "credential" });
+        expect(sawWorkspaceDuringPairing).toBe(false);
+        const replacementInit = yield* Fiber.join(replacementInitFiber);
+        expect(replacementInit.team.name).toBe("Replacement Team");
       }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
   );
 });
