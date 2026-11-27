@@ -825,18 +825,26 @@ function FindProjectsSection({
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
   const [includeUsage, setIncludeUsage] = useState(true);
   const usageCheckboxId = `welcome-usage-access-${environmentId}`;
-  const find = () => {
+  const find = async () => {
     onFind();
     if (!includeUsage || !serverConfig) return;
-    for (const provider of providers ?? []) {
-      if (!provider.enabled || !isImportSource(provider.driver)) continue;
-      const instance = serverConfig.settings.providerInstances[provider.instanceId];
-      if (instance?.usageAccess !== undefined) continue;
-      void persistProviderInstance({
-        operation: "upsert",
-        instanceId: provider.instanceId,
-        instance: withProviderUsageAccess(instance, provider.driver, "allowed"),
-      });
+    const results = await Promise.all(
+      (providers ?? []).flatMap((provider) => {
+        if (!provider.enabled || !isImportSource(provider.driver)) return [];
+        const instance = serverConfig.settings.providerInstances[provider.instanceId];
+        if (instance?.usageAccess !== undefined) return [];
+        return [
+          persistProviderInstance({
+            operation: "upsert",
+            instanceId: provider.instanceId,
+            instance: withProviderUsageAccess(instance, provider.driver, "allowed"),
+          }),
+        ];
+      }),
+    );
+    // Discovery goes ahead either way; Usage asks again for any agent that did not save.
+    if (results.some((result) => result._tag === "Failure" && !isAtomCommandInterrupted(result))) {
+      toastManager.add({ type: "error", title: gt("Could not save usage access") });
     }
   };
   if (importSourceCount === 0) return null;
@@ -857,7 +865,7 @@ function FindProjectsSection({
             </T>
           </span>
         </span>
-        <Button size="sm" variant="outline" disabled={disabled} onClick={find}>
+        <Button size="sm" variant="outline" disabled={disabled} onClick={() => void find()}>
           <T>Find my projects</T>
         </Button>
       </div>
@@ -871,7 +879,9 @@ function FindProjectsSection({
           />
         </RowIcon>
         <span className="text-muted-foreground">
-          <T>Also show my usage stats from these agents</T>
+          <T>
+            Also show my usage stats from these agents, which can read their sign-in to check limits
+          </T>
         </span>
       </label>
     </WelcomeSection>

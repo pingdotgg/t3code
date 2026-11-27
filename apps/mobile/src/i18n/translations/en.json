@@ -5729,10 +5729,10 @@
   "6228281a3736c42f": "Reads its conversation history.",
   "b28f03229c6b9ecf": "Asks Cursor for your account's usage, using the API key you gave T3 Code.",
   "7994d781649681a6": "Reads its session history.",
-  "c27aeb1a189a64c5": "T3 Code can chart tokens, cost, and limits from what your agents keep on this computer. Choose which agents to include.",
   "6b7d57c764ba683e": "Reads its session history at {location}, and its sign-in to ask Anthropic for your reset credits.",
   "3909d0c84478bec2": "Reads its session history at {location}, and its sign-in to ask xAI for your credits.",
   "6fbd4f6c919be476": "Reads its usage database at {location}, and its Go key to ask OpenCode for your Go limits.",
   "0d273061b2faa0e1": "Reads its conversation history at {location}.",
-  "8a607a4b7888e013": "Reads its session history at {location}."
+  "8a607a4b7888e013": "Reads its session history at {location}.",
+  "75543f378b9076b9": "T3 Code can chart tokens, cost, and limits from what your agents keep on the computer they run on. Choose which agents to include."
 }

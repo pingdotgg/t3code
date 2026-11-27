@@ -4,7 +4,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
-import { act, render } from "../../../test/render";
+import { render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   mutateProviderInstance: vi.fn(),
@@ -52,18 +52,20 @@ it("says what each agent's access reads and saves only the agents left checked",
       />
     </RegistryContext.Provider>,
   );
-  const text = () => screen.container.textContent ?? "";
-  expect(text()).toContain(
-    "Reads its session history at /home/me/.claude/projects, and its sign-in to ask Anthropic for your reset credits.",
-  );
-  expect(text()).toContain("Reads its session history at /home/me/.codex/sessions.");
+  await expect
+    .element(
+      screen.getByText(
+        "Reads its session history at /home/me/.claude/projects, and its sign-in to ask Anthropic for your reset credits.",
+      ),
+    )
+    .toBeVisible();
+  await expect
+    .element(screen.getByText("Reads its session history at /home/me/.codex/sessions."))
+    .toBeVisible();
 
-  const [, codexCheckbox] = [...screen.container.querySelectorAll<HTMLElement>("[role=checkbox]")];
-  await act(async () => codexCheckbox?.click());
-  const allow = [...screen.container.querySelectorAll("button")].find(
-    (button) => button.textContent === "Allow",
-  );
-  await act(async () => allow?.click());
+  await screen.getByRole("checkbox", { name: /Codex/ }).click();
+  await screen.getByRole("button", { name: "Allow", exact: true }).click();
+  await vi.waitFor(() => expect(state.mutateProviderInstance).toHaveBeenCalledTimes(2));
 
   const saved = state.mutateProviderInstance.mock.calls.map(
     ([call]) => call.input.providerInstanceMutation.instance,

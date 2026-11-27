@@ -321,13 +321,17 @@ async function click(label: string) {
 
 // Agent history is read only after "Find my projects", so most cases press it right away.
 async function mountWelcome({ findProjects = true } = {}) {
-  const screen = await render(
-    <RegistryContext.Provider value={appAtomRegistry}>
-      <WelcomePage environmentId={primaryId} onDone={state.onDone} />
-    </RegistryContext.Provider>,
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(
+    await render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <WelcomePage environmentId={primaryId} onDone={state.onDone} />
+      </RegistryContext.Provider>,
+    ),
   );
   if (findProjects && pageText().includes("Find my projects")) await click("Find my projects");
-  return screen;
+  const owned = stack.move();
+  return Object.assign(screen, { [Symbol.asyncDispose]: () => owned.disposeAsync() });
 }
 
 // The mocked modules read `state`, so every test starts by replacing all of it.

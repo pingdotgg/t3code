@@ -13036,7 +13036,6 @@
   "c23c1f8ee3808edb": "Autoriser",
   "53d6f3510e1d2505": "Importez vos projets",
   "f38cfff76578bff1": "Trouver mes projets",
-  "9c6f941b55e5040d": "Afficher aussi mes statistiques d'utilisation de ces agents",
   "e6af2ef0f498384a": [
     "T3 Code peut lire votre historique de sessions ",
     {
@@ -13046,7 +13045,6 @@
     },
     " sur cet ordinateur pour trouver les dossiers dans lesquels vous avez travaillé, ainsi que leurs remotes git."
   ],
-  "c27aeb1a189a64c5": "T3 Code peut afficher les tokens, le coût et les limites à partir de ce que vos agents conservent sur cet ordinateur. Choisissez les agents à inclure.",
   "4794e53fc07e3d86": "Lit son historique de sessions, ainsi que sa connexion pour demander à Anthropic vos crédits de réinitialisation.",
   "845c5d64893a2cd1": "Lit son historique de sessions, ainsi que sa connexion pour demander à xAI vos crédits.",
   "693a46777fff9c2c": "Lit sa base de données d’utilisation, ainsi que sa clé Go pour demander à OpenCode vos limites Go.",
@@ -13097,5 +13095,7 @@
       "v": "v"
     },
     "."
-  ]
+  ],
+  "75543f378b9076b9": "T3 Code peut afficher les tokens, le coût et les limites à partir de ce que vos agents conservent sur l’ordinateur où ils s’exécutent. Choisissez les agents à inclure.",
+  "1c90379ba4454864": "Afficher aussi mes statistiques d’utilisation de ces agents, ce qui peut lire leur connexion pour vérifier les limites"
 }

@@ -142,8 +142,8 @@ export function UsageAccessCard({ prompts }: { readonly prompts: readonly UsageA
       <View className="gap-1 px-4 pt-4">
         <Text className="text-sm text-foreground-muted">
           <T>
-            T3 Code can chart tokens, cost, and limits from what your agents keep on this computer.
-            Choose which agents to include.
+            T3 Code can chart tokens, cost, and limits from what your agents keep on the computer
+            they run on. Choose which agents to include.
           </T>
         </Text>
       </View>

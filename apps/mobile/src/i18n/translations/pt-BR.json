@@ -5721,10 +5721,10 @@
   "6228281a3736c42f": "Lê o histórico de conversas.",
   "b28f03229c6b9ecf": "Consulta na Cursor o uso da sua conta com a chave de API que você deu ao T3 Code.",
   "7994d781649681a6": "Lê o histórico de sessões.",
-  "c27aeb1a189a64c5": "O T3 Code pode mostrar tokens, custo e limites a partir do que seus agentes guardam neste computador. Escolha quais agentes incluir.",
   "6b7d57c764ba683e": "Lê o histórico de sessões em {location} e o login para consultar na Anthropic seus créditos de redefinição.",
   "3909d0c84478bec2": "Lê o histórico de sessões em {location} e o login para consultar na xAI seus créditos.",
   "6fbd4f6c919be476": "Lê o banco de dados de uso em {location} e a chave do Go para consultar na OpenCode seus limites do Go.",
   "0d273061b2faa0e1": "Lê o histórico de conversas em {location}.",
-  "8a607a4b7888e013": "Lê o histórico de sessões em {location}."
+  "8a607a4b7888e013": "Lê o histórico de sessões em {location}.",
+  "75543f378b9076b9": "O T3 Code pode mostrar tokens, custo e limites a partir do que seus agentes guardam no computador onde são executados. Escolha quais agentes incluir."
 }

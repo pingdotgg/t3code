@@ -113,10 +113,12 @@ function useUsageAccessChoices(prompts: readonly UsageAccessPrompt[], onAnswered
 function UsageAccessRows({
   prompts,
   declined,
+  disabled,
   onToggle,
 }: {
   readonly prompts: readonly UsageAccessPrompt[];
   readonly declined: ReadonlySet<string>;
+  readonly disabled: boolean;
   readonly onToggle: (prompt: UsageAccessPrompt, checked: boolean) => void;
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
@@ -148,8 +150,10 @@ function UsageAccessRows({
                   <li key={key} className="flex items-start gap-3">
                     <Checkbox
                       id={checkboxId}
+                      aria-label={label}
                       className="mt-0.5"
                       checked={!declined.has(key)}
+                      disabled={disabled}
                       onCheckedChange={(checked) => onToggle(prompt, Boolean(checked))}
                     />
                     <label htmlFor={checkboxId} className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -180,8 +184,8 @@ function UsageAccessRows({
 function UsageAccessIntro() {
   return (
     <T>
-      T3 Code can chart tokens, cost, and limits from what your agents keep on this computer. Choose
-      which agents to include.
+      T3 Code can chart tokens, cost, and limits from what your agents keep on the computer they run
+      on. Choose which agents to include.
     </T>
   );
 }
@@ -212,7 +216,12 @@ export function UsageAccessOverlay({
             <UsageAccessIntro />
           </p>
         </div>
-        <UsageAccessRows prompts={prompts} declined={choices.declined} onToggle={choices.toggle} />
+        <UsageAccessRows
+          prompts={prompts}
+          declined={choices.declined}
+          disabled={choices.saving}
+          onToggle={choices.toggle}
+        />
         <div className="flex flex-col items-center gap-3">
           <div className="flex gap-2">
             <Button
@@ -262,6 +271,7 @@ export function UsageAccessDialog({
           <UsageAccessRows
             prompts={prompts}
             declined={choices.declined}
+            disabled={choices.saving}
             onToggle={choices.toggle}
           />
           <p className="mt-4 text-xs text-muted-foreground">
