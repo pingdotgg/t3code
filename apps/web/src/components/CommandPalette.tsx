@@ -2742,6 +2742,7 @@ function OpenCommandPaletteDialog(props: {
   const fileManagerName = getLocalFileManagerName(navigator.platform, messages);
   const canOpenProjectFromFileManager =
     isBrowsing &&
+    canCreateProject &&
     browseEnvironmentId !== null &&
     (browseEnvironmentId === primaryEnvironmentId ||
       (browseEnvironmentIsDesktopLocal && browseDesktopInstanceId !== null)) &&

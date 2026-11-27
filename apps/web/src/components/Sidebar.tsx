@@ -219,6 +219,7 @@ import {
   useThreadJumpHintsVisible,
   type SidebarListItem,
   type SidebarSection,
+  canChangeSidebarProjectFolder,
 } from "./Sidebar.logic";
 import {
   createSidebarCollisionDetection,
@@ -1311,11 +1312,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     ) => {
       const api = readLocalApi();
       if (!api) return;
-      // A grouped project has a folder per checkout, so those change from project settings.
-      const canChangeFolder =
-        group.memberProjects.length <= 1 &&
-        !group.isScratch &&
-        readEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope);
+      const canChangeFolder = canChangeSidebarProjectFolder(
+        group,
+        readEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope),
+      );
       void (async () => {
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
