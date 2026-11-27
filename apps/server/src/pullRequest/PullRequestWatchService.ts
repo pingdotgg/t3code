@@ -35,15 +35,6 @@ export class PullRequestWatchFailedError extends Schema.TaggedError<PullRequestW
   }
 }
 
-export class PullRequestWatchFromSubagentError extends Schema.TaggedError<PullRequestWatchFromSubagentError>()(
-  "PullRequestWatchFromSubagentError",
-  {},
-) {
-  override get message(): string {
-    return "This thread is a subagent, so it cannot watch pull requests. Its parent thread owns the pull request: finish your task and report back instead.";
-  }
-}
-
 export class PullRequestWatchThreadNotFoundError extends Schema.TaggedError<PullRequestWatchThreadNotFoundError>()(
   "PullRequestWatchThreadNotFoundError",
   { threadId: ThreadId },
@@ -71,7 +62,6 @@ export class PullRequestWatchService extends Context.Service<
         readonly checksState?: PullRequestChecksState;
       },
       | PullRequestWatchFailedError
-      | PullRequestWatchFromSubagentError
       | PullRequestWatchThreadNotFoundError
       | PullRequestTargetError
       | PullRequestUnavailableError
@@ -113,9 +103,6 @@ const make = Effect.gen(function* () {
       threadPullRequestsOf(shell).find(
         (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
       );
-    if (watching && thread.lineage.relationshipToParent === "subagent") {
-      return yield* new PullRequestWatchFromSubagentError();
-    }
     const before = watchedLink(thread);
     const wasWatching = before?.watch !== undefined;
     // A watch on an ended PR could only report that it ended, so report it now instead.

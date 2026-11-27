@@ -2016,7 +2016,7 @@ it.effect("offers agent feedback tools only while the setting is on, to every cl
 );
 
 it.effect(
-  "lists watch tools only to threads that are not delegated children, and forge tools only where the project has a forge",
+  "lists watch tools to parents and delegated children, and forge tools only where the project has a forge",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2115,8 +2115,8 @@ it.effect(
           ]),
         );
         expect(childTools).toContain("link_pull_request");
-        expect(childTools).not.toContain("watch_pull_request");
-        expect(childTools).not.toContain("unwatch_pull_request");
+        expect(childTools).toContain("watch_pull_request");
+        expect(childTools).toContain("unwatch_pull_request");
         expect(parentTools).toEqual(
           expect.arrayContaining([
             "pull_request_read",

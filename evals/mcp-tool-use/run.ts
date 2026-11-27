@@ -563,8 +563,6 @@ export const savesPastedSecrets = t3Tools.some(
 /** A request_secret call that hands T3 a pasted secret, on a ref that takes one. */
 const pastedSecret = (name: string, input: Readonly<Record<string, unknown>>) =>
   savesPastedSecrets && name === "request_secret" && typeof input.value === "string";
-// T3 does not offer these to a delegated child, so its harness never lists them.
-const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
 // Agent feedback starts off, and T3 lists its tools only while it is on.
@@ -586,7 +584,6 @@ const forgeToolNames = new Set(
 const forArm = (value: string, arm: Arm | undefined) =>
   arm === "raw" ? value.replace(`\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`, "") : value;
 const visibleT3Tools = (options: {
-  readonly subagent?: boolean;
   readonly links?: boolean;
   readonly forge?: boolean;
   readonly agentFeedback?: Contracts.AgentFeedbackMode;
@@ -597,8 +594,7 @@ const visibleT3Tools = (options: {
       !(options.arm === "raw" && forgeToolNames.has(tool.name)) &&
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
       ((options.agentFeedback ?? "off") !== "off" || !hiddenWhileFeedbackOff.has(tool.name)) &&
-      (options.forge !== false || !hiddenWithoutForge.has(tool.name)) &&
-      !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
+      (options.forge !== false || !hiddenWithoutForge.has(tool.name)),
   );
 
 /**
@@ -717,7 +713,6 @@ export const buildBase = (
   options: {
     readonly model: Model;
     readonly keepUserInstructions: boolean;
-    readonly subagent?: boolean;
     readonly links?: boolean;
     readonly forge?: boolean;
     /** A native subagent starts from its task: T3 appends nothing to its system prompt. */
@@ -820,7 +815,6 @@ const buildCodexBase = (
     readonly model: Model;
     readonly keepUserInstructions: boolean;
     readonly effort?: string | undefined;
-    readonly subagent?: boolean;
     readonly links?: boolean;
     readonly forge?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
@@ -1921,9 +1915,6 @@ const BRANCH_PULL_REQUEST_TOOLS = new Set([
 const BRANCH_HAS_NO_PR_ERROR =
   "This thread's branch has no known PR. Pass number, or open one with pull_request_create.";
 
-const SUBAGENT_WATCH_ERROR =
-  "This thread is a subagent, so it cannot watch pull requests. Its parent thread owns the pull request: finish your task and report back instead.";
-
 /** Result for a native tool the case does not mock, other than shell, file, and web tools. */
 const nativeResult = (name: string, input: Readonly<Record<string, unknown>>) => {
   const skill = valueText(input.skill);
@@ -2358,10 +2349,6 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     );
   }
   if (isT3Name(call.name)) {
-    // T3 refuses a watch from a delegated child.
-    if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
-      return failed(SUBAGENT_WATCH_ERROR);
-    }
     if (BRANCH_PULL_REQUEST_TOOLS.has(name) && input.number === undefined) {
       // Until the agent opens it, the PR a create would open does not exist.
       if (branchPullRequest(sample).created) return failed(BRANCH_HAS_NO_PR_ERROR);
@@ -3310,7 +3297,6 @@ const main = Effect.gen(function* () {
               model: flags.model,
               keepUserInstructions,
               effort: flags.effort,
-              subagent: role === "delegated-child",
               links,
               forge,
               deviceAccess,
@@ -3325,7 +3311,6 @@ const main = Effect.gen(function* () {
             const built = buildBase(capture.request.provider_native, {
               model: flags.model,
               keepUserInstructions,
-              subagent: role === "delegated-child",
               nativeSubagent: role === "native-subagent",
               links,
               forge,

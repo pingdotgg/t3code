@@ -90,6 +90,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { withPullRequestWatchNote } from "../orchestration-v2/DelegatedPullRequestWatchNote.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   SUBAGENT_RESULT_TURN_ITEM_TYPES,
@@ -1997,7 +1998,7 @@ const make = Effect.gen(function* () {
       task.result !== null
         ? task.result
         : taskResultRun !== undefined && isTerminalTaskStatus(status)
-          ? resultText(taskResultRun)
+          ? withPullRequestWatchNote(resultText(taskResultRun), childControls.thread)
           : null;
     const resultTransfers = childControls.contextTransfers.filter(
       (transfer) =>
@@ -3720,7 +3721,14 @@ const make = Effect.gen(function* () {
             );
       // A read past the end of an item's text shows the agent nothing to acknowledge.
       const readPastEnd = (input.textOffset ?? 0) > 0 && items.every((item) => !item.text);
-      if (parent !== undefined && scope.thread !== undefined && tasks.length > 0 && !readPastEnd) {
+      if (
+        parent !== undefined &&
+        scope.thread !== undefined &&
+        tasks.length > 0 &&
+        !readPastEnd &&
+        // Timeline messages omit the watch notice, so keep its separate delivery pending.
+        !shell.pullRequests?.some((link) => link.watch !== undefined)
+      ) {
         for (const task of tasks) {
           const transfer = taskResultTransfer(parent.thread.id, target, task);
           const resultRunId = transfer?.sourcePoint.runId ?? delegatedTaskRun(target, task)?.id;

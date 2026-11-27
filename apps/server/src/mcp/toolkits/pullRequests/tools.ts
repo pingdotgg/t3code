@@ -189,7 +189,6 @@ export const PullRequestToolError = Schema.Union([
   PullRequestListFailedError,
   PullRequestWatchService.PullRequestWatchFailedError,
   PullRequestUnavailableError,
-  PullRequestWatchService.PullRequestWatchFromSubagentError,
   PullRequestProjectNotFoundError,
   PullRequestGuideFailedError,
   PullRequestForgeError,
@@ -415,8 +414,7 @@ const WatchPullRequestTool = Tool.make("watch_pull_request", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromSubagents);
+  .annotate(Tool.OpenWorld, false);
 
 const UnwatchPullRequestTool = Tool.make("unwatch_pull_request", {
   description: "Stop watching a PR for this thread. It stays linked.",
@@ -429,8 +427,7 @@ const UnwatchPullRequestTool = Tool.make("unwatch_pull_request", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromSubagents);
+  .annotate(Tool.OpenWorld, false);
 
 const GuideTarget = Schema.Struct({
   url: PullRequestTargetInput.fields.url,

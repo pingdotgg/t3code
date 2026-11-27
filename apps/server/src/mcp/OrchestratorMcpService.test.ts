@@ -629,6 +629,9 @@ describe("OrchestratorMcpService", () => {
       const taskId = NodeId.make("node:mcp-next-task");
       let finished = false;
       let firstRun = false;
+      let watching = false;
+      // The task's own result is published; a watching child's result is read from its run instead.
+      let resultPublished = true;
       let pendingRequest: "live" | "message" | null = null;
       const parentProjection = () =>
         ({
@@ -644,7 +647,7 @@ describe("OrchestratorMcpService", () => {
               driver: "codex",
               model: "gpt-5.6-terra",
               status: finished ? "completed" : "running",
-              result: finished ? "done" : null,
+              result: finished && resultPublished ? "done" : null,
               completionDelivery: { state: "pending" },
             },
           ],
@@ -662,10 +665,24 @@ describe("OrchestratorMcpService", () => {
             id: childThreadId,
             title: "Child task",
             forkedFrom: { type: "node", nodeId: taskId },
+            pullRequests: watching
+              ? [{ url: "https://github.com/acme/app/pull/124", watch: {} }]
+              : [],
           },
           runs: [childRun()],
           contextTransfers: [],
-          messages: [],
+          messages: finished
+            ? [
+                {
+                  id: MessageId.make("message:mcp-next-result"),
+                  runId: childRun().id,
+                  role: "assistant",
+                  text: "done",
+                  createdAt: DateTime.makeUnsafe(0),
+                  updatedAt: DateTime.makeUnsafe(0),
+                },
+              ]
+            : [],
           subagents: [],
           providerThreads: [],
           providerTurns: [],
@@ -688,6 +705,7 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection() : childProjection()),
+          delegatedTaskResultPending: () => Effect.succeed(false),
           getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
           getProjectThreadRecords: () => Effect.succeed(childProjection()),
           waitForThread: () =>
@@ -753,9 +771,18 @@ describe("OrchestratorMcpService", () => {
         assert.notProperty(followUp, "next");
         firstRun = false;
 
+        resultPublished = false;
+        watching = true;
         const completed = yield* service.taskStatus(scope, taskId);
         assert.equal(completed.status, "completed");
         assert.notProperty(completed, "next");
+        assert.match(
+          completed.summary ?? "",
+          /^done\n\nT3 Code: this child still watches https:\/\/github\.com\/acme\/app\/pull\/124\. /,
+        );
+        watching = false;
+        const unwatched = yield* service.taskStatus(scope, taskId);
+        assert.equal(unwatched.summary, "done");
         const waited = yield* service.waitForThread(scope, { threadId: childThreadId });
         assert.equal(waited.status, "completed");
         assert.notProperty(waited, "next");
