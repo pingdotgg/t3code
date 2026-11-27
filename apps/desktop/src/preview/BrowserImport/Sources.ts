@@ -260,11 +260,13 @@ const cookieDatabaseCandidatePaths = (
   ];
 };
 
-const isWithinRoot = (path: Path.Path, root: string, candidate: string): boolean => {
+// Prefix check on resolved paths preserves case on Windows too (unlike `path.win32.relative`).
+export const isWithinRoot = (path: Path.Path, root: string, candidate: string): boolean => {
   const resolvedRoot = path.resolve(root);
   const resolvedCandidate = path.resolve(resolvedRoot, candidate);
-  const relative = path.relative(resolvedRoot, resolvedCandidate);
-  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  if (resolvedCandidate === resolvedRoot) return true;
+  const prefix = resolvedRoot.endsWith(path.sep) ? resolvedRoot : `${resolvedRoot}${path.sep}`;
+  return resolvedCandidate.startsWith(prefix);
 };
 
 const resolveFileWithinRoot = Effect.fnUntraced(function* (
@@ -582,9 +584,7 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
     );
   }
 
-  const localStatePath = isDiscovered
-    ? yield* resolveFileWithinRoot(root, context.path.join(root, "Local State"), context, true)
-    : context.path.join(root, "Local State");
+  const localStatePath = yield* resolveWindowsLocalState(definition, context);
   const declared =
     localStatePath === undefined
       ? ([] as ReadonlyArray<BrowserImportSourceProfile>)

@@ -2,6 +2,7 @@
 // table with the same native bindings the source reads.
 import * as NodePath from "node:path";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodePathLayer from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -24,6 +25,7 @@ import {
   discoveredChromiumKeychainCandidates,
   discoveredLinuxSecretApplications,
   firefoxSymlinkLockIsHeld,
+  isWithinRoot,
   resolveCookieDatabase,
   resolveWindowsLocalState,
   isSourceInstalled,
@@ -1138,6 +1140,27 @@ describe("Ardia, Dia, and discoverBrowserImportSources", () => {
           discoveredLinuxSecretApplications(["thorium-browser"], "Thorium Browser"),
           ["thorium-browser", "thorium", "chromium", "chrome"],
         );
+
+        // Canonical containment preserves case on win32 paths too (case-sensitive NTFS directories).
+        const winPath = yield* Path.Path.pipe(Effect.provide(NodePathLayer.layerWin32));
+        const winRoot = "C:\\Users\\dev\\AppData\\Local\\Thorium\\User Data";
+        assert.isTrue(isWithinRoot(winPath, winRoot, `${winRoot}\\Local State`));
+        assert.isTrue(isWithinRoot(winPath, winRoot, "Default\\Network\\Cookies"));
+        assert.isFalse(
+          isWithinRoot(
+            winPath,
+            winRoot,
+            "C:\\Users\\dev\\AppData\\Local\\Thorium\\user data\\Local State",
+          ),
+        );
+        assert.isFalse(
+          isWithinRoot(
+            winPath,
+            winRoot,
+            "C:\\Users\\dev\\AppData\\Local\\Thorium\\User Data-evil\\Local State",
+          ),
+        );
+        assert.isFalse(isWithinRoot(winPath, winRoot, "..\\Other\\Local State"));
       }),
     ),
   );
