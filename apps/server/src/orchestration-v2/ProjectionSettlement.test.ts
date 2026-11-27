@@ -217,12 +217,38 @@ it.effect("sql: a failed latest run blocks merge settlement until a successful f
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* createThread("failed-after-merge");
-    const failedRunId = yield* createRun(
+    const failedAt = DateTime.subtract(now, { minutes: 1 });
+    const failedRunId = yield* createRun(threadId, "failed", 1, failedAt);
+    yield* store.apply({
+      id: EventId.make("event:failed-after-merge:usage-limit"),
+      type: "turn-item.updated",
       threadId,
-      "failed",
-      1,
-      DateTime.subtract(now, { minutes: 1 }),
-    );
+      occurredAt: failedAt,
+      payload: {
+        id: TurnItemId.make("item:failed-after-merge:usage-limit"),
+        threadId,
+        runId: failedRunId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        type: "error",
+        status: "failed",
+        title: null,
+        startedAt: failedAt,
+        completedAt: failedAt,
+        updatedAt: failedAt,
+        failure: {
+          class: "usage_limit",
+          message: "Plan limit reached.",
+          resetAt: null,
+          code: null,
+          retryable: null,
+        },
+      },
+    });
     const resolve = Effect.gen(function* () {
       const candidates = yield* store.getSettlementCandidates(threadId);
       assert.equal(candidates.length, 1);
@@ -245,21 +271,19 @@ it.effect("sql: a failed latest run blocks merge settlement until a successful f
     assert.isNull(yield* resolve);
     const queuedRun = yield* store.getRun(threadId, queuedRunId);
     assert.isDefined(queuedRun);
-    const cancelledAt = DateTime.subtract(now, { minutes: 1 });
+    // Cancelling the held message after the limit leaves the sidebar presenting the failure.
     yield* store.apply({
       id: EventId.make("event:failed-after-merge:queued-cancelled"),
       type: "run.updated",
       threadId,
-      occurredAt: cancelledAt,
-      payload: {
-        ...queuedRun!,
-        status: "cancelled",
-        queueHeld: false,
-        requestedAt: DateTime.subtract(cancelledAt, { minutes: 1 }),
-        completedAt: cancelledAt,
-      },
+      occurredAt: now,
+      payload: { ...queuedRun!, status: "cancelled", queuePosition: null, completedAt: now },
     });
     const [cancelledCandidate] = yield* store.getSettlementCandidates(threadId);
+    const shellThread = (yield* store.getShellSnapshot()).threads.find(
+      (thread) => thread.id === threadId,
+    );
+    assert.equal(shellThread?.latestRunId, failedRunId);
     assert.equal(cancelledCandidate?.latestRunId, failedRunId);
     assert.equal(cancelledCandidate?.status, "failed");
     assert.isNull(yield* resolve);
