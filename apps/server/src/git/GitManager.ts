@@ -4191,14 +4191,12 @@ export const make = Effect.gen(function* () {
       Effect.tap(() => recordCheckout(resolvedBranch)),
       // A failing post-checkout hook can leave HEAD on the new branch.
       Effect.tapError(() =>
-        gitCore
-          .statusDetailsLocal(cwd, { includeDivergence: false, includeBranchChanges: false })
-          .pipe(
-            Effect.flatMap(({ branch }) =>
-              branch === resolvedBranch ? recordCheckout(resolvedBranch) : Effect.void,
-            ),
-            Effect.ignore,
+        gitCore.readCurrentBranch(cwd).pipe(
+          Effect.flatMap((branch) =>
+            branch === resolvedBranch ? recordCheckout(resolvedBranch) : Effect.void,
           ),
+          Effect.ignore,
+        ),
       ),
     );
 

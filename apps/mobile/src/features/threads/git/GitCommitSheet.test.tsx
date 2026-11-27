@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
   buttons: [] as PressProps[],
   ran: [] as object[],
   createdBranch: undefined as string | undefined,
+  waitBeforeProgress: null as Promise<void> | null,
 }));
 
 vi.mock("react-native", () => ({
@@ -72,11 +73,12 @@ vi.mock("../../../state/use-selected-thread-git-actions", () => ({
   useSelectedThreadGitActions: () => ({
     canWriteSourceControl: true,
     canCreateFeatureBranch: true,
-    onRunSelectedThreadGitAction: ({
+    onRunSelectedThreadGitAction: async ({
       onProgress,
       ...input
     }: GitActionRequestInput & Pick<RunVcsStackedActionInput, "onProgress">) => {
       state.ran.push(input);
+      if (state.waitBeforeProgress) await state.waitBeforeProgress;
       if (state.createdBranch) {
         onProgress?.({
           actionId: "commit",
@@ -88,7 +90,7 @@ vi.mock("../../../state/use-selected-thread-git-actions", () => ({
           createdBranch: state.createdBranch,
         });
       }
-      return Promise.resolve(state.result);
+      return state.result;
     },
   }),
 }));
@@ -200,3 +202,38 @@ it.each(["before reopening", "after reopening"])(
     ]);
   },
 );
+
+it.each([
+  { checkedOut: "feature/retry", includedAfterFailure: false },
+  { checkedOut: "feature/other", includedAfterFailure: true },
+])("reconciles an open retry sheet when the action settles on $checkedOut", async (scenario) => {
+  state.cwd = `/repo/pending/${scenario.checkedOut}`;
+  state.refName = "main";
+  state.result = null;
+  state.ran = [];
+  state.createdBranch = "feature/retry";
+  const failure = Promise.withResolvers<void>();
+  state.waitBeforeProgress = failure.promise;
+
+  const first = openSheet();
+  first.toggle("later.ts");
+  await first.commit("Commit on a new branch");
+
+  const retry = openSheet();
+  state.refName = scenario.checkedOut;
+  retry.refresh();
+  const includedWhileRunning = retry.isIncluded("later.ts");
+  await act(async () => failure.resolve());
+  state.waitBeforeProgress = null;
+  state.createdBranch = undefined;
+
+  expect(includedWhileRunning).toBe(false);
+  expect(retry.isIncluded("later.ts")).toBe(scenario.includedAfterFailure);
+  state.result = { commit: { status: "created" } };
+  await retry.commit();
+  expect(state.ran.at(-1)).toEqual({
+    action: "commit",
+    featureBranch: false,
+    ...(scenario.includedAfterFailure ? {} : { filePaths: ["include.ts"] }),
+  });
+});
