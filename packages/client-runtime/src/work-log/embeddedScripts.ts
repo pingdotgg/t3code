@@ -60,7 +60,8 @@ const SHELL: Interpreter = {
 
 const PYTHON: Interpreter = {
   language: "python",
-  inline: flagIn("-c"),
+  // Bundles like -uc and -IBc; -W and -X take a value, so a c after them is that value.
+  inline: (flag) => /^-[bBdEiIOPqsSuvx]*c$/u.test(flag),
   valueOptions: new Set(["-W", "-X"]),
   scriptFileOptions: new Set(["-m"]),
   stdin: "without-script-file",
@@ -95,7 +96,7 @@ const INTERPRETERS: Record<string, Interpreter> = {
   fish: { language: "fish", inline: flagIn("-c", "--command"), stdin: "without-script-file" },
   node: {
     language: "javascript",
-    inline: flagIn("-e", "--eval", "-p", "--print"),
+    inline: flagIn("-e", "--eval", "-p", "--print", "-pe"),
     valueOptions: new Set(["-r", "--require", "--import", "--loader", "-C", "--conditions"]),
     stdin: "without-script-file",
   },
@@ -110,11 +111,19 @@ const INTERPRETERS: Record<string, Interpreter> = {
   },
   ruby: {
     language: "ruby",
-    inline: flagIn("-e"),
+    // Bundles like -ne and -lane; -i, -I, -r and -C take a value, so an e after them is that value.
+    inline: (flag) => /^-[acdlnpsvwyW]*e$/u.test(flag),
     valueOptions: new Set(["-r", "-I", "-C"]),
     stdin: "without-script-file",
   },
-  perl: { language: "perl", inline: flagIn("-e", "-E"), stdin: "without-script-file" },
+  perl: {
+    language: "perl",
+    // Bundles like -pe and -0777ne; in -pie or -Me the e is the value of -i or -M.
+    inline: (flag) => /^-[0-7acdfglnpsStTuUwWX]*[eE]$/u.test(flag),
+    // -M and -m take their module only attached (`-Mstrict`).
+    valueOptions: new Set(["-I"]),
+    stdin: "without-script-file",
+  },
   osascript: {
     language: "applescript",
     inline: flagIn("-e"),
@@ -353,7 +362,11 @@ function interpreterArgs(
       optionsEnded = true;
       continue;
     }
-    if (!optionsEnded && flag.startsWith("-") && flag !== "-") {
+    if (
+      !optionsEnded &&
+      (flag.startsWith("-") || (interpreter === SHELL && flag.startsWith("+"))) &&
+      flag !== "-"
+    ) {
       const [name = flag, value] = flag.startsWith("--") ? flag.split(/=(.*)/su) : [flag];
       if (interpreter.scriptFileOptions?.has(name)) {
         if (!interpreter.repeatable) return { scripts, scriptFromFile: true };
@@ -373,7 +386,13 @@ function interpreterArgs(
         if (value === undefined) index += 1;
         continue;
       }
-      if (value === undefined && interpreter.valueOptions?.has(flag)) index += 1;
+      if (
+        value === undefined &&
+        (interpreter.valueOptions?.has(flag) ||
+          (interpreter === SHELL && /^[-+][a-zA-Z]*[oO]$/u.test(flag)))
+      ) {
+        index += 1;
+      }
       continue;
     }
     positionals.push(arg);
