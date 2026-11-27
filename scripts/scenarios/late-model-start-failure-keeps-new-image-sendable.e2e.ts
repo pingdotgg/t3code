@@ -79,6 +79,16 @@ test(
     await browser.keyboard.press("Escape");
 
     const composer = screen.getByRole("textbox");
+    const imagePreview = (name: string) =>
+      screen.getByRole("button", `Preview ${name}`, { exact: true });
+    const sendAttachedImage = async (name: string) => {
+      await expect(composer).toHaveText("");
+      await expect(composer.getByRole("button", "Image attachment", { exact: false })).toHaveCount(
+        0,
+      );
+      await expect(imagePreview(name)).toBeVisible();
+      await composer.press("Enter");
+    };
     const sendImage = async (name: string, color: string) => {
       await composer.tap();
       await browser.evaluate(
@@ -102,13 +112,11 @@ test(
         { name, color },
       );
 
-      const preview = screen.getByRole("button", `Preview ${name}`, { exact: true });
-      await preview.waitFor();
+      await imagePreview(name).waitFor();
       // Removing the inline reference leaves the image attached and the prompt text empty.
-      await composer.press("Control+a");
+      await composer.press("ControlOrMeta+a");
       await composer.press("Backspace");
-      await preview.waitFor();
-      await composer.press("Enter");
+      await sendAttachedImage(name);
     };
 
     const bothStarted = screen.getByRole("dialog", "Started 2 threads in background", {
@@ -131,8 +139,7 @@ test(
     await app.screenshot("replacement-image-started-both-threads");
 
     await screen.getByRole("button", "Restore prompt", { exact: true }).tap();
-    await screen.getByRole("button", "Preview first.png", { exact: true }).waitFor();
-    await composer.press("Enter");
+    await sendAttachedImage("first.png");
     const warning =
       "The previous request may have started. Open its thread to check before sending again.";
     const retainedLaunch = screen
