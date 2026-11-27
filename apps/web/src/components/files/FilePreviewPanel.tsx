@@ -1924,6 +1924,7 @@ function FilePreviewPanelContent({
               />
             ) : file.data.truncated || isHostFile || !canWriteFiles ? (
               <SourceFilePreview
+                key={`${threadRef.threadId}:${relativePath}`}
                 name={relativePath}
                 text={file.data.contents}
                 cacheKey={projectFileCacheKey(cwd, relativePath, file.data.contents)}

@@ -433,38 +433,44 @@ describe("source file scroll", () => {
     }
   });
 
-  it("keeps each thread's offset when the panel stays mounted across threads", async () => {
-    using _settings = setup();
-    const style = document.createElement("style");
-    style.textContent = appCss;
-    document.head.append(style);
-    using _style = { [Symbol.dispose]: () => style.remove() };
-    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
-    const contents = Array.from({ length: 2000 }, (_, i) => `const line${i} = ${i};`).join("\n");
-    state.file = { relativePath: "a.ts", contents, byteLength: contents.length, truncated: false };
-    const first = { environmentId, threadId: ThreadId.make("mounted-first") };
-    const second = { environmentId, threadId: ThreadId.make("mounted-second") };
-    const panel = (thread: typeof threadRef) => (
-      <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
-        {filePreview("a.ts", null, null, thread)}
-      </div>
-    );
-    const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
-    const scrollTo = async (top: number) => {
-      await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
-      scroller()!.scrollTop = top;
-      await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(top));
-    };
+  it.each([
+    ["an editable file", "a.ts"],
+    ["a read-only host file", "/outside/a.ts"],
+  ])(
+    "keeps each thread's offset in %s when the panel stays mounted across threads",
+    async (_, path) => {
+      using _settings = setup();
+      const style = document.createElement("style");
+      style.textContent = appCss;
+      document.head.append(style);
+      using _style = { [Symbol.dispose]: () => style.remove() };
+      await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+      const contents = Array.from({ length: 2000 }, (_, i) => `const line${i} = ${i};`).join("\n");
+      state.file = { relativePath: path, contents, byteLength: contents.length, truncated: false };
+      const first = { environmentId, threadId: ThreadId.make(`mounted-first:${path}`) };
+      const second = { environmentId, threadId: ThreadId.make(`mounted-second:${path}`) };
+      const panel = (thread: typeof threadRef) => (
+        <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
+          {filePreview(path, null, null, thread)}
+        </div>
+      );
+      const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
+      const scrollTo = async (top: number) => {
+        await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+        scroller()!.scrollTop = top;
+        await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(top));
+      };
 
-    await using screen = await render(panel(first));
-    await scrollTo(4200);
-    await screen.rerender(panel(second));
-    await scrollTo(1000);
-    await screen.rerender(panel(first));
-    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
-    await screen.rerender(panel(second));
-    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(1000));
-  });
+      await using screen = await render(panel(first));
+      await scrollTo(4200);
+      await screen.rerender(panel(second));
+      await scrollTo(1000);
+      await screen.rerender(panel(first));
+      await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+      await screen.rerender(panel(second));
+      await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(1000));
+    },
+  );
 
   it("centers a linked line in a scrolled read-only file, and again when the viewer is rebuilt", async () => {
     using _settings = setup();
