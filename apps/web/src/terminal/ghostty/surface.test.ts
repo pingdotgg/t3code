@@ -512,6 +512,33 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.onData.mock.calls).toEqual([["echo hi"]]);
   });
 
+  it.each(["shortcut", "menu"])(
+    "drops a %s paste whose shell restarts during the clipboard read",
+    async (source) => {
+      const harness = createHarness();
+      const { promise: read, resolve } = Promise.withResolvers<string>();
+      vi.stubGlobal("navigator", {
+        platform: "MacIntel",
+        clipboard: { readText: () => read },
+      });
+      let lifecycle = 1;
+      const surface = await harness.create({
+        beforeKey: () => true,
+        inputLifecycle: () => lifecycle,
+      });
+
+      const menuPaste =
+        source === "menu" ? surface.pasteFromClipboard(() => read) : Promise.resolve();
+      if (source === "shortcut") key(surface, "v", "KeyV", { metaKey: true });
+      lifecycle = 2;
+      resolve("rm -rf build");
+      await read;
+      await menuPaste;
+
+      expect(harness.onData).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["V keyup", "blur", "Meta keyup without V keyup"])(
     "accepts a later identical menu paste after %s",
     async (end) => {

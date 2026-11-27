@@ -568,6 +568,8 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onLinkHover?: (text: string | null, fallbackText?: string) => void;
   /** The host must prevent the default menu; native Paste cannot reach a canvas terminal. */
   readonly onContextMenu?: (event: MouseEvent) => void;
+  /** Identifies the shell receiving input; a clipboard read that outlives it is dropped. */
+  readonly inputLifecycle?: () => unknown;
 }
 
 export class GhosttyTerminalSurface {
@@ -1031,8 +1033,16 @@ export class GhosttyTerminalSurface {
     isCurrent: () => boolean = () => true,
   ): Promise<void> {
     const token = ++this.pasteShortcutToken;
+    const lifecycle = this.options.inputLifecycle?.();
     const text = await readText();
-    if (this.disposed || this.pasteShortcutToken !== token || !isCurrent()) return;
+    if (
+      this.disposed ||
+      this.pasteShortcutToken !== token ||
+      this.options.inputLifecycle?.() !== lifecycle ||
+      !isCurrent()
+    ) {
+      return;
+    }
     this.pasteShortcutToken += 1;
     if (text.length === 0) return;
     const encoded = this.core.encodePaste(text);
@@ -1247,9 +1257,16 @@ export class GhosttyTerminalSurface {
         // Keep native paste available if the read is denied. The token drops
         // a late read; the gesture drops a native duplicate when the read wins.
         const token = ++this.pasteShortcutToken;
+        const lifecycle = this.options.inputLifecycle?.();
         void clipboard.readText().then(
           (text) => {
-            if (this.disposed || this.pasteShortcutToken !== token) return;
+            if (
+              this.disposed ||
+              this.pasteShortcutToken !== token ||
+              this.options.inputLifecycle?.() !== lifecycle
+            ) {
+              return;
+            }
             this.pasteShortcutToken += 1;
             if (text.length === 0) return;
             if (this.pasteShortcutGesture === gesture) gesture.readText = text;
