@@ -6,6 +6,7 @@ import {
   normalizeTerminalOutput,
   TERMINAL_OUTPUT_TAIL_CHARS,
   TERMINAL_PALETTES,
+  terminalOutputCollapseRedraws,
   terminalOutputPlainText,
   terminalOutputResumeText,
   terminalOutputSpans,
@@ -19,6 +20,16 @@ function feed(chunks: ReadonlyArray<string>, maxChars?: number): TerminalOutputS
     EMPTY_TERMINAL_OUTPUT,
   );
 }
+
+describe("terminalOutputCollapseRedraws", () => {
+  it.each([
+    ["12345\r进度", "进度5"],
+    ["a界b\rXY", "XY b"],
+    ["e\u0301a\rZ", "Za"],
+  ])("uses terminal columns for a saved redraw: %j", (input, expected) => {
+    expect(terminalOutputCollapseRedraws(input)).toBe(expected);
+  });
+});
 
 describe("appendTerminalOutput", () => {
   it("keeps only the latest frame of a carriage-return progress bar", () => {
@@ -85,6 +96,17 @@ describe("appendTerminalOutput", () => {
       }
     },
   );
+
+  it.each([
+    ["构建失败\nError", "before建失败\nError"],
+    ["😀 ok", "before ok"],
+    ["\ud83dX", "beforeX"],
+  ])("keeps output after non-ASCII %j aborts an unfinished CSI", (tail, expected) => {
+    const input = `before\u001b[3${tail}`;
+    for (let cut = 0; cut <= input.length; cut += 1) {
+      expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe(expected);
+    }
+  });
 
   it("keeps a bounded tail that starts on a fresh line", () => {
     const lines = Array.from({ length: 2_000 }, (_, index) => `line ${index}`).join("\n");

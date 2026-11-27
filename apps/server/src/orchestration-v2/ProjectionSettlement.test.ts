@@ -18,6 +18,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Tracer from "effect/Tracer";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -446,7 +448,33 @@ it.effect("sql: lists only active threads with pull request links, oldest first"
       pullRequests: [pullRequestLink(3), pullRequestLink(4)],
     });
 
-    const threads = yield* store.getThreadsWithPullRequests();
+    const statements: Array<string> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (endTime, exit) => {
+          end(endTime, exit);
+          const query = span.attributes.get("db.query.text");
+          if (typeof query === "string") statements.push(query);
+        };
+        return span;
+      },
+    });
+    const threads = yield* store.getThreadsWithPullRequests().pipe(Effect.withTracer(tracer));
+    const [sweepQuery] = statements.filter((statement) =>
+      statement.includes("FROM orchestration_v2_projection_threads"),
+    );
+    assert.isDefined(sweepQuery);
+    const sql = yield* SqlClient.SqlClient;
+    // The minute sweeps walk the active shell index in order instead of scanning and sorting.
+    const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+      `EXPLAIN QUERY PLAN ${sweepQuery}`,
+    ))
+      .map((row) => row.detail)
+      .join("\n");
+    assert.include(plan, "orchestration_v2_projection_threads_active_shell_idx");
+    assert.notInclude(plan, "TEMP B-TREE");
     assert.deepEqual(
       threads.map((thread) => [thread.id, thread.settledOverride, thread.pullRequests?.length]),
       [

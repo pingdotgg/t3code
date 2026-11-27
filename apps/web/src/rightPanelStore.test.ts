@@ -79,13 +79,22 @@ describe("rightPanelStore", () => {
     ).toEqual(["device", "diff", pr.id]);
   });
 
-  it("reopens the active tab first after a bulk close", () => {
+  it.each(["all", "selected"])("reopens the active tab first after closing %s tabs", (mode) => {
     const store = useRightPanelStore.getState();
     store.open(refA, "files");
     store.open(refA, "diff");
     store.open(refA, "device");
     store.activateSurface(refA, "diff");
-    store.closeAllSurfaces(refA);
+    if (mode === "selected") {
+      store.openBrowser(refA, "tab-a");
+      store.activateSurface(refA, "diff");
+      store.closeSurfaces(refA, ["files", "diff", "device"]);
+      expect(
+        selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)?.id,
+      ).toBe("browser:tab-a");
+    } else {
+      store.closeAllSurfaces(refA);
+    }
 
     expect(
       useClosedViewStore
@@ -1293,6 +1302,19 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("closing the active split pane activates its neighbouring pane, as the drawer does", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    store.splitTerminal(refA, "terminal:term-1", "term-2");
+    store.splitTerminal(refA, "terminal:term-1", "term-3");
+    store.activateTerminal(refA, "terminal:term-1", "term-1");
+
+    store.closeTerminal(refA, "terminal:term-1", "term-1");
+
+    const surface = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+    expect(surface?.kind === "terminal" ? surface.activeTerminalId : null).toBe("term-2");
+  });
+
   it("closing the final terminal pane removes its surface and closes the panel", () => {
     useRightPanelStore.getState().openTerminal(refA, "term-1");
     useRightPanelStore.getState().closeTerminal(refA, "terminal:term-1", "term-1");
@@ -1391,6 +1413,10 @@ describe("rightPanelStore", () => {
 
     store.reconcileBrowserSurfaces(refA, ["tab-a", "tab-b"]);
     expect(surfaceIds()).toEqual(["browser:tab-a", "terminal:term-1", "diff", "browser:tab-b"]);
+    store.moveSurfaces(refA, ["terminal:term-1", "diff"], "browser:tab-b");
+    expect(surfaceIds()).toEqual(["browser:tab-a", "browser:tab-b", "terminal:term-1", "diff"]);
+    store.moveSurfaces(refA, ["terminal:term-1", "diff"], "browser:tab-a");
+    expect(surfaceIds()).toEqual(["terminal:term-1", "diff", "browser:tab-a", "browser:tab-b"]);
     expect(store.getUserActionRevision(refA)).toBe(revision);
   });
 });
