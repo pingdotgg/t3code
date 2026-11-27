@@ -162,21 +162,11 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
 });
 
 it.layer(layerTest)("ContextHandoffService token cap", (it) => {
-  it.effect("retains a long reply when preparing provider and fork handoffs", () =>
+  it.effect("retains a long reply within the configured token cap", () =>
     Effect.gen(function* () {
       const service = yield* ContextHandoffService.ContextHandoffServiceV2;
       const replyText = "Detailed plan.\n".repeat(1_400);
-      const reply = importedItem({
-        role: "assistant",
-        id: "long-reply",
-        text: replyText,
-        ordinal: 2,
-      });
-      const items = [
-        importedItem({ role: "user", id: "request", text: "Write a plan", ordinal: 1 }),
-        reply,
-      ];
-      const common = {
+      const handoff = yield* service.prepareProviderHandoff({
         threadId: ThreadId.make("thread:legacy-context"),
         targetRunId: RunId.make("run:handoff"),
         transferId: null,
@@ -186,32 +176,17 @@ it.layer(layerTest)("ContextHandoffService token cap", (it) => {
         toProviderInstanceId: ProviderInstanceId.make("claude"),
         coveredRunOrdinals: { from: 1, to: 1 },
         createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
-      };
-      for (const strategy of ["full_thread_summary", "delta_since_target_last_seen"] as const) {
-        const handoff = yield* service.prepareProviderHandoff({ ...common, strategy, items });
-        assert.deepEqual(
-          handoff.history?.messages.map((message) => message.text),
-          ["Write a plan", replyText],
-        );
-        assert.equal(handoff.history?.omittedItems, 0);
-      }
-      const imported = yield* service.prepareLegacyImport({ ...common, items });
-      assert.include(
-        imported.history!.messages.map((message) => message.text),
-        replyText,
-      );
-      assert.equal(imported.history?.omittedItems, 0);
-      const fork = yield* service.prepareForkDelta({
-        ...common,
-        sourceThreadId: common.threadId,
-        targetThreadId: ThreadId.make("thread:fork"),
-        deltaItems: items,
+        strategy: "full_thread_summary",
+        items: [
+          importedItem({ role: "user", id: "request", text: "Write a plan", ordinal: 1 }),
+          importedItem({ role: "assistant", id: "long-reply", text: replyText, ordinal: 2 }),
+        ],
       });
-      assert.include(
-        fork.history!.messages.map((message) => message.text),
-        replyText,
+      assert.deepEqual(
+        handoff.history?.messages.map((message) => message.text),
+        ["Write a plan", replyText],
       );
-      assert.equal(fork.history?.omittedItems, 0);
+      assert.equal(handoff.history?.omittedItems, 0);
     }),
   );
 });

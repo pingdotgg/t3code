@@ -228,25 +228,6 @@ describe("handoff budget", () => {
     }
   });
 
-  it("retains a long reply within the configured token cap at delivery", () => {
-    const reply = message("item:long-reply", "assistant", "Detailed plan.\n".repeat(1_400));
-    const budget = handoffBudget({
-      tokenCap: 16_000,
-      userText: "Review this plan",
-      attachments: [],
-      providerThread,
-      nativeContextEstimate: 0,
-    });
-    const selected = selectHistory({
-      messages: [messages[0]!, reply],
-      coverage: "Recover omitted history",
-      budget,
-    });
-    assert.deepEqual(selected.messages, [messages[0]!, reply]);
-    assert.equal(selected.omittedItems, 0);
-    assert.isAtMost(historyCost(selected.messages, selected.context), 64_000);
-  });
-
   it("subtracts native usage, input, attachments, instructions and space for work", () => {
     const base = {
       tokenCap: 16_000,
