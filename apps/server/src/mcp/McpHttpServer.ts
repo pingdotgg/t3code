@@ -60,7 +60,12 @@ import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
 import * as McpWebhookTransport from "./McpWebhookTransport.ts";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
-import { compactT3McpToolOutput } from "@t3tools/shared/toolOutput";
+import {
+  compactT3McpToolOutput,
+  MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH,
+  MAX_TOOL_OUTPUT_IMAGES,
+} from "@t3tools/shared/toolOutput";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   MCP_TOOL_EXPOSURE_HEADER,
@@ -1230,6 +1235,34 @@ const withToolAnalytics =
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, recordingServer));
   });
 
+const SCREENSHOT_TOOLS: ReadonlySet<string> = new Set([
+  "preview_snapshot",
+  "device_screenshot",
+  "html_preview",
+]);
+
+/** A screenshot tool's images and details, in the shape an MCP result takes on a tool item. */
+const isCallToolResult = Schema.is(McpSchema.CallToolResult);
+
+function screenshotToolOutput(result: unknown): Record<string, unknown> | undefined {
+  if (!isCallToolResult(result) || result.isError === true) return undefined;
+  const images = result.content.flatMap((block) => {
+    if (block.type !== "image") return [];
+    const data = Buffer.from(block.data).toString("base64");
+    return data.length <= MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH
+      ? [{ type: "image", mimeType: block.mimeType, data }]
+      : [];
+  });
+  const details = Predicate.isObject(result.structuredContent)
+    ? (result.structuredContent as Record<string, unknown>)
+    : undefined;
+  if (images.length === 0) return details;
+  return {
+    content: images.slice(0, MAX_TOOL_OUTPUT_IMAGES),
+    ...(details === undefined ? {} : { structuredContent: details }),
+  };
+}
+
 /**
  * ACP runtimes and Code Mode wrappers can drop or replace structured MCP tool results on
  * completion. Recording each thread-scoped call's compact result before returning lets adapters
@@ -1264,25 +1297,35 @@ const withToolResultCapture = Effect.fn("McpHttpServer.withToolResultCapture")(f
               ? undefined
               : yield* mcpSessions.value.toolResultEpoch(thread.threadId);
           return yield* options.handle(payload).pipe(
-            Effect.onExit((exit) => {
-              if (thread === undefined) return Effect.void;
-              if (exit._tag === "Success" && exit.value instanceof McpSchema.InputRequired) {
-                return Effect.void;
-              }
-              if (exit._tag === "Failure" && Cause.hasInterruptsOnly(exit.cause)) {
-                return Effect.void;
-              }
-              const output =
-                exit._tag === "Success"
-                  ? compactT3McpToolOutput(toolName, exit.value)
-                  : { isError: true };
-              return output === undefined
-                ? Effect.void
-                : mcpSessions.value.recordToolResult(thread.threadId, toolName, payload, output, {
-                    providerSessionId: thread.providerSessionId,
-                    epoch,
-                  });
-            }),
+            Effect.onExit(
+              Effect.fnUntraced(function* (exit) {
+                if (thread === undefined) return;
+                if (exit._tag === "Success" && exit.value instanceof McpSchema.InputRequired) {
+                  return;
+                }
+                if (exit._tag === "Failure" && Cause.hasInterruptsOnly(exit.cause)) {
+                  return;
+                }
+                const screenshot =
+                  exit._tag === "Success" &&
+                  SCREENSHOT_TOOLS.has(resolveT3McpToolId(toolName) ?? toolName) &&
+                  (yield* mcpSessions.value.areToolResultImagesRecovered(thread.providerInstanceId))
+                    ? screenshotToolOutput(exit.value)
+                    : undefined;
+                const output =
+                  exit._tag === "Success"
+                    ? (screenshot ?? compactT3McpToolOutput(toolName, exit.value))
+                    : { isError: true };
+                if (output === undefined) return;
+                yield* mcpSessions.value.recordToolResult(
+                  thread.threadId,
+                  toolName,
+                  payload,
+                  output,
+                  { providerSessionId: thread.providerSessionId, epoch },
+                );
+              }),
+            ),
           );
         }),
       });

@@ -5716,6 +5716,7 @@
   "76ebb03de52c92d6": "Der Textbetrachter wurde beendet.",
   "f48162e8e8c12af7": "Der Textbetrachter konnte nicht geladen werden. Schließe die Datei und versuche es erneut.",
   "bc4c5b13d38a5da7": "Vorschau geschlossen.",
+  "0e573160f73e19bc": "Die Datei ist nicht verfügbar.",
   "6ad6c8fbb630657d": "Die Datei ist nicht verfügbar.",
   "9450d1827ef336a1": "Ein anderer Kopiervorgang läuft.",
   "8f48999eb6d9e2e3": "{count, plural, one {{formatted} Zeile} other {{formatted} Zeilen}}",
@@ -13031,5 +13032,9 @@
       "v": "v"
     },
     " weitere unter Verknüpfte Elemente"
-  ]
+  ],
+  "717c1c47a852a1a5": "Vorlesen pausieren",
+  "0eceb5780908eb6c": "Vorlesen",
+  "3ee98da81538c6de": "Die Vertonung konnte nicht abgespielt werden.",
+  "95435f0b59cb2193": "Audiovorschau"
 }

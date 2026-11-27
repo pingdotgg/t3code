@@ -5716,6 +5716,7 @@
   "76ebb03de52c92d6": "La visionneuse de texte s’est arrêtée.",
   "f48162e8e8c12af7": "Impossible de charger la visionneuse de texte. Fermez le fichier et réessayez.",
   "bc4c5b13d38a5da7": "Aperçu fermé.",
+  "0e573160f73e19bc": "Le fichier est indisponible.",
   "6ad6c8fbb630657d": "Le fichier est indisponible.",
   "9450d1827ef336a1": "Une autre copie est en cours.",
   "8f48999eb6d9e2e3": "{count, plural, one {{formatted} ligne} other {{formatted} lignes}}",
@@ -13031,5 +13032,9 @@
       "v": "v"
     },
     " de plus dans Éléments associés"
-  ]
+  ],
+  "717c1c47a852a1a5": "Mettre la narration en pause",
+  "0eceb5780908eb6c": "Lire à voix haute",
+  "3ee98da81538c6de": "Impossible de lire la narration.",
+  "95435f0b59cb2193": "Aperçu audio"
 }

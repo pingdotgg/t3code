@@ -19,6 +19,7 @@ import {
   htmlRenderFromToolItem,
   previewRecordingIdFromToolItem,
   sentMessageFromToolItem,
+  toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -1128,6 +1129,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         const lateText = "Confirmed on a later completion.";
         const lateErrorText = "Late explicit error.";
         const unfinishedText = "Still running when turn ended.";
+        const largeShot = "A".repeat(12 * 1024 * 1024);
         const adapter = yield* makeAntigravityAdapterV2({
           instanceId,
           selfInvocation: yield* resolveSelfInvocation(),
@@ -1313,6 +1315,28 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     );
                     yield* updateTool("recording-stop", "completed");
 
+                    // The agent offloads a screenshot and completes the call with no result.
+                    yield* startTool("snapshot", "preview_snapshot", { includeImage: true });
+                    yield* mcpSessions.recordToolResult(
+                      threadId,
+                      "preview_snapshot",
+                      { includeImage: true },
+                      { content: [{ type: "image", mimeType: "image/png", data: "AAAA" }] },
+                    );
+                    yield* updateTool("snapshot", "completed");
+
+                    // Recovered screenshots stay with the turn, so their bytes are bounded.
+                    for (const tabId of ["tab-1", "tab-2", "tab-3"]) {
+                      yield* startTool(`large-${tabId}`, "preview_snapshot", { tabId });
+                      yield* mcpSessions.recordToolResult(
+                        threadId,
+                        "preview_snapshot",
+                        { tabId },
+                        { content: [{ type: "image", mimeType: "image/png", data: largeShot }] },
+                      );
+                      yield* updateTool(`large-${tabId}`, "completed");
+                    }
+
                     // Unfinished call projected at turn end must not claim or leak to Turn 2.
                     yield* startTool("send-unfinished", "send_to_user", {
                       message: unfinishedText,
@@ -1425,6 +1449,16 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         assert.strictEqual(
           previewRecordingIdFromToolItem(tool("recording-stop")!),
           `${threadId}-rec-1`,
+        );
+        assert.deepEqual(toolOutputImages(tool("snapshot")?.output), [
+          { mimeType: "image/png", data: "AAAA" },
+        ]);
+        assert.isTrue(yield* mcpSessions.areToolResultImagesRecovered(instanceId));
+        assert.deepEqual(
+          ["tab-1", "tab-2", "tab-3"].map((tabId) =>
+            toolOutputImages(tool(`large-${tabId}`)?.output).map((image) => image.data?.length),
+          ),
+          [[largeShot.length], [largeShot.length], [undefined]],
         );
       }).pipe(Effect.provide(layerSession)),
   );
