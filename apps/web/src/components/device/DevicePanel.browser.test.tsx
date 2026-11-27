@@ -23,7 +23,6 @@ const mocks = vi.hoisted(() => ({
   close: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   shutdown: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   list: vi.fn<(request: unknown) => Promise<CommandResult>>(),
-  shutdown: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   openDevice: vi.fn(),
   closeSurface: vi.fn(),
 }));
