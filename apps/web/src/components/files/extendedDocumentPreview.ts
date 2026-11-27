@@ -24,12 +24,6 @@ import {
 
 const TABLE_PREVIEW_MAX_ROWS = 500;
 const TABLE_PREVIEW_MAX_COLUMNS = 50;
-const ODF_LIST_MARKER_TYPES = new Map([
-  ["a", "a"],
-  ["A", "A"],
-  ["i", "i"],
-  ["I", "I"],
-]);
 
 function base64ImageFits(base64: string) {
   return (
@@ -185,8 +179,8 @@ async function odfHtml(
         : 1;
   const start = odfListStart(tag === "li" && inOrderedList ? node : numberingLevel);
   let attributes = start === undefined ? "" : ` ${tag === "ol" ? "start" : "value"}="${start}"`;
-  const markerType = ODF_LIST_MARKER_TYPES.get(numberingLevel?.attrs["style:num-format"] ?? "");
-  if (markerType) attributes += ` type="${markerType}"`;
+  const format = numberingLevel?.attrs["style:num-format"] ?? "";
+  if (/^[aAiI]$/.test(format)) attributes += ` type="${format}"`;
   // Spans on repeated cells or rows would multiply past the preview's table limits.
   if (tag === "td" && count === 1)
     for (const [name, attr, max] of [
