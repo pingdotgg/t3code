@@ -1058,6 +1058,41 @@ describe("source control tools", () => {
     }),
   );
 
+  it.effect("keeps .git in an Azure DevOps repository named by its URL", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const azure = (name: string) => ({
+        ...makeProject({
+          canonicalKey: `dev.azure.com/org/project/_git/${name}`,
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: `https://dev.azure.com/org/project/_git/${name}`,
+          },
+          provider: SourceControlProviderKind.make("azure-devops"),
+          displayName: `org/project/_git/${name}`,
+          owner: "org",
+          name,
+        }),
+        id: ProjectId.make(`project-${name}`),
+      });
+      const harness = yield* makeHarness({
+        projects: [makeProject(), azure("web"), azure("web.git")],
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          activity: () => Effect.succeed(activity),
+        },
+      });
+      yield* harness.call("pull_request_read", {
+        number: 9,
+        repository: "https://dev.azure.com/org/project/_git/web.git",
+      });
+      expect(asked).toMatchObject([
+        { projectId: "project-web.git", repository: "org/project/_git/web.git" },
+      ]);
+    }),
+  );
+
   it.effect("pages a long conversation and the PR list through the cursors they return", () =>
     Effect.gen(function* () {
       const comment = (body: string) =>

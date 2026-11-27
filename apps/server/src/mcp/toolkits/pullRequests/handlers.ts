@@ -618,8 +618,16 @@ const make = Effect.gen(function* () {
     }
     // A repository named by URL is on that URL's host. One another registered project holds is on
     // that project's host and forge.
+    // The key is spelled as the forge spells project keys: Azure DevOps keeps `.git` in a name.
+    const remoteKey =
+      input.repository === undefined || parseGitRemoteRepository(input.repository) === null
+        ? null
+        : sourceControlDefinitions.repositoryKeyFromRemote(input.repository);
+    const [remoteHost, ...remotePath] = remoteKey?.split("/") ?? [];
     const remote =
-      input.repository === undefined ? null : parseGitRemoteRepository(input.repository);
+      remoteHost === undefined || remotePath.length === 0
+        ? null
+        : { host: remoteHost, path: remotePath.join("/") };
     const repository = remote?.path ?? input.repository;
     let holder = project;
     if (input.number !== undefined && repository !== undefined) {
