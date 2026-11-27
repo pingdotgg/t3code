@@ -321,6 +321,8 @@ export interface ProjectionCheckpointRollbackContext {
   readonly rolledBackAttemptIds: ReadonlyArray<RunAttemptId>;
   readonly runsToRollback: ReadonlyArray<OrchestrationV2Run>;
   readonly rootNodes: ReadonlyArray<OrchestrationV2ExecutionNode>;
+  /** Requests still pending on nodes of the runs being rolled back. */
+  readonly pendingRuntimeRequests: ReadonlyArray<OrchestrationV2RuntimeRequest>;
   /** Ready checkpoints of the target scope and of repository scopes that the rollback discards. */
   readonly staleCheckpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
 }
@@ -6573,6 +6575,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               rolledBackAttemptIds: [],
               runsToRollback: [],
               rootNodes: [],
+              pendingRuntimeRequests: [],
               staleCheckpoints: [],
             };
             if (
@@ -6622,13 +6625,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ]);
             const targetAttempt = (yield* decodeRollbackTargetAttempts(attemptRows))[0];
             const runsToRollback = yield* decodeRows(decodeRunPayload, threadId)(runRows);
-            const [nodeRows, turnRows] = yield* Effect.all([
+            const [nodeRows, requestRows, turnRows] = yield* Effect.all([
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_nodes
             WHERE thread_id = ${threadId} AND ${sql.in(
               "node_id",
               runsToRollback.map((run) => run.rootNodeId),
             )}
             ORDER BY node_id ASC`,
+              sql<PayloadRow>`SELECT request.payload_json
+            FROM orchestration_v2_projection_runtime_requests AS request
+            JOIN orchestration_v2_projection_nodes AS node ON node.node_id = request.node_id
+            WHERE request.thread_id = ${threadId} AND request.status = 'pending'
+              AND node.thread_id = ${threadId} AND ${sql.in(
+                "node.run_id",
+                runsToRollback.map((run) => run.id),
+              )}
+            ORDER BY request.runtime_request_id ASC`,
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_turns
             WHERE thread_id = ${threadId} AND (
               provider_thread_id = ${providerThread.id}
@@ -6646,6 +6658,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   : yield* decodeProviderSessionPayload(sessionRows[0].payload_json),
               rolledBackAttemptIds: rolledBackAttempts.map(({ id }) => id),
               rootNodes: yield* decodeRows(decodeNodePayload, threadId)(nodeRows),
+              pendingRuntimeRequests: yield* decodeRows(
+                decodeRuntimeRequestPayload,
+                threadId,
+              )(requestRows),
               providerTurns: yield* decodeRows(decodeProviderTurnPayload, threadId)(turnRows),
               staleCheckpoints: yield* decodeRows(decodeCheckpointPayload, threadId)(staleRows),
             };

@@ -16,6 +16,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -227,6 +228,7 @@ it.effect.each([
       runsToRollback: [],
       targetAttempt: undefined,
       rolledBackAttemptIds: [],
+      pendingRuntimeRequests: [],
       staleCheckpoints: [],
       rootNodes: [],
       providerTurns: [],
@@ -451,6 +453,7 @@ it.effect.each([
         runsToRollback: [],
         targetAttempt: undefined,
         rolledBackAttemptIds: [],
+        pendingRuntimeRequests: [],
         staleCheckpoints: [],
         rootNodes: [],
         providerTurns: [],
@@ -999,6 +1002,43 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
             [history.checkpointId(0), history.checkpointId(8)],
           );
         }),
+    );
+
+    it.effect("withdraws a question left open by a rolled-back run", () =>
+      Effect.gen(function* () {
+        const history = yield* seedRollbackHistory;
+        const requestId = RuntimeRequestId.make("rollback-history-question");
+        yield* history.store.apply({
+          id: EventId.make("rollback-history-question"),
+          type: "runtime-request.updated",
+          threadId: history.threadId,
+          occurredAt: history.now,
+          payload: {
+            id: requestId,
+            nodeId: history.nodeId(1),
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "message" },
+            createdAt: history.now,
+            resolvedAt: null,
+          },
+        });
+
+        yield* history.rollback(0, false);
+
+        const records = yield* history.store.getThreadRecords(history.threadId, [
+          "runtimeRequests",
+        ]);
+        assert.notEqual(
+          records.runtimeRequests.find((request) => request.id === requestId)?.status,
+          "pending",
+        );
+        assert.isNull(
+          (yield* history.store.getThreadShell(history.threadId))?.pendingRuntimeRequest,
+        );
+      }),
     );
 
     it.effect("skips a pending rollback once the thread is deleted", () =>
