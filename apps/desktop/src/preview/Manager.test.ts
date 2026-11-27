@@ -1593,6 +1593,39 @@ describe("PreviewManager", () => {
       ),
     );
 
+    effectIt.effect("reports a load error that follows Leave", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const preview = yield* openGuardedTab(manager, "tab_guarded_missing");
+          showMessageBox.mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+          preview.loadURL.mockImplementation(async (url: string) => {
+            const unload = blockUnload(preview);
+            const [errno, code] =
+              unload.preventDefault.mock.calls.length > 0
+                ? [-105, "ERR_NAME_NOT_RESOLVED"]
+                : [-3, "ERR_ABORTED"];
+            throw Object.assign(new Error(`${code} (${errno}) loading '${url}'`), {
+              errno,
+              code,
+              url,
+            });
+          });
+
+          const failed = yield* Effect.exit(
+            manager.navigate("tab_guarded_missing", "https://missing.invalid/"),
+          );
+
+          expect(Exit.isFailure(failed)).toBe(true);
+          if (Exit.isSuccess(failed)) return;
+          expect(Option.getOrThrow(Cause.findErrorOption(failed.cause))).toMatchObject({
+            _tag: "PreviewOperationError",
+            operation: "navigate.loadURL",
+            cause: { errno: -105 },
+          });
+        }),
+      ),
+    );
+
     effectIt.effect("does not ask when the page blocked a navigation of its own", () =>
       withManager((manager) =>
         Effect.gen(function* () {

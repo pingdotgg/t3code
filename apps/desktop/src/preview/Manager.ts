@@ -2335,29 +2335,33 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     const decision = yield* Deferred.make<boolean>();
     let leave: LeaveAttempt | undefined;
-    return yield* attemptPromise(
-      { operation: "navigate.loadURL", tabId, webContentsId: wc.id },
-      () => {
-        leave = armLeave(
-          wc,
-          () => {
-            // The Leave retry reports through tab state; the caller already has its answer.
-            void wc.loadURL(url).catch(() => undefined);
-            return true;
-          },
-          decision,
-        );
-        return wc.loadURL(url);
-      },
-    ).pipe(
-      Effect.as(true),
-      // A blocked unload and a superseding navigation both reject with ERR_ABORTED; only the
-      // blocked one waits for the leave prompt, and Stay means the address never opened.
-      Effect.catchIf(
-        (error) => Predicate.hasProperty(error.cause, "errno") && error.cause.errno === -3,
-        () => (leave?.blocked ? Deferred.await(decision) : Effect.succeed(true)),
-      ),
-    );
+    let retryLoad: Promise<void> | undefined;
+    const loadUrl = (start: () => Promise<void>) =>
+      attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, start).pipe(
+        Effect.as(true),
+        // A blocked unload and a superseding navigation both reject with ERR_ABORTED.
+        Effect.catchIf(
+          (error) => Predicate.hasProperty(error.cause, "errno") && error.cause.errno === -3,
+          () => Effect.succeed(false),
+        ),
+      );
+    const loaded = yield* loadUrl(() => {
+      leave = armLeave(
+        wc,
+        () => {
+          retryLoad = wc.loadURL(url);
+          void retryLoad.catch(() => undefined);
+          return true;
+        },
+        decision,
+      );
+      return wc.loadURL(url);
+    });
+    // Only a load the page's guard blocked waits for its prompt; a superseded load still counts.
+    if (loaded || !leave?.blocked) return true;
+    if (!(yield* Deferred.await(decision))) return false;
+    yield* loadUrl(() => retryLoad ?? Promise.resolve());
+    return true;
   });
 
   const withWebContents = Effect.fn("PreviewManager.withWebContents")(function* (
