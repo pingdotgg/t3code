@@ -540,7 +540,6 @@ it.live("answers content searches with git grep while a slow content index build
     yield* fileSystem.remove(path.join(cwd, "src/cjk.ts"));
 
     // Lines longer than the 512-character cap are matched whole, then show only ranges that fit.
-    const emojiBoundaryPrefix = `token ${"a".repeat(505)}`;
     yield* fileSystem.writeFileString(
       path.join(cwd, "src/long.ts"),
       [
@@ -548,7 +547,8 @@ it.live("answers content searches with git grep while a slow content index build
         `${" ".repeat(507)}tokenized`,
         `é token ${"d".repeat(600)} token`,
         `é tokenized${" ".repeat(600)}token`,
-        `${emojiBoundaryPrefix}😀`,
+        // The cap falls inside the emoji, so the shown line drops it whole.
+        `token ${"a".repeat(505)}😀`,
       ].join("\n"),
     );
     const longLines = (input: Partial<Parameters<typeof searchIndex.searchContents>[0]>) =>
@@ -578,16 +578,6 @@ it.live("answers content searches with git grep while a slow content index build
       [4, 512, [{ start: 2, end: 11 }]],
       [5, 511, [{ start: 0, end: 5 }]],
     ]);
-    const emojiLine = (yield* search({ query: "token" })).matches.find(
-      (match) => match.path === "src/long.ts" && match.lineNumber === 5,
-    );
-    expect(emojiLine).toEqual({
-      path: "src/long.ts",
-      lineNumber: 5,
-      lineContent: emojiBoundaryPrefix,
-      matchRanges: [{ start: 0, end: 5 }],
-    });
-    expect(emojiLine?.lineContent.isWellFormed()).toBe(true);
 
     isWarmupComplete = true;
     yield* search({});
