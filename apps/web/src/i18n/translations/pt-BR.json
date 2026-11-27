@@ -1578,6 +1578,8 @@
   "737d3c6bec93f9e6": "Escolher arquivos para a página",
   "e6a3fa7cfc14f86a": "Caixa de diálogo do navegador",
   "61a552a67e9e3eac": "Resposta da caixa de diálogo",
+  "cb5c27218e96e407": "Nome de usuário",
+  "182a659d70f8ea72": "Senha",
   "3d000b56e95f3150": "Liberar o controle",
   "0633c3bcdcb95b2f": "Assumir o controle",
   "b8ba763621bcdd70": "O navegador do servidor carregou esta página, mas não a está desenhando. Tente recarregar ou abra a página em um navegador neste computador.",
@@ -4234,6 +4236,7 @@
   "ac242b57dbfa5259": "Gerenciar tarefas agendadas",
   "d93c0db04f4c8e46": "Editar automação",
   "3fe420ed9b5bdb75": "Executar agora",
+  "fdf273ca647a967f": "Excluir",
   "0c433351a8606e50": [
     "Não foi possível carregar as automações: ",
     {
@@ -5366,7 +5369,9 @@
   "4cb21672153c1f18": "Nenhum simulador ou emulador foi encontrado neste ambiente.",
   "c82410197256eb53": "Simuladores iOS",
   "31a71fec6b5f2bf3": "Dispositivos Android",
+  "1bd21d5284dc2d8e": "Dispositivos iOS",
   "ac18a5e35195a258": "Emuladores Android",
+  "f28d1d2b5f30a8cd": "Físico",
   "94215375ea2558b8": "Em execução",
   "f8a65d4d662389b0": "Parado",
   "b1687c7b2b91e569": "Abrir {name}",
@@ -8720,7 +8725,7 @@
   "a6a6dc235b108747": "Permite que os agentes usem o navegador compartilhado. Os projetos podem substituir isso.",
   "ea5fed973bfc1aca": "Redefinir o acesso padrão ao navegador para o padrão",
   "19e1f74805f4a1fb": "Acesso dos agentes ao navegador",
-  "b395b88284e3bca2": "Mostra a pré-visualização flutuante quando um agente abre um navegador ou dispositivo, a menos que o agente diga o contrário.",
+  "d6ccca83a1676fcb": "Mostra a pré-visualização flutuante quando um agente abre um navegador ou dispositivo, a menos que o agente diga o contrário, e quando você fecha o painel direito.",
   "6aadfd59cf60b4b5": "Redefinir \"Mostrar pré-visualização flutuante automaticamente\" para o padrão",
   "e4a7ec61190bc1f9": "Mostrar pré-visualização flutuante automaticamente",
   "3705c53cb3e76a28": "Não foi possível limpar os dados de {name}",
@@ -13043,5 +13048,7 @@
   "95435f0b59cb2193": "Prévia de áudio",
   "4a12506938295127": "Informe primeiro {field}.",
   "5807c08e225c6b3d": "Baixar",
-  "0d50b5bfe7151ece": "Não foi possível baixar o arquivo"
+  "0d50b5bfe7151ece": "Não foi possível baixar o arquivo",
+  "eb1fd384ad5919dd": "Nota interna",
+  "b45f0b467e9406d0": "Responder ao cliente"
 }

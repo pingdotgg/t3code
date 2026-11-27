@@ -326,6 +326,15 @@ function escapeLength(input: string, index: number): number {
       // CAN and SUB cancel the CSI and are consumed.
       if (code === 0x18 || code === 0x1a) return cursor - index + 1;
       if (code >= 0x40 && code <= 0x7e) return cursor - index + 1;
+      // Like xterm.js, a non-ASCII code point aborts the CSI and is consumed, both halves of a surrogate pair.
+      if (code >= 0x80) {
+        if (code >= 0xd800 && code <= 0xdbff) {
+          if (cursor + 1 >= input.length) return -1;
+          const low = input.charCodeAt(cursor + 1);
+          if (low >= 0xdc00 && low <= 0xdfff) return cursor - index + 2;
+        }
+        return cursor - index + 1;
+      }
     }
     return -1;
   }
