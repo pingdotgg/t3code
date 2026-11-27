@@ -11,6 +11,7 @@ import {
   requiredScopesForServerSettingsPatch,
   requiredScopesForProjectMutation,
   ProjectMutation,
+  SecretRequestAnswerInput,
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
@@ -75,6 +76,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.providerAuthStart]: AuthProvidersManageScope,
   [WS_METHODS.providerConsumeResetCredit]: AuthProvidersManageScope,
   [WS_METHODS.providerAuthComplete]: AuthProvidersManageScope,
+  [WS_METHODS.providerMcpSignInStart]: AuthProvidersManageScope,
+  [WS_METHODS.providerMcpSignInComplete]: AuthProvidersManageScope,
   [WS_METHODS.chatGptReconnectProfile]: AuthProvidersManageScope,
   [WS_METHODS.chatGptImportProfile]: AuthProvidersManageScope,
   [WS_METHODS.chatGptHandoffSubscribe]: AuthProvidersManageScope,
@@ -96,6 +99,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetDatabaseStorage]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.peerLinksList]: AuthAccessReadScope,
+  // Names only, so a client that reads threads can open a linked environment's.
+  [WS_METHODS.peerLinksNames]: AuthOrchestrationReadScope,
+  // A linked environment's thread is read as this one's own are.
+  [WS_METHODS.peerLinksSubscribeThread]: AuthOrchestrationReadScope,
+  [WS_METHODS.peerLinksThreadHistoryPage]: AuthOrchestrationReadScope,
+  [WS_METHODS.peerLinksThreadItem]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
   [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthProvidersManageScope,
@@ -105,6 +114,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverImportAcpRegistrySession]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDeleteAcpRegistrySession]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverListAcpRegistryProviders]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetProviderRuntimeModeLimits]: AuthOrchestrationReadScope,
   [WS_METHODS.serverSetAcpRegistryProvider]: AuthProvidersManageScope,
   [WS_METHODS.serverDisableAcpRegistryProvider]: AuthProvidersManageScope,
   [WS_METHODS.serverLogoutAcpRegistry]: AuthProvidersManageScope,
@@ -121,7 +131,13 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverSignalProcess]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.scheduledTasksSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.workflowsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.workflowsCounts]: AuthOrchestrationReadScope,
+  [WS_METHODS.workflowsGet]: AuthOrchestrationReadScope,
+  [WS_METHODS.workflowsAbout]: AuthOrchestrationReadScope,
+  [WS_METHODS.workflowsGetDefinition]: AuthFilesystemReadScope,
   [WS_METHODS.secretsAnswerRequest]: AuthOrchestrationOperateScope,
+  [WS_METHODS.agentFeedbackAnswerRequest]: AuthOrchestrationOperateScope,
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
@@ -173,6 +189,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsCreateNew]: AuthOrchestrationOperateScope,
   [WS_METHODS.shellOpenInEditor]: AuthOrchestrationOperateScope,
   [WS_METHODS.filesystemBrowse]: AuthFilesystemReadScope,
+  [WS_METHODS.workspaceListFolders]: AuthFilesystemReadScope,
+  // The command text comes out of a file in the project folder.
+  [WS_METHODS.workspaceLayoutCommands]: AuthFilesystemReadScope,
+  [WS_METHODS.workspaceScanFolders]: AuthFilesystemReadScope,
+  [WS_METHODS.workspaceTaskFolder]: AuthFilesystemReadScope,
   [WS_METHODS.filesystemGetMetadata]: AuthFilesystemReadScope,
   [WS_METHODS.agentSessionsScan]: AuthOrchestrationReadScope,
   [WS_METHODS.agentSessionsImport]: AuthOrchestrationOperateScope,
@@ -267,6 +288,7 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
+const decodeSecretRequestAnswer = Schema.decodeUnknownSync(SecretRequestAnswerInput);
 
 /**
  * A queued edit that omits `attachments` keeps the queued ones, which a payload cannot show;
@@ -321,6 +343,14 @@ const requiredScopesForRpcCall = (
     containsSecretReference(payload)
   ) {
     return [AuthSettingsWriteScope, AuthProvidersManageScope];
+  }
+  // A reference answer has the server read a secret the caller names, as a saved reference does.
+  // Typed values can use any field names, so the answer's type decides, not its shape.
+  if (
+    method === WS_METHODS.secretsAnswerRequest &&
+    decodeSecretRequestAnswer(payload).answer.type === "reference"
+  ) {
+    return [AuthOrchestrationOperateScope, AuthProvidersManageScope];
   }
   if (method === WS_METHODS.projectsMutate) {
     return requiredScopesForProjectMutation(decodeProjectMutation(payload));

@@ -9,7 +9,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Clipboard from "expo-clipboard";
 import { useRef, useState } from "react";
-import { Linking } from "react-native";
+import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
 import { m } from "../../../i18n/messages";
 
 import * as Dialog from "../../../components/ui/Dialog";
@@ -24,7 +24,7 @@ const failureMessage = (cause: Cause.Cause<unknown>) => {
   return error instanceof Error ? (errorDisplayMessage(error, m) ?? error.message) : String(error);
 };
 
-const openUrl = (url: string) => void Linking.openURL(url).catch(() => undefined);
+const openUrl = (url: string) => void tryOpenExternalUrl(url, "provider-auth");
 
 /** Signs an environment in through a forge's own app, such as T3 Code for GitHub. */
 export function AppSignInRow(props: {

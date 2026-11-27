@@ -208,7 +208,7 @@ const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
 
 const RequestSecretTool = Tool.make("request_secret", {
   description:
-    'Ask for one secret per single-line card; never combine values. Open it, don\'t offer it. Returns one-use `secretRef`, or `delivery: "file"` a file read only in its command, e.g. `adb pair <ip:port> "$(cat <file>)"`. Asked how: call now. Sign-in link: `url`. Pasted secret for child/script: `value`. Never from an old thread.',
+    'Ask for secrets in a private card, one value per single-line input; never combine values in one. Open it, don\'t offer it. Returns one-use `secretRef`, or `delivery: "file"` a file read only in its command, e.g. `adb pair <ip:port> "$(cat <file>)"`. Asked how: call now. Sign-in link: `url`. Pasted secret for child/script: `value`. Never from an old thread.',
   parameters: OrchestratorMcpRequestSecretInput,
   success: OrchestratorMcpRequestSecretResult,
   failure: OrchestratorMcpFailure,
@@ -350,7 +350,7 @@ const EnvironmentLinkTool = Tool.make("t3_environment_link", {
 
 const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
   description:
-    "Forget a linked environment. That machine's Connections list its session until revoked there.",
+    "Forget a linked environment. Its session on that machine ends too when the machine answers.",
   parameters: OrchestratorMcpEnvironmentUnlinkInput,
   success: OrchestratorMcpEnvironmentUnlinkResult,
   failure: OrchestratorMcpFailure,

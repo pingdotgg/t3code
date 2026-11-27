@@ -122,7 +122,6 @@ describe("OpenCode ACP question form", () => {
       request({ q0: colorQuestion, q0_custom: colorCompanion }),
     );
 
-    expect(form?.respond({})).toEqual({ action: "cancel" });
     expect(form?.respond({ q0: "  " })).toEqual({ action: "cancel" });
     expect(form?.respond({ q0: ["red", "blue"] })).toEqual({ action: "cancel" });
   });

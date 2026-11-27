@@ -11,4 +11,8 @@ describe("truncate", () => {
   it("trims before measuring", () => {
     expect(truncate("  hello  ", 5)).toBe("hello");
   });
+
+  it("drops whitespace at the cut before the ellipsis", () => {
+    expect(truncate("hello world", 6)).toBe("hello...");
+  });
 });

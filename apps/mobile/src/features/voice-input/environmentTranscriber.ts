@@ -29,11 +29,23 @@ export function createEnvironmentTranscriber(input: {
   return {
     async prepare({ signal }) {
       check(signal);
-      const locale = await input.prepare(signal);
-      check(signal);
+      let locale = "auto";
+      const ready = input.prepare(signal).then((resolved) => {
+        check(signal);
+        locale = resolved;
+      });
+      void ready.catch(() => {});
       return {
-        locale,
+        get locale() {
+          return locale;
+        },
+        async start(_uri, { signal }) {
+          await ready;
+          check(signal);
+          return null;
+        },
         async transcribe(uri, { signal }) {
+          await ready;
           check(signal);
           const decoded = await input.decode(uri);
           check(signal);

@@ -1,9 +1,10 @@
-import { assert, describe, it } from "@effect/vitest"
+import { assert, it } from "@effect/vitest"
 import { Result } from "effect"
 import * as Base64Url from "effect/encoding/Base64Url"
 import type * as EncodingError from "effect/encoding/EncodingError"
+import { describeWithFallback } from "../utils/encoding.ts"
 
-describe("Base64Url", () => {
+describeWithFallback("Base64Url", () => {
   it("encodes strings and bytes without padding", () => {
     assert.strictEqual(Base64Url.encode("hello?"), "aGVsbG8_")
     assert.strictEqual(Base64Url.encode(new Uint8Array([251, 255])), "-_8")
@@ -14,12 +15,26 @@ describe("Base64Url", () => {
     assert.strictEqual(Base64Url.encodePadded(new Uint8Array([251, 255])), "-_8=")
   })
 
+  it("encodes long input exactly with every remainder", () => {
+    const bytes = Uint8Array.from({ length: 257 }, (_, i) => (i * 151 + 1) & 0xff)
+    for (const length of [255, 256, 257]) {
+      const view = bytes.subarray(0, length)
+      const padded = btoa(String.fromCharCode(...view)).replace(/\+/g, "-").replace(/\//g, "_")
+      assert.strictEqual(Base64Url.encodePadded(view), padded, `${length}`)
+      assert.strictEqual(Base64Url.encode(view), padded.replace(/=+$/, ""), `${length}`)
+    }
+  })
+
   it("decodes padded and unpadded input", () => {
     const expected = new Uint8Array([72, 101, 108, 108, 111, 63])
     assert.deepStrictEqual(Result.getOrThrow(Base64Url.decode("SGVsbG8_")), expected)
     assert.deepStrictEqual(Result.getOrThrow(Base64Url.decode("-_8=")), new Uint8Array([251, 255]))
     assert.strictEqual(Result.getOrThrow(Base64Url.decodeString("8J-Riw")), "👋")
     assert.strictEqual(Result.getOrThrow(Base64Url.decodeString("8J-Riw==")), "👋")
+  })
+
+  it("preserves a leading U+FEFF when round-tripping strings", () => {
+    assert.strictEqual(Result.getOrThrow(Base64Url.decodeString(Base64Url.encode("\uFEFFa"))), "\uFEFFa")
   })
 
   it("rejects the standard Base64 alphabet and malformed lengths", () => {
@@ -50,6 +65,8 @@ describe("Base64Url", () => {
     }
     for (const encoded of [Base64Url.encode(bytes), Base64Url.encodePadded(bytes)]) {
       assert.deepStrictEqual(Result.getOrThrow(Base64Url.decode(encoded)), bytes)
+      // MIME-style 76-character lines
+      assert.deepStrictEqual(Result.getOrThrow(Base64Url.decode(encoded.replace(/.{76}/g, "$&\r\n"))), bytes)
       assert.strictEqual(
         Result.getOrThrow(Base64Url.decodeString(encoded)),
         new TextDecoder().decode(bytes)
@@ -106,6 +123,12 @@ describe("Base64Url", () => {
     assertFailure("Zm\t9v", "Zm\t9v", unpadded(5))
     for (const input of ["Zm+v", "Zm/v", "Zm9!", "Zm9{", "Zm9\u00e9", "Zm9\u0000", "Zm9\u2028", "Z=g="]) {
       assertFailure(input, input, "Invalid input")
+    }
+    for (const char of [" ", "\t", "\f"]) {
+      assertFailure(`Zm9${char}`, `Zm9${char}`, "Invalid input")
+      // Long enough for size-gated decoders
+      const long = `${"Zm9v".repeat(64)}Zm9${char}`
+      assertFailure(long, long, "Invalid input")
     }
   })
 })

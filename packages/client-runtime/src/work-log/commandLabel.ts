@@ -13,6 +13,8 @@ const WINDOWS_SHELL_PROGRAMS = new Set([
   "pwsh.exe",
 ]);
 const SHELL_OPTIONS_WITH_VALUE = new Set(["-o", "-O", "--rcfile", "--init-file"]);
+// `-euo pipefail` and `+o history`: a short-option bundle ending in o or O takes the next word.
+const SHELL_OPTION_BUNDLE_WITH_VALUE = /^[-+][a-zA-Z]*[oO]$/;
 const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
 const SHELL_PRECOMMAND_MODIFIERS = new Set(["nocorrect", "noglob", "time"]);
 const POWERSHELL_SETUP_PROGRAMS = new Set(["pop-location", "push-location", "set-location"]);
@@ -171,7 +173,6 @@ const TERMINAL_SHELL_PROGRAMS = new Set([
   "else",
   "end",
   "esac",
-  "eval",
   "exec",
   "exit",
   "false",
@@ -194,15 +195,22 @@ const TERMINAL_SHELL_PROGRAMS = new Set([
   "while",
 ]);
 
-function shellCommandArgumentIndex(tokens: ReadonlyArray<string>, start: number): number | null {
+function shellCommandArgumentIndex(
+  shell: string,
+  tokens: ReadonlyArray<string>,
+  start: number,
+): number | null {
   for (let index = start; index < tokens.length; index += 1) {
     const option = tokens[index]!;
-    if (option === "--" || !option.startsWith("-")) return null;
-    if (SHELL_OPTIONS_WITH_VALUE.has(option)) {
+    if (option === "--" || !/^[-+]/.test(option)) return null;
+    if (SHELL_OPTIONS_WITH_VALUE.has(option) || SHELL_OPTION_BUNDLE_WITH_VALUE.test(option)) {
       index += 1;
       continue;
     }
-    if (option === "--command" || /^-[a-zA-Z]*c[a-zA-Z]*$/.test(option)) return index + 1;
+    if (option === "--command" || /^-[a-zA-Z]*c[a-zA-Z]*$/.test(option)) {
+      // fish takes the next token as the script even when it is `--`.
+      return index + (shell !== "fish" && tokens[index + 1] === "--" ? 2 : 1);
+    }
   }
   return null;
 }
@@ -217,11 +225,29 @@ const COMMAND_WRAPPER_FLAGS: Record<CommandWrapper, ReadonlySet<string>> = {
   sudo: new Set(["-A", "--askpass", "-b", "--background", "-E", "-H", "-i", "-n", "-S"]),
 };
 
+const ANSI_C_ESCAPES: Record<string, string> = {
+  a: "\u0007",
+  b: "\b",
+  e: "\u001b",
+  E: "\u001b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  v: "\v",
+  "\\": "\\",
+  "'": "'",
+  '"': '"',
+  "?": "?",
+};
+
+type ShellQuote = '"' | "'" | "$'";
+
 function tokenizeShellCommand(command: string): string[] | null {
   const input = command.trim();
   const tokens: string[] = [];
   let current = "";
-  let quote: '"' | "'" | null = null;
+  let quote: ShellQuote | null = null;
   let escaping = false;
   let inBackticks = false;
   let substitutionDepth = 0;
@@ -234,6 +260,21 @@ function tokenizeShellCommand(command: string): string[] | null {
       current += character;
       escaping = false;
       tokenStarted = true;
+      continue;
+    }
+    if (character === "\\" && quote === "$'") {
+      const byte = /^(?:x([\dA-Fa-f]{1,2})|([0-7]{1,3}))/u.exec(input.slice(index + 1, index + 4));
+      if (byte) {
+        current += String.fromCharCode(
+          Number.parseInt(byte[1] ?? byte[2]!, byte[1] ? 16 : 8) & 0xff,
+        );
+        index += byte[0].length;
+        continue;
+      }
+      const nextCharacter = input[index + 1];
+      if (nextCharacter === undefined) return null;
+      current += ANSI_C_ESCAPES[nextCharacter] ?? `\\${nextCharacter}`;
+      index += 1;
       continue;
     }
     if (character === "\\" && quote !== "'") {
@@ -263,7 +304,7 @@ function tokenizeShellCommand(command: string): string[] | null {
       continue;
     }
     if (quote !== null) {
-      if (character === quote) {
+      if (character === (quote === "$'" ? "'" : quote)) {
         quote = null;
       } else {
         current += character;
@@ -313,6 +354,18 @@ function tokenizeShellCommand(command: string): string[] | null {
       current += character;
       substitutionDepth -= 1;
       tokenStarted = true;
+      continue;
+    }
+    if (character === "$" && input[index + 1] === "$") {
+      current += "$$";
+      tokenStarted = true;
+      index += 1;
+      continue;
+    }
+    if (character === "$" && (input[index + 1] === "'" || input[index + 1] === '"')) {
+      quote = input[index + 1] === "'" ? "$'" : '"';
+      tokenStarted = true;
+      index += 1;
       continue;
     }
     if (character === '"' || character === "'") {
@@ -452,7 +505,7 @@ function commandAfterHeredocs(
 }
 
 function splitFirstShellCommand(command: string): ShellCommandSplit {
-  let quote: '"' | "'" | null = null;
+  let quote: ShellQuote | null = null;
   let powerShellHereStringQuote: '"' | "'" | null = null;
   let escaping = false;
   let inBackticks = false;
@@ -495,7 +548,12 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
       continue;
     }
     if (quote !== null) {
-      if (character === quote) quote = null;
+      if (character === (quote === "$'" ? "'" : quote)) quote = null;
+      continue;
+    }
+    if (character === "$" && (command[index + 1] === "$" || command[index + 1] === "'")) {
+      if (command[index + 1] === "'") quote = "$'";
+      index += 1;
       continue;
     }
     if (
@@ -627,7 +685,7 @@ function commandWithoutLeadingShellComments(command: string): string | null {
 
 function withoutShellLineContinuations(command: string): string {
   let normalizedCommand = "";
-  let quote: '"' | "'" | null = null;
+  let quote: ShellQuote | null = null;
   let escaping = false;
 
   for (let index = 0; index < command.length; index += 1) {
@@ -638,11 +696,11 @@ function withoutShellLineContinuations(command: string): string {
       continue;
     }
     if (character === "\\" && quote !== "'") {
-      if (command[index + 1] === "\n") {
+      if (quote !== "$'" && command[index + 1] === "\n") {
         index += 1;
         continue;
       }
-      if (command[index + 1] === "\r" && command[index + 2] === "\n") {
+      if (quote !== "$'" && command[index + 1] === "\r" && command[index + 2] === "\n") {
         index += 2;
         continue;
       }
@@ -651,7 +709,12 @@ function withoutShellLineContinuations(command: string): string {
       continue;
     }
     if (quote !== null) {
-      if (character === quote) quote = null;
+      if (character === (quote === "$'" ? "'" : quote)) quote = null;
+    } else if (character === "$" && (command[index + 1] === "$" || command[index + 1] === "'")) {
+      if (command[index + 1] === "'") quote = "$'";
+      normalizedCommand += command.slice(index, index + 2);
+      index += 1;
+      continue;
     } else if (character === '"' || character === "'") {
       quote = character;
     }
@@ -1104,10 +1167,9 @@ function parseCommandProgramName(
   if (windowsPath) return staticProgramName(windowsPath);
   const tokens = tokenizeShellCommand(withoutShellLineContinuations(commandSplit.firstCommand));
   if (tokens === null) return null;
-  const firstCharacter = commandSplit.firstCommand.trimStart()[0];
   if (
     tokens.length === 1 &&
-    (firstCharacter === '"' || firstCharacter === "'") &&
+    /^\$?["']/u.test(commandSplit.firstCommand.trimStart()) &&
     /[\s()=]/u.test(tokens[0] ?? "") &&
     !/[\\/]/u.test(tokens[0] ?? "")
   ) {
@@ -1225,8 +1287,9 @@ function parseCommandProgramName(
       }
       return null;
     }
-    if (tokenProgram && SHELL_PROGRAMS.has(tokenProgram.replace(/\.exe$/i, "").toLowerCase())) {
-      const scriptIndex = shellCommandArgumentIndex(tokens, index + 1);
+    const shellProgram = tokenProgram?.replace(/\.exe$/i, "").toLowerCase();
+    if (shellProgram && SHELL_PROGRAMS.has(shellProgram)) {
+      const scriptIndex = shellCommandArgumentIndex(shellProgram, tokens, index + 1);
       if (scriptIndex !== null) {
         const script = tokens[scriptIndex];
         return script
@@ -1381,13 +1444,13 @@ function withoutShellWrapper(command: string): string {
   const split = splitFirstShellCommand(trimmed);
   if (split.remainingCommand !== null) return trimmed;
   const tokens = tokenizeShellCommand(trimmed);
-  const executable = tokens?.[0]?.split(/[\\/]/u).at(-1);
-  const program = executable?.replace(/\.exe$/iu, "");
+  const executable = tokens?.[0]?.split(/[\\/]/u).at(-1)?.toLowerCase();
+  const program = executable?.replace(/\.exe$/u, "");
   if (!tokens || !executable || !program) return trimmed;
   const scriptIndex = SHELL_PROGRAMS.has(program)
-    ? shellCommandArgumentIndex(tokens, 1)
-    : WINDOWS_SHELL_PROGRAMS.has(executable.toLowerCase())
-      ? windowsShellScriptIndex(program.toLowerCase(), tokens)
+    ? shellCommandArgumentIndex(program, tokens, 1)
+    : WINDOWS_SHELL_PROGRAMS.has(executable)
+      ? windowsShellScriptIndex(program, tokens)
       : null;
   // Positional arguments can affect the script; keep those invocations intact.
   if (scriptIndex === null || scriptIndex !== tokens.length - 1) return trimmed;

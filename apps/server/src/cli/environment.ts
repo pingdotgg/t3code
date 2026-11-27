@@ -1,6 +1,7 @@
 import {
   AuthMcpClientAccess,
   EnvironmentId,
+  PeerLinkError,
   peerLinkFailureKind,
   type PeerLinkSummary,
 } from "@t3tools/contracts";
@@ -15,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import * as Argument from "effect/cli/Argument";
+import * as CliError from "effect/cli/CliError";
 import * as Command from "effect/cli/Command";
 import * as Flag from "effect/cli/Flag";
 import * as GlobalFlag from "effect/cli/GlobalFlag";
@@ -27,6 +29,7 @@ import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { expandHomePath } from "../os-jank.ts";
 import { authLocationFlags, type CliAuthLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 /**
@@ -42,6 +45,10 @@ const runWithPeerLinks = Effect.fn("environment.runWithPeerLinks")(function* <A,
   const config = yield* resolveCliAuthConfig(flags, logLevel, options);
   return yield* PeerLinks.PeerLinks.pipe(
     Effect.flatMap(run),
+    // A refused or unreachable link is an expected outcome: print its message, not a stack.
+    Effect.catchIf(Schema.is(PeerLinkError), (error) =>
+      Effect.fail(new CliError.UserError({ cause: error, userMessage: error.message })),
+    ),
     Effect.provide(
       PeerLinks.layer.pipe(
         Layer.provide(
@@ -195,7 +202,7 @@ const readLinkBatch = Effect.fn("environment.readLinkBatch")(function* (from: st
     );
   }
   const fs = yield* FileSystem.FileSystem;
-  return yield* fs.readFileString(from);
+  return yield* fs.readFileString(yield* expandHomePath(from));
 });
 
 const environmentLinkCommand = Command.make("link", {
@@ -233,7 +240,11 @@ const environmentLinkCommand = Command.make("link", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       if (Option.isSome(flags.from)) {
-        if (Option.isSome(flags.url) || Option.isSome(flags.pairingCode)) {
+        if (
+          Option.isSome(flags.url) ||
+          Option.isSome(flags.pairingCode) ||
+          flags.alternateUrl.length > 0
+        ) {
           return yield* new EnvironmentLinkUsageError({
             detail: "--from takes its addresses and pairing codes from the file.",
           });
@@ -287,16 +298,20 @@ const environmentUnlinkCommand = Command.make("unlink", {
   ),
 }).pipe(
   Command.withDescription(
-    "Forget a linked environment here. Revoke it in that environment's Sharing & access to end its session there too.",
+    "Forget a linked environment here, and end its session there when that environment answers.",
   ),
   Command.withHandler((flags) =>
     runWithPeerLinks(flags, (links) =>
       Effect.gen(function* () {
-        const removed = yield* links.unlink(EnvironmentId.make(flags.environmentId));
+        const { removed, endedThere } = yield* links.unlink(
+          EnvironmentId.make(flags.environmentId),
+        );
         yield* Console.log(
-          removed
-            ? `Forgot ${flags.environmentId}. Revoke it in that environment's Sharing & access to end its session there.\n`
-            : `No linked environment ${flags.environmentId}.\n`,
+          !removed
+            ? `No linked environment ${flags.environmentId}.\n`
+            : endedThere
+              ? `Forgot ${flags.environmentId} and ended its session there.\n`
+              : `Forgot ${flags.environmentId}. It did not answer, so revoke it in that environment's Sharing & access to end its session there.\n`,
         );
       }),
     ),

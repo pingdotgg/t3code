@@ -137,6 +137,19 @@ function removeNodes(source: string, ranges: { start: number; end: number }[]) {
   return result;
 }
 
+// A top-level return must end the chunk, so appending a binding after it would break the config.
+// Block depth, not indentation, decides scope. Long brackets are rejected before this runs.
+function luaTopLevelReturn(source: string) {
+  const code = source.replace(/--[^\n]*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, " ");
+  let depth = 0;
+  for (const [word] of code.matchAll(/\b(?:function|if|do|repeat|end|until|return)\b/g)) {
+    if (word === "return" && depth === 0) return true;
+    if (word === "end" || word === "until") depth--;
+    else if (word !== "return") depth++;
+  }
+  return false;
+}
+
 export function editCaptureConfig(
   source: string,
   format: CaptureConfigFormat,
@@ -144,7 +157,7 @@ export function editCaptureConfig(
   operation: "install" | "remove",
   requestedKeys?: string,
 ) {
-  if (format === "hyprland-lua" && (/^\s*return\b/m.test(source) || /\[=*\[/.test(source)))
+  if (format === "hyprland-lua" && (/\[=*\[/.test(source) || luaTopLevelReturn(source)))
     throw new Error(
       "This Lua config needs a manual edit. Choose your bindings file or use manual setup in Advanced.",
     );

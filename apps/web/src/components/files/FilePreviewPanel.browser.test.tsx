@@ -18,9 +18,11 @@ const state = vi.hoisted(() => ({
   optimistic: null as ProjectReadFileResult | null,
   writeFile: vi.fn(),
   assetUrl: { _tag: "Loading" } as import("~/assets/assetUrls").AssetUrlState,
+  assetResources: [] as Array<import("@t3tools/contracts").AssetResource>,
   mintUrl: vi.fn<() => Promise<string | null>>(),
   browserAssetMints: 0,
   openedBrowserUrls: [] as string[],
+  diffWorkersReady: true,
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
@@ -58,6 +60,7 @@ vi.mock(import("~/remoteOpen"), async (original) => ({
 vi.mock(import("~/hooks/useTheme"), async (original) => ({
   ...(await original()),
   useTheme: () => ({ resolvedTheme: "dark" }) as never,
+  useRenderedAppearance: () => "dark",
 }));
 vi.mock(import("~/hooks/useWorkspaceMutationRefresh"), () => ({
   useWorkspaceMutationRefresh: vi.fn(),
@@ -65,7 +68,13 @@ vi.mock(import("~/hooks/useWorkspaceMutationRefresh"), () => ({
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
   ...(await original()),
   useAssetUrlRefresh: () => state.mintUrl,
-  useAssetUrlState: () => state.assetUrl,
+  useAssetUrlState: (
+    _environmentId: unknown,
+    resource: import("@t3tools/contracts").AssetResource | null,
+  ) => {
+    if (resource) state.assetResources.push(resource);
+    return state.assetUrl;
+  },
 }));
 vi.mock(import("~/browser/previewRuntime"), async (original) => ({
   ...(await original()),
@@ -135,7 +144,10 @@ vi.mock(import("./FileBrowserPanel"), () => ({
   ),
 }));
 vi.mock(import("../DiffWorkerPoolProvider"), () => ({
-  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => <>{children}</>,
+  // Like the real provider, a pool that is still starting unmounts the viewer it wraps.
+  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => (
+    <>{state.diffWorkersReady ? children : null}</>
+  ),
 }));
 vi.mock(import("./projectFilesQueryState"), async (original) => ({
   ...(await original()),
@@ -162,6 +174,8 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
 }));
 
 import FilePreviewPanel from "./FilePreviewPanel";
+import { ChunkedMarkdown } from "./ChunkedMarkdown";
+import { splitMarkdown } from "@t3tools/shared/markdownChunks";
 
 const environmentId = EnvironmentId.make("markdown-preview-test");
 const threadRef = { environmentId, threadId: ThreadId.make("thread") };
@@ -173,7 +187,9 @@ function setup() {
   state.file = null;
   state.optimistic = null;
   state.assetUrl = { _tag: "Loading" };
+  state.assetResources = [];
   state.openedBrowserUrls = [];
+  state.diffWorkersReady = true;
   let mints = 0;
   state.mintUrl.mockReset().mockImplementation(async () => `/assets/report.docx?mint=${++mints}`);
   state.writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -188,17 +204,25 @@ function setup() {
   };
 }
 
-function markdownPreview(truncated: boolean, contents = "- [ ] Keep the rest of this file\n") {
+function markdownPreview(
+  truncated: boolean,
+  contents = "- [ ] Keep the rest of this file\n",
+  relativePath = "tasks.md",
+) {
   state.file = {
-    relativePath: "tasks.md",
+    relativePath,
     contents,
     byteLength: truncated ? 1_200_000 : contents.length,
     truncated,
   };
-  return filePreview("tasks.md");
+  return filePreview(relativePath);
 }
 
-function filePreview(relativePath: string, workspaceMutationId: string | null = null) {
+function filePreview(
+  relativePath: string,
+  workspaceMutationId: string | null = null,
+  reveal: { line: number; requestId: number } | null = null,
+) {
   return (
     <FilePreviewPanel
       environmentId={environmentId}
@@ -210,8 +234,8 @@ function filePreview(relativePath: string, workspaceMutationId: string | null = 
       keybindings={[]}
       availableEditors={[]}
       openInShortcutEnabled={false}
-      revealLine={null}
-      revealRequestId={0}
+      revealLine={reveal?.line ?? null}
+      revealRequestId={reveal?.requestId ?? 0}
       onOpenFile={vi.fn()}
       onNavigateFolder={vi.fn()}
       folderTrail={undefined}
@@ -364,6 +388,57 @@ describe("source file scroll", () => {
     await screen.rerender(sourceFile("a.ts", 2000));
 
     await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+  });
+
+  it("centers a linked line in a scrolled read-only file, and again when the viewer is rebuilt", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["text"] });
+    // Wrapped lines of differing lengths, so the viewer estimates heights until it measures them.
+    const contents = Array.from(
+      { length: 140 },
+      (_, i) =>
+        `Line ${i + 1}. ${"Notes that wrap across the preview. ".repeat(2 + ((i * 7) % 9))}`,
+    ).join("\n");
+    // A file outside the workspace is read-only, which CodeView renders.
+    const hostFile = (reveal: { line: number; requestId: number } | null) => {
+      const relativePath = "/outside/notes.txt";
+      state.file = { relativePath, contents, byteLength: contents.length, truncated: false };
+      return (
+        <div style={{ height: 400, width: 500, display: "flex", flexDirection: "column" }}>
+          {filePreview(relativePath, null, reveal)}
+        </div>
+      );
+    };
+    const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
+    const row = (line: number) =>
+      document.querySelector("diffs-container")?.shadowRoot?.querySelector(`[data-line="${line}"]`);
+    const middle = (element: Element | null | undefined) => {
+      const rect = element?.getBoundingClientRect();
+      return rect ? (rect.top + rect.bottom) / 2 : Number.NaN;
+    };
+    const lineIsCentered = () =>
+      expect(Math.abs(middle(row(82)) - middle(scroller()))).toBeLessThan(2);
+
+    await using screen = await render(hostFile(null));
+    await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(3000));
+    scroller()!.scrollTop = 2500;
+    // The viewer has moved its window of mounted rows to the new offset.
+    await vi.waitFor(() => expect(row(1)).toBeNull());
+
+    await screen.rerender(hostFile({ line: 82, requestId: 1 }));
+    await vi.waitFor(lineIsCentered);
+
+    // Starting the worker pool unmounts the viewer and mounts a new one.
+    state.diffWorkersReady = false;
+    await screen.rerender(hostFile({ line: 82, requestId: 1 }));
+    await vi.waitFor(() => expect(scroller()).toBeNull());
+    state.diffWorkersReady = true;
+    await screen.rerender(hostFile({ line: 82, requestId: 1 }));
+    await vi.waitFor(lineIsCentered);
   });
 
   it.each([
@@ -562,17 +637,28 @@ describe("source file scroll", () => {
 });
 
 describe("rendered Markdown task saves", () => {
-  it("keeps a truncated read read-only without queuing a replacement", async () => {
+  it("renders the whole file of a truncated read, read-only", async () => {
     using _settings = setup();
+    state.assetUrl = {
+      _tag: "Success",
+      url: "/assets/tasks.md",
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    };
+    const realFetch = globalThis.fetch;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) =>
+        new URL(String(input), location.href).pathname === "/assets/tasks.md"
+          ? Promise.resolve(
+              new Response("- [ ] Keep the rest of this file\n\nPast the first megabyte\n"),
+            )
+          : realFetch(input, init),
+      );
     await using screen = await render(markdownPreview(true));
-    using _timers = fakeTimers();
+    await expect.element(screen.getByText("Past the first megabyte")).toBeVisible();
     const checkbox = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    expect(checkbox).not.toBeNull();
     expect(checkbox.disabled).toBe(true);
-    expect(checkbox.readOnly).toBe(true);
     await act(async () => checkbox.click());
-    await vi.advanceTimersByTimeAsync(500);
-    expect(checkbox.checked).toBe(false);
     expect(state.optimistic).toBeNull();
     expect(state.writeFile).not.toHaveBeenCalled();
   });
@@ -580,6 +666,8 @@ describe("rendered Markdown task saves", () => {
   it("still toggles and saves tasks from a complete read", async () => {
     using _settings = setup();
     await using screen = await render(markdownPreview(false));
+    // The virtualized list mounts its pieces after measuring the viewport.
+    await expect.element(screen.getByRole("checkbox")).toBeInTheDocument();
     using _timers = fakeTimers();
     const checkbox = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     expect(checkbox).not.toBeNull();
@@ -702,5 +790,256 @@ describe("rendered Markdown select all", () => {
     // A toggled checkbox keeps focus on an input inside the preview.
     await userEvent.click(screen.getByRole("checkbox"));
     await expectFileOnlySelection();
+  });
+
+  it("copies the whole chunked file with its own line endings", async () => {
+    using _settings = setup();
+    const contents = `first\r\r# ${"x\r\r# ".repeat(2_000)}end`;
+    await using _screen = await render(
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        {markdownPreview(false, contents, "cr.md")}
+      </div>,
+    );
+    const firstChunk = await vi.waitFor(() => {
+      const first = document.querySelector("h1");
+      expect(first).not.toBeNull();
+      return first!;
+    });
+    await userEvent.click(firstChunk);
+    await userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+    );
+    let copied: string | undefined;
+    const read = (event: ClipboardEvent) => {
+      copied = event.clipboardData?.getData("text/plain");
+    };
+    window.addEventListener("copy", read);
+    using _listener = { [Symbol.dispose]: () => window.removeEventListener("copy", read) };
+    document.execCommand("copy");
+    expect(copied).toBe(contents);
+  });
+});
+
+describe("rendered Markdown relative images", () => {
+  it.each([
+    ["2026-11-23T14:05/README.md", "/workspace/2026-11-23T14:05/diagram.png"],
+    ["/README.md", "/diagram.png"],
+  ])("resolves relative images in %s against its folder", async (relativePath, expectedPath) => {
+    using _settings = setup();
+    await using _screen = await render(
+      markdownPreview(false, "![diagram](diagram.png)\n", relativePath),
+    );
+    await vi.waitFor(() => expect(state.assetResources).not.toHaveLength(0));
+    expect(state.assetResources).toContainEqual(
+      expect.objectContaining({ _tag: "media-file", path: expectedPath }),
+    );
+  });
+});
+
+function withAppCss() {
+  const style = document.createElement("style");
+  style.textContent = appCss;
+  document.head.append(style);
+  return { [Symbol.dispose]: () => style.remove() };
+}
+
+function sized(children: ReactNode) {
+  return (
+    <div style={{ width: 500, height: 400, display: "flex", flexDirection: "column" }}>
+      {children}
+    </div>
+  );
+}
+
+describe("rendered Markdown scroll position", () => {
+  const sections = Array.from(
+    { length: 200 },
+    (_, index) => `## Section ${index}\n\nParagraph ${index}.\n`,
+  ).join("\n");
+  const scroller = () =>
+    document.querySelector<HTMLElement>(".scrollbar-gutter-both") ?? expect.unreachable();
+  /** The first heading in view and its offset from the top of the viewport. */
+  const readingPosition = () => {
+    const top = scroller().getBoundingClientRect().top;
+    for (const heading of scroller().querySelectorAll("h2")) {
+      const offset = Math.round(heading.getBoundingClientRect().top - top);
+      if (offset > -100) return { heading: heading.textContent, offset };
+    }
+    return null;
+  };
+  const scrollDown = async () => {
+    scroller().scrollTop = 3000;
+    scroller().dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(readingPosition()?.heading).not.toBe("Section 0"));
+    return readingPosition();
+  };
+  const expectReadingPosition = (saved: ReturnType<typeof readingPosition>) =>
+    vi.waitFor(() => {
+      const position = readingPosition();
+      expect(position?.heading).toBe(saved?.heading);
+      expect(Math.abs((position?.offset ?? 0) - (saved?.offset ?? 0))).toBeLessThanOrEqual(2);
+    });
+
+  it("restores each file's reading position after the preview remounts", async () => {
+    using _settings = setup();
+    using _style = withAppCss();
+    const preview = (relativePath: string) => sized(markdownPreview(false, sections, relativePath));
+
+    let saved: ReturnType<typeof readingPosition>;
+    {
+      await using screen = await render(preview("long.md"));
+      await expect.element(screen.getByText("Section 0", { exact: true })).toBeInTheDocument();
+      saved = await scrollDown();
+    }
+    {
+      await using screen = await render(preview("other.md"));
+      await expect.element(screen.getByText("Section 0", { exact: true })).toBeInTheDocument();
+      expect(scroller().scrollTop, "another file opens at the top").toBe(0);
+    }
+    await using _screen = await render(preview("long.md"));
+    await expectReadingPosition(saved);
+  });
+
+  it("waits for the saved chunk when a reopened file is still streaming in", async () => {
+    using _settings = setup();
+    using _style = withAppCss();
+    const { chunks, definitions } = splitMarkdown(sections, 200);
+    const preview = (loaded: number, loading: boolean) =>
+      sized(
+        <ChunkedMarkdown
+          chunks={chunks.slice(0, loaded)}
+          definitions={definitions}
+          loading={loading}
+          cwd="/workspace"
+          relativePath="streaming.md"
+          threadRef={threadRef}
+          workspaceMutationId={null}
+        />,
+      );
+
+    let saved: ReturnType<typeof readingPosition>;
+    {
+      await using screen = await render(preview(chunks.length, false));
+      await expect.element(screen.getByText("Section 0", { exact: true })).toBeInTheDocument();
+      saved = await scrollDown();
+    }
+    await using screen = await render(preview(3, true));
+    expect(document.querySelector(".scrollbar-gutter-both"), "no list before the chunk").toBeNull();
+    await screen.rerender(preview(chunks.length, false));
+    await expectReadingPosition(saved);
+  });
+
+  it("keeps each thread's position when the same file stays open across threads", async () => {
+    using _settings = setup();
+    using _style = withAppCss();
+    const { chunks, definitions } = splitMarkdown(sections, 200);
+    const preview = (threadId: string) =>
+      sized(
+        <ChunkedMarkdown
+          chunks={chunks}
+          definitions={definitions}
+          cwd="/workspace"
+          relativePath="shared.md"
+          threadRef={{ environmentId, threadId: ThreadId.make(threadId) }}
+          workspaceMutationId={null}
+        />,
+      );
+
+    await using screen = await render(preview("first"));
+    await expect.element(screen.getByText("Section 0", { exact: true })).toBeInTheDocument();
+    const saved = await scrollDown();
+    await screen.rerender(preview("second"));
+    await vi.waitFor(() => expect(readingPosition()?.heading).toBe("Section 0"));
+    await screen.rerender(preview("first"));
+    await expectReadingPosition(saved);
+  });
+});
+
+describe("rendered Markdown footnotes across chunks", () => {
+  it("renders cross-chunk footnotes with document-wide numbering and one footnotes section", async () => {
+    using _settings = setup();
+    using _style = withAppCss();
+    const paragraphs = Array.from(
+      { length: 60 },
+      (_, i) =>
+        `Paragraph ${i}. ${"Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(2)}`,
+    );
+    const markdown = [
+      "A footnote reference.[^1]",
+      "",
+      ...paragraphs.slice(0, 35).flatMap((p) => [p, ""]),
+      "Second note[^second] and repeat[^1].",
+      "",
+      ...paragraphs.slice(35).flatMap((p) => [p, ""]),
+      "[^1]: The footnote text.",
+      "[^second]: The second footnote.",
+      "",
+      "    - [ ] Footnote task",
+    ].join("\n");
+    const onTaskListChange = vi.fn();
+
+    const split = splitMarkdown(markdown);
+    expect(split.chunks.length).toBeGreaterThan(1);
+    expect(split.footnotes).toBeDefined();
+
+    await using screen = await render(
+      sized(
+        <ChunkedMarkdown
+          {...split}
+          cwd="/workspace"
+          relativePath="footnotes.md"
+          threadRef={threadRef}
+          workspaceMutationId={null}
+          onTaskListChange={onTaskListChange}
+        />,
+      ),
+    );
+
+    const firstRef = await vi.waitFor(() => {
+      const link = screen.container.querySelector<HTMLAnchorElement>(
+        'a[data-footnote-ref][href="#user-content-fn-1"]',
+      );
+      expect(link).not.toBeNull();
+      return link!;
+    });
+    expect(firstRef.textContent).toBe("1");
+    expect(screen.container.textContent).not.toContain("[^1]");
+
+    // Clicking the footnote ref scrolls to the trailing footnotes section even in a virtualized list.
+    firstRef.click();
+    await vi.waitFor(() => {
+      const sections = screen.container.querySelectorAll("section[data-footnotes]");
+      expect(sections.length).toBe(1);
+      expect(sections[0]!.textContent).toContain("The footnote text.");
+      expect(sections[0]!.textContent).toContain("The second footnote.");
+    });
+
+    // A task in a footnote edits its line in the file, not in the section's own text.
+    await act(async () =>
+      screen.container
+        .querySelector<HTMLInputElement>('section[data-footnotes] input[type="checkbox"]')!
+        .click(),
+    );
+    expect(onTaskListChange).toHaveBeenCalledExactlyOnceWith({
+      markerOffset: markdown.indexOf("[ ] Footnote task"),
+      checked: true,
+    });
+
+    // Clicking the backref returns to the first reference (fnref-1) at the top of chunk 0.
+    const backref = screen.container.querySelector<HTMLAnchorElement>(
+      'section[data-footnotes] a[data-footnote-backref][href="#user-content-fnref-1"]',
+    );
+    expect(backref).not.toBeNull();
+    const scroller = screen.container.querySelector<HTMLElement>(".scrollbar-gutter-both")!;
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+    backref!.click();
+    await vi.waitFor(() => {
+      const topRef = screen.container.querySelector<HTMLAnchorElement>(
+        'a[data-footnote-ref][id$="fnref-1"]',
+      );
+      expect(topRef).not.toBeNull();
+      expect(topRef!.textContent).toBe("1");
+      expect(scroller.scrollTop).toBeLessThan(200);
+    });
   });
 });

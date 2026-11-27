@@ -47,8 +47,9 @@ const GENERATED_NAME =
   /(\.generated\.|\.gen\.|\.g\.dart$|\.pb\.go$|_pb2(_grpc)?\.py$|\.pb\.(cc|h)$|\.min\.(js|css)$|\.(js|css)\.map$)/;
 const GENERATED_DIRS = new Set(["__generated__", "_generated", "generated"]);
 
-const MOCK_NAME =
-  /(\.snap$|\.(mocks?|fixtures?|stubs?|fakes?)\.[^.]+$|^(mocks?|fixtures?|stubs?|fakes?)([-_.A-Z]|$))/;
+const MOCK_NAME = /(\.snap$|\.(mocks?|fixtures?|stubs?|fakes?)\.[^.]+$)/i;
+// Case-sensitive after the prefix: `MockClock.ts` is a mock, `Mockup.ts` is not.
+const MOCK_PREFIX = /^([Mm]ocks?|[Ff]ixtures?|[Ss]tubs?|[Ff]akes?)([-_.A-Z]|$)/;
 const MOCK_DIRS = new Set([
   "__fixtures__",
   "__mocks__",
@@ -99,7 +100,7 @@ export function classifyChangedFile(path: string): ChangedFileKind {
   const inDir = (set: ReadonlySet<string>) => dirs.some((dir) => set.has(dir));
   if (GENERATED_FILES.has(name.toLowerCase()) || GENERATED_NAME.test(name) || inDir(GENERATED_DIRS))
     return "generated";
-  if (MOCK_NAME.test(name) || inDir(MOCK_DIRS)) return "mocks";
+  if (MOCK_NAME.test(name) || MOCK_PREFIX.test(name) || inDir(MOCK_DIRS)) return "mocks";
   if (TEST_NAME.test(name) || CLASS_TEST_NAME.test(name) || inDir(TEST_DIRS)) return "tests";
   if (DOCS_NAME.test(name) && !NOT_DOCS_NAME.test(name)) return "docs";
   return "code";

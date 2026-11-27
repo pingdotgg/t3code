@@ -126,18 +126,37 @@ const MODEL_IDS: Record<number, string> = {
   1417: "gemini-4-argon",
   1418: "gemini-4-argon",
   1419: "gemini-4-argon",
+  1427: "gemini-4-carbon",
+  1437: "gemini-4-carbon",
+  1525: "gemini-4-hydrogen",
+  1526: "gemini-4-hydrogen",
+  1527: "gemini-4-hydrogen",
+  1532: "gemini-4-neon",
+  1533: "gemini-4-neon",
+  1537: "gemini-pro-orchestrator-neon",
+  1667: "gemini-pro-orchestrator",
+  1669: "gemini-4-hydrogen-orchestrator",
 };
 
 // Effort and routing variants share the base model's price.
 export const antigravityRateModel = (model: string) => {
-  const base = model.replace(/-(?:extra-low|low|medium|high|tiered|control|thinking|agent)$/, "");
+  const base = model.replace(
+    /-(?:extra-low|low|medium|high|tiered|control|thinking|agent|orchestrator|trial|n|r)$/,
+    "",
+  );
   return /^gemini-3-flash-(?:agent(?:-[ab])?|[ab])$/.test(model)
     ? "gemini-3.5-flash"
     : model === "gemini-3.7-flash-safety-le"
       ? "gemini-3.7-flash"
-      : base === "gemini-3-flash"
-        ? "gemini-3-flash-preview"
-        : base;
+      : model === "gemini-pro-orchestrator-neon"
+        ? "gemini-4-neon"
+        : model === "gemini-pro-orchestrator-g1-pro"
+          ? "gemini-4-argon"
+          : model === "gemini-pro-orchestrator"
+            ? "gemini-4-carbon"
+            : base === "gemini-3-flash"
+              ? "gemini-3-flash-preview"
+              : base;
 };
 
 function withRateModel(record: UsageRecord): UsageRecord {
@@ -170,7 +189,14 @@ function isConcreteModel(model: string): boolean {
 
 function rememberModel(models: Map<number, string | null>, id: number, model: string | null) {
   const previous = models.get(id);
-  models.set(id, previous === undefined || previous === model ? model : null);
+  if (previous === undefined) models.set(id, model);
+  else if (
+    previous !== model &&
+    (previous === null ||
+      model === null ||
+      antigravityRateModel(previous) !== antigravityRateModel(model))
+  )
+    models.set(id, null);
 }
 
 interface Metadata {
