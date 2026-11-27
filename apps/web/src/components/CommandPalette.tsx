@@ -2001,12 +2001,15 @@ function OpenCommandPaletteDialog(props: {
     };
   }
 
-  const handleAddProjectForEnvironment = async (input: {
-    readonly environmentId: EnvironmentId;
-    readonly rawCwd: string;
-    readonly platform: string;
-    readonly currentProjectCwd: string | null;
-  }) => {
+  const handleAddProjectForEnvironment = async (
+    input: {
+      readonly environmentId: EnvironmentId;
+      readonly rawCwd: string;
+      readonly platform: string;
+      readonly currentProjectCwd: string | null;
+    },
+    closeProjectView = captureProjectViewClose(),
+  ) => {
     const environment = environments.find(
       (candidate) => candidate.environmentId === input.environmentId,
     );
@@ -2049,7 +2052,6 @@ function OpenCommandPaletteDialog(props: {
     const cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
     if (cwd.length === 0) return;
 
-    const closeProjectView = captureProjectViewClose();
     const existing = findProjectByPath(
       projects.filter((project) => project.environmentId === input.environmentId),
       cwd,
@@ -2150,14 +2152,17 @@ function OpenCommandPaletteDialog(props: {
     closeProjectView();
   };
 
-  const handleAddProject = async (rawCwd: string) => {
+  const handleAddProject = async (rawCwd: string, closeProjectView?: () => void) => {
     if (!browseEnvironmentId) return;
-    await handleAddProjectForEnvironment({
-      environmentId: browseEnvironmentId,
-      rawCwd,
-      platform: browseEnvironmentPlatform,
-      currentProjectCwd: currentProjectCwdForBrowse,
-    });
+    await handleAddProjectForEnvironment(
+      {
+        environmentId: browseEnvironmentId,
+        rawCwd,
+        platform: browseEnvironmentPlatform,
+        currentProjectCwd: currentProjectCwdForBrowse,
+      },
+      closeProjectView,
+    );
   };
 
   const newProjectPublishTargets =
@@ -2214,7 +2219,10 @@ function OpenCommandPaletteDialog(props: {
     );
   }
 
-  async function submitAddProjectCloneFlow(destinationPathInput?: string): Promise<void> {
+  async function submitAddProjectCloneFlow(
+    destinationPathInput?: string,
+    closeProjectView = captureProjectViewClose(),
+  ): Promise<void> {
     if (!addProjectCloneFlow) {
       return;
     }
@@ -2366,7 +2374,6 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    const closeProjectView = captureProjectViewClose();
     setIsRemoteProjectCloning(true);
     const startResult = await startProjectClone({
       environmentId: addProjectCloneFlow.environmentId,
@@ -2920,6 +2927,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
+    const closeProjectView = captureProjectViewClose();
     setIsPickingProjectFolder(true);
     let pickedPath: string | null = null;
     let desktopWslState: DesktopWslState | null = null;
@@ -3010,15 +3018,19 @@ function OpenCommandPaletteDialog(props: {
             cloneDirectoryName: pinnedCloneDirectoryName,
             caseSensitive: true,
           }),
+          closeProjectView,
         );
         return;
       }
-      await handleAddProjectForEnvironment({
-        environmentId: selection.environmentId,
-        rawCwd: selection.linuxPath,
-        platform: "Linux",
-        currentProjectCwd: null,
-      });
+      await handleAddProjectForEnvironment(
+        {
+          environmentId: selection.environmentId,
+          rawCwd: selection.linuxPath,
+          platform: "Linux",
+          currentProjectCwd: null,
+        },
+        closeProjectView,
+      );
       return;
     }
     if (addProjectCloneFlow?.step === "confirm") {
@@ -3028,10 +3040,11 @@ function OpenCommandPaletteDialog(props: {
           cloneDirectoryName: pinnedCloneDirectoryName,
           caseSensitive: !isWindowsPlatform(browseEnvironmentPlatform),
         }),
+        closeProjectView,
       );
       return;
     }
-    await handleAddProject(pickedPath);
+    await handleAddProject(pickedPath, closeProjectView);
   };
 
   const submitButtonId = useId();
