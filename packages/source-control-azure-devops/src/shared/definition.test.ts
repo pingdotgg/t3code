@@ -235,6 +235,42 @@ describe("Azure DevOps repository keys", () => {
     );
     expect(registry.findByRepositoryKey("tfs.example/c/p/_git/r")).toBeUndefined();
   });
+
+  it.each([
+    "dev.azure.com/org/_git/repo",
+    "org.visualstudio.com/_git/repo",
+    "org.visualstudio.com/defaultcollection/_git/repo",
+  ])("expands shorthand repository key %s", (key) => {
+    expect(registry.canonicalRepositoryKey(key)).toBe("dev.azure.com/org/repo/_git/repo");
+    expect(registry.findByRepositoryKey(key)).toBe(definition);
+  });
+
+  it("expands encoded and previously misparsed keys and leaves other hosts alone", () => {
+    expect(registry.canonicalRepositoryKey("dev.azure.com/org/defaultcollection/_git/repo")).toBe(
+      "dev.azure.com/org/repo/_git/repo",
+    );
+    expect(registry.canonicalRepositoryKey("dev.azure.com/org/_git/my%20repo")).toBe(
+      "dev.azure.com/org/my%20repo/_git/my%20repo",
+    );
+    expect(registry.findByRepositoryKey("tfs/foo.visualstudio.com/_git/repo")).toBeUndefined();
+  });
+
+  it("matches a shorthand pull request URL against an SSH checkout and builds its canonical URL", () => {
+    const remoteUrl = "git@ssh.dev.azure.com:v3/org/repo/repo";
+    const identity: ChangeRequestProjectIdentity = {
+      canonicalKey: registry.repositoryKeyFromRemote(remoteUrl),
+      locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+    };
+    const link = parse("https://org.visualstudio.com/DefaultCollection/_git/repo/pullrequest/7")!;
+    expect(definition.isChangeRequestInRepository(identity, link)).toBe(true);
+    expect(
+      definition.changeRequestUrl({
+        host: "org.visualstudio.com",
+        repository: "defaultcollection/_git/repo",
+        number: 7,
+      }),
+    ).toBe("https://dev.azure.com/org/repo/_git/repo/pullrequest/7");
+  });
 });
 
 describe("Azure DevOps repository selector", () => {
