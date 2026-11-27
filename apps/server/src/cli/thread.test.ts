@@ -817,6 +817,12 @@ it.live("resolves a path inside a git worktree of the project's repository to th
     assert.deepStrictEqual(yield* resolveFrom([sample], worktree), sample);
     assert.deepStrictEqual(yield* resolveFrom([sample], path.join(worktree, "pkg")), sample);
     assert.deepStrictEqual(yield* resolveFrom([sample], worktree, "pkg/index.ts"), sample);
+    const worktreeAlias = path.join(root, "worktree-alias");
+    yield* Effect.promise(() => NodeFSP.symlink(worktree, worktreeAlias, "junction"));
+    assert.deepStrictEqual(
+      yield* resolveFrom([sample], worktreeAlias, "pkg/not-created/yet.ts"),
+      sample,
+    );
     assert.deepStrictEqual(yield* resolveFrom([featureProject], featureWorktree), featureProject);
     const ambiguous = yield* Effect.flip(resolveFrom([sample, featureProject], featureWorktree));
     assert.strictEqual(ambiguous._tag, "ThreadUsageError");

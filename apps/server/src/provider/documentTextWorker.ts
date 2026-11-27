@@ -18,6 +18,10 @@ const PRESENTATIONML_NAMESPACES = new Set([
   "http://schemas.openxmlformats.org/presentationml/2006/main",
   "http://purl.oclc.org/ooxml/presentationml/main",
 ]);
+const WORDPROCESSINGML_NAMESPACES = new Set([
+  "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+  "http://purl.oclc.org/ooxml/wordprocessingml/main",
+]);
 const PPTX_DRAWING_PROPERTIES = new Map([
   ["sp", "nvSpPr"],
   ["grpSp", "nvGrpSpPr"],
@@ -274,6 +278,16 @@ function xml(source: string, extension: string): XmlNode {
     ) {
       parent.children.pop();
       return;
+    }
+    if (
+      extension === ".docx" &&
+      node.name === "ruby" &&
+      WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+    ) {
+      const base = children(node).find((child) => child.name === "rubyBase");
+      const reading = children(node).find((child) => child.name === "rt");
+      // Word stores the guide first even though the base is the text on the line.
+      if (base?.hasText && reading?.hasText) node.children = [base, "(", reading, ")"];
     }
     if (extension === ".epub" && node.name === "ruby" && stack[1]?.name === "html")
       separateRubyReadings(node);
@@ -557,11 +571,22 @@ function epubSpan(value: string | undefined) {
   return digits === undefined ? 1 : Number(digits);
 }
 
+function* epubTableParts(node: XmlNode) {
+  // Legacy XHTML places footers before the body. The table model reads them after the other rows.
+  const footers: XmlNode[] = [];
+  for (const part of node.children) {
+    if (typeof part === "string") continue;
+    if (part.name === "tfoot") footers.push(part);
+    else yield part;
+  }
+  yield* footers;
+}
+
 function* epubTable(node: XmlNode): Generator<TextPart, void> {
   const occupiedUntil = new Uint32Array(512);
   let rowIndex = 0;
   let rowCount = 0;
-  for (const part of children(node)) {
+  for (const part of epubTableParts(node)) {
     const rowGroup = ["thead", "tbody", "tfoot"].includes(part.name);
     if (!rowGroup && part.name !== "tr") continue;
     if (rowGroup) occupiedUntil.fill(0);
