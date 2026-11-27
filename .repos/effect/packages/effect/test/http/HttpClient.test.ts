@@ -6,8 +6,10 @@ import {
   Deferred,
   Duration,
   Effect,
+  Equal,
   Exit,
   Fiber,
+  Hash,
   Layer,
   Option,
   Redacted,
@@ -150,6 +152,34 @@ const classifierCases: ReadonlyArray<{
 ]
 
 describe("HttpClient", () => {
+  describe("HttpClientErrorSchema", () => {
+    it("falls back to the kind when the cause message is missing or empty", () => {
+      for (const props of [{}, { cause: {} }, { cause: { message: "" } }]) {
+        const error = new HttpClientError.HttpClientErrorSchema({ kind: "TransportError", ...props })
+        assert.strictEqual(error.message, "TransportError")
+      }
+    })
+
+    it("preserves the encoded fields without adding a message field", () => {
+      const error = new HttpClientError.HttpClientErrorSchema({
+        kind: "TransportError",
+        cause: { message: "connection refused" }
+      })
+      assert.strictEqual(error.message, "connection refused")
+      const encoded = Schema.encodeSync(HttpClientError.HttpClientErrorSchema)(error)
+
+      assert.deepStrictEqual(encoded, {
+        _tag: "HttpError",
+        kind: "TransportError",
+        cause: { message: "connection refused" }
+      })
+      assert.strictEqual(
+        Schema.decodeSync(HttpClientError.HttpClientErrorSchema)(encoded).message,
+        "connection refused"
+      )
+    })
+  })
+
   it.effect("preserves the response stream after JSON serialization", () =>
     Effect.gen(function*() {
       const response = HttpClientResponse.fromWeb(
@@ -595,6 +625,18 @@ Missing key
         assert.strictEqual(typeof request.headers.traceparent, "string")
       }))
 
+    it.effect("omits trace headers when tracing is disabled", () =>
+      Effect.gen(function*() {
+        const { client, sent } = makeCapturingClient()
+
+        yield* client.get("http://test/").pipe(Effect.withTracerEnabled(false))
+
+        const request = sent()
+        assert(request !== undefined)
+        assert.isUndefined(request.headers.b3)
+        assert.isUndefined(request.headers.traceparent)
+      }))
+
     it.effect("omits trace headers when propagation is disabled and keeps the client span", () =>
       Effect.gen(function*() {
         const { client, sent } = makeCapturingClient()
@@ -665,6 +707,135 @@ Missing key
 
         strictEqual(error.message, "Transport error (GET http://test/path?token=REDACTED&sig=sig-visible)")
       }).pipe(Effect.provideService(UrlParams.CurrentRedactedNames, ["token"])))
+
+    it.effect("redacts query params using the redacted names active when the error is created", () =>
+      Effect.gen(function*() {
+        const request = HttpClientRequest.get("http://test/path?token=token-secret")
+        const error = yield* Effect.sync(() =>
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({ request })
+          })
+        ).pipe(Effect.provideService(UrlParams.CurrentRedactedNames, ["token"]))
+
+        strictEqual(error.message, "Transport error (GET http://test/path?token=REDACTED)")
+        assert.notInclude(JSON.stringify(error), "token-secret")
+      }))
+    it.live("keeps the redaction of an earlier execution when the request is reused", () =>
+      Effect.gen(function*() {
+        // Fails from a timer callback, outside the request fiber, like native
+        // transports do.
+        const client = HttpClient.make((request) =>
+          Effect.callback<never, HttpClientError.HttpClientError>((resume) => {
+            setTimeout(() =>
+              resume(Effect.fail(
+                new HttpClientError.HttpClientError({
+                  reason: new HttpClientError.TransportError({ request })
+                })
+              )), 0)
+          })
+        )
+        const request = HttpClientRequest.get("http://test/path?token=token-secret")
+        const message = "Transport error (GET http://test/path?token=REDACTED)"
+
+        const error = yield* client.execute(request).pipe(
+          Effect.flip,
+          Effect.provideService(UrlParams.CurrentRedactedNames, ["token"])
+        )
+        strictEqual(error.message, message)
+
+        yield* client.execute(request).pipe(Effect.flip)
+
+        strictEqual(error.message, message)
+        assert.notInclude(JSON.stringify(error), "token-secret")
+      }).pipe(Effect.provideService(HttpClient.TracerPropagationEnabled, false)))
+
+    it.live("adds the redacted names of the fiber that renders the error", () =>
+      Effect.gen(function*() {
+        const client = HttpClient.make((request) =>
+          Effect.callback<never, HttpClientError.HttpClientError>((resume) => {
+            setTimeout(() =>
+              resume(Effect.fail(
+                new HttpClientError.HttpClientError({
+                  reason: new HttpClientError.TransportError({ request })
+                })
+              )), 0)
+          })
+        )
+        const error = yield* client.get("http://test/path?token=token-secret&key=key-secret").pipe(
+          Effect.flip,
+          Effect.provideService(UrlParams.CurrentRedactedNames, ["token"])
+        )
+
+        const [message, json] = yield* Effect.sync(() => [error.message, JSON.stringify(error)]).pipe(
+          Effect.provideService(UrlParams.CurrentRedactedNames, ["key"])
+        )
+        strictEqual(message, "Transport error (GET http://test/path?token=REDACTED&key=REDACTED)")
+        assert.notInclude(json, "token-secret")
+        assert.notInclude(json, "key-secret")
+      }))
+
+    it.effect("compares errors equal when only the redacted names of their executions differ", () =>
+      Effect.gen(function*() {
+        const client = HttpClient.make((request) =>
+          Effect.fail(new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request }) }))
+        )
+        const request = HttpClientRequest.get("http://test/path")
+
+        const a = yield* client.execute(request).pipe(
+          Effect.flip,
+          Effect.provideService(UrlParams.CurrentRedactedNames, ["foo"])
+        )
+        const b = yield* client.execute(request).pipe(
+          Effect.flip,
+          Effect.provideService(UrlParams.CurrentRedactedNames, ["bar"])
+        )
+
+        strictEqual(a.message, b.message)
+        assert.isTrue(Equal.equals(a, b))
+        strictEqual(Hash.hash(a), Hash.hash(b))
+      }).pipe(Effect.provideService(HttpClient.TracerPropagationEnabled, false)))
+
+    it.effect("compares errors equal when the names of the fiber that renders them redact them the same", () =>
+      Effect.gen(function*() {
+        const client = HttpClient.make((request) =>
+          Effect.fail(new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request }) }))
+        )
+        const request = HttpClientRequest.get("http://test/path?token=token-secret")
+
+        const a = yield* client.execute(request).pipe(
+          Effect.flip,
+          Effect.provideService(UrlParams.CurrentRedactedNames, ["token"])
+        )
+        const b = yield* client.execute(request).pipe(
+          Effect.flip,
+          Effect.provideService(UrlParams.CurrentRedactedNames, [])
+        )
+
+        yield* Effect.sync(() => {
+          strictEqual(a.message, b.message)
+          assert.isTrue(Equal.equals(a, b))
+          strictEqual(Hash.hash(a), Hash.hash(b))
+        }).pipe(Effect.provideService(UrlParams.CurrentRedactedNames, ["token"]))
+      }).pipe(Effect.provideService(HttpClient.TracerPropagationEnabled, false)))
+
+    it.effect("keeps the redaction of an earlier execution when the runner returns the same response", () =>
+      Effect.gen(function*() {
+        const request = HttpClientRequest.get("http://test/path?token=token-secret&key=key-secret")
+        const response = HttpClientResponse.fromWeb(request, new Response("not-json"))
+        const client = HttpClient.make(() => Effect.succeed(response))
+
+        const first = yield* client.execute(request).pipe(
+          Effect.provideService(UrlParams.CurrentRedactedNames, ["token"])
+        )
+        yield* client.execute(request).pipe(
+          Effect.provideService(UrlParams.CurrentRedactedNames, ["key"])
+        )
+        const error = yield* Effect.flip(first.json)
+
+        strictEqual(error.reason._tag, "DecodeError")
+        assert.notInclude(error.message, "token-secret")
+        assert.notInclude(JSON.stringify(error), "token-secret")
+      }))
   })
 
   describe("followRedirects", () => {
@@ -2399,6 +2570,74 @@ Missing key
       const signal = yield* Deferred.await(started)
       assert.isFalse(signal.aborted)
       yield* Scope.close(scope, Exit.void)
+      assert.isTrue(signal.aborted)
+    }))
+
+  it.effect("keeps a redirect scoped when withScope is applied outside followRedirects", () =>
+    Effect.gen(function*() {
+      const final = yield* Deferred.make<AbortSignal>()
+      const client = HttpClient.make((request, _url, signal) =>
+        request.url.endsWith("/start")
+          ? Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(null, { status: 302, headers: { location: "/final" } }))
+          )
+          : Effect.andThen(Deferred.succeed(final, signal), Effect.never)
+      ).pipe(
+        HttpClient.followRedirects(),
+        HttpClient.withScope
+      )
+
+      const scope = yield* Scope.make()
+      yield* client.get("https://origin.test/start").pipe(Scope.provide(scope), Effect.forkChild)
+      const signal = yield* Deferred.await(final)
+      assert.isFalse(signal.aborted)
+      yield* Scope.close(scope, Exit.void)
+      assert.isTrue(signal.aborted)
+    }))
+
+  it.effect("keeps separate withScope owners for concurrent runs of one response effect", () =>
+    Effect.gen(function*() {
+      const signals = new Map<number, AbortSignal>()
+      const dispatched = yield* Deferred.make<void>()
+      const arrived = yield* Ref.make(0)
+      const bothArrived = yield* Deferred.make<void>()
+      const client = HttpClient.make((_request, _url, signal, fiber) => {
+        signals.set(fiber.id, signal)
+        return Effect.andThen(signals.size === 2 ? Deferred.succeed(dispatched, void 0) : Effect.void, Effect.never)
+      }).pipe(
+        // Hold both runs between withScope and dispatch until both have entered
+        HttpClient.transformResponse((effect) =>
+          Ref.updateAndGet(arrived, (n) => n + 1).pipe(
+            Effect.flatMap((n) => n === 2 ? Deferred.succeed(bothArrived, void 0) : Effect.void),
+            Effect.andThen(Deferred.await(bothArrived)),
+            Effect.andThen(effect)
+          )
+        ),
+        HttpClient.withScope
+      )
+      const effect = client.get("https://origin.test/slow")
+
+      const scopeA = yield* Scope.make()
+      const scopeB = yield* Scope.make()
+      const fiberA = yield* effect.pipe(Scope.provide(scopeA), Effect.forkChild)
+      const fiberB = yield* effect.pipe(Scope.provide(scopeB), Effect.forkChild)
+      yield* Deferred.await(dispatched)
+      yield* Scope.close(scopeA, Exit.void)
+      assert.isTrue(signals.get(fiberA.id)!.aborted)
+      assert.isFalse(signals.get(fiberB.id)!.aborted)
+    }))
+
+  it.effect("aborts a withScope request interrupted before its response", () =>
+    Effect.gen(function*() {
+      const started = yield* Deferred.make<AbortSignal>()
+      const client = HttpClient.make((_request, _url, signal) =>
+        Effect.andThen(Deferred.succeed(started, signal), Effect.never)
+      ).pipe(HttpClient.withScope)
+
+      const scope = yield* Scope.make()
+      const fiber = yield* client.get("https://origin.test/slow").pipe(Scope.provide(scope), Effect.forkChild)
+      const signal = yield* Deferred.await(started)
+      yield* Fiber.interrupt(fiber)
       assert.isTrue(signal.aborted)
     }))
 

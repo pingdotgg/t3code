@@ -350,7 +350,7 @@ const EnvironmentLinkTool = Tool.make("t3_environment_link", {
 
 const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
   description:
-    "Forget a linked environment. That machine's Connections list its session until revoked there.",
+    "Forget a linked environment. Its session on that machine ends too when the machine answers.",
   parameters: OrchestratorMcpEnvironmentUnlinkInput,
   success: OrchestratorMcpEnvironmentUnlinkResult,
   failure: OrchestratorMcpFailure,

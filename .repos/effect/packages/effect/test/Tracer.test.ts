@@ -403,10 +403,10 @@ describe("Tracer", () => {
       )
     }
 
-    it.effect("marks an empty cause Ok without a description", () =>
+    it.effect("leaves an empty cause Unset without a description", () =>
       Effect.gen(function*() {
         const span = yield* exportSpan(Exit.failCause(Cause.empty))
-        deepStrictEqual(span.status, { code: 1 })
+        deepStrictEqual(span.status, { code: 0 })
         deepStrictEqual(span.events, [])
         deepStrictEqual(span.attributes, [])
       }))
@@ -422,7 +422,7 @@ describe("Tracer", () => {
     it.effect("exports a span once when end is called again", () =>
       Effect.gen(function*() {
         const span = yield* exportSpan(Exit.void, (span) => span.end(span.status.startTime + 2n, Exit.fail("late")))
-        deepStrictEqual(span.status, { code: 1 })
+        deepStrictEqual(span.status, { code: 0 })
       }))
   })
 

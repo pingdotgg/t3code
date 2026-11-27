@@ -6,6 +6,7 @@ import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   capClaudeCatalogEffort,
   type ClaudeModelCatalog,
+  claudeReportedModels,
   formatClaudeVersionUpgradeMessage,
   getClaudeCatalogModelCapabilities,
   normalizeClaudeCatalogEffort,
@@ -17,6 +18,7 @@ import {
   resolveClaudeModelSlug,
   resolveClaudeUpdateRequiredModels,
   scopeClaudeModelCatalog,
+  scopeClaudeUpgradeMessageToChannel,
   withClaudeCodeModelRoutes,
 } from "./ClaudeModelCatalog.ts";
 
@@ -137,6 +139,30 @@ describe("Claude model catalog", () => {
       formatClaudeVersionUpgradeMessage(catalog, "3.1.9"),
       "Claude Code v3.1.9 is too old for Claude Synthetic Next. Upgrade to v3.2.0 or newer to access it.",
     );
+    // A Homebrew cask that still ships 3.1.9 cannot deliver the upgrade the check asked for.
+    const probed = {
+      version: "3.1.9",
+      message: formatClaudeVersionUpgradeMessage(catalog, "3.1.9"),
+      versionAdvisory: { latestVersion: "3.1.9", updateCommand: "brew upgrade --cask claude-code" },
+    };
+    assert.strictEqual(
+      scopeClaudeUpgradeMessageToChannel(catalog, probed).message,
+      "Claude Code v3.1.9 is too old for Claude Synthetic Next, which needs v3.2.0 or newer, but the claude-code Homebrew cask only has v3.1.9. Switch to the claude-code@latest cask: brew uninstall --cask claude-code && brew install --cask claude-code@latest",
+    );
+    assert.strictEqual(
+      scopeClaudeUpgradeMessageToChannel(catalog, {
+        ...probed,
+        versionAdvisory: { latestVersion: "3.1.9", updateCommand: null },
+      }).message,
+      "Claude Code v3.1.9 is too old for Claude Synthetic Next, which needs v3.2.0 or newer, but the newest version this install can update to is v3.1.9. Install Claude Code another way or wait for a newer release.",
+    );
+    assert.strictEqual(
+      scopeClaudeUpgradeMessageToChannel(catalog, {
+        ...probed,
+        versionAdvisory: { ...probed.versionAdvisory, latestVersion: "3.2.0" },
+      }).message,
+      probed.message,
+    );
     // Claude Code before 2.1.321 does not know claude-fable-5-2 and runs it with a 200K window.
     assert.notInclude(
       resolveClaudeModelsForVersion(BUNDLED_CLAUDE_MODEL_CATALOG, "2.1.320").map(
@@ -181,6 +207,52 @@ describe("Claude model catalog", () => {
       "claude-synthetic-next[large]",
     );
   });
+
+  it("counts a configured gateway alias as reported even when it resolves to a catalog model", () => {
+    const catalog = catalogFromManifest(manifest());
+    const reported = [
+      {
+        value: "gateway/current[1m]",
+        resolvedModel: "claude-synthetic-next",
+        displayName: "Current",
+        description: "",
+      },
+    ];
+
+    assert.deepStrictEqual(claudeReportedModels(catalog, ["GATEWAY/current"], reported), {
+      models: [],
+      hasNonCatalogModels: true,
+    });
+    assert.deepStrictEqual(claudeReportedModels(catalog, [], reported), {
+      models: [],
+      hasNonCatalogModels: false,
+    });
+  });
+
+  it.each([
+    ["synthetic", "gateway/current", ["synthetic"], true],
+    ["synthetic", "gateway/current", ["gateway/current"], true],
+    ["synthetic", "gateway/current", [], false],
+    ["synthetic", "", ["synthetic"], false],
+    ["synthetic", "SYNTHETIC[1m]", ["synthetic"], false],
+    ["synthetic", "claude-synthetic-next", ["synthetic"], false],
+    ["synthetic", "global.anthropic.claude-synthetic-next-v1:0[1m]", ["synthetic"], false],
+    ["sonnet", "gateway/current", ["sonnet"], false],
+    ["sonnet", "gateway/current", ["gateway/current"], false],
+    ["sonnet", "global.anthropic.claude-sonnet-5-5[1m]", ["sonnet"], false],
+  ])(
+    "checks gateway inventory for %s resolving to %s with custom models %j",
+    (value, resolvedModel, customModels, hasNonCatalogModels) => {
+      const catalog =
+        value === "sonnet" ? BUNDLED_CLAUDE_MODEL_CATALOG : catalogFromManifest(manifest());
+      const reported = [{ value, resolvedModel, displayName: "", description: "" }];
+
+      assert.deepStrictEqual(claudeReportedModels(catalog, customModels, reported), {
+        models: [],
+        hasNonCatalogModels,
+      });
+    },
+  );
 
   it("appends custom models with their own descriptors and keeps bare slugs opaque", () => {
     const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [

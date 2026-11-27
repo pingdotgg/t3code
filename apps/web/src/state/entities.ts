@@ -76,6 +76,9 @@ const EMPTY_ASSISTANT_MESSAGE_TEXT_ATOM = Atom.make<string | null>(null).pipe(
 const EMPTY_LAST_VISITED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
   Atom.withLabel("web-thread-last-visited:empty"),
 );
+const EMPTY_THREAD_ERROR_ATOM = Atom.make<string | null>(null).pipe(
+  Atom.withLabel("web-thread-error:empty"),
+);
 const EMPTY_UPDATED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
   Atom.withLabel("web-thread-updated-at:empty"),
 );
@@ -211,6 +214,12 @@ export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadS
   );
 }
 
+export function useThreadError(ref: ScopedThreadRef | null): string | null {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_ERROR_ATOM : environmentThreadDetails.errorAtom(ref),
+  );
+}
+
 export function useThreadHistory(ref: ScopedThreadRef | null): ThreadHistoryMeta {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_HISTORY_ATOM : environmentThreadDetails.historyAtom(ref),
@@ -296,6 +305,12 @@ export function readProjects(): ReadonlyArray<EnvironmentProject> {
   return appAtomRegistry.get(environmentProjects.projectsAtom);
 }
 
+export function subscribeProjects(
+  listener: (projects: ReadonlyArray<EnvironmentProject>) => void,
+): () => void {
+  return appAtomRegistry.subscribe(environmentProjects.projectsAtom, listener);
+}
+
 export function waitForProject(
   ref: ScopedProjectRef,
   timeoutMs = 10_000,
@@ -347,6 +362,19 @@ export function waitForThreadShell(ref: ScopedThreadRef, timeoutMs = 5_000): Pro
     registry: appAtomRegistry,
     atom: environmentThreadShells.threadShellAtom(ref),
     predicate: (thread) => thread !== null,
+    timeoutMs,
+  });
+}
+
+/** Waits for removal from the live store; delete replies arrive before the shell stream. */
+export function waitForThreadShellRemoval(
+  ref: ScopedThreadRef,
+  timeoutMs = 5_000,
+): Promise<boolean> {
+  return waitForAtomValue({
+    registry: appAtomRegistry,
+    atom: environmentThreadShells.threadShellAtom(ref),
+    predicate: (thread) => thread === null,
     timeoutMs,
   });
 }

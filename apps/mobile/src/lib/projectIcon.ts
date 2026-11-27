@@ -1,6 +1,7 @@
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { ProjectIconColor, type ProjectIconOverride } from "@t3tools/contracts";
 import { isProjectFaviconFallbackUrl } from "@t3tools/shared/projectFavicon";
+import { projectMonogram } from "@t3tools/shared/projectMonogram";
 import type { AppSymbolName } from "../components/ui/AppSymbol";
 
 export type ProjectIconGlyph =
@@ -10,24 +11,6 @@ export type ProjectIconGlyph =
 /** Hermes lacks Intl.Segmenter; fold combining marks into base characters instead. */
 export function countGlyphs(text: string): number {
   return Array.from(text.replace(/\p{M}/gu, "")).length;
-}
-
-function projectMonogram(projectName: string): string {
-  const words =
-    projectName
-      .normalize("NFKC")
-      .trim()
-      .match(/[\p{L}\p{N}]+/gu) ?? [];
-  const firstWord = words[0];
-  if (!firstWord) return "PR";
-
-  const glyphs = Array.from(firstWord);
-  const first = glyphs[0] ?? "P";
-  const second =
-    glyphs.slice(1).find((glyph) => /\p{N}/u.test(glyph)) ??
-    (words.length > 1 ? Array.from(words.at(-1) ?? "")[0] : glyphs.at(-1)) ??
-    first;
-  return Array.from(`${first}${second}`.toUpperCase()).slice(0, 2).join("");
 }
 
 function projectMonogramColor(projectName: string): ProjectIconColor {

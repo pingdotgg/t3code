@@ -161,6 +161,16 @@ describe("OpenApiPatch", () => {
         assert.deepStrictEqual(result, { a: 1 })
       }).pipe(Effect.provide(testLayer)))
 
+    it.effect("rejects a move from an array's length to itself", () =>
+      Effect.gen(function*() {
+        const path = "/items/length"
+        const error = yield* Effect.flip(OpenApiPatch.applyPatches(
+          [{ source: "inline", patch: [{ op: "move", from: path, path }] }],
+          { items: ["first"] }
+        ))
+        assert.include(error.message, `Path ${path} does not exist`)
+      }))
+
     it.effect("applies single add patch", () =>
       Effect.gen(function*() {
         const document = { info: { title: "Test" } }

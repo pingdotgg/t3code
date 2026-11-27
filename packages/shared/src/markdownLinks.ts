@@ -37,7 +37,7 @@ const INLINE_CODE_WHITESPACE_PATTERN = /\s/;
 // `/Users/me/Mobile Documents/a - b.md` is, `/usr/bin/python3 -m venv .venv` (a flag) is not.
 // A space only in the last segment reads as a command (`/usr/local/bin/node server.js`), so it
 // must sit under a user root, and nothing after a bin folder counts.
-const SPACED_ABSOLUTE_PATH_ROOT_PATTERN = /^(?:\/|~\/|[A-Za-z]:[\\/])/;
+const SPACED_ABSOLUTE_PATH_ROOT_PATTERN = /^(?:\/|~\/|[A-Za-z]:[\\/]|\\\\)/;
 const SPACED_PATH_BODY_PATTERN =
   /^(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: (?!-+\p{L})[\p{L}\p{M}\p{N}._$+@()[\]-]+)*(?:[\\/]|$))+$/u;
 
@@ -50,6 +50,7 @@ function isSpacedAbsoluteFilePath(text: string): boolean {
   const foldersBeforeSpace = body.slice(0, firstSpace).split(PATH_SEPARATOR_PATTERN).slice(0, -1);
   if (foldersBeforeSpace.some((folder) => folder === "bin" || folder === "sbin")) return false;
   const spaceInFolder = PATH_SEPARATOR_PATTERN.test(body.slice(firstSpace));
+  if (root === "\\\\" && foldersBeforeSpace.length < (spaceInFolder ? 1 : 2)) return false;
   if (!spaceInFolder && root === "/" && !/^(?:Users|home)[\\/]/.test(body)) return false;
   if (PATH_SEPARATOR_PATTERN.test(body.at(-1) ?? "")) return true;
   const basename = body.split(PATH_SEPARATOR_PATTERN).at(-1) ?? "";
@@ -201,7 +202,7 @@ function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
 
 export function inlineCodeFilePathCandidate(codeText: string): string | null {
   const trimmed = codeText.trim();
-  if (trimmed.length === 0 || trimmed.includes("`")) return null;
+  if (trimmed.length === 0 || trimmed.includes("`") || /[<>]/.test(trimmed)) return null;
   if (INLINE_CODE_WHITESPACE_PATTERN.test(trimmed) && !isSpacedAbsoluteFilePath(trimmed)) {
     return null;
   }
@@ -356,22 +357,39 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   if (!destination) return false;
   const normalize = (path: string) =>
     path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
-  const labelPosition = splitFilePathPosition(label.trim());
-  if (
-    (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
-    (labelPosition.column !== undefined && labelPosition.column !== destination.column) ||
-    (labelPosition.endLine !== undefined && labelPosition.endLine !== destination.endLine)
-  ) {
-    return false;
+  const trimmed = label.trim();
+  const isWindowsDestination = isWindowsAbsolutePath(destination.path);
+  const destinationPath = isWindowsDestination
+    ? normalize(destination.path).toLowerCase()
+    : normalize(destination.path);
+  const matchesLabelPosition = (labelPosition: FilePathPosition): boolean => {
+    if (
+      (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
+      (labelPosition.column !== undefined && labelPosition.column !== destination.column) ||
+      (labelPosition.endLine !== undefined && labelPosition.endLine !== destination.endLine)
+    ) {
+      return false;
+    }
+    let labelPath = normalize(labelPosition.path);
+    if (labelPath.length === 0) return true;
+    if (isWindowsDestination) {
+      labelPath = labelPath.toLowerCase();
+    }
+    return destinationPath === labelPath || destinationPath.endsWith(`/${labelPath}`);
+  };
+  const hashIndex = trimmed.lastIndexOf("#");
+  if (hashIndex >= 0) {
+    const path = trimmed.slice(0, hashIndex);
+    const anchored = splitFilePathPosition(path, trimmed.slice(hashIndex));
+    // A `:line` suffix before the hash wins in splitFilePathPosition; only a position from the anchor counts here.
+    if (anchored.line !== undefined && anchored.path === path && matchesLabelPosition(anchored)) {
+      return true;
+    }
   }
-  let labelPath = normalize(labelPosition.path);
-  let destinationPath = normalize(destination.path);
-  if (labelPath.length === 0) return true;
-  if (isWindowsAbsolutePath(destination.path)) {
-    labelPath = labelPath.toLowerCase();
-    destinationPath = destinationPath.toLowerCase();
-  }
-  return destinationPath === labelPath || destinationPath.endsWith(`/${labelPath}`);
+  return (
+    matchesLabelPosition(splitFilePathPosition(trimmed)) ||
+    (trimmed.length > 0 && matchesLabelPosition(splitFilePathPosition(label)))
+  );
 }
 
 export function isRelativeFilePath(path: string): boolean {
@@ -386,7 +404,7 @@ function looksLikePosixFilesystemPath(path: string): boolean {
   if (POSIX_FILE_ROOT_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
   if (POSITION_SUFFIX_PATTERN.test(path)) return true;
   const basename = path.slice(path.lastIndexOf("/") + 1);
-  return EXTENSIONLESS_FILE_NAMES.has(basename) || FILE_EXTENSION_PATTERN.test(basename);
+  return EXTENSIONLESS_FILE_NAMES.has(basename) || FILE_EXTENSION_PATTERN.test(basename.trimEnd());
 }
 
 function looksLikeFilePath(path: string, authoredPath: string): boolean {
@@ -405,11 +423,31 @@ function hasExternalScheme(path: string): boolean {
   return !POSITION_ONLY_PATTERN.test(rest);
 }
 
+export function parseMarkdownSandboxFileLink(href: string): FilePathPosition | null {
+  const prefix = /^sandbox:(?=\/)/i.exec(href);
+  if (!prefix) return null;
+
+  const source = splitMarkdownLinkSearchAndHash(href.slice(prefix[0].length));
+  const path = safeDecodeURIComponent(source.path);
+  // A sandbox URI names a local file on the thread host, never a network share.
+  if (path.length < 2 || isNetworkPath(path) || path.includes("\0") || /[\t\r\n]/.test(path)) {
+    return null;
+  }
+  const position = splitFilePathPosition(
+    stripSlashPrefixedWindowsDrive(path),
+    safeDecodeURIComponent(source.hash),
+  );
+  return ELIDED_PATH_SEGMENT_PATTERN.test(position.path) ? null : position;
+}
+
 export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   const normalized = normalizeMarkdownLinkDestination(href);
   if (normalized.length === 0 || normalized.startsWith("#") || normalized.startsWith("//")) {
     return null;
   }
+
+  const sandboxFile = parseMarkdownSandboxFileLink(normalized);
+  if (sandboxFile) return sandboxFile;
 
   const source =
     (normalized.toLowerCase().startsWith("file:") ? parseFileUrlHref(normalized) : null) ??
@@ -434,15 +472,44 @@ function parseFilePathLink(path: string, hash: string): FilePathPosition | null 
 
 const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
 
-const INLINE_CODE_SPAN_PATTERN = /`([^`\n]+)`/g;
+const BACKTICK_RUN_PATTERN = /`+/g;
 
 export function extractInlineCodeSpans(text: string): string[] {
   const spans: string[] = [];
   const segments = text.split(FENCED_CODE_SEGMENT_PATTERN);
   for (let index = 0; index < segments.length; index += 2) {
-    for (const match of (segments[index] ?? "").matchAll(INLINE_CODE_SPAN_PATTERN)) {
-      const span = match[1]?.trim();
-      if (span) spans.push(span);
+    const segment = segments[index] ?? "";
+    if (!segment.includes("`")) continue;
+    for (const line of segment.split("\n")) {
+      const runs = line.includes("`") ? [...line.matchAll(BACKTICK_RUN_PATTERN)] : [];
+      if (runs.length < 2) continue;
+      const runsByLength = new Map<number, number[]>();
+      for (const [i, run] of runs.entries()) {
+        const indexes = runsByLength.get(run[0].length);
+        if (indexes) indexes.push(i);
+        else runsByLength.set(run[0].length, [i]);
+      }
+      const cursorByLength = new Map<number, number>();
+      let textStart = 0;
+      for (let i = 0; i < runs.length; i += 1) {
+        const run = runs[i]!;
+        let backslashes = 0;
+        while (run.index - backslashes > textStart && line[run.index - backslashes - 1] === "\\") {
+          backslashes += 1;
+        }
+        // An escaped backtick is literal outside code spans; only closers keep backslashes literal.
+        const length = run[0].length - (backslashes % 2);
+        const candidates = runsByLength.get(length) ?? [];
+        let cursor = cursorByLength.get(length) ?? 0;
+        while (cursor < candidates.length && candidates[cursor]! <= i) cursor += 1;
+        cursorByLength.set(length, cursor);
+        const close = candidates[cursor];
+        if (length === 0 || close === undefined) continue;
+        const span = line.slice(run.index + run[0].length, runs[close]!.index).trim();
+        if (span) spans.push(span);
+        i = close;
+        textStart = runs[close]!.index + runs[close]![0].length;
+      }
     }
   }
   return spans;
@@ -455,21 +522,30 @@ function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
     if (start >= runStart && start <= runEnd) return runEnd;
     delimiter.lastIndex = start;
     runStart = start;
-    runEnd = delimiter.exec(markdown)?.index ?? markdown.length;
+    let match = delimiter.exec(markdown);
+    while (match?.[0].length === 2 && match[0][0] === "\\") match = delimiter.exec(markdown);
+    runEnd = match?.index ?? markdown.length;
     return runEnd;
   };
 }
 
 function markdownLinkTailScanner(markdown: string) {
-  const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
-  const titleEnd = markdownRunEndFinder(markdown, /["']/g);
-  const titleWhitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
+  // A blank line ends the paragraph, so no part of a link's tail runs past one.
+  const whitespaceEnd = markdownRunEndFinder(markdown, /\S|\n[ \t\r]*\n/g);
+  // Escape pairs (`\"`, `\\`) match so the finder can skip them.
+  const doubleQuoteEnd = markdownRunEndFinder(markdown, /\\[\\"]|"|\n[ \t\r]*\n/g);
+  const singleQuoteEnd = markdownRunEndFinder(markdown, /\\[\\']|'|\n[ \t\r]*\n/g);
+  const parenthesisEnd = markdownRunEndFinder(markdown, /\\[\\()]|[()]|\n[ \t\r]*\n/g);
+  const titleWhitespaceEnd = markdownRunEndFinder(markdown, /\S|\n[ \t\r]*\n/g);
   return (start: number) => {
     const end = whitespaceEnd(start);
-    if (markdown[end] === ")") return end + 1;
-    if (end === start || (markdown[end] !== '"' && markdown[end] !== "'")) return null;
+    const quote = markdown[end];
+    if (quote === ")") return end + 1;
+    if (end === start || (quote !== '"' && quote !== "'" && quote !== "(")) return null;
+    const titleEnd =
+      quote === '"' ? doubleQuoteEnd : quote === "'" ? singleQuoteEnd : parenthesisEnd;
     const quoteEnd = titleEnd(end + 1);
-    if (quoteEnd === markdown.length) return null;
+    if (markdown[quoteEnd] !== (quote === "(" ? ")" : quote)) return null;
     const close = titleWhitespaceEnd(quoteEnd + 1);
     return markdown[close] === ")" ? close + 1 : null;
   };
@@ -501,7 +577,7 @@ function bareMarkdownLinkDestinationEnd(markdown: string, start: number): number
 
 function markdownLinkDestinationScanner(markdown: string) {
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
-  const angleEnd = markdownRunEndFinder(markdown, /[>\n]/g);
+  const angleEnd = markdownRunEndFinder(markdown, /\\[\\<>]|[<>\r\n]/g);
   // Separate caches keep scans moving forward when angle destinations fall back to bare ones.
   const angleTail = markdownLinkTailScanner(markdown);
   const bareTail = markdownLinkTailScanner(markdown);
@@ -516,41 +592,36 @@ function markdownLinkDestinationScanner(markdown: string) {
       }
     }
     const hrefEnd = bareMarkdownLinkDestinationEnd(markdown, hrefStart);
-    if (hrefEnd === null || hrefEnd === hrefStart) return null;
+    if (hrefEnd === null) return null;
     const end = bareTail(hrefEnd);
     return end === null ? null : { hrefStart, hrefEnd, end };
   };
 }
 
-// The composer escapes brackets in labels (`[\[id\].tsx](...)`), and `\]` does not close one.
-function unescapedLabelEnd(markdown: string, start: number): number {
-  let end = markdown.indexOf("]", start);
-  while (end !== -1) {
-    let backslashes = 0;
-    while (end - backslashes > start && markdown[end - backslashes - 1] === "\\") backslashes += 1;
-    if (backslashes % 2 === 0) return end;
-    end = markdown.indexOf("]", end + 1);
-  }
-  return -1;
-}
-
+// Labels may nest balanced brackets (`[the [docs] guide](...)`), and the composer escapes them
+// (`[\[id\].tsx](...)`), so `\[` and `\]` never count. A blank line ends the paragraph and its labels.
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
-  let cursor = 0;
-  while (cursor < markdown.length) {
-    const labelStart = markdown.indexOf("[", cursor);
-    if (labelStart === -1) break;
-    const labelEnd = unescapedLabelEnd(markdown, labelStart + 1);
-    if (labelEnd === -1) break;
-
-    // Skip a failed label once; nested openings share its closing bracket.
-    cursor = labelEnd + 1;
-    const destination = scanDestination(cursor);
-    if (!destination) continue;
-    cursor = destination.end;
-    const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
-    if (href) hrefs.push(href);
+  const bracket = /!\[|[[\]\\]|\n[ \t\r]*\n/g;
+  const openers: boolean[] = [];
+  for (let match = bracket.exec(markdown); match; match = bracket.exec(markdown)) {
+    if (match[0] === "\\") {
+      bracket.lastIndex = match.index + 2;
+    } else if (match[0].startsWith("\n")) {
+      openers.length = 0;
+    } else if (match[0].endsWith("[")) {
+      openers.push(match[0] === "![");
+    } else if (openers.length > 0) {
+      const image = openers.pop();
+      const destination = scanDestination(match.index + 1);
+      if (!destination) continue;
+      // A link cannot contain a link, but it can contain an image.
+      if (!image) openers.length = 0;
+      bracket.lastIndex = destination.end;
+      const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
+      if (href) hrefs.push(href);
+    }
   }
   return hrefs;
 }
@@ -648,3 +719,6 @@ export function absoluteFilePathMatches(text: string): Array<{ index: number; pa
   }
   return paths;
 }
+
+// A drive path that has not reached whitespace yet: `C:`, `C:\Users\me`, `C:/work`.
+export const UNFINISHED_DRIVE_PATH = /(?:^|\W)[A-Za-z]:(?:[\\/]\S*)?$/;

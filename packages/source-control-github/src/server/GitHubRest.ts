@@ -39,6 +39,8 @@ export interface GitHubRestInput {
   /** Revalidate cached answers; 304 returns successfully without spending quota. */
   readonly ifNoneMatch?: string;
   readonly maxResponseBytes?: number;
+  /** Use the status and headers for a success, but still read error bodies. */
+  readonly discardSuccessBody?: boolean;
   /** Defaults to 30 seconds; a whole pull request's patch may need longer. */
   readonly timeout?: Duration.Input;
   /** Overrides `SourceControlRateLimit.Interactive` for this one request. */
@@ -114,6 +116,7 @@ function classify(input: {
 /** @public */
 export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
+  const scopedClient = HttpClient.withScope(httpClient);
   const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
 
   const send = Effect.fn("GitHubRest.send")(function* (input: {
@@ -124,6 +127,7 @@ export const make = Effect.gen(function* () {
     readonly timeout?: Duration.Input | undefined;
     readonly allowReserve: boolean;
     readonly acceptNotModified: boolean;
+    readonly discardSuccessBody: boolean;
   }) {
     const host = normalizeHost(input.host);
     // Query strings can expose SHAs or branches in traces.
@@ -143,22 +147,27 @@ export const make = Effect.gen(function* () {
       },
       (headers) =>
         Effect.gen(function* () {
-          const response: HttpClientResponse.HttpClientResponse = yield* httpClient
+          const client = input.discardSuccessBody ? scopedClient : httpClient;
+          const response: HttpClientResponse.HttpClientResponse = yield* client
             .execute(input.request.pipe(HttpClientRequest.setHeaders(headers)))
             .pipe(
               // Client spans expose SHAs and branches through url.full/url.query.
               Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
             );
-          const collected = yield* collectUint8StreamText({
-            stream: response.stream,
-            maxBytes: input.maxResponseBytes,
-          }).pipe(
-            Effect.catchIf(
-              (error) => error.reason._tag === "EmptyBodyError",
-              () => Effect.succeed({ text: "", truncated: false, invalidUtf8: false }),
-            ),
-          );
           const { status, headers: responseHeaders } = response;
+          const emptyBody = { text: "", truncated: false, invalidUtf8: false };
+          const collected =
+            input.discardSuccessBody && status >= 200 && status < 300
+              ? emptyBody
+              : yield* collectUint8StreamText({
+                  stream: response.stream,
+                  maxBytes: input.maxResponseBytes,
+                }).pipe(
+                  Effect.catchIf(
+                    (error) => error.reason._tag === "EmptyBodyError",
+                    () => Effect.succeed(emptyBody),
+                  ),
+                );
           const answer = {
             status,
             headers: responseHeaders,
@@ -168,6 +177,7 @@ export const make = Effect.gen(function* () {
           };
           return classify({ answer, acceptNotModified: input.acceptNotModified });
         }).pipe(
+          Effect.scoped,
           Effect.mapError(
             (cause) =>
               new GitHubRequestPolicy.GitHubApiRequestError({
@@ -203,6 +213,7 @@ export const make = Effect.gen(function* () {
           timeout: input.timeout,
           allowReserve: input.allowReserve ?? interactive,
           acceptNotModified: input.ifNoneMatch !== undefined,
+          discardSuccessBody: input.discardSuccessBody === true,
         }),
       ),
     );
