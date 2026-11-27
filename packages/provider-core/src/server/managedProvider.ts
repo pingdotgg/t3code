@@ -456,7 +456,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             : restore(
                 checkUsageLimits
                   ? usageRefreshSemaphore.withPermits(1)(
-                      release.pipe(Effect.andThen(applyUsageLimitsProbe(checkUsageLimits))),
+                      release.pipe(
+                        Effect.andThen(Effect.asVoid(applyUsageLimitsProbe(checkUsageLimits))),
+                      ),
                     )
                   : refreshSemaphore.withPermits(1)(
                       release.pipe(
