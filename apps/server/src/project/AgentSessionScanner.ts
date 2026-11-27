@@ -1548,14 +1548,14 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const file = yield* fileSystem.open(indexPath, { flag: "r" });
         const size = Number((yield* file.stat).size);
-        const start = Math.max(0, size - MAX_CODEX_SESSION_INDEX_BYTES);
+        const start = Math.max(0, size - MAX_CODEX_SESSION_INDEX_BYTES - 1);
         yield* file.seek(BigInt(start), "start");
         const bytes = yield* file.readAlloc(size - start);
         const contents = Option.match(bytes, {
           onNone: () => "",
           onSome: (value) => new TextDecoder().decode(value),
         });
-        // A tail read can start mid-record.
+        // A tail read starts one byte early so a preceding newline keeps the first complete record.
         return parseCodexThreadNames(
           start > 0 ? contents.slice(contents.indexOf("\n") + 1) : contents,
         );

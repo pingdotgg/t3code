@@ -936,7 +936,7 @@ Third}`;
       )
       .file(
         "book.opf",
-        '<package><manifest><item id="a" href="poster.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+        '<package><manifest><item id="a" href="poster.svg" media-type="image/svg+xml"/><item id="b" href="fallback.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/><itemref idref="b"/></spine></package>',
       )
       .file(
         "poster.svg",
@@ -945,18 +945,32 @@ Third}`;
           <filter id="shadow">
             <feOffset dx="4" dy="4"/>
             <feComponentTransfer><feFuncA type="linear" slope="0.5"/></feComponentTransfer>
+            <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
           </filter>
+          <filter id="drop"><feDropShadow dx="2" dy="2" flood-color="gray" flood-opacity="0.5"/></filter>
+          <filter id="tone"><feFlood flood-color="red"/><feBlend mode="multiply" in="SourceGraphic"/><feImage href="art.png"/></filter>
           <rect width="80" height="80" fill="orange" filter="url(#tint)"/>
         </svg>`,
+      )
+      .file(
+        "fallback.xhtml",
+        '<html><body><p><br></p><svg><filter id="d"><feDropShadow dx="2"/></filter></svg></body></html>',
       );
-    const { html } = await (await openEpub(archive)).page(0);
+    const book = await openEpub(archive);
+    const { html } = await book.page(0);
     expect(html).toContain("<feColorMatrix ");
     expect(html).toContain('color-interpolation-filters="sRGB"');
     expect(html).toContain('values="0.5"');
     expect(html).toContain('<feOffset dx="4" dy="4">');
     expect(html).toContain("<feComponentTransfer><feFuncA ");
     expect(html).toContain('slope="0.5"');
+    expect(html).toContain('<feMerge><feMergeNode></feMergeNode><feMergeNode in="SourceGraphic">');
+    expect(html).toContain('<feDropShadow dx="2" dy="2" flood-color="gray" flood-opacity="0.5">');
+    expect(html).toContain('<feFlood flood-color="red">');
+    expect(html).toContain('<feBlend in="SourceGraphic" mode="multiply">');
+    expect(html).not.toContain("feImage");
     expect(html).toContain('filter="url(#tint)"');
+    expect((await book.page(1)).html).toContain('<feDropShadow dx="2">');
   });
 
   it("keeps embedded raster images in EPUB SVG artwork", async () => {
