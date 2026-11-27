@@ -149,6 +149,7 @@ const TRIGGER_EVENT_TYPES = new Set<OrchestrationV2DomainEvent["type"]>([
   "subagent.updated",
   "provider-thread.updated",
   "thread.archived",
+  "thread.unarchived",
   "thread.deleted",
   "thread.provider-switched",
 ]);
