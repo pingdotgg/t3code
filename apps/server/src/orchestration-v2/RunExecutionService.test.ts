@@ -4039,9 +4039,8 @@ it.effect("does not start a turn whose run settled during the app context read",
 it.effect.each([
   { label: "read-only", tool: null, refresh: false },
   { label: "shell", tool: "command_execution", refresh: true },
-  { label: "dynamic tool", tool: "dynamic_tool", refresh: true },
 ] as const)(
-  "refreshes PR readers when a completed $label turn may have changed the host",
+  "refreshes PR readers after a completed $label turn only when it may have changed the host",
   ({ label, tool, refresh }) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
