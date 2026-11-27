@@ -157,7 +157,13 @@ export function PullRequestFilterSearchScreen({
               isLast={index === rows.length - 1}
               leading={
                 kind === "labels" ? (
-                  <PullRequestLabelDot color={colors[item.toLowerCase()] ?? null} />
+                  <PullRequestLabelDot
+                    color={
+                      Object.hasOwn(colors, item.toLowerCase())
+                        ? (colors[item.toLowerCase()] ?? null)
+                        : null
+                    }
+                  />
                 ) : undefined
               }
               onPress={() => choose(item)}

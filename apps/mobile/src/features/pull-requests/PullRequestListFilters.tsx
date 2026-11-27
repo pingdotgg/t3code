@@ -340,7 +340,8 @@ export function usePullRequestListFilters(props: {
       state: selectedLabels.length ? "off" : "on",
     },
     ...labels.map((label) => {
-      const color = props.labelColors[label.toLowerCase()];
+      const key = label.toLowerCase();
+      const color = Object.hasOwn(props.labelColors, key) ? props.labelColors[key] : undefined;
       return {
         id: id("label", label),
         title: label,
