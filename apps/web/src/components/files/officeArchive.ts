@@ -646,6 +646,11 @@ function wordPartTypes() {
   return {
     roles,
     relationships,
+    svg(path: string) {
+      if (path === "[Content_Types].xml" || path.endsWith(".rels")) return false;
+      const extension = path.split(".").at(-1)?.toLowerCase() ?? "";
+      return /^image\/svg\+xml$/i.test(overrides.get(path) ?? defaults.get(extension) ?? "");
+    },
     binary(path: string) {
       const extension = path.split(".").at(-1)?.toLowerCase() ?? "";
       const type = overrides.get(path) ?? defaults.get(extension) ?? "";
@@ -1207,6 +1212,8 @@ export async function boundedArchive(
         continue;
       }
       costs.set(entry.name, cost);
+      if (roles?.size === 1 && roles.has("image") && partTypes.svg(entry.name))
+        mediaSizes.set(entry.name, Math.ceil((content.length * 4) / 3));
       archive.file(entry.name, xml);
     } else {
       if (input.kind === "docx" && partTypes.roles.get(entry.name)?.has("font")) {
