@@ -6803,11 +6803,13 @@ describe("orchestration v2 provider switching", () => {
           // Compacting the fork's empty native session would summarize nothing.
           assert.isEmpty(yield* forkTurns());
           assert.equal(compacted.runs.at(-1)?.status, "failed");
+          // Shown as a failed compaction, like a provider's own, not as a thread error.
           assert.isTrue(
             compacted.turnItems.some(
-              (item) => item.type === "error" && item.title === "Nothing to compact yet",
+              (item) => item.type === "compaction" && item.status === "failed",
             ),
           );
+          assert.isFalse(compacted.turnItems.some((item) => item.type === "error"));
 
           yield* send(forkThreadId, "next", "Continue", CLAUDE_MODEL_SELECTION);
           yield* settle(forkThreadId);

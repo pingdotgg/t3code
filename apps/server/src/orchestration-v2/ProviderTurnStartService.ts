@@ -582,6 +582,10 @@ export const layer: Layer.Layer<
         readonly item:
           | Pick<Extract<OrchestrationV2TurnItem, { type: "error" }>, "type" | "title" | "failure">
           | Pick<
+              Extract<OrchestrationV2TurnItem, { type: "compaction" }>,
+              "type" | "title" | "driver" | "summary"
+            >
+          | Pick<
               Extract<OrchestrationV2TurnItem, { type: "command_execution" }>,
               "type" | "title" | "input" | "output" | "exitCode"
             >;
@@ -1213,13 +1217,11 @@ export const layer: Layer.Layer<
           providerInstanceId: run.providerInstanceId,
           itemProviderThreadId: providerThread.id,
           item: {
-            type: "error",
+            type: "compaction",
             title: "Nothing to compact yet",
-            failure: makeProviderFailure({
-              class: "validation_error",
-              message:
-                "This thread's earlier conversation reaches the agent with your next message. Send a message before compacting.",
-            }),
+            driver: session.driver,
+            summary:
+              "This thread's earlier conversation reaches the agent with your next message. Send a message before compacting.",
           },
           providerThreadUpdate: {
             ...providerThread,
