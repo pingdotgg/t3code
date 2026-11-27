@@ -1674,3 +1674,103 @@ it("requestSecret delivers a fields card as one file per field", async () => {
     });
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
+
+it("readThread shows the answers submitted to a completed question", async () => {
+  const itemId = TurnItemId.make("turn-item-mcp-answered-question");
+  const projection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
+    visibleTurnItems: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const rows = [
+    {
+      position: 0,
+      visibility: "visible",
+      sourceThreadId: parentThreadId,
+      sourceItemId: itemId,
+      item: {
+        type: "user_input_request",
+        runId: activeRunId,
+        status: "completed",
+        title: null,
+        requestId: "request-mcp-answered-question",
+        questions: [
+          {
+            id: "database",
+            header: "Database",
+            question: "Which database should the service use?",
+            options: [
+              { label: "Postgres", description: "Relational" },
+              { label: "SQLite", description: "Embedded" },
+            ],
+          },
+        ],
+        questionAnswer: {
+          requestId: "request-mcp-answered-question",
+          answers: { database: "SQLite" },
+          attachmentsByQuestionId: {},
+        },
+        updatedAt: now,
+      },
+    },
+  ];
+
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getTimelinePage: () =>
+            Effect.succeed({
+              items: rows as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: rows.length,
+              hasMore: false,
+              hasEarlier: false,
+            }),
+          getThreadRecords: () => Effect.succeed(projection),
+          getProjectThreadRecords: () => Effect.succeed(projection),
+          getRunCount: () => Effect.succeed(projection.runs.length),
+          getThreadShell: () =>
+            Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const result = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      itemId,
+      maxCharsPerItem: 2_000,
+    });
+    const text = result.items[0]?.text ?? "";
+    expect(text).toContain("Which database should the service use?");
+    expect(text).toContain('"database": "SQLite"');
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
