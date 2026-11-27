@@ -60,7 +60,7 @@ export function sanitizeDocumentHtml(source: string): string {
   });
   for (const image of fragment.querySelectorAll("img")) {
     if (
-      !/^data:image\/(png|jpeg|gif|webp);base64,[a-z\d+/]*={0,2}$/i.test(
+      !/^data:image\/(png|jpeg|gif|webp);base64,[a-z\d+/\t\n\f\r ]*(?:=[\t\n\f\r ]*){0,2}$/i.test(
         image.getAttribute("src") ?? "",
       )
     )
