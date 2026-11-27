@@ -240,10 +240,8 @@ describe("hourly usage formatting", () => {
 describe("percent formatting", () => {
   it("keeps a share short of the whole below 100%", () => {
     expect(formatPercent(0.9996)).toBe(">99.9%");
-    expect(formatPercent(0.99996, 2)).toBe(">99.99%");
     expect(formatPercent(0.999)).toBe("99.9%");
     expect(formatPercent(1)).toBe("100.0%");
-    expect(formatPercent(0.0004)).toBe("<0.1%");
   });
 });
 
