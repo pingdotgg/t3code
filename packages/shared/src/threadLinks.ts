@@ -36,14 +36,8 @@ const fencedCode = (char: "`" | "~", name: string) => {
   const info = char === "`" ? "[^`\\r\\n]*" : "[^\\r\\n]*";
   const closer = String.raw`[ \t]*\k<${bq}>${AFTER_QUOTE}\k<${name}>${char}*(?!${char})[ \t]*\r?$`;
   const opener = String.raw`^[ \t]*${OPENER_LIST_MARKERS}(?<${bq}>(?:>(?:[ \t]*>)*)?)(?:(?<=>)[ \t]{0,4}(?![ \t])${OPENER_LIST_MARKERS})?(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)`;
-  return {
-    opener,
-    block: String.raw`${opener}(?:(?:\r\n?|\n)(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:(?:\r\n?|\n)${closer})?`,
-  };
+  return String.raw`${opener}(?:(?:\r\n?|\n)(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:(?:\r\n?|\n)${closer})?`;
 };
-const backtickFence = fencedCode("`", "bt");
-const tildeFence = fencedCode("~", "tl");
-const FENCED_CODE = new RegExp(`${backtickFence.block}|${tildeFence.block}`, "my");
 // A code span may wrap lines until its paragraph ends: a blank line, heading, list item, fence, rule,
 // setext underline, or deeper blockquote.
 const SPAN_BREAK_LINE =
@@ -53,18 +47,23 @@ const THEMATIC_BREAK = /^(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})\r?
 const SETEXT_UNDERLINE = /^(?:-+|=+)[ \t]*\r?$/;
 // Earlier alternatives claim text so later ones cannot match inside it: an escaped character opens
 // nothing, code is literal, and a link to anywhere else keeps a thread URL in its label or href.
+const ESCAPED_CHARACTER = String.raw`\\[!-/:-@[-\`{-~]`;
+const LINK_PATTERNS = [
+  // A labeled link's destination may be angle-bracketed, as CommonMark allows: [label](<href>).
+  String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>|(?<href>${THREAD_HREF}[^\s>)]+|${HOSTED_LINK}))\)`,
+  String.raw`\[${LABEL}\]\((?:<[^<>\n]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)`,
+  String.raw`<(?<autolink>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>`,
+  // After a URL character the hosted link is part of a longer URL, such as a redirect target.
+  String.raw`(?<![A-Za-z0-9%/?#=&@+-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+].join("|");
+const THREAD_LINK = new RegExp(`${ESCAPED_CHARACTER}|${LINK_PATTERNS}`, "gm");
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
   [
-    String.raw`\\[!-/:-@[-\`{-~]`,
-    backtickFence.opener,
-    tildeFence.opener,
+    ESCAPED_CHARACTER,
+    fencedCode("`", "bt"),
+    fencedCode("~", "tl"),
     String.raw`(?<spanTicks>\`+)`,
-    // A labeled link's destination may be angle-bracketed, as CommonMark allows: [label](<href>).
-    String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>|(?<href>${THREAD_HREF}[^\s>)]+|${HOSTED_LINK}))\)`,
-    String.raw`\[${LABEL}\]\((?:<[^<>\n]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)`,
-    String.raw`<(?<autolink>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>`,
-    // After a URL character the hosted link is part of a longer URL, such as a redirect target.
-    String.raw`(?<![A-Za-z0-9%/?#=&@+-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+    LINK_PATTERNS,
   ].join("|"),
   "gm",
 );
@@ -300,38 +299,28 @@ export function threadLinkRefs(
 const markdownParser = unified().use(remarkParse);
 const FENCE_LIKE_LINE = /^[ \t>*+\-\d.)]*(?:`{3}|~{3})/m;
 
-function classifyIndentedFences(markdown: string) {
-  const ranges: Array<{ start: number; end: number }> = [];
-  const rejected = new Set<number>();
+function parsedCodeRanges(markdown: string) {
   // Parse only when a fence-looking line could be indented code in its container.
   const candidates = new RegExp(FENCE_LIKE_LINE, "gm");
-  for (let match = candidates.exec(markdown); match; match = candidates.exec(markdown)) {
-    if (/ {4}|\t/.test(match[0])) rejected.add(match.index);
-  }
-  if (rejected.size === 0) return { ranges, rejected };
+  let candidate = candidates.exec(markdown);
+  while (candidate && !/ {4}|\t/.test(candidate[0])) candidate = candidates.exec(markdown);
+  if (!candidate) return undefined;
 
+  const ranges: Array<{ start: number; end: number }> = [];
   const pending: Nodes[] = [markdownParser.parse(markdown)];
   while (pending.length > 0) {
     const node = pending.pop()!;
-    if (node.type === "code") {
+    if (node.type === "code" || node.type === "inlineCode") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
-      if (start === undefined || end === undefined) continue;
-      let lineStart = start;
-      while (lineStart > 0 && !/[\r\n]/.test(markdown[lineStart - 1]!)) lineStart--;
-      // Remark starts fenced code at its marker and indented code at its code indent.
-      if (markdown[start] === "`" || markdown[start] === "~") {
-        rejected.delete(lineStart);
-      } else if (FENCE_LIKE_LINE.test(node.value)) {
-        ranges.push({ start: lineStart, end });
-      }
+      if (start !== undefined && end !== undefined) ranges.push({ start, end });
     } else if ("children" in node) {
       for (let index = node.children.length - 1; index >= 0; index--) {
         pending.push(node.children[index]!);
       }
     }
   }
-  return { ranges, rejected };
+  return ranges;
 }
 
 /** Rewrites each link outside code `replace` answers for. `label` is a Markdown link's own text. */
@@ -344,32 +333,21 @@ export function replaceThreadLinks(
   if (markdown.startsWith("\uFEFF"))
     return `\uFEFF${replaceThreadLinks(markdown.slice(1), replace)}`;
   // Hermes' matchAll yields matches without `groups`; exec keeps them.
-  const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
-  const source = threadLinkSource(markdown);
+  const codeRanges = parsedCodeRanges(markdown);
+  const pattern = new RegExp(codeRanges ? THREAD_LINK : THREAD_LINK_OUTSIDE_CODE);
+  const source = codeRanges ? markdown : threadLinkSource(markdown);
   let result = "";
   let cursor = 0;
   let lines: ReturnType<typeof codeSpanLines> | undefined;
   let lineIndex = 0;
-  const { ranges: indentedRanges, rejected } = classifyIndentedFences(markdown);
   let rangeIndex = 0;
   for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
-    while (indentedRanges[rangeIndex] && indentedRanges[rangeIndex]!.end <= match.index) {
+    while (codeRanges?.[rangeIndex] && codeRanges[rangeIndex]!.end <= match.index) {
       rangeIndex++;
     }
-    const range = indentedRanges[rangeIndex];
+    const range = codeRanges?.[rangeIndex];
     if (range && range.start <= match.index) {
       pattern.lastIndex = range.end;
-      continue;
-    }
-    if (match.groups?.bt !== undefined || match.groups?.tl !== undefined) {
-      if (rejected.has(match.index)) {
-        // Try inline syntax on this line without treating it as a block opener.
-        pattern.lastIndex = match.index + 1;
-      } else {
-        FENCED_CODE.lastIndex = match.index;
-        FENCED_CODE.test(source);
-        pattern.lastIndex = FENCED_CODE.lastIndex;
-      }
       continue;
     }
     const spanTicks = match.groups?.spanTicks;
