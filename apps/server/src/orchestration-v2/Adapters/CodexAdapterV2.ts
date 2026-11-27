@@ -9610,19 +9610,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 });
               }
               const keptNativeTurnId = nativeConversationHeadRef?.nativeId ?? null;
+              const keptOrdinal =
+                threadInput.target.type === "provider_turn"
+                  ? threadInput.target.providerTurn.ordinal
+                  : 0;
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
-                  threadInput.target.type === "thread_start"
+                  keptNativeTurnId === null
                     ? revertCodexThreadFromKnownTurns(
                         client,
                         threadId,
                         threadInput.providerThreadTurns
-                          .filter(isTerminalProviderTurn)
+                          .filter(
+                            (turn) => turn.ordinal > keptOrdinal && isTerminalProviderTurn(turn),
+                          )
                           .flatMap((turn) => turn.nativeTurnRef?.nativeId ?? []),
                       )
-                    : keptNativeTurnId === null
-                      ? revertCodexThread(client, threadId, numTurns)
-                      : revertCodexThreadAfterTurn(client, threadId, keptNativeTurnId, numTurns),
+                    : revertCodexThreadAfterTurn(client, threadId, keptNativeTurnId, numTurns),
                 ),
               );
               turnTokenUsageByThread.delete(threadId);

@@ -3,7 +3,11 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as Effect from "effect/Effect";
 
-import { revertCodexThread, revertCodexThreadAfterTurn } from "./CodexThreadRevert.ts";
+import {
+  revertCodexThread,
+  revertCodexThreadAfterTurn,
+  revertCodexThreadFromKnownTurns,
+} from "./CodexThreadRevert.ts";
 
 const page = (
   id: number,
@@ -139,3 +143,72 @@ it.effect("fails instead of reverting when the kept turn is not in the thread", 
     ),
   ),
 );
+
+it.effect(
+  "rewinds from the oldest known turn across pages and preserves older turns on retry",
+  () =>
+    Effect.gen(function* () {
+      const client = yield* CodexClient.CodexAppServerClient;
+      const rewind = revertCodexThreadFromKnownTurns(client, "thread", ["first-t3", "second-t3"]);
+
+      yield* rewind;
+      yield* rewind;
+    }).pipe(
+      Effect.provide(
+        CodexReplay.layerReplay({
+          provider: "codex",
+          protocol: "codex.app-server",
+          version: "test",
+          scenario: "revert-known-turns-pages",
+          entries: [
+            ...page(1, null, 100, ["second-t3"], "first"),
+            ...page(2, "first", 100, ["first-t3"], "prefix"),
+            ...threadResult(3, "thread/revert", { threadId: "thread", beforeTurnId: "first-t3" }),
+            ...page(4, null, 100, ["newer-kept"], "older-kept"),
+            ...page(5, "older-kept", 100, ["older-kept"], null),
+            ...threadResult(6, "thread/read", { threadId: "thread", includeTurns: false }),
+          ],
+        }),
+      ),
+    ),
+);
+
+function threadResult(
+  id: number,
+  method: "thread/read" | "thread/revert",
+  params: object,
+): CodexReplay.CodexAppServerReplayEntry[] {
+  return [
+    { type: "expect_outbound", frame: { id, method, params } },
+    {
+      type: "emit_inbound",
+      frame: {
+        id,
+        result: {
+          thread: {
+            id: "thread",
+            sessionId: "thread",
+            projectId: null,
+            forkedFromId: null,
+            preview: "",
+            ephemeral: false,
+            modelProvider: "openai",
+            createdAt: 1782622440,
+            updatedAt: 1782622440,
+            status: { type: "idle" },
+            path: null,
+            cwd: "/workspace",
+            cliVersion: "0.156.0",
+            source: "vscode",
+            threadSource: null,
+            agentNickname: null,
+            agentRole: null,
+            gitInfo: null,
+            name: null,
+            turns: [],
+          },
+        },
+      },
+    },
+  ];
+}
