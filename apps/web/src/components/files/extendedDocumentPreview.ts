@@ -66,6 +66,12 @@ function boundedMarkup(value: string): string {
   reserveMarkup(value.length);
   return value;
 }
+function odfListStart(node: XmlNode | undefined): number | undefined {
+  const start = node?.attrs["text:start-value"]?.trim();
+  if (!start || !/^[+-]?\d+$/.test(start)) return undefined;
+  const value = Number(start);
+  return value >= 0 && value <= 2_147_483_647 ? value : undefined;
+}
 async function odfHtml(
   node: XmlNode,
   archive: JSZip,
@@ -129,16 +135,17 @@ async function odfHtml(
       : node.name === "text:list-item" || node.name === "text:list-header"
         ? list
         : ["", 0];
-  const numbered =
-    node.name === "text:list" &&
-    listStyles
-      .get(nextList[0])
-      ?.children.some(
-        (level) =>
-          level.name === "text:list-level-style-number" &&
-          level.attrs["text:level"] === String(nextList[1]) &&
-          !!level.attrs["style:num-format"],
-      );
+  const numberingLevel =
+    node.name === "text:list"
+      ? listStyles
+          .get(nextList[0])
+          ?.children.find(
+            (level) =>
+              level.name === "text:list-level-style-number" &&
+              level.attrs["text:level"] === String(nextList[1]) &&
+              !!level.attrs["style:num-format"],
+          )
+      : undefined;
   for (const child of node.children)
     children += await odfHtml(
       child,
@@ -147,13 +154,13 @@ async function odfHtml(
       childImageAlt,
       repeatedRow,
       nextList,
-      numbered,
+      numberingLevel !== undefined,
     );
   const tags: Record<string, string> = {
     "text:p": "p",
     "text:h": "h2",
     "text:span": "span",
-    "text:list": numbered ? "ol" : "ul",
+    "text:list": numberingLevel ? "ol" : "ul",
     "text:list-item": "li",
     "table:table": "table",
     "table:table-row": "tr",
@@ -169,13 +176,8 @@ async function odfHtml(
       : tag === "td"
         ? repeat(node.attrs["table:number-columns-repeated"], TABLE_PREVIEW_MAX_COLUMNS)
         : 1;
-  let attributes = "";
-  if (tag === "li" && inOrderedList) {
-    const start = node.attrs["text:start-value"]?.trim() ?? "";
-    const value = Number(start);
-    if (/^[+-]?\d+$/.test(start) && value >= 0 && value <= 2_147_483_647)
-      attributes = ` value="${value}"`;
-  }
+  const start = odfListStart(tag === "li" && inOrderedList ? node : numberingLevel);
+  let attributes = start === undefined ? "" : ` ${tag === "ol" ? "start" : "value"}="${start}"`;
   // Spans on repeated cells or rows would multiply past the preview's table limits.
   if (tag === "td" && count === 1)
     for (const [name, attr, max] of [
