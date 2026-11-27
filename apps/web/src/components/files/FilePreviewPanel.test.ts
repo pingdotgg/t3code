@@ -177,6 +177,11 @@ describe("document preview contents", () => {
       String.raw`{\rtf1 A{\deleted\uc1\u945\deleted0 old}B}`,
       "AB",
     ],
+    [
+      "nested table cells",
+      String.raw`{\rtf1\ansi\trowd\cellx3000\pard\intbl\itap2 Inner A\nestcell\pard\intbl\itap2 Inner B\nestcell{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}\pard\intbl\itap1\cell\row}`,
+      "Inner A\tInner B\t\t",
+    ],
   ])("keeps the text of %s", (_name, source, expected) => {
     const result = openRtf(bytes(source));
     if (result.type !== "document") throw new Error("Expected document");
@@ -280,6 +285,15 @@ describe("document preview contents", () => {
     if (escapedBreak.type !== "document") throw new Error("Expected document");
     expect(escapedBreak.pages[0]!.html).toBe(
       "<p data-rtf-whitespace><strong>ABC</strong><br><strong>D</strong></p>",
+    );
+    const underlines = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi{\ul single} {\uldb double\uldb0  plain} {\ulw words} {\uld dotted} {\ulwave wave} {\ulc1 color}}`,
+      ),
+    );
+    if (underlines.type !== "document") throw new Error("Expected document");
+    expect(underlines.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace><u>single</u> <u>double</u> plain <u>words</u> <u>dotted</u> <u>wave</u> color</p>",
     );
   });
 
@@ -489,6 +503,16 @@ Third}`;
     for (const name of ["", "Питон"]) {
       const blank = { nbformat: 4, metadata: { language_info: { name } }, cells: [] };
       expect(openNotebook(bytes(JSON.stringify(blank)))).toMatchObject({ language: "text" });
+    }
+    const kernelspec = { name: "python3", display_name: "Python 3", language: "python" };
+    for (const [metadata, language] of [
+      [{ kernelspec }, "python"],
+      [{ language_info: { name: "" }, kernelspec }, "python"],
+      [{ language_info: { name: "python" }, kernelspec: { language: "r" } }, "python"],
+    ] as const) {
+      expect(
+        openNotebook(bytes(JSON.stringify({ nbformat: 4, metadata, cells: [] }))),
+      ).toMatchObject({ language });
     }
     // IPython traceback frames can omit trailing newlines or place ANSI resets after them.
     const failed = openNotebook(

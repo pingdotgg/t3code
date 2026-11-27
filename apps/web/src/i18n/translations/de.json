@@ -4239,6 +4239,7 @@
   "ac242b57dbfa5259": "Geplante Aufgaben verwalten",
   "d93c0db04f4c8e46": "Automatisierung bearbeiten",
   "3fe420ed9b5bdb75": "Jetzt ausführen",
+  "fdf273ca647a967f": "Löschen",
   "0c433351a8606e50": [
     "Automatisierungen konnten nicht geladen werden: ",
     {
@@ -5370,7 +5371,9 @@
   "4cb21672153c1f18": "In dieser Umgebung wurden keine Simulatoren oder Emulatoren gefunden.",
   "c82410197256eb53": "iOS-Simulatoren",
   "31a71fec6b5f2bf3": "Android-Geräte",
+  "1bd21d5284dc2d8e": "iOS-Geräte",
   "ac18a5e35195a258": "Android-Emulatoren",
+  "f28d1d2b5f30a8cd": "Physisch",
   "94215375ea2558b8": "Läuft",
   "f8a65d4d662389b0": "Gestoppt",
   "b1687c7b2b91e569": "{name} öffnen",
@@ -13043,5 +13046,7 @@
   "95435f0b59cb2193": "Audiovorschau",
   "4a12506938295127": "Gib zuerst {field} ein.",
   "5807c08e225c6b3d": "Herunterladen",
-  "0d50b5bfe7151ece": "Datei konnte nicht heruntergeladen werden"
+  "0d50b5bfe7151ece": "Datei konnte nicht heruntergeladen werden",
+  "eb1fd384ad5919dd": "Interne Notiz",
+  "b45f0b467e9406d0": "Dem Kunden antworten"
 }

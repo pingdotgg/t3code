@@ -7,6 +7,23 @@
  * higher-level modules instead. This module is useful when implementing stream
  * operators or specialized streaming workflows.
  *
+ * Every channel runs in a scope supplied by its consumer, called the channel
+ * scope. The run functions create that scope and close it before they return,
+ * however the channel ends: completion, failure, defect, an early stop by a
+ * downstream operator, or interruption. `toPull` and `toPullScoped` use the
+ * scope they are given and leave closing it to its owner. Operators that run
+ * inner channels, such as `flatMap` and `concat`, may give each inner channel
+ * a child scope that closes sooner.
+ *
+ * `acquireUseRelease`, `ensuring`, `onExit`, and `scoped` finalize when their
+ * channel ends on its own (completion, failure, or defect), before downstream
+ * observes that end. `callback`, `callbackArray`, `unwrap`, and
+ * `acquireRelease` register finalizers in the channel scope, so they run when
+ * that scope closes. A channel that is abandoned because a downstream operator
+ * stopped pulling from it is finalized no later than when its channel scope
+ * closes. Under `toPull`, that can be after the pull has returned its final
+ * result, so close the scope to release what the channel still holds.
+ *
  * @stability stable
  * @since 2.0.0
  */
@@ -496,6 +513,12 @@ const asyncQueue = <A, E = never, R = never>(
 /**
  * Creates a `Channel` that interacts with a callback function using a queue.
  *
+ * **Details**
+ *
+ * The callback effect runs in the channel scope. Finalizers it registers, for
+ * example with `Effect.acquireRelease`, run when that scope closes, not when
+ * the queue ends.
+ *
  * **Example** (Creating channels from callbacks)
  *
  * ```ts import.meta.vitest
@@ -527,6 +550,12 @@ export const callback = <A, E = never, R = never>(
 
 /**
  * Creates a `Channel` that interacts with a callback function using a queue, emitting arrays.
+ *
+ * **Details**
+ *
+ * The callback effect runs in the channel scope. Finalizers it registers, for
+ * example with `Effect.acquireRelease`, run when that scope closes, not when
+ * the queue ends.
  *
  * **Example** (Creating array channels from callbacks)
  *
@@ -585,6 +614,10 @@ export const suspend = <OutElem, OutErr, OutDone, InElem, InErr, InDone, Env>(
  * Acquisition is uninterruptible. If acquisition fails, `use` is not run and
  * `release` is not registered.
  *
+ * The finalizer runs when the channel ends on its own (completion, failure, or
+ * defect), before downstream observes that end. If a downstream operator stops
+ * pulling first, it runs no later than when the channel scope closes.
+ *
  * **Example** (Managing resources with acquire-use-release)
  *
  * ```ts import.meta.vitest
@@ -630,8 +663,9 @@ export const acquireUseRelease = <A, E, R, OutElem, OutErr, OutDone, InElem, InE
  * **Details**
  *
  * The release action runs when the channel scope closes and receives the scope
- * exit. If acquisition fails, no element is emitted and `release` is not
- * registered.
+ * exit. The channel scope is the scope supplied by whatever consumes this
+ * channel: a run function, `toPull`, or an enclosing operator. If acquisition
+ * fails, no element is emitted and `release` is not registered.
  *
  * **Example** (Managing resources with acquire-release)
  *
@@ -645,6 +679,8 @@ export const acquireUseRelease = <A, E, R, OutElem, OutErr, OutDone, InElem, InE
  * )
  * const observed = [await Effect.runPromise(Channel.runCollect(channel)), released] // => [["resource"], ["resource"]]
  * ```
+ *
+ * @see {@link acquireUseRelease} for releasing when the channel itself ends
  *
  * @stability stable
  * @category constructors
@@ -6760,7 +6796,7 @@ export const merge: {
             })
           )
         ),
-        Effect.forkIn(forkedScope)
+        Effect.forkIn(forkedScope, { startImmediately: true })
       )
     yield* runSide("left", left, Scope.forkUnsafe(forkedScope))
     yield* runSide("right", right, Scope.forkUnsafe(forkedScope))
@@ -7145,6 +7181,11 @@ export const restoreUpstreamFailure = <A, E, R>(
  * Constructs a `Channel` from a scoped effect that will result in a
  * `Channel` if successful.
  *
+ * **Details**
+ *
+ * The effect runs in the channel scope, so finalizers it registers run when
+ * that scope closes.
+ *
  * **Example** (Unwrapping channel effects)
  *
  * ```ts import.meta.vitest
@@ -7187,6 +7228,14 @@ export const unwrap = <OutElem, OutErr, OutDone, InElem, InErr, InDone, R2, E, R
 /**
  * Runs a channel with a scope provided for the duration of the channel
  * execution, removing the channel's `Scope` requirement.
+ *
+ * **Details**
+ *
+ * The provided scope closes when the channel ends on its own (completion,
+ * failure, or defect), before downstream observes that end. If a downstream
+ * operator stops pulling first, it closes no later than when the channel scope
+ * closes. It satisfies the `Scope` service requirement only; constructors that
+ * register finalizers in the channel scope, such as `callback`, keep using it.
  *
  * @stability stable
  * @category resource management
@@ -7509,6 +7558,12 @@ export const onError: {
  * Returns a channel with an exit-aware finalizer that is guaranteed to run once
  * the channel begins execution, whether it succeeds or fails.
  *
+ * **Details**
+ *
+ * The finalizer runs when the channel ends on its own (completion, failure, or
+ * defect), before downstream observes that end. If a downstream operator stops
+ * pulling first, it runs no later than when the channel scope closes.
+ *
  * **Example** (Running exit finalizers)
  *
  * ```ts import.meta.vitest
@@ -7659,6 +7714,12 @@ export const onEnd: {
 /**
  * Returns a channel with a finalizer effect that is guaranteed to run once the
  * channel begins execution, whether it succeeds or fails.
+ *
+ * **Details**
+ *
+ * The finalizer runs when the channel ends on its own (completion, failure, or
+ * defect), before downstream observes that end. If a downstream operator stops
+ * pulling first, it runs no later than when the channel scope closes.
  *
  * **Example** (Ensuring cleanup runs)
  *
@@ -8648,7 +8709,8 @@ export const runFoldEffect: {
  *
  * **Details**
  *
- * The effect requires a `Scope`. The returned pull should be consumed only
+ * The channel runs in the provided `Scope`, which the pull leaves open; close
+ * it to release any resources the channel still holds. Consume the pull only
  * while that scope remains open. Pulls are serialized so only one pull is
  * evaluated at a time.
  *
@@ -8700,6 +8762,11 @@ export const toPull: <OutElem, OutErr, OutDone, Env>(
 
 /**
  * Converts a channel to a Pull within an existing scope.
+ *
+ * **Details**
+ *
+ * The channel runs in the provided scope, which the pull leaves open; close it
+ * to release any resources the channel still holds.
  *
  * **Example** (Converting channels to scoped pulls)
  *
