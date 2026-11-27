@@ -226,6 +226,7 @@ export class JiraApi extends Context.Service<
     >;
     readonly assignable: (
       project: string,
+      filter?: { readonly query: string } | { readonly accountId: string },
     ) => Effect.Effect<
       { readonly users: ReadonlyArray<JiraUser>; readonly truncated: boolean },
       IssueTrackerError
@@ -507,13 +508,13 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.map((page) => page.values)),
   ).pipe(Effect.map((page) => ({ names: page.items, truncated: page.truncated })));
 
-  const assignable: JiraApi["Service"]["assignable"] = (project) =>
+  const assignable: JiraApi["Service"]["assignable"] = (project, filter) =>
     paged(
       (startAt) =>
         send("assignable", Schema.Array(User), {
           method: "GET",
           path: "/rest/api/3/user/assignable/search",
-          query: { project, startAt, maxResults: PAGE },
+          query: { project, startAt, maxResults: PAGE, ...filter },
         }),
       // Jira drops users the caller may not see after paging, so a short page is not the last.
       true,
