@@ -142,6 +142,12 @@ describe("evaluatePullRequestWatch", () => {
 
   it("reports falling behind the base once per head", () => {
     const behind = detail({ baseComparison: "behind", behindBy: 3 });
+    assert.deepEqual(
+      evaluatePullRequestWatch(watch(), { ...behind, rebaseRequired: true }, noRemarks).changes.map(
+        (change) => change.kind,
+      ),
+      ["needs-rebase"],
+    );
     const first = evaluatePullRequestWatch(watch(), behind, noRemarks);
     assert.deepEqual(first.changes, [{ kind: "behind", behindBy: 3 }]);
     assert.deepEqual(
@@ -282,7 +288,6 @@ describe("evaluatePullRequestWatch", () => {
       { kind: "checks-failed", failed: [check("lint", "failure")] },
       { kind: "conflicting" },
       { kind: "needs-rebase" },
-      { kind: "behind" },
     ]);
   });
 

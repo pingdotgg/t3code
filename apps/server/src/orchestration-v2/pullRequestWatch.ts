@@ -254,7 +254,12 @@ export function evaluatePullRequestWatch(
   }
   const rebaseRequired = detail.rebaseRequired ?? watch.rebaseRequired;
   const toldBehind = !headMoved && watch.behind === true;
-  if (watch.awaitingBaseline !== "all" && detail.baseComparison === "behind" && !toldBehind) {
+  if (
+    watch.awaitingBaseline !== "all" &&
+    detail.baseComparison === "behind" &&
+    detail.rebaseRequired !== true &&
+    !toldBehind
+  ) {
     changes.push({
       kind: "behind",
       ...(detail.behindBy !== undefined && { behindBy: detail.behindBy }),
