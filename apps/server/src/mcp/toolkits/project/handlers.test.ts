@@ -471,6 +471,176 @@ it.effect("a launch with a model its provider does not advertise creates no thre
   }),
 );
 
+it.effect(
+  "a launch rejects options its model does not declare and normalizes legacy ultracode effort",
+  () =>
+    Effect.gen(function* () {
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const providers: ServerProvider[] = [
+        {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: true,
+          installed: true,
+          status: "ready",
+          version: null,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-01-01T00:00:00Z",
+          models: [
+            {
+              slug: "claude-opus-5-5",
+              name: "Claude Opus 5.5",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "effort",
+                    role: "reasoning",
+                    label: "Effort",
+                    type: "select",
+                    options: [
+                      { id: "high", label: "High" },
+                      { id: "xhigh", label: "Extra High" },
+                    ],
+                  },
+                  { id: "ultracode", label: "Ultracode", type: "boolean" },
+                ],
+              },
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        },
+      ];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "auto",
+        launched,
+        providers,
+      });
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const launchWith = (options: NonNullable<ModelSelection["options"]>) =>
+        toolkit
+          .handle("t3_thread_launch", {
+            title: "Options check",
+            projectId,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-opus-5-5",
+              options,
+            },
+          })
+          .pipe(
+            Stream.unwrap,
+            Stream.runCollect,
+            Effect.map((result) => result.at(-1)?.result),
+            Effect.provide(dependencies),
+          );
+
+      expect(yield* launchWith([{ id: "thought_level", value: "high" }])).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("Unknown option thought_level"),
+      });
+      expect(launched).toHaveLength(0);
+
+      yield* launchWith([{ id: "effort", value: "ultracode" }]);
+      expect(launched.map((launch) => launch.modelSelection.options)).toEqual([
+        [
+          { id: "effort", value: "xhigh" },
+          { id: "ultracode", value: true },
+        ],
+      ]);
+    }),
+);
+
+it.effect("only a full-access client may pick the agent's own mode at launch", () =>
+  Effect.gen(function* () {
+    const agent = ProviderInstanceId.make("acp-agent");
+    const launchAs = (runtimeModeCeiling: "approval-required" | "full-access") =>
+      Effect.gen(function* () {
+        const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+        const { projectId, dependencies } = clientLaunchHarness({
+          runtimeModeCeiling,
+          launched,
+          providers: [
+            {
+              instanceId: agent,
+              driver: ProviderDriverKind.make("acpRegistry"),
+              enabled: true,
+              installed: true,
+              status: "ready",
+              version: null,
+              auth: { status: "authenticated" },
+              checkedAt: "2026-01-01T00:00:00Z",
+              models: [
+                {
+                  slug: "default",
+                  name: "Default",
+                  isCustom: false,
+                  capabilities: {
+                    optionDescriptors: [
+                      {
+                        id: "_t3/session-mode",
+                        label: "Mode",
+                        type: "select",
+                        options: [
+                          { id: "default", label: "Default" },
+                          { id: "yolo", label: "YOLO" },
+                        ],
+                        currentValue: "default",
+                      },
+                    ],
+                  },
+                },
+              ],
+              slashCommands: [],
+              skills: [],
+            },
+          ],
+        });
+        const toolkit = yield* ProjectToolkit.pipe(
+          Effect.provide(
+            McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+              Layer.provide(dependencies),
+            ),
+          ),
+        );
+        const result = yield* toolkit
+          .handle("t3_thread_launch", {
+            projectId,
+            title: "Fix",
+            message: "Fix the bug",
+            modelSelection: {
+              instanceId: agent,
+              model: "default",
+              options: [{ id: "_t3/session-mode", value: "yolo" }],
+            },
+          })
+          .pipe(
+            Stream.unwrap,
+            Stream.runCollect,
+            Effect.map((collected) => collected.at(-1)?.result),
+            Effect.provide(dependencies),
+          );
+        return { result, launched };
+      });
+
+    const supervised = yield* launchAs("approval-required");
+    expect(supervised.result).toMatchObject({ code: "runtime_mode_escalation_denied" });
+    expect(supervised.launched).toHaveLength(0);
+
+    const fullAccess = yield* launchAs("full-access");
+    expect(fullAccess.launched.map((launch) => launch.modelSelection.options)).toEqual([
+      [{ id: "_t3/session-mode", value: "yolo" }],
+    ]);
+  }),
+);
+
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
@@ -1029,9 +1199,20 @@ it.effect("creating a project through MCP refuses a model default instead of dro
     const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
     const dependencies = Layer.merge(
       harness.dependencies,
-      Layer.mock(Project.ProjectService)({
-        create: () => Effect.die("the project was created without its model default"),
-      }),
+      Layer.mergeAll(
+        Layer.mock(Project.ProjectService)({
+          create: () => Effect.die("the project was created without its model default"),
+          getById: (id) => Effect.succeedSome({ ...deletedProject(id), deletedAt: null }),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          createNamedProject: () =>
+            Effect.succeed({
+              projectId: harness.projectId,
+              workspaceRoot: "/projects/client-target",
+            }),
+        }),
+      ),
     );
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
@@ -1039,17 +1220,28 @@ it.effect("creating a project through MCP refuses a model default instead of dro
       ),
     );
 
-    const refused = yield* toolkit
-      .handle("t3_project_create", {
-        title: "client-target",
-        workspaceRoot: "/projects/client-target",
-        defaultModelSelection: harness.modelSelection,
-      })
+    for (const workspaceRoot of ["/projects/client-target", undefined]) {
+      const refused = yield* toolkit
+        .handle("t3_project_create", {
+          title: "client-target",
+          ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+          defaultModelSelection: harness.modelSelection,
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+      expect(refused.at(-1)?.result).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("t3_project_update"),
+      });
+    }
+
+    const accepted = yield* toolkit
+      .handle("t3_project_create", { title: "client-target", defaultModelSelection: null })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
-    expect(refused.at(-1)?.result).toMatchObject({
-      code: "invalid_request",
-      message: expect.stringContaining("t3_project_update"),
+    expect(accepted.at(-1)?.result).toMatchObject({
+      id: harness.projectId,
+      defaultModelSelection: null,
     });
   }),
 );

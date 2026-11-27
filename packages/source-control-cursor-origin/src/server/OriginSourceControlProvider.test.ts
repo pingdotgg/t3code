@@ -5,10 +5,13 @@ import * as Option from "effect/Option";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as OriginCli from "./OriginCli.ts";
 import * as OriginSourceControlProvider from "./OriginSourceControlProvider.ts";
+
+const onPath = (command: string) => `/usr/bin/${command}`;
 
 const loginSignIn = {
   label: "login",
@@ -124,5 +127,5 @@ it.effect("reads the sign-in from an Origin CLI that wants its --json fields nam
         assert.strictEqual(viewer.failure.reason, "unauthenticated", notSignedIn.label);
       }
     }
-  }),
+  }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );

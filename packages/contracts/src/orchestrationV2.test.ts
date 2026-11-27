@@ -14,6 +14,7 @@ import {
 import {
   latestProviderTurnForAttempt,
   OrchestrationV2CheckpointFileSummary,
+  OrchestrationV2FileSearchResult,
   repositoryRewindCheckpoint,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
@@ -47,6 +48,14 @@ const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
 );
 
 describe("orchestration V2 contracts", () => {
+  it("preserves trailing spaces in file search result paths on the wire", () => {
+    const codec = Schema.toCodecJson(OrchestrationV2FileSearchResult);
+    const result = { fileName: "docs/Release notes.md ", line: 3 };
+    const encoded = Schema.encodeSync(codec)(result);
+    expect(encoded).toEqual(result);
+    expect(Schema.decodeSync(codec)(result)).toEqual(result);
+  });
+
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),
