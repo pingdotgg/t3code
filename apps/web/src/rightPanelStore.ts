@@ -1440,7 +1440,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       onRehydrateStorage: () => (state) => {
         // A restored tab can disappear before the next citation opens it again.
         for (const thread of Object.values(state?.byThreadKey ?? {})) {
-          for (const surface of thread?.surfaces ?? []) {
+          for (const surface of thread.surfaces) {
             if (surface.kind === "file" && Number.isSafeInteger(surface.revealRequestId)) {
               lastFileRevealRequestId = Math.max(lastFileRevealRequestId, surface.revealRequestId);
             }
