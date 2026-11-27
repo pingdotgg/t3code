@@ -99,6 +99,8 @@ describe("resolveAddressBarInput", () => {
     expect(resolveAddressBarInput("3.14")).toBe("https://duckduckgo.com/?q=3.14");
     expect(resolveAddressBarInput("1.2.3")).toBe("https://duckduckgo.com/?q=1.2.3");
     expect(resolveAddressBarInput("10.0.0.2")).toBe("https://10.0.0.2/");
+    expect(resolveAddressBarInput("10.0.0.2.")).toBe("https://10.0.0.2/");
+    expect(resolveAddressBarInput("0x7f.0.0.2")).toBe("http://127.0.0.2/");
   });
 
   it("still rejects empty input and unsupported schemes", () => {
