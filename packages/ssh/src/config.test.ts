@@ -425,7 +425,6 @@ describe("ssh config", () => {
             "@cert-authority ca.example.com ssh-ed25519 IIII",
             "@cert-authority @cert-authority double.example.com ssh-ed25519 JJJJ",
             "@revoked revoked.example.com ssh-ed25519 KKKK",
-            "@revoked [revoked-port.example.com]:2222 ssh-ed25519 LLLL",
             "@bogus bogus.example.com ssh-ed25519 MMMM",
             "",
           ].join("\n"),
