@@ -284,12 +284,11 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
       if (rest.length > 0) {
         return yield* JiraApi.fail(operation, "failed", "A Jira issue has one assignee at most.");
       }
-      const { users, truncated } = yield* jira.assignable(projectKey(scope));
+      const { users } = yield* jira.assignable(projectKey(scope));
+      // Jira hides users after paging, so the pages read never prove someone is missing.
       const found =
         users.find((user) => matchesUser(user, first)) ??
-        (truncated
-          ? (yield* jira.findUsers(first)).find((user) => matchesUser(user, first))
-          : undefined);
+        (yield* jira.findUsers(first)).find((user) => matchesUser(user, first));
       if (found === undefined) {
         return yield* JiraApi.fail(
           operation,
