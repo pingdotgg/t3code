@@ -140,6 +140,39 @@ describe("evaluatePullRequestWatch", () => {
     },
   );
 
+  it("reports falling behind the base once per head", () => {
+    const behind = detail({ baseComparison: "behind", behindBy: 3 });
+    const first = evaluatePullRequestWatch(watch(), behind, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "behind", behindBy: 3 }]);
+    assert.deepEqual(
+      evaluatePullRequestWatch(first.next, { ...behind, behindBy: 5 }, noRemarks).changes,
+      [],
+    );
+    const unknown = evaluatePullRequestWatch(
+      first.next,
+      { ...behind, baseComparison: "unknown" },
+      noRemarks,
+    );
+    assert.deepEqual(evaluatePullRequestWatch(unknown.next, behind, noRemarks).changes, []);
+    const rebased = evaluatePullRequestWatch(
+      first.next,
+      { ...behind, headSha: "bbbbbbbbbb", baseComparison: "up-to-date", behindBy: 0 },
+      noRemarks,
+    );
+    assert.notInclude(
+      rebased.changes.map((change) => change.kind),
+      "behind",
+    );
+    assert.include(
+      evaluatePullRequestWatch(
+        rebased.next,
+        { ...behind, headSha: "bbbbbbbbbb" },
+        noRemarks,
+      ).changes.map((change) => change.kind),
+      "behind",
+    );
+  });
+
   it.each([false, true])("baselines already-passed checks (required: %s)", (required) => {
     const green = detail({ checks: [{ ...check("test", "success"), required }] });
     const baseline = evaluatePullRequestWatch(watch({ awaitingBaseline: "all" }), green, noRemarks);
@@ -211,6 +244,7 @@ describe("evaluatePullRequestWatch", () => {
       checks: [check("lint", "failure"), check("test", "pending")],
       mergeability: "conflicting",
       rebaseRequired: true,
+      baseComparison: "behind",
     });
     const baseline = evaluatePullRequestWatch(
       watch({ awaitingBaseline: "all" }),
@@ -222,6 +256,7 @@ describe("evaluatePullRequestWatch", () => {
     assert.isFalse(baseline.next.passed);
     assert.isTrue(baseline.next.conflicting);
     assert.isTrue(baseline.next.rebaseRequired);
+    assert.isTrue(baseline.next.behind);
     assert.deepEqual(evaluatePullRequestWatch(baseline.next, broken, noRemarks).changes, []);
 
     const failed = evaluatePullRequestWatch(
@@ -239,7 +274,7 @@ describe("evaluatePullRequestWatch", () => {
     ]);
     const clean = evaluatePullRequestWatch(
       failed.next,
-      detail({ rebaseRequired: false }),
+      detail({ rebaseRequired: false, baseComparison: "up-to-date" }),
       noRemarks,
     );
     assert.deepEqual(clean.changes, []);
@@ -247,6 +282,7 @@ describe("evaluatePullRequestWatch", () => {
       { kind: "checks-failed", failed: [check("lint", "failure")] },
       { kind: "conflicting" },
       { kind: "needs-rebase" },
+      { kind: "behind" },
     ]);
   });
 

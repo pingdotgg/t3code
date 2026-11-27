@@ -103,6 +103,7 @@ export const ThreadPullRequestWatch = Schema.Struct({
   remarkIds: Schema.Array(TrimmedNonEmptyString),
   conflicting: Schema.Boolean,
   rebaseRequired: Schema.optional(Schema.Boolean),
+  behind: Schema.optional(Schema.Boolean),
   /** Last removal seen; null after an empty read, absent before the first read. */
   mergeQueueRemovalId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Consecutive comment-only wakes; limited to prevent bot loops. */

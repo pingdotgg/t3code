@@ -27,6 +27,7 @@ export type PullRequestWatchChange =
   | { readonly kind: "no-checks"; readonly minutes: number }
   | { readonly kind: "conflicting" }
   | { readonly kind: "needs-rebase" }
+  | { readonly kind: "behind"; readonly behindBy?: number }
   | { readonly kind: "merge-queue-removed"; readonly reason: string | null };
 
 export interface PullRequestWatchReport {
@@ -62,6 +63,8 @@ export function evaluatePullRequestWatch(
     | "viewer"
     | "author"
     | "rebaseRequired"
+    | "baseComparison"
+    | "behindBy"
     | "mergeQueueRemoval"
   >,
   remarks: ReadonlyArray<PullRequestComment> | null,
@@ -250,6 +253,17 @@ export function evaluatePullRequestWatch(
     changes.push({ kind: "needs-rebase" });
   }
   const rebaseRequired = detail.rebaseRequired ?? watch.rebaseRequired;
+  const toldBehind = !headMoved && watch.behind === true;
+  if (watch.awaitingBaseline !== "all" && detail.baseComparison === "behind" && !toldBehind) {
+    changes.push({
+      kind: "behind",
+      ...(detail.behindBy !== undefined && { behindBy: detail.behindBy }),
+    });
+  }
+  const behind =
+    detail.baseComparison === undefined || detail.baseComparison === "unknown"
+      ? toldBehind
+      : detail.baseComparison === "behind";
   // "unknown" is a host still computing after a push; only a clean answer clears a conflict.
   const conflicting =
     detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
@@ -289,6 +303,7 @@ export function evaluatePullRequestWatch(
       remarkIds,
       conflicting,
       rebaseRequired,
+      behind,
       mergeQueueRemovalId,
       wakes,
       // Only a read that cannot be trusted to show the checks leaves the baseline to the next one.
@@ -436,6 +451,15 @@ function changeLines(
       return [`- The branch requires a rebase onto ${context.baseBranch}.`];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
+    case "behind": {
+      const by =
+        change.behindBy === undefined
+          ? ""
+          : ` by ${change.behindBy} ${change.behindBy === 1 ? "commit" : "commits"}`;
+      return [
+        `- The branch is behind ${context.baseBranch}${by}. Rebase if the new base commits touch this PR's files or the host requires an up-to-date branch.`,
+      ];
+    }
     case "merge-queue-removed":
       return [
         `- It was removed from the merge queue without merging${change.reason === null ? "" : `: ${change.reason}`}.`,
@@ -452,6 +476,7 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   "no-checks": "no checks reported",
   conflicting: "merge conflict",
   "needs-rebase": "rebase required",
+  behind: "behind base",
   "merge-queue-removed": "removed from merge queue",
 };
 
