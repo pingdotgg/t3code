@@ -32,6 +32,7 @@ import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
+import { sendPageCommand } from "./GuestInput.ts";
 import * as PreviewManager from "./Manager.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 
@@ -1430,6 +1431,33 @@ describe("PreviewManager", () => {
             cancelId: 1,
           });
           expect(unloads[0]?.preventDefault).not.toHaveBeenCalled();
+          expect(unloads[1]?.preventDefault).toHaveBeenCalledTimes(1);
+        }),
+      ),
+    );
+
+    effectIt.effect("asks before a streamed hard reload leaves it", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const changes = makeChangeSignal();
+          const preview = yield* openGuardedTab(manager, "tab_guarded_streamed");
+          showMessageBox.mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+          const unloads: Array<{ readonly preventDefault: () => void }> = [];
+          Object.assign(preview.webContents, {
+            reloadIgnoringCache: () => {
+              unloads.push(blockUnload(preview));
+              changes.notify();
+            },
+          });
+
+          yield* Effect.promise(() =>
+            sendPageCommand(preview.webContents as never, {} as never, "Page.reload", {
+              ignoreCache: true,
+            }),
+          );
+          yield* changes.until(() => unloads.length === 2);
+
+          expect(showMessageBox).toHaveBeenCalledTimes(1);
           expect(unloads[1]?.preventDefault).toHaveBeenCalledTimes(1);
         }),
       ),

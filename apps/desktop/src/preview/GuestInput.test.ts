@@ -2,7 +2,12 @@ import * as NodeVM from "node:vm";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { routeMouseToFrame, sendPageCommand, toKeyboardInputEvents } from "./GuestInput.ts";
+import {
+  routeMouseToFrame,
+  sendPageCommand,
+  setGuardedReload,
+  toKeyboardInputEvents,
+} from "./GuestInput.ts";
 
 const makeGuest = ({
   focused,
@@ -42,6 +47,22 @@ describe("preview guest input", () => {
     await guest.send("Input.insertText", { text: "pairing-code" });
     expect(guest.webContents.insertText).toHaveBeenCalledWith("pairing-code");
     expect(guest.sendCommand).not.toHaveBeenCalledWith("Input.insertText", expect.anything());
+  });
+
+  it("reloads through the guest's guarded reload so a blocking page can ask to leave", async () => {
+    const guest = makeGuest({ focused: true });
+    const target = guest.webContents as unknown as Electron.WebContents;
+    const guarded = vi.fn();
+    setGuardedReload(target, guarded);
+    await guest.send("Page.reload", { ignoreCache: true });
+    await guest.send("Page.reload", {});
+    expect(guarded.mock.calls).toEqual([[true], [false]]);
+    expect(guest.webContents.reloadIgnoringCache).not.toHaveBeenCalled();
+    expect(guest.webContents.reload).not.toHaveBeenCalled();
+
+    setGuardedReload(target, undefined);
+    await guest.send("Page.reload", { ignoreCache: true });
+    expect(guest.webContents.reloadIgnoringCache).toHaveBeenCalledTimes(1);
   });
 
   it("stops the guest navigation without stopping its embedder", async () => {

@@ -356,6 +356,17 @@ const sendPointerCommand = async (
   }
 };
 
+const guardedReloads = new WeakMap<Electron.WebContents, (ignoreCache: boolean) => void>();
+
+/** Lets a viewer's or agent's reload ask before leaving a page whose beforeunload guard blocks it. */
+export const setGuardedReload = (
+  webContents: Electron.WebContents,
+  reload: ((ignoreCache: boolean) => void) | undefined,
+) => {
+  if (reload) guardedReloads.set(webContents, reload);
+  else guardedReloads.delete(webContents);
+};
+
 /**
  * Sends one command to the guest's page, keeping reloads and input inside it. Input that waits
  * before it reaches the guest calls `beforeDispatch` once the wait ends, which throws to drop it.
@@ -395,7 +406,10 @@ export const sendPageCommand = async (
   if (sessionId !== undefined) return debuggee.sendCommand(method, params, sessionId);
   // Electron's debugger routes Page.reload on a webview to its embedder window.
   if (method === "Page.reload") {
-    if (params["ignoreCache"] === true) webContents.reloadIgnoringCache();
+    const ignoreCache = params["ignoreCache"] === true;
+    const reload = guardedReloads.get(webContents);
+    if (reload) reload(ignoreCache);
+    else if (ignoreCache) webContents.reloadIgnoringCache();
     else webContents.reload();
     return {};
   }

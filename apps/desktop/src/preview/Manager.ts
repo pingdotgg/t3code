@@ -95,6 +95,7 @@ import {
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS, type RecordingInputOptions } from "./RecordingInput.ts";
+import { setGuardedReload } from "./GuestInput.ts";
 
 export type PreviewNavStatus =
   | { kind: "Idle" }
@@ -1765,6 +1766,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         cancelFaviconCapture();
         leaveAttempts.delete(wc.id);
         confirmedLeaves.delete(wc.id);
+        setGuardedReload(wc, undefined);
         wc.off("will-prevent-unload", unloadPrevented);
         wc.off("did-start-navigation", navigationStarted);
         wc.off("did-navigate", syncNavigation);
@@ -1790,6 +1792,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* attempt({ operation: "attachListeners", tabId, webContentsId: wc.id }, () => {
         wc.setIgnoreMenuShortcuts(true);
         wc.on("will-prevent-unload", unloadPrevented);
+        setGuardedReload(wc, (ignoreCache) =>
+          navigateAway(wc, () => (ignoreCache ? wc.reloadIgnoringCache() : wc.reload())),
+        );
         wc.on("did-start-navigation", navigationStarted);
         wc.on("did-navigate", syncNavigation);
         wc.on("did-navigate-in-page", syncInPageNavigation);

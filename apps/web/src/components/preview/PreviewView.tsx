@@ -525,11 +525,7 @@ export function PreviewView({
   };
   const moreMenuActions: PreviewMoreMenuActions | null = serverOwnsRendering
     ? {
-        // A native tab reloads through the desktop so a page's leave prompt can answer it.
-        hardReload:
-          nativeServerTab && previewBridge
-            ? desktopCall(previewBridge.hardReload)
-            : () => void adjustServerTab({ hardReload: true }),
+        hardReload: () => void adjustServerTab({ hardReload: true }),
         setColorScheme: (colorScheme) => void adjustServerTab({ colorScheme }),
         zoomIn: handleZoomIn,
         zoomOut: handleZoomOut,
