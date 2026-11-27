@@ -278,6 +278,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/worktrees",
     scope: "project-defaults",
     searchTerms: [
+      msg("Delete worktrees with deleted threads"),
       msg(
         "disk storage automatic delete deleted archived threads old inactive merged settled unchanged worktrees retention days project inherit off custom",
       ),
@@ -379,6 +380,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Chat width"),
     to: "/settings/appearance",
     searchTerms: [msg("wide full width column layout messages composer monitor")],
+  },
+  {
+    id: "html-preview-width",
+    title: msg("HTML preview width"),
+    to: "/settings/appearance",
+    searchTerms: [msg("wide full width inline page render chart dashboard artifact centered")],
   },
   {
     id: "thread-details-items",
@@ -567,6 +574,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("beta workflow durable runs automation steps schedule webhook folder")],
   },
   {
+    id: "workflow-skipped-runs",
+    title: msg("Skipped runs kept"),
+    to: "/settings/labs",
+    // Shown only while workflows are on, so search lands on the switch that turns them on.
+    targetId: "workflows-beta",
+    scope: "environment",
+    searchTerms: [msg("workflow history retention delete old skipped runs webhook")],
+  },
+  {
     id: "prompt-suggestions-beta",
     title: msg("Suggest next prompt"),
     to: "/settings/labs",
@@ -622,7 +638,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "speech-dictionary",
     title: msg("Dictionary"),
     to: "/settings/voice",
-    searchTerms: [msg("speech voice transcription vocabulary names glossary alias")],
+    searchTerms: [
+      msg("Your dictionary"),
+      msg("speech voice transcription vocabulary names glossary alias"),
+    ],
   },
   {
     id: "speech-project-dictionary",
@@ -1696,6 +1715,13 @@ export function settingsForThisPlatform(
   );
 }
 
+function titleMatchRank(title: string, query: string, queryTokens: ReadonlyArray<string>): number {
+  if (title === query) return 5;
+  if (title.startsWith(query)) return 4;
+  if (title.includes(query)) return 3;
+  return queryTokens.every((token) => title.includes(token)) ? 2 : 0;
+}
+
 export function searchSettings(
   query: string,
   items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
@@ -1708,30 +1734,29 @@ export function searchSettings(
   return settingsForThisPlatform(items)
     .flatMap((item, index) => {
       const title = normalizeSearchText(decodeMsg(item.title));
+      // The title as displayed, so search also works in the active language.
+      const displayedTitle = normalizeSearchText(translate(item.title));
+      const navLabel = SETTINGS_NAV_LABELS[item.to];
+      const displayedNavLabel = translate(navLabel);
       const fields = [
         title,
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
-        // The labels as displayed, so search also works in the active language.
-        normalizeSearchText(translate(item.title)),
+        displayedTitle,
         normalizeSearchText(translate(SETTINGS_SECTION_LABELS[item.to])),
+        // Decode only the untranslated label: decodeMsg truncates a translation at its first colon.
+        normalizeSearchText(
+          displayedNavLabel === navLabel ? decodeMsg(navLabel) : displayedNavLabel,
+        ),
         ...(item.searchTerms ?? []).map(normalizeSearchText),
         ...(item.searchTerms ?? []).map((term) => normalizeSearchText(translate(term))),
       ];
       if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];
 
-      const exactPhraseField = fields.findIndex((field) => field.includes(normalizedQuery));
-      const rank =
-        title === normalizedQuery
-          ? 5
-          : title.startsWith(normalizedQuery)
-            ? 4
-            : title.includes(normalizedQuery)
-              ? 3
-              : queryTokens.every((token) => title.includes(token))
-                ? 2
-                : exactPhraseField >= 0
-                  ? 1
-                  : 0;
+      const rank = Math.max(
+        titleMatchRank(title, normalizedQuery, queryTokens),
+        titleMatchRank(displayedTitle, normalizedQuery, queryTokens),
+        fields.some((field) => field.includes(normalizedQuery)) ? 1 : 0,
+      );
       return [{ item, index, rank }];
     })
     .toSorted(

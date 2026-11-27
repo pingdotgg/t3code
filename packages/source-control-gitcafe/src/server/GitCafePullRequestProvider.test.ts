@@ -664,13 +664,18 @@ describe("GitCafePullRequestProvider", () => {
     return Effect.gen(function* () {
       const provider = yield* GitCafePullRequestProvider.make;
       const result = yield* provider
-        .runAction({ ...target, action: "merge", mergeMethod: "squash" })
+        .runAction({
+          ...target,
+          action: "merge",
+          mergeMethod: "squash",
+          expectedHeadSha: baseOid,
+        })
         .pipe(Effect.result);
       assert.strictEqual(result._tag, succeeds ? "Success" : "Failure");
       assert.deepStrictEqual(server.writes(), ["POST /repos/owner/repo/pulls/7/merge"]);
       assert.deepInclude(server.sent.at(-1)?.body as object, {
+        headOid: baseOid,
         strategy: "squash",
-        headOid,
         expectedVersion: 4,
       });
       assertRequestId(server.sent.at(-1)?.body);

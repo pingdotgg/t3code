@@ -1,5 +1,6 @@
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
+  HttpQuotaResponse,
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
@@ -11,7 +12,7 @@ import {
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
-import { antigravityWindowLimitsModel, hubRoutes } from "@t3tools/shared/usageLimits";
+import { hubRoutes } from "@t3tools/shared/usageLimits";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -20,8 +21,11 @@ import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as HttpClientError from "effect/http/HttpClientError";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -30,6 +34,33 @@ import { resolveSettingsSecrets } from "../secrets/settingsSecretValue.ts";
 import * as Settings from "../serverSettings.ts";
 import { windowLimitsModel } from "../provider/claudeUsageLimits.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
+
+const decodeHttpQuotaJson = Schema.decodeUnknownEffect(Schema.fromJsonString(HttpQuotaResponse));
+const decodeHttpQuotaResponse = Effect.fn("UsageLimitSources.decodeHttpQuotaResponse")(function* (
+  response: HttpClientResponse.HttpClientResponse,
+) {
+  let bytes = 0;
+  const text = yield* response.stream.pipe(
+    Stream.mapEffect((chunk) => {
+      bytes += chunk.byteLength;
+      return bytes > 1024 * 1024
+        ? Effect.fail(
+            new HttpClientError.DecodeError({
+              request: response.request,
+              response,
+              description: "HTTP quota response exceeds 1 MiB.",
+            }),
+          )
+        : Effect.succeed(chunk);
+    }),
+    Stream.decodeText(),
+    Stream.runFold(
+      () => "",
+      (text, chunk) => text + chunk,
+    ),
+  );
+  return yield* decodeHttpQuotaJson(text);
+});
 
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
@@ -99,6 +130,7 @@ function missingManagementKey(config: UsageLimitSourceConfig): string {
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
+  const http = yield* HttpClient.HttpClient;
   const settingsService = yield* Settings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -124,7 +156,7 @@ export const make = Effect.gen(function* () {
       id,
       kind: config.kind,
       label: sourceLabel(id, config),
-      ...(url && /^https?:$/.test(url.protocol)
+      ...(config.kind === "cliproxy" && url && /^https?:$/.test(url.protocol)
         ? {
             origin: url.origin,
             endpoint: `${url.origin}${url.pathname.replace(/(\/management\.html)?\/*$/i, "")}`,
@@ -133,6 +165,33 @@ export const make = Effect.gen(function* () {
       checkedAt,
     } as const;
     const managementKey = yield* readManagementKey(config);
+    if (config.kind === "http") {
+      if (!url || !/^https?:$/.test(url.protocol) || url.username || url.password) {
+        return { ...base, accounts: [], error: "Invalid HTTP quota source URL." };
+      }
+      if (typeof config.managementKey !== "string" && !managementKey) {
+        return { ...base, accounts: [], error: "Could not resolve the quota source token." };
+      }
+      const request = HttpClientRequest.get(url).pipe(
+        HttpClientRequest.setHeader("Accept", "application/json"),
+      );
+      const result = yield* http
+        .execute(
+          managementKey
+            ? request.pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${managementKey}`))
+            : request,
+        )
+        .pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.flatMap(decodeHttpQuotaResponse),
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+          Effect.timeout("10 seconds"),
+          Effect.result,
+        );
+      return result._tag === "Success"
+        ? { ...base, accounts: [], quotaAccounts: result.success.accounts }
+        : { ...base, accounts: [], error: "Could not read the HTTP quota source." };
+    }
     if (managementKey.length === 0) {
       return { ...base, accounts: [], error: missingManagementKey(config) };
     }
@@ -143,7 +202,12 @@ export const make = Effect.gen(function* () {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
       return { ...base, accounts: [], error: accounts.failure.detail };
     }
-    return { ...base, accounts: accounts.success };
+    const { unreadProviders } = accounts.success;
+    return {
+      ...base,
+      accounts: accounts.success.accounts,
+      ...(unreadProviders.length > 0 ? { unreadProviders } : {}),
+    };
   });
 
   const publish = Effect.fn("UsageLimitSources.publish")(function* (
@@ -180,7 +244,7 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => new UsageLimitSourceError({ detail: "Could not read hub settings." })),
     );
     const config = settings.usageLimitSources[input.sourceId];
-    if (!config?.enabled) {
+    if (!config?.enabled || config.kind !== "cliproxy") {
       return yield* new UsageLimitSourceError({
         detail: "The usage limit source is missing or disabled.",
       });
@@ -265,10 +329,7 @@ export function hubPoolResetAt(
     // An unread account may be the one still blocked, so its refill is unknown.
     if (account.usageLimits.unavailable) return null;
     const spent = account.usageLimits.windows.filter(
-      (window) =>
-        window.usedPercent >= 100 &&
-        windowLimitsModel(window, model) &&
-        (account.driver !== "antigravity" || antigravityWindowLimitsModel(window, model)),
+      (window) => window.usedPercent >= 100 && windowLimitsModel(window, model),
     );
     if (spent.length === 0) return null;
     const resets = spent.map((window) => Date.parse(window.resetsAt ?? ""));
