@@ -5313,6 +5313,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
+    it.effect("names the settings that turn auto mode off, through the real SDK", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sdk = yield* Effect.promise(() =>
+          vi.importActual<typeof ClaudeSdk>("@anthropic-ai/claude-agent-sdk"),
+        );
+        vi.mocked(ClaudeSdk.resolveSettings).mockImplementation(sdk.resolveSettings);
+        const disabledBy = Effect.fnUntraced(function* (
+          file: "project" | "local" | "home" | "remote" | null,
+        ) {
+          const home = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-auto-home-",
+          });
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-auto-cwd-" });
+          yield* fileSystem.makeDirectory(path.join(cwd, ".claude"));
+          if (file !== null) {
+            yield* fileSystem.writeFileString(
+              {
+                project: path.join(cwd, ".claude", "settings.json"),
+                local: path.join(cwd, ".claude", "settings.local.json"),
+                home: path.join(home, "settings.json"),
+                remote: path.join(home, "remote-settings.json"),
+              }[file],
+              JSON.stringify(
+                file === "local"
+                  ? { permissions: { disableAutoMode: "disable" } }
+                  : { disableAutoMode: "disable" },
+              ),
+            );
+          }
+          const availability = yield* ClaudeAdapterV2.resolveClaudeModeAvailability({
+            settings: DEFAULT_CLAUDE_SETTINGS,
+            homePath: home,
+            customHome: true,
+            cwd,
+            fileSystem,
+            path,
+          });
+          return [availability.autoDisabled, availability.autoDisabledBy];
+        });
+        assert.deepEqual(yield* disabledBy(null), [false, undefined]);
+        assert.deepEqual(yield* disabledBy("project"), [true, "project-settings"]);
+        assert.deepEqual(yield* disabledBy("local"), [true, "project-settings"]);
+        assert.deepEqual(yield* disabledBy("home"), [true, "user-settings"]);
+        assert.deepEqual(yield* disabledBy("remote"), [true, "managed-settings"]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
     it.effect("asks before restricted Full access tools and follows policy across turns", () =>
       Effect.gen(function* () {
         const resolveSettings = vi
@@ -6152,6 +6201,140 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         decision: "decline",
       });
       assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+      // A second init, as a resumed process sends, must not repeat the notice.
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          permissionMode: reported,
+          uuid: "auto-ask-init-again",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem.message]
+            : [],
+        ),
+        reported === "auto" ? [] : [ClaudeAdapterV2.claudeAutoModeUnavailableNotice(undefined)],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  const autoModeNotices = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+    events.flatMap((event) =>
+      event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+        ? [event.turnItem.message]
+        : [],
+    );
+  const autoTurnInput = (
+    harness: {
+      readonly threadId: ThreadId;
+      readonly providerThread: OrchestrationV2ProviderThread;
+    },
+    ordinal: number,
+    providerThread = harness.providerThread,
+  ) => {
+    const input = makeClaudeTestTurnInput({
+      threadId: harness.threadId,
+      providerThread,
+      now: DateTime.makeUnsafe(0),
+      attemptId: RunAttemptId.make(`attempt-claude-auto-notice-${ordinal}`),
+      text: "Run git status.",
+      attachments: [],
+      providerTurnOrdinal: ordinal,
+      runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "auto",
+        interactionMode: "default",
+        cwd: "/workspace",
+      }),
+    });
+    return { ...input, appThread: { ...input.appThread, runtimeMode: "auto" as const } };
+  };
+
+  it.effect("says nothing about Auto when launch arguments ask Claude for another mode", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: {
+          ...DEFAULT_CLAUDE_SETTINGS,
+          launchArgs: "--permission-mode bypassPermissions",
+        },
+      });
+      yield* harness.runtime.startTurn(autoTurnInput(harness, 1));
+      assert.equal(harness.getOpenedOptions()?.permissionMode, "bypassPermissions");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          permissionMode: "bypassPermissions",
+          uuid: "auto-launch-arg-init",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      // Events arrive in order, so the terminal one follows any notice the init caused.
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepEqual(autoModeNotices(harness.events), []);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("tells a session Claude started under another id about Auto once", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        close: (queue) => Queue.shutdown(queue),
+      });
+      const init = (uuid: string) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          permissionMode: "default",
+          uuid,
+          session_id: "adopted-native-session",
+        });
+      yield* harness.runtime.startTurn(autoTurnInput(harness, 1));
+      // A start-up retry runs under a new id, which the adapter adopts from this init.
+      yield* harness.offerAndWait(init("auto-adopted-init"));
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      const adopted = harness.events.findLast((event) => event.type === "provider_thread.updated");
+      assert.equal(adopted?.providerThread.nativeThreadRef?.nativeId, "adopted-native-session");
+      yield* harness.runtime.interruptTurn({
+        providerThread: adopted!.providerThread,
+        providerTurnId: lastProviderTurn(harness.events).id,
+        requestRuntimeRestart: true,
+      });
+      yield* harness.runtime.startTurn(autoTurnInput(harness, 2, adopted!.providerThread));
+      assert.equal(harness.getOpenedOptions()?.resume, "adopted-native-session");
+      yield* harness.offerAndWait(init("auto-adopted-init-resumed"));
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "auto-adopted-result-resumed", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepEqual(autoModeNotices(harness.events), [
+        ClaudeAdapterV2.claudeAutoModeUnavailableNotice(undefined),
+      ]);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -10904,6 +11087,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       seconds: 60,
     },
     {
+      cooldown:
+        " via provider claude (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.) (reset after 2h16m10s)",
+      seconds: 8170,
+    },
+    {
+      cooldown: " via provider claude (reset after 4m 6s) (last error: rate limited)",
+      seconds: 246,
+    },
+    {
       cooldown: " (last error: Request rejected (429) (reset after 1h) (last error: rate limited))",
       seconds: 0,
     },
@@ -11066,6 +11258,145 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
   };
+  it.effect.each(["reopened", "new runtime", "no anchor", "fresh", "per-process"] as const)(
+    "a resumed process's first result charges only its own growth (%s)",
+    (scenario) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+        const now = yield* DateTime.now;
+        const turn = (name: string) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(name),
+            text: "Continue.",
+            attachments: [],
+          });
+        const modelUsage = (inputTokens: number, outputTokens: number) => ({
+          inputTokens,
+          outputTokens,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          webSearchRequests: 0,
+          costUSD: 0,
+          contextWindow: 200_000,
+          maxOutputTokens: 32_000,
+        });
+        const main = CLAUDE_TEST_MODEL_SELECTION.model;
+        const helper = "claude-haiku-4-5";
+        const reopen =
+          scenario === "reopened" || scenario === "new runtime" || scenario === "per-process";
+        if (reopen) {
+          yield* harness.runtime.startTurn(turn("earlier-ledger"));
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({
+              uuid: "result-earlier-ledger",
+              result: "OK",
+              usage: { ...zeroUsage, input_tokens: 1700, output_tokens: 50 },
+              modelUsage: { [main]: modelUsage(1700, 50) },
+            }),
+          );
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        }
+        const input = turn("current-ledger");
+        const runtime =
+          scenario === "new runtime"
+            ? yield* harness.adapter.openSession({
+                threadId: harness.threadId,
+                providerSessionId: ProviderSessionId.make("new-runtime-ledger"),
+                modelSelection: input.modelSelection,
+                runtimePolicy: input.runtimePolicy,
+              })
+            : harness.runtime;
+        const completedInNewRuntime =
+          yield* Queue.unbounded<
+            Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { readonly type: "provider_turn.updated" }
+            >
+          >();
+        if (runtime !== harness.runtime) {
+          yield* runtime.events.pipe(
+            Stream.runForEach((event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "completed"
+                ? Queue.offer(completedInNewRuntime, event)
+                : Effect.void,
+            ),
+            Effect.forkScoped,
+          );
+        }
+        yield* runtime.startTurn({
+          ...input,
+          ...(reopen ? { resume: true } : {}),
+          nativeThreadHasTurns: scenario !== "fresh",
+        });
+        assert.equal(
+          harness.getOpenedOptions()?.resume,
+          scenario === "fresh" ? undefined : WAKE_NATIVE_SESSION,
+        );
+        const messages = harness.processQueues[reopen ? 1 : 0]!;
+        yield* Queue.offer(
+          messages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "init-current-ledger",
+            session_id: WAKE_NATIVE_SESSION,
+            claude_code_version: scenario === "per-process" ? "2.1.111" : "2.1.332",
+          }),
+        );
+        // Claude Code restores a resumed session's model totals, so its first result includes them.
+        // 2.1.111 restarts them, and here its own main usage outgrows the earlier process's ledger.
+        const [historicalInput, historicalOutput] =
+          scenario === "fresh" || scenario === "per-process" ? [0, 0] : [1700, 50];
+        const [ownInput, ownOutput] = scenario === "per-process" ? [2000, 60] : [110, 2];
+        yield* Queue.offer(
+          messages,
+          makeResultFrame({
+            uuid: "result-current-ledger",
+            result: "OK",
+            usage: { ...zeroUsage, input_tokens: ownInput, output_tokens: ownOutput },
+            modelUsage: {
+              [main]: modelUsage(historicalInput + ownInput, historicalOutput + ownOutput),
+              [helper]: modelUsage(90_000, 3000),
+            },
+          }),
+        );
+        const completed = yield* Effect.gen(function* () {
+          if (runtime !== harness.runtime) return yield* Queue.take(completedInNewRuntime);
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+          return harness.events.findLast((event) => event.type === "provider_turn.updated");
+        });
+        assert.include(completed?.providerTurn.turnTokenUsage ?? {}, {
+          inputTokens: ownInput,
+          outputTokens: ownOutput,
+        });
+        assert.deepEqual(
+          completed?.providerTurn.turnTokenUsage?.otherUsage,
+          {
+            reopened: { inputTokens: 90_000, outputTokens: 3000 },
+            "new runtime": { inputTokens: 90_000, outputTokens: 3000 },
+            // Without a saved anchor the totals may hold earlier turns, so only the result counts.
+            "no anchor": undefined,
+            fresh: { inputTokens: 90_000, outputTokens: 3000 },
+            // Older Claude Code restarts a resumed process's ledger, so it counts from zero.
+            "per-process": { inputTokens: 90_000, outputTokens: 3000 },
+          }[scenario],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   const reportedContextTokens = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
     events.flatMap((event) =>
       event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
@@ -14700,18 +15031,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       assert.equal(monitorItem?.type, "turn_item.updated");
       if (monitorItem?.type !== "turn_item.updated") return;
-      assert.deepEqual(roster, [
-        {
-          taskId: longRunning.taskId,
-          kind: "monitor",
-          awaited: true,
-          description: "Monitor 0",
-          nativeItemId: "toolu_monitor_0",
-          command: "sleep 8 && echo MONITOR_DONE",
-          itemId: monitorItem.turnItem.id,
-          sourceThreadId: harness.threadId,
-        },
-      ]);
+      assert.deepEqual(roster?.[0], {
+        taskId: longRunning.taskId,
+        kind: "monitor",
+        awaited: true,
+        description: "Monitor 0",
+        nativeItemId: "toolu_monitor_0",
+        command: "sleep 8 && echo MONITOR_DONE",
+        itemId: monitorItem.turnItem.id,
+        sourceThreadId: harness.threadId,
+      });
+      // The last monitor's notice came after the final tool round, so its wake turn is owed.
+      assert.deepEqual(
+        roster?.map((task) => task.taskId),
+        [longRunning.taskId, "monitor-task-65"],
+      );
       assert.isDefined(harness.runtime.awaitBackgroundTasks);
       const released = yield* harness.runtime.awaitBackgroundTasks!({
         providerThread: harness.providerThread,
@@ -15114,6 +15448,142 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(harness.terminalEvents()[1]?.status, "completed");
       assert.isTrue(backgroundWorkHoldsCompletion(publishedRoster(harness)));
       assert.isTrue(yield* harness.hasPendingBackgroundWork);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect(
+    "a task that finishes during the turn's last model request keeps the session for its wake turn",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-mid-turn-notification"),
+            text: "Run the sleep in the background, then write the long reply.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        // The command finishes while the final reply streams; no tool step follows, so Claude
+        // Code holds the notice and starts its own turn for it right after `result`.
+        yield* Queue.offer(harness.sdkMessages, wakeNotification);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({
+            uuid: "00000000-0000-4000-8000-000000002601",
+            text: "one\ntwo\nthree",
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* harness.awaitTerminal(1);
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        assert.isTrue(
+          yield* harness.hasPendingBackgroundWork,
+          "the notice reached Claude after its last request, so a wake turn is still owed",
+        );
+        assert.deepStrictEqual(
+          publishedRoster(harness).map((task) => task.taskId),
+          [WAKE_TASK_ID],
+        );
+
+        yield* harness.offerAndWait(wakeTurnInit);
+        yield* harness.offerAndWait(wakeAssistant);
+        yield* harness.awaitContinuation(1);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-mid-turn-notification-wake"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* harness.offerAndWait(wakeResult);
+        yield* harness.awaitTerminal(2);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        assert.deepStrictEqual(publishedRoster(harness), []);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect("a task that finishes before the turn's next tool round owes no wake turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-notification-before-tool-round"),
+          text: "Run the sleep in the background, then read the file.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+      yield* Queue.offer(harness.sdkMessages, wakeNotification);
+      // Claude folds the notice into the request that follows this tool round.
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "assistant",
+          message: {
+            model: "claude-sonnet-4-6",
+            id: "msg_read_after_notice",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "tool_use", id: "toolu_read_after_notice", name: "Read", input: {} }],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+          parent_tool_use_id: null,
+          uuid: "00000000-0000-4000-8000-000000002611",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: "toolu_read_after_notice", content: "one" },
+            ],
+          },
+          parent_tool_use_id: null,
+          uuid: "00000000-0000-4000-8000-000000002612",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* Queue.offer(harness.sdkMessages, turnOneResult);
+      yield* harness.awaitTerminal(1);
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      assert.deepStrictEqual(publishedRoster(harness), []);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

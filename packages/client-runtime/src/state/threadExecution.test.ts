@@ -18,6 +18,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
+import { decodeOptions, mFallback } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import { describe, expect, it } from "vite-plus/test";
 
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
@@ -32,6 +34,7 @@ import {
   deriveThreadActivityRun,
   deriveThreadRuntime,
   formatModelSelectionEffort,
+  formatProviderSubagentStatus,
   formatSubagentEffort,
   isBackgroundWorkStopPending,
   presentPendingBackgroundWork,
@@ -946,6 +949,44 @@ describe("presentProviderGoal", () => {
         false,
       ).usage,
     ).toBe("1m / 1m tokens");
+  });
+});
+
+// A Japanese catalogue for the duration units only, keyed by source message like the real one.
+const JAPANESE_UNITS: Record<string, string> = {
+  "{minutes}m {seconds}s": "{minutes}分{seconds}秒",
+};
+const japaneseUnits = ((encodedMsg: string, options?: Parameters<MFunctionType>[1]) => {
+  const vars: Record<string, unknown> = { ...decodeOptions(encodedMsg), ...options };
+  const translated = JAPANESE_UNITS[String(vars.$_source)];
+  return translated === undefined
+    ? mFallback(encodedMsg, options)
+    : translated.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key]));
+}) as MFunctionType;
+
+describe("duration units follow the app language", () => {
+  it("in the goal usage line", () => {
+    expect(
+      presentProviderGoal(
+        { objective: "Ship the feature", status: "paused", timeUsedSeconds: 125 },
+        false,
+        japaneseUnits,
+      ).usage,
+    ).toBe("2分5秒");
+  });
+
+  it("in the provider subagent status", () => {
+    expect(
+      formatProviderSubagentStatus(
+        {
+          status: "completed",
+          startedAt: "2026-07-28T10:00:00.000Z",
+          completedAt: "2026-07-28T10:02:05.000Z",
+        },
+        0,
+        japaneseUnits,
+      ),
+    ).toBe("Completed in 2分5秒");
   });
 });
 

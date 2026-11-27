@@ -13,16 +13,42 @@ const MAX_OUTPUT = 1_000_000;
 const CELL_START = Symbol("cell-start");
 const CELL_END = Symbol("cell-end");
 const LINE_START = Symbol("line-start");
+const THEMATIC_BREAK = Symbol("thematic-break");
+const PRESENTATIONML_NAMESPACES = new Set([
+  "http://schemas.openxmlformats.org/presentationml/2006/main",
+  "http://purl.oclc.org/ooxml/presentationml/main",
+]);
+const WORDPROCESSINGML_NAMESPACES = new Set([
+  "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+  "http://purl.oclc.org/ooxml/wordprocessingml/main",
+]);
+const PPTX_DRAWING_PROPERTIES = new Map([
+  ["sp", "nvSpPr"],
+  ["grpSp", "nvGrpSpPr"],
+  ["pic", "nvPicPr"],
+  ["graphicFrame", "nvGraphicFramePr"],
+  ["cxnSp", "nvCxnSpPr"],
+]);
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
+const ODF_DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+const ODF_TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
 type TextPart =
   | string
   | typeof CELL_START
   | typeof CELL_END
   | typeof LINE_START
+  | typeof THEMATIC_BREAK
+  | { columnGap: number }
   | { imageDescription: string }
-  | { fallback: string };
+  | { fallback: string }
+  | { notebookOutput: Iterable<string> };
+
+const NOTEBOOK_OUTPUT_HEADING = "\nOutput:\n";
+const NOTEBOOK_OUTPUT_TEXT = /[^\s\0]/u;
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
+const TRAILING_HIGH_SURROGATE = /[\uD800-\uDBFF]$/;
 // Parts the document never displays: the XHTML head, tracked deletions and moves, field codes,
 // phonetic guides, paragraph properties such as tab-stop definitions, drawing anchor layout
 // values and encoded field data.
@@ -61,12 +87,18 @@ interface XmlNode {
   attrs: Record<string, string>;
   children: Array<XmlNode | string>;
   imageDescription?: string;
+  pptxHidden?: boolean;
   spaceCount?: number;
+  wordOutlineHeadingLevel?: number;
   hasText?: boolean;
   hasTextChoice?: boolean;
   markupCompatibility?: boolean;
   hasSelectedChoice?: boolean;
   epubTable?: boolean;
+  mathmlFirstChildSeen?: boolean;
+  epubBlock?: boolean;
+  odfInlineParagraphs?: boolean;
+  odfParagraphHidden?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -115,22 +147,90 @@ function separateRubyReadings(ruby: XmlNode) {
   }
 }
 
+function namespaceOf(tagName: string, scope: readonly XmlNode[]) {
+  const colon = tagName.lastIndexOf(":");
+  const binding = colon === -1 ? "xmlns" : `xmlns:${tagName.slice(0, colon)}`;
+  return scope.findLast((node) => Object.hasOwn(node.attrs, binding))?.attrs[binding];
+}
+
+function isHiddenOdfSection(
+  tagName: string,
+  attributes: Record<string, string>,
+  scope: readonly XmlNode[],
+) {
+  return (
+    namespaceOf(tagName, scope) === ODF_TEXT_NS &&
+    Object.entries(attributes).some(
+      ([name, value]) =>
+        name.endsWith(":display") &&
+        /^[\t\n\r ]*none[\t\n\r ]*$/u.test(value) &&
+        namespaceOf(name, scope) === ODF_TEXT_NS,
+    )
+  );
+}
+
+function isXhtmlElement(
+  tagName: string,
+  scope: readonly XmlNode[],
+  rootTagName: string | undefined,
+) {
+  const namespace = namespaceOf(tagName, scope);
+  return (
+    namespace === "http://www.w3.org/1999/xhtml" ||
+    (namespace === undefined && !tagName.includes(":") && rootTagName === "html")
+  );
+}
+
+function hasImportantDisplayNone(style: string): boolean {
+  // Stylesheet rules can override non-important inline display.
+  if (!style || style.includes("\\") || !/display/i.test(style) || !/important/i.test(style))
+    return false;
+  let badString = false;
+  const declarations = style.replaceAll(
+    /\/\*[\s\S]*?(?:\*\/|$)|"[^"]*(?:"|$)|'[^']*(?:'|$)/g,
+    (token) => {
+      if (token.startsWith("/")) return " ";
+      // CSS ends a string at a newline, so later declarations can still apply.
+      if (/[\n\r\f]/.test(token)) badString = true;
+      return '""';
+    },
+  );
+  // Semicolons in blocks can be part of a declaration's value.
+  if (badString || /[()[\]{}]/.test(declarations)) return false;
+  let hidden = false;
+  for (const [declaration] of declarations.matchAll(/[^;]+/g)) {
+    const match =
+      /^[\t\n\f\r ]*(display|all)[\t\n\f\r ]*:([^!]+)![\t\n\f\r ]*important[\t\n\f\r ]*$/i.exec(
+        declaration,
+      );
+    if (!match) continue;
+    const [, property, value] = match;
+    if (!value?.trim()) continue;
+    hidden = property?.toLowerCase() === "display" && /^[\t\n\f\r ]*none[\t\n\f\r ]*$/i.test(value);
+  }
+  return hidden;
+}
+
 function xml(source: string, extension: string): XmlNode {
   const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
   const stack = [root];
+  let rootTagName: string | undefined;
   let nodes = 0;
   const parser = new SaxesParser();
   if (extension === ".epub") Object.assign(parser.ENTITIES, characterEntities);
   parser.on("opentag", (tag) => {
     if (++nodes > 200_000 || stack.length > 128) throw new Truncation("XML structure limit");
+    rootTagName ??= tag.name;
     const node: XmlNode = {
       name: tag.name.split(":").at(-1)!,
       attrs: Object.fromEntries(
         Object.entries(tag.attributes).flatMap(([key, value]) => {
           const local = key.split(":").at(-1)!;
-          // XHTML table spans are unqualified; a prefixed colspan is a foreign attribute.
-          return extension === ".epub" && (local === "colspan" || local === "rowspan")
+          // A foreign attribute must not shadow an XHTML table span or a namespace declaration.
+          return (extension === ".epub" &&
+            (local === "colspan" || local === "rowspan" || local === "xmlns")) ||
+            (extension === ".odt" && local === "xmlns")
             ? [[key, String(value)]]
             : [
                 [key, String(value)],
@@ -144,19 +244,68 @@ function xml(source: string, extension: string): XmlNode {
     if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
     stack.at(-1)!.children.push(node);
     stack.push(node);
-    if (node.name === "AlternateContent" || node.name === "Choice") {
-      const colon = tag.name.lastIndexOf(":");
-      const binding = colon === -1 ? "xmlns" : `xmlns:${tag.name.slice(0, colon)}`;
-      if (
-        stack.findLast((ancestor) => Object.hasOwn(ancestor.attrs, binding))?.attrs[binding] ===
-        MARKUP_COMPATIBILITY_NS
-      )
-        node.markupCompatibility = true;
+    if (odf && node.name === "text-box" && namespaceOf(tag.name, stack) === ODF_DRAW_NS)
+      node.odfInlineParagraphs = true;
+    if (
+      extension === ".odt" &&
+      node.name === "hidden-paragraph" &&
+      namespaceOf(tag.name, stack) === ODF_TEXT_NS
+    ) {
+      const paragraph = stack.findLast(
+        (ancestor) => ancestor.name === "p" || ancestor.name === "h",
+      );
+      // A visible field keeps the paragraph visible even if another field hides it.
+      if (paragraph && paragraph.odfParagraphHidden !== false) {
+        const visibility = Object.entries(tag.attributes).find(
+          ([name]) => name.endsWith(":is-hidden") && namespaceOf(name, stack) === ODF_TEXT_NS,
+        )?.[1];
+        paragraph.odfParagraphHidden = /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u.test(visibility ?? "");
+      }
     }
+    if (
+      extension === ".epub" &&
+      node.name === "semantics" &&
+      namespaceOf(tag.name, stack) === MATHML_NS
+    )
+      node.mathmlFirstChildSeen = false;
+    if (
+      extension === ".epub" &&
+      ["nav", "main", "details", "summary"].includes(node.name) &&
+      isXhtmlElement(tag.name, stack, rootTagName)
+    )
+      node.epubBlock = true;
+    if (
+      (node.name === "AlternateContent" || node.name === "Choice") &&
+      namespaceOf(tag.name, stack) === MARKUP_COMPATIBILITY_NS
+    )
+      node.markupCompatibility = true;
   });
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (extension === ".pptx" && node.name === "cNvPr") {
+      const hidden = tag.attributes.hidden?.trim();
+      const drawing = stack.at(-2);
+      if (
+        drawing &&
+        (hidden === "true" || hidden === "1") &&
+        PPTX_DRAWING_PROPERTIES.get(drawing.name) === parent.name &&
+        PRESENTATIONML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+      ) {
+        drawing.pptxHidden = true;
+      }
+    }
+    if (extension === ".docx" && node.name === "outlineLvl" && parent.name === "pPr") {
+      const owner = stack.at(-2);
+      const outline = Number(node.attrs.val?.match(/^\s*[+-]?\d+\s*$/u)?.[0]);
+      if ((owner?.name === "p" || owner?.name === "style") && outline >= 0 && outline <= 9) {
+        // Word's outline is zero-based, with 9 reserved for body text.
+        owner.wordOutlineHeadingLevel = outline === 9 ? 0 : outline + 1;
+      }
+    }
+    // MathML Core displays only the first element child of semantics by default.
+    const isMathmlAlternative = parent.mathmlFirstChildSeen === true;
+    if (parent.mathmlFirstChildSeen === false) parent.mathmlFirstChildSeen = true;
     const isCompatibilityChoice =
       node.name === "Choice" &&
       node.markupCompatibility &&
@@ -164,10 +313,17 @@ function xml(source: string, extension: string): XmlNode {
       parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
+      node.pptxHidden ||
+      (node.odfParagraphHidden && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) ||
+      isMathmlAlternative ||
+      (extension === ".epub" &&
+        node.name === "template" &&
+        isXhtmlElement(tag.name, [...stack, node], rootTagName)) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
-        Object.hasOwn(tag.attributes, "hidden") &&
-        !/^until-found$/i.test(String(tag.attributes.hidden))) ||
+        ((Object.hasOwn(tag.attributes, "hidden") &&
+          !/^until-found$/i.test(String(tag.attributes.hidden))) ||
+          hasImportantDisplayNone(tag.attributes.style ?? ""))) ||
       (extension === ".docx" && node.name === "del") ||
       (extension === ".docx" &&
         node.name === "r" &&
@@ -177,6 +333,9 @@ function xml(source: string, extension: string): XmlNode {
             (prop) => prop.name === "vanish" && ["true", "1", "on"].includes(prop.attrs.val ?? "1"),
           )) ||
       (odf && node.name === "annotation" && parent.name !== "semantics") ||
+      (extension === ".odt" &&
+        node.name === "section" &&
+        isHiddenOdfSection(tag.name, tag.attributes, [...stack, node])) ||
       (extension === ".pptx" &&
         node.name === "timing" &&
         stack.every((ancestor) =>
@@ -189,6 +348,34 @@ function xml(source: string, extension: string): XmlNode {
     ) {
       parent.children.pop();
       return;
+    }
+    if (
+      extension === ".docx" &&
+      node.name === "ruby" &&
+      WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+    ) {
+      const base = children(node).find((child) => child.name === "rubyBase");
+      const reading = children(node).find((child) => child.name === "rt");
+      // Word stores the guide first even though the base is the text on the line.
+      if (base?.hasText && reading?.hasText) node.children = [base, "(", reading, ")"];
+    }
+    if (
+      extension === ".odt" &&
+      node.name === "note" &&
+      namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS
+    ) {
+      const parts = children(node);
+      const citation = parts.find((child) => child.name === "note-citation");
+      const body = parts.find((child) => child.name === "note-body");
+      if (citation?.hasText && body?.hasText) {
+        body.odfInlineParagraphs = true;
+        node.children = ["[", citation, ": ", body, "]"];
+      }
+    }
+    if (odf && node.name === "ruby" && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) {
+      const base = children(node).find((child) => child.name === "ruby-base");
+      const reading = children(node).find((child) => child.name === "ruby-text");
+      if (base?.hasText && reading?.hasText) node.children = [base, "(", reading, ")"];
     }
     if (extension === ".epub" && node.name === "ruby" && stack[1]?.name === "html")
       separateRubyReadings(node);
@@ -287,7 +474,21 @@ function* text(node: XmlNode): Generator<TextPart, void> {
   }
   // Word text boxes hold their own paragraphs inside the anchoring paragraph.
   if (node.name === "txbxContent") yield* paragraphs(node);
-  else if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
+  else if (node.odfInlineParagraphs) {
+    // ODF boxes and notes can sit inline, so only add breaks between their own paragraphs.
+    let seenParagraph = false;
+    for (const child of node.children) {
+      if (typeof child === "string") {
+        yield child;
+        continue;
+      }
+      if (child.name === "p" || child.name === "h") {
+        if (seenParagraph) yield "\n";
+        seenParagraph = true;
+      }
+      yield* text(child);
+    }
+  } else if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
   else if (["br", "line-break", "cr"].includes(node.name)) yield "\n";
   else if (node.name === "noBreakHyphen") yield "\u2011";
   else if (node.spaceCount !== undefined) {
@@ -316,6 +517,29 @@ function* xstringText(node: XmlNode): Generator<string, void> {
         literal ? `_${literal}` : String.fromCharCode(Number.parseInt(hex!, 16)),
     );
 }
+
+function hasXstringText(node: XmlNode): boolean {
+  for (const value of xstringText(node)) if (value.trim()) return true;
+  return false;
+}
+
+function wordStyleOutlineLevel(
+  outlines: Map<string, number | string | undefined>,
+  id: string,
+): number | undefined {
+  let outline = outlines.get(id);
+  if (typeof outline !== "string") return outline;
+  const visited = new Set<string>();
+  while (typeof outline === "string" && !visited.has(id)) {
+    visited.add(id);
+    id = outline;
+    outline = outlines.get(id);
+  }
+  const level = typeof outline === "number" ? outline : undefined;
+  for (const styleId of visited) outlines.set(styleId, level);
+  return level;
+}
+
 function* paragraphs(node: XmlNode): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
   if (node.imageDescription !== undefined) {
@@ -325,20 +549,40 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
   for (const child of node.children) {
     if (typeof child === "string") yield child;
     else if (["br", "line-break", "cr"].includes(child.name)) yield "\n";
+    else if (child.name === "hr") yield THEMATIC_BREAK;
     else if (["tbl", "table"].includes(child.name)) yield* table(child);
-    else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
-      const style =
-        all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value?.attrs.val ?? "";
+    else if (child.name === "pre" && child.hasText) {
+      yield LINE_START;
+      yield* text(child);
+      yield LINE_START;
+    } else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
+      yield THEMATIC_BREAK;
+      const style = all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value;
       const level =
         child.name === "h"
           ? Number(child.attrs["outline-level"]) || 1
           : /^h[1-6]$/.test(child.name)
             ? Number(child.name[1])
-            : Number(style.match(/^Heading([1-6])$/i)?.[1]) || 0;
+            : (child.wordOutlineHeadingLevel ??
+              style?.wordOutlineHeadingLevel ??
+              (Number(style?.attrs.val?.match(/^Heading([1-6])$/i)?.[1]) || 0));
       if (level) yield `${"#".repeat(Math.min(6, level))} `;
       yield* text(child);
       yield "\n";
-    } else if (child.name === "blockquote" && child.hasText) {
+    } else if (
+      child.hasText &&
+      (child.epubBlock ||
+        [
+          "blockquote",
+          "figure",
+          "figcaption",
+          "aside",
+          "address",
+          "header",
+          "footer",
+          "article",
+        ].includes(child.name))
+    ) {
       yield LINE_START;
       yield* paragraphs(child);
       yield LINE_START;
@@ -347,8 +591,11 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
         if (!child.hasText) continue;
         yield LINE_START;
       }
+      const block = ["li", "div", "section", "dt", "dd"].includes(child.name);
+      // Like a thematic break, a nested block starts a new line once its content arrives.
+      if (block) yield THEMATIC_BREAK;
       yield* paragraphs(child);
-      if (["li", "div", "section", "dt", "dd"].includes(child.name)) yield "\n";
+      if (block) yield "\n";
     }
   }
 }
@@ -412,11 +659,22 @@ function epubSpan(value: string | undefined) {
   return digits === undefined ? 1 : Number(digits);
 }
 
+function* epubTableParts(node: XmlNode) {
+  // Legacy XHTML places footers before the body. The table model reads them after the other rows.
+  const footers: XmlNode[] = [];
+  for (const part of node.children) {
+    if (typeof part === "string") continue;
+    if (part.name === "tfoot") footers.push(part);
+    else yield part;
+  }
+  yield* footers;
+}
+
 function* epubTable(node: XmlNode): Generator<TextPart, void> {
   const occupiedUntil = new Uint32Array(512);
   let rowIndex = 0;
   let rowCount = 0;
-  for (const part of children(node)) {
+  for (const part of epubTableParts(node)) {
     const rowGroup = ["thead", "tbody", "tfoot"].includes(part.name);
     if (!rowGroup && part.name !== "tr") continue;
     if (rowGroup) occupiedUntil.fill(0);
@@ -486,10 +744,14 @@ function* table(node: XmlNode): Generator<TextPart, void> {
     while (cells.length && !hasCellText(cells.at(-1)!)) cells.pop();
     if (!cells.length) continue;
     const repeat = repeatCount(row.attrs["number-rows-repeated"]);
+    // Word emits no cells for the grid columns w:gridBefore skips at the start of a row.
+    const trPr = row.name === "tr" ? children(row).find((c) => c.name === "trPr") : undefined;
+    const before = trPr && children(trPr).find((c) => c.name === "gridBefore")?.attrs.val;
+    const skipped = before ? Math.max(0, Number.parseInt(before, 10) || 0) : 0;
     for (let index = 0; index < repeat; index++) {
       if (++rowCount > 10_000) throw new Truncation("Row limit");
-      let column = 0;
-      let gap = 0;
+      let column = skipped;
+      let gap = skipped;
       for (const cell of cells) {
         const count = repeatCount(cell.attrs["number-columns-repeated"]);
         // Word emits no cell for columns covered by w:gridSpan; pad before the next cell.
@@ -499,7 +761,7 @@ function* table(node: XmlNode): Generator<TextPart, void> {
         for (let i = 0; i < count; i++) {
           column += span;
           if (column > 512) throw new Truncation("Column limit");
-          if (gap) yield "\t".repeat(gap);
+          if (gap) yield { columnGap: gap };
           gap = span;
           // LibreOffice hides the contents a merge covers; the cell still holds its column.
           if (covered(cell)) continue;
@@ -594,8 +856,8 @@ async function archive(path: string): Promise<Map<string, string>> {
 
 const NOTEBOOK_CELL_TYPES = ["code", "markdown", "raw"];
 
-function* notebook(source: string): Generator<string, void> {
-  const book: unknown = JSON.parse(source);
+function* notebook(source: string): Generator<TextPart, void> {
+  const book: unknown = JSON.parse(source.replace(/^\uFEFF/u, ""));
   if (!book || typeof book !== "object" || !("cells" in book) || !Array.isArray(book.cells))
     throw new Error("Invalid notebook");
   function* lines(value: unknown): Generator<string, void> {
@@ -610,6 +872,40 @@ function* notebook(source: string): Generator<string, void> {
     const plain = NodeUtil.stripVTControlCharacters([...lines(value)].join(""));
     return stream ? terminalOutputCollapseRedraws(plain) : plain;
   }
+  function* cellOutputParts(outputs: readonly unknown[]): Generator<string, void> {
+    for (const output of outputs) {
+      if (!output || typeof output !== "object") continue;
+      if ("text" in output)
+        yield outputText(output.text, "output_type" in output && output.output_type === "stream");
+      else if (
+        "data" in output &&
+        output.data &&
+        typeof output.data === "object" &&
+        ("text/plain" in output.data || "text/markdown" in output.data)
+      ) {
+        const plain = outputText(
+          "text/plain" in output.data ? output.data["text/plain"] : undefined,
+        );
+        yield "text/markdown" in output.data && !NOTEBOOK_OUTPUT_TEXT.test(plain)
+          ? outputText(output.data["text/markdown"])
+          : plain;
+      } else if ("output_type" in output && output.output_type === "error") {
+        const name = outputText("ename" in output ? output.ename : undefined);
+        const value = outputText("evalue" in output ? output.evalue : undefined);
+        if (NOTEBOOK_OUTPUT_TEXT.test(name + value)) {
+          yield name;
+          if ("evalue" in output) yield ": " + value;
+        } else yield name + value;
+        yield "\n";
+        if ("traceback" in output)
+          for (const line of lines(output.traceback)) {
+            yield NodeUtil.stripVTControlCharacters(line);
+            yield "\n";
+          }
+      }
+      yield "\n";
+    }
+  }
   for (const [index, cell] of book.cells.entries()) {
     if (index >= 10_000) throw new Truncation("Notebook cell limit");
     if (!cell || typeof cell !== "object") continue;
@@ -618,33 +914,7 @@ function* notebook(source: string): Generator<string, void> {
     yield `## Cell ${index + 1} (${kind})\n`;
     if ("source" in cell) yield* lines(cell.source);
     if ("outputs" in cell && Array.isArray(cell.outputs)) {
-      yield "\nOutput:\n";
-      for (const output of cell.outputs) {
-        if (!output || typeof output !== "object") continue;
-        if ("text" in output)
-          yield outputText(output.text, "output_type" in output && output.output_type === "stream");
-        else if (
-          "data" in output &&
-          output.data &&
-          typeof output.data === "object" &&
-          "text/plain" in output.data
-        )
-          yield outputText(output.data["text/plain"]);
-        else if ("output_type" in output && output.output_type === "error") {
-          if ("ename" in output) yield* lines(output.ename);
-          if ("evalue" in output) {
-            yield ": ";
-            yield* lines(output.evalue);
-          }
-          yield "\n";
-          if ("traceback" in output)
-            for (const line of lines(output.traceback)) {
-              yield NodeUtil.stripVTControlCharacters(line);
-              yield "\n";
-            }
-        }
-        yield "\n";
-      }
+      yield { notebookOutput: cellOutputParts(cell.outputs) };
     }
     yield "\n\n";
   }
@@ -685,7 +955,69 @@ const RTF_CODE_PAGES = new Map([
 const rtfCodePage = (value: number) =>
   RTF_CODE_PAGES.get(value) ?? (value >= 1250 && value <= 1258 ? `windows-${value}` : undefined);
 
+const MAX_RTF_DEPTH = 128;
+
+function rtfGroupEnd(source: string, start: number, outerDepth: number) {
+  // Match group boundaries without counting escaped braces or braces in binary data.
+  const structure = /[{}]|\\(?:(bin)(?![a-z])(-?\d+)? ?|[\\{}])/gi;
+  structure.lastIndex = start;
+  let depth = outerDepth + 1;
+  let token: RegExpExecArray | null;
+  while (depth <= MAX_RTF_DEPTH && (token = structure.exec(source))) {
+    if (token[0] === "{") depth++;
+    else if (token[0] === "}") {
+      if (--depth === outerDepth) return structure.lastIndex;
+    } else if (token[1] === "bin") {
+      const size = Number(token[2]);
+      if (!Number.isSafeInteger(size) || size < 0) return;
+      structure.lastIndex += size;
+    }
+  }
+}
+
+function rtfUnicodeDestination(
+  source: string,
+  start: number,
+  outerDepth: number,
+  verifiedThrough: number,
+) {
+  const ansiStart = /[\r\n]*\{/y;
+  ansiStart.lastIndex = start;
+  if (!ansiStart.test(source)) return;
+  const ansiEnd = rtfGroupEnd(source, ansiStart.lastIndex, outerDepth);
+  if (ansiEnd === undefined) return;
+
+  const unicodeStart = /[\r\n]*\{[\r\n]*\\\*[\r\n]*\\ud(?![a-zA-Z]|-?\d) ?/y;
+  unicodeStart.lastIndex = ansiEnd;
+  if (!unicodeStart.test(source)) return;
+  const body = unicodeStart.lastIndex;
+  // An enclosing group already checked for balance also proves its nested groups close.
+  const end = body < verifiedThrough ? verifiedThrough : rtfGroupEnd(source, body, outerDepth);
+  if (end !== undefined) return { body, end };
+}
+
+const RTF_NESTED_CELL_END = Symbol("rtf-nested-cell-end");
+
 function* rtf(source: string): Generator<string, void> {
+  // \nestcell ends a nested cell without a delimiter; space it only from adjacent text.
+  let last = "";
+  let afterNestedCell = false;
+  for (const part of rtfParts(source)) {
+    if (part === RTF_NESTED_CELL_END) {
+      afterNestedCell = true;
+      continue;
+    }
+    const text = part.replaceAll("\0", "");
+    if (text) {
+      if (afterNestedCell && /\S/u.test(last) && /\S/u.test(text[0]!)) yield " ";
+      afterNestedCell = false;
+      last = text.at(-1)!;
+    }
+    yield part;
+  }
+}
+
+function* rtfParts(source: string): Generator<string | typeof RTF_NESTED_CELL_END, void> {
   if (!source.startsWith("{\\rtf")) throw new Error("Invalid RTF document");
   let state = {
     skip: false,
@@ -698,6 +1030,10 @@ function* rtf(source: string): Generator<string, void> {
     decoder: new TextDecoder("windows-1252"),
   };
   const stack: Array<typeof state> = [];
+  const openGroup = () => {
+    stack.push({ ...state });
+    if (stack.length > MAX_RTF_DEPTH) throw new Truncation("RTF depth limit");
+  };
   // A font's \cpg, else its \fcharset, not the document code page, encodes the bytes written in
   // that font. A \cpg inside \fontfile encodes the font's file name instead.
   const fonts = new Map<number, typeof state.decoder>();
@@ -744,6 +1080,7 @@ function* rtf(source: string): Generator<string, void> {
     ["-", ""],
   ]);
   let fallback = 0;
+  let verifiedThrough = 0;
   for (let i = 0; i < source.length; i++) {
     const char = source[i]!;
     if (char === "{" || char === "}") {
@@ -751,8 +1088,7 @@ function* rtf(source: string): Generator<string, void> {
       fallback = 0;
     }
     if (char === "{") {
-      stack.push({ ...state });
-      if (stack.length > 128) throw new Truncation("RTF depth limit");
+      openGroup();
     } else if (char === "}") state = stack.pop() ?? state;
     else if (char === "\\") {
       const rest = source.slice(i + 1, i + 80);
@@ -776,6 +1112,15 @@ function* rtf(source: string): Generator<string, void> {
           continue;
         }
         yield* flushBytes();
+        if (control === "upr") {
+          const unicode = rtfUnicodeDestination(source, i + 1, stack.length, verifiedThrough);
+          if (unicode) {
+            openGroup();
+            verifiedThrough = unicode.end;
+            i = unicode.body - 1;
+          }
+          continue;
+        }
         if (
           [
             "fonttbl",
@@ -835,6 +1180,7 @@ function* rtf(source: string): Generator<string, void> {
         // Table structure survives tracked deletions; only the deleted cell text is dropped.
         else if (!state.skip && control === "row") yield "\n";
         else if (!state.skip && control === "cell") yield "\t";
+        else if (!state.skip && control === "nestcell") yield RTF_NESTED_CELL_END;
         else if (!hidden() && symbols.has(control)) yield symbols.get(control)!;
       } else {
         i++;
@@ -908,7 +1254,44 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       return main && has(main) ? main : fallback;
     };
     if (extension === ".docx") {
-      yield* paragraphs(read(mainPart("word/document.xml")));
+      const main = mainPart("word/document.xml");
+      const doc = read(main);
+      const rels = partRels(main);
+      const target = has(rels)
+        ? all(read(rels), "Relationship").find(
+            (rel) => rel.attrs.Type?.endsWith("/styles") && rel.attrs.TargetMode !== "External",
+          )?.attrs.Target
+        : undefined;
+      const dir = `/${NodePath.posix.dirname(main)}`;
+      const styles = NodePath.posix.resolve(dir, target || "styles.xml").slice(1);
+      if (has(styles)) {
+        const outlines = new Map<string, number | string | undefined>();
+        const headings = new Map<string, string>();
+        for (const style of all(read(styles), "style")) {
+          const id = style.attrs.styleId;
+          if ((style.attrs.type ?? "paragraph") !== "paragraph" || !id) continue;
+          const properties = children(style);
+          const outline =
+            style.wordOutlineHeadingLevel ??
+            properties.find((c) => c.name === "basedOn")?.attrs.val;
+          if (outline !== undefined) outlines.set(id, outline);
+          // Word localizes style ids while keeping built-in English names.
+          const name = properties.find((c) => c.name === "name")?.attrs.val;
+          const level = name?.match(/^heading ([1-6])$/i)?.[1];
+          if (level && id !== `Heading${level}`) headings.set(id, `Heading${level}`);
+        }
+        if (outlines.size || headings.size)
+          for (const pStyle of all(doc, "pStyle", ["pPrChange"])) {
+            const id = pStyle.attrs.val ?? "";
+            const outline = wordStyleOutlineLevel(outlines, id);
+            if (outline !== undefined) pStyle.wordOutlineHeadingLevel = outline;
+            else {
+              const heading = headings.get(id);
+              if (heading) pStyle.attrs.val = heading;
+            }
+          }
+      }
+      yield* paragraphs(doc);
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
       const content = read("content.xml");
       if (extension === ".odt")
@@ -964,7 +1347,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       const formats = cellFormats ? children(cellFormats) : [];
       const sharedPath = workbookPartPath("sharedStrings");
       const strings = has(sharedPath) ? [...all(read(sharedPath), "si")] : [];
-      const populatedStrings = strings.map(hasCellText);
+      const populatedStrings = strings.map(hasXstringText);
       for (const sheet of all(workbook, "sheet")) {
         yield `\n## Sheet: ${sheet.attrs.name}\n`;
         const target = rels.get(sheet.attrs["r:id"] ?? sheet.attrs.id)?.Target;
@@ -979,8 +1362,8 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             const raw = value?.children.find((child) => typeof child === "string")?.trim();
             return !!raw && !!populatedStrings[Number(raw)];
           }
-          if (cell.attrs.t === "inlineStr") return hasCellText(cell);
-          if (value && hasCellText(value)) return true;
+          if (cell.attrs.t === "inlineStr") return hasXstringText(cell);
+          if (value && hasXstringText(value)) return true;
           for (const formula of all(cell, "f")) if (hasCellText(formula)) return true;
           return false;
         };
@@ -1016,7 +1399,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             else if (cell.attrs.t === "b" && (raw.trim() === "0" || raw.trim() === "1"))
               yield* inCell([raw.trim() === "1" ? "true" : "false"]);
             else {
-              if (value && hasCellText(value)) yield* inCell(xstringText(value));
+              if (value && hasXstringText(value)) yield* inCell(xstringText(value));
               else for (const formula of all(cell, "f")) yield* inCell(text(formula));
               const formatId = formats[Number(cell.attrs.s ?? 0)]?.attrs.numFmtId;
               const format = formatId ? customFormats.get(formatId) : undefined;
@@ -1128,9 +1511,15 @@ export async function extractDocumentText(path: string, extension: string): Prom
   let started = false;
   let space = false;
   let midLine = false;
+  let pendingThematicBreak: string | undefined;
   let endsWithWord = false;
   let afterImageDescription = false;
   let truncated = false;
+  const takeRaw = (raw: string) => {
+    const value = raw.slice(0, remaining).replaceAll("\0", "");
+    remaining -= Math.min(raw.length, remaining);
+    return value;
+  };
   try {
     // Charge raw text before normalization so repeated whitespace also exhausts the budget.
     for await (let part of document(path, extension)) {
@@ -1142,8 +1531,14 @@ export async function extractDocumentText(path: string, extension: string): Prom
         continue;
       }
       if (part === CELL_END) {
+        remaining -= pendingThematicBreak?.length ?? 0;
+        pendingThematicBreak = undefined;
         cellDepth--;
         if (cellDepth > 0 && started) space = true;
+        continue;
+      }
+      if (part === THEMATIC_BREAK) {
+        if (midLine) pendingThematicBreak ??= "";
         continue;
       }
       if (part === LINE_START) {
@@ -1153,13 +1548,54 @@ export async function extractDocumentText(path: string, extension: string): Prom
       }
       let raw: string;
       let isImageDescription = false;
+      let isColumnGap = false;
       if (typeof part === "string") raw = part;
-      else if ("imageDescription" in part) {
+      else if ("columnGap" in part) {
+        raw = "\t".repeat(part.columnGap);
+        isColumnGap = true;
+      } else if ("imageDescription" in part) {
         raw = part.imageDescription;
         isImageDescription = true;
+      } else if ("notebookOutput" in part) {
+        // Charge leading whitespace as it arrives, but render it only with readable output.
+        let pending: string | undefined = "";
+        for (const output of part.notebookOutput) {
+          if (pending !== undefined) {
+            if (NOTEBOOK_OUTPUT_TEXT.test(output.slice(0, remaining))) {
+              const roomAfterHeading = Math.max(0, remaining - NOTEBOOK_OUTPUT_HEADING.length);
+              const fittingOutput =
+                output.length < roomAfterHeading
+                  ? output
+                  : output.slice(0, roomAfterHeading).replace(TRAILING_HIGH_SURROGATE, "");
+              if (!NOTEBOOK_OUTPUT_TEXT.test(fittingOutput)) throw new Truncation("Output budget");
+              result += takeRaw(NOTEBOOK_OUTPUT_HEADING) + pending;
+              pending = undefined;
+              midLine = false;
+            }
+          }
+          const value = takeRaw(output);
+          if (pending !== undefined) pending += value;
+          else {
+            result += value;
+            midLine = endsMidLine(value) ?? midLine;
+          }
+          if (remaining === 0) throw new Truncation("Output budget");
+        }
+        continue;
       } else {
         if (started) continue;
         raw = part.fallback;
+      }
+      if (pendingThematicBreak !== undefined) {
+        const next = pendingThematicBreak + raw;
+        const hasContent = /[^ \t]/u.test(raw);
+        // Inline markup can split significant indentation across chunks.
+        if (!hasContent && next.length < remaining) {
+          pendingThematicBreak = next;
+          continue;
+        }
+        raw = hasContent && !/^[ \t]*\n/u.test(raw) ? "\n" + next : next;
+        pendingThematicBreak = undefined;
       }
       // Resolve image boundaries here, after inline markup has been flattened.
       // Pending cell whitespace has already used its share of the output budget.
@@ -1170,8 +1606,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
         /^\u00ad*[\p{L}\p{M}\p{N}_]/u.test(raw)
       )
         raw = " " + raw;
-      let value = raw.slice(0, remaining).replaceAll("\0", "");
-      remaining -= Math.min(raw.length, remaining);
+      let value = takeRaw(raw);
       if (cellDepth) {
         value = value.replaceAll(/\s+/g, " ");
         const trimmed = value.trim();
@@ -1186,6 +1621,8 @@ export async function extractDocumentText(path: string, extension: string): Prom
           value = "";
         }
       } else {
+        // Trim leading text whitespace here so leading table column gaps survive trimEnd().
+        if (!result && !isColumnGap) value = value.trimStart();
         midLine = endsMidLine(value) ?? midLine;
       }
       result += value;
@@ -1204,7 +1641,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
     if (!(error instanceof Truncation)) throw error;
     truncated = true;
   }
-  result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trim();
+  result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trimEnd();
   if (!result && !truncated) throw new Error("No text extracted");
-  return truncated ? result.replace(/[\uD800-\uDBFF]$/, "").trimEnd() + TRUNCATED : result;
+  return truncated ? result.replace(TRAILING_HIGH_SURROGATE, "").trimEnd() + TRUNCATED : result;
 }
