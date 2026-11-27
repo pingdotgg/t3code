@@ -24,7 +24,11 @@ export function proposedPlanTitle(planMarkdown: string): string | null {
   return findPlanTitle(planMarkdown.replace(/^\uFEFF/, "").split(/\r\n?|\n/))?.text ?? null;
 }
 
-export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
+/** The separator line is a zero-based index into the returned Markdown. */
+export function displayedPlanMarkdown(planMarkdown: string): {
+  markdown: string;
+  separatorLine?: number;
+} {
   const lines = planMarkdown
     .replace(/^\uFEFF/, "")
     .trimEnd()
@@ -47,7 +51,7 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
   }
   const firstPreambleBlock = preambleBlocks[0];
   if (!title && firstPreambleBlock) {
-    return lines.slice(firstPreambleBlock.start).join("\n");
+    return { markdown: lines.slice(firstPreambleBlock.start).join("\n") };
   }
   const contentStart = start;
   if (title) start = title.index + 1;
@@ -66,17 +70,24 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
       .slice(firstPreambleBlock?.start ?? contentStart, title.index)
       .join("\n")
       .trimEnd();
-    if (!body) return before;
+    if (!body) return { markdown: before };
     // A link definition keeps adjacent lists separate even when mobile strips HTML comments.
     // Use a label absent from the plan so the definition cannot resolve an authored reference.
     const usedLabels = new Set(`${before}\n${body}`.match(/\d+/g));
     let label = 0;
     while (usedLabels.has(String(label))) label += 1;
-    return `${before}\n\n[${label}]: <>\n\n${body}`;
+    return {
+      markdown: `${before}\n\n[${label}]: <>\n\n${body}`,
+      separatorLine: before.split("\n").length + 1,
+    };
   }
-  if (!firstPreambleBlock) return body;
+  if (!firstPreambleBlock) return { markdown: body };
   const preamble = preambleBlocks
     .map(({ start, end }) => lines.slice(start, end).join("\n"))
     .join("\n");
-  return body ? `${preamble}\n\n${body}` : preamble;
+  return { markdown: body ? `${preamble}\n\n${body}` : preamble };
+}
+
+export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
+  return displayedPlanMarkdown(planMarkdown).markdown;
 }

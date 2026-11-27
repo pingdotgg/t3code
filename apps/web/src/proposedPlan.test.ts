@@ -9,9 +9,11 @@ describe("buildCollapsedProposedPlanPreviewMarkdown", () => {
     (example) => {
       const body = Array.from({ length: 7 }, (_, index) => `Step ${index + 1}`).join("\n");
       const plan = ["```sh", example, "```", "", "# Release plan", "", body].join("\n");
-      expect(buildCollapsedProposedPlanPreviewMarkdown(plan, { maxLines: 10 })).toBe(
-        stripDisplayedPlanMarkdown(plan),
-      );
+      const displayed = stripDisplayedPlanMarkdown(plan);
+      expect(buildCollapsedProposedPlanPreviewMarkdown(plan, { maxLines: 10 })).toBe(displayed);
+      expect(
+        buildCollapsedProposedPlanPreviewMarkdown(`${plan}\nAnother step`, { maxLines: 10 }),
+      ).toBe(`${displayed}\n\n...`);
     },
   );
 
