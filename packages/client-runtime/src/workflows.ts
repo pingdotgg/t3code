@@ -389,18 +389,50 @@ export function defaultWorkflowListTab(groups: WorkflowRunGroups): WorkflowListT
 
 type WorkflowListTruncation = Pick<WorkflowRunsSnapshot, "truncated" | "skippedTruncated">;
 
+interface WorkflowListPick {
+  readonly workflow: string;
+  readonly groups: WorkflowRunGroups;
+  /** Whether a Needs you entry would show under the question kind picked. */
+  readonly matchesKind?: ((node: WorkflowRunNode) => boolean) | undefined;
+}
+
 /**
- * Notice shown when the current run list may miss older runs because the snapshot hit its limit.
- * Null on Needs you (which always includes every paused run and open question), when the current
- * view is complete, or on older servers that omit the flags.
+ * Whether the pick hides a Needs you entry that may be tied to its workflow through a run the
+ * list left out: the run that invoked the entry, or a run the entry invoked before the cut.
+ */
+function pickMayHideWaiting({ workflow, groups, matchesKind }: WorkflowListPick): boolean {
+  // A run that waits on nobody is listed only within the cap, so none is older than the cut.
+  let cut: string | null = null;
+  for (const { run, questions } of allWorkflowRunNodes(groups)) {
+    if (run.status === "paused" || questions.length > 0) continue;
+    if (run.status === "skipped" && run.parentRunId === null) continue;
+    if (cut === null || run.startedAt < cut) cut = run.startedAt;
+  }
+  return groups.needsYou.some(
+    (node) =>
+      !workflowRunInvolves(node, workflow) &&
+      (matchesKind?.(node) ?? true) &&
+      (node.run.parentRunId !== null || cut === null || node.run.startedAt <= cut),
+  );
+}
+
+/**
+ * Notice shown when the current run list may miss older runs, or null when it is complete or the
+ * server omits the flags. Needs you lists every paused run and open question, so it can miss one
+ * only through the workflow picked.
  */
 export function workflowListLimitNotice(
   snapshot: WorkflowListTruncation,
   tab: WorkflowListTab,
   showSkipped: boolean,
   resolve: MFunctionType = mFallback,
+  picked?: WorkflowListPick,
 ): string | null {
-  if (tab === "needs-you") return null;
+  if (tab === "needs-you") {
+    if (snapshot.truncated !== true || picked === undefined || !pickMayHideWaiting(picked)) {
+      return null;
+    }
+  }
   if (snapshot.truncated === true) {
     return resolve(msg("Older runs may be missing."));
   }

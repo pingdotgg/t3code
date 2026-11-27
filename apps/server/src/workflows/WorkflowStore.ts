@@ -9,6 +9,7 @@ import {
   WorkflowStep,
 } from "@t3tools/contracts";
 import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -1478,24 +1479,25 @@ export const make = Effect.gen(function* () {
       return (yield* runsWherePage(filter)).rows;
     }),
     runsWherePage,
-    runs: Effect.fn("WorkflowStore.runs")(function* (status) {
-      if (status !== undefined) {
-        const rows = yield* sql<RunSummaryRow>`
+    runs: Effect.fn("WorkflowStore.runs")(
+      function* (status) {
+        if (status !== undefined) {
+          const rows = yield* sql<RunSummaryRow>`
             SELECT ${summaryColumns} FROM workflow_runs WHERE status = ${status}
             ORDER BY started_at DESC, rowid DESC LIMIT ${RUN_LIST_LIMIT + 1}
           `;
-        return {
-          rows: rows.slice(0, RUN_LIST_LIMIT),
-          truncated: rows.length > RUN_LIST_LIMIT,
-        };
-      }
-      // Skipped runs are counted apart, so a trigger that skips most of what it brings does
-      // not push the runs that did something out of the list. A paused run or one with a
-      // question open is listed however old, since what waits on a person is built from it.
-      // Fetching one row past each cap detects truncation without adding a query.
-      const tagged = yield* sql<
-        RunSummaryRow & { readonly part: number; readonly list_rowid: number }
-      >`
+          return {
+            rows: rows.slice(0, RUN_LIST_LIMIT),
+            truncated: rows.length > RUN_LIST_LIMIT,
+          };
+        }
+        // Skipped runs are counted apart, so a trigger that skips most of what it brings does
+        // not push the runs that did something out of the list. A paused run or one with a
+        // question open is listed however old, since what waits on a person is built from it.
+        // Fetching one row past each cap detects truncation without adding a query.
+        const tagged = yield* sql<
+          RunSummaryRow & { readonly part: number | bigint; readonly list_rowid: number | bigint }
+        >`
           SELECT 0 AS part, list_rowid, ${summaryColumns} FROM (
             SELECT rowid AS list_rowid, ${summaryColumns} FROM workflow_runs
             WHERE NOT (status = 'skipped' AND parent_run_id IS NULL)
@@ -1514,31 +1516,28 @@ export const make = Effect.gen(function* () {
             WHERE request_json IS NOT NULL AND signalled_at IS NULL
           )
         `;
-      const normal: Array<RunSummaryRow & { readonly list_rowid: number }> = [];
-      const skipped: Array<RunSummaryRow & { readonly list_rowid: number }> = [];
-      const needsYou: Array<RunSummaryRow & { readonly list_rowid: number }> = [];
-      for (const { part, ...row } of tagged) {
-        if (part === 0) normal.push(row);
-        else if (part === 1) skipped.push(row);
-        else needsYou.push(row);
-      }
-      const needsYouIds = new Set(needsYou.map((row) => row.run_id));
-      let truncated = false;
-      if (normal.length > RUN_LIST_LIMIT) {
-        const overflow = normal[RUN_LIST_LIMIT]!;
-        if (!needsYouIds.has(overflow.run_id)) {
-          truncated = true;
-        } else {
-          // The 501st row is itself listed by the Needs you branch; check if any non-Needs-you
-          // run sits past the 500th row so a complete list is not reported as truncated.
-          const cutoff = normal[RUN_LIST_LIMIT - 1]!;
-          const omitted = yield* sql<{ readonly found: number }>`
+        const normal: Array<RunSummaryRow & { readonly list_rowid: number | bigint }> = [];
+        const skipped: Array<RunSummaryRow & { readonly list_rowid: number | bigint }> = [];
+        const needsYou: Array<RunSummaryRow & { readonly list_rowid: number | bigint }> = [];
+        for (const { part, ...row } of tagged) {
+          if (Number(part) === 0) normal.push(row);
+          else if (Number(part) === 1) skipped.push(row);
+          else needsYou.push(row);
+        }
+        const needsYouIds = new Set(needsYou.map((row) => row.run_id));
+        let truncated = false;
+        if (normal.length > RUN_LIST_LIMIT) {
+          const overflow = normal[RUN_LIST_LIMIT]!;
+          if (!needsYouIds.has(overflow.run_id)) {
+            truncated = true;
+          } else {
+            // The 501st row is itself listed by the Needs you branch; check if any non-Needs-you
+            // run sits past the 500th row so a complete list is not reported as truncated.
+            const cutoff = normal[RUN_LIST_LIMIT - 1]!;
+            const omitted = yield* sql<{ readonly found: number | bigint }>`
               SELECT 1 AS found FROM workflow_runs
               WHERE NOT (status = 'skipped' AND parent_run_id IS NULL)
-                AND (
-                  started_at < ${cutoff.started_at}
-                  OR (started_at = ${cutoff.started_at} AND rowid < ${cutoff.list_rowid})
-                )
+                AND (started_at, rowid) < (${cutoff.started_at}, ${cutoff.list_rowid})
                 AND status != 'paused'
                 AND run_id NOT IN (
                   SELECT run_id FROM workflow_waits
@@ -1546,26 +1545,30 @@ export const make = Effect.gen(function* () {
                 )
               LIMIT 1
             `;
-          truncated = omitted.length > 0;
+            truncated = omitted.length > 0;
+          }
         }
-      }
-      const byId = new Map<string, RunSummaryRow>();
-      for (const { list_rowid: _rowid, ...row } of [
-        ...normal.slice(0, RUN_LIST_LIMIT),
-        ...skipped.slice(0, RUN_LIST_LIMIT),
-        ...needsYou,
-      ]) {
-        if (!byId.has(row.run_id)) byId.set(row.run_id, row);
-      }
-      const rows = [...byId.values()].sort((left, right) =>
-        left.started_at === right.started_at ? 0 : left.started_at < right.started_at ? 1 : -1,
-      );
-      return {
-        rows,
-        truncated,
-        skippedTruncated: skipped.length > RUN_LIST_LIMIT,
-      };
-    }, Effect.orDie),
+        const byId = new Map<string, RunSummaryRow>();
+        for (const { list_rowid: _rowid, ...row } of [
+          ...normal.slice(0, RUN_LIST_LIMIT),
+          ...skipped.slice(0, RUN_LIST_LIMIT),
+          ...needsYou,
+        ]) {
+          if (!byId.has(row.run_id)) byId.set(row.run_id, row);
+        }
+        const rows = [...byId.values()].sort((left, right) =>
+          left.started_at === right.started_at ? 0 : left.started_at < right.started_at ? 1 : -1,
+        );
+        return {
+          rows,
+          truncated,
+          skippedTruncated: skipped.length > RUN_LIST_LIMIT,
+        };
+      },
+      // The list and the check for runs it left out must read the same state.
+      (effect) => sql.withTransaction(effect).pipe(NodeSqliteClient.readOnly),
+      Effect.orDie,
+    ),
     triggerNext: Effect.fn("WorkflowStore.triggerNext")(function* (triggerId) {
       const rows = yield* sql<{ next_at: string }>`
         SELECT next_at FROM workflow_triggers WHERE trigger_id = ${triggerId}

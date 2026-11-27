@@ -289,7 +289,25 @@ export function WorkflowRunsView({
     onSelect((row === undefined ? null : askingKind([row], kind)?.run.runId) ?? runId);
   };
   const currentRunId = listedFor(shown);
-  const limitNotice = workflowListLimitNotice(snapshot, tab, showingSkipped, m);
+  const limitNotice = workflowListLimitNotice(
+    snapshot,
+    tab,
+    // With none of the picked workflow's skipped runs left, no toggle says the list was cut.
+    showingSkipped || skipped === 0,
+    m,
+    section === null
+      ? undefined
+      : {
+          workflow: section.name,
+          groups,
+          matchesKind:
+            kind === EVERY_KIND
+              ? undefined
+              : (node) =>
+                  workflowRunAsksKind(snapshot.workflows, node, kind) ||
+                  node.run.runId === openRunId,
+        },
+  );
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {problemAlert}

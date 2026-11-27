@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeSqlite from "node:sqlite";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { assert, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -1316,10 +1317,53 @@ it.effect(
         assert.isTrue(bothCut.truncated);
         assert.isTrue(bothCut.skippedTruncated);
         assert.isFalse(bothCut.rows.some((row) => row.run_id === "ok-extra-0000"));
+        // The engine's own fibers read integers as BigInts.
+        const asBigInts = yield* store
+          .runs(undefined)
+          .pipe(Effect.provideService(SqlClient.SafeIntegers, true));
+        assert.isTrue(asBigInts.truncated);
+        assert.equal(asBigInts.rows.length, bothCut.rows.length);
 
         const pageCut = yield* store.runsWherePage({ workflow: "demo", skippedTopLevel: false });
         assert.equal(pageCut.rows.length, 500);
         assert.isTrue(pageCut.truncated);
+
+        // Another connection tries to pause the omitted run between the list and its check for
+        // omitted runs. It must not be missing from both. Here the read holds the lock.
+        const [main] = yield* sql<{ readonly file: string }>`PRAGMA database_list`;
+        const other = new NodeSqlite.DatabaseSync(main!.file, { timeout: 0 });
+        const writes: Array<string> = [];
+        const raced = yield* store.runs(undefined).pipe(
+          Effect.provideService(Statement.CurrentTransformer, (statement) =>
+            Effect.as(
+              statement.compile()[0].includes("AS found")
+                ? Effect.try({
+                    try: () =>
+                      other
+                        .prepare("UPDATE workflow_runs SET status = 'paused' WHERE run_id = ?")
+                        .run("ok-extra-0000"),
+                    catch: (error) => String(error),
+                  }).pipe(
+                    Effect.match({
+                      onFailure: (error) => writes.push(error),
+                      onSuccess: () => writes.push("paused"),
+                    }),
+                  )
+                : Effect.void,
+              statement,
+            ),
+          ),
+          Effect.ensuring(Effect.sync(() => other.close())),
+        );
+        assert.isTrue(raced.truncated || raced.rows.some((row) => row.run_id === "ok-extra-0000"));
+        assert.deepStrictEqual(
+          writes.map((write) => write.includes("database is locked")),
+          [true],
+        );
+
+        // A newer ordinary run makes an ordinary run the 501st, which alone says rows were left out.
+        yield* seed("ok-newest", 1, "completed", null, 1_700_005_000);
+        assert.isTrue((yield* store.runs(undefined)).truncated);
       }),
     ),
 );

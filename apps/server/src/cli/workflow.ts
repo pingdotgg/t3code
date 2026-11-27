@@ -102,7 +102,8 @@ const startCommand = Command.make("start", {
 const truncatedNotice = (count: number, status: Option.Option<WorkflowRunStatus>) =>
   Option.isSome(status)
     ? `Showing the newest ${count} ${status.value} runs; older ones are omitted.`
-    : `Showing the newest ${count} runs; older ones are omitted.`;
+    : // An unfiltered list also holds runs that wait on a person however old, so not only the newest.
+      `Showing ${count} runs; some older ones are omitted.`;
 
 const listCommand = Command.make("list", {
   ...projectLocationFlags,

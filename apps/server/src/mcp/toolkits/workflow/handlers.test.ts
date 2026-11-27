@@ -231,7 +231,7 @@ it.effect("questions are narrowed to a kind, and runs to a tag", () =>
           toolkit.handle("t3_workflow", input).pipe(
             Stream.unwrap,
             Stream.runCollect,
-            Effect.map((parts) => parts.at(-1)?.result),
+            Effect.map((parts) => parts.at(-1)),
           ),
       );
     }).pipe(
@@ -245,16 +245,21 @@ it.effect("questions are narrowed to a kind, and runs to a tag", () =>
           list: (filter) =>
             Effect.sync(() => {
               filters.push(filter);
-              return { runs: [], truncated: false, skippedTruncated: false };
+              return { runs: [], truncated: true, skippedTruncated: true };
             }),
         }),
       ),
     );
-    expect(results[0]).toMatchObject({ questions: [{ name: "wanted" }] });
-    expect(results[1]).toMatchObject({
+    expect(results[0]?.result).toMatchObject({ questions: [{ name: "wanted" }] });
+    expect(results[1]?.result).toMatchObject({
       questions: [{ name: "wanted" }, { name: "meant" }, { name: "plain" }],
     });
     expect(filters).toEqual([{ tag: "backlog" }]);
+    expect(results[2]?.encodedResult).toEqual({
+      runs: [],
+      truncated: true,
+      skippedTruncated: true,
+    });
   }),
 );
 
@@ -380,34 +385,5 @@ it.effect("withdraw names the caller who withdrew the question and says whether 
     );
     expect(calls).toEqual([["run-1", "wanted", { by: "t3 CLI", reason: "settled elsewhere" }]]);
     expect(result).toEqual({ withdrawal: "not_open", steps: [], references: [] });
-  }),
-);
-
-it.effect("list encodes truncation flags in the MCP tool result", () =>
-  Effect.gen(function* () {
-    const runList = (input: Record<string, unknown>, response: Workflows.WorkflowRunsListResult) =>
-      Effect.gen(function* () {
-        const toolkit = yield* WorkflowToolkit;
-        const parts = yield* toolkit
-          .handle("t3_workflow", { action: "list", ...input } as never)
-          .pipe(Stream.unwrap, Stream.runCollect);
-        return parts.at(-1)?.encodedResult;
-      }).pipe(
-        Effect.provide(
-          handlersWith({
-            list: () => Effect.succeed(response),
-          }),
-        ),
-      );
-
-    expect(yield* runList({}, { runs: [], truncated: true, skippedTruncated: true })).toEqual({
-      runs: [],
-      truncated: true,
-      skippedTruncated: true,
-    });
-    expect(yield* runList({ status: "skipped" }, { runs: [], truncated: true })).toEqual({
-      runs: [],
-      truncated: true,
-    });
   }),
 );
