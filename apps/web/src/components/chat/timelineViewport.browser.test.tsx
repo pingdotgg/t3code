@@ -75,9 +75,19 @@ describe("attachTimelineViewport", () => {
     resize(600);
     resize(200);
     expect(sources).toEqual(["command", "command"]);
+
+    scroll = scrolled();
+    timeline.scrollTop = timeline.scrollHeight;
+    await scroll;
+    sources.length = 0;
+    scroll = scrolled();
+    timeline.scrollTop -= 4;
+    await scroll;
+    expect(sources).toEqual(["scroll"]);
+
     viewport.dispose();
     resize(800);
-    expect(sources).toEqual(["command", "command"]);
+    expect(sources).toEqual(["scroll"]);
   });
 
   it("reports a scrollbar press but not a click on the scroller's empty padding", async () => {
