@@ -344,7 +344,7 @@ describe("summarizeToolGroup read counts", () => {
       type: "dynamic_tool",
       toolName: "Read",
       input: offset === undefined ? { file_path: filePath } : { file_path: filePath, offset },
-    } as unknown as OrchestrationV2TurnItem,
+    },
   });
 
   it("counts a file read in several chunks once, as edits do", () => {

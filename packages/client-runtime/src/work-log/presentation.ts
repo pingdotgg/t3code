@@ -569,27 +569,33 @@ export function resolveViewedImageAsset(
   return { resource: media.resource, alt: media.name, srcFragment: media.srcFragment };
 }
 
+function toolGroupEntryFiles(
+  action: "edit" | "read",
+  entry: WorkLogPresentationEntry,
+): ReadonlyArray<string> {
+  if (action === "edit") return entry.changedFiles ?? [];
+  const item = entry.structuredPayload;
+  return collectToolFilePaths(
+    item?.type === "dynamic_tool" ? { input: item.input } : entry.toolData,
+  );
+}
+
 function toolGroupActionCount(
   action: ToolGroupAction,
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): number {
   if (action !== "edit" && action !== "read") return entries.length;
-  const changedFiles = new Set<string>();
-  let editsWithoutFileDetails = 0;
+  const files = new Set<string>();
+  let entriesWithoutFiles = 0;
   for (const entry of entries) {
-    const files =
-      action === "edit" || entry.changedFiles?.length
-        ? (entry.changedFiles ?? [])
-        : entry.structuredPayload?.type === "dynamic_tool"
-          ? collectToolFilePaths({ input: entry.structuredPayload.input })
-          : collectToolFilePaths(asRecord(entry.toolData));
-    if (files.length === 0) {
-      editsWithoutFileDetails += 1;
+    const entryFiles = toolGroupEntryFiles(action, entry);
+    if (entryFiles.length === 0) {
+      entriesWithoutFiles += 1;
     } else {
-      for (const file of files) changedFiles.add(file);
+      for (const file of entryFiles) files.add(file);
     }
   }
-  return changedFiles.size + editsWithoutFileDetails;
+  return files.size + entriesWithoutFiles;
 }
 
 function toolGroupActionLabel(
