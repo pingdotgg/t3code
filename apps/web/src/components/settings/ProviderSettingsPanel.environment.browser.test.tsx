@@ -669,6 +669,7 @@ describe("EnvironmentProviderSettings health check interval", () => {
 
   it("shows an inline Update now button in the provider status section when a CLI update is available", async () => {
     await setup();
+    await setProviders([provider()]);
     await using _screen = await render(panel({ targetInstanceId: codexId }));
 
     const updateButton = page.getByRole("button", { name: "Update now" });
