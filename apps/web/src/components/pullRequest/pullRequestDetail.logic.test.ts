@@ -825,21 +825,17 @@ describe("fix findings handoff", () => {
     expect(texts).not.toContain("reviewer: finding 0");
     expect(handoff.prompt).toContain("typecheck");
     expect(handoff.prompt).toContain("6 further findings were omitted");
+  });
 
-    const reviewThreads = Array.from({ length: 21 }, (_, index) => {
-      const body = index === 0 ? "Fix wrong total" : "<!-- marker -->";
-      return thread(body, {
-        id: `t${index}`,
-        path: "a.ts",
-        line: 1,
-        comments: [{ ...thread(body).comments[0]!, id: `c${index}` }],
-      });
-    });
-    const readable = buildFixFindingsHandoff({ ...base, reviewThreads, checks: [] });
-    expect(readable.reviewComments.slice(1).map((comment) => comment.text)).toEqual([
+  it("counts only threads with readable text toward the findings limit", () => {
+    const reviewThreads = Array.from({ length: 21 }, (_, index) =>
+      thread(index === 0 ? "Fix wrong total" : "<!-- marker -->", { id: `t${index}` }),
+    );
+    const handoff = buildFixFindingsHandoff({ ...base, reviewThreads, checks: [] });
+    expect(handoff.reviewComments.slice(1).map((comment) => comment.text)).toEqual([
       "reviewer: Fix wrong total",
     ]);
-    expect(readable.prompt).not.toContain("further findings were omitted");
+    expect(handoff.prompt).not.toContain("further findings were omitted");
 
     const hiddenRoot = reviewThreads[1]!;
     const withReply = buildFixFindingsHandoff({
