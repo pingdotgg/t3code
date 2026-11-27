@@ -323,7 +323,8 @@ export function AppearanceSettingsPanel() {
                 }}
               >
                 <SelectTrigger
-                  size="sm"
+                  variant="well"
+                  size="compact"
                   className="w-full min-w-0"
                   aria-label={gt("HTML preview width")}
                 >
