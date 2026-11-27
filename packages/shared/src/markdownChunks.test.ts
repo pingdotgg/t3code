@@ -7,8 +7,11 @@ import remarkRehype from "remark-rehype";
 import { unified } from "unified";
 
 import {
+  buildMarkdownFootnotesSection,
+  findFootnoteRefChunkIndex,
   joinMarkdownChunks,
   LARGE_MARKDOWN_CHUNK_MAX_CHARS,
+  prepareMarkdownChunk,
   splitMarkdown,
   withMarkdownDefinitions,
 } from "./markdownChunks.ts";
@@ -572,5 +575,205 @@ describe("withMarkdownDefinitions", () => {
     const text = "[ref]: /dst\n\n```text\nshown";
     const { definitions } = splitMarkdown(text);
     expect(html(withMarkdownDefinitions(text, definitions))).toBe(html(text));
+  });
+});
+
+describe("chunked Markdown footnotes", () => {
+  it("keeps footnotes undefined for single-chunk files and unreferenced definitions", () => {
+    const small = "A footnote reference.[^1]\n\n[^1]: The footnote text.\n";
+    expect(splitMarkdown(small).footnotes).toBeUndefined();
+
+    const unreferenced = [
+      "Intro paragraph.",
+      "",
+      ...Array.from({ length: 40 }, (_, i) => `Paragraph ${i}. ${"Lorem ipsum. ".repeat(12)}`),
+      "",
+      "[^unused]: Never referenced.",
+    ].join("\n");
+    const split = splitMarkdown(unreferenced);
+    expect(split.chunks.length).toBeGreaterThan(1);
+    expect(split.footnotes).toBeUndefined();
+  });
+
+  it("collects footnote definitions and per-chunk references across pieces", () => {
+    const paragraphs = Array.from(
+      { length: 60 },
+      (_, i) =>
+        `Paragraph ${i}. ${"Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(2)}`,
+    );
+    const text = [
+      "A footnote reference.[^1] Escaped \\[^1], code `[^1]`, [link](https://example.com/[^1]).",
+      "",
+      ...paragraphs.slice(0, 35).flatMap((p) => [p, ""]),
+      "Second ref[^note] and repeat[^1].",
+      "",
+      ...paragraphs.slice(35).flatMap((p) => [p, ""]),
+      "```md",
+      "[^fake]: inside code fence",
+      "```",
+      "",
+      "[^1]: The footnote text.",
+      "    Second paragraph of footnote 1.",
+      "",
+      "[^note]: First note definition.",
+      "",
+      "[^note]: Duplicate ignored.",
+    ].join("\n");
+
+    const { chunks, definitions, footnotes } = splitMarkdown(text);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.map((chunk) => chunk.text).join("\n")).toBe(text);
+    expect(footnotes).toBeDefined();
+    expect(footnotes!.stubs).toBe("[^1]: .\n[^note]: .");
+    expect(footnotes!.definitions).toBe(
+      "[^1]: The footnote text.\n    Second paragraph of footnote 1.\n\n[^note]: First note definition.",
+    );
+    expect(footnotes!.chunkRefs.flat()).toEqual(["1", "note", "1"]);
+
+    const firstRefChunk = footnotes!.chunkRefs.findIndex((refs) => refs.length > 0);
+    const secondRefChunk = footnotes!.chunkRefs.findIndex(
+      (refs, index) => index > firstRefChunk && refs.length > 0,
+    );
+    expect(firstRefChunk).toBe(0);
+    expect(secondRefChunk).toBeGreaterThan(0);
+
+    const preparedFirst = prepareMarkdownChunk(
+      chunks[firstRefChunk]!.text,
+      firstRefChunk,
+      definitions,
+      footnotes,
+    );
+    expect(preparedFirst.footnotesMode).toBe("omit");
+
+    const preparedSecond = prepareMarkdownChunk(
+      chunks[secondRefChunk]!.text,
+      secondRefChunk,
+      definitions,
+      footnotes,
+    );
+    expect(preparedSecond.footnotesMode).toBe("omit-seeded");
+    expect(preparedSecond.text).toContain("[^1]\n\n");
+
+    const section = buildMarkdownFootnotesSection(definitions, footnotes)?.text;
+    expect(section).toContain("[^1] [^note] [^1]");
+    expect(section).toContain("Second paragraph of footnote 1.");
+    expect(section).not.toContain("Duplicate ignored.");
+
+    expect(findFootnoteRefChunkIndex(footnotes!, 1, 1)).toBe(firstRefChunk);
+    expect(findFootnoteRefChunkIndex(footnotes!, 2, 1)).toBe(secondRefChunk);
+    expect(findFootnoteRefChunkIndex(footnotes!, 1, 2)).toBe(secondRefChunk);
+    expect(findFootnoteRefChunkIndex(footnotes!, 1, 3)).toBeNull();
+  });
+
+  it("keeps task list offsets exact when footnote seed prefix is prepended", () => {
+    const filler = Array.from({ length: 40 }, (_, i) => `Section ${i} ${"x".repeat(120)}`).join(
+      "\n\n",
+    );
+    const text = [
+      "[site]: https://example.com",
+      "",
+      "Lead[^1] with [site].",
+      "",
+      filler,
+      "",
+      "- [ ] task in chunk with seeded ref[^1]",
+      "",
+      "[^1]: Footnote body.",
+    ].join("\n");
+    const { chunks, definitions, footnotes } = splitMarkdown(text);
+    const taskChunkIndex = chunks.findIndex((chunk) => chunk.text.includes("- [ ] task"));
+    expect(taskChunkIndex).toBeGreaterThan(0);
+    const prepared = prepareMarkdownChunk(
+      chunks[taskChunkIndex]!.text,
+      taskChunkIndex,
+      definitions,
+      footnotes,
+    );
+    const list = unified()
+      .use(remarkParse)
+      .use(remarkGfm)
+      .parse(prepared.text)
+      .children.find((node) => node.type === "list");
+    const marker = taskListMarkerOffset(prepared.text, list!.position!.start.offset!);
+    let chunkStart = 0;
+    for (let i = 0; i < taskChunkIndex; i++) {
+      chunkStart += chunks[i]!.text.length + 1;
+    }
+    expect(chunkStart + marker! - prepared.offsetShift).toBe(text.indexOf("[ ]"));
+  });
+
+  it("counts references followed by ':' or '(', skips inline math, and stays linear", () => {
+    const filler = Array.from(
+      { length: 40 },
+      (_, i) => `Paragraph ${i}. ${"word ".repeat(25)}`,
+    ).join("\n\n");
+    const text = [
+      "As noted[^a]: see this. Quote.[^b](emphasis added) and [^c](https://example.com). Math $x[^a]y$.",
+      "",
+      // Unclosed marks rescanned from each opener took seconds; nested quotes took minutes.
+      `${"> ".repeat(40)}x[^b]: t`,
+      "",
+      `[^c] ${"](( ".repeat(20000)}`,
+      "",
+      `[^a] ${"$x ".repeat(20000)}`,
+      "",
+      `[^c] ${"<!-- ](<".repeat(20000)}`,
+      "",
+      "Literal ](see[^b]) but [link](x[^a]) is a destination.",
+      "",
+      filler,
+      "",
+      "[^a]: First note.",
+      "[^b]: Second note.",
+      "[^c]: Third note.",
+    ].join("\n");
+
+    const { chunks, footnotes } = splitMarkdown(text);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(footnotes?.chunkRefs.flat()).toEqual(["a", "b", "c", "b", "c", "a", "c", "b"]);
+  });
+
+  it("falls back when footnote definitions exceed the shared cap", () => {
+    const sections = Array.from(
+      { length: 400 },
+      (_, i) => `Paragraph ${i} referencing [^f${i}].\n\n[^f${i}]: ${"note text ".repeat(20)}`,
+    ).join("\n\n");
+    const split = splitMarkdown(sections);
+    expect(split.chunks.length).toBeGreaterThan(1);
+    expect(split.footnotes).toBeUndefined();
+  });
+
+  it("separates stub footnote definitions from a chunk starting with indented code", () => {
+    const filler = Array.from({ length: 40 }, (_, i) => `Section ${i} ${"x".repeat(120)}`).join(
+      "\n\n",
+    );
+    const text = [
+      "    indented()",
+      "",
+      "Ref[^1].",
+      "",
+      filler,
+      "",
+      "    code[^a]",
+      "",
+      "- item",
+      "",
+      "    item text[^2]",
+      "",
+      "[^1]: Footnote body.",
+      "",
+      "[^a]: Literal in code.",
+      "",
+      "[^2]: In a list item.",
+    ].join("\n");
+
+    const { chunks, definitions, footnotes } = splitMarkdown(text);
+    const prepared = prepareMarkdownChunk(chunks[0]!.text, 0, definitions, footnotes);
+    expect(prepared.footnotesMode).toBe("omit");
+    expect(prepared.text).toContain("<!-- -->\n\n    indented()");
+    expect(footnotes?.chunkRefs.flat()).toEqual(["1", "2"]);
+    // The unreferenced `[^a]` definition is dropped when the section renders.
+    const section = buildMarkdownFootnotesSection(definitions, footnotes)!.text;
+    expect(section.startsWith("[^1] [^2]\n\n")).toBe(true);
   });
 });
