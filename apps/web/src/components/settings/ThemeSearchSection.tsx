@@ -382,18 +382,25 @@ export function ThemeSearchSection({
         <InputGroupAddon>
           {isSearching ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
         </InputGroupAddon>
+        {/* Native search inputs clear on Escape even during IME composition. */}
         <InputGroupInput
           aria-label={gt("Search Open VSX themes")}
           autoFocus
           onChange={(event) => changeQuery(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key === "Escape" && (query || event.repeat)) {
+              event.preventDefault();
+              event.stopPropagation();
+              changeQuery("");
+            }
             if (event.key === "Enter" && !isSearching && installingId === null)
               themeSearch.searchNow();
           }}
           placeholder={gt("Search themes...")}
+          role="searchbox"
           size="lg"
-          type="search"
+          type="text"
           value={query}
         />
       </InputGroup>
@@ -529,9 +536,13 @@ export function ThemeSearchSection({
                     <TooltipPopup side="top">
                       <span className="grid gap-1">
                         <span>
-                          <T>
-                            <Var>{DOWNLOAD_FORMAT.format(extension.downloadCount)}</Var> downloads
-                          </T>
+                          {gt(
+                            "{count, plural, one {{formatted} download} other {{formatted} downloads}}",
+                            {
+                              count: extension.downloadCount,
+                              formatted: DOWNLOAD_FORMAT.format(extension.downloadCount),
+                            },
+                          )}
                         </span>
                         {extension.description ? <span>{extension.description}</span> : null}
                       </span>

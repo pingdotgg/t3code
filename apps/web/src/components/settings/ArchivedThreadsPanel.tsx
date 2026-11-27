@@ -38,6 +38,7 @@ import { ProjectFavicon } from "../ProjectFavicon";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { type ReactNode, useRef, useState } from "react";
 import { observeIntersection } from "~/lib/observeIntersection";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const ARCHIVE_ACTIONS = [
   {
@@ -339,23 +340,22 @@ export function ArchivedThreadsPanel() {
         control={
           <div className="flex shrink-0 items-center gap-2">
             {ARCHIVE_ACTIONS.map(({ action, label, threadLabel, Icon }) => (
-              <Tooltip key={action}>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant={action === "delete" ? "destructive-outline" : "secondary"}
-                      size="icon-sm"
-                      aria-label={m(threadLabel, { title: thread.title })}
-                      disabled={pendingKeys.has(threadKey)}
-                      onClick={() => void handleThreadAction(action, thread)}
-                    />
-                  }
-                >
-                  <Icon className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipPopup>{m(label)}</TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                key={action}
+                render={
+                  <Button
+                    type="button"
+                    variant={action === "delete" ? "destructive-outline" : "secondary"}
+                    size="icon-sm"
+                    aria-label={m(threadLabel, { title: thread.title })}
+                    disabled={pendingKeys.has(threadKey)}
+                    onClick={() => void handleThreadAction(action, thread)}
+                  />
+                }
+                label={m(label)}
+              >
+                <Icon className="size-3.5" />
+              </SharedTooltipTrigger>
             ))}
           </div>
         }

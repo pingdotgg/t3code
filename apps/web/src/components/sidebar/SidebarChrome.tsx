@@ -33,7 +33,6 @@ import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
-
 // Preserve main's measured minimum even though the redesign omits its wordmark.
 export function SidebarBrandWidthProbe({
   isElectron,

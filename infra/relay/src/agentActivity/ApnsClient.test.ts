@@ -4,11 +4,15 @@ import * as NodeCrypto from "node:crypto";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Tracer from "effect/Tracer";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import type { ApnsCredentials } from "../Config.ts";
@@ -301,6 +305,102 @@ describe("ApnsClient", () => {
       expect(authorizations).toHaveLength(3);
       expect(authorizations[1]).toBe(authorizations[0]);
       expect(authorizations[2]).not.toBe(authorizations[0]);
+      ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps device tokens out of spans, for delivered and failed requests", () => {
+    ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();
+    const { privateKey } = NodeCrypto.generateKeyPairSync("ec", {
+      namedCurve: "prime256v1",
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    });
+    const credentials = {
+      teamId: "team-spans",
+      keyId: "key-spans",
+      privateKey: Redacted.make(privateKey),
+      bundleId: "com.t3tools.test",
+      environment: "sandbox",
+    } satisfies ApnsCredentials;
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
+    const urls: Array<string> = [];
+    let reachable = true;
+    const httpClient = HttpClient.make((request) => {
+      urls.push(request.url);
+      return reachable
+        ? Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 200 })))
+        : Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({ request, cause: new Error("reset") }),
+            }),
+          );
+    });
+    const layer = ApnsClient.layer.pipe(
+      Layer.provide(ApnsProviderTokens.layer),
+      Layer.provide(Layer.succeed(HttpClient.HttpClient, httpClient)),
+      Layer.provideMerge(Layer.succeed(Tracer.Tracer, tracer)),
+    );
+
+    return Effect.gen(function* () {
+      const apns = yield* ApnsClient.ApnsClient;
+      const sendBoth = Effect.all(
+        [
+          apns.sendLiveActivityRequest({
+            credentials,
+            request: apns.makeLiveActivityRequest({
+              event: "update",
+              token: "live-activity-device-token",
+              state,
+              nowEpochSeconds: 0,
+              nowIso: DateTime.formatIso(now),
+            }),
+            issuedAtUnixSeconds: 0,
+          }),
+          apns.sendPushNotificationRequest({
+            credentials,
+            request: apns.makePushNotificationRequest({
+              token: "push-notification-device-token",
+              notification: {
+                title: "Thread",
+                body: "Input: Project",
+                environmentId: "env",
+                threadId: "thread",
+                deepLink: "/threads/env/thread",
+              },
+            }),
+            issuedAtUnixSeconds: 0,
+          }),
+        ],
+        { mode: "result" },
+      );
+
+      yield* sendBoth;
+      reachable = false;
+      yield* sendBoth;
+
+      expect(urls).toHaveLength(4);
+      expect(urls[0]).toContain("live-activity-device-token");
+      expect(urls[1]).toContain("push-notification-device-token");
+      const recorded = spans
+        .flatMap((span) => [
+          span.name,
+          ...Array.from(span.attributes.values(), String),
+          ...(span.status._tag === "Ended" && Exit.isFailure(span.status.exit)
+            ? [Cause.pretty(span.status.exit.cause)]
+            : []),
+        ])
+        .join("\n");
+      expect(recorded).toContain("relay.apns.send_live_activity_request");
+      expect(recorded).toContain("ApnsHttpRequestError");
+      expect(recorded).not.toContain("device-token");
       ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();
     }).pipe(Effect.provide(layer));
   });

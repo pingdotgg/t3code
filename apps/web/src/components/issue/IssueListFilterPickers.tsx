@@ -42,10 +42,11 @@ import {
 } from "../pullRequest/PullRequestListFilters";
 import { pullRequestLabelColor } from "../pullRequest/pullRequestList.logic";
 import { IssueGlyph } from "./issuePresentation";
-
-const VISIBLE_CHOICES = 30;
-const matches = (needle: string, ...fields: ReadonlyArray<string | null | undefined>) =>
-  needle.length === 0 || fields.some((field) => field?.toLowerCase().includes(needle));
+import {
+  issueFilterAssigneeChoices,
+  issueFilterLabelChoices,
+  matchesIssueFilterQuery,
+} from "./IssueListFilterPickers.logic";
 
 /** Every issue list filter behind one button, as the pull request page keeps its own. */
 export function IssueFiltersMenu(props: {
@@ -171,7 +172,9 @@ function ProjectChoices(props: {
   const gt = useGT();
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
-  const visible = props.projects.filter((project) => matches(needle, project.title));
+  const visible = props.projects.filter((project) =>
+    matchesIssueFilterQuery(needle, project.title),
+  );
   const pairsOf = (keys: Iterable<string>) =>
     [...keys].map((key) => JSON.parse(key) as readonly [EnvironmentId, ProjectId]);
   const allShown = props.hidden.size === 0;
@@ -233,15 +236,7 @@ function LabelChoices(props: {
   const gt = useGT();
   const [query, setQuery] = useState("");
   const known = useIssueFilterCandidates(props.scopes);
-  const needle = query.trim().toLowerCase();
-  const found = known.labels.filter((label) => matches(needle, label.name, label.description));
-  // Chosen labels lead, so one the tracker's first page lacks can still be seen and cleared.
-  const visible = [
-    ...props.value
-      .filter((name) => !found.some((label) => label.name === name))
-      .map((name) => ({ name, color: null })),
-    ...found,
-  ].slice(0, VISIBLE_CHOICES);
+  const visible = issueFilterLabelChoices(known.labels, props.value, query);
   return (
     <>
       <MenuSearchInput
@@ -299,14 +294,7 @@ function AssigneeChoices(props: {
   const gt = useGT();
   const [query, setQuery] = useState("");
   const known = useIssueFilterCandidates(props.scopes);
-  const needle = query.trim().toLowerCase();
-  const found = known.assignees.filter((actor) => matches(needle, actor.login, actor.name));
-  const visible = [
-    ...(props.value !== undefined && !found.some((actor) => actor.login === props.value)
-      ? [{ login: props.value, name: null }]
-      : []),
-    ...found,
-  ].slice(0, VISIBLE_CHOICES);
+  const visible = issueFilterAssigneeChoices(known.assignees, props.value, query);
   return (
     <>
       <MenuSearchInput

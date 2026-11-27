@@ -24,6 +24,7 @@ import { useShortcutModifierState } from "../../shortcutModifierState";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import {
   alternateComposerDispatchAction,
   resolveComposerDispatchMode,
@@ -173,35 +174,29 @@ function StopGenerationButton({
   const isStopDisabled = stopPhase === "pending";
   return (
     <ComposerSendPill className={cn(insidePendingAction && "sm:h-7")}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              className={cn(
-                COMPOSER_PILL_SLOT_CLASS_NAME,
-                "w-8",
-                insidePendingAction && "sm:w-6.5",
-              )}
-              onPointerDown={preserveComposerFocusOnPointerDown ? preventPointerFocus : undefined}
-              disabled={!canOperateThread || isStopDisabled}
-              onClick={() => {
-                if (!canOperateThread || isStopDisabled) return;
-                onStopRequested();
-                onInterrupt();
-              }}
-              aria-label={stopPhase === "pending" ? gt("Stopping") : gt("Stop generation")}
-            />
-          }
-        >
-          <span aria-hidden className="size-2.5 rounded-xs bg-error-foreground" />
-        </TooltipTrigger>
-        <TooltipPopup>
-          {stopPhase === "pending"
+      <SharedTooltipTrigger
+        render={
+          <button
+            type="button"
+            className={cn(COMPOSER_PILL_SLOT_CLASS_NAME, "w-8", insidePendingAction && "sm:w-6.5")}
+            onPointerDown={preserveComposerFocusOnPointerDown ? preventPointerFocus : undefined}
+            disabled={!canOperateThread || isStopDisabled}
+            onClick={() => {
+              if (!canOperateThread || isStopDisabled) return;
+              onStopRequested();
+              onInterrupt();
+            }}
+            aria-label={stopPhase === "pending" ? gt("Stopping") : gt("Stop generation")}
+          />
+        }
+        label={
+          stopPhase === "pending"
             ? gt("Stopping…")
-            : gt("Interrupt", { $context: "verb, stops the running agent" })}
-        </TooltipPopup>
-      </Tooltip>
+            : gt("Interrupt", { $context: "verb, stops the running agent" })
+        }
+      >
+        <span aria-hidden className="size-2.5 rounded-xs bg-error-foreground" />
+      </SharedTooltipTrigger>
     </ComposerSendPill>
   );
 }
@@ -519,41 +514,41 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 
   return withStopButton(
     <div data-chat-composer-compact-send="true" className="flex items-center gap-2">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              size="action"
-              variant="pill"
-              {...pointerFocusProps}
-              aria-pressed={!keepFullHistory}
-              aria-label={gt("Compact {tokens} tokens of history before sending", {
-                tokens: compactTokens,
-              })}
-              disabled={!canOperateThread}
-              onClick={onToggleKeepFullHistory}
-            />
-          }
-        >
-          <Minimize2Icon aria-hidden="true" className={compactTone} />
-          <span className={cn("@max-[480px]/composer-surface:hidden", compactTone)}>
-            {keepFullHistory
-              ? gt("Full", { $context: "keep full history instead of compacting" })
-              : gt("Compact", { $context: "verb, compact history before sending" })}
-          </span>
-          <span className={cn("tabular-nums", compactTone)}>{compactTokens}</span>
-        </TooltipTrigger>
-        <TooltipPopup>
-          <div>
-            {keepFullHistory
-              ? gt("Next send keeps all {tokens} tokens.", { tokens: compactTokens })
-              : gt("Next send compacts {tokens} tokens first.", { tokens: compactTokens })}
-          </div>
-          <div>
-            {keepFullHistory ? gt("Click to compact first") : gt("Click to keep full history")}
-          </div>
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <Button
+            size="action"
+            variant="pill"
+            {...pointerFocusProps}
+            aria-pressed={!keepFullHistory}
+            aria-label={gt("Compact {tokens} tokens of history before sending", {
+              tokens: compactTokens,
+            })}
+            disabled={!canOperateThread}
+            onClick={onToggleKeepFullHistory}
+          />
+        }
+        label={
+          <>
+            <div>
+              {keepFullHistory
+                ? gt("Next send keeps all {tokens} tokens.", { tokens: compactTokens })
+                : gt("Next send compacts {tokens} tokens first.", { tokens: compactTokens })}
+            </div>
+            <div>
+              {keepFullHistory ? gt("Click to compact first") : gt("Click to keep full history")}
+            </div>
+          </>
+        }
+      >
+        <Minimize2Icon aria-hidden="true" className={compactTone} />
+        <span className={cn("@max-[480px]/composer-surface:hidden", compactTone)}>
+          {keepFullHistory
+            ? gt("Full", { $context: "keep full history instead of compacting" })
+            : gt("Compact", { $context: "verb, compact history before sending" })}
+        </span>
+        <span className={cn("tabular-nums", compactTone)}>{compactTokens}</span>
+      </SharedTooltipTrigger>
       {children}
       {submit}
     </div>,

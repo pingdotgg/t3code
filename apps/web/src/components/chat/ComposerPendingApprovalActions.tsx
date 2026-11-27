@@ -9,8 +9,8 @@ import { ShieldIcon, TriangleAlertIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ComposerPendingApprovalActionsProps {
   designLabels?: boolean;
@@ -100,14 +100,7 @@ export function ComposerPendingApprovalActions({
   const allowWarning = sessionOption && alwaysAllow ? sessionOption.warning : primary?.warning;
 
   const withWarning = (warning: string | undefined, node: ReactElement) =>
-    warning ? (
-      <Tooltip>
-        <TooltipTrigger render={node} />
-        <TooltipPopup side="top">{warning}</TooltipPopup>
-      </Tooltip>
-    ) : (
-      node
-    );
+    warning ? <SharedTooltipTrigger render={node} label={warning} /> : node;
 
   return (
     <div className="flex min-w-0 grow basis-72 flex-wrap items-center justify-end gap-2">
@@ -215,12 +208,5 @@ function MenuOption({
       <span className="min-w-0 whitespace-normal wrap-break-word">{label}</span>
     </MenuItem>
   );
-  return option.warning ? (
-    <Tooltip>
-      <TooltipTrigger render={item} />
-      <TooltipPopup side="top">{option.warning}</TooltipPopup>
-    </Tooltip>
-  ) : (
-    item
-  );
+  return option.warning ? <SharedTooltipTrigger render={item} label={option.warning} /> : item;
 }

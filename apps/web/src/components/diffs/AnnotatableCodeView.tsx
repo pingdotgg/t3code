@@ -229,7 +229,6 @@ export function AnnotatableCodeView({
       text,
     });
     if (comment) {
-      // oxlint-disable-next-line react/purity -- Submission timestamps are read in this event handler (oxc#27309).
       addReviewComment(composerDraftTarget, { ...comment, createdAt: new Date().toISOString() });
       onCommentAdded?.(comment.id);
     }

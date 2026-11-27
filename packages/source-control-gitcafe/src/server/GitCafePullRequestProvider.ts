@@ -790,7 +790,7 @@ export const make = Effect.gen(function* () {
         body: {
           requestId: yield* randomUuidV4,
           expectedVersion: pull.version,
-          headOid: pull.headOid,
+          headOid: input.expectedHeadSha ?? pull.headOid,
           baseOid,
           strategy: input.mergeMethod ?? "merge",
         },
@@ -1349,7 +1349,7 @@ export const make = Effect.gen(function* () {
           body: {
             verdict: input.verdict === "request-changes" ? "request_changes" : input.verdict,
             ...(input.body.length === 0 ? {} : { body: input.body }),
-            commitOid: pull.headOid,
+            commitOid: input.expectedHeadSha ?? pull.headOid,
             expectedVersion: pull.version,
             requestId: yield* randomUuidV4,
           },

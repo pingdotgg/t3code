@@ -7,6 +7,13 @@ on:
 permissions:
   contents: read
 
+# Run-level, not job-level: runs join the group when their event arrives, so a newer push
+# always supersedes an older one. A job-level group is joined when the job starts, which
+# let an older run's slower job cancel the newer head's job and label from a stale diff.
+concurrency:
+  group: pr-size-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   prepare-config:
     name: Prepare PR size config
@@ -120,9 +127,6 @@ jobs:
       contents: read
       issues: read
       pull-requests: write
-    concurrency:
-      group: pr-size-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
     steps:
       # This pull_request_target job may fetch untrusted PR commits only as passive
       # git data. Do not add dependency installs, build/test scripts, or cache

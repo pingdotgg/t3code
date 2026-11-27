@@ -208,7 +208,13 @@ export async function loadMcpBridge(
     tools,
     declaredTools,
     callableTools: () => callableTools().map((tool) => tool.name),
-    callModelTool: async (name: string, args: Record<string, unknown>) => {
+    callModelTool: async (requestedName: string, args: Record<string, unknown>) => {
+      // Pi executes the tool calls of the message its message_end handlers return.
+      const message = { role: "assistant", content: [{ type: "toolCall", name: requestedName }] };
+      const messageEnd = handlers.get("message_end") as unknown as
+        | ((event: { message: typeof message }) => { message?: typeof message } | undefined)
+        | undefined;
+      const name = messageEnd?.({ message })?.message?.content[0]?.name ?? message.content[0]!.name;
       const tool = modelTools().find((candidate) => candidate.name === name);
       if (tool === undefined) {
         return { content: [{ type: "text", text: `Tool ${name} not found` }], isError: true };

@@ -10,7 +10,7 @@ import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 
 import { changeRequestTermKind, type ChangeRequestTermKind } from "./changeRequestTerm";
@@ -46,31 +46,27 @@ function BackButton({
 }) {
   const gt = useGT();
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            {...(focusable ? {} : { tabIndex: -1 })}
-            onClick={onBack}
-            className="-ms-1.25"
-            aria-label={gt(
-              "Back to this thread's {term, select, mr {merge requests} cr {change requests} other {pull requests}}",
-              { term },
-            )}
-          >
-            <ArrowLeftIcon aria-hidden className="size-3.5" />
-          </Button>
-        }
-      />
-      <TooltipPopup side="top">
-        {gt(
-          "Back to {term, select, mr {merge requests} cr {change requests} other {pull requests}}",
-          { term },
-        )}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          size="icon-xs"
+          variant="ghost-muted"
+          {...(focusable ? {} : { tabIndex: -1 })}
+          onClick={onBack}
+          className="-ms-1.25"
+          aria-label={gt(
+            "Back to this thread's {term, select, mr {merge requests} cr {change requests} other {pull requests}}",
+            { term },
+          )}
+        >
+          <ArrowLeftIcon aria-hidden className="size-3.5" />
+        </Button>
+      }
+      label={gt(
+        "Back to {term, select, mr {merge requests} cr {change requests} other {pull requests}}",
+        { term },
+      )}
+    />
   );
 }
 
@@ -91,34 +87,32 @@ function NumberLink({
   const openLink = useOpenLink(threadRef);
   return (
     <span className={cn("inline-flex shrink-0", toneClassName)}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <InlineButton
-              tone={null}
-              {...(focusable ? {} : { tabIndex: -1 })}
-              onClick={(event) => void openLink(detail.url, { event }).catch(console.error)}
-              onAuxClick={(event) => {
-                if (event.button === 1) void openLink(detail.url, { event }).catch(console.error);
-              }}
-              onContextMenu={(event) => openNumberContextMenu(event, detail)}
-              aria-label={gt(
-                "Open {term, select, mr {merge request} cr {change request} other {pull request}} #{number} on host",
-                {
-                  term: changeRequestTermKind(
-                    sourceControlClients.get(detail.provider).changeRequest,
-                  ),
-                  number: detail.number,
-                },
-              )}
-            >
-              #{detail.number}
-              <ExternalLinkIcon aria-hidden className="size-[13px]" />
-            </InlineButton>
-          }
-        />
-        <TooltipPopup side="top">{openOnHostText}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <InlineButton
+            tone={null}
+            {...(focusable ? {} : { tabIndex: -1 })}
+            onClick={(event) => void openLink(detail.url, { event }).catch(console.error)}
+            onAuxClick={(event) => {
+              if (event.button === 1) void openLink(detail.url, { event }).catch(console.error);
+            }}
+            onContextMenu={(event) => openNumberContextMenu(event, detail)}
+            aria-label={gt(
+              "Open {term, select, mr {merge request} cr {change request} other {pull request}} #{number} on host",
+              {
+                term: changeRequestTermKind(
+                  sourceControlClients.get(detail.provider).changeRequest,
+                ),
+                number: detail.number,
+              },
+            )}
+          >
+            #{detail.number}
+            <ExternalLinkIcon aria-hidden className="size-[13px]" />
+          </InlineButton>
+        }
+        label={openOnHostText}
+      />
     </span>
   );
 }
@@ -155,33 +149,29 @@ export function PullRequestDetailCrumbs({
               term={changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest)}
             />
           ) : null}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                repositoryUrl ? (
-                  <InlineButton
-                    tone="muted"
-                    onClick={(event) =>
-                      void openLink(repositoryUrl, { event }).catch(console.error)
-                    }
-                    onAuxClick={(event) => {
-                      if (event.button === 1)
-                        void openLink(repositoryUrl, { event }).catch(console.error);
-                    }}
-                  >
-                    {detail.repository}
-                  </InlineButton>
-                ) : (
-                  <span className="shrink-0">{detail.repository}</span>
-                )
-              }
-            />
-            <TooltipPopup side="top">
-              {repositoryUrl
+          <SharedTooltipTrigger
+            render={
+              repositoryUrl ? (
+                <InlineButton
+                  tone="muted"
+                  onClick={(event) => void openLink(repositoryUrl, { event }).catch(console.error)}
+                  onAuxClick={(event) => {
+                    if (event.button === 1)
+                      void openLink(repositoryUrl, { event }).catch(console.error);
+                  }}
+                >
+                  {detail.repository}
+                </InlineButton>
+              ) : (
+                <span className="shrink-0">{detail.repository}</span>
+              )
+            }
+            label={
+              repositoryUrl
                 ? gt("Open {repository} repository", { repository: detail.repository })
-                : detail.repository}
-            </TooltipPopup>
-          </Tooltip>
+                : detail.repository
+            }
+          />
           <NumberLink
             detail={detail}
             threadRef={threadRef}

@@ -20,6 +20,7 @@ import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts
 import {
   type FrameDetachWatch,
   type PointerRoute,
+  routeKeysToFrame,
   routeMouseToFrame,
   sendPageCommand,
 } from "./GuestInput.ts";
@@ -34,6 +35,8 @@ const AGENT_INPUT_METHOD = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|cal
 const AGENT_INPUT_WINDOW_MS = 5_000;
 /** A viewer's pointer travelling over the stream activates nothing on the page. */
 const POINTER_TRAVEL = new Set<unknown>(["mouseMoved", "mouseWheel"]);
+const ANNOTATING_MESSAGE =
+  "This page is being annotated in the desktop app. Input resumes when the annotation ends.";
 const FOCUS_IDLE = "5 seconds";
 /** How long a screenshot waits for the client to draw its guest at full detail. */
 const CAPTURE_DRAW_WAIT = "1 second";
@@ -57,6 +60,8 @@ export interface DesktopBrowserTabDebugger {
   readonly debugger: Electron.Debugger;
   /** Runs after the server clears the tab's cookies, so state kept beside them goes too. */
   readonly cookiesCleared?: () => Promise<void>;
+  /** Whether the person at this window is annotating the page, whose overlay is theirs alone. */
+  readonly annotating?: () => boolean;
 }
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
@@ -496,10 +501,20 @@ export const make = Effect.gen(function* () {
     if (tab.relay) return tab.relay;
     const { webContents, debugger: debuggee, cookiesCleared } = tab.debuggee;
     const routeHidden = routeMouseToFrame(debuggee, tab.frameSessions, watchFrameDetach(tab));
+    const routeKeys = routeKeysToFrame(debuggee, tab.frameSessions, watchFrameDetach(tab));
     // Read when the pointer queue reaches the event: a guest the window shows routes its own input.
     const routeMouse: PointerRoute = (params) =>
       shownTabs.get(keyOf(tab.key)) === true ? Promise.resolve(null) : routeHidden(params);
+    // The annotation overlay lives in the guest and takes any input sent there as the
+    // person's at this window, so relayed input waits until they finish.
+    const annotated = (method: string) =>
+      method.startsWith("Input.") && tab.debuggee.annotating?.() === true;
     const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
+      // Asked again at each dispatch: an annotation can start while the input waits its turn.
+      const refuseAnnotated = () => {
+        if (annotated(method)) throw new Error(ANNOTATING_MESSAGE);
+      };
+      refuseAnnotated();
       const result = await sendPageCommand(
         webContents,
         debuggee,
@@ -507,6 +522,8 @@ export const make = Effect.gen(function* () {
         params,
         sessionId,
         routeMouse,
+        refuseAnnotated,
+        routeKeys,
       );
       if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
       return result;
@@ -532,6 +549,7 @@ export const make = Effect.gen(function* () {
             syncPainting(tab);
             if (tab.screencasts.size > 0) return Promise.resolve({});
           }
+          if (annotated(method)) return Promise.reject(new Error(ANNOTATING_MESSAGE));
           // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
           if (AGENT_INPUT_METHOD.test(method)) {
             if (owner === undefined || !streamingOwners.has(owner)) {

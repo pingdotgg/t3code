@@ -76,8 +76,8 @@ export async function* multipart(
     let consumed = false;
     async function* body(): AsyncGenerator<Uint8Array> {
       while (true) {
-        let index = input.buffer.indexOf(delimiter);
-        while (index >= 0) {
+        const index = input.buffer.indexOf(delimiter);
+        if (index >= 0) {
           const match = await delimiterEnd(input, index + delimiter.length, headerLimit);
           if (match) {
             if (index) yield input.take(index);
@@ -86,7 +86,10 @@ export async function* multipart(
             consumed = true;
             return;
           }
-          index = input.buffer.indexOf(delimiter, index + 1);
+          // The rejected prefix is body data and no delimiter starts before it. Yield through its
+          // first byte now, so a run of padded prefixes can't hold the body in the buffer.
+          yield input.take(index + 1);
+          continue;
         }
         const safe = input.buffer.length - delimiter.length - 2;
         if (safe > 0) yield input.take(safe);
