@@ -57,16 +57,28 @@ export function wikiToMarkdown(wiki: string): string {
   const { hold, release } = stash();
   // A literal NUL would read as a token, so none survives into the text.
   let text = wiki.replaceAll("\r\n", "\n").replaceAll(HOLD, "");
+  // Jira draws a macro as a block even mid-line, and a fence only opens and closes on its own line.
   text = text.replace(
     BLOCK_WIKI,
-    (_, macro: string, parameters: string | undefined, code: string) => {
+    (
+      block,
+      macro: string,
+      parameters: string | undefined,
+      code: string,
+      at: number,
+      all: string,
+    ) => {
       const fence = ticksAround(code, 3);
-      return hold(`${fence}${macro === "code" ? codeLanguage(parameters) : ""}\n${code}\n${fence}`);
+      const before = at > 0 && all[at - 1] !== "\n" ? "\n" : "";
+      const after = (all[at + block.length] ?? "\n") === "\n" ? "" : "\n";
+      return `${before}${hold(`${fence}${macro === "code" ? codeLanguage(parameters) : ""}\n${code}\n${fence}`)}${after}`;
     },
   );
-  text = text.replace(/\{\{([^}\n]+)\}\}/g, (_, code: string) => {
+  // Inline code ends on the last `}}` of a run, so `{{f({a: 1})}}` keeps its braces.
+  text = text.replace(/\{\{([^\n]+?)\}\}(?!\})/g, (_, code: string) => {
     const ticks = ticksAround(code, 1);
-    const pad = code.startsWith("`") || code.endsWith("`") ? " " : "";
+    // Markdown strips one space from each end of a span when both ends have one.
+    const pad = /^`|`$|^ .*[^ ].* $/.test(code) ? " " : "";
     return hold(`${ticks}${pad}${code}${pad}${ticks}`);
   });
   text = text.replace(/\[([^\]|\n]+)\|(https?:\/\/[^\]\s]+|mailto:[^\]\s]+)\]/g, (_, label, url) =>
@@ -162,7 +174,10 @@ function holdFences(text: string, hold: (text: string) => string): string {
       .map((line) => line.replace(new RegExp(`^[ \\t]{0,${indent!.length}}`), ""))
       .join("\n");
     const language = info!.trim().split(/\s+/)[0] ?? "";
-    out.push(hold(`{code${language === "" ? "" : `:${language}`}}\n${code}\n{code}`));
+    // `{code}` inside would close the macro, and only `{noformat}` can show it.
+    const macro = code.includes("{code}") ? "noformat" : "code";
+    const opener = macro === "code" && language !== "" ? `{code:${language}}` : `{${macro}}`;
+    out.push(hold(`${opener}\n${code}\n{${macro}}`));
     index = end;
   }
   return out.join("\n");
@@ -171,6 +186,7 @@ function holdFences(text: string, hold: (text: string) => string): string {
 /** Bold becomes a private marker first, so the single stars left are the italics. */
 function inlineMarkdownToWiki(text: string): string {
   return text
+    .replace(/\*\*\*(?=\S)(.+?)(?<=\S)\*\*\*/g, "\u0001_$1_\u0001")
     .replace(
       /\*\*(?=\S)(.+?)(?<=\S)\*\*|(?<!\w)__(?=\S)(.+?)(?<=\S)__(?!\w)/g,
       (_, star, underscore) => `\u0001${star ?? underscore}\u0001`,

@@ -49,14 +49,16 @@ const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
   },
 };
 
-/** `https://<site>.atlassian.net/browse/<PROJECT>-<n>`, keeping the site as the workspace. */
+/**
+ * `https://<site>.atlassian.net/browse/<PROJECT>-<n>`, or a Data Center server's, after its context
+ * path. The host is the workspace; only an issue read through a connected account confirms it.
+ */
 export function parseJiraIssueUrl(url: URL) {
-  const site = url.hostname.toLowerCase();
-  if (url.protocol !== "https:" || !site.endsWith(`.${DESCRIPTOR.host}`)) return null;
-  const [, resource, key] = url.pathname.split("/");
-  if (resource !== "browse" || key === undefined) return null;
-  const scope = /^([A-Z][A-Z0-9_]*)-[1-9][0-9]*$/.exec(key)?.[1];
-  return scope === undefined ? null : { host: DESCRIPTOR.host, workspace: site, scope, key };
+  if (JiraApi.serverOrigin(url.href) === null) return null;
+  const match = /(?:^|\/)browse\/(([A-Z][A-Z0-9_]*)-[1-9][0-9]*)\/?$/.exec(url.pathname);
+  if (match === null) return null;
+  const [, key, scope] = match;
+  return { host: DESCRIPTOR.host, workspace: url.hostname.toLowerCase(), scope: scope!, key: key! };
 }
 
 /** No reactions or development panel: neither Jira Cloud's nor Data Center's API serves them. */

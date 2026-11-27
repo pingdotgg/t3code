@@ -37,6 +37,17 @@ describe("wikiToMarkdown", () => {
     // Backticks inside inline code need a longer delimiter, padded when they touch it.
     expect(wikiToMarkdown("{{a`b`c}} and {{`x}}")).toBe("``a`b`c`` and `` `x ``");
     expect(markdownToWiki("``a`b`c`` and `` `x ``")).toBe("{{a`b`c}} and {{`x}}");
+    // Braces inside inline code stay inside it.
+    expect(wikiToMarkdown("{{fn({a: 1}, *b*)}} and {{x = {a: 1}}}")).toBe(
+      "`fn({a: 1}, *b*)` and `x = {a: 1}`",
+    );
+    expect(markdownToWiki(wikiToMarkdown("{{ x }}"))).toBe("{{ x }}");
+  });
+
+  it("puts a code macro written mid-line on lines of its own", () => {
+    const markdown = wikiToMarkdown("See {code}x{code} here\n\nRest of body");
+    expect(markdown).toBe("See \n```\nx\n```\n here\n\nRest of body");
+    expect(markdownToWiki(markdown)).toBe("See \n{code}\nx\n{code}\n here\n\nRest of body");
   });
 
   it("reads code parameters by name, and closes a macro only with its own name", () => {
@@ -86,6 +97,12 @@ describe("markdownToWiki", () => {
     expect(markdownToWiki("````md\n```\ninner\n```\n````")).toBe(
       "{code:md}\n```\ninner\n```\n{code}",
     );
+    // Only `{noformat}` can show a `{code}` line without closing on it.
+    expect(markdownToWiki("```\n{code}\nhi\n{code}\n```")).toBe(
+      "{noformat}\n{code}\nhi\n{code}\n{noformat}",
+    );
+    const quoted = "{noformat}\nUse {code}foo{code}\n{noformat}";
+    expect(markdownToWiki(wikiToMarkdown(quoted))).toBe(quoted);
   });
 
   it("keeps a link whose label is code", () => {
@@ -107,6 +124,11 @@ describe("markdownToWiki", () => {
     expect(markdownToWiki("{panel:title=Note}\nbody **bold**\n{panel}")).toBe(
       "{panel:title=Note}\nbody *bold*\n{panel}",
     );
+  });
+
+  it("writes bold italics with both markers nested", () => {
+    expect(markdownToWiki("***bold italic***")).toBe("*_bold italic_*");
+    expect(wikiToMarkdown("*_bold italic_*")).toBe("***bold italic***");
   });
 
   it("round-trips what a person writes", () => {

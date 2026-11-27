@@ -115,6 +115,23 @@ const listInput = {
 } as const;
 
 describe("JiraIssueTracker on Data Center", () => {
+  it("recognises an issue link on the server, after its context path", () => {
+    const parse = (url: string) => JiraIssueTracker.parseJiraIssueUrl(new URL(url));
+    expect(parse("https://jira.acme.test/browse/PROJ-1")).toEqual({
+      host: "atlassian.net",
+      workspace: "jira.acme.test",
+      scope: "PROJ",
+      key: "PROJ-1",
+    });
+    expect(parse("https://acme.test:8443/jira/browse/PROJ-12?focusedCommentId=3")).toMatchObject({
+      workspace: "acme.test",
+      key: "PROJ-12",
+    });
+    expect(parse("https://acme.atlassian.net/browse/ENG-7")).toMatchObject({ key: "ENG-7" });
+    expect(parse("http://jira.acme.test/browse/PROJ-1")).toBeNull();
+    expect(parse("https://jira.acme.test/browse/PROJ-1/edit")).toBeNull();
+  });
+
   it.effect("vets a token against the server it names, sending it as a bearer", () =>
     Effect.gen(function* () {
       const { tracker, requests } = fakeDataCenter({
