@@ -400,6 +400,18 @@ export function pullRequestLabelColors(
   return colors;
 }
 
+/**
+ * Host label colors across a picker's searches, newest answer winning, so a label an earlier
+ * search found keeps its dot. Returns `seen` itself when nothing changed.
+ */
+export function rememberPullRequestLabelColors(
+  seen: Readonly<Record<string, string>>,
+  answered: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+  const changed = Object.entries(answered).some(([name, color]) => seen[name] !== color);
+  return changed ? { ...seen, ...answered } : seen;
+}
+
 export function filterPullRequestList<
   Entry extends PullRequestListEntry & { environmentId?: string },
 >(
