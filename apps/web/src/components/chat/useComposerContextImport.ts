@@ -46,6 +46,7 @@ import {
   changeQuestionAttachmentPreparation,
   countQuestionAttachments,
   questionAttachmentDraftId,
+  useQuestionAttachmentPreparation,
 } from "../../questionAttachments";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
@@ -232,29 +233,10 @@ export function useComposerContextImport(input: {
           }
         : null;
     const ownsAttachment = () => {
+      // Resolving the question clears its preparation slot along with its draft.
       if (questionAttachmentTarget) {
-        return (
-          questionThread !== null &&
-          questionRequests !== null &&
-          appAtomRegistry
-            .get(questionRequests)
-            ?.userInputs.some(
-              (request) =>
-                request.responseCapability !== "not_resumable" &&
-                request.questions.some(
-                  (question) =>
-                    question.allowCustomAnswer !== false &&
-                    questionAttachmentDraftId(
-                      questionThread.environmentId,
-                      questionThread.threadId,
-                      request.requestId,
-                      question.id,
-                    ) === questionAttachmentTarget,
-                ),
-            ) === true
-        );
+        return questionAttachmentTarget in useQuestionAttachmentPreparation.getState().counts;
       }
-      if (copiedFile && !stagedImage) return true;
       // An annotation can own a screenshot without a separate image chip.
       const draft = getComposerDraft(composerDraftTarget);
       const references = new Set(collectInlineContextIds(draft?.prompt ?? ""));
@@ -265,9 +247,8 @@ export function useComposerContextImport(input: {
           draft?.previewAnnotations.some((annotation) => annotation.id === localId))
       );
     };
-    // A cached image is already available when the paste starts inserting its chip.
-    if (copiedFile && stagedImage) await Promise.resolve();
-    if (!ownsAttachment()) return;
+    // A cached copy resolves before the paste inserts its chip; only a download can outlive it.
+    if (!copiedFile && !ownsAttachment()) return;
     // Question cleanup can move an accepted image. Prepare its saved record before publishing it.
     const serialized = stagedImage ? await serializeComposerImages([stagedImage], []) : [];
     if (stagedImage && !ownsAttachment()) return;

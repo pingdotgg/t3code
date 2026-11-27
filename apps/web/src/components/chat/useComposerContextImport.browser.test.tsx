@@ -249,22 +249,20 @@ it.each([
   if (edit === "switch" || edit === "reload" || pauseSerialization) {
     await screen.unmount();
   }
-  if (edit === "question-close") {
+  const closeQuestion = () => {
     appAtomRegistry.set(requests, { approvals: [], userInputs: [] });
-    store.clearComposerContent(target);
-  }
+    const announce = makeThreadRequestsResolvedAnnouncer(thread.environmentId, thread.threadId);
+    announce([{ id: requestId, status: "pending" }]);
+    announce([{ id: requestId, status: "cancelled" }]);
+  };
+  if (edit === "question-close") closeQuestion();
   let slotsDuringSerialization: number | undefined;
   await act(async () => {
     downloaded.resolve(new Response("notes", { headers: { "Content-Type": attachment.mimeType } }));
     if (pauseSerialization) {
       await serializing.promise;
       slotsDuringSerialization = countQuestionAttachments([target]);
-      if (edit === "question-close-during-serialization") {
-        appAtomRegistry.set(requests, { approvals: [], userInputs: [] });
-        const announce = makeThreadRequestsResolvedAnnouncer(thread.environmentId, thread.threadId);
-        announce([{ id: requestId, status: "pending" }]);
-        announce([{ id: requestId, status: "cancelled" }]);
-      }
+      if (edit === "question-close-during-serialization") closeQuestion();
       resumeSerialization.resolve();
     }
     await settled.promise;
