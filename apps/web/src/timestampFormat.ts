@@ -201,11 +201,12 @@ export function formatDateTimeTimestamp(isoDate: string, timestampFormat: Timest
     formatter = new Intl.DateTimeFormat(timestampLocale, {
       dateStyle: "medium",
       timeStyle: "short",
+      timeZone: "UTC",
       ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
     });
     dateTimeFormatterCache.set(timestampFormat, formatter);
   }
-  return formatter.format(date);
+  return formatter.format(wallClockAsUtc(date));
 }
 
 /** A wall-clock `H:MM` or `HH:MM` that names no date or zone, such as a daily schedule's time. */
