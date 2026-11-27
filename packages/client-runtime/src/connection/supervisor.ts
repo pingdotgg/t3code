@@ -72,6 +72,19 @@ const FRAME_CHECK_EVERY = "100 millis";
 const REMOTE_SILENT_SOCKET_AFTER = "2500 millis";
 const BACKOFF_RESET_AFTER_MS = 30_000;
 const BETTER_ROUTE_CHECK_INTERVAL_MS = 60_000;
+
+function reportedEndpointsEqual(
+  previous: ReadonlyArray<ReportedEndpoint>,
+  next: ReadonlyArray<ReportedEndpoint>,
+): boolean {
+  return (
+    previous.length === next.length &&
+    previous.every(
+      (endpoint, index) =>
+        endpoint.httpBaseUrl === next[index]?.httpBaseUrl && endpoint.kind === next[index]?.kind,
+    )
+  );
+}
 // Each check of a dead route can wait out the full probe timeout, so a route
 // that keeps failing is checked half as often each time, until the network
 // changes and it may answer again.
@@ -364,7 +377,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       Stream.filter((event) => event.type === "snapshot"),
       Stream.map((event) => event.config.directEndpoints),
       Stream.filter((reported) => reported !== undefined),
-      Stream.changesWith((previous, next) => JSON.stringify(previous) === JSON.stringify(next)),
+      Stream.changesWith(reportedEndpointsEqual),
       Stream.runForEach((reported) =>
         Effect.gen(function* () {
           const updated = yield* learn({ activeRoute, reported });
