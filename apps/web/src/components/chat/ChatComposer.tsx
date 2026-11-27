@@ -3030,7 +3030,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       linked.push(item);
     }
-    focusComposer();
+    // A landed link already refocuses the editor once the draft renders. Focusing now would
+    // let the editor write its stale text back over the link (see ComposerAttachInput).
+    if (linked.length === 0) focusComposer();
     return { linked, missing };
   };
 
