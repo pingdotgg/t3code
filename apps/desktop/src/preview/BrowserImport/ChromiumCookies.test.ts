@@ -6,7 +6,11 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Sink from "effect/Sink";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   decryptChromiumValue,
@@ -433,5 +437,83 @@ describe("readChromiumCookieDatabase", () => {
       expect(chips.undecryptable).toBe(1);
       expect(chips.undecryptableHosts).toEqual(["partitioned.example"]);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "advances to the next Linux secret candidate when an earlier readable secret cannot decrypt v11 cookies",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-chromium-fallback-key-",
+        });
+        const filename = `${directory}/Cookies`;
+        const chromiumKey = NodeCrypto.pbkdf2Sync("chromium-secret", "saltysalt", 1, 16, "sha1");
+        const bound = Buffer.concat([
+          NodeCrypto.createHash("sha256").update("ardia.example").digest(),
+          Buffer.from("session-from-chromium-key"),
+        ]);
+
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`create table meta (key text primary key, value text not null)`;
+          yield* sql`insert into meta values ('version', 24)`;
+          yield* sql`
+            create table cookies (
+              host_key text not null, name text not null, value text not null,
+              encrypted_value blob not null, path text not null, expires_utc integer not null,
+              is_secure integer not null, is_httponly integer not null, samesite integer not null,
+              top_frame_site_key text not null default ''
+            )
+          `;
+          yield* sql`insert into cookies values
+            ('ardia.example', 'sid', '', ${encryptChromium("v11", bound, chromiumKey)}, '/', 0, 1, 1, 1, '')`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+        const seenApps: Array<string> = [];
+        const result = yield* readChromiumCookies({
+          cookieDatabasePath: filename,
+          platform: "linux",
+          keychainService: undefined,
+          keychainAccount: undefined,
+          linuxSecretApplication: "ardia",
+          linuxSecretApplications: ["ardia", "chromium", "chrome"],
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              Layer.succeed(LinuxBrowserSecretPath, "/bundled/browser-secret/t3-browser-secret"),
+              Layer.succeed(
+                ChildProcessSpawner.ChildProcessSpawner,
+                ChildProcessSpawner.make((command) => {
+                  const app = (command as { readonly args: ReadonlyArray<string> }).args[0] ?? "";
+                  seenApps.push(app);
+                  const secret = app === "ardia" ? "stale-ardia-secret" : "chromium-secret";
+                  return Effect.succeed(
+                    ChildProcessSpawner.makeHandle({
+                      pid: ChildProcessSpawner.ProcessId(1),
+                      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                      isRunning: Effect.succeed(false),
+                      kill: () => Effect.void,
+                      unref: Effect.succeed(Effect.void),
+                      stdin: Sink.drain,
+                      stdout: Stream.encodeText(Stream.make(secret)),
+                      stderr: Stream.empty,
+                      all: Stream.empty,
+                      getInputFd: () => Sink.drain,
+                      getOutputFd: () => Stream.empty,
+                    }),
+                  );
+                }),
+              ),
+            ),
+          ),
+        );
+
+        expect(seenApps).toEqual(["ardia", "chromium"]);
+        expect(result.undecryptable).toBe(0);
+        expect(result.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
+          { name: "sid", value: "session-from-chromium-key" },
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

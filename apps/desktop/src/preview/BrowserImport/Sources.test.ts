@@ -1159,6 +1159,21 @@ describe("discoverBrowserImportSources", () => {
             0,
           );
 
+          // Unlisted Firefox fork whose `profiles.ini` is stale but fallback `Profiles/` holds cookies.
+          const waterfoxRoot = path.join(appSupport, "Waterfox");
+          yield* fileSystem.makeDirectory(path.join(waterfoxRoot, "Profiles", "live.default"), {
+            recursive: true,
+          });
+          yield* fileSystem.writeFileString(
+            path.join(waterfoxRoot, "profiles.ini"),
+            ["[Profile0]", "Name=Stale", "IsRelative=1", "Path=Profiles/stale.default"].join("\n"),
+          );
+          yield* writeFirefoxCookieDatabase(
+            path.join(waterfoxRoot, "Profiles", "live.default", "cookies.sqlite"),
+            1,
+            0,
+          );
+
           // Electron app (has Cookies directly, no profile.info_cache in Local State) must be ignored.
           const slackRoot = path.join(appSupport, "Slack");
           yield* fileSystem.makeDirectory(path.join(slackRoot, "Network"), { recursive: true });
@@ -1184,6 +1199,7 @@ describe("discoverBrowserImportSources", () => {
               ["Ardia", "chromium"],
               ["Chrome Canary", "chromium"],
               ["LibreWolf", "firefox"],
+              ["Waterfox", "firefox"],
             ],
           );
 
@@ -1207,6 +1223,7 @@ describe("discoverBrowserImportSources", () => {
             [
               ["Chrome Canary", "chromium"],
               ["LibreWolf", "firefox"],
+              ["Waterfox", "firefox"],
             ],
           );
         }),
@@ -1264,12 +1281,49 @@ describe("discoverBrowserImportSources", () => {
           0,
         );
 
+        // Native Firefox + Flatpak Firefox must keep Flatpak selectable with a disambiguated label.
+        const nativeFirefox = path.join(home, ".mozilla", "firefox");
+        yield* fileSystem.makeDirectory(path.join(nativeFirefox, "native.default"), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(
+          path.join(nativeFirefox, "profiles.ini"),
+          ["[Profile0]", "Name=Native", "IsRelative=1", "Path=native.default"].join("\n"),
+        );
+        yield* writeFirefoxCookieDatabase(
+          path.join(nativeFirefox, "native.default", "cookies.sqlite"),
+          1,
+          0,
+        );
+
+        const flatpakFirefox = path.join(
+          home,
+          ".var",
+          "app",
+          "org.mozilla.firefox",
+          ".mozilla",
+          "firefox",
+        );
+        yield* fileSystem.makeDirectory(path.join(flatpakFirefox, "fp.default"), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(
+          path.join(flatpakFirefox, "profiles.ini"),
+          ["[Profile0]", "Name=Flatpak", "IsRelative=1", "Path=fp.default"].join("\n"),
+        );
+        yield* writeFirefoxCookieDatabase(
+          path.join(flatpakFirefox, "fp.default", "cookies.sqlite"),
+          2,
+          0,
+        );
+
         const discovered = (yield* discoverBrowserImportSources(context)).filter((source) =>
           source.id.startsWith("discovered:"),
         );
         assert.deepEqual(
           discovered.map((source) => [source.name, source.engine]),
           [
+            ["Firefox (Flatpak)", "firefox"],
             ["Floorp", "firefox"],
             ["Librewolf", "firefox"],
             ["Thorium", "chromium"],

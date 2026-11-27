@@ -1004,7 +1004,11 @@ const directoryExists = Effect.fnUntraced(function* (path: string) {
 const readSubdirectories = Effect.fnUntraced(function* (
   base: string,
   context: BrowserImportPathContext,
-  options?: { readonly allowHidden?: boolean; readonly skip?: (entry: string) => boolean },
+  options?: {
+    readonly allowHidden?: boolean;
+    readonly skip?: (entry: string) => boolean;
+    readonly maxEntries?: number;
+  },
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const entries = yield* fileSystem
@@ -1017,6 +1021,9 @@ const readSubdirectories = Effect.fnUntraced(function* (
     const fullPath = context.path.join(base, entry);
     if (yield* directoryExists(fullPath)) {
       dirs.push({ name: entry, fullPath });
+      if (options?.maxEntries !== undefined && dirs.length > options.maxEntries) {
+        return undefined;
+      }
     }
   }
   return dirs;
@@ -1048,6 +1055,22 @@ const detectBrowserEngineAtRoot = Effect.fnUntraced(function* (
         : context.path.join(root, profile.directory);
       if (yield* databaseFileExists(context.path.join(profilePath, "cookies.sqlite"))) {
         return { kind: "browser", engine: "firefox" };
+      }
+    }
+    // Mirror `listSourceProfilesInDirectory`: fall back to scanning the platform profile directory
+    // when `profiles.ini` only lists stale or unlaunched entries.
+    const fallbackDirectory =
+      context.platform === "linux" ? root : context.path.join(root, "Profiles");
+    const fallbackEntries = yield* fileSystem
+      .readDirectory(fallbackDirectory)
+      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+    if (fallbackEntries.length <= MAX_NESTED_SCAN_ENTRIES) {
+      for (const entry of fallbackEntries) {
+        if (
+          yield* databaseFileExists(context.path.join(fallbackDirectory, entry, "cookies.sqlite"))
+        ) {
+          return { kind: "browser", engine: "firefox" };
+        }
       }
     }
   }
@@ -1124,11 +1147,13 @@ const scanBaseDirectory = Effect.fnUntraced(function* (
     return true;
   });
 
-  const level1 = yield* readSubdirectories(base, context);
+  const level1 = (yield* readSubdirectories(base, context)) ?? [];
   for (const dir1 of level1) {
     if (yield* tryRoot(dir1.fullPath, [dir1.name])) continue;
-    const level2 = yield* readSubdirectories(dir1.fullPath, context);
-    if (level2.length > MAX_NESTED_SCAN_ENTRIES) continue;
+    const level2 = yield* readSubdirectories(dir1.fullPath, context, {
+      maxEntries: MAX_NESTED_SCAN_ENTRIES,
+    });
+    if (level2 === undefined) continue;
     for (const dir2 of level2) {
       if (yield* tryRoot(dir2.fullPath, [dir1.name, dir2.name])) continue;
       if (options.checkWindowsUserData) {
@@ -1166,15 +1191,18 @@ const scanLinuxDotAndFlatpakRoots = Effect.fnUntraced(function* (
 
   // Home dotfiles for Firefox-based forks (e.g. ~/.librewolf, ~/.waterfox, ~/.floorp, ~/.mozilla/*).
   if (context.home) {
-    const dotDirs = yield* readSubdirectories(context.home, context, {
-      allowHidden: true,
-      skip: (entry) => !entry.startsWith(".") || IGNORED_LINUX_HOME_DOTDIRS.has(entry),
-    });
+    const dotDirs =
+      (yield* readSubdirectories(context.home, context, {
+        allowHidden: true,
+        skip: (entry) => !entry.startsWith(".") || IGNORED_LINUX_HOME_DOTDIRS.has(entry),
+      })) ?? [];
     for (const dir of dotDirs) {
       yield* tryRoot(dir.fullPath, [dir.name], false);
       if (dir.name === ".mozilla") {
-        const nested = yield* readSubdirectories(dir.fullPath, context);
-        if (nested.length <= MAX_NESTED_SCAN_ENTRIES) {
+        const nested = yield* readSubdirectories(dir.fullPath, context, {
+          maxEntries: MAX_NESTED_SCAN_ENTRIES,
+        });
+        if (nested !== undefined) {
           for (const child of nested) {
             yield* tryRoot(child.fullPath, [dir.name, child.name], false);
           }
@@ -1184,13 +1212,14 @@ const scanLinuxDotAndFlatpakRoots = Effect.fnUntraced(function* (
 
     // Flatpak sandboxes under ~/.var/app/<appId>.
     const flatpakBase = context.path.join(context.home, ".var", "app");
-    const flatpakApps = yield* readSubdirectories(flatpakBase, context);
+    const flatpakApps = (yield* readSubdirectories(flatpakBase, context)) ?? [];
     for (const app of flatpakApps) {
       const children = yield* readSubdirectories(app.fullPath, context, {
         allowHidden: true,
         skip: (entry) => entry === "cache" || entry === "data" || entry === ".ld.so",
+        maxEntries: MAX_NESTED_SCAN_ENTRIES,
       });
-      if (children.length > MAX_NESTED_SCAN_ENTRIES) continue;
+      if (children === undefined) continue;
       for (const child of children) {
         if (child.name === "config") {
           const nested = yield* scanBaseDirectory(child.fullPath, context, knownRoots, seenRoots, {
@@ -1208,8 +1237,10 @@ const scanLinuxDotAndFlatpakRoots = Effect.fnUntraced(function* (
         }
         yield* tryRoot(child.fullPath, [app.name, child.name], false, true);
         if (child.name === ".mozilla") {
-          const mozillaChildren = yield* readSubdirectories(child.fullPath, context);
-          if (mozillaChildren.length <= MAX_NESTED_SCAN_ENTRIES) {
+          const mozillaChildren = yield* readSubdirectories(child.fullPath, context, {
+            maxEntries: MAX_NESTED_SCAN_ENTRIES,
+          });
+          if (mozillaChildren !== undefined) {
             for (const sub of mozillaChildren) {
               yield* tryRoot(sub.fullPath, [app.name, child.name, sub.name], false, true);
             }
@@ -1304,7 +1335,8 @@ export const discoverBrowserImportSources = Effect.fn(
     }
   }
 
-  // Avoid duplicating a known browser that is already installed (e.g. a migrated legacy folder).
+  // Keep distinct cookie stores selectable (e.g. native + Flatpak Firefox); only deduplicate
+  // Ardia's migrated legacy macOS folder when the primary `com.ardia.browser` install is present.
   const knownByEngineAndName = new Map<string, BrowserImportSourceDefinition>();
   for (const source of BROWSER_IMPORT_SOURCES) {
     if (source.platforms.includes(context.platform)) {
@@ -1312,11 +1344,22 @@ export const discoverBrowserImportSources = Effect.fn(
     }
   }
   const installedKnownCache = new Map<string, boolean>();
+  const isKnownCollisionInstalled = Effect.fnUntraced(function* (collisionKey: string) {
+    const matchingKnown = knownByEngineAndName.get(collisionKey);
+    if (matchingKnown === undefined) return false;
+    let knownInstalled = installedKnownCache.get(collisionKey);
+    if (knownInstalled === undefined) {
+      knownInstalled = yield* isSourceInstalled(matchingKnown, context);
+      installedKnownCache.set(collisionKey, knownInstalled);
+    }
+    return knownInstalled;
+  });
   const discovered: Array<BrowserImportSourceDefinition> = [];
 
   const namedCandidates: Array<{
     readonly candidate: DiscoveredCandidate;
     readonly baseName: string;
+    readonly knownInstalled: boolean;
   }> = [];
   const nameCounts = new Map<string, number>();
 
@@ -1326,20 +1369,16 @@ export const discoverBrowserImportSources = Effect.fn(
 
     const collisionKey = `${candidate.engine}:${baseName.toLowerCase()}`;
     const matchingKnown = knownByEngineAndName.get(collisionKey);
-    if (matchingKnown !== undefined) {
-      let knownInstalled = installedKnownCache.get(collisionKey);
-      if (knownInstalled === undefined) {
-        knownInstalled = yield* isSourceInstalled(matchingKnown, context);
-        installedKnownCache.set(collisionKey, knownInstalled);
-      }
-      if (knownInstalled) continue;
+    const knownInstalled = yield* isKnownCollisionInstalled(collisionKey);
+    if (!candidate.flatpak && matchingKnown?.id === "ardia" && knownInstalled) {
+      continue;
     }
 
-    namedCandidates.push({ candidate, baseName });
+    namedCandidates.push({ candidate, baseName, knownInstalled });
     nameCounts.set(collisionKey, (nameCounts.get(collisionKey) ?? 0) + 1);
   }
 
-  for (const { candidate, baseName } of namedCandidates) {
+  for (const { candidate, baseName, knownInstalled } of namedCandidates) {
     const id = yield* buildDiscoveredSourceId(
       candidate.engine,
       normalizeRootKey(context, candidate.root),
@@ -1347,7 +1386,7 @@ export const discoverBrowserImportSources = Effect.fn(
     if (id === undefined) continue;
     const collisionKey = `${candidate.engine}:${baseName.toLowerCase()}`;
     const name =
-      candidate.flatpak && (nameCounts.get(collisionKey) ?? 0) > 1
+      candidate.flatpak && (knownInstalled || (nameCounts.get(collisionKey) ?? 0) > 1)
         ? `${baseName} (Flatpak)`
         : baseName;
     const rootPath = candidate.root;

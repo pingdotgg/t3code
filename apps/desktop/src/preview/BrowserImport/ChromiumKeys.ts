@@ -241,6 +241,45 @@ export interface ChromiumKeyRequest {
   readonly linuxSecretApplications?: ReadonlyArray<string> | undefined;
 }
 
+const isChromiumKeyError = Schema.is(ChromiumKeyError);
+
+export const resolveMacKeychainKey = Effect.fn("ChromiumKeys.resolveMacKeychainKey")(function* (
+  candidate: KeychainCredentialCandidate,
+): Effect.fn.Return<ChromiumKeyMaterial, ChromiumKeyError> {
+  const secret = yield* readKeychainSecret(candidate.service, candidate.account);
+  return { cbcV10: derive(secret, MAC_KEY_ITERATIONS) };
+});
+
+export const resolveLinuxApplicationKeys = Effect.fn("ChromiumKeys.resolveLinuxApplicationKeys")(
+  function* (
+    application: string | undefined,
+  ): Effect.fn.Return<
+    ChromiumKeyMaterial,
+    ChromiumKeyError,
+    ChildProcessSpawner.ChildProcessSpawner
+  > {
+    // v10 always uses the fallback passphrase; a keyring secret additionally unlocks v11.
+    const keyringSecret = application
+      ? yield* readLinuxSecret(application).pipe(
+          // Missing Secret Service or keys must not block v10; explicit denial, lock, or cancellation remains a consent failure.
+          Effect.catchIf(
+            (error) => error.reason !== "needsKeychainApproval",
+            (error) => Effect.succeed(error),
+          ),
+        )
+      : undefined;
+    return {
+      cbcV10: derive(LINUX_FALLBACK_PASSPHRASE, LINUX_KEY_ITERATIONS),
+      ...(typeof keyringSecret === "string"
+        ? { cbcV11: derive(keyringSecret, LINUX_KEY_ITERATIONS) }
+        : keyringSecret
+          ? { cbcV11Error: keyringSecret }
+          : {}),
+      cbcEmpty: derive("", LINUX_KEY_ITERATIONS),
+    };
+  },
+);
+
 export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")(function* (
   request: ChromiumKeyRequest,
 ): Effect.fn.Return<
@@ -260,14 +299,14 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
     }
     let missingError: ChromiumKeyError | undefined;
     for (const candidate of candidates) {
-      const attempt = yield* readKeychainSecret(candidate.service, candidate.account).pipe(
+      const attempt = yield* resolveMacKeychainKey(candidate).pipe(
         Effect.catchIf(
           (error) => error.reason === "keychainItemMissing",
           (error) => Effect.succeed(error),
         ),
       );
-      if (typeof attempt === "string") {
-        return { cbcV10: derive(attempt, MAC_KEY_ITERATIONS) };
+      if (!isChromiumKeyError(attempt)) {
+        return attempt;
       }
       missingError = attempt;
     }
@@ -275,38 +314,25 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
   }
 
   if (request.platform === "linux") {
-    // v10 always uses the fallback passphrase; a keyring secret additionally unlocks v11.
     const applications: ReadonlyArray<string> =
       request.linuxSecretApplications && request.linuxSecretApplications.length > 0
         ? request.linuxSecretApplications
         : request.linuxSecretApplication
           ? [request.linuxSecretApplication]
           : [];
-    let keyringSecret: string | ChromiumKeyError | undefined;
-    for (const application of applications) {
-      const attempt = yield* readLinuxSecret(application).pipe(
-        // Missing Secret Service or keys must not block v10; explicit denial, lock, or cancellation remains a consent failure.
-        Effect.catchIf(
-          (error) => error.reason !== "needsKeychainApproval",
-          (error) => Effect.succeed(error),
-        ),
-      );
-      if (typeof attempt === "string") {
-        keyringSecret = attempt;
-        break;
-      }
-      keyringSecret = attempt;
-      if (attempt.reason !== "keychainItemMissing") break;
+    if (applications.length === 0) {
+      return yield* resolveLinuxApplicationKeys(undefined);
     }
-    return {
-      cbcV10: derive(LINUX_FALLBACK_PASSPHRASE, LINUX_KEY_ITERATIONS),
-      ...(typeof keyringSecret === "string"
-        ? { cbcV11: derive(keyringSecret, LINUX_KEY_ITERATIONS) }
-        : keyringSecret
-          ? { cbcV11Error: keyringSecret }
-          : {}),
-      cbcEmpty: derive("", LINUX_KEY_ITERATIONS),
-    };
+    let lastKeys: ChromiumKeyMaterial | undefined;
+    for (const application of applications) {
+      const keys = yield* resolveLinuxApplicationKeys(application);
+      if (keys.cbcV11 !== undefined) {
+        return keys;
+      }
+      lastKeys = keys;
+      if (keys.cbcV11Error?.reason !== "keychainItemMissing") break;
+    }
+    return lastKeys ?? (yield* resolveLinuxApplicationKeys(undefined));
   }
 
   return yield* new ChromiumKeyError({ reason: "unsupportedPlatform" });

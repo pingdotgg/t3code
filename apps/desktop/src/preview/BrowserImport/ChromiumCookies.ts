@@ -15,7 +15,8 @@ import {
   ChromiumKeyError,
   ChromiumKeyFailure,
   readWindowsKey,
-  resolveChromiumKeys,
+  resolveLinuxApplicationKeys,
+  resolveMacKeychainKey,
   type ChromiumKeyMaterial,
   type KeychainCredentialCandidate,
 } from "./ChromiumKeys.ts";
@@ -178,83 +179,114 @@ export function decryptChromiumValue(
   return null;
 }
 
-export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiumCookieDatabase")(
-  function* (snapshotPath: string, keys: ChromiumKeyMaterial, platform: NodeJS.Platform) {
-    const result = yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      // Chromium razes a damaged jar to a file with no tables and rebuilds it on its next write.
-      const tables =
-        yield* sql`select 1 from sqlite_master where type = 'table' and name = 'cookies'`;
-      if (tables.length === 0) return { rows: [], schemaVersion: 0 };
-      const schemaVersion = yield* sql`select value from meta where key = 'version' limit 1`.pipe(
-        Effect.flatMap(decodeSchemaVersion),
-        Effect.map(([row]) => row.value),
-      );
-      const raw =
-        schemaVersion >= 15
-          ? yield* sql`select host_key, name, value, encrypted_value, path,
-                expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
-                samesite, top_frame_site_key from cookies`
-          : yield* sql`select host_key, name, value, encrypted_value, path,
-                expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
-                samesite, '' as top_frame_site_key from cookies`;
-      return { rows: yield* decodeCookieRows(raw), schemaVersion };
-    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })));
+const readRawChromiumCookieDatabase = Effect.fnUntraced(function* (snapshotPath: string) {
+  return yield* Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    // Chromium razes a damaged jar to a file with no tables and rebuilds it on its next write.
+    const tables =
+      yield* sql`select 1 from sqlite_master where type = 'table' and name = 'cookies'`;
+    if (tables.length === 0) {
+      return { rows: [] as ReadonlyArray<typeof CookieRow.Type>, schemaVersion: 0 };
+    }
+    const schemaVersion = yield* sql`select value from meta where key = 'version' limit 1`.pipe(
+      Effect.flatMap(decodeSchemaVersion),
+      Effect.map(([row]) => row.value),
+    );
+    const raw =
+      schemaVersion >= 15
+        ? yield* sql`select host_key, name, value, encrypted_value, path,
+              expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
+              samesite, top_frame_site_key from cookies`
+        : yield* sql`select host_key, name, value, encrypted_value, path,
+              expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
+              samesite, '' as top_frame_site_key from cookies`;
+    return { rows: yield* decodeCookieRows(raw), schemaVersion };
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })));
+});
 
-    const cookies: ImportedCookie[] = [];
-    let undecryptable = 0;
-    const undecryptableHosts = new Set<string>();
-    for (const row of result.rows) {
-      if (row.top_frame_site_key !== "") {
-        undecryptable += 1;
-        undecryptableHosts.add(bareHost(row.host_key));
-        continue;
-      }
-      const value =
-        row.encrypted_value.length === 0
-          ? row.value
-          : decryptChromiumValue(
-              row.encrypted_value,
-              keys,
-              row.host_key,
-              result.schemaVersion,
-              platform,
-            );
-      if (value === null) {
-        undecryptable += 1;
-        undecryptableHosts.add(bareHost(row.host_key));
-        continue;
-      }
-      const secure = row.is_secure === 1;
-      const scope = cookieScope(row.host_key, row.path, secure);
-      cookies.push({
-        url: scope.url,
-        name: row.name,
-        value,
-        domain: scope.domain,
-        path: row.path,
-        secure,
-        httpOnly: row.is_httponly === 1,
-        expirationDate: toUnixSeconds(row.expires_seconds),
-        sameSite: sameSiteFromColumn(row.samesite),
-      });
+interface EvaluatedCookieRows {
+  readonly result: CookieReadResult;
+  readonly keyringDecrypted: number;
+  readonly keyringFailed: number;
+  readonly hasV11: boolean;
+}
+
+const decryptChromiumCookieRows = (
+  rows: ReadonlyArray<typeof CookieRow.Type>,
+  schemaVersion: number,
+  keys: ChromiumKeyMaterial,
+  platform: NodeJS.Platform,
+): EvaluatedCookieRows => {
+  const cookies: ImportedCookie[] = [];
+  let undecryptable = 0;
+  let keyringDecrypted = 0;
+  let keyringFailed = 0;
+  let hasV11 = false;
+  const undecryptableHosts = new Set<string>();
+  const keyringPrefix = platform === "darwin" ? "v10" : platform === "linux" ? "v11" : undefined;
+
+  for (const row of rows) {
+    if (row.top_frame_site_key !== "") {
+      undecryptable += 1;
+      undecryptableHosts.add(bareHost(row.host_key));
+      continue;
     }
-    if (
-      cookies.length === 0 &&
-      keys.cbcV11Error !== undefined &&
-      result.rows.some(
-        (row) =>
-          row.top_frame_site_key === "" &&
-          Buffer.from(row.encrypted_value.subarray(0, 3)).toString("latin1") === "v11",
-      )
-    ) {
-      return yield* keys.cbcV11Error;
+    const prefix =
+      row.encrypted_value.length >= 3
+        ? Buffer.from(row.encrypted_value.subarray(0, 3)).toString("latin1")
+        : undefined;
+    if (prefix === "v11") hasV11 = true;
+    const usesKeyring = keyringPrefix !== undefined && prefix === keyringPrefix;
+    const value =
+      row.encrypted_value.length === 0
+        ? row.value
+        : decryptChromiumValue(row.encrypted_value, keys, row.host_key, schemaVersion, platform);
+    if (value === null) {
+      undecryptable += 1;
+      if (usesKeyring) keyringFailed += 1;
+      undecryptableHosts.add(bareHost(row.host_key));
+      continue;
     }
-    return {
+    if (usesKeyring) keyringDecrypted += 1;
+    const secure = row.is_secure === 1;
+    const scope = cookieScope(row.host_key, row.path, secure);
+    cookies.push({
+      url: scope.url,
+      name: row.name,
+      value,
+      domain: scope.domain,
+      path: row.path,
+      secure,
+      httpOnly: row.is_httponly === 1,
+      expirationDate: toUnixSeconds(row.expires_seconds),
+      sameSite: sameSiteFromColumn(row.samesite),
+    });
+  }
+
+  return {
+    result: {
       cookies,
       undecryptable,
       undecryptableHosts: [...undecryptableHosts],
-    } satisfies CookieReadResult;
+    },
+    keyringDecrypted,
+    keyringFailed,
+    hasV11,
+  };
+};
+
+export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiumCookieDatabase")(
+  function* (snapshotPath: string, keys: ChromiumKeyMaterial, platform: NodeJS.Platform) {
+    const raw = yield* readRawChromiumCookieDatabase(snapshotPath);
+    const evaluated = decryptChromiumCookieRows(raw.rows, raw.schemaVersion, keys, platform);
+    if (
+      evaluated.result.cookies.length === 0 &&
+      keys.cbcV11Error !== undefined &&
+      evaluated.hasV11
+    ) {
+      return yield* keys.cbcV11Error;
+    }
+    return evaluated.result;
   },
 );
 
@@ -276,29 +308,23 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
   ChromiumCookieReadError,
   FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
 > {
-  const keys = yield* (
-    source.platform === "win32" && source.windowsLocalStatePath
-      ? readWindowsKey(source.windowsLocalStatePath).pipe(Effect.map((gcmV10) => ({ gcmV10 })))
-      : resolveChromiumKeys({
-          platform: source.platform,
-          keychainService: source.keychainService,
-          keychainAccount: source.keychainAccount,
-          keychainCandidates: source.keychainCandidates,
-          linuxSecretApplication: source.linuxSecretApplication,
-          linuxSecretApplications: source.linuxSecretApplications,
-        })
-  ).pipe(
-    Effect.mapError(
-      (cause: ChromiumKeyError) =>
-        new ChromiumCookieReadError({
-          reason: cause.reason,
-          cookieDatabasePath: source.cookieDatabasePath,
-          cause,
-        }),
-    ),
-  );
+  const wrapKeyError = (cause: ChromiumKeyError) =>
+    new ChromiumCookieReadError({
+      reason: cause.reason,
+      cookieDatabasePath: source.cookieDatabasePath,
+      cause,
+    });
 
-  const snapshotPath = yield* snapshotCookieDatabase(source.cookieDatabasePath).pipe(
+  let cachedRaw:
+    | { readonly rows: ReadonlyArray<typeof CookieRow.Type>; readonly schemaVersion: number }
+    | undefined;
+  const loadRawDatabase = Effect.fnUntraced(
+    function* () {
+      if (cachedRaw !== undefined) return cachedRaw;
+      const snapshotPath = yield* snapshotCookieDatabase(source.cookieDatabasePath);
+      cachedRaw = yield* readRawChromiumCookieDatabase(snapshotPath);
+      return cachedRaw;
+    },
     Effect.mapError(
       (cause) =>
         new ChromiumCookieReadError({
@@ -309,14 +335,117 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
     ),
   );
 
-  return yield* readChromiumCookieDatabase(snapshotPath, keys, source.platform).pipe(
-    Effect.mapError(
-      (cause) =>
-        new ChromiumCookieReadError({
-          reason: isChromiumKeyError(cause) ? cause.reason : "readFailed",
-          cookieDatabasePath: source.cookieDatabasePath,
-          cause,
-        }),
-    ),
-  );
+  if (source.platform === "win32" && source.windowsLocalStatePath) {
+    const gcmV10 = yield* readWindowsKey(source.windowsLocalStatePath).pipe(
+      Effect.mapError(wrapKeyError),
+    );
+    const raw = yield* loadRawDatabase();
+    return decryptChromiumCookieRows(raw.rows, raw.schemaVersion, { gcmV10 }, source.platform)
+      .result;
+  }
+
+  if (source.platform === "darwin") {
+    const candidates: ReadonlyArray<KeychainCredentialCandidate> =
+      source.keychainCandidates && source.keychainCandidates.length > 0
+        ? source.keychainCandidates
+        : source.keychainService && source.keychainAccount
+          ? [{ service: source.keychainService, account: source.keychainAccount }]
+          : [];
+    if (candidates.length === 0) {
+      return yield* wrapKeyError(new ChromiumKeyError({ reason: "unsupportedPlatform" }));
+    }
+    let missingError: ChromiumKeyError | undefined;
+    let firstResult: CookieReadResult | undefined;
+    for (const candidate of candidates) {
+      const attempt = yield* resolveMacKeychainKey(candidate).pipe(
+        Effect.catchIf(
+          (error) => error.reason === "keychainItemMissing",
+          (error) => Effect.succeed(error),
+        ),
+        Effect.mapError(wrapKeyError),
+      );
+      if (isChromiumKeyError(attempt)) {
+        missingError = attempt;
+        continue;
+      }
+      const raw = yield* loadRawDatabase();
+      const evaluated = decryptChromiumCookieRows(
+        raw.rows,
+        raw.schemaVersion,
+        attempt,
+        source.platform,
+      );
+      firstResult ??= evaluated.result;
+      // Accept the first credential that unlocks keyring-encrypted cookies (or when none exist);
+      // otherwise keep trying fallback candidates in case an earlier keychain item is stale.
+      if (evaluated.keyringFailed === 0 || evaluated.keyringDecrypted > 0) {
+        return evaluated.result;
+      }
+    }
+    if (firstResult !== undefined) return firstResult;
+    return yield* wrapKeyError(
+      missingError ?? new ChromiumKeyError({ reason: "keychainItemMissing" }),
+    );
+  }
+
+  if (source.platform === "linux") {
+    const applications: ReadonlyArray<string> =
+      source.linuxSecretApplications && source.linuxSecretApplications.length > 0
+        ? source.linuxSecretApplications
+        : source.linuxSecretApplication
+          ? [source.linuxSecretApplication]
+          : [];
+    if (applications.length === 0) {
+      const keys = yield* resolveLinuxApplicationKeys(undefined).pipe(
+        Effect.mapError(wrapKeyError),
+      );
+      const raw = yield* loadRawDatabase();
+      return decryptChromiumCookieRows(raw.rows, raw.schemaVersion, keys, source.platform).result;
+    }
+
+    let firstResult: CookieReadResult | undefined;
+    let lastErrorKeys: ChromiumKeyMaterial | undefined;
+    for (const application of applications) {
+      const keys = yield* resolveLinuxApplicationKeys(application).pipe(
+        Effect.mapError(wrapKeyError),
+      );
+      if (keys.cbcV11 === undefined) {
+        lastErrorKeys = keys;
+        if (keys.cbcV11Error?.reason === "keychainItemMissing") continue;
+        break;
+      }
+      const raw = yield* loadRawDatabase();
+      const evaluated = decryptChromiumCookieRows(
+        raw.rows,
+        raw.schemaVersion,
+        keys,
+        source.platform,
+      );
+      firstResult ??= evaluated.result;
+      if (evaluated.keyringFailed === 0 || evaluated.keyringDecrypted > 0) {
+        return evaluated.result;
+      }
+    }
+    if (firstResult !== undefined) return firstResult;
+    const fallbackKeys =
+      lastErrorKeys ??
+      (yield* resolveLinuxApplicationKeys(undefined).pipe(Effect.mapError(wrapKeyError)));
+    const raw = yield* loadRawDatabase();
+    const evaluated = decryptChromiumCookieRows(
+      raw.rows,
+      raw.schemaVersion,
+      fallbackKeys,
+      source.platform,
+    );
+    if (
+      evaluated.result.cookies.length === 0 &&
+      fallbackKeys.cbcV11Error !== undefined &&
+      evaluated.hasV11
+    ) {
+      return yield* wrapKeyError(fallbackKeys.cbcV11Error);
+    }
+    return evaluated.result;
+  }
+
+  return yield* wrapKeyError(new ChromiumKeyError({ reason: "unsupportedPlatform" }));
 });

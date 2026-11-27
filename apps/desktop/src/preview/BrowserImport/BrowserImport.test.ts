@@ -8,6 +8,7 @@ import type { Session } from "electron";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Cipher from "effect/crypto/Cipher";
 import * as Digest from "effect/crypto/Digest";
@@ -269,8 +270,10 @@ describe("BrowserImport.importCookies", () => {
   it.effect("discovers and imports cookies from unlisted Chromium and Firefox browsers", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-autodiscover-" });
       const appSupport = `${home}/Library/Application Support`;
+      const librewolfProfileDirectory = path.join("Profiles", "main.default");
 
       // Auto-discovered Chromium browser (uses fallback Chromium Safe Storage key from mock).
       const cometRoot = `${appSupport}/Comet`;
@@ -392,7 +395,7 @@ describe("BrowserImport.importCookies", () => {
       assert.deepEqual(yield* decodeImportSource(librewolf!), {
         id: librewolf!.id,
         name: "LibreWolf",
-        profiles: [{ directory: "Profiles/main.default", name: "Default", cookieCount: 1 }],
+        profiles: [{ directory: librewolfProfileDirectory, name: "Default", cookieCount: 1 }],
       });
 
       assert.deepEqual(
@@ -411,7 +414,7 @@ describe("BrowserImport.importCookies", () => {
         yield* importer.importCookies({
           input: {
             sourceId: librewolf!.id,
-            sourceProfileDirectory: "Profiles/main.default",
+            sourceProfileDirectory: librewolfProfileDirectory,
             targetProfileId: "default",
           },
           scope: "persist:t3code-preview-test",

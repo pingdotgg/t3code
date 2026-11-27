@@ -13,5 +13,5 @@ This is a one-time copy—later login changes stay separate, and some sites may 
 ## Platform notes
 
 - **macOS (Safari)**: Requires temporary **Full Disk Access** (grant in System Settings, quit/reopen T3 Code if macOS requires it, then reopen the import wizard). You can revoke Full Disk Access afterward.
-- **Windows**: Supports Firefox-based browsers (such as Firefox and Zen) and Chromium browsers using standard encryption (such as Helium). Other Chromium browsers use app-bound encryption and cannot be imported.
+- **Windows**: Supports Firefox-based browsers (such as Firefox and Zen) and Chromium browsers that use standard DPAPI encryption (such as Helium), including unlisted browsers in standard local app data locations. Chromium browsers that use app-bound encryption cannot be imported.
 - Partitioned cookies are skipped on all platforms. Administrators can disable cookie import via [managed policy](./managed-policy.md#other-capabilities).
