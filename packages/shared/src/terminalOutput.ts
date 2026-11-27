@@ -311,7 +311,7 @@ function applySgr(attributes: Attributes, params: ReadonlyArray<number>): void {
 
 const STRING_SEQUENCE_INTRODUCERS = new Set(["]", "P", "X", "_", "^"]);
 
-/** Length of a complete escape sequence starting at `index` (an ESC), or -1 if unfinished. */
+/** Length of a complete escape sequence whose introducer follows `index`, or -1 if unfinished. */
 function escapeLength(input: string, index: number): number {
   const next = input[index + 1];
   if (next === undefined) return -1;
@@ -632,6 +632,14 @@ class Terminal {
     }
   }
 
+  private control(code: number): boolean {
+    if (code === 0x0a) this.newline();
+    else if (code === 0x0d) this.col = 0;
+    else if (code === 0x08) this.col = Math.max(0, this.col - 1);
+    else return code === 0x07; // BEL has no screen effect.
+    return true;
+  }
+
   /** Applies `input`; returns the unfinished escape left at its end. */
   feed(input: string, replay: boolean): string {
     let printable = 0;
@@ -645,26 +653,35 @@ class Terminal {
       }
       flush(index);
       printable = index + 1;
-      if (code === 0x0a) this.newline();
-      else if (code === 0x09) {
-        const offset = this.tabOffsets[this.row] ?? 0;
-        this.moveTo(this.row, nextTabColumn(this.col + offset) - offset);
-      } else if (code === 0x0d) this.col = 0;
-      else if (code === 0x08) this.col = Math.max(0, this.col - 1);
-      else if (code === 0x1b) {
-        const length = escapeLength(input, index);
-        if (length === -1) {
-          const fragment = input.slice(index);
-          if (fragment.length <= MAX_PENDING_ESCAPE) return fragment;
+      if (code === 0x1b) {
+        let start = index + 1;
+        while (this.control(input.charCodeAt(start))) start += 1;
+        const length = escapeLength(input, start - 1);
+        const end = length === -1 ? -1 : start - 1 + length;
+        let sequence = ESC + input.slice(start, end === -1 ? input.length : end);
+        if (sequence[1] === "[") {
+          // Apply controls now and leave them out of the CSI, including any pending fragment.
+          sequence = sequence.replace(/[\u0007\b\n\r]/gu, (control) => {
+            this.control(control.charCodeAt(0));
+            return "";
+          });
+        }
+        if (end === -1) {
+          if (sequence.length <= MAX_PENDING_ESCAPE) return sequence;
           // Retain the introducer and possible ST prefix so long string payloads stay hidden until termination.
-          if (STRING_SEQUENCE_INTRODUCERS.has(fragment[1]!)) {
-            return fragment.slice(0, 2) + (fragment.endsWith(ESC) ? ESC : "");
+          if (STRING_SEQUENCE_INTRODUCERS.has(sequence[1]!)) {
+            return sequence.slice(0, 2) + (sequence.endsWith(ESC) ? ESC : "");
           }
           return "";
         }
-        this.escape(input.slice(index, index + length), replay);
-        index += length - 1;
-        printable = index + 1;
+        this.escape(sequence, replay);
+        index = end - 1;
+        printable = end;
+      } else if (code === 0x09) {
+        const offset = this.tabOffsets[this.row] ?? 0;
+        this.moveTo(this.row, nextTabColumn(this.col + offset) - offset);
+      } else {
+        this.control(code);
       }
     }
     const last = input.charCodeAt(input.length - 1);
