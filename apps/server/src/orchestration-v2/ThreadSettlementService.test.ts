@@ -2482,7 +2482,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     }),
   );
 
-  it.effect.each(["re-engaged", "deleted", "moved"] as const)(
+  it.effect.each(["re-engaged", "deleted"] as const)(
     "skips the settle script for a thread %s while its shells close",
     (state) =>
       Effect.gen(function* () {
@@ -2498,9 +2498,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
               currentThreads[0] =
                 state === "re-engaged"
                   ? { ...settled, settledOverride: "active" }
-                  : state === "moved"
-                    ? { ...settled, worktreePath: "/worktrees/marker" }
-                    : { ...settled, deletedAt: DateTime.makeUnsafe(NOW) };
+                  : { ...settled, deletedAt: DateTime.makeUnsafe(NOW) };
             }),
         });
 

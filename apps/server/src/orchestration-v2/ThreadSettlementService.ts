@@ -10,7 +10,6 @@ import {
   CommandId,
   isDelegatedAppThread,
   isOrchestrationV2WorkActive,
-  type ProjectId,
   type ThreadId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
@@ -801,10 +800,15 @@ export const make = Effect.gen(function* () {
 
   // Skip settle scripts in shared checkouts where other threads may still work.
   const runSettleScript = Effect.fn("ThreadSettlementServiceV2.runSettleScript")(
-    function* (threadId: ThreadId, projectId: ProjectId, worktreePath: string) {
+    function* (threadId: ThreadId) {
+      // Read the thread once the slot is held: it may have re-engaged, moved or gone while queued.
+      const thread = yield* projections.getThread(threadId);
+      if (thread.deletedAt !== null || thread.settledOverride !== "settled") return;
+      const worktreePath = thread.worktreePath;
+      if (worktreePath === null) return;
       if (!(yield* fileSystem.exists(worktreePath))) {
         // A settle script that tears something down would otherwise be skipped with no trace.
-        const project = Option.getOrUndefined(yield* projectStore.getShell(projectId));
+        const project = Option.getOrUndefined(yield* projectStore.getShell(thread.projectId));
         if (
           project !== undefined &&
           settleProjectScript(resolveProjectScripts(yield* settingsService.getSettings, project))
@@ -816,11 +820,6 @@ export const make = Effect.gen(function* () {
         }
         return;
       }
-      // Recheck after waiting, closing and worktree I/O; only live, settled threads may run scripts.
-      const thread = yield* projections.getThread(threadId);
-      if (thread.deletedAt !== null || thread.settledOverride !== "settled") return;
-      // A thread moved to another worktree while queued; its newer settlement queued its own run.
-      if (thread.worktreePath !== worktreePath) return;
       const settledAtMs = toMillis(thread.settledAt);
       if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
       // The parent's worktree belongs to the parent; shared-worktree children
@@ -880,9 +879,7 @@ export const make = Effect.gen(function* () {
       if (settled.deletedAt !== null || settled.settledOverride !== "settled") return;
       yield* terminals.closeOnSettle({ threadId });
       if (settled.worktreePath === null) return;
-      yield* runSettleScript(threadId, settled.projectId, settled.worktreePath).pipe(
-        FiberSet.run(settleScriptRuns),
-      );
+      yield* runSettleScript(threadId).pipe(FiberSet.run(settleScriptRuns));
     },
     (effect, threadId) =>
       effect.pipe(
