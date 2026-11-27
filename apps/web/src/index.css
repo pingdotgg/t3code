@@ -7198,13 +7198,6 @@ body {
     --pane-join-rim-k: 1.6;
     /* The rim's run along the pane's top edge, out from each ear. */
     --pane-join-tail: 36px;
-    /* The row the tabs centre in. Windows' 40px caption row leaves less than
-       the topbar's height under the shift, and padding cannot go negative. */
-    --pane-join-row: min(
-      var(--workspace-topbar-height),
-      var(--pane-notch-height) - var(--pane-join-shift)
-    );
-
     & [data-pane-header] {
       /* From a tab's foot to the pane's top edge, matching the rise above it. */
       --pane-join-drop: calc(
