@@ -1,10 +1,19 @@
+// @effect-diagnostics nodeBuiltinImport:off - a FIFO gate must be released with a synchronous
+// open on the main thread, because the Effect FileSystem queues behind the pinned libuv pool.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import { assert, it } from "@effect/vitest";
 import { ProjectId, type ProjectTrackedFolder } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -281,6 +290,139 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
       assert.deepEqual(
         probed.filter((target) => target !== workspaceRoot),
         [],
+      );
+    }),
+  );
+
+  // Opening a FIFO waits in `open()` for a writer, like listing a folder behind a macOS privacy
+  // prompt, and pins a libuv pool thread that interruption cannot free.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "keeps scanning without using up the libuv pool while a folder's listing never returns",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tmp = yield* makeTempDir;
+        const root = (name: string) => path.join(tmp, name);
+        const probe = path.join(tmp, "probe");
+        yield* fileSystem.writeFileString(probe, "free");
+        for (const folder of ["home/api/.git", "home/Desktop/notes/.git", "other/web/.git"]) {
+          yield* fileSystem.makeDirectory(path.join(tmp, folder), { recursive: true });
+        }
+        // `work` hangs in the probe of a child's `.git` before any listing, like a hung mount.
+        const blocked = (name: string) =>
+          path.join(root(name), "Desktop", ...(name === "work" ? [".git"] : []));
+        const listings = new Map<string, { gate: string; started: Deferred.Deferred<void> }>();
+        for (const name of ["home", "work", "spare", "extra"]) {
+          const gate = path.join(tmp, `${name}.gate`);
+          yield* fileSystem.makeDirectory(path.join(root(name), "Desktop"), { recursive: true });
+          NodeChildProcess.execFileSync("mkfifo", [gate]);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              try {
+                NodeFS.closeSync(
+                  NodeFS.openSync(gate, NodeFS.constants.O_WRONLY | NodeFS.constants.O_NONBLOCK),
+                );
+              } catch {
+                // ENXIO: no reader is waiting.
+              }
+            }),
+          );
+          listings.set(blocked(name), {
+            gate,
+            started: yield* Deferred.make<void>(),
+          });
+        }
+        const hang = <A, E>(target: string, call: Effect.Effect<A, E>) => {
+          const listing = listings.get(target);
+          return listing === undefined
+            ? call
+            : Deferred.succeed(listing.started, undefined).pipe(
+                Effect.andThen(fileSystem.readFileString(listing.gate)),
+                Effect.andThen(call),
+              );
+        };
+        const hanging = FileSystem.FileSystem.of({
+          ...fileSystem,
+          readDirectory: (target, options) =>
+            hang(target, fileSystem.readDirectory(target, options)),
+          stat: (target) => hang(target, fileSystem.stat(target)),
+        });
+        const discover = (workspaceRoot: string) =>
+          WorkspaceFolders.discoverFolders(workspaceRoot).pipe(
+            Effect.map((folders) => folders.map((folder) => folder.path)),
+            Effect.provideService(FileSystem.FileSystem, hanging),
+          );
+        const discoverPastDeadline = Effect.fnUntraced(function* (name: string) {
+          const scan = yield* Effect.forkChild(discover(root(name)));
+          yield* Deferred.await(listings.get(blocked(name))!.started);
+          yield* TestClock.adjust("2 seconds");
+          return yield* Fiber.join(scan);
+        });
+
+        const home = root("home");
+        const found = [path.join(home, "Desktop", "notes"), path.join(home, "api")];
+        assert.deepEqual(
+          (yield* WorkspaceFolders.discoverFolders(home)).map((folder) => folder.path),
+          found,
+        );
+        // The stuck root keeps what it last found, so its repositories do not drop out meanwhile.
+        assert.deepEqual(yield* discoverPastDeadline("home"), found);
+        // Each pass would otherwise pin another thread, and four leave the server unanswered.
+        for (let pass = 0; pass < 4; pass++) assert.deepEqual(yield* discover(home), found);
+        assert.deepEqual(yield* discover(root("other")), [path.join(root("other"), "web")]);
+        // Two stuck calls are the most there can be, however many projects hold one. Other roots
+        // then make none either, and keep what they found. One with nothing found yet fails
+        // rather than report no repositories, so a project keeps the ones it stored.
+        yield* Effect.flip(discoverPastDeadline("work"));
+        yield* Effect.flip(discover(root("spare")));
+        const stored = { path: path.join(root("extra"), "kept"), name: "kept", discovered: true };
+        assert.deepEqual(
+          yield* WorkspaceFolders.projectFolders({
+            workspaceRoot: root("extra"),
+            trackedFolders: [stored],
+          }).pipe(Effect.provideService(FileSystem.FileSystem, hanging)),
+          [stored],
+        );
+        assert.deepEqual(yield* discover(root("other")), [path.join(root("other"), "web")]);
+        assert.equal(yield* fileSystem.readFileString(probe), "free");
+      }),
+  );
+
+  it.effect("does not count waiting behind a slow listing against the deadline", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tmp = yield* makeTempDir;
+      const slow = ["a", "b", "c"].map((name) => path.join(tmp, name));
+      for (const folder of slow) {
+        yield* fileSystem.makeDirectory(path.join(folder, "repo", ".git"), { recursive: true });
+      }
+      const started = yield* Queue.unbounded<string>();
+      const slowFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        readDirectory: (target, options) =>
+          slow.includes(target)
+            ? Queue.offer(started, target).pipe(
+                Effect.andThen(Effect.sleep("1 second")),
+                Effect.andThen(fileSystem.readDirectory(target)),
+              )
+            : fileSystem.readDirectory(target, options),
+      });
+      const discovering = yield* Effect.forkChild(
+        WorkspaceFolders.discoverFolders(tmp).pipe(
+          Effect.map((folders) => folders.map((folder) => folder.path)),
+          Effect.provideService(FileSystem.FileSystem, slowFileSystem),
+        ),
+      );
+      // The listings run one at a time, so the last waits two seconds before its own read starts.
+      for (const _ of slow) {
+        yield* Queue.take(started);
+        yield* TestClock.adjust("1 second");
+      }
+      assert.deepEqual(
+        yield* Fiber.join(discovering),
+        slow.map((folder) => path.join(folder, "repo")),
       );
     }),
   );

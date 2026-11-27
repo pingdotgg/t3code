@@ -243,10 +243,14 @@ export const make = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     if ((folderSyncDue.get(row.projectId) ?? 0) > now) return;
     folderSyncDue.set(row.projectId, now + FOLDER_SYNC_INTERVAL_MS);
-    const discovered = yield* discoverFolders(row.workspaceRoot).pipe(
+    const scanned = yield* discoverFolders(row.workspaceRoot).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+      Effect.option,
     );
+    // Not scanned is not "no repositories": the stored list stays until the folder can be read.
+    if (Option.isNone(scanned)) return;
+    const discovered = scanned.value;
     if (sameProjectFolders(mergeProjectFolders(discovered, row.trackedFolders), row.trackedFolders))
       return;
     const command = {
