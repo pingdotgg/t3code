@@ -10,6 +10,8 @@ const red = "\u001b[0;31mX\u001b[0m";
 
 it.each([
   ["abc\u001b\r[31mX", red + "bc"],
+  ["abc\u001b\u0007\r[31mX", red + "bc"],
+  ["abc\u001b[\u0007\r31mX", red + "bc"],
   ["abc\u001b\n[31mX", "abc\n" + red],
   ["abcde\u001b\b\b[31mX", "abc" + red + "e"],
   ["abc\u001b\r\u001b[31mX", red + "bc"],
