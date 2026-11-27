@@ -2128,6 +2128,14 @@ describe("source control tools", () => {
         comments: [{ path: " note.txt", line: 1, body: "Spaced name." }],
       });
       expect(reviews).toMatchObject([{ comments: [{ path: " note.txt" }] }]);
+      const error = yield* harness
+        .call("pull_request_review", {
+          verdict: "comment",
+          comments: [{ path: "", line: 1, body: "No file." }],
+        })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("is not in this PR's diff");
+      expect(reviews).toHaveLength(1);
     }),
   );
 
