@@ -12,7 +12,7 @@ import {
 } from "./documentPreviewXml";
 import { officeXmlDecoder } from "./officeArchive";
 import { externalUrl } from "./office/links";
-import { mediaTime, ttmlCaptions } from "./epubMedia";
+import { mediaFragment, mediaTime, ttmlCaptions } from "./epubMedia";
 import type { EpubLocation, EpubNarrationCue, EpubPage } from "./officePreviewProtocol";
 import { isPreviewError, PreviewError } from "./previewFailure";
 
@@ -781,9 +781,8 @@ export async function openEpub(archive: JSZip) {
       if (namespace === undefined && (tag === "video" || tag === "audio" || tag === "source")) {
         const href = node.attrs.src ?? "";
         const src = await resource(localPath(archive, base, href));
-        const time = /#t=(?:npt:)?[\d.]+(?:,[\d.]+)?$/.exec(href)?.[0] ?? "";
         if (tag === "source" && !src) return "";
-        if (src) props += attr("src", src + time);
+        if (src) props += attr("src", src + mediaFragment(href));
         if (tag !== "source") props += " controls" + attr("preload", node.attrs.preload);
         if (tag !== "source" && node.attrs.loop !== undefined) props += " loop";
         if (tag !== "source" && node.attrs.muted !== undefined) props += " muted";

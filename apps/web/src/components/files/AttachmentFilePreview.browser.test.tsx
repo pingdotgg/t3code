@@ -2490,7 +2490,7 @@ it("highlights EPUB narration cues during playback and pauses on chapter change"
     .file("audio.wav", pcm)
     .generateAsync({ type: "blob" });
   await using screen = await render(
-    <div style={{ display: "flex", height: 480, width: 360 }}>
+    <div className="flex h-[480px] w-[360px]">
       <AttachmentFilePreview
         name="read-along.epub"
         mimeType="application/epub+zip"
