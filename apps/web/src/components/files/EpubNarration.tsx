@@ -121,7 +121,7 @@ export function EpubNarration(props: {
   };
 
   return (
-    <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-2 border-b border-divider px-3 py-1">
+    <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-2 border-b border-divider px-3 py-1 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11">
       <Button size="sm" variant="secondary" onClick={toggle}>
         {playing ? <PauseIcon /> : <HeadphonesIcon />}
         {playing ? gt("Pause narration") : gt("Read aloud")}

@@ -83,7 +83,7 @@ function ReadingFrame(props: {
         <EpubNarration cues={props.page.narration} frame={frame} />
       ) : null}
       {media.length > 0 ? (
-        <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-divider px-3 py-1">
+        <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-divider px-3 py-1 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11">
           {media.map((item, index) => (
             <Button
               // oxlint-disable-next-line react/no-array-index-key -- The authored media order is fixed within a chapter.

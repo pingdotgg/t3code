@@ -39,7 +39,7 @@ export function EpubMediaDialog(props: {
         if (!open) props.onClose();
       }}
     >
-      <DialogPopup>
+      <DialogPopup className="max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11">
         <DialogHeader>
           <DialogTitle className="me-10">{title}</DialogTitle>
         </DialogHeader>
