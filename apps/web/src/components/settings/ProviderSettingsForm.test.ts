@@ -52,6 +52,59 @@ describe("ProviderSettingsForm helpers", () => {
     expect(next).toEqual({ forkOwned: 1 });
   });
 
+  it("shows Antigravity credential fields only for the sign-in methods that read them, or while set", () => {
+    const antigravity = providerClients.get(ProviderDriverKind.make("antigravity"));
+    expect(antigravity).toBeDefined();
+    const keysFor = (value?: unknown) =>
+      deriveProviderSettingsFields(antigravity!, value).map((field) => field.key);
+
+    expect(keysFor({})).toEqual(["authMethod", "binaryPath"]);
+    expect(
+      keysFor({
+        authMethod: "oauth-personal",
+        apiKey: { provider: "vault", reference: "antigravity" },
+        gcpLocation: "us-central1",
+      }),
+    ).toEqual(["authMethod", "apiKey", "gcpLocation", "binaryPath"]);
+    expect(keysFor({ authMethod: "oauth-business" })).toEqual([
+      "authMethod",
+      "gcpProject",
+      "gcpLocation",
+      "binaryPath",
+    ]);
+    expect(keysFor({ authMethod: "gemini-api-key" })).toEqual([
+      "authMethod",
+      "apiKey",
+      "binaryPath",
+    ]);
+    expect(keysFor({ authMethod: "agent-platform" })).toEqual([
+      "authMethod",
+      "apiKey",
+      "gcpProject",
+      "gcpLocation",
+      "binaryPath",
+    ]);
+    expect(keysFor()).toEqual(["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"]);
+  });
+
+  it("does not store a text value its field's schema rejects", () => {
+    const claude = providerClients.get(ProviderDriverKind.make("claudeAgent"));
+    expect(claude).toBeDefined();
+    const autoCompactWindow = deriveProviderSettingsFields(claude!).find(
+      (field) => field.key === "autoCompactWindow",
+    );
+    expect(autoCompactWindow).toBeDefined();
+
+    for (const invalid of ["300k", "50000"]) {
+      expect(
+        nextProviderConfigWithFieldValue({ launchArgs: "--x" }, autoCompactWindow!, invalid),
+      ).toEqual({ launchArgs: "--x" });
+    }
+    expect(
+      nextProviderConfigWithFieldValue({ launchArgs: "--x" }, autoCompactWindow!, "300000"),
+    ).toEqual({ launchArgs: "--x", autoCompactWindow: "300000" });
+  });
+
   it("stores false boolean fields when true is the default", () => {
     const next = nextProviderConfigWithFieldValue(
       undefined,

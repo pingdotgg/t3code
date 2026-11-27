@@ -76,21 +76,14 @@ const readTogether = Effect.fn("OnePasswordDriver.readTogether")(function* (
   return values.map(nonEmpty);
 }, Effect.scoped);
 
-/** `None` when 1Password did not answer in time; a failed run reads as `Some(undefined)`. */
-const bounded = <A, E extends { readonly _tag: string }, R>(
+const recover = <A, E extends { readonly _tag: string }, R>(
   stage: "read" | "inject",
   effect: Effect.Effect<A | undefined, E, R>,
 ) =>
   effect.pipe(
-    Effect.timeoutOption(READ_TIMEOUT),
-    Effect.tap((outcome) =>
-      Option.isNone(outcome)
-        ? Effect.logWarning("1Password did not answer in time", { stage })
-        : Effect.void,
-    ),
     Effect.catch((error) =>
       Effect.logWarning("Could not run 1Password", { stage, error: error._tag }).pipe(
-        Effect.as(Option.some(undefined)),
+        Effect.as(undefined),
       ),
     ),
   );
@@ -99,14 +92,29 @@ export const driver = defineSecretProviderDriver({
   kind: definition.kind,
   definition,
   read: Effect.fn("OnePasswordDriver.read")(function* ({ account }, references) {
-    if (references.length > 1) {
-      const together = yield* bounded("inject", readTogether(account, references));
-      // Reading one by one after a timeout would only wait that long again for each reference.
-      if (Option.isNone(together)) return references.map(() => undefined);
-      if (together.value !== undefined) return together.value;
-    }
-    return yield* Effect.forEach(references, (reference) =>
-      bounded("read", readOne(account, reference)).pipe(Effect.map(Option.getOrUndefined)),
-    );
+    // One deadline covers the batch and the fallback; a reference not read by then is unreadable.
+    const values: Array<string | undefined> = references.map(() => undefined);
+    const outcome = yield* Effect.gen(function* () {
+      if (references.length > 1) {
+        const together = yield* recover("inject", readTogether(account, references));
+        if (together !== undefined) return together;
+      }
+      yield* Effect.forEach(
+        references,
+        (reference, index) =>
+          recover("read", readOne(account, reference)).pipe(
+            Effect.map((value) => {
+              values[index] = value;
+            }),
+          ),
+        { discard: true },
+      );
+      return values;
+    }).pipe(Effect.timeoutOption(READ_TIMEOUT));
+    if (Option.isSome(outcome)) return outcome.value;
+    yield* Effect.logWarning("1Password did not answer in time", {
+      references: references.length,
+    });
+    return values;
   }),
 });

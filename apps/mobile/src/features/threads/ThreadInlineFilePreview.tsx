@@ -1,16 +1,17 @@
 import { useIsFocused } from "@react-navigation/native";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useAudioPlayerStatus } from "expo-audio";
+import { useGT, useMessages } from "gt-react-native";
 import { useContext, useEffect, useRef, useState } from "react";
 import { AppState, Pressable, View } from "react-native";
-import type { FilePreviewSource } from "../../components/FilePreviewModal";
+import type { FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { filePreviewKey } from "../../lib/filePreviewGallery";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "../../lib/videoAudioSession";
 import { useRefreshAssetUrl } from "../../state/assets";
-import { ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
+import { ThreadMediaRetainContext, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import {
   acquireAudioSession,
   activateAudioSession,
@@ -29,10 +30,12 @@ type PreviewProps = {
 };
 
 function FileCardHeader(props: PreviewProps) {
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Open ${props.source.name}`}
+      accessibilityLabel={gt("Open {name}", { name: props.source.name })}
       onPress={props.onOpen}
       onLongPress={props.onLongPress}
       className="h-[72px] flex-row items-center gap-3 p-3 active:bg-subtle"
@@ -45,8 +48,9 @@ function FileCardHeader(props: PreviewProps) {
           {props.source.name}
         </Text>
         <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-          Audio
-          {props.sizeBytes !== undefined ? ` · ${formatAttachmentSize(props.sizeBytes)}` : ""}
+          {props.sizeBytes !== undefined
+            ? gt("Audio · {size}", { size: formatAttachmentSize(props.sizeBytes, messages) })
+            : gt("Audio")}
         </Text>
       </View>
       <SymbolView name="chevron.right" size={12} tintColorClassName="accent-foreground-muted" />
@@ -59,7 +63,14 @@ function timestamp(seconds: number) {
   return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, "0")}`;
 }
 
-function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<string | null> }) {
+function InlineAudio(
+  props: PreviewProps & {
+    readonly resolveUri: () => Promise<string | null>;
+    readonly onPlaybackActivityChange?: (active: boolean) => void;
+  },
+) {
+  const gt = useGT();
+  const { onPlaybackActivityChange } = props;
   // An empty source keeps native buffering off until the user explicitly plays.
   const player = usePlaybackAudioPlayer(null);
   const status = useAudioPlayerStatus(player);
@@ -90,8 +101,16 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
       // oxlint-disable-next-line react/set-state-in-effect -- Native completion and fullscreen takeover invalidate the pending playback request.
       requestPlayback(false);
     }
+    if (status.didJustFinish || status.error) onPlaybackActivityChange?.(false);
     if (fullscreenVideoOpen) pauseAudioPlayer(player);
-  }, [fullscreenVideoOpen, status.didJustFinish, status.error, player, requestPlayback]);
+  }, [
+    fullscreenVideoOpen,
+    status.didJustFinish,
+    status.error,
+    player,
+    requestPlayback,
+    onPlaybackActivityChange,
+  ]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState to pause audio in the background and releases the audio session on cleanup
   useEffect(() => {
     active.current = true;
@@ -131,6 +150,7 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
     );
     if (!isAudioSessionOwner(token)) return;
     props.onPlaybackStart?.();
+    onPlaybackActivityChange?.(true);
     audioToken.current = token;
     requestPlayback(true);
     const generation = ++requestGeneration.current;
@@ -149,6 +169,7 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
           if (!isCurrentRequest() || AppState.currentState !== "active") return;
           if (!uri) {
             requestPlayback(false);
+            onPlaybackActivityChange?.(false);
             setError(true);
             return;
           }
@@ -163,6 +184,7 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
       .catch(() => {
         if (isCurrentRequest()) {
           requestPlayback(false);
+          onPlaybackActivityChange?.(false);
           setError(true);
         }
       })
@@ -188,7 +210,11 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
-            playing ? "Pause audio" : error || status.error ? "Retry audio" : "Play audio"
+            playing
+              ? gt("Pause audio")
+              : error || status.error
+                ? gt("Retry audio")
+                : gt("Play audio")
           }
           accessibilityState={{ busy }}
           onPress={toggle}
@@ -210,9 +236,9 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
           </View>
           <Text className="text-xs text-foreground-muted" numberOfLines={1}>
             {error || status.error
-              ? "Unavailable · tap play to retry"
+              ? gt("Unavailable · tap play to retry")
               : busy
-                ? "Loading…"
+                ? gt("Loading…")
                 : `${timestamp(status.currentTime)} / ${status.isLoaded ? timestamp(status.duration) : "--:--"}`}
           </Text>
         </View>
@@ -221,7 +247,9 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
   );
 }
 
-function VisibleFilePreview(props: PreviewProps) {
+function VisibleFilePreview(
+  props: PreviewProps & { readonly onPlaybackActivityChange?: (active: boolean) => void },
+) {
   // Each mounted preview owns its source; feed streaming must not restart a fetch or player.
   const [source] = useState(props.source);
   const refresh = useRefreshAssetUrl(
@@ -235,13 +263,27 @@ function VisibleFilePreview(props: PreviewProps) {
 export function ThreadInlineFilePreview(props: PreviewProps) {
   const visible = useContext(ThreadMediaVisibleContext);
   const focused = useIsFocused();
+  const retainRow = useContext(ThreadMediaRetainContext);
+  // Unmounting disposes the native player, so a started player stays mounted off-screen
+  // (and its feed row out of recycling) until it finishes or fails. Leaving the screen
+  // disposes it, so the latch resets too; the feed drops its row pin on blur itself.
+  const [playbackActive, setPlaybackActive] = useState(false);
+  if (!focused && playbackActive) setPlaybackActive(false);
+  const onPlaybackActivityChange = (active: boolean) => {
+    setPlaybackActive(active);
+    retainRow(active);
+  };
   return (
     <View
       className="my-1 overflow-hidden rounded-xl border border-border bg-card"
       style={{ width: 280, maxWidth: "100%" }}
     >
-      {visible && focused ? (
-        <VisibleFilePreview key={filePreviewKey(props.source)} {...props} />
+      {focused && (visible || playbackActive) ? (
+        <VisibleFilePreview
+          key={filePreviewKey(props.source)}
+          {...props}
+          onPlaybackActivityChange={onPlaybackActivityChange}
+        />
       ) : (
         <>
           <FileCardHeader {...props} />

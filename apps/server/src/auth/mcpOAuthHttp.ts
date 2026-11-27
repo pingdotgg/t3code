@@ -2,20 +2,31 @@ import {
   AuthMcpApprovalError,
   AuthMcpAuthorizationRequest,
   AuthMcpClientAccess,
+  AuthMcpClientRegistration,
+  AuthMcpRegistrationError,
   EnvironmentHttpApi,
   mcpClientScopes,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+
+import * as CloudLink from "../cloud/CloudLink.ts";
+import { agentApprovalAppUrlConfig } from "../cloud/publicConfig.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as McpOAuth from "./McpOAuth.ts";
 import { renderErrorPage } from "./mcpOAuthHtml.ts";
 
 const APPROVAL_PAGE_PATH = "/connect-agent";
+const HOSTED_APPROVAL_PATH = "/approve-agent";
 
 const PAGE_HEADERS = {
   "content-security-policy":
@@ -35,6 +46,10 @@ const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
 
 const requestUrls = Effect.map(HttpServerRequest.HttpServerRequest, McpOAuth.requestUrls);
 const decodeAuthorizationRequest = Schema.decodeEffect(AuthMcpAuthorizationRequest);
+// Decoded by the handler so malformed metadata gets the RFC 7591 error, not HttpApi's empty 400.
+const decodeClientRegistration = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(AuthMcpClientRegistration),
+);
 
 /**
  * An unverified client or redirect is reported, never redirected; any other problem goes back to
@@ -62,6 +77,29 @@ export const layer = HttpApiBuilder.group(
   "mcpOAuth",
   Effect.fnUntraced(function* (handlers) {
     const oauth = yield* McpOAuth.McpOAuth;
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const cloudLink = yield* CloudLink.CloudLink;
+    const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+    const hostedAppUrl = yield* agentApprovalAppUrlConfig.pipe(
+      Effect.orElseSucceed(() => DEFAULT_HOSTED_APP_URL),
+    );
+    // T3 Connect serves this host, so the owner can approve on the hosted app by signing in there.
+    const hostedApprovalUrl = (issuer: string, search: string) =>
+      cloudLink.linkState().pipe(
+        Effect.flatMap((state) =>
+          state.linked && !state.linkRevoked && state.tunnelHostname === new URL(issuer).hostname
+            ? serverEnvironment.getEnvironmentId.pipe(
+                Effect.map((environmentId) => {
+                  const url = new URL(HOSTED_APPROVAL_PATH, hostedAppUrl);
+                  url.search = search;
+                  url.searchParams.set("environment", environmentId);
+                  return Option.some(url.toString());
+                }),
+              )
+            : Effect.succeedNone,
+        ),
+        Effect.orElseSucceed(Option.none),
+      );
     const protectedResource = () =>
       requestUrls.pipe(Effect.map(McpOAuth.protectedResourceMetadata));
 
@@ -71,8 +109,18 @@ export const layer = HttpApiBuilder.group(
       .handle("authorizationServer", () =>
         requestUrls.pipe(Effect.map(McpOAuth.authorizationServerMetadata)),
       )
-      .handle("register", ({ payload }) =>
-        oauth.register(payload).pipe(
+      .handleRaw("register", ({ request }) =>
+        request.text.pipe(
+          Effect.orDie,
+          Effect.flatMap(decodeClientRegistration),
+          Effect.mapError(
+            (cause) =>
+              new AuthMcpRegistrationError({
+                error: "invalid_client_metadata",
+                error_description: `Invalid client metadata: ${cause.message}`,
+              }),
+          ),
+          Effect.flatMap(oauth.register),
           Effect.map((client) => ({
             client_id: client.clientId,
             client_name: client.name,
@@ -96,7 +144,14 @@ export const layer = HttpApiBuilder.group(
             .pipe(Effect.result);
           const headers = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
           if (Result.isSuccess(authorization)) {
-            return HttpServerResponse.redirect(`${APPROVAL_PAGE_PATH}${url.search}`, { headers });
+            // A link needs a plain pairing code, so it stays on this environment's own page.
+            const hosted = authorization.success.client.peerLink
+              ? Option.none()
+              : yield* hostedApprovalUrl(urls.issuer, url.search);
+            return HttpServerResponse.redirect(
+              Option.getOrElse(hosted, () => `${APPROVAL_PAGE_PATH}${url.search}`),
+              { headers },
+            );
           }
           const error = authorization.failure;
           return error._tag === "McpOAuthPageError"
@@ -115,7 +170,7 @@ export const layer = HttpApiBuilder.group(
           const resolved = yield* forwardedAuthorization(oauth, payload);
           if ("redirectTo" in resolved) return resolved;
           const urls = yield* requestUrls;
-          const session = yield* oauth.approvingBrowserSession(request, resolved);
+          const session = yield* oauth.approvingSession(request, resolved);
           yield* noStore;
           return {
             clientName: resolved.client.name,
@@ -152,6 +207,16 @@ export const layer = HttpApiBuilder.group(
         Effect.gen(function* () {
           yield* noStore;
           return yield* oauth.exchangeCode({ request, urls: yield* requestUrls, token: payload });
+        }),
+      )
+      .handle("revoke", ({ payload }) =>
+        Effect.gen(function* () {
+          yield* noStore;
+          // RFC 7009 §2.2: an unknown or already revoked token gets the same 200 as a revoked one.
+          if (payload.token === undefined) return;
+          yield* environmentAuth
+            .revokeMcpClientToken(Redacted.value(payload.token))
+            .pipe(Effect.orDie);
         }),
       );
   }),

@@ -52,6 +52,11 @@ export interface EnvironmentThreadSearchMatch extends OrchestrationThreadSearchM
 export interface ThreadSearchResultsState {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
   readonly isLoading: boolean;
+  /**
+   * Every environment asked failed to answer, so an empty result says nothing about matches. One
+   * environment failing beside another that answered still counts as an answer.
+   */
+  readonly failed: boolean;
   /** Rows of matching older settled threads, which shells that omit them do not hold. */
   readonly rows: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -121,7 +126,7 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
     Atom.make((get): ThreadSearchResultsState => {
       const parsedKey = parseThreadSearchKey(key);
       if (Option.isNone(parsedKey)) {
-        return { matches: [], isLoading: false, rows: EMPTY_SEARCH_ROWS };
+        return { matches: [], isLoading: false, failed: false, rows: EMPTY_SEARCH_ROWS };
       }
 
       const [environmentIds, query, scope = {}] = parsedKey.value;
@@ -131,6 +136,8 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
       const matches: EnvironmentThreadSearchMatch[] = [];
       const rows: Array<ThreadSearchResultsState["rows"][number]> = [];
       let isLoading = false;
+      let asked = 0;
+      let failures = 0;
 
       for (const environmentId of environmentIds) {
         const before = options.olderSettledBefore
@@ -152,6 +159,8 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
           }),
         );
         isLoading ||= result.waiting;
+        asked += 1;
+        if (AsyncResult.isFailure(result)) failures += 1;
         const value = AsyncResult.getOrElse(result, () => null);
         if (value !== null) {
           matches.push(...value.matches.map((match) => ({ ...match, environmentId })));
@@ -164,7 +173,12 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
         }
       }
 
-      return { matches, isLoading, rows: rows.length === 0 ? EMPTY_SEARCH_ROWS : rows };
+      return {
+        matches,
+        isLoading,
+        failed: asked > 0 && failures === asked,
+        rows: rows.length === 0 ? EMPTY_SEARCH_ROWS : rows,
+      };
     }).pipe(Atom.withLabel(`${options.labelPrefix}:${key}`)),
   );
   const rowsAtom = Atom.family((rowsKey: string) => {
@@ -246,14 +260,7 @@ function buildThreadSearchSubject(
   projectTitle: string | null | undefined,
   environmentLabel: string | null | undefined,
 ): ThreadSearchSubject {
-  // What the user wrote, not agent wakes or task notices in the user role. A
-  // thread the user never wrote in counts from its creation; an older server
-  // omits the field, so the latest user-role message stands in.
-  const authored = thread.latestUserAuthoredMessageAt;
-  const activityAt =
-    authored === undefined
-      ? getThreadSortTimestamp(thread, "updated_at")
-      : Date.parse(authored ?? thread.createdAt);
+  const activityAt = getThreadSortTimestamp(thread, "updated_at");
   const localOpenedAt = localThreadOpens.get(`${thread.environmentId}:${thread.id}`) ?? 0;
   return {
     id: thread.id,

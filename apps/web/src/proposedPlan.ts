@@ -1,10 +1,14 @@
 import { stripDisplayedPlanMarkdown, proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "./i18n/messages";
 
 export function buildCollapsedProposedPlanPreviewMarkdown(
   planMarkdown: string,
   options?: {
     maxLines?: number;
   },
+  resolve: MessageResolver = m,
 ): string {
   const maxLines = options?.maxLines ?? 8;
   const lines = stripDisplayedPlanMarkdown(planMarkdown)
@@ -14,6 +18,7 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
   const previewLines: string[] = [];
   let visibleLineCount = 0;
   let hasMoreContent = false;
+  let openFence: { marker: string; indent: string } | null = null;
 
   for (const line of lines) {
     const isVisibleLine = line.trim().length > 0;
@@ -25,6 +30,20 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
     if (isVisibleLine) {
       visibleLineCount += 1;
     }
+    const match = /^( {0,3})(?:(`{3,})[^`]*|(~{3,}).*)$/.exec(line);
+    const fence = match?.[2] ?? match?.[3];
+    if (match === null || fence === undefined) {
+      continue;
+    }
+    if (openFence === null) {
+      openFence = { marker: fence, indent: match[1] ?? "" };
+    } else if (
+      fence[0] === openFence.marker[0] &&
+      fence.length >= openFence.marker.length &&
+      line.trim() === fence
+    ) {
+      openFence = null;
+    }
   }
 
   while (previewLines.length > 0 && previewLines.at(-1)?.trim().length === 0) {
@@ -32,7 +51,11 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
   }
 
   if (previewLines.length === 0) {
-    return proposedPlanTitle(planMarkdown) ?? "Plan preview unavailable.";
+    return proposedPlanTitle(planMarkdown) ?? resolve(msg("Plan preview unavailable."));
+  }
+
+  if (openFence !== null) {
+    previewLines.push(openFence.indent + openFence.marker);
   }
 
   if (hasMoreContent) {
@@ -52,36 +75,6 @@ function sanitizePlanFileSegment(input: string): string {
 }
 
 export const PLAN_IMPLEMENTATION_PROMPT_PREFIX = "PLEASE IMPLEMENT THIS PLAN:\n";
-
-export function buildPlanImplementationPrompt(planMarkdown: string): string {
-  return `${PLAN_IMPLEMENTATION_PROMPT_PREFIX}${planMarkdown.trim()}`;
-}
-
-export function resolvePlanFollowUpSubmission(input: { draftText: string; planMarkdown: string }): {
-  text: string;
-  interactionMode: "default" | "plan";
-} {
-  const trimmedDraftText = input.draftText.trim();
-  if (trimmedDraftText.length > 0) {
-    return {
-      text: trimmedDraftText,
-      interactionMode: "plan",
-    };
-  }
-
-  return {
-    text: buildPlanImplementationPrompt(input.planMarkdown),
-    interactionMode: "default",
-  };
-}
-
-export function buildPlanImplementationThreadTitle(planMarkdown: string): string {
-  const title = proposedPlanTitle(planMarkdown);
-  if (!title) {
-    return "Implement plan";
-  }
-  return `Implement ${title}`;
-}
 
 export function buildProposedPlanMarkdownFilename(planMarkdown: string): string {
   const title = proposedPlanTitle(planMarkdown);

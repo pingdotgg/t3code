@@ -77,6 +77,45 @@ export function enablePreparedServerCache(entry: string, cacheRoot: string): boo
       return false;
     const identity = NodeZlib.crc32(resources).toString(16);
     NodeFS.mkdirSync(NodePath.join(cacheRoot, "server"), { recursive: true });
+    if (process.env.APPIMAGE) {
+      try {
+        for (const candidate of NodeFS.readdirSync(NodePath.join(cacheRoot, "server"), {
+          withFileTypes: true,
+        })) {
+          if (!candidate.isDirectory() || !candidate.name.startsWith("appimage-")) continue;
+          const abandoned = NodePath.join(cacheRoot, "server", candidate.name);
+          let hasStaleLink = false;
+          // Node nests files under an engine/UID directory and can replace links with regular files.
+          const removable = NodeFS.readdirSync(abandoned, { withFileTypes: true }).every(
+            (engine) =>
+              engine.isDirectory() &&
+              NodeFS.readdirSync(NodePath.join(abandoned, engine.name), {
+                withFileTypes: true,
+              }).every((file) => {
+                if (!/^[a-f0-9]{8}$/.test(file.name)) return false;
+                if (!file.isSymbolicLink()) return file.isFile();
+                const target = NodeFS.readlinkSync(
+                  NodePath.join(abandoned, engine.name, file.name),
+                );
+                const mount = target.match(/^(.*[\\/]\.mount_[^/\\]+)[\\/]/)?.[1];
+                if (
+                  !mount ||
+                  !NodePath.isAbsolute(target) ||
+                  NodePath.basename(NodePath.dirname(target)) !== "server-compile-cache" ||
+                  !/^[a-f0-9]{8}$/.test(NodePath.basename(target))
+                )
+                  return false;
+                if (NodeFS.lstatSync(mount, { throwIfNoEntry: false })) return false;
+                hasStaleLink = true;
+                return true;
+              }),
+          );
+          if (removable && hasStaleLink) NodeFS.rmSync(abandoned, { recursive: true, force: true });
+        }
+      } catch {
+        // Concurrent removal or restricted permissions must not prevent enabling this launch's cache.
+      }
+    }
     const directory = process.env.APPIMAGE
       ? NodeFS.mkdtempSync(NodePath.join(cacheRoot, "server", "appimage-"))
       : NodePath.join(cacheRoot, "server", identity);
@@ -113,12 +152,19 @@ export async function generatePreparedServerCache(resourcesInput: string): Promi
   const result = NodeModule.enableCompileCache({ directory: prepared, portable: true });
   if (result.status !== NodeModule.constants.compileCacheStatus.ENABLED)
     throw new Error("Cannot enable release compile cache");
-  const cli = NodeFS.readdirSync(dist).find((file) => /^binCli-.*\.mjs$/.test(file));
+  const files = NodeFS.readdirSync(dist);
+  const cli = files.find((file) => /^binCli-.*\.mjs$/.test(file));
   if (!cli) throw new Error("Missing bundled server CLI");
+  const servers = files.filter((file) => /^server-.*\.mjs$/.test(file));
+  if (servers.length > 1) throw new Error("Ambiguous bundled server entry");
+  const server = servers[0];
+  if (!server) throw new Error("Missing bundled server entry");
   await import(NodeURL.pathToFileURL(NodePath.join(dist, cli)).href);
+  // The CLI loads the server dynamically; importing its declarative layers does not launch them.
+  await import(NodeURL.pathToFileURL(NodePath.join(dist, server)).href);
   NodeModule.flushCompileCache();
   const active = NodeModule.getCompileCacheDir()!;
-  const entries = NodeFS.readdirSync(dist)
+  const entries = files
     .filter((file) => file.endsWith(".mjs"))
     .flatMap((file) => {
       const key = cacheKey(active, NodePath.join(dist, file));
@@ -126,7 +172,7 @@ export async function generatePreparedServerCache(resourcesInput: string): Promi
       NodeFS.copyFileSync(NodePath.join(active, key), NodePath.join(prepared, key));
       return [{ module: `${archive}/apps/server/dist/${file}`, file: key }];
     });
-  if (!entries.some((entry) => entry.module.endsWith(`/${cli}`)))
+  if (![cli, server].every((file) => entries.some((entry) => entry.module.endsWith(`/${file}`))))
     throw new Error("Packaged engine cache key format is unsupported");
   NodeFS.writeFileSync(
     NodePath.join(prepared, "manifest.json"),

@@ -190,10 +190,13 @@ export function useManagedTunnelUsage() {
           (environment) => environment.endpoint.providerKind === "cloudflare_tunnel",
         ).length ?? null);
   const cap = t3Chat.accountId !== null && t3Chat.data ? managedTunnelCap(t3Chat.data) : null;
+  const firstLoad = (query: { accountId: string | null; data: unknown; isPending: boolean }) =>
+    query.accountId !== null && query.data === null && query.isPending;
   return {
     used,
     limit: cap?.limit ?? null,
     upgrade: cap?.upgrade ?? null,
+    loading: firstLoad(environments) || firstLoad(t3Chat),
     refresh: refreshManagedTunnelUsage,
   };
 }

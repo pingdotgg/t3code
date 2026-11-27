@@ -68,6 +68,8 @@ export interface Formatter<in Value, out Format = string> {
  * - Iterables (`Set`, `Map`, etc.): formatted as
  *   `ClassName([...elements])`.
  * - Class instances: wrapped as `ClassName({...})`.
+ * - When listing object properties, includes own string and symbol keys,
+ *   including non-enumerable ones. Inherited properties are not listed.
  * - `Redactable` values are automatically redacted.
  * - Arrays/objects with 0–1 entries are inline; larger ones are
  *   pretty-printed when `space` is set.

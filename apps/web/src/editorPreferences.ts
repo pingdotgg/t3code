@@ -10,10 +10,14 @@ import {
   type AtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import { parseFileUrlHref, splitFilePathPosition } from "@t3tools/shared/fileLinks";
+import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
+import { msg } from "gt-react";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
+import { m } from "./i18n/messages";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
 import { readEnvironmentScope } from "./state/session";
@@ -27,7 +31,11 @@ export class PreferredEditorEnvironmentRequiredError extends Schema.TaggedError<
   },
 ) {
   override get message(): string {
-    return `Cannot open ${this.targetPath} because no environment is selected.`;
+    return m(
+      msg("Cannot open {targetPath} because no environment is selected.", {
+        targetPath: this.targetPath,
+      }),
+    );
   }
 }
 
@@ -40,7 +48,12 @@ export class PreferredEditorUnavailableError extends Schema.TaggedError<Preferre
   },
 ) {
   override get message(): string {
-    return `No available editor can open ${this.targetPath} in environment ${this.environmentId}.`;
+    return m(
+      msg("No available editor can open {targetPath} in environment {environmentId}.", {
+        targetPath: this.targetPath,
+        environmentId: this.environmentId,
+      }),
+    );
   }
 }
 
@@ -57,16 +70,28 @@ export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
 
 function resolveAndPersistPreferredEditor(availableEditors: readonly EditorId[]): EditorId | null {
   const availableEditorIds = new Set(availableEditors);
-  const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
+  let stored: EditorId | null = null;
+  try {
+    stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
+  } catch (error) {
+    console.warn("Could not read the preferred editor.", error);
+  }
   if (stored && availableEditorIds.has(stored)) return stored;
   const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
-  if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
+  if (editor) {
+    try {
+      setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
+    } catch (error) {
+      console.warn("Could not save the preferred editor.", error);
+    }
+  }
   return editor ?? null;
 }
 
 export function useOpenInPreferredEditor(
   environmentId: EnvironmentId | null,
   availableEditors: readonly EditorId[],
+  projectRoot?: string,
 ) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
@@ -98,7 +123,7 @@ export function useOpenInPreferredEditor(
         Cause.fail(
           new EnvironmentAuthorizationError({
             requiredScope: AuthOrchestrationOperateScope,
-            message: "This connection cannot open an editor on this environment.",
+            message: m(msg("This connection cannot open an editor on this environment.")),
           }),
         ),
       );
@@ -115,11 +140,15 @@ export function useOpenInPreferredEditor(
         ),
       );
     }
+    const uri = /^file:\/\//iu.test(targetPath) ? parseFileUrlHref(targetPath) : null;
+    const { line, column } = uri ? splitFilePathPosition("", uri.hash) : {};
     const result = await openInEditor({
       environmentId,
       input: {
-        cwd: targetPath,
+        cwd: uri ? safeDecodeURIComponent(uri.path) : targetPath,
+        ...(uri ? { position: { line, column } } : {}),
         editor,
+        ...(projectRoot ? { projectRoot } : {}),
       },
     });
     return mapAtomCommandResult(result, () => editor);

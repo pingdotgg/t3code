@@ -136,6 +136,24 @@ describe("presentations with providers", () => {
       h.registry.dispose();
     }
   });
+
+  it("follows refused routes when nothing else about the connection changes", () => {
+    const h = harness();
+    const atom = h.full.presentationsWithProvidersAtom;
+    const stop = h.registry.subscribe(atom, () => {});
+    try {
+      h.registry.set(h.state, AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE }));
+      expect(h.registry.get(atom).get(FIRST)?.refusedRouteIds).toEqual([]);
+      h.registry.set(
+        h.state,
+        AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, refusedRouteIds: ["direct"] }),
+      );
+      expect(h.registry.get(atom).get(FIRST)?.refusedRouteIds).toEqual(["direct"]);
+    } finally {
+      stop();
+      h.registry.dispose();
+    }
+  });
 });
 
 describe("connection presentation", () => {

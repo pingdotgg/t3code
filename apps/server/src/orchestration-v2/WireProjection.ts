@@ -15,11 +15,12 @@ import {
   dedupeSubagentBodies,
   dedupeTurnItemBodies,
 } from "@t3tools/shared/orchestrationV2DedupedBodies";
+import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import {
+  commandIndicatesFailure,
   compactDynamicToolOutput,
   omitToolOutputImageData,
   toolOutputImages,
-  toolOutputIndicatesFailure,
 } from "@t3tools/shared/toolOutput";
 
 // A checkpoint over vendored or generated trees can list 15k+ files; the card needs a prefix.
@@ -97,8 +98,10 @@ function summarizeDynamicValue(value: unknown): unknown {
     pendingSpace = false;
     if (firstLine.length > 160) break;
   }
+  const last = firstLine.charCodeAt(158);
+  const end = last >= 0xd800 && last <= 0xdbff ? 158 : 159;
   return {
-    summary: firstLine.length <= 160 ? firstLine : `${firstLine.slice(0, 159).trimEnd()}…`,
+    summary: firstLine.length <= 160 ? firstLine : `${firstLine.slice(0, end).trimEnd()}…`,
     truncated: true,
   };
 }
@@ -164,12 +167,7 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       const { output, ...projected } = item;
       // A successful search can print "ENOENT" or "exit code 2", so output text
       // decides only when the provider reported no exit code.
-      const failed =
-        item.exitCode === undefined
-          ? item.outputIndicatesFailure === true ||
-            (output !== undefined &&
-              toolOutputIndicatesFailure(output.slice(0, MAX_DETAIL_STRING_BYTES)))
-          : item.exitCode !== 0;
+      const failed = commandIndicatesFailure(item);
       return {
         ...projected,
         ...(failed ? { outputIndicatesFailure: true } : {}),
@@ -226,7 +224,7 @@ function boundDynamicValue(value: unknown): unknown {
 }
 
 /** Preserve ordered image markers in truncated output so clients can load images by index. */
-function boundToolOutput(output: unknown): unknown {
+function boundToolResult(output: unknown): unknown {
   const omitted = omitToolOutputImageData(output);
   const bounded = boundDynamicValue(omitted);
   if (typeof bounded !== "string" || typeof omitted === "string") return bounded;
@@ -237,6 +235,21 @@ function boundToolOutput(output: unknown): unknown {
         { type: "text", text: bounded },
         ...images.map((image) => ({ type: "image", mimeType: image.mimeType })),
       ];
+}
+
+function boundToolOutput(output: unknown): unknown {
+  if (typeof output !== "object" || output === null || !("result" in output)) {
+    return boundToolResult(output);
+  }
+  const app =
+    MCP_APP_OUTPUT_KEY in output ? readMcpAppReference(output[MCP_APP_OUTPUT_KEY]) : undefined;
+  if (app === undefined) return boundToolResult(output);
+  // The app receives this result, so its image data stays unless it is too large to send.
+  const fits = boundDynamicValue(output.result) === output.result;
+  return {
+    [MCP_APP_OUTPUT_KEY]: app,
+    result: fits ? output.result : boundToolResult(output.result),
+  };
 }
 
 export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {

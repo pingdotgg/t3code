@@ -29,7 +29,12 @@ it.effect(
                 ? Effect.sync(() => {
                     expect(cwd).toBe("/tmp/project");
                     calls.push(url.href);
-                    return { title: "t".repeat(400), body: "b".repeat(2_000) };
+                    // Change 1 puts an emoji across each limit; change 2 ends one inside it.
+                    const pad = url.pathname.endsWith("/1") ? 0 : 1;
+                    return {
+                      title: `${"t".repeat(299 - pad)}🚀${"t".repeat(100)}`,
+                      body: `${"b".repeat(1_199 - pad)}🚀${"b".repeat(800)}`,
+                    };
                   })
                 : undefined,
           }),
@@ -37,12 +42,10 @@ it.effect(
       );
       expect(calls).toEqual(["https://forge.test/change/1", "https://forge.test/change/2"]);
       expect(result).toBe(
-        calls
-          .map(
-            (url) =>
-              `${url}\n${encodeSubject({ title: "t".repeat(300), body: "b".repeat(1_200) })}`,
-          )
-          .join("\n\n"),
+        [
+          `${calls[0]}\n${encodeSubject({ title: "t".repeat(299), body: "b".repeat(1_199) })}`,
+          `${calls[1]}\n${encodeSubject({ title: `${"t".repeat(298)}🚀`, body: `${"b".repeat(1_198)}🚀` })}`,
+        ].join("\n\n"),
       );
     }),
 );

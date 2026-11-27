@@ -13,6 +13,10 @@ internal object T3ComposerClipboard {
   fun hasThreadLink(text: String): Boolean =
     text.contains("t3-thread://v2/") || text.contains("https://app.t3.codes/threads/")
 
+  // Clipboard bridges can echo our text back without its HTML context metadata.
+  private var copiedContext: Pair<String, String>? = null
+
+  @Synchronized
   fun write(context: Context, text: String, fragment: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     val payload = try {
@@ -22,6 +26,7 @@ internal object T3ComposerClipboard {
     }
     val records = payload?.optJSONArray("records")
     if (payload == null || records == null) {
+      copiedContext = null
       clipboard.setPrimaryClip(ClipData.newPlainText("T3 Code", text))
       return
     }
@@ -35,8 +40,10 @@ internal object T3ComposerClipboard {
       }
     )
     payload.put("records", JSONArray(selected))
-    val encoded = java.net.URLEncoder.encode(payload.toString(), "UTF-8").replace("+", "%20")
+    val serialized = payload.toString()
+    val encoded = java.net.URLEncoder.encode(serialized, "UTF-8").replace("+", "%20")
     val escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    copiedContext = if (selected.isEmpty()) null else text to serialized
     clipboard.setPrimaryClip(
       if (selected.isEmpty()) {
         ClipData.newPlainText(
@@ -53,19 +60,28 @@ internal object T3ComposerClipboard {
     )
   }
 
+  @Synchronized
   fun read(context: Context): Map<String, String> {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     val clip = clipboard.primaryClip
     val item = if (clip != null && clip.itemCount > 0) clip.getItemAt(0) else null
+    val text = item?.text?.toString() ?: ""
+    val html = item?.htmlText ?: ""
+    val copied = copiedContext?.takeIf {
+      clip?.itemCount == 1 && item?.uri == null && it.first == text
+    }
+    if (copied == null) copiedContext = null
     return mapOf(
-      "text" to (item?.text?.toString() ?: ""),
-      "html" to (item?.htmlText ?: ""),
-      "fragment" to ""
+      "text" to text,
+      "html" to html,
+      "fragment" to
+        if (!html.contains("data-t3-context-fragment=")) copied?.second.orEmpty() else ""
     )
   }
 }
 
 class T3ComposerEditorModule : Module() {
+  @Suppress("LongMethod") // A flat list of the view's props and events.
   override fun definition() = ModuleDefinition {
     Name("T3ComposerEditor")
 
@@ -108,6 +124,12 @@ class T3ComposerEditorModule : Module() {
       Prop("readOnly") { view: T3ComposerEditorView, readOnly: Boolean ->
         view.setReadOnly(readOnly)
       }
+      Prop("enterBehavior") { view: T3ComposerEditorView, behavior: String ->
+        view.setEnterBehavior(behavior)
+      }
+      Prop("submitEnabled") { view: T3ComposerEditorView, enabled: Boolean ->
+        view.setSubmitEnabled(enabled)
+      }
       Prop("scrollEnabled") { view: T3ComposerEditorView, scrollEnabled: Boolean ->
         view.setScrollEnabled(scrollEnabled)
       }
@@ -132,6 +154,7 @@ class T3ComposerEditorModule : Module() {
         "onComposerSelectionChange",
         "onComposerFocus",
         "onComposerBlur",
+        "onComposerSubmit",
         "onComposerPasteImages",
         "onComposerContextPress",
         "onComposerPasteContext",

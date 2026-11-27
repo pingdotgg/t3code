@@ -1,25 +1,20 @@
 import {
   EnvironmentId,
-  ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSetupError,
   UsageDay,
   USAGE_CONTRACT_VERSION,
-  type ServerProvider,
   type UsageModelFilter,
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
-import {
-  cursorKeychainAccessEnvironments,
-  needsCursorKeychainAccess,
-  refreshUsage,
-  refreshUsageLimits,
-} from "./usage.ts";
+import { refreshUsage, refreshUsageLimits, resetCreditFailureText } from "./usage.ts";
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -47,7 +42,7 @@ function harness(ids = ["a"], modelFilters: Record<string, UsageModelFilter> = {
   const environments = ids.map((id) => {
     const environmentId = EnvironmentId.make(id);
     const rates = Promise.withResolvers<
-      AsyncResult.Success<typeof pricing> | AsyncResult.Failure<never, unknown>
+      AsyncResult.Success<typeof pricing> | AsyncResult.Failure<never, Error>
     >();
     const scan = Promise.withResolvers<UsageSummary>();
     const scanStarted = Promise.withResolvers<void>();
@@ -86,7 +81,14 @@ function harness(ids = ["a"], modelFilters: Record<string, UsageModelFilter> = {
         run: (
           _registry: AtomRegistry.AtomRegistry,
           { environmentId }: { environmentId: EnvironmentId },
-        ) => get(environmentId).rates.promise,
+        ) =>
+          Effect.promise(() => get(environmentId).rates.promise).pipe(
+            Effect.flatMap((result) =>
+              AsyncResult.isSuccess(result)
+                ? Effect.succeed(result.value)
+                : Effect.failCause(result.cause),
+            ),
+          ),
       },
     },
     presentations: {
@@ -199,91 +201,38 @@ describe("manual usage refresh", () => {
 });
 
 describe("limits refresh cooldown", () => {
-  it("runs a fresh check after an in-flight check when settings change", async () => {
-    const id = EnvironmentId.make("limits-after-enable");
+  it("shares an in-flight check and skips duplicate automatic refreshes", async () => {
+    const id = EnvironmentId.make("limits-in-flight");
     const oldCheck = Promise.withResolvers<string>();
     const first = refreshUsageLimits(id, () => oldCheck.promise, true);
     const newCheck = vi.fn(async () => "new limits");
-    const afterEnable = refreshUsageLimits(id, newCheck, false, true);
+    const manual = refreshUsageLimits(id, newCheck);
+    expect(await refreshUsageLimits(id, newCheck, true)).toBeUndefined();
     expect(newCheck).not.toHaveBeenCalled();
     oldCheck.resolve("old limits");
     expect(await first).toBe("old limits");
-    expect(await afterEnable).toBe("new limits");
-    expect(newCheck).toHaveBeenCalledTimes(1);
+    expect(await manual).toBe("old limits");
+    expect(newCheck).not.toHaveBeenCalled();
   });
 });
 
-describe("needsCursorKeychainAccess", () => {
-  const cursorPrompt: UsageSummary = {
-    ...summary,
-    sources: [
-      {
-        fingerprint: {
-          hostId: "host",
-          provider: "cursor",
-          resolvedHomePath: "/Users/me/.cursor/auth.json",
-          volumeId: "volume",
-        },
-        status: "ok",
-        scannedFiles: 0,
-        skippedFiles: 0,
-        malformedRecords: 0,
-        distinctSessions: 0,
-        message: "Cursor account usage is off on this environment.",
-        action: "enableCursorKeychain",
-      },
-    ],
-  };
-  const cursor = (status: ServerProvider["status"]): ServerProvider => ({
-    instanceId: ProviderInstanceId.make("cursor"),
-    driver: ProviderDriverKind.make("cursor"),
-    enabled: status !== "disabled",
-    installed: status === "ready",
-    version: null,
-    status,
-    auth: { status: "unknown" },
-    checkedAt: "2026-09-05T12:00:00.000Z",
-    models: [],
-    slashCommands: [],
-    skills: [],
-  });
-
-  it("offers access only when Cursor is ready on that environment", () => {
-    expect(needsCursorKeychainAccess(cursorPrompt, [cursor("ready")])).toBe(true);
-    expect(needsCursorKeychainAccess(cursorPrompt, [cursor("error")])).toBe(false);
-    expect(needsCursorKeychainAccess(cursorPrompt, [cursor("disabled")])).toBe(false);
-    expect(needsCursorKeychainAccess(cursorPrompt, [])).toBe(false);
-    expect(needsCursorKeychainAccess(cursorPrompt, null)).toBe(false);
-    expect(needsCursorKeychainAccess(summary, [cursor("ready")])).toBe(false);
-  });
-
-  it("stops offering access once any environment reads the Cursor account", () => {
-    const off = { summary: cursorPrompt, needsCursorKeychainAccess: true };
-    const account: UsageSummary = {
-      ...summary,
-      sources: [
-        {
-          fingerprint: {
-            hostId: "cursor.com",
-            provider: "cursor",
-            resolvedHomePath: "cursor-account:abc",
-            volumeId: "abc",
-          },
-          status: "ok",
-          scannedFiles: 1,
-          skippedFiles: 0,
-          malformedRecords: 0,
-          distinctSessions: 1,
-          message: null,
-        },
-      ],
-    };
-    expect(cursorKeychainAccessEnvironments([off, off])).toEqual([off, off]);
-    expect(
-      cursorKeychainAccessEnvironments([
-        off,
-        { summary: account, needsCursorKeychainAccess: false },
-      ]),
-    ).toEqual([]);
+describe("reset credit failure text", () => {
+  it("shows the server's reason, falling back only when there is none", () => {
+    const refused = new ProviderSetupError({
+      instanceId: ProviderInstanceId.make("claude"),
+      operation: "consume-reset-credit",
+      detail: "This provider is disabled.",
+    });
+    expect(resetCreditFailureText(AsyncResult.failure(Cause.fail(refused)))).toBe(
+      "This provider is disabled.",
+    );
+    expect(resetCreditFailureText(AsyncResult.failure(Cause.die("Socket closed")))).toBe(
+      "Socket closed",
+    );
+    for (const cause of [Cause.fail({}), Cause.interrupt()]) {
+      expect(resetCreditFailureText(AsyncResult.failure(cause))).toBe(
+        "Could not use the reset credit.",
+      );
+    }
   });
 });

@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import {
   contextUsageForHandoff,
   handoffBudget,
+  handoffCoverage,
   historyCost,
   historyResponseItems,
   selectHistory,
@@ -150,6 +151,10 @@ describe("handoff budget", () => {
       })?.text,
       "File change: src/a.ts, src/b.ts, src/new.ts",
     );
+    assert.equal(
+      historicalMessage({ ...base, type: "file_change", fileName: "src/a.ts", changes: [] })?.text,
+      "File change: src/a.ts",
+    );
     assert.isNull(
       historicalMessage({
         ...base,
@@ -176,6 +181,21 @@ describe("handoff budget", () => {
     assert.deepEqual(selected.messages, messages);
     assert.equal(selected.omittedItems, 2);
     assert.isAtMost(historyCost(selected.messages, selected.context), 3_000);
+  });
+
+  it("points history recovery at the omitted items instead of a read from the thread's start", () => {
+    const omitted = message("item:omitted", "assistant", "o".repeat(4_000));
+    const selected = selectHistory({
+      messages: [
+        messages[0]!,
+        omitted,
+        ...Array.from({ length: 3 }, (_, i) => message(`item:recent-${i}`, "assistant", "recent")),
+      ],
+      coverage: handoffCoverage({ threadId, coveredRunOrdinals: { from: 1, to: 46 }, items: [] }),
+      budget: 3_000,
+    });
+    assert.deepEqual(selected.omittedItemIds, [omitted.itemId]);
+    assert.include(selected.context, omitted.itemId);
   });
 
   it("counts JSON escaping and UTF-8 bytes across many messages", () => {
@@ -259,7 +279,18 @@ describe("handoff budget", () => {
         64_000,
       );
     }
-    assert.equal(handoffBudget({ ...base, tokenCap: 2_000 }), 2_000);
+    assert.equal(handoffBudget({ ...base, tokenCap: 2_000 }), 8_000);
+    // The work reserve never takes more than half of a small local window.
+    for (const [modelContextWindow, nativeContextEstimate, expected] of [
+      [8_192, 0, 4_086],
+      [32_768, 0, 16_758],
+      [131_072, 50_000, 48_294],
+    ] as const) {
+      assert.equal(
+        handoffBudget({ ...base, tokenCap: 64_000, modelContextWindow, nativeContextEstimate }),
+        expected,
+      );
+    }
   });
 
   it("keeps measured occupancy across a model change", () => {
@@ -344,7 +375,7 @@ describe("handoff budget", () => {
         nativeContextEstimate: 0,
         modelContextWindow: preserved?.maxTokens,
       }),
-      16_000,
+      64_000,
     );
     assert.equal(
       handoffBudget({
@@ -358,7 +389,7 @@ describe("handoff budget", () => {
     );
   });
   it("reserves context for image batches up to the attachment limit, honoring smaller known windows", () => {
-    let previousBudget = 16_000;
+    let previousBudget = 64_000;
     for (let count = 1; count <= PROVIDER_SEND_TURN_MAX_ATTACHMENTS; count++) {
       const input = {
         tokenCap: 16_000,
@@ -377,24 +408,26 @@ describe("handoff budget", () => {
       assert.isAtLeast(budget, 0);
       assert.isAtMost(budget, previousBudget);
       previousBudget = budget;
-      if (count <= 8) assert.equal(budget, 16_000);
-      if (count === 10) {
+      if (count <= 3) assert.equal(budget, 64_000);
+      if (count >= 4 && count <= 10) {
         assert.isAbove(budget, 0);
-        assert.isBelow(budget, 16_000);
+        assert.isBelow(budget, 64_000);
       }
       if (count === PROVIDER_SEND_TURN_MAX_ATTACHMENTS) assert.equal(budget, 0);
       if (budget > 0) {
         const selected = selectHistory({ messages, coverage: "Recover omitted history", budget });
         assert.isAtMost(historyCost(selected.messages, selected.context), budget);
       }
-      assert.equal(handoffBudget({ ...input, modelContextWindow: 2_000_000 }), 16_000);
-      assert.equal(handoffBudget({ ...input, modelContextWindow: 20_000 }), 0);
+      assert.equal(handoffBudget({ ...input, modelContextWindow: 2_000_000 }), 64_000);
+      // 20k window: half is reserved for work, then 27 prompt bytes and 8,192 per image.
+      const smallWindowBudget = count === 1 ? 1_781 : 0;
+      assert.equal(handoffBudget({ ...input, modelContextWindow: 20_000 }), smallWindowBudget);
       assert.equal(
         handoffBudget({
           ...input,
           providerThread: { ...providerThread, contextUsage: { usedTokens: 0, maxTokens: 20_000 } },
         }),
-        0,
+        smallWindowBudget,
       );
       assert.equal(
         handoffBudget({
@@ -405,7 +438,7 @@ describe("handoff budget", () => {
             contextUsage: { usedTokens: 0, maxTokens: 1_000_000, autoCompactThreshold: 20_000 },
           },
         }),
-        0,
+        smallWindowBudget,
       );
     }
   });

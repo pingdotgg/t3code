@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/process";
+import { VcsProcessExitError } from "@t3tools/contracts";
 
 import * as VcsProcess from "./VcsProcess.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
@@ -91,21 +92,25 @@ describe("VcsDriverRegistry", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-registry-" });
-      const projectDir = path.join(parentDir, "project");
       yield* fs.makeDirectory(path.join(parentDir, ".git"));
-      yield* fs.makeDirectory(projectDir);
       const calls: string[] = [];
 
       yield* Effect.gen(function* () {
         const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
-        assert.equal((yield* registry.detect({ cwd: projectDir }))?.repository.rootPath, parentDir);
+        for (const [repoRel, cwdRel] of [
+          ["project", "project"],
+          ["..cache", path.join("..cache", "sub")],
+        ] as const) {
+          const nestedRepoDir = path.join(parentDir, repoRel);
+          const cwd = path.join(parentDir, cwdRel);
+          yield* fs.makeDirectory(cwd, { recursive: true });
 
-        yield* fs.makeDirectory(path.join(projectDir, ".git"));
+          assert.equal((yield* registry.detect({ cwd }))?.repository.rootPath, parentDir);
 
-        assert.equal(
-          (yield* registry.detect({ cwd: projectDir }))?.repository.rootPath,
-          projectDir,
-        );
+          yield* fs.makeDirectory(path.join(nestedRepoDir, ".git"));
+
+          assert.equal((yield* registry.detect({ cwd }))?.repository.rootPath, nestedRepoDir);
+        }
       }).pipe(Effect.provide(makeDiskBackedLayer(parentDir, calls)));
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
@@ -127,5 +132,54 @@ describe("VcsDriverRegistry", () => {
         assert.equal(calls.filter((call) => call === DETECT_COMMAND).length, 2);
       }).pipe(Effect.provide(makeDiskBackedLayer(repoDir, calls)));
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+  const makeFailingLayer = (detectOutput: VcsProcess.VcsProcessOutput) =>
+    Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      Layer.provide(
+        Layer.mock(VcsProjectConfig.VcsProjectConfig)({
+          resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) =>
+            normalizeGitArgs(input.args).join(" ") === DETECT_COMMAND
+              ? Effect.succeed(detectOutput)
+              : Effect.fail(
+                  new VcsProcessExitError({
+                    operation: input.operation,
+                    command: "git",
+                    cwd: input.cwd,
+                    exitCode: 128,
+                    detail: "fatal: bad config line 1 in file .git/config",
+                  }),
+                ),
+        }),
+      ),
+    );
+
+  it.effect("reads only a failed work-tree probe as no repository", () =>
+    Effect.gen(function* () {
+      const probeFailure = yield* VcsDriverRegistry.VcsDriverRegistry.pipe(
+        Effect.flatMap((registry) => registry.detect({ cwd: "/repo" })),
+        Effect.provide(
+          makeFailingLayer({
+            ...processOutput(""),
+            exitCode: ChildProcessSpawner.ExitCode(128),
+            stderr: "fatal: bad config line 1 in file .git/config",
+          }),
+        ),
+      );
+      assert.equal(probeFailure, null);
+
+      // A newline in the root path makes detection ask for it again, and main surfaced that failure.
+      const fallbackFailure = yield* VcsDriverRegistry.VcsDriverRegistry.pipe(
+        Effect.flatMap((registry) => registry.detect({ cwd: "/repo" })),
+        Effect.provide(makeFailingLayer(processOutput("true\n/re\npo\n.git\n"))),
+        Effect.flip,
+      );
+      assert.equal(fallbackFailure._tag, "VcsProcessExitError");
+    }),
   );
 });

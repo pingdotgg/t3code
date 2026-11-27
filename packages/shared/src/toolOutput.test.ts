@@ -2,8 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   compactDynamicToolOutput,
+  compactT3McpToolOutput,
   MAX_TOOL_OUTPUT_IMAGES,
   mcpToolResultOutput,
+  SEND_TO_USER_MAX_LENGTH,
+  sentMessageFromToolItem,
   toolOutputImages,
   toolOutputIndicatesFailure,
 } from "./toolOutput.ts";
@@ -21,6 +24,30 @@ describe("compactDynamicToolOutput", () => {
     ]) {
       expect(compactDynamicToolOutput(value)).toEqual(metadata);
     }
+  });
+
+  it("keeps a send_to_user message up to its limit, even in 3-byte characters", () => {
+    const longest = "界".repeat(SEND_TO_USER_MAX_LENGTH);
+    for (const sentMessage of ["Draft:\n\n> Hi Sam,", longest]) {
+      const json = JSON.stringify({ sentMessage, message: "Shown to the user." });
+      expect(compactDynamicToolOutput([{ type: "text", text: json }])).toEqual({ sentMessage });
+    }
+    expect(compactDynamicToolOutput({ sentMessage: `${longest}界` })).toBeUndefined();
+    // OpenCode 2 Code Mode reports a script's nested send_to_user call as one `execute` item.
+    const output = JSON.stringify({ sentMessage: "Draft", message: "Shown to the user." });
+    expect(sentMessageFromToolItem({ toolName: "execute", output })).toBe("Draft");
+    expect(compactT3McpToolOutput("t3-code.send_to_user", output)).toEqual({
+      sentMessage: "Draft",
+    });
+    expect(
+      compactT3McpToolOutput("t3-code.preview_recording_stop", {
+        structuredContent: { id: "thread-rec-1", path: "/tmp/rec.webm" },
+      }),
+    ).toEqual({ id: "thread-rec-1" });
+    expect(
+      compactT3McpToolOutput("t3-code.preview_recording_stop", { isError: true, id: "ignored" }),
+    ).toEqual({ isError: true });
+    expect(compactT3McpToolOutput("other.send_to_user", output)).toBeUndefined();
   });
 
   it("keeps nested thread identity and scalar task IDs without result bodies", () => {
@@ -138,6 +165,36 @@ describe("compactDynamicToolOutput", () => {
       threadId: "known",
     });
   });
+
+  it("keeps pull request summary outcomes without private details", () => {
+    expect(
+      compactDynamicToolOutput({
+        number: 42,
+        url: "https://github.com/acme/app/pull/42",
+        created: false,
+        state: "merged",
+      }),
+    ).toEqual({ created: false, state: "merged" });
+    expect(
+      compactDynamicToolOutput({
+        guides: [
+          { number: 1, outcome: "started", detail: null },
+          { number: 2, outcome: "failed", detail: "Private error" },
+        ],
+        checks: [{ name: "external", rerun: false, detail: "Private refusal" }],
+      }),
+    ).toEqual({
+      guides: [{ outcome: "started" }, { outcome: "failed" }],
+      checks: [{ rerun: false }],
+    });
+    expect(
+      compactDynamicToolOutput({
+        state: "draft",
+        guides: [{ outcome: "started" }, { outcome: "unknown" }],
+        checks: [{ rerun: true }, { name: "missing-rerun" }],
+      }),
+    ).toBeUndefined();
+  });
 });
 
 describe("toolOutputIndicatesFailure", () => {
@@ -156,6 +213,7 @@ describe("toolOutputIndicatesFailure", () => {
       "<exited with exit code 2>",
       "Exited with exit code 1",
       "exit code: 127",
+      "clean exit first, then ExIt CoDe: 3",
     ])
       expect(toolOutputIndicatesFailure(text)).toBe(true);
   });
@@ -167,6 +225,9 @@ describe("toolOutputIndicatesFailure", () => {
       "Exited with exit code 0",
       "cannot find path",
       "is not recognized",
+      "exit",
+      "not found",
+      "the path cannot be found",
     ]) {
       expect(toolOutputIndicatesFailure(text)).toBe(false);
     }
@@ -195,6 +256,8 @@ describe("toolOutputImages", () => {
     expect(output).toEqual({ content, structuredContent });
     expect(mcpToolResultOutput({ content: [text], structuredContent })).toBe(structuredContent);
     expect(mcpToolResultOutput({ content })).toBe(content);
+    expect(mcpToolResultOutput({ content: [text], structuredContent: {} })).toEqual([text]);
+    expect(mcpToolResultOutput({ content: [text], structuredContent: [] })).toEqual([text]);
   });
 
   it("skips types the server must not serve inline", () => {
