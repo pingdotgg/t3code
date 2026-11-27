@@ -105,6 +105,7 @@ describe("colon-namespaced labels typed as a search", () => {
     expect(parsePullRequestQuery("security:cve:critical,area:web,low").filters.labels).toEqual([
       ["security:cve:critical", "area:web", "security:low"],
     ]);
+    expect(parsePullRequestQuery("size:,area:web").filters.labels).toEqual([["area:web"]]);
   });
 
   // regression: #19934 negated key:value qualifiers become namespaced label exclusions
@@ -113,6 +114,7 @@ describe("colon-namespaced labels typed as a search", () => {
     expect(parsePullRequestQuery("-security:cve:critical").filters.excludedLabels).toEqual([
       "security:cve:critical",
     ]);
+    expect(parsePullRequestQuery("-size:,area:web").filters.excludedLabels).toEqual(["area:web"]);
     expect(parsePullRequestQuery("-size:S,XS").filters.excludedLabels).toEqual([
       "size:S",
       "size:XS",
