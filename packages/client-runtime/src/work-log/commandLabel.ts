@@ -15,6 +15,8 @@ const WINDOWS_SHELL_PROGRAMS = new Set([
 const SHELL_OPTIONS_WITH_VALUE = new Set(["-o", "-O", "--rcfile", "--init-file"]);
 // `-euo pipefail` and `+o history`: a short-option bundle ending in o or O takes the next word.
 const SHELL_OPTION_BUNDLE_WITH_VALUE = /^[-+][a-zA-Z]*[oO]$/;
+const TIMEOUT_OPTION =
+  /^(?:-(?:[fpv]+|[fpv]*[ks].+)|--(?:foreground|preserve-status|verbose)|--(?:kill-after|signal)=.+)$/u;
 const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
 const SHELL_PRECOMMAND_MODIFIERS = new Set(["nocorrect", "noglob", "time"]);
 const POWERSHELL_SETUP_PROGRAMS = new Set(["pop-location", "push-location", "set-location"]);
@@ -771,9 +773,21 @@ function transparentWrapperCommandIndex(
   }
 
   if (wrapper === "timeout" || wrapper === "gtimeout") {
-    return /^(?:\d+(?:\.\d*)?|\.\d+)[smhd]?$/u.test(tokens[index + 1] ?? "") &&
-      tokens[index + 2] !== undefined
-      ? index + 2
+    let targetIndex = index + 1;
+    while (true) {
+      const option = tokens[targetIndex];
+      if (option === "--") {
+        targetIndex += 1;
+        break;
+      }
+      if (!option?.startsWith("-")) break;
+      if (/^(?:-[fpv]*[ks]|--(?:kill-after|signal))$/u.test(option)) targetIndex += 2;
+      else if (TIMEOUT_OPTION.test(option)) targetIndex += 1;
+      else return null;
+    }
+    return /^(?:\d+(?:\.\d*)?|\.\d+)[smhd]?$/u.test(tokens[targetIndex] ?? "") &&
+      tokens[targetIndex + 1] !== undefined
+      ? targetIndex + 1
       : null;
   }
 
