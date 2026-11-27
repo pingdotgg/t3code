@@ -24,12 +24,7 @@ import {
   useRemoteOpenState,
 } from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
-import {
-  AppWindowIcon,
-  CheckIcon,
-  ChevronDownIcon,
-  SquareArrowOutUpRightIcon,
-} from "lucide-react";
+import { AppWindowIcon, CheckIcon, ChevronDownIcon, SquareArrowOutUpRightIcon } from "lucide-react";
 
 import { Group, GroupSeparator } from "../ui/group";
 import { Kbd } from "../ui/kbd";

@@ -232,9 +232,5 @@ function MenuOption({
       <span className="min-w-0 whitespace-normal wrap-break-word">{label}</span>
     </MenuItem>
   );
-  return option.warning ? (
-    <SharedTooltipTrigger render={item} label={option.warning} />
-  ) : (
-    item
-  );
+  return option.warning ? <SharedTooltipTrigger render={item} label={option.warning} /> : item;
 }
