@@ -410,17 +410,17 @@ export const make = Effect.gen(function* () {
               (thread.pendingGuestMessageCount ?? 0) > 0)
           )
             return;
-          if (
-            thread.status === "completed" &&
-            (yield* terminals.hasActiveSubprocess({ threadId: thread.id }))
-          )
-            return;
+          const hasActiveTerminal = yield* terminals.hasActiveSubprocess({ threadId: thread.id });
+          if (thread.status === "completed" && hasActiveTerminal) return;
           const sequence = yield* orchestrator.getThreadEventSequence(thread.id);
           yield* orchestrator.dispatch({
             type: "thread.settle",
-            commandId: CommandId.make(`server:settle-when-done:${thread.id}:${sequence}`),
+            commandId: CommandId.make(
+              `server:settle-when-done:${thread.id}:${sequence}:${hasActiveTerminal ? "terminal" : "ready"}`,
+            ),
             threadId: thread.id,
             expectedSettleWhenDone: intent,
+            hasActiveTerminal,
           });
         }).pipe(
           Effect.catchTags({

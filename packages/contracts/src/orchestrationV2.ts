@@ -3413,6 +3413,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     expectedLatestRunId: Schema.optional(RunId),
     expectedSettleWhenDone: Schema.optional(OrchestrationV2SettleWhenDone),
+    hasActiveTerminal: Schema.optional(Schema.Boolean),
     settledAt: Schema.optional(Schema.DateTimeUtc),
   }),
   /** Rejects changes since snapshotAt or any explicit settled override to preserve user actions. */

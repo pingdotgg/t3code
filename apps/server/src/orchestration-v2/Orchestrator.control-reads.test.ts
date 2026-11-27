@@ -3523,6 +3523,7 @@ it.effect.each([
           answers: { question: "Keep working" },
         });
         assert.isNull((yield* projections.getThread(threadId)).settleWhenDone ?? null);
+        assert.isNull((yield* projections.getThread(threadId)).snoozedUntil);
         assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
         return;
       }
@@ -3697,6 +3698,20 @@ it.effect.each([
         assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, intent);
       }
       const succeeds = status === "completed" || followup === "restart";
+      if (followup === "cancelled-wake") {
+        const terminalHeld = yield* orchestrator
+          .dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make("settle-held-by-terminal"),
+            threadId,
+            expectedSettleWhenDone: intent,
+            hasActiveTerminal: true,
+          })
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(terminalHeld));
+        assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, intent);
+        assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
+      }
       const result = yield* orchestrator
         .dispatch({
           type: "thread.settle",
@@ -3704,6 +3719,7 @@ it.effect.each([
           threadId,
           ...(followup === "compaction" ? {} : { expectedLatestRunId: latestRunId }),
           expectedSettleWhenDone: intent,
+          ...(status === "failed" ? { hasActiveTerminal: true } : {}),
         })
         .pipe(Effect.exit);
       if (status === "completed" && followup === "held-wake") {

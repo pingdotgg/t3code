@@ -2712,6 +2712,12 @@ it.effect.each([
     action: null,
   },
   {
+    name: "cancelled followup with terminal",
+    status: "cancelled" as const,
+    terminal: true,
+    action: "thread.settle",
+  },
+  {
     name: "interrupted response",
     status: "interrupted" as const,
     action: "thread.settle",
@@ -2790,9 +2796,10 @@ it.effect.each([
           }
         : {}),
     });
+    const terminalActive = yield* Ref.make(scenario.terminal === true);
     const h = yield* makeHarness({
       snapshot: makeSnapshot([thread]),
-      hasActiveSubprocess: () => Effect.succeed(scenario.terminal === true),
+      hasActiveSubprocess: () => Ref.get(terminalActive),
       settings: {
         ...DEFAULT_SERVER_SETTINGS,
         sidebarAutoSettleAfterDays: null,
@@ -2804,6 +2811,9 @@ it.effect.each([
       yield* startHarness(service, h.activation, h.snapshotReads);
       const commands = yield* Ref.get(h.pendingCommands);
       assert.equal(commands[0]?.type ?? null, scenario.action);
+      if (commands[0]?.type === "thread.settle" && scenario.terminal) {
+        assert.isTrue(commands[0].hasActiveTerminal);
+      }
       if (commands[0]?.type === "thread.settle-when-done.set") {
         assert.isFalse(commands[0].enabled);
         assert.deepEqual(commands[0].expected, intent);
@@ -2817,6 +2827,17 @@ it.effect.each([
         const repeated = yield* Ref.get(h.pendingCommands);
         assert.equal(repeated.length, 2);
         assert.equal(repeated[0]?.commandId, repeated[1]?.commandId);
+      }
+      if (scenario.name === "cancelled followup with terminal") {
+        yield* Ref.set(terminalActive, false);
+        yield* TestClock.adjust("1 minute");
+        yield* Queue.take(h.snapshotReads);
+        yield* service.drain;
+        const repeated = yield* Ref.get(h.pendingCommands);
+        assert.equal(repeated.length, 2);
+        assert.notEqual(repeated[0]?.commandId, repeated[1]?.commandId);
+        const ready = repeated[1];
+        assert.isTrue(ready?.type === "thread.settle" && ready.hasActiveTerminal === false);
       }
     }).pipe(Effect.provide(h.layer));
   }),

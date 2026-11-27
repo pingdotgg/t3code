@@ -4876,6 +4876,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return;
         }
         if (
+          command.hasActiveTerminal === true ||
           projection.runs.some(
             (run) =>
               run.status === "queued" ||
