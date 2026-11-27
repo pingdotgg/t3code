@@ -73,6 +73,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
   ModelSelection,
+  OrchestrationV2PendingBackgroundTask,
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderFailure,
@@ -328,6 +329,7 @@ const CodexBackgroundTerminalsListResponse = Schema.Struct({
   data: Schema.Array(
     Schema.Struct({
       processId: Schema.String,
+      itemId: Schema.optionalKey(Schema.String),
     }),
   ),
   nextCursor: Schema.NullOr(Schema.String),
@@ -1541,19 +1543,11 @@ function codexRetryTurnItem(
   });
 }
 
-type CodexCommandExecutionItem = Extract<
-  | CodexSchema.V2ItemStartedNotification__ThreadItem
-  | CodexSchema.V2ItemCompletedNotification__ThreadItem,
-  { type: "commandExecution" }
->;
-
 interface TrackedRunningCommandItem {
   readonly id: string;
   readonly command: string;
   readonly aggregatedOutput?: string;
   readonly processId?: string;
-  /** The started item, to project the command again when only its wait mark changes. */
-  readonly item: CodexCommandExecutionItem;
   /** The agent waits on this command (`t3_background_wait`). */
   readonly awaited?: true;
 }
@@ -2949,6 +2943,66 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             return updated;
           });
 
+        /**
+         * Commands the agent waits on go on their root provider thread's roster, as other
+         * adapters list awaited work, so delegated tasks, Settle and restart recovery see them.
+         */
+        const publishAwaitedCommandRosters = Effect.fnUntraced(function* () {
+          const contexts = new Map([
+            ...(yield* Ref.get(settledTurns)),
+            ...(yield* Ref.get(activeTurns)),
+          ]);
+          const rosters = new Map<string, Array<OrchestrationV2PendingBackgroundTask>>();
+          for (const [nativeTurnId, items] of yield* Ref.get(runningCommandItemsByTurn)) {
+            const context = contexts.get(nativeTurnId);
+            const nativeThreadId = context?.providerThread.nativeThreadRef?.nativeId;
+            if (context === undefined || context.subagent !== null || nativeThreadId == null)
+              continue;
+            for (const tracked of items.values()) {
+              if (tracked.awaited !== true) continue;
+              const description = tracked.command.trim();
+              rosters.set(nativeThreadId, [
+                ...(rosters.get(nativeThreadId) ?? []),
+                {
+                  taskId: tracked.id,
+                  kind: "command",
+                  command: tracked.command,
+                  ...(description.length === 0 ? {} : { description }),
+                  ...(context.projectionRunId === null ? {} : { runId: context.projectionRunId }),
+                  awaited: true,
+                },
+              ]);
+            }
+          }
+          const activeNativeThreadIds = new Set(
+            [...(yield* Ref.get(activeTurns)).values()].flatMap((context) =>
+              context.subagent === null ? [context.providerThread.nativeThreadRef?.nativeId] : [],
+            ),
+          );
+          for (const [nativeThreadId, providerThread] of rootProviderThreads) {
+            const tasks = rosters.get(nativeThreadId) ?? [];
+            const previous = providerThread.pendingBackgroundTasks ?? [];
+            if (
+              previous.length === tasks.length &&
+              previous.every((task, index) => task.taskId === tasks[index]?.taskId)
+            )
+              continue;
+            const updated = {
+              ...providerThread,
+              pendingBackgroundTasks: tasks,
+              updatedAt: yield* DateTime.now,
+            };
+            rootProviderThreads.set(nativeThreadId, updated);
+            yield* emitProviderEvent({
+              type: "provider_thread.updated",
+              driver: CODEX_PROVIDER,
+              providerThread: updated,
+              // No run reads this stream between turns, so the session stores the roster itself.
+              ...(activeNativeThreadIds.has(nativeThreadId) ? {} : { sessionScoped: true }),
+            });
+          }
+        });
+
         const clearRunningCommandItem = (nativeTurnId: string, nativeItemId: string) =>
           Ref.modify(runningCommandItemsByTurn, (current) => {
             const items = current.get(nativeTurnId);
@@ -2964,7 +3018,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               updated.set(nativeTurnId, remaining);
             }
             return [remaining.size === 0, updated] as const;
-          });
+          }).pipe(Effect.tap(publishAwaitedCommandRosters));
 
         interface PendingMcpAppCapture {
           readonly item: Extract<CodexDynamicToolItem, { readonly type: "mcpToolCall" }>;
@@ -3205,14 +3259,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           Effect.timeout("10 seconds"),
         );
 
-        /**
-         * Codex can end a turn without item/completed for a command whose shell already
-         * exited (openai/codex#53488). Only a live background terminal keeps a command
-         * running past its turn; the rest settle as cancelled since their result is unknown.
-         */
-        const settleExitedCommandItems = Effect.fn("CodexAdapterV2.settleExitedCommandItems")(
-          function* (nativeThreadId: string, nativeTurnId: string) {
-            const liveProcessIds = new Set<string>();
+        const listBackgroundTerminals = Effect.fn("CodexAdapterV2.listBackgroundTerminals")(
+          function* (nativeThreadId: string) {
+            const terminals: Array<CodexBackgroundTerminalsListPage["data"][number]> = [];
             let cursor: string | null = null;
             while (true) {
               const response: unknown = yield* client.raw.request(
@@ -3224,10 +3273,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               );
               const page: CodexBackgroundTerminalsListPage =
                 yield* decodeCodexBackgroundTerminalsListResponse(response);
-              for (const terminal of page.data) liveProcessIds.add(terminal.processId);
-              if (page.nextCursor === null) break;
+              terminals.push(...page.data);
+              if (page.nextCursor === null) return terminals;
               cursor = page.nextCursor;
             }
+          },
+        );
+
+        /**
+         * Codex can end a turn without item/completed for a command whose shell already
+         * exited (openai/codex#53488). Only a live background terminal keeps a command
+         * running past its turn; the rest settle as cancelled since their result is unknown.
+         */
+        const settleExitedCommandItems = Effect.fn("CodexAdapterV2.settleExitedCommandItems")(
+          function* (nativeThreadId: string, nativeTurnId: string) {
+            const liveProcessIds = new Set(
+              (yield* listBackgroundTerminals(nativeThreadId)).map(
+                (terminal) => terminal.processId,
+              ),
+            );
             yield* turnTerminalizationPermit.withPermits(1)(
               Effect.gen(function* () {
                 const context = (yield* Ref.get(settledTurns)).get(nativeTurnId);
@@ -4458,13 +4522,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         const buildCommandExecutionArtifacts = Effect.fn(
           "CodexAdapterV2.buildCommandExecutionArtifacts",
-        )(function* (context: ActiveCodexTurnContext, item: CodexCommandExecutionItem) {
+        )(function* (
+          context: ActiveCodexTurnContext,
+          item: Extract<
+            | CodexSchema.V2ItemStartedNotification__ThreadItem
+            | CodexSchema.V2ItemCompletedNotification__ThreadItem,
+            { type: "commandExecution" }
+          >,
+        ) {
           const updatedAt = yield* DateTime.now;
           const status = codexItemStatus(item.status);
-          const awaited =
-            !status.completed &&
-            (yield* Ref.get(runningCommandItemsByTurn)).get(context.nativeTurnId)?.get(item.id)
-              ?.awaited === true;
           const completedAt = status.completed ? updatedAt : null;
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             driver: CODEX_PROVIDER,
@@ -4519,7 +4586,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ...(context.subagent === null && continuationRequests !== undefined
               ? { completionWake: "always" as const }
               : {}),
-            ...(awaited ? { awaited: true as const } : {}),
           };
           return { node, turnItem };
         });
@@ -5823,6 +5889,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     updated.delete(context.nativeTurnId);
                     return updated;
                   });
+                  yield* publishAwaitedCommandRosters();
                   yield* releaseSettledTurnIfIdle(context.nativeTurnId);
                 }
               }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
@@ -5916,7 +5983,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 yield* trackRunningCommandItem(payload.turnId, {
                   id: payload.item.id,
                   command: payload.item.command,
-                  item: payload.item,
                   ...(payload.item.aggregatedOutput === null ||
                   payload.item.aggregatedOutput === undefined
                     ? {}
@@ -7640,6 +7706,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   updated.delete(input.nativeTurnId);
                   return updated;
                 });
+                yield* publishAwaitedCommandRosters();
                 yield* Ref.update(runningDynamicToolsByTurn, (current) => {
                   if (!current.has(input.nativeTurnId)) {
                     return current;
@@ -8533,54 +8600,91 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             return false;
           }),
-          awaitBackgroundTasks: Effect.fn("CodexAdapterV2.awaitBackgroundTasks")(
-            function* ({ providerThread, taskIds, awaited }) {
+          awaitBackgroundTasks: Effect.fn("CodexAdapterV2.awaitBackgroundTasks")(function* ({
+            providerThread,
+            taskIds,
+            awaited,
+          }) {
+            // Only a root command wakes the agent when it ends.
+            const rootCommandTurnIds = Effect.gen(function* () {
               const contexts = new Map([
                 ...(yield* Ref.get(settledTurns)),
                 ...(yield* Ref.get(activeTurns)),
               ]);
-              const matched = new Set<string>();
-              const marked: Array<{
-                readonly context: ActiveCodexTurnContext;
-                readonly item: CodexCommandExecutionItem;
-              }> = [];
-              yield* Ref.update(runningCommandItemsByTurn, (current) => {
-                const updated = new Map(current);
-                for (const [nativeTurnId, items] of current) {
+              return new Set(
+                [...(yield* Ref.get(runningCommandItemsByTurn)).keys()].filter((nativeTurnId) => {
                   const context = contexts.get(nativeTurnId);
-                  // Only a root command wakes the agent when it ends.
-                  if (context?.providerThread.id !== providerThread.id || context.subagent !== null)
-                    continue;
-                  for (const tracked of items.values()) {
-                    // Codex shows the agent a terminal's session id, which is its processId.
-                    const named = taskIds.filter(
-                      (taskId) => taskId === tracked.id || taskId === tracked.processId,
-                    );
-                    if (named.length === 0) continue;
-                    for (const taskId of named) matched.add(taskId);
-                    if ((tracked.awaited === true) === awaited) continue;
-                    const { awaited: _previous, ...rest } = tracked;
-                    const nextItems = new Map(updated.get(nativeTurnId));
-                    nextItems.set(tracked.id, awaited ? { ...rest, awaited: true } : rest);
-                    updated.set(nativeTurnId, nextItems);
-                    marked.push({ context, item: tracked.item });
-                  }
+                  return (
+                    context?.providerThread.id === providerThread.id && context.subagent === null
+                  );
+                }),
+              );
+            });
+            // Codex shows the agent a terminal's session id, its processId. A command that waited
+            // on approval starts without one, so Codex's terminal list maps unseen ids to items.
+            const turnIds = yield* rootCommandTurnIds;
+            const running = yield* Ref.get(runningCommandItemsByTurn);
+            const commands = [...turnIds].flatMap((id) => [...(running.get(id)?.values() ?? [])]);
+            const unseen = taskIds.filter(
+              (taskId) =>
+                !commands.some((tracked) => taskId === tracked.id || taskId === tracked.processId),
+            );
+            const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+            const learnedProcessIds = new Map<string, string>();
+            if (
+              unseen.length > 0 &&
+              nativeThreadId != null &&
+              commands.some((tracked) => tracked.processId === undefined)
+            ) {
+              const terminals = yield* listBackgroundTerminals(nativeThreadId).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CODEX_PROVIDER,
+                      detail: "Could not list Codex background terminals.",
+                      cause,
+                    }),
+                ),
+              );
+              for (const terminal of terminals) {
+                if (terminal.itemId !== undefined && unseen.includes(terminal.processId)) {
+                  learnedProcessIds.set(terminal.itemId, terminal.processId);
                 }
-                return updated;
-              });
-              for (const { context, item } of marked) {
-                const artifacts = yield* buildCommandExecutionArtifacts(context, item);
-                yield* emitProviderEvent({
-                  type: "turn_item.updated",
-                  driver: CODEX_PROVIDER,
-                  turnItem: artifacts.turnItem,
-                });
               }
-              return { matched: [...matched] };
-            },
-            // Item events hold this permit, so a mark never projects a command after its result.
-            turnTerminalizationPermit.withPermits(1),
-          ),
+            }
+            // Item events hold this permit, so a mark never lists a command after its result.
+            return yield* turnTerminalizationPermit.withPermits(1)(
+              Effect.gen(function* () {
+                const eligible = yield* rootCommandTurnIds;
+                const matched = new Set<string>();
+                yield* Ref.update(runningCommandItemsByTurn, (current) => {
+                  const updated = new Map(current);
+                  for (const nativeTurnId of eligible) {
+                    for (const tracked of current.get(nativeTurnId)?.values() ?? []) {
+                      const processId = tracked.processId ?? learnedProcessIds.get(tracked.id);
+                      const named = taskIds.filter(
+                        (taskId) => taskId === tracked.id || taskId === processId,
+                      );
+                      if (named.length === 0) continue;
+                      for (const taskId of named) matched.add(taskId);
+                      const { awaited: _previous, ...rest } = tracked;
+                      updated.set(
+                        nativeTurnId,
+                        new Map(updated.get(nativeTurnId)).set(tracked.id, {
+                          ...rest,
+                          ...(processId === undefined ? {} : { processId }),
+                          ...(awaited ? { awaited: true as const } : {}),
+                        }),
+                      );
+                    }
+                  }
+                  return updated;
+                });
+                yield* publishAwaitedCommandRosters();
+                return { matched: [...matched] };
+              }),
+            );
+          }),
           ensureThread: (threadInput) =>
             rejectIfRetired.pipe(
               Effect.andThen(ensureInitialized),
@@ -9073,6 +9177,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }
                   return updated;
                 });
+                yield* publishAwaitedCommandRosters();
               });
 
               const finalizeRemainingInterruptLineage = Effect.gen(function* () {
@@ -9261,6 +9366,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         updated.delete(context.nativeTurnId);
                         return updated;
                       });
+                      yield* publishAwaitedCommandRosters();
                       yield* clearImageWork(context);
                       yield* releaseSettledTurnIfIdle(context.nativeTurnId);
                     }

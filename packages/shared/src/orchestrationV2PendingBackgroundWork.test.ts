@@ -387,10 +387,17 @@ describe("derivePendingBackgroundWork kinds", () => {
     ]);
   });
 
-  it("holds only for a background command item the agent marked awaited", () => {
+  it("holds for a command the provider lists awaited, over its running turn item", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
-      providerThreads: [],
+      providerThreads: [
+        {
+          id: "provider-thread-1" as never,
+          pendingBackgroundTasks: [
+            { taskId: "tests", kind: "command", description: "npm test", awaited: true },
+          ],
+        },
+      ],
       turnItems: [
         {
           id: "item-tests" as never,
@@ -399,7 +406,6 @@ describe("derivePendingBackgroundWork kinds", () => {
           title: null,
           nativeItemRef: { nativeId: "tests" },
           input: "npm test",
-          awaited: true,
         },
         {
           id: "item-dev" as never,

@@ -7544,18 +7544,188 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("marks a running command awaited by its session id or item id until it ends", () =>
+  const awaitedRosters = (
+    events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+    providerThreadId: OrchestrationV2ProviderThread["id"],
+  ) =>
+    events.flatMap((event) =>
+      event.type === "provider_thread.updated" &&
+      event.providerThread.id === providerThreadId &&
+      event.providerThread.pendingBackgroundTasks !== undefined
+        ? [event.providerThread.pendingBackgroundTasks.map((task) => task.taskId)]
+        : [],
+    );
+
+  it.effect(
+    "lists a command the agent marks awaited, by session id or item id, until it ends",
+    () =>
+      Effect.gen(function* () {
+        const released = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          {
+            ...backgroundExecTranscript,
+            entries: backgroundExecTranscript.entries.map((entry) =>
+              entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
+                ? { ...entry, afterMs: 0 }
+                : entry,
+            ),
+          },
+          undefined,
+          undefined,
+          undefined,
+          (entry) =>
+            entry.label === "item/completed/command-late" ? Deferred.await(released) : Effect.void,
+        );
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-command-background-wait"),
+          text: BG_PROMPT,
+        });
+        yield* harness.runtime.startTurn(turnInput);
+        yield* harness.firstTerminal;
+        const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+        if (awaitBackgroundTasks === undefined) {
+          return yield* Effect.die("Codex adapter runtime must expose awaitBackgroundTasks.");
+        }
+        const rosters = () => awaitedRosters(harness.events, harness.providerThread.id);
+
+        // Codex shows the agent the terminal's session id; T3 knows the item id.
+        assert.deepEqual(
+          yield* awaitBackgroundTasks({
+            providerThread: harness.providerThread,
+            taskIds: ["4242", "9999"],
+            awaited: true,
+          }),
+          { matched: ["4242"] },
+        );
+        yield* harness.until(() => rosters().length === 1);
+        const listed = harness.events.findLast((event) => event.type === "provider_thread.updated");
+        assert.deepEqual(
+          listed?.type === "provider_thread.updated"
+            ? listed.providerThread.pendingBackgroundTasks
+            : undefined,
+          [
+            {
+              taskId: BG_COMMAND_ITEM,
+              kind: "command",
+              command: BG_COMMAND,
+              description: BG_COMMAND,
+              runId: turnInput.runId,
+              awaited: true,
+            },
+          ],
+        );
+        assert.deepEqual(
+          yield* awaitBackgroundTasks({
+            providerThread: harness.providerThread,
+            taskIds: [BG_COMMAND_ITEM],
+            awaited: false,
+          }),
+          { matched: [BG_COMMAND_ITEM] },
+        );
+        yield* awaitBackgroundTasks({
+          providerThread: harness.providerThread,
+          taskIds: [BG_COMMAND_ITEM],
+          awaited: true,
+        });
+        yield* harness.until(() => rosters().length === 3);
+
+        yield* Deferred.succeed(released, undefined);
+        yield* harness.until(() => rosters().length === 4);
+        assert.deepEqual(rosters(), [[BG_COMMAND_ITEM], [], [BG_COMMAND_ITEM], []]);
+        assert.deepEqual(
+          yield* awaitBackgroundTasks({
+            providerThread: harness.providerThread,
+            taskIds: ["4242"],
+            awaited: true,
+          }),
+          { matched: [] },
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  // A command that waited on approval starts without a process id; Codex sends it on completion.
+  it.effect("resolves the session id of an approved command Codex started without one", () =>
     Effect.gen(function* () {
       const released = yield* Deferred.make<void>();
-      const harness = yield* makeCodexReplayHarness(
+      const [started, answer, turnCompleted, late] = backgroundExecTranscript.entries.slice(-4);
+      const liveTerminal = (id: number) => [
         {
-          ...backgroundExecTranscript,
-          entries: backgroundExecTranscript.entries.map((entry) =>
-            entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
-              ? { ...entry, afterMs: 0 }
-              : entry,
-          ),
+          type: "expect_outbound" as const,
+          label: `list-background-terminals-${id}`,
+          frame: {
+            id,
+            method: "thread/backgroundTerminals/list",
+            params: { threadId: BG_NATIVE_THREAD },
+          },
         },
+        {
+          type: "emit_inbound" as const,
+          label: `list-background-terminals-${id}`,
+          frame: {
+            id,
+            result: {
+              data: [
+                {
+                  processId: "4242",
+                  itemId: BG_COMMAND_ITEM,
+                  command: BG_COMMAND,
+                  cwd: "/workspace",
+                },
+              ],
+              nextCursor: null,
+            },
+          },
+        },
+      ];
+      if (
+        started?.type !== "emit_inbound" ||
+        late?.type !== "emit_inbound" ||
+        answer === undefined ||
+        turnCompleted === undefined
+      ) {
+        return yield* Effect.die("The background exec transcript changed shape.");
+      }
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "codex-bg-approved-command",
+          entries: [
+            ...backgroundExecTranscript.entries.slice(0, -4),
+            {
+              ...started,
+              frame: {
+                method: "item/started",
+                params: {
+                  item: {
+                    ...backgroundCommandItem("inProgress"),
+                    processId: null,
+                    source: "agent",
+                  },
+                  threadId: BG_NATIVE_THREAD,
+                  turnId: BG_NATIVE_TURN,
+                  startedAtMs: 1782622440500,
+                },
+              },
+            },
+            ...liveTerminal(4),
+            answer,
+            turnCompleted,
+            ...liveTerminal(5),
+            { ...late, afterMs: 0 },
+          ],
+        }),
         undefined,
         undefined,
         undefined,
@@ -7567,68 +7737,33 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           threadId: harness.threadId,
           providerThread: harness.providerThread,
           now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("attempt-command-background-wait"),
+          attemptId: RunAttemptId.make("attempt-approved-command-wait"),
           text: BG_PROMPT,
         }),
       );
-      yield* harness.firstTerminal;
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
+        ),
+      );
       const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
       if (awaitBackgroundTasks === undefined) {
         return yield* Effect.die("Codex adapter runtime must expose awaitBackgroundTasks.");
       }
-      const commands = () =>
-        harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
-            ? [[event.turnItem.status, event.turnItem.awaited]]
-            : [],
-        );
-
-      // Codex shows the agent the terminal's session id; T3 knows the item id.
-      assert.deepEqual(
-        yield* awaitBackgroundTasks({
-          providerThread: harness.providerThread,
-          taskIds: ["4242", "9999"],
-          awaited: true,
-        }),
-        { matched: ["4242"] },
-      );
-      yield* harness.until(() => commands().length === 2);
-      assert.deepEqual(commands(), [
-        ["running", undefined],
-        ["running", true],
-      ]);
-      assert.deepEqual(
-        yield* awaitBackgroundTasks({
-          providerThread: harness.providerThread,
-          taskIds: [BG_COMMAND_ITEM],
-          awaited: false,
-        }),
-        { matched: [BG_COMMAND_ITEM] },
-      );
-      yield* awaitBackgroundTasks({
-        providerThread: harness.providerThread,
-        taskIds: [BG_COMMAND_ITEM],
-        awaited: true,
-      });
-      yield* harness.until(() => commands().length === 4);
-
-      yield* Deferred.succeed(released, undefined);
-      yield* harness.until(() => commands().some(([status]) => status === "completed"));
-      assert.deepEqual(commands(), [
-        ["running", undefined],
-        ["running", true],
-        ["running", undefined],
-        ["running", true],
-        ["completed", undefined],
-      ]);
       assert.deepEqual(
         yield* awaitBackgroundTasks({
           providerThread: harness.providerThread,
           taskIds: ["4242"],
           awaited: true,
         }),
-        { matched: [] },
+        { matched: ["4242"] },
       );
+      yield* harness.firstTerminal;
+      yield* Deferred.succeed(released, undefined);
+      const rosters = () => awaitedRosters(harness.events, harness.providerThread.id);
+      yield* harness.until(() => rosters().length === 2);
+      assert.deepEqual(rosters(), [[BG_COMMAND_ITEM], []]);
     }).pipe(
       Effect.scoped,
       Effect.provide(
