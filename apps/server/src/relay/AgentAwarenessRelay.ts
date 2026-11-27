@@ -495,6 +495,7 @@ export const make = Effect.gen(function* () {
   const MAX_ACTIVE_QUEUED_RELAY_ROWS = 2;
   const MAX_QUEUED_CLEANUP_RETRY_WINDOW_MS = 24 * 60 * 60_000;
   const livePublishedPhaseByThread = new Map<ThreadId, RelayAgentActivityState["phase"]>();
+  let livePhaseRelayIdentity: { readonly url: string; readonly issuer: string } | undefined;
   interface ActiveQueuedRelayRow {
     readonly parentThreadId: ThreadId;
     readonly recipientMemberIds: Extract<
@@ -608,20 +609,22 @@ export const make = Effect.gen(function* () {
   const resetPublishedConnection = Effect.fn("resetPublishedConnection")(function* (options?: {
     readonly preserveRelay?: { readonly url: string; readonly issuer: string } | "all";
   }) {
+    const activeRelayIdentity = publishedRelayConfig ?? livePhaseRelayIdentity;
     const sameRelayRefresh =
       options?.preserveRelay === "all" ||
       (options?.preserveRelay !== undefined &&
-        publishedRelayConfig?.url === options.preserveRelay.url &&
-        publishedRelayConfig?.issuer === options.preserveRelay.issuer);
+        activeRelayIdentity?.url === options.preserveRelay.url &&
+        activeRelayIdentity?.issuer === options.preserveRelay.issuer);
     yield* pruneQueuedMessageCleanups(options?.preserveRelay);
     publishedRelayConfig = undefined;
     cachedRelayClient = undefined;
     publishConfirmDeadlines.clear();
     heldCompletions.clear();
-    // Preserve live attention phase counts across same-relay credential refresh because real
-    // rows remain live on the relay until overwritten or tombstoned.
+    // Preserve live attention phase counts across same-relay credential refresh or temporary
+    // disable/re-enable because real rows remain live on the relay until overwritten or tombstoned.
     if (!sameRelayRefresh) {
       livePublishedPhaseByThread.clear();
+      livePhaseRelayIdentity = undefined;
     }
     yield* Ref.set(publishedStateByThreadRef, new Map());
   });
@@ -655,6 +658,7 @@ export const make = Effect.gen(function* () {
         preserveRelay: { url: relayConfig.url, issuer: relayConfig.issuer },
       });
       publishedRelayConfig = relayConfig;
+      livePhaseRelayIdentity = { url: relayConfig.url, issuer: relayConfig.issuer };
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
 
@@ -956,6 +960,7 @@ export const make = Effect.gen(function* () {
         preserveRelay: { url: relayConfig.url, issuer: relayConfig.issuer },
       });
       publishedRelayConfig = relayConfig;
+      livePhaseRelayIdentity = { url: relayConfig.url, issuer: relayConfig.issuer };
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
     if (cachedRelayClient === undefined) {
@@ -1108,6 +1113,7 @@ export const make = Effect.gen(function* () {
             preserveRelay: { url: relayConfig.url, issuer: relayConfig.issuer },
           });
           publishedRelayConfig = relayConfig;
+          livePhaseRelayIdentity = { url: relayConfig.url, issuer: relayConfig.issuer };
         }
         const environmentId = yield* serverEnvironment.getEnvironmentId;
         const currentSnapshot = resolveAgentAwarenessRelayPublishSnapshot({
@@ -1162,6 +1168,7 @@ export const make = Effect.gen(function* () {
           const oldest = activeQueuedRelayRows.entries().next().value;
           if (oldest === undefined) break;
           const [oldestId, oldestEntry] = oldest;
+          if (oldestEntry.flushing) return;
           yield* cancelQueuedCleanupTimer(oldestId);
           const evictExit = yield* Effect.exit(
             publishQueuedRowTombstoneUnsafe(oldestId, oldestEntry),
@@ -1170,8 +1177,12 @@ export const make = Effect.gen(function* () {
             if (Cause.hasInterruptsOnly(evictExit.cause)) {
               return yield* Effect.failCause(evictExit.cause);
             }
+            const delayMs =
+              RELAY_AGENT_ACTIVITY_RETRY_DELAYS_MS[oldestEntry.attempts] ??
+              RELAY_AGENT_ACTIVITY_STEADY_RETRY_DELAY_MS;
+            oldestEntry.attempts += 1;
             oldestEntry.flushing = true;
-            yield* scheduleQueuedCleanupTimer(oldestId, RELAY_AGENT_ACTIVITY_RETRY_DELAYS_MS[0]);
+            yield* scheduleQueuedCleanupTimer(oldestId, delayMs);
             return;
           }
           activeQueuedRelayRows.delete(oldestId);

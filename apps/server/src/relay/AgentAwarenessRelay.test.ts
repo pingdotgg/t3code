@@ -1844,8 +1844,26 @@ describe("AgentAwarenessRelay team notification gating", () => {
           `${threadIds[0]!}:queued:run-cap-1`,
         );
 
-        // Repeated flush attempts while row 1 is already in backoff retry must NOT cancel backoff or spin.
+        // Subsequent queued-message traffic while run-cap-1 is already flushing in backoff MUST NOT
+        // cancel its backoff timer or issue another tombstone attempt during the outage.
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: threadIds[0]!,
+          queuedRunId: "run-cap-4-while-flushing",
+          senderMemberId: null,
+          senderPseudo: "eve",
+          recipientMemberIds: [],
+          messagePreview: "Should also abort without spinning",
+          createdAt: "2026-04-06T12:03:30.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        assert.equal(publications.length, beforeFailedEvict + 1);
+
+        // Repeated flush attempts (via both publishThread and requestCatchUp) while disabled during
+        // an outage must NOT cancel backoff or wipe livePhaseRelayIdentity.
         yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+        yield* relay.publishThread(threadIds[0]!);
         yield* relay.requestCatchUp();
         yield* Effect.yieldNow;
         yield* relay.drain;
