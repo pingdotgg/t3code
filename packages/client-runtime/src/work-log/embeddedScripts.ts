@@ -60,7 +60,8 @@ const SHELL: Interpreter = {
 
 const PYTHON: Interpreter = {
   language: "python",
-  inline: flagIn("-c"),
+  // Bundles like -uc and -IBc; -W and -X take a value, so a c after them is that value.
+  inline: (flag) => /^-[bBdEiIOPqsSuvx]*c$/u.test(flag),
   valueOptions: new Set(["-W", "-X"]),
   scriptFileOptions: new Set(["-m"]),
   stdin: "without-script-file",
@@ -95,7 +96,7 @@ const INTERPRETERS: Record<string, Interpreter> = {
   fish: { language: "fish", inline: flagIn("-c", "--command"), stdin: "without-script-file" },
   node: {
     language: "javascript",
-    inline: flagIn("-e", "--eval", "-p", "--print"),
+    inline: flagIn("-e", "--eval", "-p", "--print", "-pe"),
     valueOptions: new Set(["-r", "--require", "--import", "--loader", "-C", "--conditions"]),
     stdin: "without-script-file",
   },
@@ -110,7 +111,8 @@ const INTERPRETERS: Record<string, Interpreter> = {
   },
   ruby: {
     language: "ruby",
-    inline: flagIn("-e"),
+    // Bundles like -ne and -lane; -i, -I, -r and -C take a value, so an e after them is that value.
+    inline: (flag) => /^-[acdlnpsvwyW]*e$/u.test(flag),
     valueOptions: new Set(["-r", "-I", "-C"]),
     stdin: "without-script-file",
   },

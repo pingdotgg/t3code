@@ -3079,6 +3079,57 @@ describe("AntigravityAdapterV2 executed model", () => {
       );
     }).pipe(Effect.provide(layerSession)),
   );
+
+  // Token analytics read observedModel only from turnTokenUsage.models.
+  it.effect("reports the executed model in the completed provider turn's token usage", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agy-model-" });
+      const logs = path.join(
+        profile,
+        "antigravity-acp",
+        "brain",
+        "mock-session-1",
+        ".system_generated",
+        "logs",
+      );
+      yield* fileSystem.makeDirectory(logs, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(logs, "transcript.jsonl"),
+        [
+          { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE" },
+          {
+            step_index: 1,
+            source: "MODEL",
+            type: "PLANNER_RESPONSE",
+            status: "DONE",
+            model: "gemini-test-high",
+            content: "T3 READY",
+          },
+        ]
+          .map((line) => JSON.stringify(line))
+          .join("\n") + "\n",
+      );
+      const { startTurn, throughTerminal } = yield* openSessionWithRunningCommand(
+        {},
+        undefined,
+        undefined,
+        { profileDirectory: profile, initialToolCalls: [] },
+      );
+      yield* startTurn(1, false);
+      const run = yield* throughTerminal;
+      const completed = run.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      const models =
+        completed?.type === "provider_turn.updated"
+          ? completed.providerTurn.turnTokenUsage?.models
+          : undefined;
+      assert.equal(models?.length, 1);
+    }).pipe(Effect.provide(layerSession)),
+  );
 });
 
 describe("AntigravityAdapterV2 subagent reads", () => {
