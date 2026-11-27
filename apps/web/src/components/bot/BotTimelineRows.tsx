@@ -44,7 +44,3 @@ export function BotTypingTimelineRow({
     </div>
   );
 }
-
-export function BotWakeTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "bot-wake" }> }) {
-  return <p className="min-w-0 px-1 text-xs text-muted-foreground wrap-anywhere">{row.label}</p>;
-}

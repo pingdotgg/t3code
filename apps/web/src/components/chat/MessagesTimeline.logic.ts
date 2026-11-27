@@ -565,13 +565,6 @@ type MessagesTimelineRowContent =
       detail?: string;
     }
   | {
-      /** What woke a Bot, shown as a caption above the reply it triggered. */
-      kind: "bot-wake";
-      id: string;
-      createdAt: string;
-      label: string;
-    }
-  | {
       kind: "thinking";
       id: string;
       createdAt: string | null;
@@ -1605,7 +1598,7 @@ function timelineRowEntries(
 }
 
 /**
- * A Bot reads as a chat: each turn's final reply, plus what wakes it, what it asks and what fails.
+ * A Bot reads as a chat: each turn's final reply, plus what it asks and what fails.
  * Its progress and tool calls only show live, in the typing row.
  */
 function botConversationEntries(
@@ -1628,7 +1621,6 @@ function botConversationEntries(
     const work = entry.entry;
     const item = work.projectedItem?.item;
     return (
-      work.itemType === "notification" ||
       work.questionAnswer !== undefined ||
       work.tone === "error" ||
       work.sourceActivityKind === "runtime.error" ||
@@ -2124,20 +2116,6 @@ export function deriveMessagesTimelineRows(
       continue;
     }
 
-    if (
-      botPresentation &&
-      timelineEntry.kind === "work" &&
-      timelineEntry.entry.itemType === "notification"
-    ) {
-      nextRows.push({
-        kind: "bot-wake",
-        id: timelineEntry.id,
-        createdAt: timelineEntry.createdAt,
-        label: timelineEntry.entry.label,
-      });
-      continue;
-    }
-
     if (timelineEntry.kind === "work") {
       if (
         isPendingApproval(timelineEntry.entry) ||
@@ -2552,18 +2530,13 @@ export function deriveMessagesTimelineRows(
       botPresentation,
     ),
   );
-  let botAvatarShown = false;
   return result.map((row, index) => {
     if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
       return { ...row, continuesWorkLog: true };
     }
-    if (botPresentation) {
-      if (row.kind === "bot-wake" || (row.kind === "message" && row.message.role === "user")) {
-        botAvatarShown = false;
-      } else if (row.kind === "message" && row.message.role === "assistant" && !botAvatarShown) {
-        botAvatarShown = true;
-        return { ...row, botAvatar: true };
-      }
+    // A Bot shows one reply per turn, so each one is its own chat message.
+    if (botPresentation && row.kind === "message" && row.message.role === "assistant") {
+      return { ...row, botAvatar: true };
     }
     if (!timelineRowIsOwnUserMessage(row)) return row;
     const previous = result[index - 1];
@@ -2928,12 +2901,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.snapshot === (b as typeof a).snapshot;
 
     case "bot-typing":
-      return true;
-
-    case "bot-wake": {
-      const bw = b as typeof a;
-      return a.createdAt === bw.createdAt && a.label === bw.label;
-    }
+      return a.detail === (b as typeof a).detail;
 
     case "assistant-meta": {
       const bm = b as typeof a;

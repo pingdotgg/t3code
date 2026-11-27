@@ -108,7 +108,7 @@ import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
 import { forwardWheelToTimeline } from "./timelineMinimapWheel";
 import { TimelineMinimap } from "./TimelineMinimap";
-import { BotReplyHeader, BotTypingTimelineRow, BotWakeTimelineRow } from "../bot/BotTimelineRows";
+import { BotReplyHeader, BotTypingTimelineRow } from "../bot/BotTimelineRows";
 import {
   type TimelineBot,
   type TimelineRowSharedState,
@@ -1689,7 +1689,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       className={cn(
         isWorkLogRow || isSubagentGroup
           ? undefined
-          : row.kind === "turn-fold" || row.kind === "working" || row.kind === "bot-wake"
+          : row.kind === "turn-fold" || row.kind === "working"
             ? "pb-1.5"
             : row.kind === "message" && row.groupedWithNext
               ? "pb-1"
@@ -1758,7 +1758,6 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
       {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
-      {row.kind === "bot-wake" ? <BotWakeTimelineRow row={row} /> : null}
       {row.kind === "bot-typing" ? <BotTypingTimelineRow row={row} /> : null}
     </div>
   );

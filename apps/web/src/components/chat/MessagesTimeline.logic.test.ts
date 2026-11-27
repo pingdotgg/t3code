@@ -2048,6 +2048,12 @@ describe("deriveMessagesTimelineRows", () => {
     expect(progressRows).toEqual([
       expect.objectContaining({ kind: "bot-typing", detail: "I'll read the report for 0.2.0." }),
     ]);
+    // A new progress line replaces the memoized typing row.
+    const typing = computeStableMessagesTimelineRows(derive(true), {
+      result: [],
+      byId: new Map(),
+    });
+    expect(computeStableMessagesTimelineRows(progressRows, typing).result).toEqual(progressRows);
   });
 
   it("keeps an actually running tool in the shared activity row", () => {
@@ -3125,7 +3131,7 @@ describe("v2 run and attempt history", () => {
       expect.objectContaining({ id: "provider-recovered" }),
     ]);
 
-    // A Bot turn reads as chat: its wake is a caption, then only its final reply.
+    // A Bot turn reads as chat: only its final reply, not its wake, progress or tools.
     const botRows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
@@ -3162,9 +3168,8 @@ describe("v2 run and attempt history", () => {
       turnDiffSummaries: [],
       supportsConversationRollback: false,
     });
-    expect(botRows.map((row) => row.id)).toEqual(["wake-entry", "assistant-final-entry"]);
-    expect(botRows[0]).toMatchObject({ kind: "bot-wake", label: "Bump tinyqs finished its turn" });
-    expect(botRows[1]).toMatchObject({ botAvatar: true });
+    expect(botRows.map((row) => row.id)).toEqual(["assistant-final-entry"]);
+    expect(botRows[0]).toMatchObject({ botAvatar: true });
   });
   it("hides tool calls or everything but the final answer", () => {
     const runId = RunId.make("turn-1");
