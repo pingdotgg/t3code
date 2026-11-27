@@ -13031,5 +13031,10 @@
       "v": "v"
     },
     " till i Länkade objekt"
-  ]
+  ],
+  "b5d5b2963c028498": "Telemetri är avstängt på den här datorn, så den här rapporten kan inte skickas till T3-teamet.",
+  "3c14af8e2e9dce12": "Återkopplingsrapporten kan inte skickas",
+  "d5028ee02ce433cc": "Telemetri är avstängt på den här datorn, så rapporter stannar lokalt och kan inte skickas till T3-teamet.",
+  "cc23af6a0143e58b": "Telemetri är avstängt på de valda datorerna, så rapporter stannar lokalt och kan inte skickas till T3-teamet.",
+  "5d2f6d94153f5d40": "Telemetri är avstängt på några valda datorer, så rapporter från dessa datorer stannar lokalt och kan inte skickas till T3-teamet."
 }

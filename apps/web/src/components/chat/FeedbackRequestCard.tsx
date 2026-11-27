@@ -7,8 +7,10 @@ import {
   feedbackRequestDisplay,
   feedbackRequestFailureMessage,
   type FeedbackRequestItem,
+  feedbackTelemetryDisabledNotice,
   feedbackTraceLines,
   feedbackTraceSummary,
+  isServerTelemetryDisabled,
 } from "@t3tools/client-runtime/feedback-request";
 import {
   isAtomCommandInterrupted,
@@ -23,6 +25,7 @@ import { CheckIcon, ChevronDownIcon, LockIcon, MessageSquareIcon, MinusIcon } fr
 import { useAtomValue } from "@effect/atom-react";
 import { useRef, useState } from "react";
 
+import { useServerConfigs } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
@@ -85,6 +88,8 @@ function PendingFeedbackRequest(props: {
   const canAnswer = useAtomValue(
     serverEnvironment.answerFeedbackRequest.permissionAtom(props.environmentId),
   );
+  const serverConfig = useServerConfigs().get(props.environmentId);
+  const telemetryDisabled = isServerTelemetryDisabled(serverConfig);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [includeConversation, setIncludeConversation] = useState(false);
@@ -116,6 +121,7 @@ function PendingFeedbackRequest(props: {
     );
   };
   const disabled = submitting || !canAnswer;
+  const sendDisabled = disabled || telemetryDisabled;
 
   return (
     <section
@@ -126,10 +132,20 @@ function PendingFeedbackRequest(props: {
       <div className="flex min-w-0 flex-col gap-1">
         <h3 className="flex items-center gap-1.5 text-sm font-medium text-foreground">
           <MessageSquareIcon className="size-3.5 shrink-0 text-icon-muted" aria-hidden />
-          <T>Send this report to the T3 team?</T>
+          {telemetryDisabled ? (
+            <T>Feedback report cannot be sent</T>
+          ) : (
+            <T>Send this report to the T3 team?</T>
+          )}
         </h3>
         <p className="text-xs text-muted-foreground">
-          <T>This is everything that leaves your machine. Nothing is sent unless you press Send.</T>
+          {telemetryDisabled ? (
+            feedbackTelemetryDisabledNotice(m)
+          ) : (
+            <T>
+              This is everything that leaves your machine. Nothing is sent unless you press Send.
+            </T>
+          )}
         </p>
       </div>
       {props.item.conversationTrace !== undefined ? (
@@ -146,7 +162,7 @@ function PendingFeedbackRequest(props: {
             size="sm"
             checked={includeConversation}
             onCheckedChange={setIncludeConversation}
-            disabled={disabled}
+            disabled={sendDisabled}
           />
         </label>
       ) : null}
@@ -170,7 +186,7 @@ function PendingFeedbackRequest(props: {
         >
           <T>Don't send</T>
         </Button>
-        <Button type="button" size="sm" disabled={disabled} onClick={() => void send("send")}>
+        <Button type="button" size="sm" disabled={sendDisabled} onClick={() => void send("send")}>
           <T>Send</T>
         </Button>
       </div>

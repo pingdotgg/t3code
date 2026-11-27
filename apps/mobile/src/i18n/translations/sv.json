@@ -5713,5 +5713,9 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "201490988858b511": "återkallad av {by}",
-  "46d614fa7b4bf1e5": "Arbetsflödeskörningar"
+  "46d614fa7b4bf1e5": "Arbetsflödeskörningar",
+  "b5d5b2963c028498": "Telemetri är avstängt på den här datorn, så den här rapporten kan inte skickas till T3-teamet.",
+  "3c14af8e2e9dce12": "Återkopplingsrapporten kan inte skickas",
+  "d5028ee02ce433cc": "Telemetri är avstängt på den här datorn, så rapporter stannar lokalt och kan inte skickas till T3-teamet.",
+  "673dbe41bda27953": "Hanteras av {organization}. Telemetri är avstängt på den här datorn, så rapporter stannar lokalt och kan inte skickas till T3-teamet."
 }

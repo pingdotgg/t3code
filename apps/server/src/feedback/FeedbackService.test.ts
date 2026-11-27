@@ -154,6 +154,8 @@ const harness = Effect.gen(function* () {
   );
   const items = yield* Ref.make(turnItems);
   const telemetry = yield* Ref.make(true);
+  // Telemetry is on but the event is not delivered, as when the send fails or races an opt-out.
+  const dropDelivery = yield* Ref.make(false);
   const runId = yield* Ref.make(RunId.make("run:1"));
   const events = yield* Ref.make<ReadonlyArray<readonly [string, unknown]>>([]);
   // Every feedback card the service records, in order.
@@ -285,12 +287,15 @@ const harness = Effect.gen(function* () {
             ),
         }),
         Layer.mock(Analytics.AnalyticsService)({
+          isEnabled: Ref.get(telemetry),
           record: (event, properties) =>
-            Ref.get(telemetry).pipe(
-              Effect.tap((on) =>
-                on
-                  ? Ref.update(events, (rows) => [...rows, [event, properties] as const])
-                  : Effect.void,
+            Effect.all([Ref.get(telemetry), Ref.get(dropDelivery)]).pipe(
+              Effect.flatMap(([on, drop]) =>
+                on && !drop
+                  ? Ref.update(events, (rows) => [...rows, [event, properties] as const]).pipe(
+                      Effect.as(true),
+                    )
+                  : Effect.succeed(false),
               ),
             ),
         }),
@@ -330,6 +335,7 @@ const harness = Effect.gen(function* () {
     reading,
     items,
     telemetry,
+    dropDelivery,
     runId,
     events,
     cards,
@@ -412,10 +418,10 @@ it.effect("stores nothing and fails when agent feedback is off", () =>
 
 it.effect("scrubs the caller's private values and sends only the event contract", () =>
   Effect.gen(function* () {
-    const { telemetry, events, cards, layer } = yield* harness;
+    const { dropDelivery, events, cards, layer } = yield* harness;
     yield* Effect.gen(function* () {
       const feedback = yield* Feedback.FeedbackService;
-      yield* Ref.set(telemetry, false);
+      yield* Ref.set(dropDelivery, true);
       const {
         stored: local,
         card,
@@ -446,12 +452,12 @@ it.effect("scrubs the caller's private values and sends only the event contract"
         sent: false,
       });
       expect(yield* Ref.get(events)).toEqual([]);
-      // Stored with telemetry off, but not sent: the card says so, and keeps only the outline.
+      // Stored but not delivered: the card says so, and keeps only the outline.
       expect(local.trace).toEqual(card.conversationTrace);
       expect(closed).toMatchObject({ feedbackStatus: "cancelled", preview: card.preview });
       expect(closed.conversationTrace).toBeUndefined();
 
-      yield* Ref.set(telemetry, true);
+      yield* Ref.set(dropDelivery, false);
       const sent = yield* feedback.submit({ ...input, subject: "t3 thread show" }, fromThread);
       expect("sent" in sent && sent.sent).toBe(true);
       expect(yield* Ref.get(events)).toEqual([
@@ -829,7 +835,7 @@ it.effect("Send refuses while Off and closes the card; When I ask and Automatic 
 
 it.effect("a report stored before its card was settled settles the card on the next answer", () =>
   Effect.gen(function* () {
-    const { telemetry, events, cards, shown, failRecords, runId, layer } = yield* harness;
+    const { dropDelivery, events, cards, shown, failRecords, runId, layer } = yield* harness;
     yield* Effect.gen(function* () {
       const status = (card: CardRecord) =>
         Ref.get(shown).pipe(Effect.map((all) => all.get(card.turnItemId)?.feedbackStatus));
@@ -859,7 +865,7 @@ it.effect("a report stored before its card was settled settles the card on the n
 
       // Stored but not sent: the card closes unsent, with the outline only.
       yield* Ref.set(runId, RunId.make("run:2"));
-      yield* Ref.set(telemetry, false);
+      yield* Ref.set(dropDelivery, true);
       const keptCard = yield* show(cards, requested);
       yield* Ref.set(failRecords, true);
       expect(yield* Effect.result(answer(keptCard, "send", true))).toMatchObject({
@@ -872,6 +878,30 @@ it.effect("a report stored before its card was settled settles the card on the n
       expect(closed).toMatchObject({ feedbackStatus: "cancelled", preview: keptCard.preview });
       expect(closed.conversationTrace).toBeUndefined();
       expect(yield* listFeedbackReports).toHaveLength(2);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("refuses Send with telemetry_off and keeps the card open while telemetry is off", () =>
+  Effect.gen(function* () {
+    const { telemetry, events, cards, shown, layer } = yield* harness;
+    yield* Effect.gen(function* () {
+      yield* Ref.set(telemetry, false);
+      const card = yield* show(cards, requested);
+      expect(yield* Effect.result(answer(card, "send", true))).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "AgentFeedbackRequestError", reason: "telemetry_off" },
+      });
+      expect((yield* Ref.get(shown)).get(card.turnItemId)?.feedbackStatus).toBe("pending");
+      expect(yield* Queue.size(cards)).toBe(0);
+      expect(yield* listFeedbackReports).toEqual([]);
+      expect(yield* Ref.get(events)).toEqual([]);
+
+      // The card can still be declined cleanly while telemetry is off.
+      yield* answer(card, "decline");
+      const declined = yield* Queue.take(cards);
+      expect(declined).toMatchObject({ feedbackStatus: "declined", preview: card.preview });
+      expect(declined.conversationTrace).toBeUndefined();
     }).pipe(Effect.provide(layer));
   }),
 );

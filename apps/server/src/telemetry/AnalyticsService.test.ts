@@ -197,13 +197,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
         respondWithStatus(204),
         Effect.gen(function* () {
           const analytics = yield* AnalyticsService.AnalyticsService;
+          assert.equal(yield* analytics.isEnabled, false);
           yield* analytics.record("test.before-discovery");
           yield* analytics.flush;
           env.T3CODE_TELEMETRY_ENABLED = "false";
           delete env.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
+          assert.equal(yield* analytics.isEnabled, false);
           yield* analytics.record("test.opted-out");
           yield* analytics.flush;
           env.T3CODE_TELEMETRY_ENABLED = "true";
+          assert.equal(yield* analytics.isEnabled, true);
           yield* analytics.record("test.allowed");
           yield* analytics.flush;
         }),
@@ -223,9 +226,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
         respondWithStatus(204),
         Effect.gen(function* () {
           const analytics = yield* AnalyticsService.AnalyticsService;
+          assert.equal(yield* analytics.isEnabled, false);
           yield* analytics.record("test.do-not-track");
           yield* analytics.flush;
           env.DO_NOT_TRACK = "0";
+          assert.equal(yield* analytics.isEnabled, true);
           yield* analytics.record("test.allowed");
           yield* analytics.flush;
         }),

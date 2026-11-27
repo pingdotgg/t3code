@@ -13024,5 +13024,10 @@
       "v": "v"
     },
     " weitere unter Verknüpfte Elemente"
-  ]
+  ],
+  "b5d5b2963c028498": "Telemetrie ist auf diesem Gerät deaktiviert, daher kann dieser Bericht nicht an das T3-Team gesendet werden.",
+  "3c14af8e2e9dce12": "Feedbackbericht kann nicht gesendet werden",
+  "d5028ee02ce433cc": "Telemetrie ist auf diesem Gerät deaktiviert, daher bleiben Berichte lokal und können nicht an das T3-Team gesendet werden.",
+  "cc23af6a0143e58b": "Telemetrie ist auf den ausgewählten Geräten deaktiviert, daher bleiben Berichte lokal und können nicht an das T3-Team gesendet werden.",
+  "5d2f6d94153f5d40": "Telemetrie ist auf einigen ausgewählten Geräten deaktiviert, daher bleiben Berichte von diesen Geräten lokal und können nicht an das T3-Team gesendet werden."
 }

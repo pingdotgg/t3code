@@ -229,6 +229,7 @@ const makeHarnessFor = Effect.fnUntraced(function* (
     properties: Readonly<Record<string, unknown>> | undefined;
   }[] = [];
   const analytics = AnalyticsService.AnalyticsService.of({
+    isEnabled: Effect.succeed(true),
     record: (event, properties) =>
       failAnalytics
         ? Effect.die("analytics unavailable")

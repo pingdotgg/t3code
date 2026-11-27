@@ -13024,5 +13024,10 @@
       "v": "v"
     },
     " de plus dans Éléments associés"
-  ]
+  ],
+  "b5d5b2963c028498": "La télémétrie est désactivée sur cette machine, ce rapport ne peut donc pas être envoyé à l'équipe T3.",
+  "3c14af8e2e9dce12": "Impossible d'envoyer le rapport de retour",
+  "d5028ee02ce433cc": "La télémétrie est désactivée sur cette machine, les rapports restent donc locaux et ne peuvent pas être envoyés à l'équipe T3.",
+  "cc23af6a0143e58b": "La télémétrie est désactivée sur les machines sélectionnées, les rapports restent donc locaux et ne peuvent pas être envoyés à l'équipe T3.",
+  "5d2f6d94153f5d40": "La télémétrie est désactivée sur certaines machines sélectionnées, les rapports de ces machines restent donc locaux et ne peuvent pas être envoyés à l'équipe T3."
 }

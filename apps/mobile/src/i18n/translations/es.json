@@ -5707,5 +5707,9 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo"
+  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo",
+  "b5d5b2963c028498": "La telemetría está desactivada en este equipo, por lo que este informe no puede enviarse al equipo de T3.",
+  "3c14af8e2e9dce12": "No se puede enviar el informe de comentarios",
+  "d5028ee02ce433cc": "La telemetría está desactivada en este equipo, por lo que los informes permanecen locales y no pueden enviarse al equipo de T3.",
+  "673dbe41bda27953": "Gestionado por {organization}. La telemetría está desactivada en este equipo, por lo que los informes permanecen locales y no pueden enviarse al equipo de T3."
 }

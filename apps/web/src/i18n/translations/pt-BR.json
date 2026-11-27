@@ -13024,5 +13024,10 @@
       "v": "v"
     },
     " mais em Itens vinculados"
-  ]
+  ],
+  "b5d5b2963c028498": "A telemetria está desativada nesta máquina, então este relatório não pode ser enviado para a equipe do T3.",
+  "3c14af8e2e9dce12": "Não é possível enviar o relatório de feedback",
+  "d5028ee02ce433cc": "A telemetria está desativada nesta máquina, então os relatórios ficam locais e não podem ser enviados para a equipe do T3.",
+  "cc23af6a0143e58b": "A telemetria está desativada nas máquinas selecionadas, então os relatórios ficam locais e não podem ser enviados para a equipe do T3.",
+  "5d2f6d94153f5d40": "A telemetria está desativada em algumas máquinas selecionadas, então os relatórios dessas máquinas ficam locais e não podem ser enviados para a equipe do T3."
 }

@@ -276,6 +276,42 @@ it.effect("resends a reveal kind and remote targets that outlast the snapshot ti
   }),
 );
 
+it.effect(
+  "resends a snapshot only when late desktop shell discovery changes telemetryEnabled",
+  () =>
+    Effect.gen(function* () {
+      const events = yield* withLateConfigDiscovery(
+        snapshotConfig({
+          observability: {
+            logsDirectoryPath: "/tmp/logs",
+            localTracingEnabled: true,
+            otlpTracesEnabled: false,
+            otlpMetricsEnabled: false,
+            otlpLogsEnabled: false,
+            telemetryEnabled: false,
+          },
+        }),
+        Stream.empty,
+        {
+          resolveAvailableEditors: () => Effect.succeed([]),
+          resolveFileManagerRevealKind: () => Effect.undefined,
+        },
+        { resolveTargets: () => Effect.succeed([]) },
+        { resolve: () => Effect.succeed([]) },
+        Stream.make(false, true, true, false),
+      ).pipe(Stream.runCollect);
+
+      assert.equal(events.length, 2);
+      const [enabled, disabled] = Array.from(events);
+      assert.equal(enabled?.type, "snapshot");
+      assert.equal(disabled?.type, "snapshot");
+      if (enabled?.type === "snapshot" && disabled?.type === "snapshot") {
+        assert.equal(enabled.config.observability.telemetryEnabled, true);
+        assert.equal(disabled.config.observability.telemetryEnabled, false);
+      }
+    }),
+);
+
 it.effect("runs editor, remote open target and direct endpoint discovery side by side", () =>
   Effect.gen(function* () {
     // Each discovery finishes only once the other two have started, so a
@@ -845,7 +881,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(AcpRegistrySessions.AcpRegistrySessions)({}),
   Layer.mock(AgentSessionImporter.AgentSessionImporter)({}),
   Layer.mock(AgentSessionScanner.AgentSessionScanner)({}),
-  Layer.mock(AnalyticsService.AnalyticsService)({}),
+  Layer.mock(AnalyticsService.AnalyticsService)({ isEnabled: Effect.succeed(true) }),
   Layer.mock(AntigravityInstallation.AntigravityInstallation)({ managedDirectory: "/unused" }),
   Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
   Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({}),
@@ -972,7 +1008,10 @@ it.live.each([
           markDisconnected: () => Effect.void,
           awaitInvalidation: () => Effect.never,
         }),
-        Layer.mock(AnalyticsService.AnalyticsService)({ recordOwners: () => Effect.void }),
+        Layer.mock(AnalyticsService.AnalyticsService)({
+          isEnabled: Effect.succeed(true),
+          recordOwners: () => Effect.void,
+        }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: process.cwd(),
         }),

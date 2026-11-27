@@ -13032,5 +13032,10 @@
       "v": "v"
     },
     " more in Linked items"
-  ]
+  ],
+  "b5d5b2963c028498": "Telemetry is off on this machine, so this report cannot be sent to the T3 team.",
+  "3c14af8e2e9dce12": "Feedback report cannot be sent",
+  "d5028ee02ce433cc": "Telemetry is off on this machine, so reports stay local and cannot be sent to the T3 team.",
+  "cc23af6a0143e58b": "Telemetry is off on the selected machines, so reports stay local and cannot be sent to the T3 team.",
+  "5d2f6d94153f5d40": "Telemetry is off on some selected machines, so reports from those machines stay local and cannot be sent to the T3 team."
 }

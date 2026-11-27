@@ -13019,5 +13019,10 @@
       "v": "v"
     },
     " más en Elementos vinculados"
-  ]
+  ],
+  "b5d5b2963c028498": "La telemetría está desactivada en este equipo, por lo que este informe no puede enviarse al equipo de T3.",
+  "3c14af8e2e9dce12": "No se puede enviar el informe de comentarios",
+  "d5028ee02ce433cc": "La telemetría está desactivada en este equipo, por lo que los informes permanecen locales y no pueden enviarse al equipo de T3.",
+  "cc23af6a0143e58b": "La telemetría está desactivada en los equipos seleccionados, por lo que los informes permanecen locales y no pueden enviarse al equipo de T3.",
+  "5d2f6d94153f5d40": "La telemetría está desactivada en algunos equipos seleccionados, por lo que los informes de esos equipos permanecen locales y no pueden enviarse al equipo de T3."
 }

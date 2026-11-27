@@ -1,5 +1,6 @@
 import { msg } from "gt-react";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
+import { isServerTelemetryDisabled } from "@t3tools/client-runtime/feedback-request";
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
 import {
@@ -429,6 +430,23 @@ function AgentFeedbackRow() {
     )
   )
     return null;
+  const telemetryDisabledCount = connectedEnvironments.filter((environment) =>
+    isServerTelemetryDisabled(environment.serverConfig),
+  ).length;
+  const telemetryStatus =
+    (mixed || settings.agentFeedback.mode !== "off") && telemetryDisabledCount > 0
+      ? telemetryDisabledCount === connectedEnvironments.length
+        ? connectedEnvironments.length === 1
+          ? gt(
+              "Telemetry is off on this machine, so reports stay local and cannot be sent to the T3 team.",
+            )
+          : gt(
+              "Telemetry is off on the selected machines, so reports stay local and cannot be sent to the T3 team.",
+            )
+        : gt(
+            "Telemetry is off on some selected machines, so reports from those machines stay local and cannot be sent to the T3 team.",
+          )
+      : undefined;
   return (
     <SettingsRow
       serverScoped
@@ -439,6 +457,7 @@ function AgentFeedbackRow() {
           ? gt("The selected machines use different agent feedback modes.")
           : m(AGENT_FEEDBACK_MODE_DESCRIPTIONS[settings.agentFeedback.mode])
       }
+      status={telemetryStatus}
       control={
         <Select
           value={mixed ? null : settings.agentFeedback.mode}

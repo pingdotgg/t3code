@@ -415,6 +415,8 @@ export const ServerObservability = Schema.Struct({
   otlpLogsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Relay tracing policy for browsers opened from this server. */
   relayTracingAllowed: Schema.optionalKey(Schema.Boolean),
+  /** Whether this server can send product analytics and agent feedback events. */
+  telemetryEnabled: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerObservability = typeof ServerObservability.Type;
 

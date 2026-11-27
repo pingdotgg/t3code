@@ -5707,5 +5707,9 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "201490988858b511": "retirée par {by}",
-  "46d614fa7b4bf1e5": "Exécutions de workflow"
+  "46d614fa7b4bf1e5": "Exécutions de workflow",
+  "b5d5b2963c028498": "La télémétrie est désactivée sur cette machine, ce rapport ne peut donc pas être envoyé à l'équipe T3.",
+  "3c14af8e2e9dce12": "Impossible d'envoyer le rapport de retour",
+  "d5028ee02ce433cc": "La télémétrie est désactivée sur cette machine, les rapports restent donc locaux et ne peuvent pas être envoyés à l'équipe T3.",
+  "673dbe41bda27953": "Géré par {organization}. La télémétrie est désactivée sur cette machine, les rapports restent donc locaux et ne peuvent pas être envoyés à l'équipe T3."
 }

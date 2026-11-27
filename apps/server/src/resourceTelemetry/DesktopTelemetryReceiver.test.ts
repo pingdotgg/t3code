@@ -15,6 +15,7 @@ import { describe, expect } from "vite-plus/test";
 
 import {
   makeApplyDesktopShellEnvironmentSnapshot,
+  makeDesktopShellEnvironmentUpdates,
   requireDesktopTelemetryWriteProgress,
 } from "./DesktopTelemetryReceiver.ts";
 
@@ -202,5 +203,29 @@ NodeAssert.deepEqual(fingerprints(NodeTls.getCACertificates("default")), expecte
       );
       yield* requireDesktopTelemetryWriteProgress(7, 42, 1);
     }),
+  );
+
+  it.effect("publishes shellEnvironmentChanges when a matching shell snapshot is applied", () =>
+    Effect.gen(function* () {
+      const environment: NodeJS.ProcessEnv = {
+        PATH: "/usr/bin",
+        T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1",
+      };
+      const updates = yield* makeDesktopShellEnvironmentUpdates(environment, "darwin");
+      yield* updates.apply({
+        version: 1,
+        type: "shellEnvironment",
+        platform: "darwin",
+        discovered: true,
+        environment: { T3CODE_TELEMETRY_ENABLED: "false" },
+      });
+      const emitted = yield* updates.shellEnvironmentChanges.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+      );
+      expect(emitted).toHaveLength(1);
+      expect(environment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING).toBeUndefined();
+      expect(environment.T3CODE_TELEMETRY_ENABLED).toBe("false");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
