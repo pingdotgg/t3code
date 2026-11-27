@@ -254,12 +254,37 @@ function toSystemEvent(
     return { kind: "renamed", detail: trimmed(detail) };
   }
   if (text.startsWith("changed title")) {
-    // Skip whole {-…-} runs in the old title so a deleted "** to **" is not the boundary; GitLab
-    // does not escape markers, so only the old side's runs are deletions.
-    const raw = /^changed title from \*\*(?:\{-.*?-\}|.)*?\*\* to \*\*(.*)\*\*$/.exec(text)?.[1];
+    const raw = legacyNewTitle(text);
     return { kind: "renamed", detail: trimmed(raw?.replace(/\{\+(.*?)\+\}/g, "$1")) };
   }
   return null;
+}
+
+/**
+ * The new side of "changed title from **old** to **new**". Whole {-…-} runs in the old title are
+ * skipped so a deleted "** to **" is not the boundary; GitLab does not escape markers, so only the
+ * old side's runs are deletions. A single forward scan, so a malformed note cannot backtrack.
+ */
+function legacyNewTitle(text: string): string | null {
+  const prefix = "changed title from **";
+  const boundary = "** to **";
+  if (!text.startsWith(prefix) || !text.endsWith("**")) return null;
+  let index = prefix.length;
+  let deletionsClose = true;
+  while (index < text.length && !text.startsWith(boundary, index)) {
+    if (deletionsClose && text.startsWith("{-", index)) {
+      const end = text.indexOf("-}", index + 2);
+      if (end !== -1) {
+        index = end + 2;
+        continue;
+      }
+      // No later "{-" can close either; stop searching so the scan stays linear.
+      deletionsClose = false;
+    }
+    index += 1;
+  }
+  const start = index + boundary.length;
+  return start <= text.length - 2 ? text.slice(start, -2) : null;
 }
 
 // The path class excludes the sigil, so matching is linear on any input.
