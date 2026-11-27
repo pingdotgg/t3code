@@ -1135,20 +1135,21 @@ function withPreviewAppCss() {
   return { [Symbol.dispose]: () => style.remove() };
 }
 
-function opened(positionKey: string, children: ReactNode) {
+function opened(positionKey: string, children: ReactNode, height = 400) {
   return (
     <PreviewPositionKey value={positionKey}>
-      <div style={{ width: 500, height: 400, display: "flex", flexDirection: "column" }}>
-        {children}
-      </div>
+      <div style={{ width: 500, height, display: "flex", flexDirection: "column" }}>{children}</div>
     </PreviewPositionKey>
   );
 }
 
 describe("large text scroll position", () => {
-  const log = (count: number) => (
+  const log = (count: number, indexing = false, revealLine?: number) => (
     <VirtualTablePreview
       name="app.log"
+      indexing={indexing}
+      revealLine={revealLine ?? null}
+      revealRequestId={1}
       count={count}
       columns={1}
       source
@@ -1186,11 +1187,35 @@ describe("large text scroll position", () => {
       await using _screen = await render(opened("other.log", log(5000)));
       await vi.waitFor(() => expect(firstVisibleRow(), "another file opens at the top").toBe(0));
     }
-    await using screen = await render(opened("app.log", log(100)));
+    await using screen = await render(opened("app.log", log(100, true)));
     await vi.waitFor(() => expect(firstVisibleRow()).toBe(0));
     await screen.rerender(opened("app.log", log(5000)));
     await vi.waitFor(() => expect(firstVisibleRow()).toBe(saved));
   });
+
+  it.each([1505, 66000])(
+    "restores the exact reading row with %i rows available on return",
+    async (count) => {
+      using _style = withPreviewAppCss();
+      const key = `cited-log-${count}`;
+      {
+        await using _screen = await render(opened(key, log(66000, false, 1000), 608));
+        await vi.waitFor(() => expect(firstVisibleRow()).toBe(999));
+        scroller().scrollTop = 1499 * 29;
+        scroller().dispatchEvent(new Event("scroll"));
+        await vi.waitFor(() => expect(firstVisibleRow()).toBe(1499));
+      }
+      await using screen = await render(
+        opened(key, log(count, count < 66000, count === 66000 ? 1000 : undefined), 608),
+      );
+      if (count < 66000) {
+        expect(firstVisibleRow()).toBe(0);
+        scroller().dispatchEvent(new Event("scroll"));
+        await screen.rerender(opened(key, log(66000, false, 1000), 608));
+      }
+      await vi.waitFor(() => expect(firstVisibleRow()).toBe(1499));
+    },
+  );
 });
 
 describe("notebook scroll position", () => {

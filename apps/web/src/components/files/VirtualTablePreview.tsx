@@ -4,13 +4,14 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { observeResize } from "~/lib/observeResize";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
 import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
-import { createPositionMemory, PreviewPositionKey, PreviewRevealRequest } from "./previewPosition";
+import { createPositionMemory, PreviewPositionKey } from "./previewPosition";
 
-const savedFirstRows = createPositionMemory<{ row: number; revealRequest: object | null }>();
+const savedFirstRows = createPositionMemory<{ row: number; revealKey: string | null }>();
 
 export default function VirtualTablePreview(props: {
   readonly name: string;
   readonly count: number;
+  readonly indexing?: boolean;
   readonly columns: number;
   readonly getRows: (page: number) => readonly (readonly string[])[] | undefined;
   readonly loadPage?: (page: number) => void;
@@ -288,9 +289,8 @@ function ScaledRows(
   const pendingReveal = useRef<{ row: number; attempts: number } | null>(null);
   const pendingEnd = useRef(false);
   const positionKey = useContext(PreviewPositionKey);
-  const revealRequest = useContext(PreviewRevealRequest);
   const savedPosition = savedFirstRows.get(positionKey);
-  const handledReveal = useRef<object | string | null>(savedPosition?.revealRequest ?? null);
+  const handledReveal = useRef<string | null>(savedPosition?.revealKey ?? null);
   const pendingRestore = useRef(savedPosition?.row);
   const position = { top, height: props.viewportHeight };
   const scrollHeight = Math.min(8_000_000, props.count * 29);
@@ -337,11 +337,11 @@ function ScaledRows(
   useLayoutEffect(() => {
     const node = ref.current;
     if (props.revealLine == null) {
-      if (typeof handledReveal.current === "string") handledReveal.current = null;
+      if (!props.indexing) handledReveal.current = null;
       pendingReveal.current = null;
       return;
     }
-    const key = revealRequest ?? `${props.revealRequestId}:${props.revealLine}`;
+    const key = `${props.revealRequestId}:${props.revealLine}`;
     if (!node || !props.count || handledReveal.current === key) return;
     pendingRestore.current = undefined;
     const row = Math.min(props.count, Math.max(1, props.revealLine)) - 1;
@@ -350,17 +350,19 @@ function ScaledRows(
     pendingEnd.current = false;
     pendingReveal.current = { row, attempts: 0 };
     handledReveal.current = key;
-  }, [revealRequest, props.revealLine, props.revealRequestId, props.count, headerRows, scale]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Return a reopened file to its saved row once that row has streamed in.
+  }, [props.indexing, props.revealLine, props.revealRequestId, props.count, headerRows, scale]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the saved row after the complete scroll track has committed.
   useLayoutEffect(() => {
     const row = pendingRestore.current;
     const node = ref.current;
-    if (row === undefined || !node || row >= props.count) return;
+    if (row === undefined || !node || props.indexing) return;
     pendingRestore.current = undefined;
-    node.scrollTop = Math.max(0, (row - headerRows) * 29) * scale;
+    if (row >= props.count) return;
+    // Rounding down can leave the previous row at the top of the virtual track.
+    node.scrollTop = Math.ceil(Math.max(0, (row - headerRows) * 29) * scale);
     setTop(node.scrollTop);
     pendingReveal.current = { row, attempts: 0 };
-  }, [props.count, headerRows, scale]);
+  }, [props.indexing, props.count, headerRows, scale]);
   const atStart = position.top === 0;
   const rowHeight = () =>
     contentRef.current?.querySelector<HTMLElement>(`[data-preview-row="${first}"]`)?.offsetHeight ||
@@ -583,10 +585,10 @@ function ScaledRows(
       onScroll={(event) => {
         const scrolled = event.currentTarget.scrollTop;
         setTop(scrolled);
-        pendingRestore.current = undefined;
+        if (pendingRestore.current !== undefined) return;
         savedFirstRows.set(positionKey, {
           row: Math.min(maxFirst, Math.floor(scrolled / scale / 29)) + headerRows,
-          revealRequest: typeof handledReveal.current === "object" ? handledReveal.current : null,
+          revealKey: handledReveal.current,
         });
       }}
     >
