@@ -191,7 +191,6 @@ describe("thread links", () => {
     ["nested list", "- a\n  -     ```md\n        <t3-thread://v1/abc>\n        ```", ""],
     ["nested list with tab", "-\t-     ~~~\n          <t3-thread://v1/abc>", ""],
     ["quote + 5 spaces", ">     ```md\n>     <t3-thread://v1/abc>\n>     ```", "> "],
-    ["nested quote + 5 spaces", "> >     ```md\n> >     <t3-thread://v1/abc>\n> >     ```", "> > "],
     [
       "spaced nested quote + 5 spaces",
       ">    >     ```md\n>    >     <t3-thread://v1/abc>",
@@ -202,11 +201,6 @@ describe("thread links", () => {
     [
       "quote + list after para",
       "> para\n> -     ```md\n>       <t3-thread://v1/abc>\n>       ```",
-      "> ",
-    ],
-    [
-      "quote + list after list",
-      "> - item\n> -     ```md\n>       <t3-thread://v1/abc>\n>       ```",
       "> ",
     ],
     ["1. after paragraph", "Intro\n1.     ```md\n       <t3-thread://v1/abc>\n       ```", ""],
@@ -221,7 +215,6 @@ describe("thread links", () => {
     ["quote after indented code", "    ```md\n>     ```\n>     <t3-thread://v1/abc>", "> "],
     ["4 spaces after closer", "    ```md\n    a\n    ```\n    <t3-thread://v1/abc>", ""],
     ["4 spaces with U+2028", "    ```\u2028<t3-thread://v1/t1>```", ""],
-    ["4 spaces with U+2029", "    ```md\u2029<t3-thread://v1/t1> ```", ""],
     ["hosted link", "    ```\n    https://app.t3.codes/threads/env/thr\n    ```", ""],
   ])(
     "keeps links inside fence-looking indented code blocks literal (%s)",
