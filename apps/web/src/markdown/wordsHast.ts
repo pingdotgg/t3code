@@ -961,7 +961,7 @@ function insightSource(text: string, options: RenderOptions): InsightSource | nu
   const nonce = Math.random().toString(36).slice(2);
   const marker = new RegExp(String.raw`^\[!Hyakki-INSIGHT-${nonce}-(\d+)\](?:\r?\n)?`);
   const anywhere = new RegExp(String.raw`\[!Hyakki-INSIGHT-${nonce}-(\d+)\]`, "g");
-  const lines = text.split(/(?<=\n)/u);
+  const lines = text.split(/(?<=\n)|(?<=\r)(?!\n)/u);
   const skipped = new Set<number>();
   for (;;) {
     // Each line's offset in the message and in the source, and how much longer it got.

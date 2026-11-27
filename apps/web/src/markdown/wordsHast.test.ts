@@ -272,6 +272,13 @@ describe("wordsHast", () => {
     expect(slices).toEqual(["[a](u)", "- [ ] task", "```sh\nls\n```", "-      [b](./b.ts)"]);
   });
 
+  it.each(["\n", "\r\n", "\r"])("renders insight callouts with %j line endings", (ending) => {
+    const markdown = ["★ Insight ─────", "Cache is warm.", "─────", "After."].join(ending);
+    expect(wordsHtml(markdown, { insights: true })).toBe(
+      '<blockquote data-alert="insight" dir="ltr">\n<p>Cache is warm.</p>\n</blockquote>\n<p dir="ltr">After.</p>',
+    );
+  });
+
   it("renders insight blocks as remarkAssistantInsights did", () => {
     const markdown =
       "Intro\n\n`★ Insight ─────────────────────────────────────`\n- one\n- two\n`─────────────────────────────────────────────────`\n\nAfter\n\n```\n★ Insight ─────\n```";
