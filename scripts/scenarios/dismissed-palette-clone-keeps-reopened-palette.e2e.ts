@@ -19,12 +19,24 @@ test(
 
       await browser.addInitScript(() => {
         const starts = new WeakMap<WebSocket, string>();
+        let released = false;
+        const searchesAfterRelease = new Set<string>();
+        document.addEventListener("release-palette-clone-start", () => {
+          released = true;
+        });
         const send = WebSocket.prototype.send;
         WebSocket.prototype.send = function (data) {
           if (typeof data === "string") {
             for (const request of [JSON.parse(data)].flat()) {
               if (request?._tag === "Request" && request.tag === "projectClone.start") {
                 starts.set(this, String(request.id));
+              }
+              if (
+                released &&
+                request?._tag === "Request" &&
+                request.tag === "orchestration.searchThreads"
+              ) {
+                searchesAfterRelease.add(String(request.id));
               }
             }
           }
@@ -64,6 +76,15 @@ test(
                 );
               } else {
                 listener.call(this, event);
+                if (
+                  wire.some(
+                    (message) =>
+                      message?._tag === "Exit" &&
+                      searchesAfterRelease.has(String(message.requestId)),
+                  )
+                ) {
+                  document.documentElement.dataset.scenarioSearchAfterRelease = "answered";
+                }
               }
             },
             options,
@@ -87,16 +108,21 @@ test(
       await palette.waitFor({ state: "hidden" });
       await browser.keyboard.press("Control+k");
       await palette.getByRole("combobox").fill("Current work");
-      await browser.evaluate(async () => {
+      await browser.evaluate(() => {
         document.dispatchEvent(new Event("release-palette-clone-start"));
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-        );
         return null;
       });
+      // A search sent after the release is answered only after the clone reply's
+      // continuation ran; if that continuation closed the palette, no search is sent.
+      await browser.keyboard.press("Backspace");
+      const openPalette = '[data-slot="command-dialog-popup"][data-open]';
+      await browser
+        .locator(
+          `html[data-scenario-search-after-release=answered], html:not(:has(${openPalette}))`,
+        )
+        .waitFor({ state: "attached" });
       await app.screenshot("reopened-palette-after-clone-start-returns");
-      const openPalette = browser.locator('[data-slot="command-dialog-popup"][data-open]');
-      expect(await openPalette.isVisible()).toBe(true);
+      expect(await browser.locator(openPalette).isVisible()).toBe(true);
     } finally {
       remote.close();
       remote.closeAllConnections();
