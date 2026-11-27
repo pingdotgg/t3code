@@ -2432,23 +2432,32 @@ const make = Effect.gen(function* () {
           .revokeLocalSyncTokensForMember(updatedMember.id, updatedAt)
           .pipe(Effect.ignore);
       }
-      TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, updatedMember.id);
-      if (updatedMember.status === "removed" && Option.isSome(githubRepositoryOption)) {
-        const removedSecretKeyOpt = yield* githubRepositoryOption.value
-          .deleteMemberCredential(updatedMember.id)
-          .pipe(Effect.orElseSucceed(() => Option.none<string>()));
-        if (Option.isSome(removedSecretKeyOpt) && Option.isSome(secretStoreOption)) {
-          yield* TeamGitHubRepository.removeTeamGitHubSecret(
-            secretStoreOption.value,
-            removedSecretKeyOpt.value,
-          ).pipe(Effect.ignore);
-        }
-      }
-      yield* notifyGitHubCredentialChanged({
-        kind: "member",
-        teamId: team.id,
-        memberId: updatedMember.id,
-      });
+      yield* TeamGitHubOAuth.withMemberGitHubCredentialMutationLock(
+        team.id,
+        updatedMember.id,
+        Effect.gen(function* () {
+          TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(
+            githubOAuthFlowStore,
+            updatedMember.id,
+          );
+          if (updatedMember.status === "removed" && Option.isSome(githubRepositoryOption)) {
+            const removedSecretKeyOpt = yield* githubRepositoryOption.value
+              .deleteMemberCredential(updatedMember.id)
+              .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+            if (Option.isSome(removedSecretKeyOpt) && Option.isSome(secretStoreOption)) {
+              yield* TeamGitHubRepository.removeTeamGitHubSecret(
+                secretStoreOption.value,
+                removedSecretKeyOpt.value,
+              ).pipe(Effect.ignore);
+            }
+          }
+          yield* notifyGitHubCredentialChanged({
+            kind: "member",
+            teamId: team.id,
+            memberId: updatedMember.id,
+          });
+        }),
+      );
       if (input.peerClientPairing) {
         const envs = yield* repository
           .listEnvironments(team.id)
@@ -10081,7 +10090,6 @@ const make = Effect.gen(function* () {
     }
     const authMethod = input.payload.authMethod ?? "pat";
     const { githubRepo, secrets, httpClient } = yield* requireGitHubDeps();
-    TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, actor.id);
     const verified = yield* TeamGitHubRepository.verifyGitHubToken({
       httpClient,
       token: input.payload.token,
@@ -10089,62 +10097,70 @@ const make = Effect.gen(function* () {
       githubNameOverride: input.payload.githubName ?? null,
       githubEmailOverride: input.payload.githubEmail ?? null,
     });
-    const nowIso = DateTime.formatIso(yield* DateTime.now);
-    const existingOpt = yield* githubRepo
-      .getMemberCredential(actor.id)
-      .pipe(Effect.mapError(toInternalError));
-    const secretRevision = (yield* random.uuidV4()).replaceAll("-", "").slice(0, 12);
-    const secretKey = `${TeamGitHubRepository.teamMemberGitHubSecretKey(team.id, actor.id)}-${secretRevision}`;
-    yield* TeamGitHubRepository.writeTeamGitHubSecret(secrets, secretKey, {
-      authMethod,
-      accessToken: input.payload.token.trim(),
-      apiBaseUrl: verified.apiBaseUrl,
-      githubLogin: verified.githubLogin,
-      githubName: verified.githubName,
-      githubEmail: verified.githubEmail,
-    });
-    const stored = yield* githubRepo
-      .upsertMemberCredential({
-        memberId: actor.id,
-        teamId: team.id,
-        authMethod,
-        githubLogin: verified.githubLogin,
-        githubName: verified.githubName,
-        githubEmail: verified.githubEmail,
-        apiBaseUrl: verified.apiBaseUrl,
-        secretKey,
-        connectedAt: Option.isSome(existingOpt) ? existingOpt.value.connectedAt : nowIso,
-        updatedAt: nowIso,
-        tokenExpiresAt: null,
-        hasRefreshToken: false,
-        needsReconnect: false,
-        reconnectReason: null,
-      })
-      .pipe(
-        Effect.onError(() =>
-          TeamGitHubRepository.removeTeamGitHubSecret(secrets, secretKey).pipe(Effect.ignore),
-        ),
-        Effect.mapError(toInternalError),
-      );
-    // Immediately invalidate prior active turn leases & recycle warm sessions on PAT rotation,
-    // then remove the superseded secret key after the DB commit has flipped to the new revision.
-    yield* notifyGitHubCredentialChanged({
-      kind: "member",
-      teamId: team.id,
-      memberId: actor.id,
-    });
-    if (Option.isSome(existingOpt) && existingOpt.value.secretKey !== secretKey) {
-      yield* TeamGitHubRepository.removeTeamGitHubSecret(secrets, existingOpt.value.secretKey).pipe(
-        Effect.ignore,
-      );
-    }
-    const identity = TeamGitHubRepository.stripMemberGitHubSecretKey(stored);
-    yield* publish({
-      version: 1,
-      type: "myGitHubIdentityUpdated",
-      payload: { memberId: actor.id, identity },
-    });
-    return identity;
+    return yield* TeamGitHubOAuth.withMemberGitHubCredentialMutationLock(
+      team.id,
+      actor.id,
+      Effect.gen(function* () {
+        TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, actor.id);
+        const nowIso = DateTime.formatIso(yield* DateTime.now);
+        const existingOpt = yield* githubRepo
+          .getMemberCredential(actor.id)
+          .pipe(Effect.mapError(toInternalError));
+        const secretRevision = (yield* random.uuidV4()).replaceAll("-", "").slice(0, 12);
+        const secretKey = `${TeamGitHubRepository.teamMemberGitHubSecretKey(team.id, actor.id)}-${secretRevision}`;
+        yield* TeamGitHubRepository.writeTeamGitHubSecret(secrets, secretKey, {
+          authMethod,
+          accessToken: input.payload.token.trim(),
+          apiBaseUrl: verified.apiBaseUrl,
+          githubLogin: verified.githubLogin,
+          githubName: verified.githubName,
+          githubEmail: verified.githubEmail,
+        });
+        const stored = yield* githubRepo
+          .upsertMemberCredential({
+            memberId: actor.id,
+            teamId: team.id,
+            authMethod,
+            githubLogin: verified.githubLogin,
+            githubName: verified.githubName,
+            githubEmail: verified.githubEmail,
+            apiBaseUrl: verified.apiBaseUrl,
+            secretKey,
+            connectedAt: Option.isSome(existingOpt) ? existingOpt.value.connectedAt : nowIso,
+            updatedAt: nowIso,
+            tokenExpiresAt: null,
+            hasRefreshToken: false,
+            needsReconnect: false,
+            reconnectReason: null,
+          })
+          .pipe(
+            Effect.onError(() =>
+              TeamGitHubRepository.removeTeamGitHubSecret(secrets, secretKey).pipe(Effect.ignore),
+            ),
+            Effect.mapError(toInternalError),
+          );
+        // Immediately invalidate prior active turn leases & recycle warm sessions on PAT rotation,
+        // then remove the superseded secret key after the DB commit has flipped to the new revision.
+        yield* notifyGitHubCredentialChanged({
+          kind: "member",
+          teamId: team.id,
+          memberId: actor.id,
+        });
+        if (Option.isSome(existingOpt) && existingOpt.value.secretKey !== secretKey) {
+          yield* TeamGitHubRepository.removeTeamGitHubSecret(
+            secrets,
+            existingOpt.value.secretKey,
+          ).pipe(Effect.ignore);
+        }
+        const identity = TeamGitHubRepository.stripMemberGitHubSecretKey(stored);
+        yield* publish({
+          version: 1,
+          type: "myGitHubIdentityUpdated",
+          payload: { memberId: actor.id, identity },
+        });
+        return identity;
+      }),
+    );
   });
 
   const disconnectMyGitHub = Effect.fn("TeamService.disconnectMyGitHub")(function* (input: {
@@ -10159,27 +10175,33 @@ const make = Effect.gen(function* () {
       });
     }
     const { githubRepo, secrets } = yield* requireGitHubDeps();
-    TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, actor.id);
-    const nowIso = DateTime.formatIso(yield* DateTime.now);
-    const removedSecretKeyOpt = yield* githubRepo
-      .deleteMemberCredential(actor.id, nowIso)
-      .pipe(Effect.mapError(toInternalError));
-    const fallbackSecretKey = TeamGitHubRepository.teamMemberGitHubSecretKey(team.id, actor.id);
-    yield* TeamGitHubRepository.removeTeamGitHubSecret(
-      secrets,
-      Option.getOrElse(removedSecretKeyOpt, () => fallbackSecretKey),
-    ).pipe(Effect.ignore);
-    yield* notifyGitHubCredentialChanged({
-      kind: "member",
-      teamId: team.id,
-      memberId: actor.id,
-    });
-    yield* publish({
-      version: 1,
-      type: "myGitHubIdentityUpdated",
-      payload: { memberId: actor.id, identity: null },
-    });
-    return { disconnected: Option.isSome(removedSecretKeyOpt) };
+    return yield* TeamGitHubOAuth.withMemberGitHubCredentialMutationLock(
+      team.id,
+      actor.id,
+      Effect.gen(function* () {
+        TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, actor.id);
+        const nowIso = DateTime.formatIso(yield* DateTime.now);
+        const removedSecretKeyOpt = yield* githubRepo
+          .deleteMemberCredential(actor.id, nowIso)
+          .pipe(Effect.mapError(toInternalError));
+        const fallbackSecretKey = TeamGitHubRepository.teamMemberGitHubSecretKey(team.id, actor.id);
+        yield* TeamGitHubRepository.removeTeamGitHubSecret(
+          secrets,
+          Option.getOrElse(removedSecretKeyOpt, () => fallbackSecretKey),
+        ).pipe(Effect.ignore);
+        yield* notifyGitHubCredentialChanged({
+          kind: "member",
+          teamId: team.id,
+          memberId: actor.id,
+        });
+        yield* publish({
+          version: 1,
+          type: "myGitHubIdentityUpdated",
+          payload: { memberId: actor.id, identity: null },
+        });
+        return { disconnected: Option.isSome(removedSecretKeyOpt) };
+      }),
+    );
   });
 
   const setAutomationGitHub = Effect.fn("TeamService.setAutomationGitHub")(function* (input: {
@@ -10403,74 +10425,81 @@ const make = Effect.gen(function* () {
         githubNameOverride: input.githubNameOverride,
         githubEmailOverride: input.githubEmailOverride,
       });
-      // Re-validate session, membership, config, and cancellation generation right before committing
-      // so any concurrent disconnect, suspension, cancellation, or config change aborts cleanly.
-      yield* input.verifyStillAuthorized;
-      const nowIso = DateTime.formatIso(yield* DateTime.now);
-      const existingOpt = yield* githubRepo
-        .getMemberCredential(input.memberId)
-        .pipe(Effect.mapError(toInternalError));
-      const secretRevision = (yield* random.uuidV4()).replaceAll("-", "").slice(0, 12);
-      const secretKey = `${TeamGitHubRepository.teamMemberGitHubSecretKey(input.teamId, input.memberId)}-${secretRevision}`;
-      yield* TeamGitHubRepository.writeTeamGitHubSecret(secrets, secretKey, {
-        authMethod: input.mode,
-        accessToken: input.tokenSet.accessToken,
-        ...(input.tokenSet.refreshToken !== null
-          ? { refreshToken: input.tokenSet.refreshToken }
-          : {}),
-        ...(input.tokenSet.expiresAt !== null ? { expiresAt: input.tokenSet.expiresAt } : {}),
-        ...(input.tokenSet.refreshTokenExpiresAt !== null
-          ? { refreshTokenExpiresAt: input.tokenSet.refreshTokenExpiresAt }
-          : {}),
-        tokenEndpoint: `${input.webBaseUrl}/login/oauth/access_token`,
-        webBaseUrl: input.webBaseUrl,
-        clientId: input.clientId,
-        apiBaseUrl: verified.apiBaseUrl,
-        githubLogin: verified.githubLogin,
-        githubName: verified.githubName,
-        githubEmail: verified.githubEmail,
-      });
-      const stored = yield* githubRepo
-        .upsertMemberCredential({
-          memberId: input.memberId,
-          teamId: input.teamId,
-          authMethod: input.mode,
-          githubLogin: verified.githubLogin,
-          githubName: verified.githubName,
-          githubEmail: verified.githubEmail,
-          apiBaseUrl: verified.apiBaseUrl,
-          secretKey,
-          connectedAt: Option.isSome(existingOpt) ? existingOpt.value.connectedAt : nowIso,
-          updatedAt: nowIso,
-          tokenExpiresAt: input.tokenSet.expiresAt,
-          hasRefreshToken: input.tokenSet.refreshToken !== null,
-          needsReconnect: false,
-          reconnectReason: null,
-        })
-        .pipe(
-          Effect.onError(() =>
-            TeamGitHubRepository.removeTeamGitHubSecret(secrets, secretKey).pipe(Effect.ignore),
-          ),
-          Effect.mapError(toInternalError),
-        );
-      yield* notifyGitHubCredentialChanged({
-        kind: "member",
-        teamId: input.teamId,
-        memberId: input.memberId,
-      });
-      if (Option.isSome(existingOpt) && existingOpt.value.secretKey !== secretKey) {
-        yield* TeamGitHubRepository.removeTeamGitHubSecret(
-          secrets,
-          existingOpt.value.secretKey,
-        ).pipe(Effect.ignore);
-      }
-      const identity = TeamGitHubRepository.stripMemberGitHubSecretKey(stored);
-      yield* publish({
-        version: 1,
-        type: "myGitHubIdentityUpdated",
-        payload: { memberId: input.memberId, identity },
-      });
-      return identity;
+      // Serialize authorization re-check + secret write + DB upsert + lease invalidation + publish
+      // with disconnect/PAT/refresh mutations so an in-flight OAuth completion can never resurrect
+      // a disconnected credential or overwrite a newer PAT/OAuth revision.
+      return yield* TeamGitHubOAuth.withMemberGitHubCredentialMutationLock(
+        input.teamId,
+        input.memberId,
+        Effect.gen(function* () {
+          yield* input.verifyStillAuthorized;
+          const nowIso = DateTime.formatIso(yield* DateTime.now);
+          const existingOpt = yield* githubRepo
+            .getMemberCredential(input.memberId)
+            .pipe(Effect.mapError(toInternalError));
+          const secretRevision = (yield* random.uuidV4()).replaceAll("-", "").slice(0, 12);
+          const secretKey = `${TeamGitHubRepository.teamMemberGitHubSecretKey(input.teamId, input.memberId)}-${secretRevision}`;
+          yield* TeamGitHubRepository.writeTeamGitHubSecret(secrets, secretKey, {
+            authMethod: input.mode,
+            accessToken: input.tokenSet.accessToken,
+            ...(input.tokenSet.refreshToken !== null
+              ? { refreshToken: input.tokenSet.refreshToken }
+              : {}),
+            ...(input.tokenSet.expiresAt !== null ? { expiresAt: input.tokenSet.expiresAt } : {}),
+            ...(input.tokenSet.refreshTokenExpiresAt !== null
+              ? { refreshTokenExpiresAt: input.tokenSet.refreshTokenExpiresAt }
+              : {}),
+            tokenEndpoint: `${input.webBaseUrl}/login/oauth/access_token`,
+            webBaseUrl: input.webBaseUrl,
+            clientId: input.clientId,
+            apiBaseUrl: verified.apiBaseUrl,
+            githubLogin: verified.githubLogin,
+            githubName: verified.githubName,
+            githubEmail: verified.githubEmail,
+          });
+          const stored = yield* githubRepo
+            .upsertMemberCredential({
+              memberId: input.memberId,
+              teamId: input.teamId,
+              authMethod: input.mode,
+              githubLogin: verified.githubLogin,
+              githubName: verified.githubName,
+              githubEmail: verified.githubEmail,
+              apiBaseUrl: verified.apiBaseUrl,
+              secretKey,
+              connectedAt: Option.isSome(existingOpt) ? existingOpt.value.connectedAt : nowIso,
+              updatedAt: nowIso,
+              tokenExpiresAt: input.tokenSet.expiresAt,
+              hasRefreshToken: input.tokenSet.refreshToken !== null,
+              needsReconnect: false,
+              reconnectReason: null,
+            })
+            .pipe(
+              Effect.onError(() =>
+                TeamGitHubRepository.removeTeamGitHubSecret(secrets, secretKey).pipe(Effect.ignore),
+              ),
+              Effect.mapError(toInternalError),
+            );
+          yield* notifyGitHubCredentialChanged({
+            kind: "member",
+            teamId: input.teamId,
+            memberId: input.memberId,
+          });
+          if (Option.isSome(existingOpt) && existingOpt.value.secretKey !== secretKey) {
+            yield* TeamGitHubRepository.removeTeamGitHubSecret(
+              secrets,
+              existingOpt.value.secretKey,
+            ).pipe(Effect.ignore);
+          }
+          const identity = TeamGitHubRepository.stripMemberGitHubSecretKey(stored);
+          yield* publish({
+            version: 1,
+            type: "myGitHubIdentityUpdated",
+            payload: { memberId: input.memberId, identity },
+          });
+          return identity;
+        }),
+      );
     },
   );
 
@@ -10877,7 +10906,13 @@ const make = Effect.gen(function* () {
         teamGeneration: outcome.flow.teamGeneration,
         isCancelled: () => outcome.flow.cancelled,
       }),
-    });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          githubOAuthFlowStore.deviceFlows.delete(outcome.flow.deviceFlowId);
+        }),
+      ),
+    );
     return {
       status: "completed" as const,
       intervalSeconds: PositiveInt.make(outcome.flow.intervalSeconds),

@@ -200,6 +200,7 @@ export interface PendingDeviceFlow {
   readonly memberGeneration: number;
   readonly teamGeneration: number;
   cancelled: boolean;
+  completing: boolean;
   intervalSeconds: number;
   nextPollAllowedAtMs: number;
   readonly expiresAtMs: number;
@@ -239,34 +240,42 @@ function pruneExpiredMap<T extends { readonly expiresAtMs: number }>(
   map: Map<string, T>,
   nowMs: number,
   maxEntries: number,
+  onEvict?: (entry: T) => void,
 ): void {
   for (const [key, entry] of map) {
     if (entry.expiresAtMs <= nowMs) {
+      onEvict?.(entry);
       map.delete(key);
     }
   }
   while (map.size >= maxEntries) {
-    const oldestKey = map.keys().next().value;
-    if (oldestKey === undefined) break;
+    const oldest = map.entries().next().value;
+    if (oldest === undefined) break;
+    const [oldestKey, oldestEntry] = oldest;
+    onEvict?.(oldestEntry);
     map.delete(oldestKey);
   }
 }
 
-function enforcePerMemberCap<T extends { readonly memberId: TeamMemberId }>(
+function enforcePerMemberCap<T>(
   map: Map<string, T>,
   memberId: TeamMemberId,
   maxPerMember: number,
+  getMemberId: (entry: T) => TeamMemberId,
+  onEvict?: (entry: T) => void,
 ): void {
-  const memberKeys: Array<string> = [];
+  const memberEntries: Array<readonly [string, T]> = [];
   for (const [key, entry] of map) {
-    if (entry.memberId === memberId) {
-      memberKeys.push(key);
+    if (getMemberId(entry) === memberId) {
+      memberEntries.push([key, entry]);
     }
   }
-  while (memberKeys.length >= maxPerMember) {
-    const oldest = memberKeys.shift();
+  while (memberEntries.length >= maxPerMember) {
+    const oldest = memberEntries.shift();
     if (oldest !== undefined) {
-      map.delete(oldest);
+      const [oldestKey, oldestEntry] = oldest;
+      onEvict?.(oldestEntry);
+      map.delete(oldestKey);
     }
   }
 }
@@ -331,7 +340,12 @@ export const startBrowserOAuthFlow = Effect.fn("TeamGitHubOAuth.startBrowserFlow
     const callbackUrl = yield* normalizeGitHubOAuthCallbackUrl(input.redirectBaseUrl);
     const nowMs = yield* Clock.currentTimeMillis;
     pruneExpiredMap(input.store.browserStates, nowMs, MAX_PENDING_OAUTH_STATES);
-    enforcePerMemberCap(input.store.browserStates, input.memberId, MAX_PENDING_FLOWS_PER_MEMBER);
+    enforcePerMemberCap(
+      input.store.browserStates,
+      input.memberId,
+      MAX_PENDING_FLOWS_PER_MEMBER,
+      (entry) => entry.memberId,
+    );
 
     const state = NodeCrypto.randomBytes(32).toString("base64url");
     const codeVerifier = generatePkceCodeVerifier();
@@ -389,6 +403,12 @@ export const createPendingBrowserOAuthConfirmation = Effect.fn(
 }): Effect.fn.Return<{ readonly confirmationCode: string }> {
   const nowMs = yield* Clock.currentTimeMillis;
   pruneExpiredMap(input.store.browserConfirmations, nowMs, MAX_PENDING_OAUTH_CONFIRMATIONS);
+  enforcePerMemberCap(
+    input.store.browserConfirmations,
+    input.pending.memberId,
+    MAX_PENDING_FLOWS_PER_MEMBER,
+    (entry) => entry.pending.memberId,
+  );
   const confirmationCode = generateConfirmationCode();
   input.store.browserConfirmations.set(input.pending.state, {
     state: input.pending.state,
@@ -727,8 +747,17 @@ export const startDeviceAuthorizationFlow = Effect.fn("TeamGitHubOAuth.startDevi
     }
 
     const nowMs = yield* Clock.currentTimeMillis;
-    pruneExpiredMap(input.store.deviceFlows, nowMs, MAX_PENDING_DEVICE_FLOWS);
-    enforcePerMemberCap(input.store.deviceFlows, input.memberId, MAX_PENDING_FLOWS_PER_MEMBER);
+    const markEvictedCancelled = (entry: PendingDeviceFlow) => {
+      entry.cancelled = true;
+    };
+    pruneExpiredMap(input.store.deviceFlows, nowMs, MAX_PENDING_DEVICE_FLOWS, markEvictedCancelled);
+    enforcePerMemberCap(
+      input.store.deviceFlows,
+      input.memberId,
+      MAX_PENDING_FLOWS_PER_MEMBER,
+      (entry) => entry.memberId,
+      markEvictedCancelled,
+    );
     const expiresInSeconds = Math.max(
       30,
       Math.min(Math.floor(parsed.expires_in ?? 900), MAX_DEVICE_FLOW_TTL_SECONDS),
@@ -762,6 +791,7 @@ export const startDeviceAuthorizationFlow = Effect.fn("TeamGitHubOAuth.startDevi
       memberGeneration: getMemberOAuthGeneration(input.store, input.memberId),
       teamGeneration: getTeamOAuthGeneration(input.store, input.teamId),
       cancelled: false,
+      completing: false,
       intervalSeconds,
       // Allow the first poll immediately after the user authorizes on GitHub.
       nextPollAllowedAtMs: nowMs,
@@ -816,11 +846,14 @@ export const pollDeviceAuthorizationFlow = Effect.fn("TeamGitHubOAuth.pollDevice
       Effect.gen(function* () {
         if (
           flow.cancelled ||
+          flow.completing ||
           !input.store.deviceFlows.has(input.deviceFlowId) ||
           getMemberOAuthGeneration(input.store, flow.memberId) !== flow.memberGeneration ||
           getTeamOAuthGeneration(input.store, flow.teamId) !== flow.teamGeneration
         ) {
-          input.store.deviceFlows.delete(input.deviceFlowId);
+          if (!flow.completing) {
+            input.store.deviceFlows.delete(input.deviceFlowId);
+          }
           return yield* new TeamOperationError({
             code: "not_found",
             message: "GitHub device sign-in session has been cancelled, completed, or expired.",
@@ -866,22 +899,24 @@ export const pollDeviceAuthorizationFlow = Effect.fn("TeamGitHubOAuth.pollDevice
           } as const;
         }
 
-        const { status, bodyText } = yield* postGitHubOAuthForm({
-          httpClient: input.httpClient,
-          webBaseUrl: flow.webBaseUrl,
-          path: "/login/oauth/access_token",
-          params: {
-            client_id: flow.clientId,
-            device_code: flow.deviceCode,
-            grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-          },
-          ...(input.allowedApiOrigins === undefined
-            ? {}
-            : { allowedApiOrigins: input.allowedApiOrigins }),
-          ...(input.resolveHostAddresses === undefined
-            ? {}
-            : { resolveHostAddresses: input.resolveHostAddresses }),
-        });
+        const postResult = yield* Effect.result(
+          postGitHubOAuthForm({
+            httpClient: input.httpClient,
+            webBaseUrl: flow.webBaseUrl,
+            path: "/login/oauth/access_token",
+            params: {
+              client_id: flow.clientId,
+              device_code: flow.deviceCode,
+              grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+            },
+            ...(input.allowedApiOrigins === undefined
+              ? {}
+              : { allowedApiOrigins: input.allowedApiOrigins }),
+            ...(input.resolveHostAddresses === undefined
+              ? {}
+              : { resolveHostAddresses: input.resolveHostAddresses }),
+          }),
+        );
 
         // Re-check cancellation / member or team purge after outbound network I/O.
         if (
@@ -897,8 +932,31 @@ export const pollDeviceAuthorizationFlow = Effect.fn("TeamGitHubOAuth.pollDevice
           });
         }
 
+        if (postResult._tag === "Failure") {
+          // Transient transport/timeout error: keep flow alive and retry on the next poll interval.
+          flow.nextPollAllowedAtMs = nowMs + flow.intervalSeconds * 1_000;
+          return {
+            kind: "result",
+            result: {
+              status: "pending",
+              intervalSeconds: PositiveInt.make(flow.intervalSeconds),
+            },
+          } as const;
+        }
+
+        const { status, bodyText } = postResult.success;
         const decodedOpt = decodeGitHubTokenResponse(bodyText);
         if (Option.isNone(decodedOpt)) {
+          if (status >= 500 || status === 429 || status === 408) {
+            flow.nextPollAllowedAtMs = nowMs + flow.intervalSeconds * 1_000;
+            return {
+              kind: "result",
+              result: {
+                status: "pending",
+                intervalSeconds: PositiveInt.make(flow.intervalSeconds),
+              },
+            } as const;
+          }
           return yield* new TeamOperationError({
             code: "github_oauth_failed",
             message: `GitHub device token polling failed with HTTP ${status}.`,
@@ -907,7 +965,9 @@ export const pollDeviceAuthorizationFlow = Effect.fn("TeamGitHubOAuth.pollDevice
         const parsed = decodedOpt.value;
         if (parsed.error) {
           switch (parsed.error) {
-            case "authorization_pending": {
+            case "authorization_pending":
+            case "temporarily_unavailable":
+            case "server_error": {
               flow.nextPollAllowedAtMs = nowMs + flow.intervalSeconds * 1_000;
               return {
                 kind: "result",
@@ -979,6 +1039,16 @@ export const pollDeviceAuthorizationFlow = Effect.fn("TeamGitHubOAuth.pollDevice
           }
         }
 
+        if (status >= 500 || status === 429 || status === 408) {
+          flow.nextPollAllowedAtMs = nowMs + flow.intervalSeconds * 1_000;
+          return {
+            kind: "result",
+            result: {
+              status: "pending",
+              intervalSeconds: PositiveInt.make(flow.intervalSeconds),
+            },
+          } as const;
+        }
         if (status < 200 || status >= 300) {
           return yield* new TeamOperationError({
             code: "github_oauth_failed",
@@ -997,7 +1067,9 @@ export const pollDeviceAuthorizationFlow = Effect.fn("TeamGitHubOAuth.pollDevice
             },
           } as const;
         }
-        input.store.deviceFlows.delete(input.deviceFlowId);
+        // Keep the flow in `store.deviceFlows` while `/user` verification runs so `cancelGitHubDeviceFlow`
+        // can still cancel it; `completing = true` prevents a duplicate poll from re-exchanging `device_code`.
+        flow.completing = true;
         return {
           kind: "authorized",
           flow,
@@ -1011,6 +1083,9 @@ export const pollDeviceAuthorizationFlow = Effect.fn("TeamGitHubOAuth.pollDevice
 // Per-(teamId, memberId) refresh locks serialize concurrent token refreshes so GitHub's single-use
 // rotated refresh_token is never clobbered by parallel turns or broker requests.
 const memberRefreshLocks = new Map<string, Semaphore.Semaphore>();
+// Separate fast local commit lock serializes secret/DB/lease/publish critical sections across
+// connect, disconnect, OAuth persist, and refresh commits without blocking on outbound network I/O.
+const memberCredentialMutationLocks = new Map<string, Semaphore.Semaphore>();
 
 function memberRefreshLockKey(teamId: TeamId, memberId: TeamMemberId): string {
   return `${teamId}::${memberId}`;
@@ -1024,6 +1099,20 @@ function getMemberGitHubRefreshLock(teamId: TeamId, memberId: TeamMemberId): Sem
     memberRefreshLocks.set(key, lock);
   }
   return lock;
+}
+
+export function withMemberGitHubCredentialMutationLock<A, E, R>(
+  teamId: TeamId,
+  memberId: TeamMemberId,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> {
+  const key = memberRefreshLockKey(teamId, memberId);
+  let lock = memberCredentialMutationLocks.get(key);
+  if (!lock) {
+    lock = Semaphore.makeUnsafe(1);
+    memberCredentialMutationLocks.set(key, lock);
+  }
+  return lock.withPermits(1)(effect);
 }
 
 export interface ResolvedFreshMemberGitHubCredential {
@@ -1123,32 +1212,38 @@ export const resolveFreshMemberGitHubCredential = Effect.fn(
     record: TeamGitHubRepository.StoredMemberGitHubRecord,
     reason: string,
   ) {
-    // Guard with secret_key CAS so a stale refresh failure never marks a newer PAT/OAuth credential
-    // as needsReconnect or revokes the new credential's active turn leases.
-    const updatedOpt = yield* input.githubRepo
-      .updateMemberCredentialRefreshState({
-        memberId: input.memberId,
-        expectedSecretKey: record.secretKey,
-        tokenExpiresAt: null,
-        hasRefreshToken: false,
-        needsReconnect: true,
-        reconnectReason: reason,
-      })
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    if (Option.isNone(updatedOpt)) {
-      return;
-    }
-    yield* TeamGitHubRepository.removeTeamGitHubSecret(input.secrets, record.secretKey).pipe(
-      Effect.ignore,
+    // Serialize CAS update + secret removal + lease revocation + state publish with credential mutations
+    // so a concurrent PAT/OAuth replacement cannot interleave and lose its leases or read model.
+    yield* withMemberGitHubCredentialMutationLock(
+      input.teamId,
+      input.memberId,
+      Effect.gen(function* () {
+        const updatedOpt = yield* input.githubRepo
+          .updateMemberCredentialRefreshState({
+            memberId: input.memberId,
+            expectedSecretKey: record.secretKey,
+            tokenExpiresAt: null,
+            hasRefreshToken: false,
+            needsReconnect: true,
+            reconnectReason: reason,
+          })
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (Option.isNone(updatedOpt)) {
+          return;
+        }
+        yield* TeamGitHubRepository.removeTeamGitHubSecret(input.secrets, record.secretKey).pipe(
+          Effect.ignore,
+        );
+        if (input.onRefreshRevoked) {
+          yield* input.onRefreshRevoked(input.memberId).pipe(Effect.ignore);
+        }
+        if (input.onIdentityUpdated) {
+          yield* input
+            .onIdentityUpdated(TeamGitHubRepository.stripMemberGitHubSecretKey(updatedOpt.value))
+            .pipe(Effect.ignore);
+        }
+      }),
     );
-    if (input.onRefreshRevoked) {
-      yield* input.onRefreshRevoked(input.memberId).pipe(Effect.ignore);
-    }
-    if (input.onIdentityUpdated) {
-      yield* input
-        .onIdentityUpdated(TeamGitHubRepository.stripMemberGitHubSecretKey(updatedOpt.value))
-        .pipe(Effect.ignore);
-    }
   });
 
   // Fast path: PATs, non-expiring OAuth tokens, and fresh tokens bypass the refresh Semaphore.
@@ -1259,7 +1354,7 @@ export const resolveFreshMemberGitHubCredential = Effect.fn(
       // Never send a stored refresh_token to a different host or OAuth/GitHub App client_id.
       const hostMatches =
         secret.webBaseUrl !== undefined && secret.webBaseUrl === appConfig.webBaseUrl;
-      const clientMatches = secret.clientId === undefined || secret.clientId === appConfig.clientId;
+      const clientMatches = secret.clientId !== undefined && secret.clientId === appConfig.clientId;
       if (!hostMatches || !clientMatches) {
         if (stillValid && (yield* verifyRecordUnchanged(record))) {
           return {
@@ -1376,59 +1471,70 @@ export const resolveFreshMemberGitHubCredential = Effect.fn(
         return null;
       }
 
-      // Re-verify credential revision before writing to ServerSecretStore so a disconnect or
-      // PAT/OAuth rotation during the HTTP refresh never gets clobbered or resurrected.
-      if (!(yield* verifyRecordUnchanged(record))) {
-        return null;
-      }
+      // Serialize secret write + CAS update + state publish with credential mutations so a disconnect
+      // or PAT/OAuth replacement cannot interleave, resurrect a deleted secret, or publish stale state.
+      const committed = yield* withMemberGitHubCredentialMutationLock(
+        input.teamId,
+        input.memberId,
+        Effect.gen(function* () {
+          if (!(yield* verifyRecordUnchanged(record))) {
+            return false;
+          }
 
-      const nextRefreshToken = tokenSet.refreshToken ?? refreshToken;
-      const nextRefreshTokenExpiresAt =
-        tokenSet.refreshTokenExpiresAt ?? secret.refreshTokenExpiresAt ?? undefined;
-      const nextSecret: TeamGitHubRepository.StoredTeamGitHubSecret = {
-        ...secret,
-        accessToken: tokenSet.accessToken,
-        ...(nextRefreshToken.length > 0 ? { refreshToken: nextRefreshToken } : {}),
-        ...(tokenSet.expiresAt !== null ? { expiresAt: tokenSet.expiresAt } : {}),
-        ...(nextRefreshTokenExpiresAt !== undefined
-          ? { refreshTokenExpiresAt: nextRefreshTokenExpiresAt }
-          : {}),
-        tokenEndpoint: `${appConfig.webBaseUrl}/login/oauth/access_token`,
-        webBaseUrl: appConfig.webBaseUrl,
-        clientId: appConfig.clientId,
-      };
-      const writeResult = yield* Effect.result(
-        TeamGitHubRepository.writeTeamGitHubSecret(input.secrets, record.secretKey, nextSecret),
+          const nextRefreshToken = tokenSet.refreshToken ?? refreshToken;
+          const nextRefreshTokenExpiresAt =
+            tokenSet.refreshTokenExpiresAt ?? secret.refreshTokenExpiresAt ?? undefined;
+          const { expiresAt: _prevExpiresAt, ...baseSecret } = secret;
+          const nextSecret: TeamGitHubRepository.StoredTeamGitHubSecret = {
+            ...baseSecret,
+            accessToken: tokenSet.accessToken,
+            ...(nextRefreshToken.length > 0 ? { refreshToken: nextRefreshToken } : {}),
+            ...(tokenSet.expiresAt !== null ? { expiresAt: tokenSet.expiresAt } : {}),
+            ...(nextRefreshTokenExpiresAt !== undefined
+              ? { refreshTokenExpiresAt: nextRefreshTokenExpiresAt }
+              : {}),
+            tokenEndpoint: `${appConfig.webBaseUrl}/login/oauth/access_token`,
+            webBaseUrl: appConfig.webBaseUrl,
+            clientId: appConfig.clientId,
+          };
+          const writeResult = yield* Effect.result(
+            TeamGitHubRepository.writeTeamGitHubSecret(input.secrets, record.secretKey, nextSecret),
+          );
+          if (writeResult._tag === "Failure") {
+            return false;
+          }
+
+          const updatedRecordOpt = yield* input.githubRepo
+            .updateMemberCredentialRefreshState({
+              memberId: input.memberId,
+              expectedSecretKey: record.secretKey,
+              tokenExpiresAt: tokenSet.expiresAt,
+              hasRefreshToken: nextRefreshToken.length > 0,
+              needsReconnect: false,
+              reconnectReason: null,
+            })
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+
+          if (Option.isNone(updatedRecordOpt)) {
+            yield* TeamGitHubRepository.removeTeamGitHubSecret(
+              input.secrets,
+              record.secretKey,
+            ).pipe(Effect.ignore);
+            return false;
+          }
+
+          if (input.onIdentityUpdated) {
+            yield* input
+              .onIdentityUpdated(
+                TeamGitHubRepository.stripMemberGitHubSecretKey(updatedRecordOpt.value),
+              )
+              .pipe(Effect.ignore);
+          }
+          return true;
+        }),
       );
-      if (writeResult._tag === "Failure") {
+      if (!committed) {
         return null;
-      }
-
-      const updatedRecordOpt = yield* input.githubRepo
-        .updateMemberCredentialRefreshState({
-          memberId: input.memberId,
-          expectedSecretKey: record.secretKey,
-          tokenExpiresAt: tokenSet.expiresAt,
-          hasRefreshToken: nextRefreshToken.length > 0,
-          needsReconnect: false,
-          reconnectReason: null,
-        })
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-
-      if (Option.isNone(updatedRecordOpt)) {
-        // Credential was disconnected or replaced concurrently; clean up the orphaned secret and fail closed.
-        yield* TeamGitHubRepository.removeTeamGitHubSecret(input.secrets, record.secretKey).pipe(
-          Effect.ignore,
-        );
-        return null;
-      }
-
-      if (input.onIdentityUpdated) {
-        yield* input
-          .onIdentityUpdated(
-            TeamGitHubRepository.stripMemberGitHubSecretKey(updatedRecordOpt.value),
-          )
-          .pipe(Effect.ignore);
       }
 
       return {

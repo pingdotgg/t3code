@@ -64,7 +64,11 @@ interface MockOAuthGitHubServer {
     readonly entered: Promise<void>;
     readonly release: () => void;
   };
-  readonly setNextExpiresIn: (seconds: number) => void;
+  readonly holdNextUserFetch: () => {
+    readonly entered: Promise<void>;
+    readonly release: () => void;
+  };
+  readonly setNextExpiresIn: (seconds: number | null) => void;
   readonly authorizeDeviceCode: (userCode: string, login?: string) => void;
   readonly setDeviceNextError: (userCode: string, error: string | null) => void;
   readonly registerAuthCode: (input: {
@@ -125,12 +129,16 @@ function startMockOAuthGitHubServer(): Promise<MockOAuthGitHubServer> {
     readonly onEntered: () => void;
     readonly waitRelease: Promise<void>;
   } | null = null;
-  let nextExpiresIn = 28_800;
+  let pendingUserFetchGate: {
+    readonly onEntered: () => void;
+    readonly waitRelease: Promise<void>;
+  } | null = null;
+  let nextExpiresIn: number | null = 28_800;
   const tokenExchangeBodies: Array<Record<string, string>> = [];
 
   const mintTokenPair = (
     user: { readonly login: string; readonly name: string; readonly email: string },
-    options?: { readonly expiresIn?: number; readonly withRefreshToken?: boolean },
+    options?: { readonly expiresIn?: number | null; readonly withRefreshToken?: boolean },
   ) => {
     tokenSeq += 1;
     const accessToken = `ghu_access_${user.login}_${tokenSeq}`;
@@ -148,7 +156,9 @@ function startMockOAuthGitHubServer(): Promise<MockOAuthGitHubServer> {
     return {
       access_token: accessToken,
       token_type: "bearer",
-      ...(options?.expiresIn !== undefined ? { expires_in: options.expiresIn } : {}),
+      ...(options?.expiresIn !== undefined && options.expiresIn !== null
+        ? { expires_in: options.expiresIn }
+        : {}),
       ...(refreshToken
         ? {
             refresh_token: refreshToken,
@@ -281,6 +291,12 @@ function startMockOAuthGitHubServer(): Promise<MockOAuthGitHubServer> {
               }
               if (entry.nextError !== null) {
                 const err = entry.nextError;
+                if (err === "http_503_html") {
+                  entry.nextError = null;
+                  res.writeHead(503, { "content-type": "text/html" });
+                  res.end("<html><body>503 Service Unavailable</body></html>");
+                  return;
+                }
                 if (err === "slow_down") {
                   entry.nextError = "authorization_pending";
                   res.writeHead(200, { "content-type": "application/json" });
@@ -366,8 +382,20 @@ function startMockOAuthGitHubServer(): Promise<MockOAuthGitHubServer> {
           return;
         }
         if (pathname === "/user") {
-          res.writeHead(200, { "content-type": "application/json" });
-          res.end(JSON.stringify({ id: user.id, login: user.login, name: user.name, email: null }));
+          const respondUser = () => {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(
+              JSON.stringify({ id: user.id, login: user.login, name: user.name, email: null }),
+            );
+          };
+          const userGate = pendingUserFetchGate;
+          if (userGate !== null) {
+            pendingUserFetchGate = null;
+            userGate.onEntered();
+            void userGate.waitRelease.then(respondUser);
+          } else {
+            respondUser();
+          }
           return;
         }
         if (pathname === "/user/emails") {
@@ -430,6 +458,18 @@ function startMockOAuthGitHubServer(): Promise<MockOAuthGitHubServer> {
           pendingDevicePollGate = { onEntered, waitRelease };
           return { entered, release };
         },
+        holdNextUserFetch: () => {
+          let onEntered!: () => void;
+          let release!: () => void;
+          const entered = new Promise<void>((r) => {
+            onEntered = r;
+          });
+          const waitRelease = new Promise<void>((r) => {
+            release = r;
+          });
+          pendingUserFetchGate = { onEntered, waitRelease };
+          return { entered, release };
+        },
         setNextExpiresIn: (s) => {
           nextExpiresIn = s;
         },
@@ -478,7 +518,9 @@ function swapAllowedGitHubOriginsEnv(value: string | undefined): string | undefi
   return prev;
 }
 
-function makeFullTestLayer() {
+function makeFullTestLayer(options?: {
+  readonly onSecretSet?: (key: string) => Effect.Effect<void>;
+}) {
   const platform = Layer.mergeAll(
     NodeServices.layer,
     NodeEffectCrypto.layer,
@@ -488,7 +530,20 @@ function makeFullTestLayer() {
     prefix: "t3-team-gh-oauth-test-",
   }).pipe(Layer.provideMerge(platform));
   const persistence = SqlitePersistence.layerMemory.pipe(Layer.provide(base));
-  const secrets = ServerSecretStore.layer.pipe(Layer.provide(base));
+  const rawSecrets = ServerSecretStore.layer.pipe(Layer.provide(base));
+  const secrets = options?.onSecretSet
+    ? Layer.effect(
+        ServerSecretStore.ServerSecretStore,
+        Effect.gen(function* () {
+          const inner = yield* ServerSecretStore.ServerSecretStore;
+          return {
+            ...inner,
+            set: (name, value) =>
+              options.onSecretSet!(name).pipe(Effect.andThen(inner.set(name, value))),
+          };
+        }),
+      ).pipe(Layer.provide(rawSecrets))
+    : rawSecrets;
   const authSessions = AuthSessions.layer.pipe(Layer.provide(persistence));
   const serverEnv = ServerEnvironment.layer.pipe(Layer.provide(secrets), Layer.provide(base));
   const sessions = SessionStore.layer.pipe(
@@ -1052,6 +1107,50 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
         const inFlightOutcome = yield* Fiber.join(inFlightPollFiber);
         expect(inFlightOutcome._tag).toBe("Failure");
         expect((yield* team.getState(bobSessionId)).myGitHubIdentity).toBeNull();
+
+        // In-flight cancel during `/user` verification (AFTER device token exchange) MUST also cancel & abort!
+        const startedCancelDuringUser = yield* team.startGitHubDeviceFlow({
+          sessionId: bobSessionId,
+          payload: {},
+        });
+        mockGitHub.authorizeDeviceCode(startedCancelDuringUser.userCode, "bob-cancelled-user");
+        const userGate = mockGitHub.holdNextUserFetch();
+        const cancelUserFiber = yield* Effect.forkChild(
+          Effect.result(
+            team.pollGitHubDeviceFlow({
+              sessionId: bobSessionId,
+              payload: { deviceFlowId: startedCancelDuringUser.deviceFlowId },
+            }),
+          ),
+        );
+        yield* Effect.promise(() => userGate.entered);
+        const cancelDuringUserRes = yield* team.cancelGitHubDeviceFlow({
+          sessionId: bobSessionId,
+          payload: { deviceFlowId: startedCancelDuringUser.deviceFlowId },
+        });
+        expect(cancelDuringUserRes.cancelled).toBe(true);
+        userGate.release();
+        const cancelDuringUserOutcome = yield* Fiber.join(cancelUserFiber);
+        expect(cancelDuringUserOutcome._tag).toBe("Failure");
+        expect((yield* team.getState(bobSessionId)).myGitHubIdentity).toBeNull();
+
+        // Transient GitHub HTTP 503 HTML outage during device polling returns retryable pending, NOT fatal error.
+        const startedTransient = yield* team.startGitHubDeviceFlow({
+          sessionId: bobSessionId,
+          payload: {},
+        });
+        mockGitHub.setDeviceNextError(startedTransient.userCode, "http_503_html");
+        const poll503 = yield* team.pollGitHubDeviceFlow({
+          sessionId: bobSessionId,
+          payload: { deviceFlowId: startedTransient.deviceFlowId },
+        });
+        expect(poll503.status).toBe("pending");
+        expect(
+          (yield* team.cancelGitHubDeviceFlow({
+            sessionId: bobSessionId,
+            payload: { deviceFlowId: startedTransient.deviceFlowId },
+          })).cancelled,
+        ).toBe(true);
       }).pipe(Effect.provide(makeFullTestLayer())),
   );
 
@@ -1404,6 +1503,55 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
           yield* TeamGitHubRepository.readTeamGitHubSecret(secrets, race2Cred.secretKey),
         ).toBeNull();
 
+        // Refresh returning a non-expiring token (no expires_in) clears stale expiresAt and stops loop-refreshing.
+        const startedNoExp = yield* team.startGitHubOAuth({
+          sessionId: aliceSession.sessionId,
+          payload: { redirectBaseUrl: "http://127.0.0.1:41999" },
+        });
+        mockGitHub.registerAuthCode({
+          code: "code_alice_no_exp",
+          codeChallenge: new URL(startedNoExp.authorizeUrl).searchParams.get("code_challenge")!,
+          login: "alice-app",
+          name: "Alice App",
+          email: "alice@app.example",
+          expiresIn: 60,
+          withRefreshToken: true,
+        });
+        yield* team.completeGitHubOAuthCallback({
+          code: "code_alice_no_exp",
+          state: startedNoExp.state,
+          callbackSessionId: aliceSession.sessionId,
+        });
+        const noExpCred = Option.getOrThrow(yield* githubRepo.getMemberCredential(init.owner.id));
+        const hitsBeforeNoExp = mockGitHub.refreshHits();
+        mockGitHub.setNextExpiresIn(null);
+        const noExpLease = yield* broker.issueRemoteTurnLease({
+          teamId: init.team.id,
+          environmentId: remoteEnvId,
+          threadId,
+          turnId: "turn-no-exp",
+          authorKind: "member",
+          authorMemberId: init.owner.id,
+        });
+        expect(noExpLease.hasCredential).toBe(true);
+        expect(mockGitHub.refreshHits()).toBe(hitsBeforeNoExp + 1);
+        const storedAfterNoExp = yield* TeamGitHubRepository.readTeamGitHubSecret(
+          secrets,
+          noExpCred.secretKey,
+        );
+        expect(storedAfterNoExp?.expiresAt).toBeUndefined();
+        // Next resolution MUST NOT trigger another refresh!
+        const resolvedNoExp = yield* broker.resolveRemoteTurnLease({
+          leaseId: noExpLease.leaseId!,
+          leaseToken: noExpLease.leaseToken!,
+          environmentId: remoteEnvId,
+          threadId,
+          turnId: "turn-no-exp",
+        });
+        expect(resolvedNoExp?.token).toBe(storedAfterNoExp?.accessToken);
+        expect(mockGitHub.refreshHits()).toBe(hitsBeforeNoExp + 1);
+        mockGitHub.setNextExpiresIn(28_800);
+
         // Final sequential reconnect + disconnect immediately revokes active local & remote turn leases.
         const startedFinal = yield* team.startGitHubOAuth({
           sessionId: aliceSession.sessionId,
@@ -1454,5 +1602,111 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
         });
         expect(afterDisconnectResolve).toBeNull();
       }).pipe(Effect.provide(makeFullTestLayer())),
+  );
+
+  it.live(
+    "serializes OAuth secret storage against concurrent disconnect so disconnected credentials are never resurrected",
+    () => {
+      let secretSetGate: {
+        readonly onEntered: () => void;
+        readonly waitRelease: Promise<void>;
+      } | null = null;
+      return Effect.gen(function* () {
+        const mockGitHub = yield* Effect.acquireRelease(
+          Effect.promise(() => startMockOAuthGitHubServer()),
+          (m) => Effect.promise(() => m.close()),
+        );
+        yield* Effect.acquireRelease(
+          Effect.sync(() => swapAllowedGitHubOriginsEnv(mockGitHub.baseUrl)),
+          (prev) =>
+            Effect.sync(() => {
+              swapAllowedGitHubOriginsEnv(prev);
+            }),
+        );
+
+        const team = yield* TeamService.TeamService;
+        const githubRepo = yield* TeamGitHubRepository.TeamGitHubRepository;
+        const sessionStore = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessionStore.issue({
+          subject: "alice",
+          scopes: ["orchestration:read", "orchestration:operate", "access:write"],
+          client: { label: "Alice", deviceType: "desktop", os: "linux" },
+        });
+        const init = yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "Acme Secret Gate", ownerPseudo: "alice" },
+        });
+        yield* team.setGitHubAppConfig({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            mode: "github_app",
+            clientId: "Iv1.secretgate",
+            clientSecret: "GATE_SECRET",
+            webBaseUrl: mockGitHub.baseUrl,
+            apiBaseUrl: mockGitHub.baseUrl,
+            enabled: true,
+          },
+        });
+
+        const started = yield* team.startGitHubOAuth({
+          sessionId: aliceSession.sessionId,
+          payload: { redirectBaseUrl: "http://127.0.0.1:41999" },
+        });
+        mockGitHub.registerAuthCode({
+          code: "code_alice_gate",
+          codeChallenge: new URL(started.authorizeUrl).searchParams.get("code_challenge")!,
+          login: "alice-gated",
+          name: "Alice Gated",
+          email: "alice@gated.example",
+          expiresIn: 28_800,
+          withRefreshToken: true,
+        });
+
+        // Block ServerSecretStore.set on the member credential key, start disconnect while blocked,
+        // then release secret storage -> disconnect runs strictly after commit and removes the credential!
+        let onEntered!: () => void;
+        let release!: () => void;
+        const entered = new Promise<void>((r) => {
+          onEntered = r;
+        });
+        const waitRelease = new Promise<void>((r) => {
+          release = r;
+        });
+        secretSetGate = { onEntered, waitRelease };
+
+        const oauthFiber = yield* Effect.forkChild(
+          team.completeGitHubOAuthCallback({
+            code: "code_alice_gate",
+            state: started.state,
+            callbackSessionId: aliceSession.sessionId,
+          }),
+        );
+        yield* Effect.promise(() => entered);
+        const disconnectFiber = yield* Effect.forkChild(
+          team.disconnectMyGitHub({ sessionId: aliceSession.sessionId }),
+        );
+        release();
+        yield* Fiber.join(oauthFiber);
+        const disconnectRes = yield* Fiber.join(disconnectFiber);
+        expect(disconnectRes.disconnected).toBe(true);
+        expect(Option.isNone(yield* githubRepo.getMemberCredential(init.owner.id))).toBe(true);
+        expect((yield* team.getState(aliceSession.sessionId)).myGitHubIdentity).toBeNull();
+      }).pipe(
+        Effect.provide(
+          makeFullTestLayer({
+            onSecretSet: (key) => {
+              if (secretSetGate !== null && key.startsWith("team-github-member-")) {
+                const gate = secretSetGate;
+                secretSetGate = null;
+                gate.onEntered();
+                return Effect.promise(() => gate.waitRelease);
+              }
+              return Effect.void;
+            },
+          }),
+        ),
+      );
+    },
   );
 });

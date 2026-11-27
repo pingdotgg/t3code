@@ -454,7 +454,17 @@ export function TeamGitHubSettingsSection({
       return;
     }
     if (!isAtomCommandInterrupted(result)) {
-      reportError(gt("Could not finish GitHub sign-in"), squashAtomCommandFailure(result));
+      const failure = squashAtomCommandFailure(result);
+      if (
+        typeof failure === "object" &&
+        failure !== null &&
+        "code" in failure &&
+        failure.code === "github_oauth_state_invalid"
+      ) {
+        setPendingOAuth(null);
+        setOAuthConfirmationCode("");
+      }
+      reportError(gt("Could not finish GitHub sign-in"), failure);
     }
   };
 
