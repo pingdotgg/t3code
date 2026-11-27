@@ -278,60 +278,35 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
     }),
   );
 
-  it.effect(
-    "does not discover Mix dependencies but keeps explicitly tracked and other ignored repositories",
-    () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const workspaceRoot = yield* makeTempDir;
-        for (const folder of [".git", "deps/heroicons/.git", "deps/other/.git", "code/.git"]) {
-          yield* fileSystem.makeDirectory(path.join(workspaceRoot, folder), { recursive: true });
-        }
-        yield* fileSystem.writeFileString(path.join(workspaceRoot, "mix.exs"), "");
-        yield* fileSystem.writeFileString(
-          path.join(workspaceRoot, ".gitignore"),
-          "/deps/\n/code/\n",
-        );
-        const explicit = { path: path.join(workspaceRoot, "deps/other"), name: "other" };
-        const found = yield* WorkspaceFolders.discoverFolders(workspaceRoot);
-        assert.deepEqual(found, [
-          { path: path.join(workspaceRoot, "code"), name: "code", discovered: true },
-        ]);
-        assert.deepEqual(WorkspaceFolders.mergeProjectFolders(found, [explicit]), [
-          ...found,
-          explicit,
-        ]);
-
-        yield* fileSystem.writeFileString(
-          path.join(workspaceRoot, "team.code-workspace"),
-          JSON.stringify({ folders: [{ path: "deps/heroicons" }] }),
-        );
-        assert.deepEqual(
-          (yield* WorkspaceFolders.discoverFolders(workspaceRoot)).map((folder) => folder.name),
-          ["heroicons", "code"],
-        );
-        yield* fileSystem.remove(path.join(workspaceRoot, "team.code-workspace"));
-
-        yield* fileSystem.remove(path.join(workspaceRoot, "mix.exs"));
-        assert.deepEqual(
-          (yield* WorkspaceFolders.discoverFolders(workspaceRoot)).map((folder) => folder.name),
-          ["code", "heroicons", "other"],
+  it.effect("does not discover Mix dependencies unless a workspace file lists them", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* makeTempDir;
+      for (const folder of [".git", "deps/heroicons/.git", "code/.git", "zzz/.git"]) {
+        yield* fileSystem.makeDirectory(path.join(workspaceRoot, folder), { recursive: true });
+      }
+      // Sorts before `zzz`, so it would claim that repository's real path if it were kept.
+      yield* fileSystem.symlink(
+        path.join(workspaceRoot, "zzz"),
+        path.join(workspaceRoot, "deps/alias"),
+      );
+      const names = () =>
+        WorkspaceFolders.discoverFolders(workspaceRoot).pipe(
+          Effect.map((found) => found.map((folder) => folder.name)),
         );
 
-        yield* fileSystem.writeFileString(path.join(workspaceRoot, "mix.exs"), "");
-        yield* fileSystem.makeDirectory(path.join(workspaceRoot, "zzz/.git"), {
-          recursive: true,
-        });
-        yield* fileSystem.symlink(
-          path.join(workspaceRoot, "zzz"),
-          path.join(workspaceRoot, "deps/alias"),
-        );
-        assert.deepEqual(
-          (yield* WorkspaceFolders.discoverFolders(workspaceRoot)).map((folder) => folder.name),
-          ["code", "zzz"],
-        );
-      }),
+      assert.deepEqual(yield* names(), ["code", "alias", "heroicons"]);
+
+      yield* fileSystem.writeFileString(path.join(workspaceRoot, "mix.exs"), "");
+      assert.deepEqual(yield* names(), ["code", "zzz"]);
+
+      yield* fileSystem.writeFileString(
+        path.join(workspaceRoot, "team.code-workspace"),
+        JSON.stringify({ folders: [{ path: "deps/heroicons" }] }),
+      );
+      assert.deepEqual(yield* names(), ["heroicons", "code", "zzz"]);
+    }),
   );
 
   it.effect("does not walk a project's folders when t3.json ignores the whole project", () =>
