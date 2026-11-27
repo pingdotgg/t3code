@@ -5,6 +5,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -1024,11 +1025,22 @@ export function discoveredLinuxSecretApplications(
   return [...seen];
 }
 
-const canonicalRootKey = Effect.fnUntraced(function* (
+// Deduplicate by filesystem inode when available so case-insensitive macOS/Windows aliases
+// collapse to one entry even if `realPath` preserves input casing, while distinct dirs stay separate.
+const rootDedupeKey = Effect.fnUntraced(function* (
   context: BrowserImportPathContext,
   directory: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
+  const inodeKey = yield* fileSystem.stat(directory).pipe(
+    Effect.map((info) =>
+      Option.isSome(info.ino) && info.ino.value > 0n
+        ? `ino:${info.dev}:${info.ino.value}`
+        : undefined,
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );
+  if (inodeKey !== undefined) return inodeKey;
   return yield* fileSystem
     .realPath(directory)
     .pipe(Effect.orElseSucceed(() => context.path.resolve(directory)));
@@ -1192,7 +1204,7 @@ const scanBaseDirectory = Effect.fnUntraced(function* (
     root: string,
     segments: ReadonlyArray<string>,
   ): Effect.fn.Return<boolean, never, FileSystem.FileSystem> {
-    const key = yield* canonicalRootKey(context, root);
+    const key = yield* rootDedupeKey(context, root);
     if (knownRoots.has(key) || seenRoots.has(key)) return true;
     const detected = yield* detectBrowserEngineAtRoot(root, context);
     if (detected === undefined) return false;
@@ -1202,7 +1214,13 @@ const scanBaseDirectory = Effect.fnUntraced(function* (
       (detected === "chromium" && options.allowChromium) ||
       (detected === "firefox" && options.allowFirefox)
     ) {
-      candidates.push({ engine: detected, root, segments });
+      const fileSystem = yield* FileSystem.FileSystem;
+      const canonicalRoot = yield* fileSystem
+        .realPath(root)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (canonicalRoot !== undefined) {
+        candidates.push({ engine: detected, root: canonicalRoot, segments });
+      }
     }
     return true;
   });
@@ -1239,10 +1257,10 @@ export const discoverBrowserImportSources = Effect.fn(
   const knownRoots = new Set<string>();
   for (const source of BROWSER_IMPORT_SOURCES) {
     const root = source.userDataDirectory(context);
-    if (root !== undefined) knownRoots.add(yield* canonicalRootKey(context, root));
+    if (root !== undefined) knownRoots.add(yield* rootDedupeKey(context, root));
     if (context.platform === "linux" && source.alternateLinuxRoots) {
       for (const alt of source.alternateLinuxRoots(context)) {
-        knownRoots.add(yield* canonicalRootKey(context, alt));
+        knownRoots.add(yield* rootDedupeKey(context, alt));
       }
     }
   }
@@ -1255,7 +1273,7 @@ export const discoverBrowserImportSources = Effect.fn(
     (yield* isSourceInstalled(ardiaSource, context))
   ) {
     knownRoots.add(
-      yield* canonicalRootKey(context, macApplicationSupport(context, "Ardia", "Chromium")),
+      yield* rootDedupeKey(context, macApplicationSupport(context, "Ardia", "Chromium")),
     );
   }
 
@@ -1311,15 +1329,11 @@ export const discoverBrowserImportSources = Effect.fn(
     }
   }
 
-  const fileSystem = yield* FileSystem.FileSystem;
   const discovered: Array<BrowserImportSourceDefinition> = [];
   for (const candidate of rawCandidates) {
     const name = deriveDiscoveredBrowserName(candidate.segments);
     if (name === undefined) continue;
-    const canonicalRoot = yield* fileSystem
-      .realPath(candidate.root)
-      .pipe(Effect.orElseSucceed(() => undefined));
-    if (canonicalRoot === undefined) continue;
+    const canonicalRoot = candidate.root;
     const hashed = yield* crypto
       .digest(Digest.sha256, new TextEncoder().encode(`${candidate.engine}\0${canonicalRoot}`))
       .pipe(Effect.orElseSucceed(() => undefined));
