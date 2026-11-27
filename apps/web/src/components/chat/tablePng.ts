@@ -92,6 +92,18 @@ function cornerRadius(value: string, box: Box): number {
   return value.endsWith("%") ? (Math.min(box.width, box.height) * radius) / 100 : radius;
 }
 
+/** A cross-origin image would taint the canvas and fail the whole encode, so test it alone. */
+function isReadable(image: HTMLImageElement): boolean {
+  const probe = createCanvas(1, 1, "srgb");
+  try {
+    probe?.context.drawImage(image, 0, 0, 1, 1);
+    probe?.context.getImageData(0, 0, 1, 1);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Replays draw ops; `images[i]` is the decoded source for an image op at index `i`. */
 function paintOps(
   context: Canvas2D["context"],
@@ -476,13 +488,17 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
 
   const visitImage = (image: HTMLImageElement, style: CSSStyleDeclaration, alpha: number) => {
     if (!image.complete || image.naturalWidth === 0) return;
-    // A cross-origin image would taint the canvas and fail the whole encode, so test it alone.
-    const probe = createCanvas(1, 1, "srgb");
-    try {
-      probe?.context.drawImage(image, 0, 0, 1, 1);
-      probe?.context.getImageData(0, 0, 1, 1);
-    } catch {
-      return;
+    // Desktop serves workspace assets from the server's origin, not the page's; the server
+    // answers with CORS headers, so a CORS load of the same URL can be drawn.
+    let source: Promise<CanvasImageSource | null> = Promise.resolve(image);
+    if (!isReadable(image)) {
+      const corsImage = new Image();
+      corsImage.crossOrigin = "anonymous";
+      corsImage.src = image.currentSrc || image.src;
+      source = corsImage.decode().then(
+        () => (isReadable(corsImage) ? corsImage : null),
+        () => null,
+      );
     }
     const rect = image.getBoundingClientRect();
     const inset = (side: "Top" | "Right" | "Bottom" | "Left") =>
@@ -497,7 +513,7 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
         width: box.width - inset("Left") - inset("Right"),
         height: box.height - inset("Top") - inset("Bottom"),
       },
-      image: Promise.resolve(image),
+      image: source,
       alpha,
     });
   };

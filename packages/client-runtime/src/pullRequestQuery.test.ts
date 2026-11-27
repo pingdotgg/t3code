@@ -69,6 +69,14 @@ describe("reading qualifiers out of a typed query", () => {
         "is:pr state:open archived:false repo:org/repo org:org user:alice sort:updated-desc -repo:org/fork -state:closed fix",
       ),
     ).toEqual({ text: "fix", filters: {} });
+    expect(parsePullRequestQuery("type:pr is:open bug")).toEqual(
+      parsePullRequestQuery("is:pr is:open bug"),
+    );
+    expect(parsePullRequestQuery("TYPE:PR bug")).toEqual({ text: "bug", filters: {} });
+    expect(parsePullRequestQuery("type:bug -type:pr label:type:pr").filters).toEqual({
+      labels: [["type:bug"], ["type:pr"]],
+      excludedLabels: ["type:pr"],
+    });
   });
 
   it("sets no author when the query names more than one", () => {
