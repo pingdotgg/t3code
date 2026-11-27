@@ -1265,6 +1265,21 @@ describe("question answer paths", () => {
         },
         {
           ext: "docx",
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+              '<w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Overview</w:t></w:r></w:p>' +
+              '<w:p><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Budget</w:t></w:r></w:p>' +
+              '<w:p><w:pPr><w:outlineLvl w:val="8"/></w:pPr><w:r><w:t>Details</w:t></w:r></w:p>' +
+              '<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Override</w:t></w:r></w:p>' +
+              '<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:outlineLvl w:val="9"/><w:pPrChange w:id="0" w:author="Editor"><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:pPrChange></w:pPr><w:r><w:t>Body text</w:t></w:r></w:p>' +
+              "</w:body></w:document>",
+          },
+          expected: [],
+          exact: "# Overview\n## Budget\n###### Details\n## Override\nBody text",
+        },
+        {
+          ext: "docx",
           bounded: true,
           parts: {
             "word/document.xml":
