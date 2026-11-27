@@ -2475,16 +2475,22 @@ const make = Effect.gen(function* () {
       }
       const modelSelection =
         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
-      // A caller names no mode for its task, so it starts with the project's
-      // effective default, as the composer and t3_thread_launch do. Its mode
-      // stays within the ceiling the caller was approved with.
-      const settings = yield* serverSettings.getSettings.pipe(
-        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
-      );
-      const runtimeMode = yield* resolveRuntimeMode(
-        limits.runtimeMode,
-        resolveProjectSettings(settings, project.id, project).settings.defaultRuntimeMode,
-      ).pipe(Effect.orElseSucceed(() => limits.runtimeMode));
+      // As in t3_thread_launch: an agent's task inherits its thread's mode; a
+      // client with no thread starts at the project default, within its ceiling.
+      const runtimeMode =
+        parent !== undefined
+          ? limits.runtimeMode
+          : yield* serverSettings.getSettings.pipe(
+              Effect.mapError(() =>
+                failure("orchestration_error", "Unable to read server settings."),
+              ),
+              Effect.flatMap((settings) =>
+                resolveRuntimeMode(
+                  limits.runtimeMode,
+                  resolveProjectSettings(settings, project.id, project).settings.defaultRuntimeMode,
+                ).pipe(Effect.orElseSucceed(() => limits.runtimeMode)),
+              ),
+            );
       // Never end on a lone high surrogate, which renders as a broken character.
       const derivedTitle = (input.prompt.split("\n")[0]?.trim() ?? "")
         .slice(0, 80)
@@ -2547,8 +2553,7 @@ const make = Effect.gen(function* () {
         runtimeMode: task.runtimeMode,
         ceiling: limits.runtimeMode,
       });
-      const summary = yield* summarizeScheduledTask(scope, { parent, limits }, task);
-      return summary;
+      return yield* summarizeScheduledTask(scope, { parent, limits }, task);
     }),
     listScheduledTasks: Effect.fn("OrchestratorMcpService.listScheduledTasks")(
       function* (scope, input) {

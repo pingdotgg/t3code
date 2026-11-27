@@ -529,7 +529,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         yield* Effect.logInfo("Thread launched", {
           threadId: thread.id,
           projectId: thread.projectId,
-          runtimeMode: startedRuntimeMode,
+          runtimeMode: thread.runtimeMode,
+          replayed: replaying,
         });
         return {
           threadId: thread.id,
