@@ -58,7 +58,10 @@ const make = Effect.gen(function* () {
       environment,
       leafName: "conversations",
       filePattern: /\.db$/,
-    });
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
     const canonical = new Set<string>();
     for (const root of [...(configured?.length ? configured : defaults), ...cliproxyDirs]) {
       const resolved = path.resolve(expandHomePath(root, home));
