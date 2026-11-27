@@ -7,6 +7,7 @@ import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { AsyncResult } from "effect/reactivity";
 
@@ -14,10 +15,17 @@ const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
   sourceControl: undefined as unknown,
   lookupRepository: vi.fn(),
+  createNewProject: vi.fn<() => Promise<boolean>>(),
+  addProject: vi.fn<() => Promise<{ _tag: "Success"; value: { projectId: string } }>>(),
 }));
 const setup = (deniedScope?: string, sourceControl?: unknown) => {
   scopes.denied = deniedScope;
   scopes.sourceControl = sourceControl;
+  scopes.createNewProject.mockReset().mockResolvedValue(false);
+  scopes.addProject.mockReset().mockResolvedValue({
+    _tag: "Success",
+    value: { projectId: "project-cloned" },
+  });
 };
 const githubAvailable = {
   versionControlSystems: [],
@@ -58,7 +66,7 @@ vi.mock("../hooks/useSettings", async (original) => ({
 vi.mock("../hooks/useScratchProject", () => ({
   useScratchProject: () => ({ scratchEnvironmentId: () => null }),
 }));
-vi.mock("../hooks/useNewProject", () => ({ useNewProject: () => async () => undefined }));
+vi.mock("../hooks/useNewProject", () => ({ useNewProject: () => scopes.createNewProject }));
 vi.mock("../hooks/useHandleNewThread", () => ({
   useHandleNewThread: () => ({
     activeDraftThread: null,
@@ -72,7 +80,10 @@ vi.mock("../hooks/useOpenPanelPullRequestUrl", () => ({ useOpenPanelPullRequestU
 vi.mock("../connection/useDesktopLocalBootstraps", () => ({ useDesktopLocalBootstraps: () => [] }));
 vi.mock("../state/use-atom-command", () => ({
   // The add-project destination step starts a clone and follows its project id.
-  useAtomCommand: () => async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
+  useAtomCommand: (command: unknown) =>
+    command === projectEnvironment.create || command === sourceControlEnvironment.startProjectClone
+      ? scopes.addProject
+      : async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
   // Doubles as the add-project folder scan, which finds nothing to track.
@@ -249,6 +260,61 @@ it("tells screen readers whether a new project will be published", async () => {
   await expect.element(option).toHaveAttribute("aria-checked", "false");
   await option.click();
   await expect.element(option).toHaveAttribute("aria-checked", "true");
+});
+
+describe.each([
+  { source: "New project", input: "new-project" },
+  { source: "Local folder", input: "/workspace/existing" },
+  { source: "Git URL", input: "https://example.com/team/project.git" },
+])("$source completion", ({ source, input }) => {
+  it.each(["going back", "reopening the palette"])("keeps the view after %s", async (leave) => {
+    setup();
+    const finished = Promise.withResolvers<void>();
+    scopes.createNewProject.mockImplementation(async () => {
+      await finished.promise;
+      return true;
+    });
+    scopes.addProject.mockImplementation(async () => {
+      await finished.promise;
+      return { _tag: "Success", value: { projectId: "project-added" } };
+    });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText(source, { exact: true }).click();
+    const search = page.getByRole("combobox");
+    await search.fill(input);
+    if (source === "Git URL") {
+      await userEvent.keyboard("{Enter}");
+      await expect.element(search).toHaveValue("/workspace/project");
+    }
+    await userEvent.keyboard("{Enter}");
+    expect(
+      source === "New project" ? scopes.createNewProject : scopes.addProject,
+    ).toHaveBeenCalledOnce();
+    if (leave === "going back") {
+      await search.fill("");
+      if (source !== "Local folder") {
+        await userEvent.keyboard("{Backspace}");
+      }
+      await expect.element(page.getByText("Git URL", { exact: true })).toBeVisible();
+    } else {
+      await userEvent.keyboard("{Escape}");
+      await expect.element(search).not.toBeInTheDocument();
+      await act(() => openCommandPalette());
+      await search.fill("another search");
+    }
+
+    await act(async () => {
+      finished.resolve();
+      await finished.promise;
+    });
+    expect(page.getByTestId("command-palette").element()).toHaveAttribute("data-open");
+    if (leave === "going back") {
+      expect(page.getByText("Git URL", { exact: true }).element()).toBeVisible();
+    } else {
+      expect(search.element()).toHaveValue("another search");
+    }
+  });
 });
 
 it("keeps the source list visible after a dismissed repository lookup succeeds", async () => {
