@@ -289,6 +289,18 @@ function pendingEndAt(node: HTMLElement, expectedTop: number | null): number | n
   return Math.abs(node.scrollTop - expectedTop) > 1 ? null : expectedTop;
 }
 
+interface PendingReveal {
+  row: number;
+  attempts: number;
+  expectedTop?: number | undefined;
+}
+
+function pendingRevealAt(node: HTMLElement, pending: PendingReveal | null): PendingReveal | null {
+  if (pending?.expectedTop === undefined) return pending;
+  const clampedTop = Math.min(pending.expectedTop, node.scrollHeight - node.clientHeight);
+  return Math.abs(node.scrollTop - clampedTop) > 1 ? null : pending;
+}
+
 function ScaledRows(
   props: Omit<Parameters<typeof RowPage>[0], "page" | "rowHeights"> & {
     hasHorizontalOverflow: boolean;
@@ -312,11 +324,7 @@ function ScaledRows(
   const [layout, setLayout] = useState({ offset: 0, height: 0, rowHeight: 29 });
   const [top, setTop] = useState(0);
   const handledReveal = useRef<string | null>(null);
-  const pendingReveal = useRef<{
-    row: number;
-    attempts: number;
-    expectedTop?: number | undefined;
-  } | null>(null);
+  const pendingReveal = useRef<PendingReveal | null>(null);
   const pendingEnd = useRef<number | null>(null);
   const positionKey = useContext(PreviewPositionKey);
   const pendingRestore = useRef(savedRowPositions.get(positionKey));
@@ -342,7 +350,7 @@ function ScaledRows(
     scrollModel.current = { scale, maxFirst, heights };
     const node = ref.current;
     if (!node || (previous.scale === scale && previous.maxFirst === maxFirst)) return;
-    checkSavedRowScroll(node);
+    pendingReveal.current = pendingRevealAt(node, pendingReveal.current);
     pendingEnd.current = pendingEndAt(node, pendingEnd.current);
     // Native-tail pixels cross rows of different heights before returning to the scaled track.
     const logicalTop = logicalScrollTop(node.scrollTop, previous);
@@ -401,12 +409,6 @@ function ScaledRows(
   const rowHeight = () =>
     contentRef.current?.querySelector<HTMLElement>(`[data-preview-row="${first}"]`)?.offsetHeight ||
     29;
-  function checkSavedRowScroll(node: HTMLElement) {
-    const expectedTop = pendingReveal.current?.expectedTop;
-    if (expectedTop === undefined) return;
-    const clampedTop = Math.min(expectedTop, node.scrollHeight - node.clientHeight);
-    if (Math.abs(node.scrollTop - clampedTop) > 1) pendingReveal.current = null;
-  }
   const onWheel = useEffectEvent((event: WheelEvent) => {
     const node = ref.current;
     if (!node || event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
@@ -544,15 +546,15 @@ function ScaledRows(
   }, [first, atStart]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Correct the DOM scroll position once a requested worker row has loaded and its actual bounds are measurable.
   useLayoutEffect(() => {
-    const pending = pendingReveal.current;
     const node = ref.current;
-    if (!pending || !node) return;
-    checkSavedRowScroll(node);
-    if (!pendingReveal.current) return;
+    if (!node) return;
+    const pending = pendingRevealAt(node, pendingReveal.current);
+    pendingReveal.current = pending;
+    if (!pending) return;
     const alignStart = pending.expectedTop !== undefined;
-    const row =
-      pending &&
-      contentRef.current?.querySelector<HTMLElement>(`[data-preview-row="${pending.row}"]`);
+    const row = contentRef.current?.querySelector<HTMLElement>(
+      `[data-preview-row="${pending.row}"]`,
+    );
     if (
       !row ||
       !props.getRows(Math.floor(pending.row / PREVIEW_PAGE_ROWS))?.[pending.row % PREVIEW_PAGE_ROWS]
@@ -655,7 +657,7 @@ function ScaledRows(
         const atEnd = scrolled > 0 && node.scrollHeight - node.clientHeight - scrolled <= 1;
         // Native scrolling can move away from the last offset written by the End effects.
         pendingEnd.current = pendingEndAt(node, pendingEnd.current);
-        checkSavedRowScroll(node);
+        pendingReveal.current = pendingRevealAt(node, pendingReveal.current);
         savedRowPositions.set(
           positionKey,
           atEnd && !props.indexing
