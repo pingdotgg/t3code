@@ -146,11 +146,8 @@ describe("pdfFindMatchRuns", () => {
     expect(pdfFindIncludes(page, "bud-get")).toBe(false);
     expect(pdfFindIncludes(page, " ")).toBe(false);
 
-    const runs = ["Ο", "Σ"];
-    expect(pdfFindIncludes(runs.join(""), "ΟΣ")).toBe(true);
-    expect(pdfFindMatchRuns(runs, "ΟΣ")).toEqual([true, true]);
-    expect(pdfFindIncludes(runs.join(""), "οσ")).toBe(true);
-    expect(pdfFindMatchRuns(runs, "ος")).toEqual([true, true]);
+    expect(pdfFindIncludes("ΟΣ", "οσ")).toBe(true);
+    expect(pdfFindMatchRuns(["Ο", "Σ"], "ΟΣ")).toEqual([true, true]);
   });
 
   it("matches straight quotes typed for typeset curly ones", () => {

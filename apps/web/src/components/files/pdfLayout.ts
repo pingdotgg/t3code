@@ -84,7 +84,8 @@ export function pdfPageText(
   return items.map((item) => ("str" in item ? item.str + (item.hasEOL ? "\n" : "") : "")).join("");
 }
 
-// A typed straight quote finds a typeset curly one, as pdf.js's own find does.
+// A typed straight quote finds a typeset curly one, as pdf.js's own find does. Final sigma folds
+// to σ because lowercasing a whole page turns a word-final Σ into ς, but a lone run's into σ.
 function foldPdfFindCharacters(text: string) {
   return text
     .toLowerCase()
