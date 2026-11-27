@@ -1236,14 +1236,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const file = path.join(hooksDir, name);
       const contents = yield* read(file, true);
       if (contents === null) continue;
+      const text = new TextDecoder().decode(contents).replaceAll("\r\n", "\n").trim();
+      if (text !== SHIM_FOR_SCRIPT_ABOVE) {
+        hooks.push({ name, file });
+        covered.set(file, contents);
+        continue;
+      }
+      // The runner exits at once without the script, so a shim with none runs nothing: it is no
+      // hook, and a push without hooks starts neither it nor the runner.
+      const script = path.join(path.dirname(hooksDir), name);
+      const scriptContents = yield* read(script, false);
+      if (scriptContents === null) continue;
       hooks.push({ name, file });
       covered.set(file, contents);
-      const text = new TextDecoder().decode(contents).replaceAll("\r\n", "\n").trim();
-      if (text !== SHIM_FOR_SCRIPT_ABOVE) continue;
-      for (const named of [path.join(hooksDir, "h"), path.join(path.dirname(hooksDir), name)]) {
-        const more = yield* read(named, false);
-        if (more !== null) covered.set(named, more);
-      }
+      const runner = path.join(hooksDir, "h");
+      const runnerContents = yield* read(runner, false);
+      if (runnerContents !== null) covered.set(runner, runnerContents);
+      covered.set(script, scriptContents);
     }
     const configured = yield* readConfiguredHooks(cwd);
     const onPush = configured.filter((hook) => hook.pushEvents.length > 0);
