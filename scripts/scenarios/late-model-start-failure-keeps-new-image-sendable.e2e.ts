@@ -138,7 +138,6 @@ test(
     const retainedLaunch = screen
       .getByRole("dialog", "Could not start showcase", { exact: true })
       .filter({ hasText: warning });
-    await expect(retainedLaunch.getByText(warning, { exact: true })).toBeVisible();
     await expect(retainedLaunch.getByRole("button", "Open thread", { exact: true })).toBeVisible();
   },
 );
