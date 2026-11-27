@@ -6,10 +6,12 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "@effect/vitest";
 
+import { ProjectId } from "./baseSchemas.ts";
 import {
   type PullRequestDetail,
   PullRequestListResult,
   PullRequestOperationError,
+  PullRequestSubmitReviewInput,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
 import { WS_METHODS, WsRpcGroup } from "./rpc.ts";
@@ -159,6 +161,63 @@ describe("resolvePullRequestAuthorFilter", () => {
   it("passes any other login through trimmed", () => {
     expect(resolvePullRequestAuthorFilter(" ana ", "bilal")).toBe("ana");
     expect(resolvePullRequestAuthorFilter("meredith", "bilal")).toBe("meredith");
+  });
+});
+
+describe("PullRequestSubmitReviewInput", () => {
+  it("preserves leading and trailing whitespace in inline comment paths", () => {
+    const codec = Schema.toCodecJson(PullRequestSubmitReviewInput);
+    const input: PullRequestSubmitReviewInput = {
+      projectId: ProjectId.make("project-1"),
+      repository: "pingdotgg/t3code",
+      number: 1,
+      verdict: "comment",
+      body: "",
+      comments: [
+        {
+          path: " note.txt",
+          oldPath: "old.txt ",
+          position: { kind: "added", newLine: 1 },
+          body: "Check filename spacing.",
+        },
+      ],
+    };
+
+    const encoded = Schema.encodeSync(codec)(input);
+    expect(encoded).toMatchObject({
+      comments: [{ path: " note.txt", oldPath: "old.txt " }],
+    });
+    expect(Schema.decodeSync(codec)(encoded)).toStrictEqual(input);
+
+    const spaceOnly: PullRequestSubmitReviewInput = {
+      ...input,
+      comments: [
+        {
+          path: " ",
+          oldPath: "  ",
+          position: { kind: "deleted", oldLine: 1 },
+          body: "Whitespace-only filenames are valid.",
+        },
+      ],
+    };
+    const encodedSpaceOnly = Schema.encodeSync(codec)(spaceOnly);
+    expect(encodedSpaceOnly).toMatchObject({
+      comments: [{ path: " ", oldPath: "  " }],
+    });
+    expect(Schema.decodeSync(codec)(encodedSpaceOnly)).toStrictEqual(spaceOnly);
+
+    expect(() =>
+      Schema.decodeUnknownSync(codec)({
+        ...input,
+        comments: [{ ...input.comments[0], path: "" }],
+      }),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeUnknownSync(codec)({
+        ...input,
+        comments: [{ ...input.comments[0], oldPath: "" }],
+      }),
+    ).toThrow();
   });
 });
 
