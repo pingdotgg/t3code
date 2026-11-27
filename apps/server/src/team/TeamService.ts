@@ -7962,6 +7962,12 @@ const make = Effect.gen(function* () {
       remoteEnvLifecycleLock.withPermits(1)(
         Effect.gen(function* () {
           const activeTeam = yield* requireWorkspace();
+          if (activeTeam.id !== team.id) {
+            return yield* new TeamOperationError({
+              code: "not_found",
+              message: "The target team workspace changed before attachment completed.",
+            });
+          }
           const activeActor = yield* requireActiveMember(input.sessionId);
           if (
             activeActor.teamId !== activeTeam.id ||
@@ -7972,6 +7978,7 @@ const make = Effect.gen(function* () {
               message: "Only owner and admin members can attach remote team environments.",
             });
           }
+          yield* validateAccessRuleMemberIds(activeTeam.id, [accessRule]);
           let environmentId = input.payload.environmentId;
           let resolvedName = input.payload.name?.trim();
           let peerLinkId: string | null = null;
@@ -8264,6 +8271,14 @@ const make = Effect.gen(function* () {
       readonly peerClientPairing: PeerClientPairing.PeerClientPairing["Service"];
       readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     }) {
+      const admittedWorkspaceId = yield* repository.getWorkspace().pipe(
+        Effect.map((workspace) => Option.map(workspace, (w) => w.id)),
+        Effect.mapError(() =>
+          teamPostAuthError(
+            "Could not resolve team workspace state for remote environment pairing.",
+          ),
+        ),
+      );
       yield* assertCanAccessEnvironment(input.sessionId, input.pairingInput.environmentId);
       yield* drainPendingRemoteRevocations({
         environmentId: input.pairingInput.environmentId,
@@ -8272,6 +8287,19 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.ignore);
       return yield* withRemotePairingPermit(
         Effect.gen(function* () {
+          const currentWorkspaceId = yield* repository.getWorkspace().pipe(
+            Effect.map((workspace) => Option.map(workspace, (w) => w.id)),
+            Effect.mapError(() =>
+              teamPostAuthError(
+                "Could not verify team workspace state for remote environment pairing.",
+              ),
+            ),
+          );
+          if (Option.getOrNull(currentWorkspaceId) !== Option.getOrNull(admittedWorkspaceId)) {
+            return yield* teamPostAuthError(
+              "Team workspace state changed while preparing remote environment pairing; retry the request.",
+            );
+          }
           yield* assertCanAccessEnvironment(input.sessionId, input.pairingInput.environmentId);
           const subjectOption = yield* getRemotePairingSubject(input.sessionId);
           const memberBefore = Option.isSome(subjectOption)

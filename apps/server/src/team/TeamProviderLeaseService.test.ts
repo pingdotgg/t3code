@@ -320,12 +320,21 @@ describe("TeamProviderLeaseService", () => {
         serverSettings: DEFAULT_SERVER_SETTINGS,
       }),
     ).toBeNull();
+    const inheritedProviderInstances = Object.create({
+      "inherited-claude": {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        config: { homePath: "/evil/inherited-claude" },
+      },
+    });
     expect(
       resolveLinkedServerProviderProfileDir({
         stateDir: "/state",
         driver: "claudeAgent",
-        linkedServerInstanceId: "toString",
-        serverSettings: DEFAULT_SERVER_SETTINGS,
+        linkedServerInstanceId: "inherited-claude",
+        serverSettings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: inheritedProviderInstances,
+        } as never,
       }),
     ).toBeNull();
   });
