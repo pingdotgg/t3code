@@ -121,6 +121,15 @@ describe("ConnectionDriver", () => {
         detail: "The host only publishes activity.",
       }),
     };
+    const unlinkedRelay = {
+      ...relay,
+      failure: new ConnectionBlockedError({
+        reason: "permission",
+        hop: "relay",
+        failureCause: "not_linked",
+        detail: "The host is not linked to T3 Connect.",
+      }),
+    };
     const unreachable = {
       target: new BearerConnectionTarget({ ...environment, connectionId: "unreachable" }),
       profile: Option.none(),
@@ -150,6 +159,12 @@ describe("ConnectionDriver", () => {
         name: "allows retries when a direct route cannot reach the host",
         primary: unreachable,
         alternates: [relay],
+        expected: unreachable.failure,
+      },
+      {
+        name: "allows retries when the relay refuses for another reason",
+        primary: unreachable,
+        alternates: [unlinkedRelay],
         expected: unreachable.failure,
       },
       {
