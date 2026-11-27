@@ -685,7 +685,13 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
             refreshControl={
               <RefreshControl
                 refreshing={pullRefresh.refreshing}
-                onRefresh={() => void pager.refresh(registry, pullRefresh.onRefresh)}
+                onRefresh={() =>
+                  void pager.refresh(registry, () =>
+                    pullRefresh.onRefresh(async () =>
+                      issueEnvironment.oweDetailRefresh(registry, detailAtom),
+                    ),
+                  )
+                }
               />
             }
             contentContainerStyle={{
