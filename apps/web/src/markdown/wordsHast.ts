@@ -1099,6 +1099,12 @@ function flattenPreview(tree: Root, preview: NonNullable<MarkdownExtensions["pre
       fragments.push(take(node.value));
       return;
     }
+    if (
+      node.type === "element" &&
+      (node.properties.dataFootnotes !== undefined || node.properties.dataFootnoteRef !== undefined)
+    ) {
+      return;
+    }
     if (node.type === "element" && node.properties.dataMarkdownMath !== undefined) {
       flush();
       // One line has no room for display math, which a preview shows inline.

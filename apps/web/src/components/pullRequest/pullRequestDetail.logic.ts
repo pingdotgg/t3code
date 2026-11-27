@@ -736,6 +736,12 @@ function markdownExcerpt(body: string): string | null {
   const visit = (node: Nodes) => {
     if (node.type === "text") words.push(node.value);
     if (node.type === "element" && node.tagName === "pre") return;
+    // Footnote markers and the footnote list are not part of the comment's prose.
+    if (
+      node.type === "element" &&
+      (node.properties.dataFootnotes !== undefined || node.properties.dataFootnoteRef !== undefined)
+    )
+      return;
     if (node.type === "element" && node.tagName === "blockquote") {
       const paragraph = node.children.find((child) => child.type === "element");
       const first = paragraph?.tagName === "p" ? paragraph.children[0] : undefined;
@@ -1071,8 +1077,7 @@ export function buildFixFindingsHandoff(input: {
   readonly inThisThread?: boolean;
 }): FixFindingsHandoff {
   const threads = input.reviewThreads.filter(
-    (thread) =>
-      !thread.isResolved && thread.comments.some((comment) => comment.body.trim().length > 0),
+    (thread) => !thread.isResolved && reviewThreadText(thread) !== "",
   );
   const attached = new Set(
     input.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
