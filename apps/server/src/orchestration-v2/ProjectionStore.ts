@@ -1325,8 +1325,6 @@ type SettlementThreadRow = Pick<
   | "blocking_run_requested_at"
   | "blocking_run_started_at"
   | "blocking_run_completed_at"
-  | "blocking_failure_payload_json"
-  | "last_error"
 > & {
   readonly latest_resuming_message_at: string | null;
 };
@@ -1502,21 +1500,6 @@ const decodePlanJson = Schema.decodeUnknownEffect(
 const decodeTurnItemPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2TurnItemJsonSchema),
 );
-// A usage-limit failure on the last executed run keeps presenting past runs that never started.
-// Untraced: it runs once per shell and settlement row.
-const usageLimitBlockingFailure = Effect.fnUntraced(function* (
-  failurePayloadJson: string | null,
-  lastError: string | null,
-) {
-  if (failurePayloadJson === null) return null;
-  const failure = yield* decodeTurnItemPayload(failurePayloadJson).pipe(
-    Effect.orElseSucceed(() => null),
-  );
-  return failure?.type === "error" &&
-    threadErrorSummary(failure.failure, lastError).lastErrorClass === "usage_limit"
-    ? failure
-    : null;
-});
 const decodeCheckpointScopePayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2CheckpointScopeJsonSchema),
 );
@@ -8507,30 +8490,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         candidate.ordinal DESC, candidate.run_id DESC
       LIMIT 1
     )`;
-    const rootFailurePayload = (alias: string) => {
-      const run = sql.literal(alias);
-      return sql`(
-        SELECT item.payload_json
-        FROM orchestration_v2_projection_turn_items item
-        WHERE item.thread_id = ${run}.thread_id
-          AND item.run_id = ${run}.run_id
-          AND item.type = 'error' AND item.status = 'failed'
-          AND item.node_id IS json_extract(${run}.payload_json, '$.rootNodeId')
-        ORDER BY item.updated_at DESC, item.ordinal DESC, item.turn_item_id DESC
-        LIMIT 1
-      )`;
-    };
-    const providerLastError = sql`(
-      SELECT json_extract(session.payload_json, '$.lastError')
-      -- Keep bindings outermost: one provider instance can hold every session.
-      FROM orchestration_v2_projection_provider_session_bindings binding
-      CROSS JOIN orchestration_v2_projection_provider_sessions session
-        ON session.provider_session_id = binding.provider_session_id
-      WHERE binding.thread_id = t.thread_id
-        AND session.provider_instance_id = t.provider_instance_id
-      ORDER BY session.updated_at DESC, session.provider_session_id DESC
-      LIMIT 1
-    )`;
 
     // Mirrors isBackgroundWakeRunForShell. Stored sources keep the legacy encoding, where a
     // command is background_command and a subagent is background_task with work "subagent".
@@ -8620,7 +8579,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ORDER BY r.ordinal DESC, r.run_id DESC
                 LIMIT 1
               ) AS activity_run_started_at,
-              ${providerLastError} AS last_error,
+              (
+                SELECT json_extract(session.payload_json, '$.lastError')
+                -- Keep bindings outermost: one provider instance can hold every session.
+                FROM orchestration_v2_projection_provider_session_bindings binding
+                CROSS JOIN orchestration_v2_projection_provider_sessions session
+                  ON session.provider_session_id = binding.provider_session_id
+                WHERE binding.thread_id = t.thread_id
+                  AND session.provider_instance_id = t.provider_instance_id
+                ORDER BY session.updated_at DESC, session.provider_session_id DESC
+                LIMIT 1
+              ) AS last_error,
               (
                 SELECT item.payload_json
                 FROM orchestration_v2_projection_turn_items item
@@ -8642,7 +8611,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND stop_request.type = 'run_interrupt_request'
               ) AS blocking_run_stop_requested,
               ${isBackgroundWakeShellRun("blocked")} AS blocking_run_background_wake,
-              ${rootFailurePayload("blocked")} AS blocking_failure_payload_json,
+              (
+                SELECT item.payload_json
+                FROM orchestration_v2_projection_turn_items item
+                WHERE item.thread_id = t.thread_id
+                  AND item.run_id = blocked.run_id
+                  AND item.type = 'error' AND item.status = 'failed'
+                  AND item.node_id IS json_extract(blocked.payload_json, '$.rootNodeId')
+                ORDER BY item.updated_at DESC, item.ordinal DESC, item.turn_item_id DESC
+                LIMIT 1
+              ) AS blocking_failure_payload_json,
               (
                 SELECT request.payload_json
                 FROM orchestration_v2_projection_runtime_requests request
@@ -8989,8 +8967,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               blocked.requested_at AS blocking_run_requested_at,
               json_extract(blocked.payload_json, '$.startedAt') AS blocking_run_started_at,
               blocked.completed_at AS blocking_run_completed_at,
-              ${rootFailurePayload("blocked")} AS blocking_failure_payload_json,
-              ${providerLastError} AS last_error,
               (
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
@@ -9095,13 +9071,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return yield* Effect.forEach(rows, (row) =>
               Effect.gen(function* () {
                 const thread = yield* decodeThreadPayload(row.payload_json);
-                // Present the same run as the shell, which keeps a usage-limit failure.
-                const blocked =
-                  row.blocking_run_id !== null &&
-                  (yield* usageLimitBlockingFailure(
-                    row.blocking_failure_payload_json,
-                    row.last_error,
-                  )) !== null;
+                // Cancelling a message that never started does not resolve a failure, even
+                // where the shell then presents the cancelled run.
+                const blocked = row.blocking_run_id !== null;
                 const status = blocked
                   ? "failed"
                   : shellStatusFromStoredRunStatus(row.latest_run_status);
@@ -9318,12 +9290,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             : DateTime.makeUnsafe(row.latest_run_completed_at);
         let latestRunStopRequested = row.latest_run_stop_requested === 1;
         let latestRunBackgroundWake = row.latest_run_background_wake === 1;
-        if (row.blocking_run_id !== null) {
-          const blockingFailure = yield* usageLimitBlockingFailure(
+        if (row.blocking_run_id !== null && row.blocking_failure_payload_json !== null) {
+          const blockingFailure = yield* decodeTurnItemPayload(
             row.blocking_failure_payload_json,
-            row.last_error,
-          );
-          if (blockingFailure !== null) {
+          ).pipe(Effect.orElseSucceed(() => null));
+          const blocksQueue =
+            threadErrorSummary(
+              blockingFailure?.type === "error" ? blockingFailure.failure : null,
+              row.last_error,
+            ).lastErrorClass === "usage_limit";
+          if (blocksQueue && blockingFailure !== null) {
             terminalFailureItem = blockingFailure;
             latestRunId = RunId.make(row.blocking_run_id);
             latestRunStopRequested = row.blocking_run_stop_requested === 1;
