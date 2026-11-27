@@ -2,6 +2,7 @@ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { DownloadIcon, PlusIcon } from "lucide-react";
 import type { ChangeEvent, DragEvent, UIEvent } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { useEffect, useRef, useState } from "react";
 import { formatBytes } from "../../lib/formatBytes";
 import { cn } from "../../lib/utils";
@@ -358,9 +359,14 @@ function ThemeImportBody({
     preferredName?: string | null,
   ): ThemeDefinition => {
     // renameTheme leaves the collection behind: updating a collection replaces every theme in it.
-    if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
-      const candidate = renameTheme(theme, preferredName.slice(0, 48));
-      if (!isThemeIdTaken(candidate.id)) return candidate;
+    if (preferredName) {
+      const name = preferredName
+        .slice(0, splitsSurrogatePair(preferredName, 48) ? 47 : 48)
+        .trimEnd();
+      if (name.toLowerCase() !== theme.label.toLowerCase()) {
+        const candidate = renameTheme(theme, name);
+        if (!isThemeIdTaken(candidate.id)) return candidate;
+      }
     }
     for (let copy = 1; copy < 100; copy += 1) {
       const candidate = renameTheme(theme, numberedThemeName(theme.label, ` (${copy})`));

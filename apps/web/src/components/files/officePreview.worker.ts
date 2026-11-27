@@ -1,3 +1,5 @@
+import { isCompoundOfficeFile } from "./officeEncryptedStreams";
+import { previewUnlock } from "./previewUnlock";
 import { boundedArchive, prepareOffice } from "./officeArchive";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
 import type { OfficeWorkerRequest, OfficeWorkerResult } from "./officePreviewProtocol";
@@ -12,7 +14,7 @@ let workbook: string[][][] = [];
 function reply(result: OfficeWorkerResult) {
   self.postMessage(result, { transfer: "bytes" in result ? [result.bytes] : [] });
 }
-async function handle(input: OfficeWorkerRequest) {
+async function handle(input: Exclude<OfficeWorkerRequest, { type: "unlock" }>, password?: string) {
   if (input.type === "epub-page") {
     const book = epub;
     if (!book) throw new PreviewError({ code: "epub-no-chapters" });
@@ -58,12 +60,15 @@ async function handle(input: OfficeWorkerRequest) {
     return;
   }
   if (input.kind === "docx" || input.kind === "xlsx" || input.kind === "pptx") {
-    reply({ type: input.kind, ...(await prepareOffice(input.bytes, input.kind)) });
+    const bytes = isCompoundOfficeFile(input.bytes)
+      ? (await import("./officeEncryption")).decryptOffice(input.bytes, password)
+      : input.bytes;
+    reply({ type: input.kind, ...(await prepareOffice(bytes, input.kind, password)) });
     return;
   }
   if (input.kind === "epub") {
     const { openEpub } = await import("./epubPreview");
-    const { archive } = await boundedArchive(input);
+    const { archive } = await boundedArchive(input, password);
     const { page, ...book } = await openEpub(archive);
     epub = { page, ...book };
     reply({ type: "epub", ...book });
@@ -74,7 +79,9 @@ async function handle(input: OfficeWorkerRequest) {
     reply(input.kind === "ipynb" ? openNotebook(input.bytes) : openRtf(input.bytes));
     return;
   }
-  const { archive } = await boundedArchive(input);
+  const { archive } = await boundedArchive(input, password);
+  const { unlockOpenDocument } = await import("./openDocumentEncryption");
+  await unlockOpenDocument(archive, password);
   const result = await openDocument(archive, input.kind);
   if (result.type === "ods") {
     workbook = result.sheets.map((sheet) => sheet.rows);
@@ -87,8 +94,7 @@ async function handle(input: OfficeWorkerRequest) {
     });
   } else reply(result);
 }
+const receive = previewUnlock(handle, reply, "parse-failed");
 self.addEventListener("message", (event: MessageEvent<OfficeWorkerRequest>) => {
-  void handle(event.data).catch((cause: unknown) =>
-    reply({ type: "error", ...previewFailure(cause, "parse-failed") }),
-  );
+  void receive(event.data);
 });

@@ -706,13 +706,15 @@ describe("question answer paths", () => {
             "book.opf":
               '<package><manifest><item id="a" href="a.xhtml"/></manifest><spine><itemref idref="a"/></spine></package>',
             "a.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Intro<p>Body paragraph</p></div><ul><li>Summary<p>Details</p></li></ul><div>Intro<h2>Section Title</h2></div><table><tr><td>First<p>Second</p></td><td>Neighbor</td></tr></table></body></html>',
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Intro<p>Body paragraph</p></div><ul><li>Summary<p>Details</p></li></ul><div>Intro<h2>Section Title</h2></div><table><tr><td>First<p>Second</p></td><td>Neighbor</td></tr></table>' +
+              '<div>Intro<details open="open"><summary><strong>Supported</strong> files</summary>JPEG <em>files</em> only.</details>Next section</div></body></html>',
           },
           expected: [
             "## Chapter 1\nIntro\nBody paragraph",
             "Summary\nDetails",
             "Intro\n## Section Title",
             "First Second\tNeighbor",
+            "Intro\nSupported files\nJPEG files only.\nNext section",
           ],
         },
         {
@@ -849,6 +851,8 @@ describe("question answer paths", () => {
               '<section>Choose a route.<nav><a href="#east">East pier</a> | <a href="#west">West pier</a></nav>All departures are in local time.</section>',
               "<div>Keep <nav></nav>walking.</div>",
               '<div>Keep<x:nav xmlns:x="urn:example"> this </x:nav>inline.</div>',
+              "<div>Harbor directions.<main><strong>Use the north pier.</strong></main>Boats depart at noon.</div>",
+              '<div>Keep<x:main xmlns:x="urn:example"> this </x:main>inline too.</div>',
               "</body></html>",
             ].join(""),
           },
@@ -861,6 +865,7 @@ describe("question answer paths", () => {
             "Note\n  indented",
             "Summary of decisions.\nMotion 12 carried.\nMotion 13 deferred.\nMeeting adjourned.\nKeep reading.",
             "Choose a route.\nEast pier | West pier\nAll departures are in local time.\nKeep walking.\nKeep this inline.",
+            "Harbor directions.\nUse the north pier.\nBoats depart at noon.\nKeep this inline too.",
           ],
         },
         // A prefixed span attribute is foreign markup, not an XHTML span.

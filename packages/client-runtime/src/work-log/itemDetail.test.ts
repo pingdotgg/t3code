@@ -120,18 +120,20 @@ describe("tool text output formatting", () => {
     '{"id":1}\n{"id":-9007199254740993}',
     '{"id":9.007199254740993e15}',
     '{"id":1e309}',
+    '{"ratio":1e-400}',
   ])("keeps %j as returned when parsing would change a number", (text) => {
     expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(text);
   });
 
-  it.each(['{"id":42,"note":"12345678901234567890"}', '{"ratio":0.1234567890123456789}'])(
-    "still pretty-prints %j",
-    (text) => {
-      expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(
-        JSON.stringify(JSON.parse(text), null, 2),
-      );
-    },
-  );
+  it.each([
+    '{"id":42,"note":"12345678901234567890"}',
+    '{"ratio":0.1234567890123456789}',
+    '{"ratio":0.00e-400}',
+  ])("still pretty-prints %j", (text) => {
+    expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(
+      JSON.stringify(JSON.parse(text), null, 2),
+    );
+  });
 });
 
 describe("MCP app tool output", () => {
