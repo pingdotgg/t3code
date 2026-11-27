@@ -27,6 +27,7 @@ import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import { Command } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -117,6 +118,47 @@ const withProjectService = <A, E>(
 
 const readProjects = (baseDir: string) =>
   withProjectService(baseDir, (projects) => projects.snapshot);
+
+it.live("uses the literal folder when a relative project path starts with a space", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const cwd = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+    const baseDir = NodePath.join(cwd, "state");
+    const intended = NodePath.join(cwd, " notes");
+    const sibling = NodePath.join(cwd, "notes");
+    yield* fs.makeDirectory(intended);
+    yield* fs.makeDirectory(sibling);
+
+    const runProject = Effect.fn("test.runProject")(function* (args: ReadonlyArray<string>) {
+      const entrypoint = NodePath.join(import.meta.dirname, "../bin.ts");
+      const command = ChildProcess.make(
+        process.execPath,
+        [entrypoint, "project", ...args, "--base-dir", baseDir],
+        { cwd },
+      );
+      assert.equal(Number(yield* spawner.exitCode(command)), 0, args.join(" "));
+    });
+
+    yield* runProject(["add", " notes", "--title", "Literal"]);
+    assert.equal((yield* readProjects(baseDir)).projects[0]?.workspaceRoot, intended);
+    yield* runProject(["add", "notes", "--title", "Sibling"]);
+    yield* runProject(["rename", " notes", "Renamed"]);
+    const projects = (yield* readProjects(baseDir)).projects;
+    assert.equal(projects.find((project) => project.workspaceRoot === intended)?.title, "Renamed");
+    assert.equal(projects.find((project) => project.workspaceRoot === sibling)?.title, "Sibling");
+
+    yield* runProject(["remove", " notes"]);
+    yield* runProject(["rename", ` ${sibling} `, "Padded path"]);
+    assert.deepEqual(
+      (yield* readProjects(baseDir)).projects.map(({ title, workspaceRoot }) => ({
+        title,
+        workspaceRoot,
+      })),
+      [{ title: "Padded path", workspaceRoot: sibling }],
+    );
+  }).pipe(Effect.provide(layerCliRuntime)),
+);
 
 it.effect(
   "adds, renames, and removes projects, and tracks folders on add, through the V2 project CLI domain",
