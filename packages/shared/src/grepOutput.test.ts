@@ -72,6 +72,14 @@ describe("parseGrepOutput", () => {
     ]);
   });
 
+  it("keeps a headed match with its filename containing colon-delimited numbers", () => {
+    const output = "README.md\n1:needle first\n\ndocs/Release notes:12:draft.md\n2:needle second\n";
+    expect(parseGrepOutput(output, ".")).toEqual([
+      { fileName: "README.md", line: 1, preview: "needle first" },
+      { fileName: "docs/Release notes:12:draft.md", line: 2, preview: "needle second" },
+    ]);
+  });
+
   it.each([
     ["a directory listing", "Contents of /repo:\n  [DIR] .git\n  [FILE] README.md"],
     ["an error", "ripgrep failed: invalid regex"],
