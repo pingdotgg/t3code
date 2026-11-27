@@ -9641,7 +9641,7 @@
   "42828d2fd1f35806": "Memória residente",
   "e97f1b37426da9ff": "{bytes} de picos combinados dos processos",
   "3dd6eb5644a6ed8b": "Número de processos",
-  "85f0adb1de45cbc1": "{processStarts} inícios · {processExits} saídas",
+  "57320c95780c065c": "{processStarts, plural, one {{processStarts} início} other {{processStarts} inícios}} · {processExits, plural, one {{processExits} saída} other {{processExits} saídas}}",
   "0f0ae2813abd70e4": "Taxa de leitura",
   "dc52330df5cc4586": "{bytes} observados",
   "d032b2addb6f00dc": "Taxa de gravação",

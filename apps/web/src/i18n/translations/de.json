@@ -9641,7 +9641,7 @@
   "42828d2fd1f35806": "Residenter Speicher",
   "e97f1b37426da9ff": "{bytes} kombinierte Prozessspitzen",
   "3dd6eb5644a6ed8b": "Anzahl der Prozesse",
-  "85f0adb1de45cbc1": "{processStarts} gestartet · {processExits} beendet",
+  "57320c95780c065c": "{processStarts} gestartet · {processExits} beendet",
   "0f0ae2813abd70e4": "Lesedurchsatz",
   "dc52330df5cc4586": "{bytes} beobachtet",
   "d032b2addb6f00dc": "Schreibdurchsatz",

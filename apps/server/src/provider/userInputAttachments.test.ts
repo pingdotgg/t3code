@@ -578,8 +578,8 @@ describe("question answer paths", () => {
               },
               {
                 output_type: "error",
-                ename: "ZeroDivisionError",
-                evalue: "division by zero",
+                ename: "\u001b[31mZeroDivisionError\u001b[0m",
+                evalue: "\u001b[31mdivision by zero\u001b[0m",
                 traceback: [
                   "\u001b[32mCell In[1], line 1\u001b[0m",
                   "\u001b[31m----> 1 1 / 0\u001b[0m",

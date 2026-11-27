@@ -680,13 +680,12 @@ function* notebook(source: string): Generator<TextPart, void> {
           ? outputText(output.data["text/markdown"])
           : plain;
       } else if ("output_type" in output && output.output_type === "error") {
-        const name = [...lines("ename" in output ? output.ename : undefined)].join("");
-        const value = [...lines("evalue" in output ? output.evalue : undefined)].join("");
-        const plain = NodeUtil.stripVTControlCharacters(name + value);
-        if (NOTEBOOK_OUTPUT_TEXT.test(plain)) {
+        const name = outputText("ename" in output ? output.ename : undefined);
+        const value = outputText("evalue" in output ? output.evalue : undefined);
+        if (NOTEBOOK_OUTPUT_TEXT.test(name + value)) {
           yield name;
           if ("evalue" in output) yield ": " + value;
-        } else yield plain;
+        } else yield name + value;
         yield "\n";
         if ("traceback" in output)
           for (const line of lines(output.traceback)) {

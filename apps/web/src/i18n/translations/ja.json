@@ -9597,7 +9597,7 @@
   "42828d2fd1f35806": "常駐メモリ",
   "e97f1b37426da9ff": "プロセスのピークの合計 {bytes}",
   "3dd6eb5644a6ed8b": "プロセス数",
-  "85f0adb1de45cbc1": "開始 {processStarts} 件 · 終了 {processExits} 件",
+  "57320c95780c065c": "開始 {processStarts} 件 · 終了 {processExits} 件",
   "0f0ae2813abd70e4": "読み取りスループット",
   "dc52330df5cc4586": "観測済み {bytes}",
   "d032b2addb6f00dc": "書き込みスループット",
