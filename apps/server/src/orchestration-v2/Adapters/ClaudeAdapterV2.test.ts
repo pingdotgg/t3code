@@ -124,6 +124,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ClaudeProjectTrust from "../../provider/ClaudeProjectTrust.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
 import { withInlineContext } from "../ContextHandoffDelivery.ts";
@@ -1783,6 +1784,199 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
 });
 
 describe("ClaudeAdapterV2 provider installation gate", () => {
+  it.effect("a session opens on its folder unless the project trust check hands it another", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const random = yield* SecureRandom.SecureRandom;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const untrusted = {
+        projectConfigRoot: "/state/claude-project-config/abc",
+        notice: "The project is not trusted.",
+      };
+      const released: Array<string> = [];
+      const opened = Effect.fnUntraced(function* (
+        name: string,
+        modes: Pick<
+          ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+          "runtimeMode" | "interactionMode" | "maxRuntimeMode"
+        >,
+        belowFullAccess: ClaudeProjectTrust.ClaudeUntrustedSessionConfig | null = untrusted,
+      ) {
+        const asked: Array<{
+          readonly cwd: string;
+          readonly session: string;
+          readonly fullAccess: boolean;
+        }> = [];
+        let options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-trust-" }),
+          fileSystem,
+          path,
+          random,
+          idAllocator,
+          projectTrust: {
+            read: () => Effect.die("unused"),
+            forFolder: () => Effect.die("unused"),
+            forSession: (input) =>
+              Effect.acquireRelease(
+                Effect.sync(() => {
+                  asked.push({
+                    cwd: input.cwd,
+                    session: input.session,
+                    fullAccess: input.fullAccess,
+                  });
+                  return input.fullAccess ? null : belowFullAccess;
+                }),
+                () => Effect.sync(() => released.push(name)),
+              ),
+          },
+          queryRunner: {
+            allocateSessionId: Effect.succeed(`native-thread-claude-trust-${name}`),
+            open: (input) =>
+              Effect.sync(() => {
+                options = input.options;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  renameSession: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                } satisfies ClaudeAdapterV2.ClaudeAgentSdkQuerySession;
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-trust-cwd-" });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          ...modes,
+          cwd,
+        });
+        const threadId = ThreadId.make(`thread-claude-trust-${name}`);
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`provider-session-claude-trust-${name}`),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-claude-trust-${name}`),
+            text: "Hello",
+            attachments: [],
+            runtimePolicy,
+          }),
+        );
+        // The turn is running once its provider turn is announced; a notice comes before that.
+        const started = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "provider_turn.updated"),
+          Stream.runCollect,
+        );
+        return {
+          asked: asked.map((input) => ({
+            cwd: input.cwd === cwd,
+            session: input.session === providerThread.id,
+            fullAccess: input.fullAccess,
+          })),
+          projectConfigRoot: options?.projectConfigRoot,
+          notices: Array.from(started).flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+              ? [event.turnItem.message]
+              : [],
+          ),
+        };
+      });
+      const kept = {
+        asked: [{ cwd: true, session: true, fullAccess: true }],
+        projectConfigRoot: undefined,
+        notices: [],
+      };
+      const leftOut = {
+        asked: [{ cwd: true, session: true, fullAccess: false }],
+        projectConfigRoot: untrusted.projectConfigRoot,
+        notices: [untrusted.notice],
+      };
+
+      assert.deepStrictEqual(
+        yield* opened("full", { runtimeMode: "full-access", interactionMode: "default" }),
+        kept,
+      );
+      assert.deepStrictEqual(
+        yield* opened("supervised", {
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+        }),
+        leftOut,
+      );
+      assert.deepStrictEqual(
+        yield* opened(
+          "trusted",
+          { runtimeMode: "approval-required", interactionMode: "default" },
+          null,
+        ),
+        { ...leftOut, projectConfigRoot: undefined, notices: [] },
+      );
+      assert.deepStrictEqual(
+        yield* opened("auto", { runtimeMode: "auto", interactionMode: "default" }),
+        leftOut,
+      );
+      assert.deepStrictEqual(
+        yield* opened("plan", { runtimeMode: "full-access", interactionMode: "plan" }),
+        leftOut,
+      );
+      // A thread recorded above the administrator's limit is not in Full access.
+      assert.deepStrictEqual(
+        yield* opened("capped", {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          maxRuntimeMode: "auto-accept-edits",
+        }),
+        leftOut,
+      );
+      // The folder a session was handed is kept until that session closes.
+      assert.deepStrictEqual(released, []);
+      yield* Effect.scoped(
+        opened("closing", { runtimeMode: "approval-required", interactionMode: "default" }),
+      );
+      assert.deepStrictEqual(released, ["closing"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("opens each turn's Claude process inside the installation gate", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2092,6 +2286,7 @@ describe("ClaudeAdapterV2 executable path", () => {
           IdAllocator.layer,
           McpProviderSessions.layer,
           ProviderInstallationGate.layer,
+          ClaudeProjectTrust.layerTrusted,
           NodeServices.layer,
           NodeCrypto.layer,
         ),

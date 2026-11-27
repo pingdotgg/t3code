@@ -116,6 +116,7 @@ export const WINDOWS_POLICY_VALUES = {
   BrowserCookieImport: { type: "boolean", path: ["limits", "browserCookieImport"] },
   PreviewTunnel: { type: "boolean", path: ["limits", "previewTunnel"] },
   WorktreeLayoutCommands: { type: "boolean", path: ["limits", "worktreeLayoutCommands"] },
+  ClaudeProjectHooks: { type: "boolean", path: ["limits", "claudeProjectHooks"] },
   ProviderInstances: { type: "json", path: ["limits", "providers", "instances"] },
   UpdatesMode: { type: "string", path: ["limits", "updates", "mode"] },
   UpdatesFeedUrl: { type: "string", path: ["limits", "updates", "feedUrl"] },

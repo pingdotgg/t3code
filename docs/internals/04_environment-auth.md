@@ -126,6 +126,32 @@ model.
   there is and is taken as the person's answer.
   What those files go on to run, such as a package script or a file they source, is not part of
   the digest, so an approval is for the named files and not for everything the push executes.
+- **A project's Claude Code settings run commands only once a person trusts the project, or in
+  Full access.** Claude Code runs what a folder's configuration names without showing a request:
+  hooks, helper commands (`apiKeyHelper`, `proxyAuthHelper`, `awsAuthRefresh`,
+  `awsCredentialExport`, `gcpAuthRefresh`, `otelHeadersHelper`), the servers in `.mcp.json`, and
+  `env`, which can name a script every shell runs (`BASH_ENV`). Claude Code's own answer is a
+  trust question once per folder, which an SDK session never shows, so
+  [`ClaudeProjectTrust`](../../apps/server/src/provider/ClaudeProjectTrust.ts) keeps that answer
+  per project and decides at every session the Claude adapter opens. A trusted project, and any
+  thread in Full access by the same test the layout commands use, opens on its folder as it is.
+  Trust is for the project, not for the content of its files: nothing is asked again when they
+  change, as in Claude Code. Otherwise, when the folder names any of the four, the session gets
+  Claude Code's `projectConfigRoot`: a folder under the state directory, made anew at each start
+  and removed when the provider session closes, that holds only the deny and ask rules and links
+  to the rest of `.claude` and to the project's files. A folder that names none of the four is opened as it is
+  whether trusted or not, because the substitute folder is also where the user's own hooks run;
+  such a session follows its settings files as Claude Code does, so what they gain while it runs
+  applies to it. The SDK has no narrower switch: `disableAllHooks` and `allowManagedHooksOnly`
+  also stop the user's hooks, and leaving the project sources out drops `CLAUDE.md`. Claude Code
+  started in a folder outside a thread's session, to list its slash commands or to generate a
+  commit message, pull request text or a branch name, has no permission mode of its own: it is
+  keyed on trust and the managed policy only, never on Full access, and reads such a folder
+  unless the project is trusted. Where the caller names no project, the folder is matched against
+  project folders and thread worktrees, and a folder of no project is not trusted. Recording
+  trust is a client RPC only, under the same lint rule as the layout commands. Skills, agents and
+  commands stay available to an untrusted session; what they run goes through the session's
+  permission checks.
 - **Peer-link client pairing.** Only a full-access peer link may mint a one-time client pairing on
   the linked environment (since full-access agents can already run `t3 auth pairing create`). The
   linked side enforces this itself, and the operation stays a human-triggered RPC/HTTP route rather

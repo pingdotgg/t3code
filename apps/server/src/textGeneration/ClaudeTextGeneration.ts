@@ -37,6 +37,7 @@ import {
   makeClaudeEnvironment,
 } from "../provider/Drivers/ClaudeHome.ts";
 import { readClaudeUserSettings } from "../provider/Drivers/ClaudeSkills.ts";
+import type { ClaudeProjectTrust } from "../provider/ClaudeProjectTrust.ts";
 import { readClaudeLaunchArgSettings } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -126,6 +127,11 @@ function claudeErrorResult(stdout: string): string | undefined {
 
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
+  /**
+   * A generation has no permission mode, so trust alone decides whether Claude Code reads the
+   * project's own settings: on the folder of a trusted project, else on a substitute.
+   */
+  folderConfigRoot: ClaudeProjectTrust["Service"]["forFolder"],
   environment?: NodeJS.ProcessEnv,
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
   routeModelCatalog: (
@@ -208,6 +214,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const runClaudeJson = Effect.fn("runClaudeJson")(function* <S extends Schema.Top>({
     operation,
     cwd,
+    projectId,
     prompt,
     outputSchema: outputSchemaJson,
     modelSelection,
@@ -228,6 +235,14 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
               ),
             )
         : cwd;
+    // An investigation reads no project settings at all, and a title's folder holds none.
+    const projectConfigRoot = investigate
+      ? null
+      : yield* folderConfigRoot({ cwd: workingDirectory, projectId }).pipe(
+          Effect.mapError(
+            (cause) => new TextGenerationError({ operation, detail: cause.message, cause }),
+          ),
+        );
     const catalog = yield* routeModelCatalog(yield* scopedModelCatalog, workingDirectory);
     const resolvedModelSelection = {
       ...modelSelection,
@@ -355,6 +370,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
               ]
             : ["--tools", ""]),
           ...(investigate ? ["--setting-sources", ""] : []),
+          ...(projectConfigRoot === null ? [] : ["--project-config-root", projectConfigRoot]),
           "--disable-slash-commands",
           ...(noSessionPersistence ? [NO_SESSION_PERSISTENCE] : []),
           // managed-mcp.json already isolates servers and makes Claude reject this flag.

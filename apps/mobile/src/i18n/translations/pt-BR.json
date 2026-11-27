@@ -5716,5 +5716,14 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Execuções de workflow"
+  "46d614fa7b4bf1e5": "Execuções de workflow",
+  "c624901a460291d4": "A política de {organization} não permite confiar nas configurações do Claude Code de um projeto.",
+  "ce6146b3397a2d2a": "Não foi possível confiar no projeto.",
+  "9c7ec89670215fc6": "Um projeto confiável executa tudo o que suas configurações do Claude Code indicam, em todas as threads do Claude do projeto: hooks, comandos auxiliares, servidores MCP e variáveis de ambiente. Eles são executados na máquina deste ambiente com as suas permissões, fora de qualquer sandbox de agente. Você é perguntado uma vez por projeto, e não de novo quando as configurações mudam. Isto é o que elas contêm agora. A confiança vale a partir da próxima sessão.",
+  "35876f92d191fc8c": "Até lá, as sessões do Claude rodam aqui sem os hooks, comandos auxiliares, servidores MCP e variáveis de ambiente do projeto.",
+  "cd9ffdf0f4057b75": "Ocultar o que é executado",
+  "f3f0532cb9dbf07a": "Mostrar o que é executado",
+  "8a3a0d0af54b004f": "Confiar no projeto",
+  "250cfd2dfd5bd82d": "Confiar nas configurações do Claude Code deste projeto?",
+  "74c018af28776721": "Esta conexão não pode confiar em um projeto. Use um cliente que possa usar o terminal."
 }

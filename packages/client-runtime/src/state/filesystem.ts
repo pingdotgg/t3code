@@ -279,5 +279,15 @@ export function createFilesystemEnvironmentAtoms<R, E>(
       label: "environment-data:workspace:approve-layout-commands",
       tag: WS_METHODS.workspaceApproveLayoutCommands,
     }),
+    /** Whether a project's Claude Code settings are trusted, and what its, or one thread's, folder would run. */
+    claudeProjectTrust: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:workspace:claude-project-trust",
+      tag: WS_METHODS.workspaceClaudeProjectTrust,
+      staleTimeMs: 0,
+    }),
+    setClaudeProjectTrust: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:workspace:set-claude-project-trust",
+      tag: WS_METHODS.workspaceSetClaudeProjectTrust,
+    }),
   };
 }

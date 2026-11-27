@@ -104,8 +104,12 @@ import {
   WorkspaceFoldersError,
   TaskFolder,
   TaskFolderError,
+  ClaudeProjectTrustError,
   WorkspaceAddTaskFolderRepositoryInput,
   WorkspaceApproveLayoutCommandsInput,
+  WorkspaceClaudeProjectTrustInput,
+  WorkspaceClaudeProjectTrustResult,
+  WorkspaceSetClaudeProjectTrustInput,
   WorkspaceLayoutCommandsInput,
   WorkspaceLayoutCommandsResult,
   WorkspaceListFoldersInput,
@@ -511,6 +515,8 @@ export const WS_METHODS = {
   workspaceAddTaskFolderRepository: "workspace.addTaskFolderRepository",
   workspaceLayoutCommands: "workspace.layoutCommands",
   workspaceApproveLayoutCommands: "workspace.approveLayoutCommands",
+  workspaceClaudeProjectTrust: "workspace.claudeProjectTrust",
+  workspaceSetClaudeProjectTrust: "workspace.setClaudeProjectTrust",
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
@@ -1759,6 +1765,17 @@ const WsWorkspaceApproveLayoutCommandsRpc = Rpc.make(WS_METHODS.workspaceApprove
   error: Schema.Union([TaskFolderError, EnvironmentAuthorizationError]),
 });
 
+const WsWorkspaceClaudeProjectTrustRpc = Rpc.make(WS_METHODS.workspaceClaudeProjectTrust, {
+  payload: WorkspaceClaudeProjectTrustInput,
+  success: WorkspaceClaudeProjectTrustResult,
+  error: Schema.Union([ClaudeProjectTrustError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkspaceSetClaudeProjectTrustRpc = Rpc.make(WS_METHODS.workspaceSetClaudeProjectTrust, {
+  payload: WorkspaceSetClaudeProjectTrustInput,
+  error: Schema.Union([ClaudeProjectTrustError, EnvironmentAuthorizationError]),
+});
+
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   payload: AgentSessionScanInput,
   success: AgentSessionScanResult,
@@ -2668,6 +2685,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsWorkspaceAddTaskFolderRepositoryRpc,
   WsWorkspaceLayoutCommandsRpc,
   WsWorkspaceApproveLayoutCommandsRpc,
+  WsWorkspaceClaudeProjectTrustRpc,
+  WsWorkspaceSetClaudeProjectTrustRpc,
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,

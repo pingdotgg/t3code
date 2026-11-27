@@ -15,6 +15,7 @@ import { mobilePreferencesAtom } from "../../state/preferences";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
+import { ClaudeProjectTrustCard } from "./ClaudeProjectTrustCard";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
 import { useAppActive } from "../../lib/appState";
@@ -1747,6 +1748,12 @@ function ThreadDetailBody(
                       key={props.selectedThread.latestRun?.runId}
                       thread={props.selectedThread}
                       environmentId={props.environmentId}
+                    />
+                    <ClaudeProjectTrustCard
+                      thread={props.selectedThread}
+                      environmentId={props.environmentId}
+                      claude={providerSubagentProvider?.driver === "claudeAgent"}
+                      draft={props.draftMode !== undefined}
                     />
                     <ChildThreadApprovals
                       threadRef={props.selectedThreadDetailRef}

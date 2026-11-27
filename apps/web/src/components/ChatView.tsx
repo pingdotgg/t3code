@@ -28,6 +28,7 @@ import { usePullRequestLinking } from "../hooks/usePullRequestLinking";
 import { useComposerSelection } from "./chat/useComposerSelection";
 import { useComposerFocus } from "./chat/useComposerFocus";
 import { useProjectCloneBanner } from "./chat/useProjectCloneBanner";
+import { useClaudeProjectTrustBanner } from "./chat/useClaudeProjectTrustBanner";
 import { useAttachmentPreviewHandoff } from "./chat/useAttachmentPreviewHandoff";
 import {
   applyOptimisticUserMessagesAction,
@@ -1455,6 +1456,16 @@ export default function ChatView(props: ChatViewProps) {
     lockedInstanceId: activeRuntime?.providerInstanceId ?? activeThreadModelInstanceId,
   });
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
+  const claudeProjectTrustBannerItem = useClaudeProjectTrustBanner({
+    projectRef: activeProjectRef,
+    threadId: isServerThread ? (activeThreadId ?? undefined) : undefined,
+    enabled:
+      selectedProvider === "claudeAgent" &&
+      !(
+        runtimeMode === "full-access" &&
+        (activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE) === "default"
+      ),
+  });
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
   const activeUsageModel =
@@ -2834,7 +2845,10 @@ export default function ChatView(props: ChatViewProps) {
     );
     const extensionStatusItems = extensionStatusBanner === null ? [] : [extensionStatusBanner];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
-    const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
+    const projectCloneItems = [
+      ...(projectCloneBannerItem === null ? [] : [projectCloneBannerItem]),
+      ...(claudeProjectTrustBannerItem === null ? [] : [claudeProjectTrustBannerItem]),
+    ];
     // An approval's feedback goes to that approval; the armed session waits for the next message.
     const freshSessionItems =
       freshSessionPending && activePendingApproval === null

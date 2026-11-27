@@ -106,6 +106,8 @@ import {
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
+  ClaudeProjectTrustError,
+  type ProjectId,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
@@ -227,6 +229,8 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
 import * as LayoutCommandApprovalWrites from "./workspace/LayoutCommandApprovalWrites.ts";
+import * as ClaudeProjectTrust from "./provider/ClaudeProjectTrust.ts";
+import * as ClaudeProjectTrustWrites from "./provider/ClaudeProjectTrustWrites.ts";
 import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -1602,6 +1606,35 @@ export const layerWsRpc = (
       const taskFolders = yield* TaskFolders.TaskFolders;
       const layoutCommandApprovalWrites =
         yield* LayoutCommandApprovalWrites.LayoutCommandApprovalWrites;
+      const claudeProjectTrust = yield* ClaudeProjectTrust.ClaudeProjectTrust;
+      const claudeProjectTrustWrites = yield* ClaudeProjectTrustWrites.ClaudeProjectTrustWrites;
+      // The folder a Claude session of the thread, or else of the project, reads its settings from.
+      const claudeProjectFolder = Effect.fn("ws.claudeProjectFolder")(function* (input: {
+        readonly projectId: ProjectId;
+        readonly threadId?: ThreadId | undefined;
+      }) {
+        const unreadable = ClaudeProjectTrust.failed("Could not read the project's folder.");
+        const shell =
+          input.threadId === undefined
+            ? null
+            : yield* threadManagement
+                .getThreadShell(input.threadId)
+                .pipe(Effect.mapError(unreadable));
+        if (input.threadId !== undefined && shell?.projectId !== input.projectId) {
+          return yield* new ClaudeProjectTrustError({
+            detail: `Thread ${input.threadId} was not found in project ${input.projectId}.`,
+          });
+        }
+        const project = yield* projectService
+          .getById(input.projectId)
+          .pipe(Effect.mapError(unreadable));
+        if (Option.isNone(project)) {
+          return yield* new ClaudeProjectTrustError({
+            detail: `Project ${input.projectId} was not found.`,
+          });
+        }
+        return shell?.worktreePath ?? project.value.workspaceRoot;
+      });
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -3221,6 +3254,15 @@ export const layerWsRpc = (
               layoutCommandApprovalWrites.set({ projectId: input.projectId, ...approval }),
             { discard: true },
           ).pipe(Effect.andThen(taskFolders.layoutCommands(input.projectId))),
+        [WS_METHODS.workspaceClaudeProjectTrust]: (input) =>
+          claudeProjectFolder(input).pipe(
+            Effect.flatMap((cwd) => claudeProjectTrust.read({ projectId: input.projectId, cwd })),
+          ),
+        // The one place trust is recorded: a person's client session, behind the scope.
+        [WS_METHODS.workspaceSetClaudeProjectTrust]: (input) =>
+          claudeProjectFolder({ projectId: input.projectId }).pipe(
+            Effect.andThen(claudeProjectTrustWrites.set(input)),
+          ),
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
         [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,

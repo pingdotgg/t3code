@@ -153,7 +153,8 @@ export type ManagedCapability =
   | "webhookTasks"
   | "browserCookieImport"
   | "previewTunnel"
-  | "worktreeLayoutCommands";
+  | "worktreeLayoutCommands"
+  | "claudeProjectHooks";
 
 function managedCapabilityDeniedMessage(
   organization: string,
@@ -189,6 +190,12 @@ function managedCapabilityDeniedMessage(
     case "worktreeLayoutCommands":
       return resolve(
         msg("{organization}'s policy does not allow project worktree layout commands.", {
+          organization,
+        }),
+      );
+    case "claudeProjectHooks":
+      return resolve(
+        msg("{organization}'s policy does not allow trusting a project's Claude Code settings.", {
           organization,
         }),
       );

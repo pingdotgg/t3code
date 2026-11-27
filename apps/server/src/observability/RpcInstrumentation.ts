@@ -208,6 +208,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.workspaceAddTaskFolderRepository]: "workspace",
   [WS_METHODS.workspaceLayoutCommands]: "workspace",
   [WS_METHODS.workspaceApproveLayoutCommands]: "workspace",
+  [WS_METHODS.workspaceClaudeProjectTrust]: "workspace",
+  [WS_METHODS.workspaceSetClaudeProjectTrust]: "workspace",
   [WS_METHODS.filesystemGetMetadata]: "workspace",
   [WS_METHODS.agentSessionsScan]: "workspace",
   [WS_METHODS.agentSessionsImport]: "workspace",

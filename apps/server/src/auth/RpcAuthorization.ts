@@ -192,6 +192,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.workspaceListFolders]: AuthFilesystemReadScope,
   // The command text comes out of a file in the project folder.
   [WS_METHODS.workspaceLayoutCommands]: AuthFilesystemReadScope,
+  // The command text comes out of files in the project folder.
+  [WS_METHODS.workspaceClaudeProjectTrust]: AuthFilesystemReadScope,
   [WS_METHODS.workspaceScanFolders]: AuthFilesystemReadScope,
   [WS_METHODS.workspaceTaskFolder]: AuthFilesystemReadScope,
   [WS_METHODS.filesystemGetMetadata]: AuthFilesystemReadScope,

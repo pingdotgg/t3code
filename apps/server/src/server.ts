@@ -146,6 +146,8 @@ import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
 import * as LayoutCommandApprovals from "./workspace/LayoutCommandApprovals.ts";
 import * as LayoutCommandApprovalWrites from "./workspace/LayoutCommandApprovalWrites.ts";
+import * as ClaudeProjectTrust from "./provider/ClaudeProjectTrust.ts";
+import * as ClaudeProjectTrustWrites from "./provider/ClaudeProjectTrustWrites.ts";
 import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as TaskFolderStore from "./workspace/TaskFolderStore.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
@@ -788,7 +790,13 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerOrchestrationApplication),
   // One hub, which the feeders above and the workflow store inside the runtime publish to.
   Layer.provideMerge(MilestoneHub.layer),
-  Layer.provideMerge(Layer.merge(layerTaskFolders, LayoutCommandApprovalWrites.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      layerTaskFolders,
+      LayoutCommandApprovalWrites.layer,
+      ClaudeProjectTrustWrites.layer.pipe(Layer.provide(ManagedPolicy.layer)),
+    ),
+  ),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(SecretCheck.layer),
@@ -811,7 +819,15 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   // One gate for the server, below hydration so the Claude adapter sees it: layers memoize by
   // reference, so the runtime layer shares it.
-  Layer.provideMerge(ProviderInstallationGate.layer),
+  // The project trust check sits here for the same reason: the adapter asks it at each session open.
+  Layer.provideMerge(
+    Layer.merge(
+      ProviderInstallationGate.layer,
+      ClaudeProjectTrust.layer.pipe(
+        Layer.provide(Layer.merge(SqlitePersistence.layerConfig, ManagedPolicy.layer)),
+      ),
+    ),
+  ),
   // Provider hydration builds the Claude runner, which reports agents to the same scanner the
   // terminal and preview layers share.
   Layer.provideMerge(layerPortScanner),

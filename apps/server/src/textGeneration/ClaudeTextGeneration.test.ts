@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { ClaudeSettings, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
@@ -71,6 +71,8 @@ function withFakeClaudeEnv<A, E, R>(
     cwdMustNotBe?: string;
     settingsLog?: string;
     claudeConfig?: Partial<ClaudeSettings>;
+    /** Stands in for `ClaudeProjectTrust.forFolder`; every project is trusted when left out. */
+    folderConfigRoot?: Parameters<typeof makeClaudeTextGeneration>[1];
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -110,6 +112,7 @@ function withFakeClaudeEnv<A, E, R>(
     const config = decodeClaudeSettings(input.claudeConfig ?? {});
     const textGeneration = yield* makeClaudeTextGeneration(
       config,
+      input.folderConfigRoot ?? (() => Effect.succeed(null)),
       environment,
       Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
     );
@@ -403,6 +406,88 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           }),
       );
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    ["an untrusted project on the substitute folder", "/state/claude-project-config/folder-1"],
+    ["a trusted project on its own folder", null],
+  ] as const)("generates text for %s", ([, root]) =>
+    Effect.gen(function* () {
+      const asked: Array<unknown> = [];
+      const cwd = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+        prefix: "t3code-claude-generation-",
+      });
+      const selection = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+      };
+      const projectId = ProjectId.make("project:generation");
+      yield* withFakeClaudeEnv(
+        {
+          output: JSON.stringify({
+            structured_output: { subject: "Add a line", body: "", title: "T", branch: "add-line" },
+          }),
+          ...(root === null
+            ? { argsMustNotContain: "--project-config-root" }
+            : { argsMustContain: `--project-config-root ${root}` }),
+          folderConfigRoot: (input) => Effect.sync(() => (asked.push(input), root)),
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            yield* textGeneration.generateCommitMessage({
+              cwd,
+              branch: null,
+              stagedSummary: "a.txt | 1 +",
+              stagedPatch: "+line",
+              modelSelection: selection,
+              projectId,
+            });
+            yield* textGeneration.generatePrContent({
+              cwd,
+              baseBranch: "main",
+              headBranch: "feature",
+              commitSummary: "Add a line",
+              diffSummary: "a.txt | 1 +",
+              diffPatch: "+line",
+              modelSelection: selection,
+              projectId,
+            });
+            // No project id: the folder is looked up.
+            yield* textGeneration.generateBranchName({
+              cwd,
+              message: "add a line",
+              modelSelection: selection,
+            });
+          }),
+      );
+      expect(asked).toEqual([
+        { cwd, projectId },
+        { cwd, projectId },
+        { cwd, projectId: undefined },
+      ]);
+    }),
+  );
+
+  it.effect("a review guide reads no project settings, so it asks for no folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const checkout = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-guide-" });
+      yield* withFakeClaudeEnv(
+        {
+          output: JSON.stringify({ structured_output: { stops: [] } }),
+          expectedTools: "Read,Grep,Glob,Bash",
+          argsMustContain: "--setting-sources ",
+          argsMustNotContain: "--project-config-root",
+          folderConfigRoot: () => Effect.die("a review guide asked for a folder"),
+        },
+        (textGeneration) =>
+          textGeneration.generateReviewGuide({
+            ...reviewGuideInput,
+            cwd: checkout,
+            projectCwd: checkout,
+          }),
+      );
+    }),
   );
 
   it.effect("runs Claude text generation with the configured CLAUDE_CONFIG_DIR", () =>

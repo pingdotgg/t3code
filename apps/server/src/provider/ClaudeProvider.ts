@@ -1,6 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK's spawn hook returns a Node child process.
 import * as NodeChildProcess from "node:child_process";
 
+import type { ClaudeProjectTrust } from "./ClaudeProjectTrust.ts";
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   type ClaudeSettings,
@@ -273,6 +274,8 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly abortController: AbortController;
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
+  /** Where the probe reads project configuration from in place of `cwd`: see `ClaudeProjectTrust`. */
+  readonly projectConfigRoot?: string | undefined;
   readonly managedMcpConfig: boolean;
   readonly spawnVia: "env" | "launcher-thread" | undefined;
 }): ClaudeQueryOptions {
@@ -301,6 +304,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
       CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: "1",
     },
     ...(input.cwd ? { cwd: input.cwd } : {}),
+    ...(input.projectConfigRoot ? { projectConfigRoot: input.projectConfigRoot } : {}),
     stderr: () => {},
   };
 }
@@ -491,6 +495,7 @@ const probeClaudeCapabilities = (
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   includeStatus = true,
+  projectConfigRoot?: string,
 ) => {
   const abort = new AbortController();
   const abortProbe = Effect.sync(() => {
@@ -529,6 +534,7 @@ const probeClaudeCapabilities = (
             abortController: abort,
             environment: claudeEnvironment,
             cwd,
+            projectConfigRoot,
             managedMcpConfig,
             spawnVia,
           }),
@@ -641,7 +647,9 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   claudeSettings: ClaudeSettings,
   machineSnapshot: ServerProvider,
   cwd: string,
-  environment?: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv | undefined,
+  /** The probe starts Claude Code in `cwd`: on the folder of a trusted project, else on a substitute. */
+  folderConfigRoot: ClaudeProjectTrust["Service"]["forFolder"],
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
@@ -649,7 +657,13 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   // A deleted worktree can never answer the probe. Pending would make clients rescan it forever.
   const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
   const probeResult = cwdExists
-    ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(Effect.result)
+    ? yield* folderConfigRoot({ cwd }).pipe(
+        Effect.flatMap((root) =>
+          probeClaudeCapabilities(claudeSettings, environment, cwd, false, root ?? undefined),
+        ),
+        Effect.scoped,
+        Effect.result,
+      )
     : undefined;
   const capabilities =
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;

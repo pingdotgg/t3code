@@ -26,7 +26,7 @@ When an agent below **Full access** opens a PR using T3 Code's built-in pull req
 Providers enforce permissions differently, and some read-only actions proceed even in **Supervised**:
 
 - **Auto mode**: Supported by Codex, Claude, Cursor, Grok, Antigravity (account-dependent; falls back to Supervised if unavailable), and fx. Providers without an equivalent (including OpenCode) fall back to asking.
-- **Claude**: In **Auto**, asks about actions its review leaves open (unavailable if disabled in Claude settings or by the model). In **Full access**, Claude's own settings can still require approval or block dangerous removals. While an approval is pending, typing a reply declines it with feedback directly to that agent or subagent.
+- **Claude**: In **Auto**, asks about actions its review leaves open (unavailable if disabled in Claude settings or by the model). In **Full access**, Claude's own settings can still require approval or block dangerous removals. Below **Full access**, a thread runs the hooks, helper commands, MCP servers and environment variables a project's Claude Code settings name only after you [trust the project](./providers-claude.md#project-trust); in **Full access** it runs them without asking. While an approval is pending, typing a reply declines it with feedback directly to that agent or subagent.
 - **Codex**: In **Full access**, skips dangerous-command prompts, though managed network restrictions can still prompt unless commands were allowed for the session.
 - **Grok**: No **Auto-accept edits** (falls back to Supervised). File approvals offer session-wide allow; command approvals do not.
 - **fx**: No **Auto-accept edits**; **Full access** requires fx 0.0.14+ (otherwise falls back to Supervised).

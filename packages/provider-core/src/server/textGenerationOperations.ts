@@ -1,7 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
+import {
+  type ChatAttachment,
+  type ModelSelection,
+  type ProjectId,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
@@ -26,6 +31,8 @@ export type Operation = keyof ProviderTextGeneration;
 export interface Request<S extends Schema.Top> {
   readonly operation: Operation;
   readonly cwd: string;
+  /** The project `cwd` belongs to, when the caller knows it. */
+  readonly projectId?: ProjectId | null | undefined;
   readonly prompt: string;
   readonly outputSchema: S;
   readonly modelSelection: ModelSelection;
@@ -97,6 +104,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     const generated = yield* run({
       operation: "generateCommitMessage",
       cwd: input.cwd,
+      projectId: input.projectId,
       modelSelection: input.modelSelection,
       ...buildCommitMessagePrompt({
         branch: input.branch,
@@ -121,6 +129,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     const generated = yield* run({
       operation: "generatePrContent",
       cwd: input.cwd,
+      projectId: input.projectId,
       modelSelection: input.modelSelection,
       ...buildPrContentPrompt({
         baseBranch: input.baseBranch,
@@ -143,6 +152,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     const generated = yield* run({
       operation: "generateBranchName",
       cwd: input.cwd,
+      projectId: input.projectId,
       modelSelection: input.modelSelection,
       attachments: input.attachments,
       ...buildBranchNamePrompt({

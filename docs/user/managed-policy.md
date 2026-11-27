@@ -79,6 +79,7 @@ Key constraints:
     "browserCookieImport": false,
     "previewTunnel": false,
     "worktreeLayoutCommands": false,
+    "claudeProjectHooks": false,
     "telemetry": false,
     "providers": {
       "allowedDrivers": ["claudeAgent", "codex"],
@@ -113,6 +114,7 @@ When `maxRuntimeMode` is set, users cannot modify provider launch settings (`bin
 - `browserCookieImport: false`: Disables importing cookies from other browsers.
 - `previewTunnel: false`: Disables remote `localhost` tunneling and port forwarding (streams tabs instead).
 - `worktreeLayoutCommands: false`: Disables `t3.json` `worktreeLayout` `create`/`remove` commands.
+- `claudeProjectHooks: false`: No project's [Claude Code settings can be trusted](./providers-claude.md#project-trust). Claude leaves out the hooks, helper commands, MCP servers and environment variables a project folder names, in every permission mode; the user's own Claude Code settings and the project's deny and ask rules, memory files, commands, skills and agents still apply.
 - `telemetry: false`: Disables product usage data and relay tracing for the server, desktop app, and server-opened browsers (does not control `app.t3.codes` or mobile).
 
 ### Providers

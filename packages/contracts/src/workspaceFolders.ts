@@ -137,6 +137,65 @@ export const WorkspaceApproveLayoutCommandsInput = Schema.Struct({
 });
 export type WorkspaceApproveLayoutCommandsInput = typeof WorkspaceApproveLayoutCommandsInput.Type;
 
+/**
+ * One thing a folder's Claude Code configuration makes Claude Code run or set by itself, as the
+ * file holds it now.
+ */
+export const ClaudeProjectCommand = Schema.Struct({
+  /**
+   * - `hook`: a hook; `event` is the Claude Code event, such as `SessionStart`.
+   * - `helper`: a helper command such as `apiKeyHelper`; `event` is its settings key.
+   * - `mcp`: a server Claude Code starts; `event` is its name.
+   * - `env`: an environment variable for the session and its commands; `event` is its name.
+   */
+  kind: Schema.Literals(["hook", "helper", "mcp", "env"]),
+  /** `.claude/settings.json`, `.claude/settings.local.json`, or `.mcp.json`. */
+  source: Schema.Literals(["project", "local", "mcp"]),
+  event: Schema.String,
+  /** The tools or sources a hook is limited to, when the file names any. */
+  matcher: Schema.optional(Schema.String),
+  /** What runs or is set: the command, URL, prompt, or value. */
+  detail: Schema.String,
+});
+export type ClaudeProjectCommand = typeof ClaudeProjectCommand.Type;
+
+export const WorkspaceClaudeProjectTrustInput = Schema.Struct({
+  projectId: ProjectId,
+  /** Reads the folder this thread works in. Without it, the project's own folder. */
+  threadId: Schema.optional(ThreadId),
+});
+export type WorkspaceClaudeProjectTrustInput = typeof WorkspaceClaudeProjectTrustInput.Type;
+
+export const WorkspaceClaudeProjectTrustResult = Schema.Struct({
+  /**
+   * - `trusted`: a person trusted the project, so its Claude sessions run on its folder as it is.
+   * - `untrusted`: nobody has; below Full access its sessions leave `commands` out.
+   * - `off`: the administrator's policy lets no project be trusted.
+   */
+  status: Schema.Literals(["trusted", "untrusted", "off"]),
+  /** What the folder would run. Empty when there is nothing to trust it with. */
+  commands: Schema.Array(ClaudeProjectCommand),
+});
+export type WorkspaceClaudeProjectTrustResult = typeof WorkspaceClaudeProjectTrustResult.Type;
+
+export const WorkspaceSetClaudeProjectTrustInput = Schema.Struct({
+  projectId: ProjectId,
+  trusted: Schema.Boolean,
+});
+export type WorkspaceSetClaudeProjectTrustInput = typeof WorkspaceSetClaudeProjectTrustInput.Type;
+
+export class ClaudeProjectTrustError extends Schema.TaggedError<ClaudeProjectTrustError>()(
+  "ClaudeProjectTrustError",
+  {
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export class TaskFolderError extends Schema.TaggedError<TaskFolderError>()("TaskFolderError", {
   operation: Schema.Literals(["plan", "create", "add-repository", "remove", "read", "approve"]),
   detail: Schema.String,

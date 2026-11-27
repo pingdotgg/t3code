@@ -5716,5 +5716,14 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "201490988858b511": "retirée par {by}",
-  "46d614fa7b4bf1e5": "Exécutions de workflow"
+  "46d614fa7b4bf1e5": "Exécutions de workflow",
+  "c624901a460291d4": "La politique de {organization} n’autorise pas à faire confiance aux réglages Claude Code d’un projet.",
+  "ce6146b3397a2d2a": "Impossible de faire confiance au projet.",
+  "9c7ec89670215fc6": "Un projet de confiance exécute tout ce que ses réglages Claude Code indiquent, dans tous les fils Claude du projet : hooks, commandes auxiliaires, serveurs MCP et variables d’environnement. Ils s’exécutent sur la machine de cet environnement avec vos autorisations, hors de tout bac à sable d’agent. La question est posée une fois par projet, et pas de nouveau quand les réglages changent. Voici ce qu’ils contiennent maintenant. La confiance s’applique à partir de la prochaine session.",
+  "35876f92d191fc8c": "D’ici là, les sessions Claude s’exécutent ici sans les hooks, commandes auxiliaires, serveurs MCP et variables d’environnement du projet.",
+  "cd9ffdf0f4057b75": "Masquer ce qui s’exécute",
+  "f3f0532cb9dbf07a": "Afficher ce qui s’exécute",
+  "8a3a0d0af54b004f": "Faire confiance au projet",
+  "250cfd2dfd5bd82d": "Faire confiance aux réglages Claude Code de ce projet ?",
+  "74c018af28776721": "Cette connexion ne peut pas faire confiance à un projet. Utilisez un client qui peut utiliser le terminal."
 }

@@ -5722,5 +5722,14 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "201490988858b511": "återkallad av {by}",
-  "46d614fa7b4bf1e5": "Arbetsflödeskörningar"
+  "46d614fa7b4bf1e5": "Arbetsflödeskörningar",
+  "c624901a460291d4": "{organization}s policy tillåter inte att lita på ett projekts Claude Code-inställningar.",
+  "ce6146b3397a2d2a": "Det gick inte att lita på projektet.",
+  "9c7ec89670215fc6": "Ett betrott projekt kör allt som dess Claude Code-inställningar anger, i alla projektets Claude-trådar: hooks, hjälpkommandon, MCP-servrar och miljövariabler. De körs på den här miljöns dator med dina behörigheter, utanför alla agentsandlådor. Du får frågan en gång per projekt, inte igen när inställningarna ändras. Det här är vad de innehåller nu. Förtroendet gäller från och med nästa session.",
+  "35876f92d191fc8c": "Tills dess körs Claude-sessioner här utan projektets hooks, hjälpkommandon, MCP-servrar och miljövariabler.",
+  "cd9ffdf0f4057b75": "Dölj vad som körs",
+  "f3f0532cb9dbf07a": "Visa vad som körs",
+  "8a3a0d0af54b004f": "Lita på projektet",
+  "250cfd2dfd5bd82d": "Lita på det här projektets Claude Code-inställningar?",
+  "74c018af28776721": "Den här anslutningen kan inte lita på ett projekt. Använd en klient som får använda terminalen."
 }
