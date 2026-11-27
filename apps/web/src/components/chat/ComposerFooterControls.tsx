@@ -13,6 +13,7 @@ import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { resolveRuntimeModeOption, runtimeModeConfig } from "./runtimeModeConfig";
 import { useComposerMenuState } from "./useComposerMenuState";
+import { HiddenThreadContext } from "./backgroundThread";
 import {
   RuntimeModeLimitsTargetContext,
   useProviderRuntimeModeLimits,
@@ -38,7 +39,8 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   const size = props.size ?? "sm";
   const accessDisplay = props.accessDisplay ?? "label";
   const composerFloatingLayerProps = useComposerMenuProps();
-  const [open, setOpen] = useComposerMenuState(props.hidden);
+  const hiddenThread = use(HiddenThreadContext);
+  const [open, setOpen] = useComposerMenuState(props.hidden || hiddenThread);
   const permissionsChipRef = useRef<HTMLButtonElement>(null);
   const runtimeModeOption =
     props.runtimeModeOptions.find((option) => option.mode === props.runtimeMode) ??
