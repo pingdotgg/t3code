@@ -101,7 +101,7 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
   const selectedDeletions = selectedFiles.reduce((sum, file) => sum + file.deletions, 0);
 
   const runCommitAction = async (featureBranch: boolean) => {
-    if (busy || !canWriteSourceControl || (featureBranch && !canCreateFeatureBranch)) return;
+    if (!canWriteSourceControl || (featureBranch && !canCreateFeatureBranch)) return;
     const commitMessage = dialogCommitMessage.trim();
     const submitted = {
       refName: selectionBranch,
