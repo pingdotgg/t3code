@@ -41,11 +41,22 @@ export function markdownTaskMarkerOffset(
   if (renderedText.includes("\uFFFC")) return null;
   const tasks: Array<{ readonly item: ListItem; readonly offset: number }> = [];
   const collect = (node: Nodes) => {
-    if (node.type === "listItem" && typeof node.checked === "boolean") {
+    if (node.type === "listItem") {
+      const first = node.children[0];
+      const emptyTask =
+        first?.type === "paragraph" &&
+        /^\[[ xX]\][ \t]*$/.test(
+          markdown.slice(first.position?.start.offset, first.position?.end.offset),
+        );
       // Native enrmrkd only recognizes task markers on the same line as their list bullet.
       const start = node.position?.start.offset;
       const offset = start === undefined ? null : taskListMarkerOffset(markdown, start);
-      if (start !== undefined && offset !== null && !/[\r\n]/.test(markdown.slice(start, offset))) {
+      if (
+        (typeof node.checked === "boolean" || emptyTask) &&
+        start !== undefined &&
+        offset !== null &&
+        !/[\r\n]/.test(markdown.slice(start, offset))
+      ) {
         tasks.push({ item: node, offset });
       }
     }
