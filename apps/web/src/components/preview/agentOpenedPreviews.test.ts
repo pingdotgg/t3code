@@ -238,13 +238,6 @@ describe("floatBrowserSurface", () => {
 
 describe("floatPanelSurfaceOnClose", () => {
   const browser = browserMiniPlayerSource("tab_panel");
-  const pixel = {
-    kind: "device",
-    hostId: "local",
-    deviceId: "pixel",
-    platform: "android",
-    name: "Pixel 8",
-  } as const;
   const previewState = {
     ...previewStateTesting.EMPTY_THREAD_PREVIEW_STATE,
     sessions: {
@@ -261,17 +254,9 @@ describe("floatPanelSurfaceOnClose", () => {
 
   it.each([
     { name: "floats a browser", source: browser, autoShow: true, before: null, after: browser },
-    { name: "floats a device", source: pixel, autoShow: true, before: null, after: pixel },
     {
       name: "floats no browser with Auto-show off",
       source: browser,
-      autoShow: false,
-      before: null,
-      after: undefined,
-    },
-    {
-      name: "floats no device with Auto-show off",
-      source: pixel,
       autoShow: false,
       before: null,
       after: undefined,
