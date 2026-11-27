@@ -21,7 +21,7 @@ import {
   useRightPanelStore,
   type RightPanelSurface,
 } from "../rightPanelStore";
-import { readThreadShell } from "../state/entities";
+import { readThreadShell, waitForThreadShellRemoval } from "../state/entities";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { threadEnvironment } from "../state/threads";
@@ -70,20 +70,22 @@ export function useRightPanelSurfaceClose(input: {
         terminalActions.closeTerminalSession(terminalId, ref);
       }
     }
-    const sideChat =
-      surface.kind === "thread"
-        ? readThreadShell(scopeThreadRef(ref.environmentId, surface.threadId))
-        : null;
     if (
       surface.kind === "thread" &&
       // Only a side chat the shell still lists is thrown away with its tab; a subagent belongs to
       // its parent's work, and an unlisted side chat is already deleted.
-      sideChat?.lineage.sideChat === true &&
+      readThreadShell(scopeThreadRef(ref.environmentId, surface.threadId))?.lineage.sideChat ===
+        true &&
       readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)
     ) {
-      // Reopening would bring back a deleted thread: the shell leaves idle subagents out, so the
-      // reopen shortcut can no longer tell a deleted side chat from one of them.
-      if (sideChat.latestUserMessageAt === null) {
+      const sideChatRef = scopeThreadRef(ref.environmentId, surface.threadId);
+      // The server keeps a side chat with a run or message. Reopen cannot tell one it deleted from
+      // an idle subagent the shell leaves out, so forget the tab once the server has removed it.
+      void deleteThread({
+        environmentId: ref.environmentId,
+        input: { threadId: surface.threadId, onlyIfUnused: true },
+      }).then(async (result) => {
+        if (result._tag !== "Success" || !(await waitForThreadShellRemoval(sideChatRef))) return;
         const closedViews = useClosedViewStore.getState();
         for (const entry of closedViews.entries) {
           if (
@@ -94,11 +96,6 @@ export function useRightPanelSurfaceClose(input: {
             closedViews.remove(entry.id);
           }
         }
-      }
-      // The server keeps a side chat with a run or message. Reopen skips one it deleted.
-      void deleteThread({
-        environmentId: ref.environmentId,
-        input: { threadId: surface.threadId, onlyIfUnused: true },
       });
     }
   };

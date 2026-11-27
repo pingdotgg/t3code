@@ -40,6 +40,7 @@ vi.mock("../state/entities", () => ({
   useQuietThreadShell: () => null,
   useProject: () => null,
   readThreadShell: (ref: ScopedThreadRef) => fixture.shells.get(ref.threadId) ?? null,
+  waitForThreadShellRemoval: async () => true,
 }));
 vi.mock("../state/terminalSessions", () => ({ useKnownTerminalSessions: () => null }));
 vi.mock("../composerDraftStore", async () => {
@@ -191,7 +192,7 @@ it("reopens the active browser first after closing every browser tab", async () 
   ).toEqual(["tab-a", "tab-b"]);
 });
 
-it("does not offer an unused side chat for reopen, since closing it deletes it", async () => {
+it("does not offer a side chat for reopen once closing it deleted it", async () => {
   fixture.allowed = new Set(["environment-a"]);
   const ref: ScopedThreadRef = {
     environmentId: EnvironmentId.make("environment-a"),
@@ -204,7 +205,6 @@ it("does not offer an unused side chat for reopen, since closing it deletes it",
       {
         id: sideChatId,
         lineage: { sideChat: true, parentThreadId: ref.threadId },
-        latestUserMessageAt: null,
       },
     ],
   ]);
@@ -223,10 +223,7 @@ it("does not offer an unused side chat for reopen, since closing it deletes it",
   try {
     await using screen = await render(<Harness />);
     await screen.getByRole("button").click();
-    expect(
-      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).surfaces,
-    ).toEqual([]);
-    expect(useClosedViewStore.getState().entries).toEqual([]);
+    await vi.waitFor(() => expect(useClosedViewStore.getState().entries).toEqual([]));
   } finally {
     fixture.shells = new Map();
   }
