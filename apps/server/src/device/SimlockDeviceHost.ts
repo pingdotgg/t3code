@@ -448,7 +448,9 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     Effect.tap((devices) =>
       Effect.sync(() => {
         platforms = (["ios", "android"] as const).map((platform) =>
-          devices.some((device) => device.platform === platform)
+          // A held lease stays openable even when discovery no longer lists its device.
+          devices.some((device) => device.platform === platform) ||
+          [...leases.values()].some((lease) => lease.platform === platform)
             ? { platform, available: true }
             : {
                 platform,
