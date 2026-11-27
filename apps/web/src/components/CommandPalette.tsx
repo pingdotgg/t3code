@@ -471,6 +471,7 @@ function OpenCommandPaletteDialog(props: {
       : createCommandPaletteSearchState(initialSearch.query);
   });
   const { query, views: viewStack } = searchState;
+  const viewGeneration = useRef(0);
   const setQuery = (query: string) => dispatchSearch({ type: "query", query });
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
@@ -1015,6 +1016,7 @@ function OpenCommandPaletteDialog(props: {
     .slice(0, RECENT_THREAD_LIMIT);
 
   const pushPaletteView = useStableCallback((view: CommandPaletteView): void => {
+    viewGeneration.current += 1;
     browseNavigation.invalidate();
     dispatchSearch({ type: "push", view });
     highlightClearedRef.current = true;
@@ -1022,6 +1024,7 @@ function OpenCommandPaletteDialog(props: {
   });
 
   const popView = useStableCallback((): void => {
+    viewGeneration.current += 1;
     browseNavigation.invalidate();
     cloneLookupGeneration.current += 1;
     setIsRemoteProjectLookingUp(false);
@@ -1988,6 +1991,16 @@ function OpenCommandPaletteDialog(props: {
     return { ...group, items: group.items.map((item) => jumpItems.get(item.value) ?? item) };
   });
 
+  function captureProjectViewClose(): () => void {
+    const palette = useCommandPaletteStore.getState();
+    const view = viewGeneration.current;
+    return () => {
+      if (useCommandPaletteStore.getState() === palette && viewGeneration.current === view) {
+        setOpen(false);
+      }
+    };
+  }
+
   const handleAddProjectForEnvironment = async (input: {
     readonly environmentId: EnvironmentId;
     readonly rawCwd: string;
@@ -2036,6 +2049,7 @@ function OpenCommandPaletteDialog(props: {
     const cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
     if (cwd.length === 0) return;
 
+    const closeProjectView = captureProjectViewClose();
     const existing = findProjectByPath(
       projects.filter((project) => project.environmentId === input.environmentId),
       cwd,
@@ -2049,7 +2063,7 @@ function OpenCommandPaletteDialog(props: {
         }).then((result) => reportProjectFailure(gt("Failed to unarchive project"), result));
       }
       if (await moveDraftToAddedProject(existing)) {
-        setOpen(false);
+        closeProjectView();
         return;
       }
       const latestThread = getLatestThreadForProject(
@@ -2080,7 +2094,7 @@ function OpenCommandPaletteDialog(props: {
           return;
         }
       }
-      setOpen(false);
+      closeProjectView();
       return;
     }
 
@@ -2133,7 +2147,7 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
-    setOpen(false);
+    closeProjectView();
   };
 
   const handleAddProject = async (rawCwd: string) => {
@@ -2168,7 +2182,7 @@ function OpenCommandPaletteDialog(props: {
     if (newProjectFlow === null || !canSubmitNewProject || newProjectSubmittingRef.current) {
       return;
     }
-    const paletteAtSubmit = useCommandPaletteStore.getState();
+    const closeProjectView = captureProjectViewClose();
     newProjectSubmittingRef.current = true;
     setIsCreatingNewProject(true);
     const created = await settlePromise(() =>
@@ -2181,8 +2195,7 @@ function OpenCommandPaletteDialog(props: {
     newProjectSubmittingRef.current = false;
     setIsCreatingNewProject(false);
     if (created._tag === "Failure") throw squashAtomCommandFailure(created);
-    // Dismissing or replacing the palette invalidates the submitting view.
-    if (created.value && useCommandPaletteStore.getState() === paletteAtSubmit) setOpen(false);
+    if (created.value) closeProjectView();
   }
 
   function getDefaultCloneDestination(
@@ -2353,6 +2366,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
+    const closeProjectView = captureProjectViewClose();
     setIsRemoteProjectCloning(true);
     const startResult = await startProjectClone({
       environmentId: addProjectCloneFlow.environmentId,
@@ -2377,7 +2391,7 @@ function OpenCommandPaletteDialog(props: {
       }
       return;
     }
-    setOpen(false);
+    closeProjectView();
     void suggestAppAccessForRemote(
       addProjectCloneFlow.environmentId,
       addProjectCloneFlow.remoteUrl,
