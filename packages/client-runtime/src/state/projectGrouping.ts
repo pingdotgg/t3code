@@ -259,6 +259,13 @@ export function deriveProjectGroupLabel(input: {
   ) {
     return sharedTitle;
   }
+  // A checkout added after a rename starts with the default title.
+  const customTitles = uniqueNonEmptyValues(
+    input.members.filter((member) => member.hasCustomTitle === true).map((member) => member.title),
+  );
+  if (customTitles.length === 1) {
+    return customTitles[0]!;
+  }
   if (sharedDisplayNames.length === 1) {
     return sharedDisplayNames[0]!;
   }

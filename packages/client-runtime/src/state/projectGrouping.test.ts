@@ -352,6 +352,20 @@ describe("buildProjectGroups", () => {
     expect(label(renamed)).toBe("t3code");
   });
 
+  // regression: #44316 a checkout added after a rename replaced the name with the repository's
+  it("keeps a renamed group's title when a new checkout joins with the default title", () => {
+    const renamed = makeProject("t3code", "/work/t3code", { title: "Acme", hasCustomTitle: true });
+    const added = makeProject("t3code", "/remote/t3code", {
+      environmentId: EnvironmentId.make("remote"),
+    });
+    const conflicting = { ...added, title: "Other", hasCustomTitle: true };
+
+    const label = (projects: ReadonlyArray<EnvironmentProject>) =>
+      buildProjectGroups({ projects, settings: settings("repository") })[0]?.label;
+    expect(label([renamed, added])).toBe("Acme");
+    expect(label([renamed, conflicting])).toBe("T3 Code");
+  });
+
   it("labels a group by its repository when clones disagree on its casing", () => {
     // A subfolder project, its repository root, and a clone whose remote URL is
     // lowercased: no shared title or display name, but one repository.
