@@ -171,11 +171,9 @@ describe("PullRequestsColumn condensed search", () => {
 function HostFilteredColumn({
   host,
   onHost,
-  hostMenuOptions,
 }: {
   host: string | undefined;
   onHost: (host: string | undefined) => void;
-  hostMenuOptions: ReadonlyArray<PullRequestFilterOption<string>>;
 }) {
   const scrollRef = createRef<HTMLDivElement>();
   return (
@@ -186,7 +184,7 @@ function HostFilteredColumn({
       involvement="all"
       state="open"
       host={host}
-      hostMenuOptions={hostMenuOptions}
+      hostMenuOptions={HOST_OPTIONS}
       onInvolvement={() => {}}
       onState={() => {}}
       onHost={onHost}
@@ -198,7 +196,7 @@ function HostFilteredColumn({
       titlebarControls={null}
       rightPanelOpen={false}
       maximizedAway={false}
-      listBody={null}
+      listBody={<div style={{ height: 2000 }} />}
       scrollRef={scrollRef}
     />
   );
@@ -211,42 +209,6 @@ const HOST_OPTIONS: ReadonlyArray<PullRequestFilterOption<string>> = [
 ];
 
 describe("PullRequestsColumn host selector", () => {
-  // The in-flow (non-condensed) header is where the selector lives; the condensed topbar
-  // only appears once the page scrolls, so mount the column with a tall list body.
-  function HostFilteredColumn({
-    host,
-    onHost,
-  }: {
-    host: string | undefined;
-    onHost: (host: string | undefined) => void;
-  }) {
-    const scrollRef = createRef<HTMLDivElement>();
-    return (
-      <PullRequestsColumn
-        refreshing={false}
-        onRefresh={() => {}}
-        searchValue=""
-        involvement="all"
-        state="open"
-        host={host}
-        hostMenuOptions={HOST_OPTIONS}
-        onInvolvement={() => {}}
-        onState={() => {}}
-        onHost={onHost}
-        searchInput={<input aria-label="Search pull requests" />}
-        sortMenu={null}
-        filtersMenu={null}
-        savedViewsMenu={null}
-        rightPanelControl={null}
-        titlebarControls={null}
-        rightPanelOpen={false}
-        maximizedAway={false}
-        listBody={<div style={{ height: 2000 }} />}
-        scrollRef={scrollRef}
-      />
-    );
-  }
-
   // Base UI unmounts the popup on pick, so each case opens the menu exactly once.
   async function pickHost(from: string | undefined, pick: string) {
     const onHost = vi.fn();
