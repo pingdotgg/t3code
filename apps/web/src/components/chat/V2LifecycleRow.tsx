@@ -52,7 +52,7 @@ import {
   MessageSquareIcon,
 } from "lucide-react";
 
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import {
   applyProviderInstanceSettings,
