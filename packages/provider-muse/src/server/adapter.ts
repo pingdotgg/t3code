@@ -283,7 +283,7 @@ const backgroundTaskId = (item: MuseItem) =>
 interface LiveBackgroundTask {
   readonly kind: "monitor" | "command";
   readonly description?: string;
-  readonly awaited?: true;
+  readonly awaited: true;
 }
 const isMonitorTask = (task: { readonly kind: string; readonly tool?: string | undefined }) =>
   task.tool?.toLowerCase() === "monitor" || task.kind.toLowerCase().includes("monitor");
@@ -301,8 +301,9 @@ const liveBackgroundTask = (
   return {
     kind: monitor ? "monitor" : "command",
     ...(description ? { description } : {}),
-    // A monitor wakes the session when it reports, so the thread waits on it like a subagent.
-    ...(monitor ? { awaited: true as const } : {}),
+    // Muse hands a backgrounded task's result back as runtime context and wakes the session,
+    // so the thread waits on it like a subagent.
+    awaited: true,
   };
 };
 const recordSchema = Schema.Record(Schema.String, Schema.Unknown);

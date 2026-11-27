@@ -1811,7 +1811,7 @@ describe("MuseAdapterV2", () => {
           true,
       );
       assert.deepEqual(listed.providerThread.pendingBackgroundTasks, [
-        { taskId: "shell-1", kind: "command", description: "shell" },
+        { taskId: "shell-1", kind: "command", description: "shell", awaited: true },
       ]);
 
       // A monitor started before this client attached comes from `task/list` alone.
