@@ -20,6 +20,7 @@ import {
   CLOUD_SPEECH_LABELS,
   CLOUD_SPEECH_PROVIDER_NAMES,
   isSecretReference,
+  SpeechModelId,
   type CloudSpeechModel,
   type CloudSpeechProvider,
   type SecretProviderId,
@@ -33,6 +34,8 @@ import type { HttpClient } from "effect/http";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { useId, useState } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   inEnvironmentSpeechRuntime,
   runEnvironmentSpeech,
@@ -85,6 +88,21 @@ function useCloudRead<A, E>(
 }
 const isApiKey = Schema.is(CloudSpeechApiKey);
 const isModelId = Schema.is(CloudSpeechModelId);
+const isCustomModelId = Schema.is(SpeechModelId);
+/** Mirror of the server check: https, or plain http only for loopback hosts. */
+function isCustomEndpoint(value: string) {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return false;
+  }
+  if (url.search || url.hash || url.username || url.password) return false;
+  const host = url.hostname.toLowerCase();
+  const loopback =
+    host === "localhost" || host === "[::1]" || host === "127.0.0.1" || host.endsWith(".localhost");
+  return url.protocol === "https:" || (url.protocol === "http:" && loopback);
+}
 type CloudDestination = Extract<VoiceTranscriptionDestination, { kind: "cloud" }>;
 
 function ModelPicker({
@@ -159,7 +177,7 @@ function ModelPicker({
 export function CloudVoiceConfiguration({
   environment,
   provider,
-  active,
+  active: selected,
   close,
 }: {
   environment: Pick<EnvironmentPresentation, "environmentId" | "label" | "serverConfig">;
@@ -172,7 +190,8 @@ export function CloudVoiceConfiguration({
   const id = environment.environmentId;
   const name = CLOUD_SPEECH_LABELS[provider];
   const company = CLOUD_SPEECH_PROVIDER_NAMES[provider];
-  const routed = provider === "openrouter";
+  const routed = provider === "openrouter" || provider === "custom";
+  const custom = provider === "custom";
   const formId = useId();
   const prepared = Option.getOrNull(usePreparedConnection(id));
   const canUse = useEnvironmentScope(id, AuthOrchestrationOperateScope);
@@ -180,15 +199,31 @@ export function CloudVoiceConfiguration({
   const canUseReferences = useEnvironmentScope(id, AuthProvidersManageScope);
   const [presence, refresh] = useCloudRead(canUse ? prepared : null, getCloudSpeechKeys);
   const [models, refreshModels] = useCloudRead(
-    routed && canUse ? prepared : null,
+    provider === "openrouter" && canUse ? prepared : null,
     getCloudSpeechModels,
   );
   const choice = useAudioChoice();
   const grant = choice === "off" ? null : choice;
   const currentModel =
-    active && grant?.destination.kind === "cloud" && grant.destination.provider === "openrouter"
+    selected &&
+    grant?.destination.kind === "cloud" &&
+    (grant.destination.provider === "openrouter" || grant.destination.provider === "custom")
       ? grant.destination.model
       : undefined;
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "custom speech endpoint update",
+    reportFailure: false,
+  });
+  const savedEndpoint = environment.serverConfig?.settings?.cloudSpeechCustomBaseUrl ?? "";
+  const [endpoint, setEndpoint] = useState(savedEndpoint);
+  const endpointChanged = custom && endpoint.trim() !== savedEndpoint;
+  // A custom grant bound to another URL is void, so it must be approved again.
+  const active =
+    selected &&
+    (grant?.destination.kind !== "cloud" ||
+      grant.destination.provider !== "custom" ||
+      grant.destination.endpoint === savedEndpoint);
+  const endpointReady = !custom || isCustomEndpoint(endpoint);
   const [remove, setRemove] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -225,24 +260,37 @@ export function CloudVoiceConfiguration({
   // Fixed providers edit the key only when nothing is saved or the device already uses them.
   const editingKey = canManage && saved !== undefined && (routed || active || !saved);
   const listedModels = AsyncResult.isSuccess(models) ? (models.value?.models ?? null) : null;
-  const modelChosen = isModelId(model) && (listedModels?.some((m) => m.id === model) ?? false);
+  const customModelReady = isCustomModelId(model.trim());
+  const modelChosen = custom
+    ? customModelReady
+    : isModelId(model) && (listedModels?.some((m) => m.id === model) ?? false);
   const keyReady = draft.trim() ? credential !== undefined : Boolean(saved);
   const modelChanged = model !== (currentModel ?? "");
   const destination = (): CloudDestination =>
-    routed && isModelId(model)
-      ? { kind: "cloud", provider: "openrouter", environmentId: id, model }
-      : { kind: "cloud", provider: provider as "openai" | "xai", environmentId: id };
+    custom && customModelReady
+      ? {
+          kind: "cloud",
+          provider: "custom",
+          environmentId: id,
+          model: model.trim(),
+          endpoint: endpoint.trim(),
+        }
+      : routed && isModelId(model)
+        ? { kind: "cloud", provider: "openrouter", environmentId: id, model }
+        : { kind: "cloud", provider: provider as "openai" | "xai", environmentId: id };
   const enable = () => chooseAudioDestination(destination());
   const canSubmit = routed
-    ? modelChosen && keyReady && (!active || modelChanged || keyChanged)
+    ? modelChosen &&
+      endpointReady &&
+      keyReady &&
+      (!active || modelChanged || keyChanged || endpointChanged)
     : credential !== undefined;
 
-  const saveKey = async (value: SettingsSecretValue | null, thenEnable: boolean) => {
+  const saveKey = async (value: SettingsSecretValue | null, commit: (() => void) | null) => {
     if (!connected || !canManage || busy) return;
     setError("");
     setBusy(true);
     try {
-      const commit = thenEnable ? pendingCloudAudioChoice(destination()) : null;
       await runEnvironmentSpeech(setCloudSpeechKey(prepared, provider, value));
       refresh();
       commit?.();
@@ -252,13 +300,40 @@ export function CloudVoiceConfiguration({
     }
     setBusy(false);
   };
-  const submit = () => {
+  const submit = async () => {
     if (!canSubmit || busy) return;
-    const grantChanges = !active || modelChanged;
+    const grantChanges = !active || modelChanged || endpointChanged;
+    // Created before the first await so an Off chosen elsewhere during the save
+    // is never overwritten by this submission's commit.
+    const commit = grantChanges ? pendingCloudAudioChoice(destination()) : null;
+    if (endpointChanged) {
+      setError("");
+      setBusy(true);
+      try {
+        const result = await updateSettings({
+          environmentId: id,
+          input: { patch: { cloudSpeechCustomBaseUrl: endpoint.trim() } },
+        });
+        setBusy(false);
+        if (result._tag !== "Success") {
+          setError(gt("Couldn’t save the endpoint URL. Check your connection and try again."));
+          return;
+        }
+      } catch {
+        setBusy(false);
+        setError(gt("Couldn’t save the endpoint URL. Check your connection and try again."));
+        return;
+      }
+    }
     if (credential !== undefined && (!routed || keyChanged))
-      return void saveKey(credential, grantChanges);
+      return void saveKey(credential, commit);
     // Model-only changes never write to the environment.
-    if (grantChanges) enable();
+    if (commit) {
+      // The endpoint save awaited above, so this acknowledges the choice created
+      // before it; without that await, choosing directly is equally safe.
+      if (endpointChanged) commit();
+      else enable();
+    }
     close();
   };
 
@@ -341,7 +416,9 @@ export function CloudVoiceConfiguration({
               ? gt("Remove the {company} key?", { company })
               : active
                 ? routed
-                  ? gt("Manage OpenRouter dictation")
+                  ? custom
+                    ? gt("Manage custom dictation")
+                    : gt("Manage OpenRouter dictation")
                   : gt("Manage {company} key", { company })
                 : gt("Use {name} for dictation?", { name })}
           </DialogTitle>
@@ -355,7 +432,12 @@ export function CloudVoiceConfiguration({
                 ? gt("Anyone with dictation access to {environment} can use this API key.", {
                     environment: environment.label,
                   })
-                : cloudSpeechDisclosure(provider, environment.label, messages)}
+                : cloudSpeechDisclosure(
+                    provider,
+                    environment.label,
+                    messages,
+                    custom ? { endpoint: endpoint.trim() || savedEndpoint } : undefined,
+                  )}
           </DialogDescription>
         </DialogHeader>
         {!remove && (
@@ -376,7 +458,7 @@ export function CloudVoiceConfiguration({
               saved === undefined ? (
               <p>
                 <T>
-                  Update <Var>{environment.label}</Var> to use OpenRouter dictation.
+                  Update <Var>{environment.label}</Var> to use <Var>{name}</Var> dictation.
                 </T>
               </p>
             ) : saved === undefined ? (
@@ -389,31 +471,78 @@ export function CloudVoiceConfiguration({
                 className="grid gap-3"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  submit();
+                  void submit();
                 }}
               >
-                <div className="grid gap-2">
-                  <Label htmlFor="voice-cloud-model">
-                    <T>Model</T>
-                  </Label>
-                  {listedModels ? (
-                    <ModelPicker
-                      models={listedModels}
-                      value={model}
-                      onChange={setModel}
-                      disabled={busy}
-                      current={currentModel}
-                    />
-                  ) : AsyncResult.isFailure(models) ? (
-                    <Button size="sm" variant="outline" type="button" onClick={refreshModels}>
-                      <T>Retry loading models</T>
-                    </Button>
-                  ) : (
-                    <p role="status" className="text-sm text-muted-foreground">
-                      <T>Loading transcription models…</T>
-                    </p>
-                  )}
-                </div>
+                {custom ? (
+                  <>
+                    <div className="grid gap-2">
+                      <Label htmlFor="voice-cloud-endpoint">
+                        <T>Endpoint URL</T>
+                      </Label>
+                      <Input
+                        id="voice-cloud-endpoint"
+                        aria-label={gt("Endpoint base URL")}
+                        placeholder="https://example.com/v1"
+                        value={endpoint}
+                        disabled={busy || !canManage}
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(event) => setEndpoint(event.target.value)}
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        <T>
+                          Base URL of an OpenAI-compatible server, including the version path. Audio
+                          is sent to its /audio/transcriptions route. Plain http is only allowed for
+                          localhost.
+                        </T>
+                      </p>
+                      {endpoint.trim() && !endpointReady ? (
+                        <p className="text-sm text-destructive" role="alert">
+                          <T>Enter an https URL, or plain http for localhost.</T>
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="voice-cloud-model">
+                        <T>Model</T>
+                      </Label>
+                      <Input
+                        id="voice-cloud-model"
+                        aria-label={gt("Transcription model")}
+                        placeholder="whisper-1"
+                        value={model}
+                        disabled={busy}
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(event) => setModel(event.target.value)}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="grid gap-2">
+                    <Label htmlFor="voice-cloud-model">
+                      <T>Model</T>
+                    </Label>
+                    {listedModels ? (
+                      <ModelPicker
+                        models={listedModels}
+                        value={model}
+                        onChange={setModel}
+                        disabled={busy}
+                        current={currentModel}
+                      />
+                    ) : AsyncResult.isFailure(models) ? (
+                      <Button size="sm" variant="outline" type="button" onClick={refreshModels}>
+                        <T>Retry loading models</T>
+                      </Button>
+                    ) : (
+                      <p role="status" className="text-sm text-muted-foreground">
+                        <T>Loading transcription models…</T>
+                      </p>
+                    )}
+                  </div>
+                )}
                 {editingKey ? (
                   <div className="grid gap-2">{keyField}</div>
                 ) : !saved ? (
@@ -437,7 +566,7 @@ export function CloudVoiceConfiguration({
                 className="grid gap-2"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  submit();
+                  void submit();
                 }}
               >
                 {keyField}
@@ -484,7 +613,7 @@ export function CloudVoiceConfiguration({
                 size="sm"
                 variant="destructive"
                 disabled={busy}
-                onClick={() => void saveKey(null, false)}
+                onClick={() => void saveKey(null, null)}
               >
                 <T>Remove key</T>
               </Button>

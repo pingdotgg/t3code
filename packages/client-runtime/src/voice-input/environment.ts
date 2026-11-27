@@ -4,11 +4,11 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { CloudSpeechError, SPEECH_STREAM_PATH } from "@t3tools/contracts";
 import type {
-  CloudSpeechModelId,
   CloudSpeechProvider,
   EnvironmentSpeechModelDownload,
   SettingsSecretValue,
   SpeechAcceleration,
+  SpeechModelId,
   SpeechModelUnloadTimeout,
   SpeechTranscriptionOptions,
   SpeechPostProcessingOptions,
@@ -131,9 +131,13 @@ export const transcribeCloudPcm = (
   pcm: Uint8Array,
   options: SpeechTranscriptionOptions,
   canSend: () => boolean,
-  model?: CloudSpeechModelId,
+  model?: SpeechModelId,
+  endpoint?: string,
 ) => {
-  const query = model === undefined ? {} : { model };
+  const query = {
+    ...(model === undefined ? {} : { model }),
+    ...(endpoint === undefined ? {} : { endpoint }),
+  };
   return request({
     group: "voice",
     prepared,

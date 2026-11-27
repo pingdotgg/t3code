@@ -7,7 +7,27 @@ export function cloudSpeechDisclosure(
   provider: CloudSpeechProvider,
   environment: string,
   resolve: MFunctionType = mFallback,
+  { endpoint }: { endpoint?: string | undefined } = {},
 ) {
+  if (provider === "custom") {
+    let host = "";
+    try {
+      host = endpoint ? new URL(endpoint).host : "";
+    } catch {
+      host = "";
+    }
+    return resolve(
+      host
+        ? msg("After you stop, {environment} sends your recording to your endpoint at {host}.", {
+            environment,
+            host,
+          })
+        : msg(
+            "After you stop, {environment} sends your recording to the custom endpoint configured on it.",
+            { environment },
+          ),
+    );
+  }
   return provider === "openrouter"
     ? resolve(
         msg(

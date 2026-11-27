@@ -136,7 +136,15 @@ export function useVoiceTranscriptionDestination() {
   const canDictate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const cloud = grant?.destination.kind === "cloud" ? grant.destination : undefined;
   const provider = cloud?.provider;
-  const model = cloud?.provider === "openrouter" ? cloud.model : undefined;
+  const model =
+    cloud && (cloud.provider === "openrouter" || cloud.provider === "custom")
+      ? cloud.model
+      : undefined;
+  // A custom grant is bound to the exact endpoint it consented to; a server-side
+  // URL change voids it until the destination is chosen again.
+  const staleEndpoint =
+    cloud?.provider === "custom" &&
+    cloud.endpoint !== (environment?.serverConfig?.settings?.cloudSpeechCustomBaseUrl ?? "");
   const supported =
     environment?.serverConfig?.environment.capabilities[
       provider ? "cloudVoiceTranscription" : "voiceTranscription"
@@ -147,6 +155,7 @@ export function useVoiceTranscriptionDestination() {
     ...(device ? { device: true, onDevice: appleSpeechAvailable } : {}),
     ...(provider ? { cloudProvider: provider } : {}),
     ...(model ? { cloudModel: model } : {}),
+    ...(cloud?.provider === "custom" ? { cloudEndpoint: cloud.endpoint } : {}),
     grantId: grant?.id ?? null,
     label: device
       ? APPLE_SPEECH_LABEL
@@ -156,7 +165,7 @@ export function useVoiceTranscriptionDestination() {
             environment: environment.label,
           })
         : (environment?.label ?? null),
-    prepared: supported && canDictate ? connection : null,
+    prepared: supported && canDictate && !staleEndpoint ? connection : null,
   };
 }
 
@@ -168,6 +177,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const grantId = destination.grantId;
   const cloudProvider = destination.cloudProvider;
   const cloudModel = destination.cloudModel;
+  const cloudEndpoint = destination.cloudEndpoint;
   const draftCapabilities = useEnvironment(input.environmentId)?.serverConfig?.environment
     .capabilities;
   const originatingConnection = Option.getOrNull(usePreparedConnection(input.environmentId));
@@ -208,6 +218,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     onDevice,
     cloudProvider,
     cloudModel,
+    cloudEndpoint,
   });
   const snapshot = useVoiceInputSessionSnapshot(session);
   const owns = snapshot.target?.ownerKey === input.ownerKey;

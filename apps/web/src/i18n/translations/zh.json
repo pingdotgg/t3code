@@ -7964,6 +7964,22 @@
   "0a9e4d44c145cd07": "有权在 {environment} 使用听写的人都可以使用此密钥产生费用。",
   "55803224ee096dc0": "移除 {company} 密钥？",
   "0a7813c7df04ffe9": "管理 OpenRouter 听写",
+  "fb6adc43377d4ca0": "停止录音后，{environment} 会将录音发送到 {host} 上的端点。",
+  "1391f283f6ea713c": "停止录音后，{environment} 会将录音发送到已配置的自定义端点。",
+  "7fdea09e793a891b": "无法保存端点 URL，请检查连接后重试。",
+  "719eaff335f3245d": "管理自定义听写",
+  "c0c71696731ef2e2": "端点基础 URL",
+  "df0c4af34648e957": "转写模型",
+  "2b5b356019c6857b": [
+    "请更新 ",
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    " 以使用 ",
+    { "i": 2, "k": "_gt_value_2", "v": "v" },
+    " 听写。"
+  ],
+  "97162d60f4c3a34e": "兼容 OpenAI 的服务器的基础 URL，包含版本路径。音频会发送到其 /audio/transcriptions 路由。纯 HTTP 仅允许用于 localhost。",
+  "6485c1689d6addd6": "请输入 https URL，localhost 可使用纯 HTTP。",
+  "2ce113aa171d3337": "管理端点",
   "9996968084688efe": "管理 {company} 密钥",
   "bf6a4f30c36e0a87": "使用 {name} 听写？",
   "710bec893f7881d1": "在 {environment} 上使用 {name} 听写的所有人都将无法继续使用。",
@@ -7990,15 +8006,6 @@
     " 以继续。"
   ],
   "1d33877ef8ea3559": "重新加载 API 密钥",
-  "be805c1729dc0726": [
-    "请更新 ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " 以使用 OpenRouter 听写。"
-  ],
   "d7acad5dde4c1d1b": "正在检查 API 密钥…",
   "8257030da7a4ad4e": "模型",
   "418d9b293a8983a9": [

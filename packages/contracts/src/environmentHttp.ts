@@ -57,7 +57,6 @@ import {
   CloudSpeechApiKey,
   CloudSpeechError,
   CloudSpeechKeys,
-  CloudSpeechModelId,
   CloudSpeechModels,
   CloudSpeechProvider,
   EnvironmentSpeechAccelerationRequest,
@@ -70,6 +69,7 @@ import {
   EnvironmentSpeechPostProcessingResult,
   EnvironmentSpeechStatus,
   EnvironmentSpeechTranscriptionResult,
+  SpeechModelId,
 } from "./speech.ts";
 import { PeerLinkClientPairingCredential, PeerLinkClientPairingRequest } from "./peerLink.ts";
 import { SecretReference } from "./secretReference.ts";
@@ -884,7 +884,10 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     HttpApiEndpoint.post("transcribeCloud", "/api/voice/cloud/:provider/transcribe", {
       headers: OptionalBearerHeaders,
       params: Schema.Struct({ provider: CloudSpeechProvider }),
-      query: Schema.Struct({ model: Schema.optionalKey(CloudSpeechModelId) }),
+      query: Schema.Struct({
+        model: Schema.optionalKey(SpeechModelId),
+        endpoint: Schema.optionalKey(Schema.String),
+      }),
       payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
       success: EnvironmentSpeechTranscriptionResult,
       error: [

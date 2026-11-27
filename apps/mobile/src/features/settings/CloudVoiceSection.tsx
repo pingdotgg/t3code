@@ -294,6 +294,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
           })}
         >
           {CloudSpeechProvider.literals.map((provider, index) => {
+            if (provider === "custom") return null;
             const label = CLOUD_SPEECH_LABELS[provider];
             const routed = provider === "openrouter";
             const key = saved[provider];
