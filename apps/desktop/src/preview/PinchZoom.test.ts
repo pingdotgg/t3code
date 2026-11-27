@@ -36,25 +36,32 @@ interface FakeWheel {
   defaultPrevented: boolean;
 }
 
+const makeFrame = () => {
+  const listeners = new Map<string, (event: unknown) => void>();
+  const listen = (type: string, next: (event: unknown) => void) => {
+    listeners.set(type, next);
+  };
+  return {
+    document: { addEventListener: listen },
+    addEventListener: listen,
+    emit: (type: string, event: unknown) => listeners.get(type)?.(event),
+  };
+};
+
 const makePage = () => {
-  let listener: ((event: FakeWheel) => void) | null = null;
+  const frame = makeFrame();
   const frames: Array<() => void> = [];
   const requests: PageZoom[] = [];
   const viewport = { scale: 1, offsetLeft: 0, offsetTop: 0, width: 1000, height: 800 };
   let time = 0;
-  const target = {
-    visualViewport: viewport,
-    addEventListener: (_type: string, next: (event: FakeWheel) => void) => {
-      listener = next;
-    },
-  };
+  const target = Object.assign(frame, { visualViewport: viewport });
   const pinchZoom = installPinchZoom(
     target as unknown as Window,
     (zoom) => requests.push(zoom),
     (callback) => frames.push(callback),
     () => time,
   );
-  const pinch = (deltaY: number, init: Partial<FakeWheel> = {}) => {
+  const pinch = (deltaY: number, init: Partial<FakeWheel> = {}, inFrame = frame) => {
     const event: FakeWheel = {
       isTrusted: true,
       ctrlKey: true,
@@ -65,7 +72,7 @@ const makePage = () => {
       defaultPrevented: false,
       ...init,
     };
-    listener?.(event);
+    inFrame.emit("wheel", event);
     return event;
   };
   const runFrames = () => {
@@ -85,7 +92,20 @@ const makePage = () => {
   const wait = (ms: number) => {
     time += ms;
   };
-  return { pinch, runFrames, requests, showZoom, wait, pinchZoom };
+  const loadIframe = (left: number, top: number) => {
+    const child = makeFrame();
+    frame.emit("load", {
+      target: {
+        nodeName: "IFRAME",
+        contentWindow: child,
+        clientLeft: 2,
+        clientTop: 2,
+        getBoundingClientRect: () => ({ left, top }),
+      },
+    });
+    return child;
+  };
+  return { pinch, runFrames, requests, showZoom, wait, pinchZoom, loadIframe };
 };
 
 describe("installPinchZoom", () => {
@@ -140,5 +160,13 @@ describe("installPinchZoom", () => {
     page.runFrames();
     page.pinchZoom.reset();
     expect(page.requests.at(-1)).toBe(UNZOOMED);
+  });
+
+  it("anchors a pinch over a same-origin frame at the pointer in the page", () => {
+    const page = makePage();
+    const child = page.loadIframe(100, 50);
+    page.pinch(-100, { clientX: 8, clientY: 18 }, child);
+    page.runFrames();
+    expect(page.requests[0]).toEqual(zoomPage(UNZOOMED, Math.E, 110, 70, 1000, 800));
   });
 });

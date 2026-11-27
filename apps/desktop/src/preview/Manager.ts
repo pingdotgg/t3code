@@ -460,12 +460,18 @@ const decodePageZoom = Schema.decodeUnknownOption(
 
 // No CDP command sets the visual viewport's offset, but scrolling an element into view moves the
 // visual viewport before the layout viewport, so a probe at the target corner places it exactly.
+// Root scroll padding would offset where the probe lands, so it is lifted for the call.
 const scrollVisualViewportExpression = (x: number, y: number) => `(() => {
+  const root = document.documentElement;
+  const style = root.getAttribute("style");
+  root.style.setProperty("scroll-padding", "0px", "important");
   const probe = document.createElement("div");
-  probe.style.cssText = "position:absolute;width:1px;height:1px;visibility:hidden;pointer-events:none;left:" + (scrollX + ${x}) + "px;top:" + (scrollY + ${y}) + "px";
-  document.documentElement.append(probe);
+  probe.style.cssText = "position:absolute;width:1px;height:1px;margin:0;scroll-margin:0;visibility:hidden;pointer-events:none;left:" + (scrollX + ${x}) + "px;top:" + (scrollY + ${y}) + "px";
+  root.append(probe);
   probe.scrollIntoView({ block: "start", inline: "start", behavior: "instant" });
   probe.remove();
+  if (style === null) root.removeAttribute("style");
+  else root.setAttribute("style", style);
 })()`;
 
 const decodePageShortcutKeys = Schema.decodeUnknownOption(
@@ -2108,8 +2114,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     },
   );
 
-  // URL tabs can paint before registerWebview; set the background at attach time.
-  /** The guest preload requests a zoom; scale and position are sent together so no frame shows one without the other. */
+  // Scale and position go out together so no frame shows one without the other.
   const applyPageZoom = Effect.fn("PreviewManager.applyPageZoom")(function* (
     wc: Electron.WebContents,
     zoom: { readonly scale: number; readonly x: number; readonly y: number },
@@ -2130,6 +2135,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }).pipe(Effect.ignore);
   });
 
+  // URL tabs can paint before registerWebview; set the background at attach time.
   const prepareWebview = Effect.fn("PreviewManager.prepareWebview")(function* (
     wc: Electron.WebContents,
   ) {

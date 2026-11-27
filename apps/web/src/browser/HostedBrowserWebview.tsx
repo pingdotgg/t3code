@@ -207,7 +207,10 @@ export function HostedBrowserWebview(props: {
     };
     // Mirrors PAGE_ZOOM_RESET_CHANNEL; the guest preload owns the pinch zoom.
     const unregisterPageZoomReset = registerBrowserPageZoomReset(runtimeTabId, () => {
-      void webview.send("preview:page-zoom-reset").catch(() => {});
+      // An attaching guest can make send() throw before it returns a promise.
+      try {
+        void webview.send("preview:page-zoom-reset").catch(() => {});
+      } catch {}
     });
     // The desktop clears a destroyed guest's id; nothing reattaches this element, so remount it.
     const unsubscribeState = bridge.onStateChange((changedTabId, state) => {
