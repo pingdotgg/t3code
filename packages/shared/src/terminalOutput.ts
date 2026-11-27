@@ -765,8 +765,16 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
     (up(row) > 0 ? `${ESC}[${up(row)}A` : "") + `${ESC}[${col + 1}G`;
   let suffix = "";
   if (screen.saved !== null) {
-    suffix += `${goTo(screen.saved.row, screen.saved.col)}${ESC}7`;
-    if (up(screen.saved.row) > 0) suffix += `${ESC}[${up(screen.saved.row)}B`;
+    if (screen.saved.row > lastRow) {
+      const extra = screen.saved.row - lastRow;
+      suffix +=
+        "\n".repeat(extra) +
+        `${ESC}[${screen.saved.col + 1}G${ESC}7` +
+        `${ESC}[${extra}A${ESC}[${lineWidth(screen.lines[lastRow]!) + 2}G${ESC}[J`;
+    } else {
+      suffix += `${goTo(screen.saved.row, screen.saved.col)}${ESC}7`;
+      if (up(screen.saved.row) > 0) suffix += `${ESC}[${up(screen.saved.row)}B`;
+    }
   }
   if (
     screen.saved !== null ||
@@ -977,10 +985,16 @@ export function terminalOutputPlainText(text: string): string {
 // tqdm redraws a progress bar after a carriage return; JupyterLab shows only what the last
 // redraws leave on the line. Walking the frames from the last keeps this linear.
 function lastFrame(line: string): string {
-  let row = "";
-  for (const frame of line.split("\r").reverse())
-    // A cut through a surrogate pair blanks the glyph's other half, as a terminal does.
-    if (frame.length > row.length) row += frame.slice(row.length).replace(/^[\udc00-\udfff]/u, " ");
+  const frames = line.split("\r");
+  let row = frames.pop()!;
+  if (frames.length === 0) return row;
+  let width = textWidth(row);
+  for (const frame of frames.reverse()) {
+    const frameWidth = textWidth(frame);
+    if (frameWidth <= width) continue;
+    row += sliceLine([{ pen: "", text: frame }], width, frameWidth)[0]?.text ?? "";
+    width = frameWidth;
+  }
   return row;
 }
 

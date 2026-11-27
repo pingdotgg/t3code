@@ -114,7 +114,14 @@ const INTERPRETERS: Record<string, Interpreter> = {
     valueOptions: new Set(["-r", "-I", "-C"]),
     stdin: "without-script-file",
   },
-  perl: { language: "perl", inline: flagIn("-e", "-E"), stdin: "without-script-file" },
+  perl: {
+    language: "perl",
+    // Bundles like -pe and -0777ne; in -pie or -Me the e is the value of -i or -M.
+    inline: (flag) => /^-[0-7acdfglnpsStTuUwWX]*[eE]$/u.test(flag),
+    // -M and -m take their module only attached (`-Mstrict`).
+    valueOptions: new Set(["-I"]),
+    stdin: "without-script-file",
+  },
   osascript: {
     language: "applescript",
     inline: flagIn("-e"),
@@ -353,7 +360,11 @@ function interpreterArgs(
       optionsEnded = true;
       continue;
     }
-    if (!optionsEnded && flag.startsWith("-") && flag !== "-") {
+    if (
+      !optionsEnded &&
+      (flag.startsWith("-") || (interpreter === SHELL && flag.startsWith("+"))) &&
+      flag !== "-"
+    ) {
       const [name = flag, value] = flag.startsWith("--") ? flag.split(/=(.*)/su) : [flag];
       if (interpreter.scriptFileOptions?.has(name)) {
         if (!interpreter.repeatable) return { scripts, scriptFromFile: true };
@@ -373,7 +384,13 @@ function interpreterArgs(
         if (value === undefined) index += 1;
         continue;
       }
-      if (value === undefined && interpreter.valueOptions?.has(flag)) index += 1;
+      if (
+        value === undefined &&
+        (interpreter.valueOptions?.has(flag) ||
+          (interpreter === SHELL && /^[-+][a-zA-Z]*[oO]$/u.test(flag)))
+      ) {
+        index += 1;
+      }
       continue;
     }
     positionals.push(arg);
