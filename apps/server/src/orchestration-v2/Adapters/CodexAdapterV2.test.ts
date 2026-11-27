@@ -157,6 +157,28 @@ describe("CodexAdapterV2 assistant message streaming", () => {
 });
 
 describe("CodexAdapterV2 runtime policy", () => {
+  it.effect("routes subscription-sharing subagents through T3 delegation", () =>
+    Effect.gen(function* () {
+      const build = (subscriptionSharing: boolean) =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-delegation",
+          codexInput: [{ type: "text", text: "Ask a subagent to review this change." }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          hasT3Mcp: true,
+          subscriptionSharing,
+        });
+
+      const sharing = yield* build(true);
+      const sharingInstructions = sharing.additionalContext?.["t3_code_orchestration_01"]?.value;
+      assert.include(sharingInstructions, "Use `delegate_task` for subagents");
+      assert.notInclude(sharingInstructions, "spawn_agent");
+
+      const local = yield* build(false);
+      assert.include(local.additionalContext?.["t3_code_orchestration_01"]?.value, "spawn_agent");
+    }),
+  );
+
   it.effect.each([undefined, false, true])(
     "selects native collaboration modes without prompt overrides with hasT3Mcp=%s",
     (hasT3Mcp) =>
@@ -7892,6 +7914,97 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
+  );
+
+  it.effect.each([
+    { name: "waits for an idle unsubscribe's native close", subscribed: true },
+    { name: "discards a close waiter when the thread was already unsubscribed", subscribed: false },
+  ])("$name", ({ subscribed }) =>
+    Effect.gen(function* () {
+      const beforeClose = yield* Deferred.make<void>();
+      const releaseClose = yield* Deferred.make<void>();
+      const handoffDone = yield* Deferred.make<void>();
+      const unsubscribe = (id: number, status: string) => [
+        {
+          type: "expect_outbound" as const,
+          label: `unsubscribe-${id}`,
+          frame: { id, method: "thread/unsubscribe", params: { threadId: BG_NATIVE_THREAD } },
+        },
+        {
+          type: "emit_inbound" as const,
+          label: `unsubscribe-result-${id}`,
+          frame: { id, result: { status } },
+        },
+      ];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "codex-unload-handoff",
+          entries: [
+            ...backgroundExecTranscript.entries.slice(0, -1),
+            ...backgroundTerminalLive(4),
+            ...unsubscribe(5, subscribed ? "unsubscribed" : "notSubscribed"),
+            ...unsubscribe(6, "notSubscribed"),
+            ...(subscribed
+              ? [
+                  {
+                    type: "emit_inbound" as const,
+                    label: "thread-close",
+                    frame: { method: "thread/closed", params: { threadId: BG_NATIVE_THREAD } },
+                  },
+                ]
+              : []),
+          ],
+        }),
+        undefined,
+        undefined,
+        undefined,
+        (entry) =>
+          entry.label === "thread-close"
+            ? Deferred.succeed(beforeClose, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseClose)),
+              )
+            : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-unload-handoff"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* harness.firstTerminal;
+      const unload = harness.runtime.unloadThread!;
+      yield* unload({ providerThread: harness.providerThread });
+      const handoffUnload = unload({
+        providerThread: harness.providerThread,
+        awaitClosed: true,
+      });
+      if (!subscribed) {
+        yield* handoffUnload;
+        return;
+      }
+      const handoff = yield* handoffUnload.pipe(
+        Effect.tap(() => Deferred.succeed(handoffDone, undefined)),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(beforeClose);
+      yield* TestClock.adjust(1);
+      assert.isFalse(yield* Deferred.isDone(handoffDone));
+      yield* Deferred.succeed(releaseClose, undefined);
+      yield* Fiber.join(handoff);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   const backgroundStopCases = [true, false, "still_running", "thread_unloaded"] as const;

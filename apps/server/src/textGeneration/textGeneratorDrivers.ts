@@ -126,8 +126,8 @@ const readModel = (entry: { readonly id: string; readonly name?: string | undefi
 const ChatCompletion = Schema.Struct({
   choices: Schema.Array(
     Schema.Struct({
-      finish_reason: Schema.NullOr(Schema.String),
-      message: Schema.Struct({ content: Schema.NullOr(Schema.String) }),
+      finish_reason: Schema.optional(Schema.NullOr(Schema.String)),
+      message: Schema.Struct({ content: Schema.optional(Schema.NullOr(Schema.String)) }),
     }),
   ),
 });
@@ -172,7 +172,7 @@ const openAICompatible: TextGeneratorDriver = {
 
 const ANTHROPIC_VERSION = "2023-06-01";
 const AnthropicMessage = Schema.Struct({
-  stop_reason: Schema.NullOr(Schema.String),
+  stop_reason: Schema.optional(Schema.NullOr(Schema.String)),
   content: Schema.Array(
     Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) }),
   ),

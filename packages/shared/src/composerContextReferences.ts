@@ -169,11 +169,15 @@ const FENCE_CLOSER = /^[ \t>]*(`{3,}|~{3,})[ \t]*$/;
 function fencedCodeRanges(markdown: string) {
   const ranges: Array<{ start: number; end: number }> = [];
   if (!markdown.includes("```") && !markdown.includes("~~~")) return ranges;
+  // Remark omits the leading BOM from its offsets.
+  const sourceOffset = markdown.startsWith("\uFEFF") ? 1 : 0;
   const visit = (node: Nodes) => {
     if (node.type === "code") {
-      const start = node.position?.start.offset;
-      const end = node.position?.end.offset;
-      if (start === undefined || end === undefined) return;
+      const parserStart = node.position?.start.offset;
+      const parserEnd = node.position?.end.offset;
+      if (parserStart === undefined || parserEnd === undefined) return;
+      const start = parserStart + sourceOffset;
+      const end = parserEnd + sourceOffset;
       const source = markdown.slice(start, end);
       const opener = FENCE_OPENER.exec(source)?.[0];
       const lastLineStart = Math.max(source.lastIndexOf("\n"), source.lastIndexOf("\r")) + 1;

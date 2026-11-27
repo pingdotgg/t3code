@@ -768,7 +768,11 @@ const finishRun = Effect.fn("cli.thread.finishRun")(function* (
 });
 
 export const titleFromMessage = (message: string) => {
-  const firstLine = message.trim().split("\n")[0]?.trim() ?? "";
+  const firstLine =
+    message
+      .trim()
+      .split(/[\r\n\u2028\u2029]/, 1)[0]
+      ?.trim() ?? "";
   if (firstLine.length <= TITLE_MAX_CHARS) return firstLine;
   let end = TITLE_MAX_CHARS - 1;
   const previous = firstLine.charCodeAt(end - 1);

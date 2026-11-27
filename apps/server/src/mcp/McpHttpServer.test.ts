@@ -59,6 +59,7 @@ import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as McpClientInput from "./McpClientInput.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -565,6 +566,34 @@ it.effect("saves the uncapped screenshot while the agent sees the capped one", (
       });
     }),
   ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps screenshot results only for provider instances that recover them", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const png =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+      yield* serveSnapshots("mcp-capture-client", {
+        ...snapshotResult,
+        screenshot: { mimeType: "image/png", data: png, width: 1, height: 1 },
+      });
+      const args = { tabId: alternateTabId, includeImage: true };
+
+      yield* callSnapshot(args);
+      expect(yield* sessions.takeToolResult(threadId, "preview_snapshot", args)).toBeUndefined();
+
+      yield* sessions.recoversToolResultImages(invocation.thread.providerInstanceId);
+      yield* callSnapshot(args);
+      expect(yield* sessions.takeToolResult(threadId, "preview_snapshot", args)).toMatchObject({
+        content: [{ type: "image", mimeType: "image/png", data: png }],
+        structuredContent: {
+          url: snapshotResult.url,
+          screenshot: { mimeType: "image/png", width: 1, height: 1 },
+        },
+      });
+    }),
+  ).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(McpProviderSessions.layer)))),
 );
 
 it.effect("names the screenshot destination when saving it fails", () =>
@@ -2265,26 +2294,56 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
           providerInstanceId: ProviderInstanceId.make("copilot"),
         },
         client: undefined,
-        capabilities: new Set(["orchestration"]),
+        capabilities: new Set(["orchestration", "device"]),
         issuedAt: 1,
       });
       const scopes = new Map([
         ["deferringToken", scopeFor("deferringToken")],
+        ["proxyToken", scopeFor("proxyToken")],
         ["otherToken", scopeFor("otherToken")],
       ]);
       const tool = (name: string, description: string) =>
         Tool.make(name, {
           description,
-          success: Schema.Struct({}),
+          parameters: Schema.Struct({ url: Schema.optional(Schema.String) }),
+          success: Schema.Struct({ ok: Schema.Boolean }),
           failure: OrchestratorMcpFailure,
           failureMode: "return",
         });
+      const disabledTool = Tool.make("disabled_secret", {
+        description: "Hidden browser tool.",
+        success: Schema.Struct({ ok: Schema.Boolean }),
+        failure: OrchestratorMcpFailure,
+        failureMode: "return",
+      }).annotate(McpSchema.EnabledWhen, () => false);
+      const oversizedTool = Tool.make("oversized_budget_tool", {
+        description: "Budget boundary test tool with a giant schema.",
+        parameters: Schema.Struct({
+          payload: Schema.String.annotate({ description: "x".repeat(8_500) }),
+        }),
+        success: Schema.Struct({ ok: Schema.Boolean }),
+        failure: OrchestratorMcpFailure,
+        failureMode: "return",
+      });
+      const smallBudgetTool = Tool.make("small_budget_tool", {
+        description: "Budget boundary test tool with a small schema.",
+        parameters: Schema.Struct({ flag: Schema.optional(Schema.Boolean) }),
+        success: Schema.Struct({ ok: Schema.Boolean }),
+        failure: OrchestratorMcpFailure,
+        failureMode: "return",
+      });
       const OptionalToolkit = Toolkit.make(
         tool("delegate_task", "Delegates a task."),
         tool("preview_open", "Opens a browser preview."),
         tool("schedule_task", "Schedules a task."),
+        oversizedTool,
+        smallBudgetTool,
+        disabledTool,
       );
-      const reads = McpToolAccess.reads(() => Effect.succeed({}));
+      const reads = McpToolAccess.reads(() => Effect.succeed({ ok: true }));
+      const pngBytes = new Uint8Array([
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
+      ]);
       const serverLayer = McpHttpServer.layerMcpTransport(
         Layer.mergeAll(
           McpHttpServer.toolkitRegistration(
@@ -2293,13 +2352,47 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               delegate_task: reads,
               preview_open: reads,
               schedule_task: reads,
+              oversized_budget_tool: reads,
+              small_budget_tool: reads,
+              disabled_secret: reads,
             }),
           ),
+          McpHttpServer.layerDeviceToolkit,
           McpHttpServer.layerToolSearch,
         ),
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.mock(DeviceService.DeviceService)({
+            locateSession: () => Effect.succeedNone,
+            sessionsForThread: (tid) =>
+              Effect.succeed([
+                {
+                  threadId: tid,
+                  hostId: "local",
+                  deviceId: DeviceId.make("phone"),
+                  platform: "ios",
+                  openedAt: "2026-10-23T00:00:00Z",
+                },
+              ]),
+            screenshot: () =>
+              Effect.succeed({
+                device: {
+                  hostId: "local",
+                  id: DeviceId.make("phone"),
+                  platform: "ios" as const,
+                  name: "iPhone",
+                  version: "18.0",
+                  booted: true,
+                  physical: false,
+                },
+                png: pngBytes,
+              }),
+          }),
+        ),
+        Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-proxy-test-" })),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(scopes.get(token)),
@@ -2310,12 +2403,12 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         Layer.build,
       );
       const httpClient = yield* HttpClient.HttpClient;
-      const session = (token: string, deferred: boolean) =>
+      const session = (token: string, exposure?: "deferred" | "deferred-proxy") =>
         Effect.gen(function* () {
           const headers = {
             accept: "application/json, text/event-stream",
             authorization: `Bearer ${token}`,
-            ...(deferred ? { "t3-tool-exposure": "deferred" } : {}),
+            ...(exposure === undefined ? {} : { "t3-tool-exposure": exposure }),
           };
           const initialize = yield* httpClient.post("/mcp", {
             headers,
@@ -2324,7 +2417,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               "application/json",
             ),
           });
-          const rpc = (method: string, params: object) =>
+          const rpcRaw = (method: string, params: object) =>
             httpClient
               .post("/mcp", {
                 headers: {
@@ -2337,17 +2430,18 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
                   "application/json",
                 ),
               })
-              .pipe(
-                Effect.flatMap((response) => response.text),
-                // tool_search answers over SSE, after its list_changed notification.
-                Effect.map((text): unknown =>
-                  text
-                    .split("\n")
-                    .filter((line) => line.startsWith("data: ") || line.startsWith("{"))
-                    .map((line) => JSON.parse(line.replace(/^data: /u, "")) as { id?: number })
-                    .find((message) => message.id === 2),
-                ),
-              );
+              .pipe(Effect.flatMap((response) => response.text));
+          const rpc = (method: string, params: object) =>
+            rpcRaw(method, params).pipe(
+              // tool_search answers over SSE, after its list_changed notification.
+              Effect.map((text): unknown =>
+                text
+                  .split("\n")
+                  .filter((line) => line.startsWith("data: ") || line.startsWith("{"))
+                  .map((line) => JSON.parse(line.replace(/^data: /u, "")) as { id?: number })
+                  .find((message) => message.id === 2),
+              ),
+            );
           return {
             listed: rpc("tools/list", {}).pipe(
               Effect.map((body) =>
@@ -2356,25 +2450,147 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
                   .sort(),
               ),
             ),
+            callRaw: (name: string, args: object) =>
+              rpcRaw("tools/call", { name, arguments: args }),
             call: (name: string, args: object) =>
               rpc("tools/call", { name, arguments: args }).pipe(
-                Effect.map((body) => (body as { result: { structuredContent?: unknown } }).result),
+                Effect.map(
+                  (body) =>
+                    body as {
+                      readonly result?: {
+                        readonly isError?: boolean;
+                        readonly structuredContent?: unknown;
+                        readonly content?: ReadonlyArray<{
+                          readonly type: string;
+                          readonly text?: string;
+                          readonly mimeType?: string;
+                        }>;
+                      };
+                      readonly error?: { readonly message: string };
+                    },
+                ),
               ),
           };
         });
 
-      const deferring = yield* session("deferringToken", true);
-      const other = yield* session("otherToken", false);
+      const deferring = yield* session("deferringToken", "deferred");
+      const proxying = yield* session("proxyToken", "deferred-proxy");
+      const other = yield* session("otherToken");
       expect(yield* deferring.listed).toEqual(["delegate_task", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+      expect(yield* proxying.listed).toEqual(["delegate_task", "tool_call", "tool_search"]);
+      expect(yield* other.listed).toEqual([
+        "delegate_task",
+        "device_close",
+        "device_list",
+        "device_open",
+        "device_screenshot",
+        "oversized_budget_tool",
+        "preview_open",
+        "schedule_task",
+        "small_budget_tool",
+      ]);
       // Unlisted tools stay callable.
-      expect((yield* deferring.call("schedule_task", {})).structuredContent).toEqual({});
+      expect((yield* deferring.call("schedule_task", {})).result?.structuredContent).toEqual({
+        ok: true,
+      });
 
+      // Dynamic deferred mode (Copilot): omits inputSchema and adds matches to tools/list.
       expect(
-        (yield* deferring.call("tool_search", { query: "browser" })).structuredContent,
+        (yield* deferring.call("tool_search", { query: "browser" })).result?.structuredContent,
       ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
       expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+
+      // Proxy deferred mode (Antigravity): returns inputSchema, skips disabled tools and list_changed, keeps fixed list.
+      const proxySearchRaw = yield* proxying.callRaw("tool_search", { query: "browser" });
+      expect(proxySearchRaw).not.toContain("notifications/tools/list_changed");
+      const proxySearch = yield* proxying.call("tool_search", { query: "browser" });
+      expect(proxySearch.result?.structuredContent).toEqual({
+        tools: [
+          {
+            name: "preview_open",
+            description: "Opens a browser preview.",
+            inputSchema: expect.objectContaining({ type: "object" }),
+          },
+        ],
+      });
+      expect(yield* proxying.listed).toEqual(["delegate_task", "tool_call", "tool_search"]);
+
+      expect(
+        (yield* proxying.call("tool_search", { query: "remind me tomorrow" })).result
+          ?.structuredContent,
+      ).toEqual({
+        tools: [
+          {
+            name: "schedule_task",
+            description: "Schedules a task.",
+            inputSchema: expect.objectContaining({ type: "object" }),
+          },
+        ],
+      });
+
+      // An oversized schema falls back to name + description so the whole response stays <= 8 KB, while small matches keep schemas.
+      const budgetSearch = yield* proxying.call("tool_search", { query: "budget" });
+      const budgetPayload = budgetSearch.result?.structuredContent as {
+        readonly tools: ReadonlyArray<{
+          readonly name: string;
+          readonly description: string;
+          readonly inputSchema?: unknown;
+        }>;
+      };
+      expect(Buffer.byteLength(JSON.stringify(budgetPayload), "utf8")).toBeLessThanOrEqual(8_000);
+      expect(budgetPayload.tools).toEqual([
+        {
+          name: "oversized_budget_tool",
+          description: "Budget boundary test tool with a giant schema.",
+        },
+        {
+          name: "small_budget_tool",
+          description: "Budget boundary test tool with a small schema.",
+          inputSchema: expect.objectContaining({ type: "object" }),
+        },
+      ]);
+
+      // tool_call invokes optional tools, preserves image content, blocks disabled/meta tools, and returns schema on bad args.
+      expect(
+        (yield* proxying.call("tool_call", { name: "schedule_task", arguments: {} })).result
+          ?.structuredContent,
+      ).toEqual({ ok: true });
+      // Core tools such as delegate_task also work through tool_call if the agent evicts them.
+      expect(
+        (yield* proxying.call("tool_call", { name: "delegate_task", arguments: {} })).result
+          ?.structuredContent,
+      ).toEqual({ ok: true });
+      const imageCall = yield* proxying.call("tool_call", {
+        name: "device_screenshot",
+        arguments: {},
+      });
+      expect(imageCall.result?.content).toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: "image/png" })]),
+      );
+      const blockedMeta = yield* proxying.call("tool_call", { name: "tool_call", arguments: {} });
+      expect(blockedMeta.error?.message).toContain("Cannot invoke 'tool_call'");
+      const blockedDisabled = yield* proxying.call("tool_call", {
+        name: "disabled_secret",
+        arguments: {},
+      });
+      expect(blockedDisabled.error?.message).toContain("Tool 'disabled_secret' not found");
+      const badArgs = yield* proxying.call("tool_call", {
+        name: "preview_open",
+        arguments: { url: 123 },
+      });
+      expect(badArgs.result?.isError).toBe(true);
+      expect(badArgs.result?.content?.[0]?.text).toContain("Expected inputSchema:");
+      expect(yield* other.listed).toEqual([
+        "delegate_task",
+        "device_close",
+        "device_list",
+        "device_open",
+        "device_screenshot",
+        "oversized_budget_tool",
+        "preview_open",
+        "schedule_task",
+        "small_budget_tool",
+      ]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

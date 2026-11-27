@@ -5407,10 +5407,10 @@ function providerFailureFromResult(
           message.result.startsWith(
             "API Error: Request rejected (429) · All credentials for model ",
           )
-            ? (/^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
+            ? (/^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down(?: via provider [^\s()]+)? \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
                 message.result,
               ) ??
-                /^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(last error: [\s\S]*\) \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)$/.exec(
+                /^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down(?: via provider [^\s()]+)? \(last error: [\s\S]*\) \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)$/.exec(
                   message.result,
                 ))
             : /\(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(message.result),
@@ -6632,6 +6632,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const wakeEligibleBackgroundTasksByNativeThread = yield* Ref.make(
           new Map<string, Set<string>>(),
         );
+        // Claude folds a notice into the running turn only between tool rounds; one that arrives
+        // after the last round reaches the model in a wake turn Claude starts after `result`.
+        // When that turn ends its tasks become wake-eligible again until a later turn carries them.
+        const heldTurnNotificationsByNativeThread = new Map<
+          string,
+          {
+            readonly turn: ActiveClaudeTurnContext;
+            readonly tasks: Map<string, OrchestrationV2PendingBackgroundTask>;
+          }
+        >();
         const opaqueBackgroundTaskReplayTombstonesByNativeThread = yield* Ref.make(
           new Map<string, Set<string>>(),
         );
@@ -7394,6 +7404,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             taskId,
           );
 
+        const releaseHeldTurnNotifications = Effect.fnUntraced(function* (nativeThreadId: string) {
+          const held = heldTurnNotificationsByNativeThread.get(nativeThreadId);
+          if (held === undefined) return;
+          heldTurnNotificationsByNativeThread.delete(nativeThreadId);
+          for (const taskId of held.tasks.keys()) {
+            yield* clearTaskIdFromNativeThreadSet(
+              wakeEligibleBackgroundTasksByNativeThread,
+              nativeThreadId,
+              taskId,
+            );
+          }
+        });
+
         // Untraced with roster emission: this runs for each streamed roster update.
         const owedWakeTasksForNativeThread = Effect.fnUntraced(function* (nativeThreadId: string) {
           const previous = (yield* Ref.get(lastProviderThreadByNativeThread)).get(nativeThreadId);
@@ -7402,8 +7425,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId,
           );
           const tasks: OrchestrationV2PendingBackgroundTask[] = [];
-          for (const task of previous?.pendingBackgroundTasks ?? []) {
+          const held =
+            heldTurnNotificationsByNativeThread.get(nativeThreadId)?.tasks.values() ?? [];
+          for (const task of [...(previous?.pendingBackgroundTasks ?? []), ...held]) {
             if (
+              !tasks.some((owed) => owed.taskId === task.taskId) &&
               !roster.has(task.taskId) &&
               (yield* isKnownOpaqueBackgroundTaskOnNativeThread(nativeThreadId, task.taskId))
             )
@@ -7717,6 +7743,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : [];
           scheduledWakeupsByNativeThread.delete(nativeThreadId);
           possibleEarlyWakeNativeThreads.delete(nativeThreadId);
+          heldTurnNotificationsByNativeThread.delete(nativeThreadId);
           yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
           yield* clearNativeThreadTaskIdSet(
             wakeEligibleBackgroundTasksByNativeThread,
@@ -10504,7 +10531,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   !liveQuery.stopping &&
                   liveQuery.lastTurn === input.context;
                 if (nativeThreadId !== null) {
+                  const held = heldTurnNotificationsByNativeThread.get(nativeThreadId);
+                  if (held !== undefined && held.turn !== input.context) {
+                    yield* releaseHeldTurnNotifications(nativeThreadId);
+                  } else if (held !== undefined) {
+                    yield* markWakeEligibleOpaqueBackgroundTasks(nativeThreadId, [
+                      ...held.tasks.keys(),
+                    ]);
+                  }
                   if (input.status !== "completed" && !processKeepsTasks) {
+                    heldTurnNotificationsByNativeThread.delete(nativeThreadId);
                     // Stop cancels Claude's wakeup and an exited process loses it; a failed
                     // turn on a live process leaves it pending. Process exits null the query first.
                     if (input.status !== "failed" || liveQuery === null) {
@@ -11107,6 +11143,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             yield* clearOpaqueBackgroundTaskReplayTombstone(nativeThreadId, taskId);
           }
+          if (
+            heldTurnNotificationsByNativeThread.get(nativeThreadId)?.turn !==
+            (yield* Ref.get(activeTurn))
+          ) {
+            yield* releaseHeldTurnNotifications(nativeThreadId);
+          }
           yield* endClaudeMonitorTasks((taskId) => retiredTaskIds.has(taskId));
           const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
             nativeThreadId,
@@ -11367,6 +11409,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               updated.delete(message.task_id);
               return updated;
             });
+            const turn = input.activeContext;
+            const notifiedTask =
+              turn !== null &&
+              turn === (yield* Ref.get(activeTurn)) &&
+              (yield* isWakeEligibleOpaqueBackgroundTaskOnNativeThread(
+                input.nativeThreadId,
+                message.task_id,
+              ))
+                ? (rosterForNativeThread(
+                    yield* Ref.get(pendingBackgroundTasksByNativeThread),
+                    input.nativeThreadId,
+                  ).get(message.task_id) ??
+                  (yield* Ref.get(lastProviderThreadByNativeThread))
+                    .get(input.nativeThreadId)
+                    ?.pendingBackgroundTasks?.find((task) => task.taskId === message.task_id))
+                : undefined;
             const removed = yield* clearPendingBackgroundTask(
               input.nativeThreadId,
               message.task_id,
@@ -11376,6 +11434,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               input.nativeThreadId,
               message.task_id,
             );
+            if (turn !== null && notifiedTask !== undefined) {
+              const held = heldTurnNotificationsByNativeThread.get(input.nativeThreadId);
+              if (held?.turn === turn) held.tasks.set(notifiedTask.taskId, notifiedTask);
+              else {
+                yield* releaseHeldTurnNotifications(input.nativeThreadId);
+                heldTurnNotificationsByNativeThread.set(input.nativeThreadId, {
+                  turn,
+                  tasks: new Map([[notifiedTask.taskId, notifiedTask]]),
+                });
+              }
+            }
             rosterChanged = removed;
           }
 
@@ -11641,6 +11710,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           if (context === (yield* Ref.get(activeTurn))) {
+            // The next tool round's request carries every notice held so far.
+            if (
+              message.type === "user" &&
+              message.parent_tool_use_id == null &&
+              claudeToolResultBlocksFromUserMessage(message).length > 0 &&
+              heldTurnNotificationsByNativeThread.get(liveQuery.nativeThreadId)?.turn === context
+            ) {
+              heldTurnNotificationsByNativeThread.delete(liveQuery.nativeThreadId);
+            }
             const lifecycle = claudePromptLifecycle(message);
             if (
               (message.type === "system" &&
@@ -15318,7 +15396,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           backgroundTasksEndWithProcess: true,
           hasPendingBackgroundWork: Effect.gen(function* () {
             // A wakeup can be up to an hour out, past the idle timeout, and dies with the process.
-            if (scheduledWakeupsByNativeThread.size > 0) {
+            if (
+              scheduledWakeupsByNativeThread.size > 0 ||
+              heldTurnNotificationsByNativeThread.size > 0
+            ) {
               return true;
             }
             for (const roster of (yield* Ref.get(pendingBackgroundTasksByNativeThread)).values()) {
@@ -15361,6 +15442,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               )
                 return true;
             }
+            if (heldTurnNotificationsByNativeThread.has(nativeThreadId)) return true;
             return (
               rosterForNativeThread(
                 yield* Ref.get(pendingBackgroundTasksByNativeThread),

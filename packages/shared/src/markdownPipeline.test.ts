@@ -10,6 +10,7 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  chatMarkdownImageSources,
   remarkAssistantInsights,
   remarkEnableOrderedListNumbers,
 } from "./markdownPipeline.ts";
@@ -580,6 +581,38 @@ it("keeps uppercase HTTP(S) link and image URLs by lowercasing the scheme before
   ]);
 });
 
+it("keeps uppercase FILE link and image URLs by lowercasing the scheme before sanitizing", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  type Node = { tagName?: string; properties?: object; children?: Node[] };
+  const elements = (node: Node): Node[] => [
+    ...(node.tagName === "a" || node.tagName === "img" ? [node] : []),
+    ...(node.children ?? []).flatMap(elements),
+  ];
+  const markdown = [
+    '[upper](FILE:///tmp/A.md) <a href="FiLe:///C:/Demo%20A.md">raw</a>',
+    "",
+    "![shot](FILE:///tmp/Shot.png)",
+    "",
+    '<picture><source media="(prefers-color-scheme: dark)" srcset="FILE:///tmp/Dark.png"><source media="(prefers-color-scheme: light)" srcset="FILE:///tmp/Light.png"><img src="FILE://host/tmp/Fallback.png"></picture>',
+  ].join("\n");
+  const tree = processor.runSync(processor.parse(markdown)) as Node;
+  expect(elements(tree).map((node) => node.properties)).toEqual([
+    { href: "file:///tmp/A.md" },
+    { href: "file:///C:/Demo%20A.md" },
+    { src: "file:///tmp/Shot.png", alt: "shot", dataStandalone: true },
+    {
+      src: "file://host/tmp/Fallback.png",
+      dataDarkSrc: "file:///tmp/Dark.png",
+      dataLightSrc: "file:///tmp/Light.png",
+    },
+  ]);
+  expect(chatMarkdownImageSources(markdown)).toHaveLength(4);
+});
+
 it("keeps raw and percent-encoded Windows drive file links through the shared Markdown sanitizer", () => {
   const processor = unified()
     .use(remarkParse)
@@ -966,15 +999,39 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
         '<picture><source media="(prefers-color-scheme: light)" srcset="javascript:alert(1)"><img src="docs/dark.webp"></picture>',
         "",
         String.raw`<picture><source media="(prefers-color-scheme: dark)" srcset="C:\shots\dark.png"><img src="C:\shots\light.png"></picture>`,
+        "",
+        '<picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/a\u00a0b.png 2x"><img src="https://example.com/light.png"></picture>',
+        "",
+        '<picture><source media="(prefers-color-scheme: light)" srcset=" \thttps://example.com/\u00a0light\u00a0v2.png,\thttps://example.com/2x.png 2x"><img src="https://example.com/dark.png"></picture>',
       ].join("\n"),
     ),
   ) as Node;
 
-  expect(tags(tree)).toEqual(["picture", "img", "p", "picture", "img", "p", "picture", "img"]);
+  expect(tags(tree)).toEqual([
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+  ]);
   expect(images(tree).map((image) => image.properties)).toEqual([
     { src: "docs/light.webp", alt: "Studio", dataDarkSrc: "docs/dark.webp" },
     { src: "docs/dark.webp" },
     { dataLocalSrc: String.raw`C:\shots\light.png`, dataDarkSrc: "file:///C:/shots/dark.png" },
+    { src: "https://example.com/light.png", dataDarkSrc: "https://example.com/a\u00a0b.png" },
+    {
+      src: "https://example.com/dark.png",
+      dataLightSrc: "https://example.com/\u00a0light\u00a0v2.png",
+    },
   ]);
 });
 

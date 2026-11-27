@@ -1651,6 +1651,11 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
     color-mix(in srgb, var(--input) var(--appearance-contrast-base), transparent),
     var(--foreground) var(--appearance-contrast-border-boost)
   );
+  --contrast-accent: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--accent) var(--appearance-contrast-base), transparent),
+    var(--foreground) var(--appearance-contrast-border-boost)
+  );
   --contrast-border: color-mix(
     in srgb,
     color-mix(in srgb, var(--border) var(--appearance-contrast-base), transparent),
@@ -2266,6 +2271,20 @@ code {
   & :is(pre, pre *) {
     color: inherit !important;
   }
+}
+
+/* Markdown fences hold sentences, not code: each line takes the direction of its
+   own words. Coding-font ligatures assume left-to-right and would overprint RTL letters.
+   Text and unlabeled fences stay LTR: they often hold trees and tables, whose lines must align. */
+.chat-markdown
+  .chat-markdown-codeblock:is(
+    [data-language="md" i],
+    [data-language="markdown" i],
+    [data-language="mdx" i]
+  )
+  pre {
+  unicode-bidi: plaintext;
+  font-variant-ligatures: none;
 }
 
 /* Sent messages color prose with the message foreground, which is not chosen

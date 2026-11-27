@@ -1,3 +1,4 @@
+import { previewUnlock } from "./previewUnlock";
 import type { Database } from "sql.js";
 
 import { boundedZip } from "@t3tools/client-runtime/zip/bounded-zip";
@@ -11,7 +12,7 @@ import {
   type BinaryWorkerRequest,
   type BinaryWorkerResult,
 } from "./binaryPreviewProtocol";
-import { PreviewError, previewFailure } from "./previewFailure";
+import { PreviewError } from "./previewFailure";
 
 let database: Database | null = null;
 let tables: string[] = [];
@@ -155,7 +156,7 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
   return entries;
 }
 
-async function handle(input: BinaryWorkerRequest) {
+async function handle(input: Exclude<BinaryWorkerRequest, { type: "unlock" }>, password?: string) {
   if (input.type === "entry") {
     const bytes = files.get(input.path);
     if (bytes === undefined) throw new PreviewError({ code: "archive-entry-unavailable" });
@@ -230,7 +231,7 @@ async function handle(input: BinaryWorkerRequest) {
       (input.bytes.byteLength >= 4 &&
         [0x04034b50, 0x06054b50].includes(new DataView(input.bytes).getUint32(0, true)))
     ) {
-      const archive = await boundedZip(input.bytes, BINARY_PREVIEW_MAX_BYTES);
+      const archive = await boundedZip(input.bytes, BINARY_PREVIEW_MAX_BYTES, { password });
       entries = [...archive].map(([path, file]) => {
         files.set(path, file.bytes);
         return {
@@ -258,8 +259,7 @@ async function handle(input: BinaryWorkerRequest) {
   }
 }
 
+const receive = previewUnlock(handle, reply, "preview-failed");
 self.addEventListener("message", (event: MessageEvent<BinaryWorkerRequest>) => {
-  void handle(event.data).catch((cause: unknown) =>
-    reply({ type: "error", ...previewFailure(cause, "preview-failed") }),
-  );
+  void receive(event.data);
 });
