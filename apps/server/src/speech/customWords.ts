@@ -14,8 +14,8 @@ export function makeSpeechTextCorrector(
   const MATCH_THRESHOLD = 0.18;
 
   const matchKey = (value: string) =>
-    [...value]
-      .filter((character) => /[\p{L}\p{N}]/u.test(character))
+    [...value.normalize("NFC")]
+      .filter((character) => /[\p{L}\p{M}\p{N}]/u.test(character))
       .join("")
       .toLocaleLowerCase();
 
