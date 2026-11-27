@@ -2618,7 +2618,7 @@ export const layerWsRpc = (
             }
             // Await refresh; RPC scope closure would interrupt a fork before the hub answered.
             if (input.instanceId === undefined) {
-              yield* usageLimitSources.refresh;
+              yield* usageLimitSources.refreshWithRoutedModels;
             }
             let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
               ? providerRegistry.refreshWorkspaceSnapshot({
