@@ -36,6 +36,14 @@ describe("mcpAppContentSecurityPolicy", () => {
     expect(policy).toContain("script-src 'unsafe-inline' https://*.cdn.test");
     expect(policy).toContain("img-src data: blob: https://*.cdn.test");
   });
+
+  it("lets apps compile WebAssembly without allowing eval", () => {
+    const scriptSrc = mcpAppContentSecurityPolicy(undefined)
+      .split("; ")
+      .find((directive) => directive.startsWith("script-src "));
+    expect(scriptSrc?.split(" ")).toContain("'wasm-unsafe-eval'");
+    expect(scriptSrc?.split(" ")).not.toContain("'unsafe-eval'");
+  });
 });
 
 describe("injectMcpAppCsp", () => {
