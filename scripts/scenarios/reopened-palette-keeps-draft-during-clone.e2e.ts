@@ -25,7 +25,11 @@ test(
         // unrelated timers and the waiter's normal clearTimeout cancellation alone.
         window.setTimeout = new Proxy(window.setTimeout, {
           apply(target, receiver, [handler, delay, ...args]) {
-            if (holdProjectWait && new Error().stack?.includes("at waitForProject (")) {
+            const stack = holdProjectWait ? new Error().stack : undefined;
+            if (
+              stack?.includes("at waitForProject (") &&
+              stack.includes("at submitAddProjectCloneFlow (")
+            ) {
               holdProjectWait = false;
               const id: number = Reflect.apply(target, receiver, [handler, 60_000, ...args]);
               document.documentElement.dataset.cloneProjectWait = "pending";
