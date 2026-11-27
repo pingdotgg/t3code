@@ -1185,6 +1185,88 @@ describe("waitForRevertedMessage", () => {
       vi.useRealTimers();
     }
   });
+
+  it("resolves when a cross-provider rollback closes the current provider thread and restores an earlier one", async () => {
+    vi.useFakeTimers();
+    const { state, projection } = projectionAtom();
+    const earlierProviderThreadId = ProviderThreadId.make("provider-thread-earlier");
+    const laterProviderThreadId = projection.providerThreads[0]!.id;
+    const earlierProviderThread = {
+      ...projection.providerThreads[0]!,
+      id: earlierProviderThreadId,
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+    };
+    const crossProviderInitial = {
+      ...projection,
+      thread: {
+        ...projection.thread,
+        activeProviderThreadId: laterProviderThreadId,
+      },
+      providerThreads: [earlierProviderThread, projection.providerThreads[0]!],
+      attempts: [
+        { id: "attempt-1", providerTurnId: null },
+        { id: "attempt-2", providerTurnId: null },
+      ],
+      providerTurns: [
+        {
+          id: "turn-1",
+          runAttemptId: "attempt-1",
+          ordinal: 1,
+          providerThreadId: earlierProviderThreadId,
+        },
+        {
+          id: "turn-2",
+          runAttemptId: "attempt-2",
+          ordinal: 1,
+          providerThreadId: laterProviderThreadId,
+        },
+      ],
+      runs: projection.runs.map((run) => ({
+        ...run,
+        activeAttemptId: run.ordinal <= 2 ? `attempt-${run.ordinal}` : run.activeAttemptId,
+        providerThreadId: run.ordinal === 1 ? earlierProviderThreadId : laterProviderThreadId,
+      })),
+    };
+    appAtomRegistry.set(state, { data: Option.some(crossProviderInitial as never) });
+
+    let outcome = "pending";
+    const waiting = waitForRevertedMessage(threadRef, 1, requestId, async () => {
+      appAtomRegistry.set(state, {
+        data: Option.some({
+          ...crossProviderInitial,
+          thread: {
+            ...crossProviderInitial.thread,
+            activeProviderThreadId: earlierProviderThreadId,
+          },
+          providerThreads: [
+            { ...earlierProviderThread, lastRunOrdinal: 1 },
+            { ...projection.providerThreads[0]!, status: "closed" as const, lastRunOrdinal: null },
+          ],
+          runs: crossProviderInitial.runs.map((run) =>
+            run.ordinal > 1 ? { ...run, status: "rolled_back" as const } : run,
+          ),
+        } as never),
+      });
+    }).then(
+      () => {
+        outcome = "reverted";
+      },
+      () => {
+        outcome = "rejected";
+      },
+    );
+
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(outcome).toBe("reverted");
+      await waiting;
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("mergeDirectPreviewAnnotation", () => {
@@ -1532,6 +1614,150 @@ describe("deriveAvailableRevertTurnCounts", () => {
   it("offers nothing without a provider session to rewind", () => {
     expect(deriveAvailableRevertTurnCounts(projection({ providerSessionId: null })).size).toBe(0);
     expect(deriveAvailableRevertTurnCounts(null).size).toBe(0);
+  });
+
+  it("offers runs from earlier open provider threads across a provider switch and excludes closed ones", () => {
+    const base = makeThreadProjectionFixture();
+    const claudeInstance = ProviderInstanceId.make("claudeAgent");
+    const codexInstance = ProviderInstanceId.make("codex");
+    const closedProviderThreadId = ProviderThreadId.make("closed-provider-thread");
+    const multiProviderProjection = {
+      ...base,
+      thread: {
+        ...base.thread,
+        modelSelection: { ...base.thread.modelSelection, instanceId: codexInstance },
+        activeProviderThreadId: otherProviderThreadId,
+      },
+      providerThreads: [
+        {
+          id: providerThreadId,
+          providerInstanceId: claudeInstance,
+          providerSessionId: ProviderSessionId.make("claude-session"),
+          status: "idle",
+          ownerNodeId: null,
+        },
+        {
+          id: closedProviderThreadId,
+          providerInstanceId: claudeInstance,
+          providerSessionId: ProviderSessionId.make("closed-session"),
+          status: "closed",
+          ownerNodeId: null,
+        },
+        {
+          id: otherProviderThreadId,
+          providerInstanceId: codexInstance,
+          providerSessionId: ProviderSessionId.make("codex-session"),
+          status: "idle",
+          ownerNodeId: null,
+        },
+      ],
+      runs: [
+        {
+          id: RunId.make("run-1"),
+          ordinal: 1,
+          status: "completed",
+          providerThreadId,
+          activeAttemptId: "attempt-1",
+        },
+        {
+          id: RunId.make("run-2"),
+          ordinal: 2,
+          status: "completed",
+          providerThreadId: closedProviderThreadId,
+          activeAttemptId: "attempt-2",
+        },
+        {
+          id: RunId.make("run-3"),
+          ordinal: 3,
+          status: "interrupted",
+          providerThreadId: otherProviderThreadId,
+          activeAttemptId: "attempt-3",
+        },
+      ],
+      attempts: [1, 2, 3].map((ordinal) => ({ id: `attempt-${ordinal}`, providerTurnId: null })),
+      providerTurns: [
+        { id: "turn-1", runAttemptId: "attempt-1", ordinal: 1, providerThreadId },
+        {
+          id: "turn-2",
+          runAttemptId: "attempt-2",
+          ordinal: 1,
+          providerThreadId: closedProviderThreadId,
+        },
+      ],
+    } as unknown as ReturnType<typeof makeThreadProjectionFixture>;
+
+    const available = deriveAvailableRevertTurnCounts(multiProviderProjection);
+    expect([...available].toSorted()).toEqual([0, 1]);
+  });
+
+  it("enforces per-provider rollback support while allowing boundary rewind onto an untouched provider", () => {
+    const base = makeThreadProjectionFixture();
+    const grokInstance = ProviderInstanceId.make("grok");
+    const codexInstance = ProviderInstanceId.make("codex");
+    const multiProviderProjection = {
+      ...base,
+      thread: {
+        ...base.thread,
+        modelSelection: { ...base.thread.modelSelection, instanceId: codexInstance },
+        activeProviderThreadId: otherProviderThreadId,
+      },
+      providerThreads: [
+        {
+          id: providerThreadId,
+          providerInstanceId: grokInstance,
+          providerSessionId: ProviderSessionId.make("grok-session"),
+          status: "idle",
+          ownerNodeId: null,
+        },
+        {
+          id: otherProviderThreadId,
+          providerInstanceId: codexInstance,
+          providerSessionId: ProviderSessionId.make("codex-session"),
+          status: "idle",
+          ownerNodeId: null,
+        },
+      ],
+      runs: [
+        {
+          id: RunId.make("run-1"),
+          ordinal: 1,
+          status: "completed",
+          providerThreadId,
+          activeAttemptId: "attempt-1",
+        },
+        {
+          id: RunId.make("run-2"),
+          ordinal: 2,
+          status: "completed",
+          providerThreadId,
+          activeAttemptId: "attempt-2",
+        },
+        {
+          id: RunId.make("run-3"),
+          ordinal: 3,
+          status: "completed",
+          providerThreadId: otherProviderThreadId,
+          activeAttemptId: "attempt-3",
+        },
+      ],
+      attempts: [1, 2, 3].map((ordinal) => ({ id: `attempt-${ordinal}`, providerTurnId: null })),
+      providerTurns: [
+        { id: "turn-1", runAttemptId: "attempt-1", ordinal: 1, providerThreadId },
+        { id: "turn-2", runAttemptId: "attempt-2", ordinal: 2, providerThreadId },
+        {
+          id: "turn-3",
+          runAttemptId: "attempt-3",
+          ordinal: 1,
+          providerThreadId: otherProviderThreadId,
+        },
+      ],
+    } as unknown as ReturnType<typeof makeThreadProjectionFixture>;
+
+    const available = deriveAvailableRevertTurnCounts(multiProviderProjection, {
+      supportsConversationRollback: (instanceId) => instanceId !== grokInstance,
+    });
+    // Run 1 needs Grok rollback (forbidden); run 2 is Grok's last turn before Codex (allowed).
+    expect([...available].toSorted()).toEqual([0, 2, 3]);
   });
 });
 

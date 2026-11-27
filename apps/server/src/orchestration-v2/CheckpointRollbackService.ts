@@ -1,7 +1,8 @@
 import {
   CheckpointId,
   CheckpointScopeId,
-  type CommandId,
+  CommandId,
+  isRetiredProviderThread,
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
   ProviderThreadId,
@@ -33,6 +34,7 @@ import {
   SHARED_WORKSPACE_RESTORE_MESSAGE,
 } from "./CheckpointRestoreSafety.ts";
 import { CheckpointRestoreError, CheckpointServiceV2 } from "./CheckpointService.ts";
+import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
@@ -174,6 +176,7 @@ export const layer: Layer.Layer<
       if (
         providerThread === undefined ||
         providerThread.providerSessionId === null ||
+        isRetiredProviderThread(providerThread) ||
         checkpoint === undefined ||
         scope === undefined ||
         // A repository's checkpoints follow the thread's; they are not a place to rewind to.
@@ -187,10 +190,9 @@ export const layer: Layer.Layer<
       ) {
         return yield* invalidTarget();
       }
-      if (
-        providerThread.id !== context.thread.activeProviderThreadId ||
-        providerThread.providerInstanceId !== context.thread.modelSelection.instanceId
-      ) {
+
+      const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
+      if (targetOrdinal === 0 && providerThread.id !== context.thread.activeProviderThreadId) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "active-provider-changed",
           threadId: input.threadId,
@@ -198,8 +200,6 @@ export const layer: Layer.Layer<
           checkpointId: input.checkpointId,
         });
       }
-
-      const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
       const rollbackTarget: ProviderAdapter.ProviderAdapterV2RollbackTarget =
         targetOrdinal === 0
           ? {
@@ -391,44 +391,62 @@ export const layer: Layer.Layer<
       ];
       if (restoreFiles && restoreTargets.length === 0) return yield* invalidTarget();
 
-      const modelSelection = context.thread.modelSelection;
-      const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
-        thread: context.thread,
-        modelSelection,
-      });
-      const existingSession = context.providerSession;
-      const session = yield* sessions.open({
-        threadId: input.threadId,
-        providerSessionId: providerThread.providerSessionId,
-        modelSelection,
-        runtimePolicy: resolvedRuntimePolicy,
-        ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
-        ...(providerThread.nativeThreadRef?.nativeId == null
-          ? {}
-          : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
-        ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
-          ? {}
-          : {
-              initialProviderItemIdentityVersion: providerThread.nativeMetadata.itemIdentityVersion,
-            }),
-      });
-
-      // Rolled-back turns remain in audit history but no longer exist in the provider conversation.
-      const rolledBackAttemptIds = new Set(context.rolledBackAttemptIds);
-      const providerThreadTurns = context.providerTurns.filter(
-        (turn) =>
-          turn.providerThreadId === providerThread.id &&
-          (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
+      const targetRunsToRollback = runsToRollback.filter(
+        (run) => run.providerThreadId === providerThread.id,
       );
+      // Cross-provider boundary rewind: every discarded run belonged to other provider threads,
+      // so the target provider conversation already stands at `targetOrdinal`.
+      const isCrossProviderBoundaryRewind =
+        runsToRollback.length > 0 && targetRunsToRollback.length === 0;
+      const snapshot = isCrossProviderBoundaryRewind
+        ? { providerThread }
+        : yield* Effect.gen(function* () {
+            const modelSelection =
+              providerThread.providerInstanceId === context.thread.modelSelection.instanceId
+                ? context.thread.modelSelection
+                : (context.targetRun?.modelSelection ??
+                  targetRunsToRollback.at(-1)?.modelSelection ??
+                  context.thread.modelSelection);
+            const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
+              thread: context.thread,
+              modelSelection,
+            });
+            const existingSession = context.providerSession;
+            const session = yield* sessions.open({
+              threadId: input.threadId,
+              providerSessionId: providerThread.providerSessionId!,
+              modelSelection,
+              runtimePolicy: resolvedRuntimePolicy,
+              ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
+              ...(providerThread.nativeThreadRef?.nativeId == null
+                ? {}
+                : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
+              ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+                ? {}
+                : {
+                    initialProviderItemIdentityVersion:
+                      providerThread.nativeMetadata.itemIdentityVersion,
+                  }),
+            });
 
-      const snapshot =
-        runsToRollback.length === 0
-          ? { providerThread }
-          : yield* session.rollbackThread({
+            if (targetRunsToRollback.length === 0) {
+              return { providerThread };
+            }
+
+            // Rolled-back turns remain in audit history but no longer exist in the provider conversation.
+            const rolledBackAttemptIds = new Set(context.rolledBackAttemptIds);
+            const providerThreadTurns = context.providerTurns.filter(
+              (turn) =>
+                turn.providerThreadId === providerThread.id &&
+                (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
+            );
+
+            return yield* session.rollbackThread({
               providerThread,
               target: rollbackTarget,
               providerThreadTurns,
             });
+          });
       if (restoreFiles) {
         yield* checkpoints.restore({ targets: restoreTargets, scopes: [scope, ...repositories] });
       }
@@ -479,6 +497,23 @@ export const layer: Layer.Layer<
               }),
             );
           }
+          for (const abandoned of context.abandonedProviderThreads ?? []) {
+            events.push(
+              yield* makeEvent({
+                type: "provider-thread.updated",
+                threadId: input.threadId,
+                driver: abandoned.driver,
+                providerInstanceId: abandoned.providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  ...abandoned,
+                  status: "closed",
+                  lastRunOrdinal: null,
+                  updatedAt: now,
+                },
+              }),
+            );
+          }
           events.push(
             yield* makeEvent({
               type: "provider-thread.updated",
@@ -493,6 +528,36 @@ export const layer: Layer.Layer<
               },
             }),
           );
+          const detachEffects: Array<PendingOrchestrationEffectV2> = [];
+          const detachCommandId =
+            input.requestId ??
+            CommandId.make(`command:rollback-detach:${input.threadId}:${input.checkpointId}`);
+          for (const abandonedSession of context.abandonedSessions ?? []) {
+            events.push(
+              yield* makeEvent({
+                type: "provider-session.detached",
+                threadId: input.threadId,
+                driver: abandonedSession.driver,
+                providerInstanceId: abandonedSession.providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  providerSessionId: abandonedSession.id,
+                  detachedAt: now,
+                  reason: "Rewound past this provider session.",
+                },
+              }),
+            );
+            detachEffects.push({
+              id: `effect:${detachCommandId}:provider-session.detach:${abandonedSession.id}`,
+              commandId: detachCommandId,
+              threadId: input.threadId,
+              request: {
+                type: "provider-session.detach",
+                providerSessionId: abandonedSession.id,
+                detail: "Rewound past this provider session.",
+              },
+            });
+          }
           for (const staleCheckpoint of staleCheckpoints) {
             events.push(
               yield* makeEvent({
@@ -533,7 +598,11 @@ export const layer: Layer.Layer<
               );
             }
           }
-          yield* eventSink.write({ events });
+          if (detachEffects.length > 0) {
+            yield* eventSink.writeWithEffects({ events, effects: detachEffects });
+          } else {
+            yield* eventSink.write({ events });
+          }
         }),
       );
     });

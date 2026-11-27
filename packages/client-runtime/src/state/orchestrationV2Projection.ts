@@ -2,6 +2,7 @@ import { applyThreadPullRequestLinkUpdate } from "../threadPullRequests.ts";
 import {
   applyOrchestrationV2ThreadVisit,
   isQueuedProviderThreadPlaceholder,
+  isRetiredProviderThread,
 } from "@t3tools/contracts";
 import type {
   OrchestrationV2DomainEvent,
@@ -402,7 +403,8 @@ export function applyOrchestrationV2ProjectionEvent(
         ...base,
         thread:
           event.payload.appThreadId === base.thread.id &&
-          !isQueuedProviderThreadPlaceholder(event.payload)
+          !isQueuedProviderThreadPlaceholder(event.payload) &&
+          !isRetiredProviderThread(event.payload)
             ? { ...base.thread, activeProviderThreadId: event.payload.id }
             : base.thread,
         providerThreads: upsertEntity(base.providerThreads, event.payload),

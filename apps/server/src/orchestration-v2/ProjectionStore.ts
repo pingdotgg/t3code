@@ -58,6 +58,7 @@ import {
   IDLE_COMPACTION_TEXT,
   idleCompactionOf,
   isQueuedProviderThreadPlaceholder,
+  isRetiredProviderThread,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
   OrchestrationV2CheckpointScopeJson as OrchestrationV2CheckpointScopeJsonSchema,
@@ -316,6 +317,7 @@ export interface ProjectionCheckpointRollbackContext {
   readonly providerSession: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
   readonly checkpoint: OrchestrationV2Checkpoint | undefined;
   readonly scope: OrchestrationV2CheckpointScope | undefined;
+  readonly targetRun: OrchestrationV2Run | undefined;
   readonly targetAttempt: (typeof RollbackTargetAttempts.Type)[number] | undefined;
   readonly providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
   readonly rolledBackAttemptIds: ReadonlyArray<RunAttemptId>;
@@ -323,6 +325,12 @@ export interface ProjectionCheckpointRollbackContext {
   readonly rootNodes: ReadonlyArray<OrchestrationV2ExecutionNode>;
   /** Ready checkpoints of the target scope and of repository scopes that the rollback discards. */
   readonly staleCheckpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
+  /** Non-retired root provider threads discarded when rewinding past their runs. */
+  readonly abandonedProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
+  /** Exclusive non-shared live sessions owned only by abandoned provider threads. */
+  readonly abandonedSessions: ReadonlyArray<
+    OrchestrationV2ThreadProjection["providerSessions"][number]
+  >;
 }
 
 export interface ProjectionProviderControlContext {
@@ -1175,7 +1183,8 @@ export function applyToProjection(
         ...base,
         thread:
           event.payload.appThreadId === base.thread.id &&
-          !isQueuedProviderThreadPlaceholder(event.payload)
+          !isQueuedProviderThreadPlaceholder(event.payload) &&
+          !isRetiredProviderThread(event.payload)
             ? {
                 ...base.thread,
                 activeProviderThreadId: event.payload.id,
@@ -2998,7 +3007,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `;
               if (
                 event.payload.appThreadId !== null &&
-                !isQueuedProviderThreadPlaceholder(event.payload)
+                !isQueuedProviderThreadPlaceholder(event.payload) &&
+                !isRetiredProviderThread(event.payload)
               ) {
                 const threadRows = yield* sql<PayloadRow>`
                 SELECT payload_json
@@ -6549,50 +6559,64 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               checkpoint,
               scope,
               providerSession: undefined,
+              targetRun: undefined,
               targetAttempt: undefined,
               providerTurns: [],
               rolledBackAttemptIds: [],
               runsToRollback: [],
               rootNodes: [],
               staleCheckpoints: [],
+              abandonedProviderThreads: [],
+              abandonedSessions: [],
             };
             if (
               providerThread === undefined ||
               providerThread.providerSessionId === null ||
+              isRetiredProviderThread(providerThread) ||
               checkpoint === undefined ||
               scope === undefined ||
               checkpoint.scopeId !== scope.id ||
-              checkpoint.status === "stale" ||
-              providerThread.id !== thread.activeProviderThreadId ||
-              providerThread.providerInstanceId !== thread.modelSelection.instanceId
+              checkpoint.status === "stale"
             )
               return context;
 
             const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
-            const [attemptRows, runRows, sessionRows, rolledBackAttempts, staleRows] =
-              yield* Effect.all([
-                sql`SELECT attempt.attempt_id AS id, attempt.provider_turn_id AS "providerTurnId"
+            const [
+              attemptRows,
+              targetRunRows,
+              runRows,
+              sessionRows,
+              rootProviderThreadRows,
+              rolledBackAttempts,
+              staleRows,
+            ] = yield* Effect.all([
+              sql`SELECT attempt.attempt_id AS id, attempt.provider_turn_id AS "providerTurnId"
             FROM orchestration_v2_projection_run_attempts AS attempt
             JOIN orchestration_v2_projection_runs AS run
               ON attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId')
             WHERE run.thread_id = ${threadId} AND run.ordinal = ${targetOrdinal}
               AND run.status != 'rolled_back' AND attempt.thread_id = ${threadId}`,
-                sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
+            WHERE thread_id = ${threadId} AND ordinal = ${targetOrdinal}
+              AND status != 'rolled_back'
+            LIMIT 1`,
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
             WHERE thread_id = ${threadId} AND ordinal > ${targetOrdinal}
               AND status IN ('completed', 'interrupted', 'failed', 'cancelled')
             ORDER BY ordinal ASC`,
-                sql<PayloadRow>`SELECT session.payload_json
+              sql<PayloadRow>`SELECT session.payload_json
             FROM orchestration_v2_projection_provider_sessions AS session
             JOIN orchestration_v2_projection_provider_session_bindings AS binding
               ON binding.provider_session_id = session.provider_session_id
-            WHERE binding.thread_id = ${threadId}
-              AND session.provider_session_id = ${providerThread.providerSessionId}`,
-                sql<{ readonly id: RunAttemptId }>`SELECT attempt.attempt_id AS id
+            WHERE binding.thread_id = ${threadId}`,
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_threads
+            WHERE thread_id = ${threadId} AND owner_node_id IS NULL`,
+              sql<{ readonly id: RunAttemptId }>`SELECT attempt.attempt_id AS id
             FROM orchestration_v2_projection_run_attempts AS attempt
             JOIN orchestration_v2_projection_runs AS run ON run.run_id = attempt.run_id
             WHERE run.thread_id = ${threadId} AND run.status = 'rolled_back'
               AND attempt.thread_id = ${threadId}`,
-                sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoints
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoints
             WHERE thread_id = ${threadId} AND status = 'ready'
               AND ((scope_id = ${scope.id} AND app_run_ordinal > ${targetOrdinal})
                 -- Repository checkpoints carry no app run ordinal; theirs is the run's ordinal.
@@ -6600,9 +6624,61 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT scope_id FROM orchestration_v2_projection_checkpoint_scopes
                   WHERE thread_id = ${threadId} AND kind = 'manual')))
             ORDER BY scope_id = ${scope.id} DESC, scope_id ASC, ordinal_within_scope ASC`,
-              ]);
+            ]);
             const targetAttempt = (yield* decodeRollbackTargetAttempts(attemptRows))[0];
+            const targetRun = (yield* decodeRows(decodeRunPayload, threadId)(targetRunRows))[0];
             const runsToRollback = yield* decodeRows(decodeRunPayload, threadId)(runRows);
+            const allSessions = yield* decodeRows(
+              decodeProviderSessionPayload,
+              threadId,
+            )(sessionRows);
+            const rootProviderThreads = yield* decodeRows(
+              decodeProviderThreadPayload,
+              threadId,
+            )(rootProviderThreadRows);
+            const rolledBackProviderThreadIds = new Set(
+              runsToRollback.flatMap((run) =>
+                run.providerThreadId === null ? [] : [run.providerThreadId],
+              ),
+            );
+            const abandonedProviderThreads = rootProviderThreads.filter(
+              (candidate) =>
+                candidate.id !== providerThread.id &&
+                !isRetiredProviderThread(candidate) &&
+                (rolledBackProviderThreadIds.has(candidate.id) ||
+                  candidate.id === thread.activeProviderThreadId ||
+                  (candidate.lastRunOrdinal !== null && candidate.lastRunOrdinal > targetOrdinal) ||
+                  (candidate.firstRunOrdinal !== null &&
+                    candidate.firstRunOrdinal > targetOrdinal)),
+            );
+            const abandonedIds = new Set(abandonedProviderThreads.map((candidate) => candidate.id));
+            const retainedSessionIds = new Set(
+              rootProviderThreads.flatMap((candidate) =>
+                !isRetiredProviderThread(candidate) &&
+                !abandonedIds.has(candidate.id) &&
+                candidate.providerSessionId !== null
+                  ? [candidate.providerSessionId]
+                  : [],
+              ),
+            );
+            if (providerThread.providerSessionId !== null) {
+              retainedSessionIds.add(providerThread.providerSessionId);
+            }
+            const abandonedSessionIds = new Set(
+              abandonedProviderThreads.flatMap((candidate) =>
+                candidate.providerSessionId !== null &&
+                !retainedSessionIds.has(candidate.providerSessionId)
+                  ? [candidate.providerSessionId]
+                  : [],
+              ),
+            );
+            const abandonedSessions = allSessions.filter(
+              (session) =>
+                abandonedSessionIds.has(session.id) &&
+                session.status !== "stopped" &&
+                session.status !== "error" &&
+                !session.capabilities.sessions.supportsMultipleProviderThreadsPerSession,
+            );
             const [nodeRows, turnRows] = yield* Effect.all([
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_nodes
             WHERE thread_id = ${threadId} AND ${sql.in(
@@ -6619,16 +6695,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ]);
             return {
               ...context,
+              targetRun,
               targetAttempt,
               runsToRollback,
-              providerSession:
-                sessionRows[0] === undefined
-                  ? undefined
-                  : yield* decodeProviderSessionPayload(sessionRows[0].payload_json),
+              providerSession: allSessions.find(
+                (session) => session.id === providerThread.providerSessionId,
+              ),
               rolledBackAttemptIds: rolledBackAttempts.map(({ id }) => id),
               rootNodes: yield* decodeRows(decodeNodePayload, threadId)(nodeRows),
               providerTurns: yield* decodeRows(decodeProviderTurnPayload, threadId)(turnRows),
               staleCheckpoints: yield* decodeRows(decodeCheckpointPayload, threadId)(staleRows),
+              abandonedProviderThreads,
+              abandonedSessions,
             };
           }),
         )

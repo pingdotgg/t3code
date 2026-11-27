@@ -1419,6 +1419,13 @@ export function isQueuedProviderThreadPlaceholder(
   );
 }
 
+/** Closed or archived provider threads are retired and must not reclaim the active slot. */
+export function isRetiredProviderThread(
+  providerThread: Pick<OrchestrationV2ProviderThread, "status">,
+): boolean {
+  return providerThread.status === "closed" || providerThread.status === "archived";
+}
+
 export const OrchestrationV2RuntimeRequest = Schema.Struct({
   id: RuntimeRequestId,
   nodeId: NodeId,

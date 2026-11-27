@@ -890,6 +890,10 @@ describe("provider-thread.updated", () => {
     );
     expect(queued?.thread.activeProviderThreadId).toBeNull();
 
+    const closed = apply(providerThread("provider-thread-closed", { status: "closed" }));
+    expect(closed?.thread.activeProviderThreadId).toBeNull();
+    expect(closed?.providerThreads[0]?.status).toBe("closed");
+
     const foreign = apply(
       providerThread("provider-thread-foreign", { appThreadId: ThreadId.make("other-thread") }),
     );
