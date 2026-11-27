@@ -915,6 +915,37 @@ it.effect("reads that run on every change or sweep do not read every run", () =>
   ),
 );
 
+it.effect("runsWhere keyPrefix matches keys whose next character is the highest code point", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const start = (runId: string, idempotencyKey: string) =>
+        store.runStarted({
+          runId,
+          workflow: "intake",
+          version: 1,
+          engineTag: "intake@1",
+          idempotencyKey,
+          input: {},
+        });
+      const maxScalar = String.fromCodePoint(0x10ffff);
+      yield* start("a", "case/abc");
+      yield* start("b", `case/${maxScalar}tail`);
+      yield* start("c", "case0");
+      yield* start("max-hit", `${maxScalar}x`);
+      yield* start("bmp-hit", `a\uD7FF${maxScalar}`);
+      yield* start("bmp-next", "a\uE000");
+
+      const ids = (keyPrefix: string) =>
+        Effect.map(store.runsWhere({ keyPrefix }), (rows) => rows.map((row) => row.run_id));
+
+      assert.deepStrictEqual(yield* ids("case/"), ["b", "a"]);
+      assert.deepStrictEqual(yield* ids(maxScalar), ["max-hit"]);
+      assert.deepStrictEqual(yield* ids("a\uD7FF"), ["bmp-hit"]);
+    }),
+  ),
+);
+
 it.effect("a run waiting on you is listed however many runs started after it", () =>
   withStore(
     Effect.gen(function* () {

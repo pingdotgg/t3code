@@ -1,5 +1,6 @@
 import { pipe } from "effect/Function";
 import { IMAGE_DIMENSIONS_HEADER_BYTES } from "@t3tools/shared/imageDimensions";
+import { notebookOutputGroups } from "@t3tools/shared/notebookOutput";
 import { decodeHTMLAttribute } from "entities";
 import type JSZip from "jszip";
 import {
@@ -66,6 +67,12 @@ function boundedMarkup(value: string): string {
   reserveMarkup(value.length);
   return value;
 }
+function odfListStart(node: XmlNode | undefined): number | undefined {
+  const start = node?.attrs["text:start-value"]?.trim();
+  if (!start || !/^[+-]?\d+$/.test(start)) return undefined;
+  const value = Number(start);
+  return value >= 0 && value <= 2_147_483_647 ? value : undefined;
+}
 async function odfHtml(
   node: XmlNode,
   archive: JSZip,
@@ -73,6 +80,7 @@ async function odfHtml(
   imageAlt = "",
   inRepeatedRow = false,
   list: [string, number] = ["", 0],
+  inOrderedList = false,
 ): Promise<string> {
   if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
   if (node.name === "text:s" || node.name === "text:tab")
@@ -105,7 +113,8 @@ async function odfHtml(
       "text:alphabetical-index-source",
       "text:bibliography-source",
       "table:covered-table-cell",
-    ].includes(node.name)
+    ].includes(node.name) ||
+    (node.name === "text:section" && node.attrs["text:display"]?.trim() === "none")
   )
     return "";
   const childImageAlt =
@@ -128,23 +137,32 @@ async function odfHtml(
       : node.name === "text:list-item" || node.name === "text:list-header"
         ? list
         : ["", 0];
+  const numberingLevel =
+    node.name === "text:list"
+      ? listStyles
+          .get(nextList[0])
+          ?.children.find(
+            (level) =>
+              level.name === "text:list-level-style-number" &&
+              level.attrs["text:level"] === String(nextList[1]) &&
+              !!level.attrs["style:num-format"],
+          )
+      : undefined;
   for (const child of node.children)
-    children += await odfHtml(child, archive, listStyles, childImageAlt, repeatedRow, nextList);
-  const numbered =
-    node.name === "text:list" &&
-    listStyles
-      .get(nextList[0])
-      ?.children.some(
-        (level) =>
-          level.name === "text:list-level-style-number" &&
-          level.attrs["text:level"] === String(nextList[1]) &&
-          !!level.attrs["style:num-format"],
-      );
+    children += await odfHtml(
+      child,
+      archive,
+      listStyles,
+      childImageAlt,
+      repeatedRow,
+      nextList,
+      numberingLevel !== undefined,
+    );
   const tags: Record<string, string> = {
     "text:p": "p",
     "text:h": "h2",
     "text:span": "span",
-    "text:list": numbered ? "ol" : "ul",
+    "text:list": numberingLevel ? "ol" : "ul",
     "text:list-item": "li",
     "table:table": "table",
     "table:table-row": "tr",
@@ -160,7 +178,10 @@ async function odfHtml(
       : tag === "td"
         ? repeat(node.attrs["table:number-columns-repeated"], TABLE_PREVIEW_MAX_COLUMNS)
         : 1;
-  let spans = "";
+  const start = odfListStart(tag === "li" && inOrderedList ? node : numberingLevel);
+  let attributes = start === undefined ? "" : ` ${tag === "ol" ? "start" : "value"}="${start}"`;
+  const format = numberingLevel?.attrs["style:num-format"] ?? "";
+  if (/^[aAiI]$/.test(format)) attributes += ` type="${format}"`;
   // Spans on repeated cells or rows would multiply past the preview's table limits.
   if (tag === "td" && count === 1)
     for (const [name, attr, max] of [
@@ -169,9 +190,9 @@ async function odfHtml(
     ] as const) {
       const span = Number(node.attrs[attr]);
       if (max > 1 && Number.isSafeInteger(span) && span > 1)
-        spans += ` ${name}="${Math.min(span, max)}"`;
+        attributes += ` ${name}="${Math.min(span, max)}"`;
     }
-  const markup = `<${tag}${spans}>${children}</${tag}>`;
+  const markup = `<${tag}${attributes}>${children}</${tag}>`;
   reserveMarkup(count * markup.length - children.length);
   return markup.repeat(count);
 }
@@ -304,8 +325,9 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   const notebook = record(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
   if (notebook.nbformat !== 4 || !Array.isArray(notebook.cells) || notebook.cells.length > 500)
     throw new PreviewError({ code: "notebook-unsupported" });
+  const metadata = record(notebook.metadata);
   const language =
-    String(record(record(notebook.metadata).language_info).name ?? "")
+    String(record(metadata.language_info).name || record(metadata.kernelspec).language || "")
       .replaceAll(/[^a-z\d+#-]/gi, "")
       .slice(0, 40) || "text";
   const cells: NotebookCell[] = notebook.cells.map((value) => {
@@ -315,38 +337,41 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
     return {
       kind: cell.cell_type === "markdown" ? "markdown" : cell.cell_type === "code" ? "code" : "raw",
       source: notebookText(cell.source),
-      outputs: outputs
-        .map((value) => {
-          const output = record(value);
-          const data = record(output.data);
-          for (const mime of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
-            if (data[mime]) {
-              const base64 = notebookText(data[mime], 4 * 1024 * 1024).replaceAll(/\s/g, "");
-              if (base64ImageFits(base64))
-                return { kind: "image" as const, text: `data:${mime};base64,${base64}` };
-            }
+      outputs: Array.from(notebookOutputGroups(outputs, notebookText), (group) => {
+        if (group.kind === "stream") {
+          return {
+            kind: "text" as const,
+            text: terminalOutputCollapseRedraws(terminalOutputPlainText(group.text)),
+          };
+        }
+        const output = record(group.output);
+        const data = record(output.data);
+        for (const mime of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
+          if (data[mime]) {
+            const base64 = notebookText(data[mime], 4 * 1024 * 1024).replaceAll(/\s/g, "");
+            if (base64ImageFits(base64))
+              return { kind: "image" as const, text: `data:${mime};base64,${base64}` };
           }
-          const html = notebookText(data["text/html"]);
-          if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
-          const plain = terminalOutputPlainText(
-            notebookText(
-              output.text ??
-                data["text/plain"] ??
-                data["text/markdown"] ??
-                tracebackLines(output.traceback),
-            ),
-          );
-          const text =
-            output.output_type === "stream" ? terminalOutputCollapseRedraws(plain) : plain;
-          if (text.trim() || output.output_type !== "error") return { kind: "text" as const, text };
-          const summary = [output.ename, output.evalue]
-            .filter((part) => typeof part === "string")
-            .map((part) => terminalOutputPlainText(notebookText(part)))
-            .filter((part) => part.trim().length > 0)
-            .join(": ");
-          return { kind: "text" as const, text: summary };
-        })
-        .filter((output) => output.text.trim().length > 0),
+        }
+        const html = notebookText(data["text/html"]);
+        if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
+        const plain = terminalOutputPlainText(
+          notebookText(
+            output.text ??
+              data["text/plain"] ??
+              data["text/markdown"] ??
+              tracebackLines(output.traceback),
+          ),
+        );
+        const text = output.output_type === "stream" ? terminalOutputCollapseRedraws(plain) : plain;
+        if (text.trim() || output.output_type !== "error") return { kind: "text" as const, text };
+        const summary = [output.ename, output.evalue]
+          .filter((part) => typeof part === "string")
+          .map((part) => terminalOutputPlainText(notebookText(part)))
+          .filter((part) => part.trim().length > 0)
+          .join(": ");
+        return { kind: "text" as const, text: summary };
+      }).filter((output) => output.text.trim().length > 0),
     };
   });
   return { type: "notebook", language, cells };
@@ -375,6 +400,9 @@ const RTF_CHARACTERS = new Map([
   ["ltrmark", "\u200e"],
   ["rtlmark", "\u200f"],
 ]);
+
+const RTF_UNDERLINE_WORD =
+  /^(?:ul|uld|uldash|uldashd|uldashdd|uldb|ulhair|ulhwave|ulldash|ulth|ulthd|ulthdash|ulthdashd|ulthdashdd|ulthldash|ululdbwave|ulw|ulwave)$/;
 
 const rtfCodePageLabel = (codePage: number) =>
   (
@@ -591,7 +619,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         }
       } else if (word === "b") state.bold = arg !== 0;
       else if (word === "i") state.italic = arg !== 0;
-      else if (word === "ul") state.underline = arg !== 0;
+      else if (RTF_UNDERLINE_WORD.test(word!)) state.underline = arg !== 0;
       else if (word === "ulnone") state.underline = false;
       else if (word === "deleted") state.deleted = arg !== 0;
       else if (word === "v") state.hiddenText = arg !== 0;
@@ -616,7 +644,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         }
         fallback = state.uc;
       } else if (!hidden() && word === "page") finishPage();
-      else if (word === "cell") emit("\t", state.skip);
+      else if (word === "cell" || word === "nestcell") emit("\t", state.skip);
       else if (
         (!state.skip && word === "row") ||
         (!hidden() && (word === "par" || word === "line"))
