@@ -164,7 +164,13 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     (yield* gitOutput(input.cwd, ["rev-parse", "--git-common-dir"])).replace(/\n$/, ""),
   );
   const pointsBack = yield* fileSystem.readFileString(path.join(adminDir, "gitdir")).pipe(
-    Effect.flatMap((gitdir) => samePath(path.resolve(adminDir, gitdir.trim()), gitFile)),
+    // Folders, not `.git` files: a hard-linked copy of the checkout shares its `.git` file.
+    Effect.flatMap((gitdir) => {
+      const backlink = path.resolve(adminDir, gitdir.trim());
+      return path.basename(backlink) === ".git"
+        ? samePath(path.dirname(backlink), worktreePath)
+        : Effect.succeed(false);
+    }),
     Effect.orElseSucceed(() => false),
   );
   if (!pointsBack || !(yield* samePath(path.dirname(adminDir), path.join(commonDir, "worktrees"))))
