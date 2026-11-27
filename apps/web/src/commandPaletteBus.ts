@@ -1,4 +1,8 @@
-import type { EnvironmentId, PullRequestLinkedThreadsResult } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PullRequestLinkedThreadsResult,
+  ScopedProjectRef,
+} from "@t3tools/contracts";
 
 import type { DraftId } from "./composerDraftStore";
 import { dispatchCommandPalette, isCommandPaletteMounted } from "./commandPaletteStore";
@@ -8,13 +12,15 @@ export interface CommandPaletteLinkedThreads {
   readonly threads: PullRequestLinkedThreadsResult["threads"];
 }
 
-export interface CommandPaletteOpenDetail {
-  readonly open?: "add-project" | "new-thread-in";
-  /** With add-project: the draft the new project is picked for. */
-  readonly draftId?: DraftId | null;
-  readonly query?: string;
-  readonly linkedThreads?: CommandPaletteLinkedThreads;
-}
+export type CommandPaletteOpenDetail =
+  | {
+      readonly open?: "add-project" | "new-thread-in";
+      /** With add-project: the draft the new project is picked for. */
+      readonly draftId?: DraftId | null;
+      readonly query?: string;
+      readonly linkedThreads?: CommandPaletteLinkedThreads;
+    }
+  | { readonly open: "change-project-folder"; readonly projectRef: ScopedProjectRef };
 
 export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void {
   // With no palette on screen (e.g. /pair) the request is dropped; kept in the
@@ -27,6 +33,8 @@ export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void 
       _tag: "OpenAddProject",
       ...(detail.draftId ? { draftId: detail.draftId } : {}),
     });
+  } else if (detail.open === "change-project-folder") {
+    dispatchCommandPalette({ _tag: "OpenChangeProjectFolder", projectRef: detail.projectRef });
   } else if (detail.query !== undefined) {
     dispatchCommandPalette({
       _tag: "OpenSearch",

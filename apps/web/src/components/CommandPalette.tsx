@@ -54,10 +54,10 @@ import {
   type DesktopWslState,
   type EnvironmentId,
   type FilesystemBrowseResult,
+  type ScopedProjectRef,
   SourceControlProviderKind,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
-  type ScopedProjectRef,
 } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -71,6 +71,7 @@ import {
   FileSearchIcon,
   FolderGit2Icon,
   FolderIcon,
+  FolderOpenIcon,
   FolderPlusIcon,
   MessageSquareDashedIcon,
   LinkIcon,
@@ -140,6 +141,7 @@ import { pickTriageEnvironment } from "../lib/triageTarget";
 import { useNewProject } from "../hooks/useNewProject";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { reportProjectFailure, useProjectPin } from "../hooks/useProjectGroupUpdate";
+import { useChangeProjectFolder } from "../hooks/useChangeProjectFolder";
 import {
   useEnvironmentProviders,
   useEnvironments,
@@ -150,6 +152,8 @@ import {
   useDelegatedUnderParent,
   useHiddenThreadKeys,
   useEnvironmentThreadRefs,
+  readProject,
+  useProject,
   useProjects,
   useServerConfigs,
   useVisibleThreadShells,
@@ -163,8 +167,10 @@ import {
 } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
+  ensureBrowseDirectoryPath,
   findProjectByPath,
   getBrowseDirectoryPath,
+  getBrowseParentPath,
   hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
@@ -326,10 +332,28 @@ function openIntentView(
         addonIcon: <PaletteIcon className={ADDON_ICON_CLASS} />,
         groups: [{ value: "themes", label: resolve(msg("Change theme")), items: [] }],
       };
+    case "change-project-folder":
+      return changeProjectFolderView(
+        intent.projectRef,
+        readProject(intent.projectRef)?.workspaceRoot ?? "~/",
+      );
     case "search":
     case undefined:
       return null;
   }
+}
+
+// Starts beside the old folder, where a renamed folder usually is.
+function changeProjectFolderView(
+  projectRef: ScopedProjectRef,
+  workspaceRoot: string,
+): CommandPaletteView {
+  return {
+    addonIcon: <FolderOpenIcon className={ADDON_ICON_CLASS} />,
+    groups: [],
+    initialQuery: getBrowseParentPath(workspaceRoot) ?? ensureBrowseDirectoryPath(workspaceRoot),
+    changeFolderProjectRef: projectRef,
+  };
 }
 
 const NEW_THREAD_NO_PROJECT_VALUE = "new-thread-in:no-project";
@@ -467,7 +491,7 @@ function OpenCommandPaletteDialog(props: {
   const [searchState, dispatchSearch] = useReducer(reduceCommandPaletteSearchState, null, () => {
     const view = props.initialContext ? null : openIntentView(props.openIntent, messages);
     return view
-      ? { query: "", views: [{ view, parentQuery: "" }] }
+      ? { query: view.initialQuery ?? "", views: [{ view, parentQuery: "" }] }
       : createCommandPaletteSearchState(initialSearch.query);
   });
   const { query, views: viewStack } = searchState;
@@ -491,6 +515,7 @@ function OpenCommandPaletteDialog(props: {
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     label: "project unarchive",
   });
+  const changeProjectFolder = useChangeProjectFolder();
   const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
   const startTriage = useStartTriage();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
@@ -573,6 +598,10 @@ function OpenCommandPaletteDialog(props: {
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
   const [browseGeneration, setBrowseGeneration] = useState(0);
   const [browseNavigation] = useState(createBrowseNavigationCoordinator);
+  // The view owns the target, so an add flow pushed on top adds, and Back repoints again.
+  const changeFolderProjectRef = currentView?.changeFolderProjectRef ?? null;
+  const changeFolderProjectEntity = useProject(changeFolderProjectRef);
+  const changeFolderProject = changeFolderProjectRef === null ? null : changeFolderProjectEntity;
   const [addProjectEnvironmentId, setAddProjectEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
@@ -693,7 +722,10 @@ function OpenCommandPaletteDialog(props: {
         ? desktopLocalBackendId(environment.entry.target)?.startsWith("wsl:") === true
         : false;
     }) ?? null;
-  const browseEnvironmentId = addProjectEnvironmentId ?? defaultAddProjectEnvironmentId;
+  const browseEnvironmentId =
+    changeFolderProjectRef?.environmentId ??
+    addProjectEnvironmentId ??
+    defaultAddProjectEnvironmentId;
   const canCreateProject = useEnvironmentScope(browseEnvironmentId, AuthOrchestrationOperateScope);
   const browseEnvironment =
     environments.find((environment) => environment.environmentId === browseEnvironmentId) ?? null;
@@ -786,14 +818,19 @@ function OpenCommandPaletteDialog(props: {
     currentProjectId,
   );
   const currentProjectCwd = currentProject?.workspaceRoot ?? null;
+  const canChangeCurrentProjectFolder = useEnvironmentScope(
+    currentProject?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
   const currentThreadActionItems = useCommandPaletteThreadActions({
     threadRef: activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
     projectCwd: currentProjectCwd,
   });
   const currentProjectCwdForBrowse =
-    browseEnvironmentId && currentProjectEnvironmentId === browseEnvironmentId
+    changeFolderProject?.workspaceRoot ??
+    (browseEnvironmentId && currentProjectEnvironmentId === browseEnvironmentId
       ? currentProjectCwd
-      : null;
+      : null);
   const getBrowseCwdForEnvironment = (environmentId: EnvironmentId | null): string | null =>
     environmentId && currentProjectEnvironmentId === environmentId ? currentProjectCwd : null;
   const relativePathNeedsActiveProject =
@@ -1895,6 +1932,31 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+  if (
+    currentProject &&
+    canChangeCurrentProjectFolder &&
+    !isScratchProject(currentProject, scratchWorkspaceRootFor(currentProject.environmentId))
+  ) {
+    const project = currentProject;
+    actionItems.push({
+      kind: "action",
+      value: "action:change-project-folder",
+      searchTerms: ["project", "folder", "path", "move", "moved", "rename", "relink", "workspace"],
+      title: gt("Change project folder"),
+      description: project.workspaceRoot,
+      icon: <FolderOpenIcon className={ITEM_ICON_CLASS} />,
+      keepOpen: true,
+      run: async () => {
+        setAddProjectCloneFlow(null);
+        pushPaletteView(
+          changeProjectFolderView(
+            scopeProjectRef(project.environmentId, project.id),
+            project.workspaceRoot,
+          ),
+        );
+      },
+    });
+  }
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems }, messages);
   const sourceSelectionViewValue =
@@ -2138,6 +2200,11 @@ function OpenCommandPaletteDialog(props: {
 
   const handleAddProject = async (rawCwd: string) => {
     if (!browseEnvironmentId) return;
+    if (changeFolderProjectRef !== null) {
+      // Read when the pick lands: the project can be removed while a picker is open.
+      if (await changeProjectFolder(readProject(changeFolderProjectRef), rawCwd)) setOpen(false);
+      return;
+    }
     await handleAddProjectForEnvironment({
       environmentId: browseEnvironmentId,
       rawCwd,
@@ -2455,6 +2522,13 @@ function OpenCommandPaletteDialog(props: {
   const cloneDestinationBrowseGroups = browseGroups.map((group) =>
     group.value === "directories" ? { ...group, label: gt("Select where to clone") } : group,
   );
+  const changeFolderBrowseGroups = changeFolderProject
+    ? browseGroups.map((group) =>
+        group.value === "directories"
+          ? { ...group, label: gt("New folder for {title}", { title: changeFolderProject.title }) }
+          : group,
+      )
+    : browseGroups;
 
   const newProjectsRoot = newProjectFlow ? newProjectsRootFor(newProjectFlow.environmentId) : null;
   const newProjectPathPreview =
@@ -2601,7 +2675,7 @@ function OpenCommandPaletteDialog(props: {
   } else if (addProjectCloneFlow?.step === "confirm") {
     displayedGroups = relativePathNeedsActiveProject ? [] : cloneDestinationBrowseGroups;
   } else if (isBrowsing) {
-    displayedGroups = relativePathNeedsActiveProject ? [] : browseGroups;
+    displayedGroups = relativePathNeedsActiveProject ? [] : changeFolderBrowseGroups;
   }
   const resultRows = buildCommandPaletteRows(displayedGroups);
   const autoHighlightsFirstRow =
@@ -2631,6 +2705,7 @@ function OpenCommandPaletteDialog(props: {
     (!isCloneDestinationStep || canCloneProject) &&
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
   const willCreateProjectPath =
+    changeFolderProjectRef === null &&
     canSubmitBrowsePath &&
     !isBrowsePending &&
     browseAccessError === null &&
@@ -2643,9 +2718,11 @@ function OpenCommandPaletteDialog(props: {
     ? willCreateProjectPath
       ? gt("Create & Clone")
       : gt("Clone")
-    : willCreateProjectPath
-      ? gt("Create & Add")
-      : gt("Add");
+    : changeFolderProjectRef !== null
+      ? gt("Use folder")
+      : willCreateProjectPath
+        ? gt("Create & Add")
+        : gt("Add");
   const addShortcutLabel = hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter";
   const hasHighlightedNewProjectItem = newProjectFlow !== null && highlightedItemValue !== null;
   const createShortcutLabel = hasHighlightedNewProjectItem
@@ -2665,6 +2742,7 @@ function OpenCommandPaletteDialog(props: {
   const fileManagerName = getLocalFileManagerName(navigator.platform, messages);
   const canOpenProjectFromFileManager =
     isBrowsing &&
+    canCreateProject &&
     browseEnvironmentId !== null &&
     (browseEnvironmentId === primaryEnvironmentId ||
       (browseEnvironmentIsDesktopLocal && browseDesktopInstanceId !== null)) &&
@@ -2997,6 +3075,22 @@ function OpenCommandPaletteDialog(props: {
         );
         return;
       }
+      if (changeFolderProjectRef !== null) {
+        if (selection.environmentId === changeFolderProjectRef.environmentId) {
+          if (await changeProjectFolder(readProject(changeFolderProjectRef), selection.linuxPath)) {
+            setOpen(false);
+          }
+        } else {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: gt("Failed to change project folder"),
+              description: gt("Choose a folder in the environment the project belongs to."),
+            }),
+          );
+        }
+        return;
+      }
       await handleAddProjectForEnvironment({
         environmentId: selection.environmentId,
         rawCwd: selection.linuxPath,
@@ -3121,7 +3215,7 @@ function OpenCommandPaletteDialog(props: {
             ? "*:data-[slot=autocomplete-input]:pe-32!"
             : isBrowsing
               ? browseInputEndPaddingClass({
-                  willCreateProjectPath,
+                  hasWideSubmitLabel: willCreateProjectPath || changeFolderProjectRef !== null,
                   hasHighlightedBrowseItem,
                 })
               : undefined,

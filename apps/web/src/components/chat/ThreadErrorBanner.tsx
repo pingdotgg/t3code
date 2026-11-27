@@ -84,11 +84,14 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   onDismiss,
   errorClass,
   errorCode,
+  onChooseProjectFolder,
 }: {
   error: string | null;
   errorClass?: OrchestrationV2ProviderFailureClass | null;
   errorCode?: string | null;
   onDismiss?: () => void;
+  /** Set when the error is the project's own folder being gone. */
+  onChooseProjectFolder?: (() => void) | undefined;
 }) {
   const gt = useGT();
   if (!error) return null;
@@ -121,8 +124,13 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             <ExpandableText text={error} collapsedText={getThreadErrorBannerMessage(error)} />
           )}
         </AlertDescription>
-        {(chatGptLimit || onDismiss) && (
+        {(chatGptLimit || onDismiss || onChooseProjectFolder) && (
           <AlertAction>
+            {onChooseProjectFolder ? (
+              <Button variant="default" size="sm" onClick={onChooseProjectFolder}>
+                <T>Choose new folder</T>
+              </Button>
+            ) : null}
             {workspaceLimit ? (
               <Button variant="default" size="sm" onClick={copyAdminRequest}>
                 <T>Copy request for admin</T>

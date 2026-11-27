@@ -40,6 +40,7 @@ import {
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
   withoutRemovedCheckout,
+  canChangeSidebarProjectFolder,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -1762,6 +1763,18 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+  });
+});
+
+describe("canChangeSidebarProjectFolder", () => {
+  const checkout = { memberProjects: [{}] };
+  it.each([
+    ["one checkout, update-capable connection", checkout, true, true],
+    ["one checkout, read-only connection", checkout, false, false],
+    ["a project grouped across checkouts", { memberProjects: [{}, {}] }, true, false],
+    ["a scratch project", { ...checkout, isScratch: true }, true, false],
+  ])("%s", (_label, group, canOperate, expected) => {
+    expect(canChangeSidebarProjectFolder(group, canOperate)).toBe(expected);
   });
 });
 

@@ -21,6 +21,7 @@ import {
   type AddProjectRemoteSourceReadiness,
 } from "@t3tools/client-runtime/operations/projects";
 import {
+  type ScopedProjectRef,
   type ScopedThreadRef,
   type EnvironmentId,
   type ProjectId,
@@ -66,10 +67,10 @@ export function buildLinkedThreadActionItems(
 }
 
 export function browseInputEndPaddingClass(input: {
-  readonly willCreateProjectPath: boolean;
+  readonly hasWideSubmitLabel: boolean;
   readonly hasHighlightedBrowseItem: boolean;
 }): string {
-  if (input.willCreateProjectPath) {
+  if (input.hasWideSubmitLabel) {
     return "*:data-[slot=autocomplete-input]:pe-38!";
   }
   if (input.hasHighlightedBrowseItem) {
@@ -87,6 +88,7 @@ export type CommandPaletteOpenIntent =
       /** The draft a project is being picked for; one with user content moves to it. */
       readonly draftId?: DraftId;
     }
+  | { readonly kind: "change-project-folder"; readonly projectRef: ScopedProjectRef }
   | {
       readonly kind: "search";
       readonly query: string;
@@ -113,6 +115,7 @@ export type CommandPaletteUiAction =
       readonly linkedThreads?: CommandPaletteLinkedThreads;
     }
   | { readonly _tag: "OpenAddProject"; readonly draftId?: DraftId }
+  | { readonly _tag: "OpenChangeProjectFolder"; readonly projectRef: ScopedProjectRef }
   | { readonly _tag: "OpenNewThreadIn" }
   | { readonly _tag: "OpenChangeTheme" }
   | {
@@ -171,6 +174,8 @@ export function reduceCommandPaletteUiState(
         kind: "add-project",
         ...(action.draftId ? { draftId: action.draftId } : {}),
       });
+    case "OpenChangeProjectFolder":
+      return openWithIntent({ kind: "change-project-folder", projectRef: action.projectRef });
     case "OpenNewThreadIn":
       return openWithIntent({ kind: "new-thread-in" });
     case "OpenChangeTheme":
@@ -255,6 +260,8 @@ export interface CommandPaletteView {
   readonly addonIcon: ReactNode;
   readonly groups: ReadonlyArray<CommandPaletteGroup>;
   readonly initialQuery?: string;
+  /** Set on the view whose folder browser repoints this project instead of adding one. */
+  readonly changeFolderProjectRef?: ScopedProjectRef;
 }
 
 // Child search unmounts the palette; retain search data without its view closures.

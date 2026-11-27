@@ -812,6 +812,17 @@ export function isSidebarNestedLinkClick(target: EventTarget | null): boolean {
   return nodeClosest(parent, "a[href]") !== null;
 }
 
+/**
+ * Change folder… appears for one checkout on a connection that can update it. A grouped
+ * project has a folder per checkout, so those change from project settings.
+ */
+export function canChangeSidebarProjectFolder(
+  group: { readonly memberProjects: ReadonlyArray<unknown>; readonly isScratch?: boolean },
+  canOperateEnvironment: boolean,
+): boolean {
+  return canOperateEnvironment && group.memberProjects.length <= 1 && group.isScratch !== true;
+}
+
 /** The "New thread in" picker opens unless there is one open project or none; then the current context decides. */
 export function shouldCreateNewThreadInCurrentProject(
   shiftKey: boolean,

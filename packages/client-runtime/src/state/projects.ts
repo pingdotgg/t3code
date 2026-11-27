@@ -1,5 +1,6 @@
 import {
   isExplicitRelativePath,
+  isHostPath,
   isUncPath,
   isWindowsAbsolutePath,
   isWindowsDrivePath,
@@ -119,6 +120,16 @@ export function resolveProjectPathForDispatch(value: string, cwd?: string | null
   return normalizeProjectPathForDispatch(
     joinedPath.length === 0 ? absoluteBase.root : `${absoluteBase.root}${joinedPath}`,
   );
+}
+
+/** A project's new folder. A bare name resolves in the old folder, not the server's cwd. */
+export function resolveProjectFolderChange(value: string, workspaceRoot: string): string {
+  const trimmedValue = value.trim();
+  const relativeValue =
+    trimmedValue.length === 0 || isHostPath(trimmedValue) || isExplicitRelativePath(trimmedValue)
+      ? trimmedValue
+      : `./${trimmedValue}`;
+  return resolveProjectPathForDispatch(relativeValue, workspaceRoot);
 }
 
 export function findProjectByPath<T extends { workspaceRoot?: string; cwd?: string }>(
