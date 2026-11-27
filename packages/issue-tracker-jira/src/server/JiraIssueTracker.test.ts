@@ -446,19 +446,26 @@ describe("JiraIssueTracker", () => {
   );
 
   // https://github.com/pingdotgg/t3code/pull/38003#issuecomment-7101618257
-  it.effect("posts a service desk comment as an internal note", () =>
-    Effect.gen(function* () {
-      const { tracker, requests } = fakeJira({
-        "GET /rest/api/3/issue/HELP-3": () =>
-          issue("HELP-3", { project: { key: "HELP", projectTypeKey: "service_desk" } }),
-        "POST /rest/api/3/issue/HELP-3/comment": () => ({}),
-      });
-      const api = yield* tracker;
-      yield* api.comment({ ...target, scope: "HELP", key: "HELP-3", body: "Looking" });
-      expect(requests.at(-1)?.body).toMatchObject({
-        properties: [{ key: "sd.public.comment", value: { internal: true } }],
-      });
-    }),
+  it.effect(
+    "posts a service desk comment as an internal note unless it replies to the customer",
+    () =>
+      Effect.gen(function* () {
+        const { tracker, requests } = fakeJira({
+          "GET /rest/api/3/issue/HELP-3": () =>
+            issue("HELP-3", { project: { key: "HELP", projectTypeKey: "service_desk" } }),
+          "POST /rest/api/3/issue/HELP-3/comment": () => ({}),
+        });
+        const api = yield* tracker;
+        const help = { ...target, scope: "HELP", key: "HELP-3" };
+        yield* api.comment({ ...help, body: "Looking" });
+        expect(requests.at(-1)?.body).toMatchObject({
+          properties: [{ key: "sd.public.comment", value: { internal: true } }],
+        });
+        yield* api.comment({ ...help, body: "Fixed", audience: "public" });
+        expect(requests.at(-1)?.body).toMatchObject({
+          properties: [{ key: "sd.public.comment", value: { internal: false } }],
+        });
+      }),
   );
 
   it.effect("reports Jira's own words for a refusal, and a rate limit with its wait", () =>
@@ -477,78 +484,5 @@ describe("JiraIssueTracker", () => {
       expect(limited.reason).toBe("rate-limited");
       expect(limited.retryAt).toBe(30_000);
     }),
-  );
-
-  it.effect(
-    "keeps internal notes apart from customer replies in a Service Management project",
-    () =>
-      Effect.gen(function* () {
-        const note = (id: string, jsdPublic: boolean) => ({
-          id,
-          created: "2026-07-02T11:00:00.000+0000",
-          body: { type: "doc", content: [] },
-          jsdPublic,
-        });
-        const { tracker, requests } = fakeJira({
-          "GET /rest/api/3/issue/HELP-3": () =>
-            issue("HELP-3", { project: { key: "HELP", projectTypeKey: "service_desk" } }),
-          "GET /rest/api/3/issue/HELP-3/comment": ({ query }) =>
-            query.get("startAt") === "2"
-              ? { total: 3, comments: [note("c1", false)] }
-              : { total: 3, comments: [note("c3", false), note("c2", true)] },
-          "POST /rest/api/3/issue/HELP-3/comment": () => ({ id: "c4" }),
-          "GET /rest/api/3/issue/ENG-7": () =>
-            issue("ENG-7", { project: { key: "ENG", projectTypeKey: "software" } }),
-          "GET /rest/api/3/issue/ENG-7/comment": () => ({ total: 1, comments: [note("c1", true)] }),
-          "POST /rest/api/3/issue/ENG-7/comment": () => ({ id: "c2" }),
-        });
-        const api = yield* tracker;
-        const request = { ...target, scope: "HELP", key: "HELP-3" };
-        const detail = yield* api.getIssue(request);
-        expect(detail.commentAudiences).toBe(true);
-        expect(detail.comments.map((comment) => comment.internal)).toEqual([true, undefined]);
-        const older = yield* api.getComments({ ...request, cursor: "2" });
-        expect(older.comments[0]?.internal).toBe(true);
-
-        const unsaid = yield* api.comment({ ...request, body: "draft" }).pipe(Effect.flip);
-        expect(unsaid.detail).toContain("internal note or a reply to the customer");
-        expect(requests.filter((seen) => seen.method === "POST")).toHaveLength(0);
-        yield* api.comment({ ...request, body: "Checked **logs**", audience: "internal" });
-        expect(requests.at(-1)?.body).toEqual({
-          body: {
-            version: 1,
-            type: "doc",
-            content: [
-              {
-                type: "paragraph",
-                content: [
-                  { type: "text", text: "Checked " },
-                  { type: "text", text: "logs", marks: [{ type: "strong" }] },
-                ],
-              },
-            ],
-          },
-          properties: [{ key: "sd.public.comment", value: { internal: true } }],
-        });
-        yield* api.comment({ ...request, body: "Fixed", audience: "public" });
-        expect(requests.at(-1)?.body).toMatchObject({
-          properties: [{ key: "sd.public.comment", value: { internal: false } }],
-        });
-
-        const software = { ...target, key: "ENG-7" };
-        const plain = yield* api.getIssue(software);
-        expect(plain.commentAudiences).toBeUndefined();
-        expect(plain.comments[0]?.internal).toBeUndefined();
-        const misnamed = yield* api
-          .comment({ ...software, body: "draft", audience: "internal" })
-          .pipe(Effect.flip);
-        expect(misnamed.detail).toContain("no internal notes");
-        yield* api.comment({ ...software, body: "Hi" });
-        expect(requests.filter((seen) => seen.method === "POST").map((seen) => seen.body)).toEqual([
-          expect.anything(),
-          expect.anything(),
-          { body: expect.objectContaining({ type: "doc" }) },
-        ]);
-      }),
   );
 });

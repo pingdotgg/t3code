@@ -257,7 +257,7 @@ export const IssueDetail = Schema.Struct({
   body: Schema.String,
   reactions: Schema.optional(Schema.Array(IssueReaction)),
   comments: Schema.Array(IssueComment),
-  /** A new comment here must name its audience, since one without it reaches the customer. */
+  /** A new comment here is an internal note unless its audience is public. */
   commentAudiences: Schema.optional(Schema.Boolean),
   /** Where older comments carry on; null once the conversation is whole. */
   commentsCursor: Schema.NullOr(TrimmedNonEmptyString),
@@ -388,7 +388,7 @@ export type IssueCreateResult = typeof IssueCreateResult.Type;
 export const IssueCommentInput = Schema.Struct({
   ...IssueRef.fields,
   body: CommentBody,
-  /** Required where the detail has `commentAudiences`, refused everywhere else. */
+  /** Internal unless public where the detail has `commentAudiences`; internal is refused elsewhere. */
   audience: Schema.optional(IssueCommentAudience),
 });
 export type IssueCommentInput = typeof IssueCommentInput.Type;

@@ -28,12 +28,12 @@ export function IssueCommentComposer({
   reference: IssueRef;
   /** Why the viewer cannot comment here; null when they can. */
   blocked: string | null;
-  /** Each comment is an internal note or a reply to the customer, chosen before sending. */
+  /** Each comment is an internal note unless the viewer picks a reply to the customer. */
   audiences: boolean;
 }) {
   const gt = useGT();
-  const [chosenAudience, setAudience] = useState<IssueCommentAudience | null>(null);
-  const audience = audiences ? chosenAudience : null;
+  // Internal by default: a customer reply is always an explicit choice.
+  const [audience, setAudience] = useState<IssueCommentAudience>("internal");
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -50,11 +50,11 @@ export function IssueCommentComposer({
   });
 
   const submit = async (text: string) => {
-    if (text.trim().length === 0 || locked || (audiences && audience === null)) return;
+    if (text.trim().length === 0 || locked) return;
     setSubmitting(true);
     const result = await comment({
       environmentId,
-      input: { ...reference, body: text, ...(audience === null ? {} : { audience }) },
+      input: { ...reference, body: text, ...(audiences ? { audience } : {}) },
     });
     setSubmitting(false);
     if (result._tag === "Failure") {
@@ -72,16 +72,13 @@ export function IssueCommentComposer({
   };
   const submitAfterDictation = () => speech.submitAfterDictation((text) => void submit(text));
   const submitDisabled =
-    speech.preparing ||
-    (body.trim().length === 0 && !speech.blocksSubmission) ||
-    locked ||
-    (audiences && audience === null);
+    speech.preparing || (body.trim().length === 0 && !speech.blocksSubmission) || locked;
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3">
       <ComposerSurface.Shell className="pointer-events-auto">
         <ComposerSurface.Host
-          className={audience === "internal" ? "bg-warning-surface" : undefined}
+          className={audiences && audience === "internal" ? "bg-warning-surface" : undefined}
         >
           <form
             className="relative z-10 flex flex-col"
@@ -127,11 +124,7 @@ export function IssueCommentComposer({
                       />
                     }
                   >
-                    {audience === "internal"
-                      ? gt("Internal note")
-                      : audience === "public"
-                        ? gt("Reply to customer")
-                        : gt("Choose audience")}
+                    {audience === "internal" ? gt("Internal note") : gt("Reply to customer")}
                     <ChevronDownIcon aria-hidden className="size-3" />
                   </MenuTrigger>
                   <MenuPopup align="start">

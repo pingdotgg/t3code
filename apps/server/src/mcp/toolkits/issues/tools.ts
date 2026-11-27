@@ -173,8 +173,6 @@ export const ReadIssueResult = Schema.Struct({
   writable: Schema.Boolean,
   capabilities: IssueCapabilities,
   states: Schema.Array(IssueState),
-  /** A comment must say whether it is an internal note or a reply to the customer. */
-  commentAudiences: Schema.optional(Schema.Boolean),
   author: Schema.NullOr(Schema.String),
   assignees: Schema.Array(Schema.String),
   labels: Schema.Array(Schema.String),
@@ -311,13 +309,14 @@ const CreateIssueTool = Tool.make("create_issue", {
 
 const CommentOnIssueTool = Tool.make("comment_on_issue", {
   description:
-    "Post a comment on an issue. Where read_issue reports commentAudiences, pass audience, and ask the user if they did not say whether it is an internal note or a reply to the customer. Never resend a refused internal note as public.",
+    "Post a comment on an issue. On a Jira Service Management issue it is an internal note the customer never sees unless audience is public. Never resend a refused internal note as public.",
   parameters: Schema.Struct({
     ...IssueTargetInput.fields,
     body: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
     audience: Schema.optional(
       IssueCommentAudience.annotate({
-        description: "internal: only agents see it. public: the customer sees it.",
+        description:
+          "Defaults to internal. public replies to the customer; set it only when the user asked to reply to them.",
       }),
     ),
   }),

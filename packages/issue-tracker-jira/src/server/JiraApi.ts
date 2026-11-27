@@ -10,7 +10,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import { IssueTrackerKind } from "@t3tools/contracts";
+import { type IssueCommentAudience, IssueTrackerKind } from "@t3tools/contracts";
 import {
   IssueTrackerError,
   type IssueTrackerCredential,
@@ -221,11 +221,11 @@ export class JiraApi extends Context.Service<
       fields: Record<string, unknown>,
     ) => Effect.Effect<void, IssueTrackerError>;
     readonly transition: (key: string, id: string) => Effect.Effect<void, IssueTrackerError>;
-    /** `internal` marks a Service Management comment as a note or a customer reply. */
+    /** On a Service Management issue the comment is an internal note unless `audience` is public. */
     readonly addComment: (
       key: string,
       body: AdfNode,
-      internal?: boolean,
+      audience: IssueCommentAudience | undefined,
     ) => Effect.Effect<void, IssueTrackerError>;
     readonly labels: Effect.Effect<
       { readonly names: ReadonlyArray<string>; readonly truncated: boolean },
@@ -483,18 +483,40 @@ export const make = Effect.gen(function* () {
       body: { transition: { id } },
     });
 
-  const addComment: JiraApi["Service"]["addComment"] = (key, body, internal) =>
-    send("addComment", Schema.Unknown, {
-      method: "POST",
-      path: `/rest/api/3/issue/${encodeURIComponent(key)}/comment`,
-      // Service Management's own comment API takes plain text only; this property keeps the ADF.
-      body: {
-        body,
-        ...(internal === undefined
-          ? {}
-          : { properties: [{ key: "sd.public.comment", value: { internal } }] }),
-      },
-    }).pipe(Effect.asVoid);
+  const addComment: JiraApi["Service"]["addComment"] = Effect.fn("JiraApi.addComment")(
+    function* (key, body, audience) {
+      const issue = yield* send(
+        "addComment",
+        Schema.Struct({ fields: Schema.Struct({ project: Schema.optional(IssueProject) }) }),
+        {
+          method: "GET",
+          path: `/rest/api/3/issue/${encodeURIComponent(key)}`,
+          query: { fields: "project" },
+        },
+      );
+      const serviceDesk = issue.fields.project?.projectTypeKey === "service_desk";
+      if (!serviceDesk && audience === "internal") {
+        return yield* fail(
+          "addComment",
+          "failed",
+          `${key} is not in a Service Management project, so it has no internal notes.`,
+        );
+      }
+      // A service desk comment is a reply the customer sees unless marked internal.
+      yield* send("addComment", Schema.Unknown, {
+        method: "POST",
+        path: `/rest/api/3/issue/${encodeURIComponent(key)}/comment`,
+        body: serviceDesk
+          ? {
+              body,
+              properties: [
+                { key: "sd.public.comment", value: { internal: audience !== "public" } },
+              ],
+            }
+          : { body },
+      });
+    },
+  );
 
   const labels: JiraApi["Service"]["labels"] = paged((startAt) =>
     send("labels", Schema.Struct({ values: Schema.Array(Schema.String) }), {

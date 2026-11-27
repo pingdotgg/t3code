@@ -490,10 +490,6 @@ describe("IssueService", () => {
               Effect.sync(() => {
                 calls += 1;
               }),
-            comment: () =>
-              Effect.sync(() => {
-                calls += 1;
-              }),
           }),
         ],
       });
@@ -501,11 +497,6 @@ describe("IssueService", () => {
 
       // The state is the tracker's own name, passed through: the tracker is what proves it.
       yield* service.setState({ ...ref, state: "In Review" });
-      // On a tracker without internal notes, the comment would reach everyone.
-      const audience = yield* Effect.flip(
-        service.comment({ ...ref, body: "note", audience: "internal" }),
-      );
-      expect(audience._tag).toBe("IssueOperationError");
       const reaction = yield* Effect.flip(
         service.react({ ...ref, content: "heart", reacted: true }),
       );

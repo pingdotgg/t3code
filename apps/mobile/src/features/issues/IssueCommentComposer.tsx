@@ -51,7 +51,7 @@ export function IssueCommentComposer(props: {
   readonly label: string;
   readonly blocked: string | null;
   readonly posting: boolean;
-  /** Each comment is an internal note or a reply to the customer, chosen before sending. */
+  /** Each comment is an internal note unless the viewer picks a reply to the customer. */
   readonly audiences: boolean;
   readonly bottomInset: number;
   readonly contentMaxWidth?: number;
@@ -61,8 +61,8 @@ export function IssueCommentComposer(props: {
   readonly onFocusChange: (focused: boolean) => void;
 }) {
   const gt = useGT();
-  const [chosenAudience, setAudience] = useState<IssueCommentAudience | null>(null);
-  const audience = props.audiences ? chosenAudience : null;
+  // Internal by default: a customer reply is always an explicit choice.
+  const [audience, setAudience] = useState<IssueCommentAudience>("internal");
   const editorRef = useRef<ComposerEditorHandle>(null);
   const [draft, setDraft] = useState("");
   // Read by dictation and by send after an await, when the render's `draft` may be stale.
@@ -99,18 +99,14 @@ export function IssueCommentComposer(props: {
   );
   const dictating = voicePresentation.statusKind === "active";
   const locked = props.posting || voiceInput.blocksSubmission;
-  const canSend =
-    props.blocked === null &&
-    !locked &&
-    draft.trim().length > 0 &&
-    (!props.audiences || audience !== null);
+  const canSend = props.blocked === null && !locked && draft.trim().length > 0;
 
   const sending = useRef(false);
   const flushAndSubmit = async () => {
     await editorRef.current?.flushPendingInput();
     const submitted = latestDraft.current;
     if (submitted.trim().length === 0) return;
-    const sent = await props.onSubmit(submitted, audience ?? undefined);
+    const sent = await props.onSubmit(submitted, props.audiences ? audience : undefined);
     if (sent && latestDraft.current === submitted) changeDraft("");
   };
   const send = () => {
@@ -192,14 +188,7 @@ export function IssueCommentComposer(props: {
       <View pointerEvents="none">
         <ComposerInlineControl
           size={chrome.controlSize}
-          label={
-            audience === "internal"
-              ? gt("Internal note")
-              : audience === "public"
-                ? gt("Reply to customer")
-                : gt("Choose audience")
-          }
-          selected={audience !== null}
+          label={audience === "internal" ? gt("Internal note") : gt("Reply to customer")}
         />
       </View>
     </Menu>
@@ -232,7 +221,7 @@ export function IssueCommentComposer(props: {
       <View className="w-full self-center" style={{ maxWidth: props.contentMaxWidth }}>
         <ComposerSurface
           animateLayout={false}
-          tone={audience === "internal" ? "warning" : undefined}
+          tone={props.audiences && audience === "internal" ? "warning" : undefined}
           style={{
             borderRadius: chrome.borderRadius,
             borderCurve: "circular",

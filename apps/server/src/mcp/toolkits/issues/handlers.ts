@@ -208,7 +208,6 @@ const make = Effect.gen(function* () {
           writable: detail.writable,
           capabilities: detail.capabilities,
           states: detail.states,
-          ...(detail.commentAudiences === true ? { commentAudiences: true } : {}),
           author: detail.author?.login ?? null,
           assignees: detail.assignees.map((actor) => actor.login),
           labels: detail.labels.map((label) => label.name),
