@@ -38,6 +38,7 @@ function panel(overrides: Partial<ComponentProps<typeof RightPanelTabs>> = {}) {
       onCloseSurface={noop}
       onCloseOtherSurfaces={noop}
       onCloseSurfacesToRight={noop}
+      onCloseSelectedSurfaces={noop}
       onCloseAllSurfaces={noop}
       onCopyFilePath={noop}
       onAddBrowser={noop}

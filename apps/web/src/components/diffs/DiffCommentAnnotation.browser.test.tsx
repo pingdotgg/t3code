@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { registerCommands } from "~/shortcuts/dispatcher";
 import { act, render } from "../../../test/render";
+import { RightPanelSheet } from "../RightPanelSheet";
 import { DiffCommentAnnotation } from "./DiffCommentAnnotation";
 
 it("leaves IME keys in a diff comment to the composition", async () => {
@@ -51,8 +53,39 @@ it("leaves IME keys in a diff comment to the composition", async () => {
 
   await userEvent.keyboard("{Escape}");
   expect(onCancel).toHaveBeenCalledOnce();
-  expect(heard).toEqual([{ key: "Escape", consumed: true }]);
+  expect(heard).toEqual([]);
 
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
   expect(onComment).toHaveBeenCalledExactlyOnceWith("Draft");
+});
+
+it("Escape cancels a diff comment without closing the right panel sheet", async () => {
+  const onCloseSheet = vi.fn();
+  function Draft() {
+    const [open, setOpen] = useState(true);
+    if (!open) return null;
+    return (
+      <DiffCommentAnnotation
+        kind="draft"
+        rangeLabel="3"
+        text=""
+        onCancel={() => setOpen(false)}
+        onComment={() => {}}
+      />
+    );
+  }
+  await using _screen = await render(
+    <RightPanelSheet animationDurationMs={0} open onClose={onCloseSheet}>
+      <Draft />
+    </RightPanelSheet>,
+  );
+  const draft = page.getByRole("textbox", { name: "Comment on lines 3" });
+  await act(() => (draft.element() as HTMLElement).focus());
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(draft).not.toBeInTheDocument();
+  expect(onCloseSheet).not.toHaveBeenCalled();
+
+  await userEvent.keyboard("{Escape}");
+  expect(onCloseSheet).toHaveBeenCalledOnce();
 });

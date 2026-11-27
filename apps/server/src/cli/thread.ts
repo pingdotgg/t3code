@@ -1,4 +1,5 @@
 import {
+  NonNegativeInt,
   OrchestratorMcpFailure,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
@@ -250,7 +251,11 @@ export type ThreadTools = ReturnType<typeof makeThreadTools>;
  * outside agent does, and revokes that session when the command ends.
  */
 export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
-  flags: { readonly baseDir: Option.Option<string>; readonly json: boolean },
+  flags: {
+    readonly baseDir: Option.Option<string>;
+    readonly json: boolean;
+    readonly clientLabel?: string;
+  },
   run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
@@ -265,7 +270,7 @@ export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function*
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const issued = yield* Effect.acquireRelease(
       environmentAuth.issueMcpClientSession({
-        label: "t3 thread cli",
+        label: flags.clientLabel ?? "t3 thread cli",
         // The CLI runs as the machine's owner. New threads still start at
         // the project's default mode, never at this ceiling by default.
         access: "full-access",
@@ -343,7 +348,8 @@ const listGitCheckouts = Effect.fn("cli.thread.listGitCheckouts")(function* (dir
   const stdout = (yield* list(["-z"])) ?? (yield* list([]))?.replaceAll("\n", "\0") ?? "";
   return stdout.split("\0\0").flatMap((record) => {
     const [first = "", ...attributes] = record.split("\0");
-    return first.startsWith("worktree ") && !attributes.includes("bare")
+    const prunable = attributes.some((attribute) => attribute.startsWith("prunable"));
+    return first.startsWith("worktree ") && !attributes.includes("bare") && !prunable
       ? [first.slice("worktree ".length)]
       : [];
   });
@@ -368,9 +374,11 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   // through a symlink (macOS /tmp), so both sides compare as real paths.
   const realPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
-  const target = yield* realPath(
-    path.resolve(yield* HostProcess.WorkingDirectory, yield* expandHomePath(identifier)),
+  const requestedPath = path.resolve(
+    yield* HostProcess.WorkingDirectory,
+    yield* expandHomePath(identifier),
   );
+  const target = yield* realPath(requestedPath);
   const roots = yield* Effect.forEach(projects, (project) =>
     Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
   );
@@ -381,12 +389,21 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
       (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
     );
   };
-  const deepestContaining = (candidate: string) =>
-    roots
+  const containingRoots = (candidate: string, originalPath?: string) => {
+    // Projects can register the same directory through separate symlinks.
+    const matchingPathLength = (root: string) =>
+      originalPath !== undefined && contains(root, originalPath) ? root.length : 0;
+    return roots
       .filter(({ root }) => contains(root, candidate))
-      .toSorted((left, right) => right.root.length - left.root.length)[0]?.project;
+      .toSorted(
+        (left, right) =>
+          right.root.length - left.root.length ||
+          matchingPathLength(right.project.workspaceRoot) -
+            matchingPathLength(left.project.workspaceRoot),
+      );
+  };
 
-  const containing = deepestContaining(target);
+  const containing = containingRoots(target, requestedPath)[0]?.project;
   if (containing !== undefined) return containing;
   const targetInfo = yield* fileSystem.stat(target).pipe(Effect.option);
   const gitDirectory =
@@ -405,8 +422,12 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   const matches = new Map<ProjectId, (typeof projects)[number]>();
   for (const checkout of listed) {
     if (checkout === ownCheckout) continue;
-    const project = deepestContaining(path.join(checkout, relative));
-    if (project !== undefined) matches.set(project.id, project);
+    const checkoutMatches = containingRoots(path.join(checkout, relative));
+    const deepestLength = checkoutMatches[0]?.root.length;
+    for (const { project, root } of checkoutMatches) {
+      if (root.length !== deepestLength) break;
+      matches.set(project.id, project);
+    }
   }
   const [match, ...others] = matches.values();
   if (match === undefined) {
@@ -763,7 +784,11 @@ const finishRun = Effect.fn("cli.thread.finishRun")(function* (
 });
 
 export const titleFromMessage = (message: string) => {
-  const firstLine = message.trim().split("\n")[0]?.trim() ?? "";
+  const firstLine =
+    message
+      .trim()
+      .split(/[\r\n\u2028\u2029]/, 1)[0]
+      ?.trim() ?? "";
   if (firstLine.length <= TITLE_MAX_CHARS) return firstLine;
   let end = TITLE_MAX_CHARS - 1;
   const previous = firstLine.charCodeAt(end - 1);
@@ -1045,6 +1070,7 @@ const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
   thread: threadArgument,
   messages: Flag.Int("messages").pipe(
+    Flag.withSchema(NonNegativeInt),
     Flag.withDescription("How many of the latest messages to print."),
     Flag.withDefault(10),
   ),

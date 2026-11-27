@@ -75,11 +75,17 @@ it("reads the V1 tables only from the legacy importer", () => {
 });
 
 it("keeps the legacy importer out of reach of new code", () => {
-  const importers = relativeSources
-    .filter(
-      ({ path, source }) =>
-        !path.startsWith("orchestration-v2/legacy/") && /from\s+["'][^"']*\/legacy\//.test(source),
-    )
+  const imports = relativeSources
+    .filter(({ path }) => !path.startsWith("orchestration-v2/legacy/"))
+    .flatMap(({ path, source }) =>
+      Array.from(source.matchAll(/from\s+["'][^"']*\/legacy\/([^"']+)["']/g), ([, file]) => ({
+        path,
+        file,
+      })),
+    );
+  const deletionFile = "LegacyDeletedThreadContent.ts";
+  const importers = imports
+    .filter(({ file }) => file !== deletionFile)
     .map(({ path }) => path)
     .toSorted();
   assert.deepEqual(importers, [
@@ -88,4 +94,8 @@ it("keeps the legacy importer out of reach of new code", () => {
     "project/ProjectService.ts",
     "serverRuntimeStartup.ts",
   ]);
+  assert.deepEqual(
+    imports.filter(({ file }) => file === deletionFile).map(({ path }) => path),
+    ["orchestration-v2/ProjectionMaintenance.ts"],
+  );
 });

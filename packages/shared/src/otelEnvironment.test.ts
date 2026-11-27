@@ -385,3 +385,16 @@ describe("OtelEnvironment", () => {
     );
   });
 });
+
+describe("isCiEnvironment", () => {
+  it("treats a set CI variable as CI, except empty, false, and 0", () => {
+    assert.isFalse(OtelEnvironment.isCiEnvironment({}));
+    assert.isTrue(OtelEnvironment.isCiEnvironment({ CI: "1" }));
+    assert.isTrue(OtelEnvironment.isCiEnvironment({ TF_BUILD: "True" }));
+    assert.isTrue(OtelEnvironment.isCiEnvironment({ BITBUCKET_BUILD_NUMBER: "42" }));
+    for (const value of ["", " ", "false", "FALSE", "0"]) {
+      assert.isFalse(OtelEnvironment.isCiEnvironment({ CI: value }), `CI=${value}`);
+    }
+    assert.isTrue(OtelEnvironment.isCiEnvironment({ CI: "false", GITLAB_CI: "true" }));
+  });
+});

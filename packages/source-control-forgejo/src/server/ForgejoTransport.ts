@@ -15,7 +15,7 @@ export class ForgejoTransportError extends Schema.TaggedError<ForgejoTransportEr
 ) {}
 import { ForgejoCli, type ForgejoCliError } from "./ForgejoCli.ts";
 
-/** Shared transport for the fork's issue and review operations, using upstream's fj/tea login selection. */
+/** Shared transport for the fork's issue and review operations, using upstream's fj/gt login selection. */
 export class ForgejoTransport extends Context.Service<
   ForgejoTransport,
   {

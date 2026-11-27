@@ -126,6 +126,12 @@ const policies = (): ReadonlyArray<Policy> => [
     toggle: "PreviewTunnel",
   },
   {
+    id: "WorktreeLayoutCommands",
+    title: "Allow project worktree layout commands",
+    help: "Disabled stops T3 Code from running the worktreeLayout commands a project's t3.json declares, whether or not a user approved them. Such a project gets no new worktree threads; existing thread folders are restored and removed without the project's commands.",
+    toggle: "WorktreeLayoutCommands",
+  },
+  {
     id: "Telemetry",
     title: "Allow usage data",
     help: "Disabled stops T3 Code from sending product usage data and relay connection traces. Enabled cannot turn them on for a user who turned them off.",

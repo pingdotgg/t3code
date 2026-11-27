@@ -667,6 +667,17 @@ export interface RunExecutionServiceV2StartRootRunInput {
     threadId: ThreadId,
     nodeIds: ReadonlyArray<NodeId>,
   ) => Effect.Effect<UnsettledWork, ProjectionStoreV2Error>;
+  /**
+   * Runs the turn in a fresh native session when its start found the native session gone,
+   * returning that session's thread, or undefined to let the start fail.
+   */
+  readonly recoverLostNativeSession?: (
+    turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+    error: ProviderAdapter.ProviderAdapterV2Error,
+  ) => Effect.Effect<
+    OrchestrationV2ProviderThread | undefined,
+    ProviderAdapter.ProviderAdapterV2Error
+  >;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
@@ -675,7 +686,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
 type RunBaselineInput = Pick<
   RunExecutionServiceV2StartRootRunInput,
   "appThread" | "run" | "checkpointScope"
->;
+> & { readonly sourceOrdinalWithinScope?: number | undefined };
 
 export interface RunExecutionServiceV2Shape {
   readonly startRootRun: (
@@ -1081,6 +1092,7 @@ export const layer: Layer.Layer<
         .captureBaseline({
           scope: input.checkpointScope,
           ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+          sourceOrdinalWithinScope: input.sourceOrdinalWithinScope,
           thread: input.appThread,
         })
         .pipe(
@@ -1089,7 +1101,7 @@ export const layer: Layer.Layer<
               ? Effect.interrupt
               : Effect.logWarning(
                   "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                  { runId: input.run.id },
+                  { runId: input.run.id, cause },
                 ),
           ),
         );
@@ -2282,7 +2294,23 @@ export const layer: Layer.Layer<
                     }),
                   }),
                 ))
-              : input.session.startTurn(turnInput);
+              : input.session
+                  .startTurn(turnInput)
+                  .pipe(
+                    Effect.catch((error) =>
+                      input.recoverLostNativeSession === undefined
+                        ? Effect.fail(error)
+                        : input
+                            .recoverLostNativeSession(turnInput, error)
+                            .pipe(
+                              Effect.flatMap((recovered) =>
+                                recovered === undefined
+                                  ? Effect.fail(error)
+                                  : Ref.set(latestProviderThread, recovered),
+                              ),
+                            ),
+                    ),
+                  );
         yield* Effect.andThen(shouldStart, startTurn).pipe(
           // Wait for acceptance so abandoned startup cannot leave a refresher
           // on the already-detached ingestion fiber.

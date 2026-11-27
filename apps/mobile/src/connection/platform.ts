@@ -152,14 +152,11 @@ const layerWakeups = Layer.effect(
           }
           if (state === "active") {
             const wakeup = mobileApplicationActiveWakeup(backgroundedAtMs, Date.now());
-            recordConnectionDiagnostic(
-              "wakeup",
-              backgroundedAtMs === null
-                ? wakeup
-                : `${wakeup} after ${Math.round((Date.now() - backgroundedAtMs) / 1000)}s`,
-            );
+            if (wakeup !== null) {
+              recordConnectionDiagnostic("wakeup", wakeup);
+              PubSub.publishUnsafe(wakeups, wakeup);
+            }
             backgroundedAtMs = null;
-            PubSub.publishUnsafe(wakeups, wakeup);
           }
         });
       }),

@@ -27,6 +27,7 @@ describe("path helpers", () => {
     ["report:123", "/workspace", "/workspace/report:123"],
     ["src/file", "C:\\Workspace\\", "C:\\Workspace\\src\\file"],
     ["~/report:123", "/workspace", "~/report:123"],
+    ["note.txt", "/tmp/photos\\", "/tmp/photos\\/note.txt"],
   ])("resolves literal path %s within %s", (path, root, expected) => {
     expect(resolveWorkspaceFilePath(path, root)).toBe(expected);
   });

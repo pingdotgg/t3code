@@ -11,7 +11,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import { discovery, make } from "./ForgejoSourceControlProvider.ts";
 
-const login = (url: string) => ({ name: url, url, user: "pat-s", valid: "true", default: "false" });
+const login = (host: string, user = "pat-s") => ({ host, user, active: true, verified: true });
 const authOutput = JSON.stringify([
   login("https://codeberg.org"),
   login("https://git.example.org"),
@@ -31,7 +31,7 @@ describe("Forgejo discovery", () => {
         remoteUrl: "https://git.example.org/owner/repo",
       },
       auth: {
-        stdout: JSON.stringify([login("https://git.example.org")]),
+        stdout: JSON.stringify([login("https://git.example.org", "")]),
         stderr: "",
         exitCode: ChildProcessSpawner.ExitCode(0),
       },

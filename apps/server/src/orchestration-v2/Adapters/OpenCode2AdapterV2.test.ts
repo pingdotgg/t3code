@@ -244,7 +244,10 @@ const turnInput = (
   modelSelection: ModelSelection = bigPickle,
   runtimeMode: "full-access" | "approval-required" = "full-access",
 ) => ({
-  appThread: { title: TITLE } as OrchestrationV2AppThread,
+  appThread: {
+    title: TITLE,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+  } as OrchestrationV2AppThread,
   threadId,
   runId: RunId.make("run:opencode2-adapter"),
   runOrdinal: 1,
@@ -586,6 +589,50 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("creates the session without the thread title so OpenCode titles it", () =>
+    Effect.gen(function* () {
+      const runtime = yield* openCode2ReplayRuntime([
+        ...opening,
+        out("agent.list", "<any>"),
+        reply("agent.list", agentList),
+        out("session.create", {
+          location: { directory: WORK },
+          model: { providerID: "opencode", id: "big-pickle" },
+          permissions: supervisedRules,
+          title: null,
+        }),
+        replyData("session.create", sessionInfo({ permissions: supervisedRules })),
+      ]);
+      const created = yield* runtime
+        .ensureThread({
+          threadId,
+          title: "Seed prompt",
+          modelSelection: bigPickle,
+          runtimePolicy: policy("approval-required"),
+        })
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("250 millis");
+      assert.equal((yield* Fiber.join(created)).nativeThreadRef?.nativeId, SESSION);
+    }),
+  );
+
+  it.effect("does not write a seed title into the session before the first turn", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const seeded = turnInput(thread);
+      yield* runtime.startTurn({
+        ...seeded,
+        appThread: { ...seeded.appThread, title: "Seed prompt" },
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
   it.effect("renames the session before the first turn after the thread was renamed", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -600,7 +647,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       ]);
       const renamed = {
         ...turnInput(thread),
-        appThread: { title: "Prime factors of 391" } as OrchestrationV2AppThread,
+        appThread: {
+          ...turnInput(thread).appThread,
+          title: "Prime factors of 391",
+          titleRenamed: true,
+        },
       };
       const first = yield* terminalOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.startTurn(renamed);
@@ -924,7 +975,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(started);
-      assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
+      assert.include(yield* Fiber.join(terminal), { status: "interrupted", promptDropped: true });
       assert.lengthOf(prompts, 0);
     }),
   );
@@ -3813,6 +3864,38 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         message: { ...turnInput(thread).message, text: "/noop" },
       });
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("returns from a plugin command that waits on its own question", () =>
+    Effect.gen(function* () {
+      // A plugin command that prompts and waits holds the session.command reply until its question is answered.
+      const { runtime, thread } = yield* resumed([
+        out("command.list", "<any>"),
+        reply("command.list", { location: { directory: WORK }, data: [{ name: "askwait" }] }),
+        out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+        reply("message.list", { data: [], cursor: {} }),
+        out("session.command", { sessionID: SESSION, name: "askwait", text: "" }),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("form.created", { form: colorForm }),
+      ]);
+      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
+      const started = yield* runtime
+        .startTurn({
+          ...turnInput(thread),
+          message: { ...turnInput(thread).message, text: "/askwait" },
+        })
+        .pipe(Effect.forkScoped);
+      assert.isDefined(yield* Fiber.join(requested));
+      const returned = yield* Fiber.join(started).pipe(
+        Effect.timeoutOption("10 seconds"),
+        Effect.forkScoped,
+      );
+      yield* TestClock.adjust("10 seconds");
+      assert.isTrue(
+        Option.isSome(yield* Fiber.join(returned)),
+        "startTurn must return once the command is admitted, or the answer queues behind it",
+      );
     }).pipe(Effect.scoped),
   );
 
@@ -8659,6 +8742,74 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const input = turnInput(thread);
       yield* runtime.startTurn({ ...input, message: { ...input.message, text: "/goal clear" } });
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
+  // regression: #41870
+  it.effect("does not tell the user to retry /goal resume when OpenCode has no paused goal", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("command.list", "<any>"),
+          reply("command.list", { location: { directory: WORK }, data: [{ name: "goal" }] }),
+          out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+          reply("message.list", { data: [], cursor: {} }),
+          out("session.command", { sessionID: SESSION, name: "goal", text: "resume" }),
+          reply("session.command", {
+            status: 500,
+            body: {
+              _tag: "CommandExecutionError",
+              command: "goal",
+              message: "No paused goal to resume.",
+            },
+          }),
+        ],
+        { version: "2.2.5" },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const input = turnInput(thread);
+      yield* runtime
+        .startTurn({ ...input, message: { ...input.message, text: "/goal resume" } })
+        .pipe(Effect.ignore);
+      const ended = yield* Fiber.join(terminal);
+      if (ended?.status !== "completed") {
+        const message = ended?.failure?.message ?? "";
+        assert.notInclude(message, "Retry the turn");
+        assert.match(message, /paused goal|no goal/iu);
+      }
+    }),
+  );
+
+  // regression: #42892
+  it.effect("shows OpenCode's goal length limit when it rejects a /goal objective", () =>
+    Effect.gen(function* () {
+      const objective = "a".repeat(4001);
+      const { runtime, thread } = yield* resumed(
+        [
+          out("command.list", "<any>"),
+          reply("command.list", { location: { directory: WORK }, data: [{ name: "goal" }] }),
+          out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+          reply("message.list", { data: [], cursor: {} }),
+          out("session.command", { sessionID: SESSION, name: "goal", text: objective }),
+          reply("session.command", {
+            status: 500,
+            body: {
+              _tag: "CommandExecutionError",
+              command: "goal",
+              message: "A goal objective is limited to 4000 characters (got 4001).",
+            },
+          }),
+        ],
+        { version: "2.2.5" },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const input = turnInput(thread);
+      yield* runtime
+        .startTurn({ ...input, message: { ...input.message, text: `/goal ${objective}` } })
+        .pipe(Effect.ignore);
+      const ended = yield* Fiber.join(terminal);
+      assert.equal(ended?.status, "failed");
+      assert.include(ended?.failure?.message ?? "", "4000 characters (got 4001)");
     }),
   );
 

@@ -312,7 +312,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
     );
 
     it.effect(
-      "holds an untrusted T3 Connect device until it is approved, and revocation cuts it off",
+      "holds an untrusted Cloud Connect device until it is approved, and revocation cuts it off",
       () =>
         Effect.gen(function* () {
           const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -386,8 +386,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           });
           const [oldestDeviceSession, newestDeviceSession] = yield* deviceSessions();
           expect(newestDeviceSession).toBeDefined();
-          // Authorized clients lists T3 Connect sessions under this name.
-          expect(newestDeviceSession?.client.label).toBe("T3 Connect");
+          expect(newestDeviceSession?.client.label).toBe("Cloud Connect");
           // Revoking any one of the device's sessions ends all of them and its trust.
           expect(
             yield* serverAuth.revokeClientSession(admin.sessionId, oldestDeviceSession!.sessionId),
@@ -1019,7 +1018,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           } as never);
 
         yield* post({ origin: "http://192.168.1.50:5733", "sec-fetch-site": "same-origin" });
-        yield* post({ origin: "http://localhost:13773" });
+        const session = yield* post({ origin: "http://localhost:13773" });
+        // A client learns which session is its own, to tell its answers from another client's.
+        const own = yield* serverAuth.getSessionState({
+          cookies: { [sessions.cookieName]: exchanged.sessionToken },
+          headers: { host: "localhost:13773", origin: "http://localhost:13773" },
+        } as never);
+        expect(own.sessionId).toBe(session.sessionId);
 
         const otherPort = yield* Effect.flip(
           post({ origin: "http://localhost:3000", "sec-fetch-site": "same-site" }),

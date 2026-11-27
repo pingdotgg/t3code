@@ -60,6 +60,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly clientAssetsDir: string;
     readonly backendCwd: string;
     readonly preloadPath: string;
+    readonly previewPickPreloadPath: string;
     readonly compileCachePath: string;
     readonly appUpdateYmlPath: string;
     readonly devServerUrl: Option.Option<URL>;
@@ -215,6 +216,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     clientAssetsDir: path.join(serverRoot, "apps/server/dist/client"),
     backendCwd: input.isPackaged ? homeDirectory : appRoot,
     preloadPath: path.join(input.dirname, "preload.cjs"),
+    previewPickPreloadPath: path.join(input.dirname, "preview-pick-preload.cjs"),
     compileCachePath: path.join(input.dirname, "compileCache.cjs"),
     appUpdateYmlPath: input.isPackaged
       ? path.join(resourcesPath, "app-update.yml")

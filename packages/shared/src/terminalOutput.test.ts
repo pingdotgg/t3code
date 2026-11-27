@@ -4,7 +4,9 @@ import {
   appendTerminalOutput,
   EMPTY_TERMINAL_OUTPUT,
   normalizeTerminalOutput,
+  TERMINAL_OUTPUT_TAIL_CHARS,
   TERMINAL_PALETTES,
+  terminalOutputCollapseRedraws,
   terminalOutputPlainText,
   terminalOutputResumeText,
   terminalOutputSpans,
@@ -18,6 +20,16 @@ function feed(chunks: ReadonlyArray<string>, maxChars?: number): TerminalOutputS
     EMPTY_TERMINAL_OUTPUT,
   );
 }
+
+describe("terminalOutputCollapseRedraws", () => {
+  it.each([
+    ["12345\r进度", "进度5"],
+    ["a界b\rXY", "XY b"],
+    ["e\u0301a\rZ", "Za"],
+  ])("uses terminal columns for a saved redraw: %j", (input, expected) => {
+    expect(terminalOutputCollapseRedraws(input)).toBe(expected);
+  });
+});
 
 describe("appendTerminalOutput", () => {
   it("keeps only the latest frame of a carriage-return progress bar", () => {
@@ -71,6 +83,29 @@ describe("appendTerminalOutput", () => {
     expect(
       terminalOutputSpans(feed(["\u001b[38:2::12:", "34:56mR"]).text, TERMINAL_PALETTES.dark),
     ).toEqual([{ text: "R", style: { color: "rgb(12,34,56)" } }]);
+  });
+
+  it.each(["\u001b[3", "\u001b]0;title"])(
+    "keeps output after CAN or SUB cancels %j, wherever the chunk splits",
+    (sequence) => {
+      for (const cancel of ["\u0018", "\u001a"]) {
+        const input = `before${sequence}${cancel}Ready`;
+        for (let cut = 0; cut <= input.length; cut += 1) {
+          expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("beforeReady");
+        }
+      }
+    },
+  );
+
+  it.each([
+    ["构建失败\nError", "before建失败\nError"],
+    ["😀 ok", "before ok"],
+    ["\ud83dX", "beforeX"],
+  ])("keeps output after non-ASCII %j aborts an unfinished CSI", (tail, expected) => {
+    const input = `before\u001b[3${tail}`;
+    for (let cut = 0; cut <= input.length; cut += 1) {
+      expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe(expected);
+    }
   });
 
   it("keeps a bounded tail that starts on a fresh line", () => {
@@ -129,6 +164,12 @@ describe("appendTerminalOutput", () => {
     expect(feed(["ok\u001b]0;title\u001b", "\u001b[31mred"]).text).toBe(
       "ok\u001b[0;31mred\u001b[0m",
     );
+    for (const input of ["a\u001b[1;\u001b[32mb\u001b[0m", "a\u001b[\u001b[32mb"]) {
+      expect(normalizeTerminalOutput(input).text).toBe("a\u001b[0;32mb\u001b[0m");
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("a\u001b[0;32mb\u001b[0m");
+      }
+    }
   });
 });
 
@@ -239,6 +280,18 @@ describe("appendTerminalOutput under adversarial output", () => {
     }
   });
 
+  it("consumes an escape followed by an emoji whole, however it is split", () => {
+    for (const [input, expected] of [
+      ["a\u001b😀b", "ab"],
+      ["a\u001b\ud83dX", "aX"],
+    ] as const) {
+      expect(normalizeTerminalOutput(input).text).toBe(expected);
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe(expected);
+      }
+    }
+  });
+
   it("gives the same result however the output is split into chunks", () => {
     const input =
       "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n" +
@@ -282,6 +335,29 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
     expect(viewer.text).toBe("界e\u0301Xef");
   });
 
+  it("restores a cursor saved on a row erased before the resync", () => {
+    for (const [prefix, next, expected] of [
+      ["\n\u001b7\u001b[A\u001b[J", "A\nB\u001b8Z", "A\nZ"],
+      [
+        "hello\n\n  \u001b7\u001b[2A\u001b[6G\u001b[J\u001b[2G",
+        "X\n\n1234\u001b8Z",
+        "hXllo\n\n12Z4",
+      ],
+      ["\u0301\n\u001b7\u001b[A\u001b[2G\u001b[J", "\nB\u001b8Z", "\u0301\nZ"],
+      [
+        `Build started\n${"working\n".repeat(63)}\u001b7\u001b[63A\u001b[J`,
+        `A${"\n".repeat(63)}B\u001b8Z`,
+        `Build started\nA${"\n".repeat(63)}Z`,
+      ],
+    ] as const) {
+      const source = feed([prefix]);
+      const viewer = feed([terminalOutputResumeText(source)]);
+      expect(viewer.text).toBe(source.text);
+      expect(appendTerminalOutput(viewer, next).text).toBe(appendTerminalOutput(source, next).text);
+      expect(appendTerminalOutput(viewer, next).text).toBe(expected);
+    }
+  });
+
   it("stays on the right line when early output was trimmed away", () => {
     const lines = Array.from({ length: 40 }, (_, index) => `line ${index}`).join("\n");
     const source = feed([lines, "\u001b[1A\rLINE"], 120);
@@ -291,6 +367,23 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
       120,
     );
     expect(viewer.text).toBe(appendTerminalOutput(source, " edited", 120).text);
+  });
+
+  it("keeps scrollback when a redraw after a cleared screen moves above the live window", () => {
+    const history = "Build started\n";
+    const source = feed([history + "working\n".repeat(63), "\u001b[2J", "Progress: 10%"]);
+    const redraw = "\u001b[1A\r\u001b[2KProgress: 20%";
+    expect(feed([terminalOutputResumeText(source), redraw]).text).toBe(history + "Progress: 20%");
+  });
+
+  it("recovers scrollback hidden by a full output tail once a redraw shortens it", () => {
+    const history = "Build started\n";
+    const progress = "x".repeat(TERMINAL_OUTPUT_TAIL_CHARS);
+    const source = feed([history + "working\n".repeat(63) + "\u001b[2J" + progress]);
+    const viewer = feed([terminalOutputResumeText(source)]);
+    expect(viewer.text).toBe(progress);
+    const redraw = "\r\u001b[2KProgress: done";
+    expect(appendTerminalOutput(viewer, redraw).text).toBe(history + "Progress: done");
   });
 });
 

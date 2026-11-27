@@ -1,5 +1,3 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Vite config runs before any Effect runtime.
-import * as NodeFSP from "node:fs/promises";
 import * as NodeZlib from "node:zlib";
 
 import react from "@vitejs/plugin-react";
@@ -13,10 +11,7 @@ import * as Hash from "effect/Hash";
 import pkg from "./package.json" with { type: "json" };
 import pdfjsPkg from "pdfjs-dist/package.json" with { type: "json" };
 
-import {
-  DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES,
-  DEV_PROXIED_PATH_PREFIXES,
-} from "@t3tools/shared/devProxy";
+import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { resolveTaggedSourceVersion } from "../../scripts/lib/tagged-source-version";
@@ -112,6 +107,12 @@ const browserTestProject = {
       "@pierre/diffs/ssr",
       "effect/testing",
       "saxes",
+      "@noble/ciphers/aes.js",
+      "@noble/hashes/hmac.js",
+      "@noble/hashes/legacy.js",
+      "@noble/hashes/pbkdf2.js",
+      "@noble/hashes/sha2.js",
+      "@noble/hashes/utils.js",
       "@betteroffice/docx/editor",
       "@betteroffice/docx/layout",
       "@betteroffice/docx/layout/render",
@@ -121,6 +122,7 @@ const browserTestProject = {
       "@betteroffice/xlsx",
       "@betteroffice/xlsx/headless",
       "fast-xml-parser",
+      "parse5",
       "entities",
       "dompurify",
       "heic-to/csp",
@@ -149,33 +151,12 @@ const browserTestProject = {
         resetPointer: async ({ page }) => {
           await page.mouse.move(-1, -1);
         },
-      },
-    },
-  },
-} satisfies TestProjectInlineConfiguration;
-
-// Render scenarios count React commits; they run only through scripts/render-metrics.ts,
-// which reads the per-scenario reports this command writes.
-const renderScenariosProject = {
-  ...browserTestProject,
-  test: {
-    ...browserTestProject.test,
-    name: "renders",
-    include: ["test/*.renders.tsx"],
-    // App scenarios mount the whole app per test, which outlasts 15s on a loaded machine.
-    hookTimeout: 60_000,
-    testTimeout: 60_000,
-    setupFiles: ["./test/renderCounter.ts", ...browserTestProject.test.setupFiles],
-    browser: {
-      ...browserTestProject.test.browser,
-      // Vitest names each instance in place, so a shared array would clash with the browser project.
-      instances: [{ browser: "chromium" }],
-      commands: {
-        ...browserTestProject.test.browser.commands,
-        writeRenderReport: async (_context, scenario: string, json: string) => {
-          const directory = process.env.T3CODE_RENDER_REPORT_DIR;
-          if (!directory) throw new Error("T3CODE_RENDER_REPORT_DIR is not set");
-          await NodeFSP.writeFile(`${directory}/${scenario}.json`, json);
+        // A press held across a render: userEvent only offers whole clicks.
+        pointerDown: async ({ page }) => {
+          await page.mouse.down();
+        },
+        pointerUp: async ({ page }) => {
+          await page.mouse.up();
         },
       },
     },
@@ -344,6 +325,7 @@ export default defineConfig(({ command }) => {
         "@pierre/diffs/edit",
         "@pierre/diffs/react",
         "@pierre/diffs/worker/worker.js",
+        "@t3tools/client-runtime > @zip.js/zip.js/index-native.cjs",
         "effect/Array",
         "effect/Order",
         "react-dom/client",
@@ -393,7 +375,9 @@ export default defineConfig(({ command }) => {
                 prefix,
                 {
                   target: devProxyTarget,
-                  changeOrigin: !DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES.has(prefix),
+                  // Keep the client's Host: OAuth metadata, cookie Origin checks and DPoP proofs
+                  // all compare against the URL the client used.
+                  changeOrigin: false,
                   ...(prefix === "/ws" || prefix === "/api" ? { ws: true } : {}),
                 },
               ]),
@@ -422,6 +406,7 @@ export default defineConfig(({ command }) => {
       sourcemap: buildSourcemap,
       ...(builtDev ? { watch: { exclude: rolldownWatchExclude } } : {}),
       rolldownOptions: {
+        input: ["index.html", "epub-preview.html"],
         output: {
           // PDF.js resolves decoder modules and ICC data relative to wasmUrl.
           assetFileNames: (asset) =>
@@ -433,11 +418,7 @@ export default defineConfig(({ command }) => {
     },
     worker: { format: "es" },
     test: {
-      projects: [
-        defineProject(unitTestProject),
-        defineProject(browserTestProject),
-        defineProject(renderScenariosProject),
-      ],
+      projects: [defineProject(unitTestProject), defineProject(browserTestProject)],
     },
   };
 });

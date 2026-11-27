@@ -199,9 +199,17 @@ describe("chromiumProcessIsAlive", () => {
 });
 
 describe("isSourceInstalled", () => {
-  it.effect.each([undefined, "", "relative-config", "relocated", "chrome-override"])(
-    "discovers Linux Chromium profiles with XDG_CONFIG_HOME=%s",
-    (configHome) =>
+  it.effect.each([
+    ["chrome", "google-chrome", undefined],
+    ["chrome", "google-chrome", ""],
+    ["chrome", "google-chrome", "relative-config"],
+    ["chrome", "google-chrome", "relocated"],
+    ["chrome", "google-chrome", "chrome-override"],
+    ["chromium", "chromium", "relocated"],
+    ["chromium", "chromium", "chrome-override"],
+  ] as const)(
+    "discovers Linux %s profiles in %s with config home %s",
+    ([sourceId, directory, configHome]) =>
       run(
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -212,7 +220,7 @@ describe("isSourceInstalled", () => {
               ? path.join(home, "config")
               : configHome;
           const chromeConfigHome =
-            configHome === "chrome-override" ? path.join(home, ".config") : undefined;
+            configHome === "chrome-override" ? path.join(home, "chrome-config") : undefined;
           const context = yield* sourcePathContext.pipe(
             Effect.provideService(HostProcess.Environment, {
               HOME: home,
@@ -224,8 +232,8 @@ describe("isSourceInstalled", () => {
           const configRoot =
             chromeConfigHome ??
             (configHome === "relocated" ? path.join(home, "config") : path.join(home, ".config"));
-          const source = BROWSER_IMPORT_SOURCES.find((source) => source.id === "chrome")!;
-          const root = path.join(configRoot, "google-chrome");
+          const source = BROWSER_IMPORT_SOURCES.find((source) => source.id === sourceId)!;
+          const root = path.join(configRoot, directory);
           const database = path.join(root, "Default", "Network", "Cookies");
           assert.isFalse(yield* isSourceInstalled(source, context));
           yield* fileSystem.makeDirectory(path.dirname(database), { recursive: true });

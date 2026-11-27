@@ -43,6 +43,14 @@ const KINDS: ReadonlyArray<{
     description: m(msg("Every account the hub pools, read through its management API.")),
   },
   {
+    kind: "http",
+    label: m(msg("HTTP quota source")),
+    urlLabel: m(msg("Endpoint URL")),
+    urlPlaceholder: "https://quota.example.com/limits",
+    needsKey: false,
+    description: m(msg("Quota from an HTTP endpoint.")),
+  },
+  {
     kind: "aiusage",
     label: m(msg("Usage dashboard")),
     urlLabel: m(msg("Dashboard URL")),
@@ -65,17 +73,19 @@ export function AddUsageLimitSourceDialog({
   environmentId,
   environmentLabel,
   sources,
+  kind: initialKind = "cliproxy",
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
+  readonly kind?: UsageLimitSourceKind;
   readonly sources: UnifiedSettings["usageLimitSources"];
 }) {
   const gt = useGT();
   const formId = useId();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  const [kind, setKind] = useState<UsageLimitSourceKind>("cliproxy");
+  const [kind, setKind] = useState<UsageLimitSourceKind>(initialKind);
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
   const secretSources = useSecretSources(environmentId);
@@ -84,10 +94,18 @@ export function AddUsageLimitSourceDialog({
   const managementKey = typeof keyDraft === "string" ? keyDraft.trim() : keyDraft;
   const spec = KINDS.find((entry) => entry.kind === kind) ?? KINDS[0]!;
   const trimmedUrl = url.trim();
-  const canSave = trimmedUrl.length > 0 && (!spec.needsKey || (keyValid && managementKey !== ""));
+  const http = kind === "http";
+  const endpoint = URL.parse(trimmedUrl);
+  const canSave = http
+    ? keyValid &&
+      endpoint !== null &&
+      /^https?:$/.test(endpoint.protocol) &&
+      !endpoint.username &&
+      !endpoint.password
+    : trimmedUrl.length > 0 && (!spec.needsKey || (keyValid && managementKey !== ""));
 
   const reset = () => {
-    setKind("cliproxy");
+    setKind(initialKind);
     setLabel("");
     setUrl("");
     setKeyDraft("");
@@ -103,7 +121,7 @@ export function AddUsageLimitSourceDialog({
           kind,
           ...(label.trim() ? { label: label.trim() } : {}),
           url: trimmedUrl,
-          managementKey: spec.needsKey ? managementKey : "",
+          managementKey: spec.needsKey || http ? managementKey : "",
           enabled: true,
         },
       },
@@ -170,14 +188,14 @@ export function AddUsageLimitSourceDialog({
                 autoFocus
               />
             </div>
-            {spec.needsKey ? (
+            {spec.needsKey || http ? (
               <div className="grid gap-1.5">
                 <Label htmlFor="usage-source-key">
-                  <T>Management key</T>
+                  {http ? <T>Bearer token (optional)</T> : <T>Management key</T>}
                 </Label>
                 <SecretSourceInput
                   id="usage-source-key"
-                  aria-label={gt("Management key")}
+                  aria-label={http ? gt("Bearer token (optional)") : gt("Management key")}
                   value={keyDraft}
                   sources={secretSources}
                   environmentId={environmentId}
