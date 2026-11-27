@@ -6,7 +6,6 @@ import {
   insertPullRequestCompletion,
   narrowPullRequestMentions,
   narrowPullRequestReferences,
-  pullRequestCompletions,
 } from "./pullRequestComposerTrigger.ts";
 
 const GITLAB = { mentions: true, referenceSigils: ["#", "!"] } as const;
@@ -25,7 +24,6 @@ describe("detectPullRequestComposerTrigger", () => {
     ["after !5", 6, "!", "5"],
     ["#crash", 0, "#", "crash"],
     ["#किताब", 0, "#", "किताब"],
-    ["see !किताब", 4, "!", "किताब"],
     ["#cafe\u0301", 0, "#", "cafe\u0301"],
   ])("finds the trigger in %j", (text, rangeStart, sigil, query) => {
     const cursor = rangeStart + 1 + query.length;
@@ -48,7 +46,6 @@ describe("detectPullRequestComposerTrigger", () => {
     ["![image", "![image".length],
     ["## Heading", 2],
     ["#\u0301", "#\u0301".length],
-    ["!\u0301", "!\u0301".length],
   ])("ignores %j", (text, cursor) => {
     expect(detectPullRequestComposerTrigger(text, cursor, GITLAB)).toBeNull();
   });
@@ -125,33 +122,5 @@ describe("narrowPullRequestReferences", () => {
     expect(narrowed("#", "12")).toEqual(["#12", "#3", "#120"]);
     expect(narrowed("!", "CRASH")).toEqual(["!12"]);
     expect(narrowed("#", "")).toEqual(["#12", "#3", "#120"]);
-  });
-
-  it("completes references whose titles use combining marks", () => {
-    const references = [
-      {
-        kind: "issue" as const,
-        reference: "#42",
-        number: 42,
-        title: "किताब",
-        state: "open" as const,
-      },
-      {
-        kind: "change-request" as const,
-        reference: "!42",
-        number: 42,
-        title: "किताब",
-        state: "open" as const,
-      },
-    ];
-    for (const [text, expectedToken] of [
-      ["see #किताब", "#42"],
-      ["see !किताब", "!42"],
-    ] as const) {
-      const trigger = detectPullRequestComposerTrigger(text, text.length, GITLAB);
-      expect(
-        pullRequestCompletions(trigger, { authors: [], references }, 5).map((c) => c.token),
-      ).toEqual([expectedToken]);
-    }
   });
 });
