@@ -6278,6 +6278,28 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("completes a silent prompt whose outcome check found the finished reply", () =>
+    Effect.gen(function* () {
+      // The agent wrote its final reply to its session log but never answered session/prompt.
+      const harness = yield* makePromptInactivityHarness({
+        environment: (runtimeOrdinal) =>
+          runtimeOrdinal === 1 ? { T3_ACP_HANG_PROMPT_FOREVER: "1" } : {},
+        watchPromptOutcome: () =>
+          Effect.succeed((_result, options) =>
+            Effect.succeed(options?.retired === true ? { replyFinished: true as const } : undefined),
+          ),
+      });
+      yield* harness.startTurn(1);
+      yield* TestClock.adjust("15 minutes");
+      yield* harness.startTurn(2);
+      const [silent, next] = yield* harness.terminals(2);
+      assert.equal(silent?.status, "completed");
+      assert.isNull(silent?.failure ?? null);
+      assert.equal(next?.status, "completed");
+      assert.lengthOf(harness.natives, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("retires a silent prompt whose outcome check dies", () =>
     Effect.gen(function* () {
       const harness = yield* makePromptInactivityHarness({

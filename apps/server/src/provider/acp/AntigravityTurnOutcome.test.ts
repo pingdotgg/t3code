@@ -14,6 +14,8 @@ const USER_INPUT = 14;
 const PLANNER_RESPONSE = 15;
 const TOOL = 8;
 const ERROR_MESSAGE = 17;
+const RUNNING = 2;
+const DONE = 3;
 
 // Error-step payloads trimmed from Antigravity 1.4.5 against a local Gemini endpoint.
 const errorPayload = (error: string) =>
@@ -101,6 +103,80 @@ const reusable = (failure: OrchestrationV2ProviderFailure) =>
   ({ failure, threadDisposition: "reusable" }) as const;
 
 describe("watchAntigravityPromptOutcome", () => {
+  it.effect("reports a retired prompt whose reply the agent finished", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profileDirectory = yield* fs.makeTempDirectoryScoped();
+      const sessionId = "1303fbd2-43f7-4da8-a6f4-eecc3f5d4928";
+      const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
+      yield* fs.makeDirectory(conversations, { recursive: true });
+      let nextIndex = 0;
+      const appendSteps = (steps: ReadonlyArray<readonly [number, number]>) => {
+        const database = new NodeSqlite.DatabaseSync(path.join(conversations, `${sessionId}.db`));
+        try {
+          database.exec(
+            "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER, step_payload BLOB)",
+          );
+          const insert = database.prepare("INSERT INTO steps VALUES (?, ?, ?, ?)");
+          for (const [type, status] of steps) insert.run(nextIndex++, type, status, Buffer.from("x"));
+        } finally {
+          database.close();
+        }
+      };
+      const turn = (
+        steps: ReadonlyArray<readonly [number, number]>,
+        options?: { readonly retired?: boolean },
+      ) =>
+        Effect.gen(function* () {
+          const check = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
+          appendSteps(steps);
+          return yield* check({ stopReason: "end_turn" }, options);
+        });
+      appendSteps([[USER_INPUT, DONE]]);
+
+      // Antigravity 1.5 trajectory: an earlier error step, then the final reply, done.
+      assert.deepEqual(
+        yield* turn(
+          [
+            [USER_INPUT, DONE],
+            [ERROR_MESSAGE, DONE],
+            [PLANNER_RESPONSE, DONE],
+          ],
+          { retired: true },
+        ),
+        { replyFinished: true },
+      );
+      // A reply still being written, or a later tool call, is not a finished reply.
+      assert.isUndefined(
+        yield* turn(
+          [
+            [USER_INPUT, DONE],
+            [PLANNER_RESPONSE, RUNNING],
+          ],
+          { retired: true },
+        ),
+      );
+      assert.isUndefined(
+        yield* turn(
+          [
+            [USER_INPUT, DONE],
+            [PLANNER_RESPONSE, DONE],
+            [TOOL, DONE],
+          ],
+          { retired: true },
+        ),
+      );
+      // A prompt that returned on its own keeps its outcome.
+      assert.isUndefined(
+        yield* turn([
+          [USER_INPUT, DONE],
+          [PLANNER_RESPONSE, DONE],
+        ]),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("fails only turns whose own steps end in an upstream error", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
