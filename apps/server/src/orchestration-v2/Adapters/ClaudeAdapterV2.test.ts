@@ -11258,7 +11258,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
   };
-  it.effect.each(["reopened", "new runtime", "no anchor", "fresh", "backwards"] as const)(
+  it.effect.each(["reopened", "new runtime", "no anchor", "fresh", "per-process"] as const)(
     "a resumed process's first result charges only its own growth (%s)",
     (scenario) =>
       Effect.gen(function* () {
@@ -11286,7 +11286,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const main = CLAUDE_TEST_MODEL_SELECTION.model;
         const helper = "claude-haiku-4-5";
         const reopen =
-          scenario === "reopened" || scenario === "new runtime" || scenario === "backwards";
+          scenario === "reopened" || scenario === "new runtime" || scenario === "per-process";
         if (reopen) {
           yield* harness.runtime.startTurn(turn("earlier-ledger"));
           yield* Queue.offer(
@@ -11338,7 +11338,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         const messages = harness.processQueues[reopen ? 1 : 0]!;
         // Claude Code restores a resumed session's model totals, so its first result includes them.
-        const historical = scenario === "fresh" || scenario === "backwards" ? 0 : 1700;
+        const historical = scenario === "fresh" || scenario === "per-process" ? 0 : 1700;
         yield* Queue.offer(
           messages,
           makeResultFrame({
@@ -11368,7 +11368,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             // Without a saved anchor the totals may hold earlier turns, so only the result counts.
             "no anchor": undefined,
             fresh: { inputTokens: 90_000, outputTokens: 3000 },
-            backwards: undefined,
+            // Older Claude Code restarts a resumed process's ledger, so it counts from zero.
+            "per-process": { inputTokens: 90_000, outputTokens: 3000 },
           }[scenario],
         );
       }).pipe(

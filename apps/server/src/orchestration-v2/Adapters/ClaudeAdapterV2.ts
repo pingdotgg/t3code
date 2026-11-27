@@ -29,6 +29,7 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { pastedUrl } from "@t3tools/shared/oauthCallback";
 import {
   addClaudeLedgerUsage,
+  claudeLedgerCoversResult,
   claudeLedgerDelta,
   claudeModelLedger,
   claudeReportedContextWindows,
@@ -5773,8 +5774,10 @@ interface ClaudeLiveQueryContext {
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
   // Subagents this process still ran when a replacement took over; only its exit can end them.
   handedOffSubagents: ReadonlySet<ActiveClaudeSubagent>;
-  // The SDK's cumulative model ledger at the last result; only a fresh session starts at zero.
+  // The SDK's model ledger at the last result; only a fresh session starts at zero.
   modelLedger: ClaudeModelLedger | undefined;
+  // Set until the first result checks the earlier process's ledger against this one's.
+  modelLedgerCarriedOver: boolean;
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
@@ -14366,6 +14369,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
             ),
             modelLedger: shouldResume ? modelLedgers.get(nativeThreadId) : new Map(),
+            modelLedgerCarriedOver: shouldResume && modelLedgers.has(nativeThreadId),
             taskOutputRoot: claudeTaskOutputRoot(
               adapterOptions.environment,
               path,
@@ -14443,7 +14447,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }
                   if (message.type === "result") {
                     const ledger = claudeModelLedger(message.modelUsage);
-                    const growth = claudeLedgerDelta(context.modelLedger, ledger);
+                    let growth = claudeLedgerDelta(context.modelLedger, ledger);
+                    if (context.modelLedgerCarriedOver) {
+                      context.modelLedgerCarriedOver = false;
+                      // Older Claude Code restarts a resumed process's ledger at zero; then growth
+                      // since the earlier process cannot cover this result's own usage.
+                      if (!claudeLedgerCoversResult(growth, message.usage)) {
+                        growth = claudeLedgerDelta(new Map(), ledger);
+                      }
+                    }
                     if (growth !== undefined) resultLedgerUsage.set(message, growth);
                     // A ledger that went backwards cannot anchor the next turn's growth.
                     context.modelLedger =
@@ -14452,9 +14464,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                         : ledger;
                     // A stopping process's late result must not replace its successor's anchor.
                     if (!context.stopping) {
-                      if (context.modelLedger === undefined)
-                        modelLedgers.delete(context.nativeThreadId);
-                      else modelLedgers.set(context.nativeThreadId, context.modelLedger);
+                      const sessionId =
+                        clearedNativeSessions.get(context.nativeThreadId) ?? context.nativeThreadId;
+                      if (context.modelLedger === undefined) modelLedgers.delete(sessionId);
+                      else modelLedgers.set(sessionId, context.modelLedger);
                     }
                     for (const [model, window] of claudeReportedContextWindows(
                       message.modelUsage,
