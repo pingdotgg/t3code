@@ -26,6 +26,7 @@ import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
 
 import { checkReachability, readLinkState } from "~/cloud/linkEnvironmentAtoms";
 import { isManagedTunnelActive } from "~/cloud/t3ConnectState";
+import { connectDenialFor } from "~/cloud/connectDenial";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { readCachedCloudLinkState } from "~/cloud/cloudLinkState";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
@@ -87,11 +88,7 @@ function UseInAnotherAppDialog({ requested }: { readonly requested: EnvironmentI
   const { environment, label } = useAccessEnvironment(requested);
   const gt = useGT();
   const messages = useMessages();
-  const connectDenial = managedCapabilityDenial(
-    useManagedPolicy(environment?.environmentId),
-    "connect",
-    messages,
-  );
+  const connectDenial = connectDenialFor(useManagedPolicy(environment?.environmentId), messages);
   const title = `${gt("Use T3 Code in another app (MCP)")} · ${label ?? "T3 Code"}`;
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : close())}>

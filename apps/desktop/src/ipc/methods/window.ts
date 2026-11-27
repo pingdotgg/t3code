@@ -127,24 +127,31 @@ export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.instal
 /**
  * T3 Connect is off under a policy that sets `limits.connect: false` or leaves `remote` out of
  * `limits.clients`, the same rule as the server's `allowsConnect`. The renderer decides whether to
- * mount Clerk before any server config arrives, so it asks over sync IPC. Read once here; an
- * unreadable policy turns Connect off.
+ * mount Clerk before any server config arrives, and names the organization that turned it off,
+ * so it asks over sync IPC. Read once here; an unreadable policy turns Connect off.
  */
-export const installConnectEnabled = Effect.fn("desktop.ipc.window.installConnectEnabled")(
+export const installConnectPolicy = Effect.fn("desktop.ipc.window.installConnectPolicy")(
   function* () {
     const ipc = yield* DesktopIpc.DesktopIpc;
-    const enabled = yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
+    const policy = yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
       Effect.map((found) => {
         const limits = found?.document.limits;
-        return limits?.connect !== false && (limits?.clients?.includes("remote") ?? true);
+        const enabled = limits?.connect !== false && (limits?.clients?.includes("remote") ?? true);
+        return {
+          enabled,
+          organization: enabled ? null : (found?.document.organization ?? "Your organization"),
+        };
       }),
-      Effect.orElseSucceed(() => false),
+      Effect.orElseSucceed(() => ({ enabled: false, organization: "Your organization" })),
     );
     yield* ipc.handleSync(
       DesktopIpc.makeSyncIpcMethod({
-        channel: IpcChannels.GET_CONNECT_ENABLED_CHANNEL,
-        result: Schema.Boolean,
-        handler: () => Effect.succeed(enabled),
+        channel: IpcChannels.GET_CONNECT_POLICY_CHANNEL,
+        result: Schema.Struct({
+          enabled: Schema.Boolean,
+          organization: Schema.NullOr(Schema.String),
+        }),
+        handler: () => Effect.succeed(policy),
       }),
     );
   },

@@ -94,13 +94,28 @@ export function resolveRelayTracingConfig() {
     : null;
 }
 
-let desktopConnectEnabled: boolean | null = null;
+interface DesktopConnectPolicy {
+  readonly enabled: boolean;
+  readonly organization: string | null;
+}
+
+let desktopConnectPolicy: DesktopConnectPolicy | null = null;
 
 // Managed Policy can turn T3 Connect off on desktop; the answer is fixed for the session.
+function desktopConnectPolicyNow(): DesktopConnectPolicy | null {
+  if (typeof window === "undefined" || window.desktopBridge === undefined) return null;
+  desktopConnectPolicy ??= window.desktopBridge.getConnectPolicy();
+  return desktopConnectPolicy;
+}
+
 function connectEnabledOnDesktop(): boolean {
-  if (typeof window === "undefined" || window.desktopBridge === undefined) return true;
-  desktopConnectEnabled ??= window.desktopBridge.getConnectEnabled();
-  return desktopConnectEnabled;
+  return desktopConnectPolicyNow()?.enabled !== false;
+}
+
+/** The organization whose Managed Policy turned T3 Connect off on this desktop, or null. */
+export function desktopConnectDeniedBy(): string | null {
+  const policy = desktopConnectPolicyNow();
+  return policy?.enabled === false ? policy.organization : null;
 }
 
 /** Clerk may run: cloud is configured and, on desktop, Managed Policy allows T3 Connect. */

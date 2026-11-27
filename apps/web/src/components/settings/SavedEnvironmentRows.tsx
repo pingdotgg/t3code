@@ -51,6 +51,7 @@ import {
   resolveServerSelfUpdateCapability,
   supportsDesktopAppUpdate,
 } from "~/versionSkew";
+import { connectDenialFor } from "~/cloud/connectDenial";
 import { cloudConfigured, hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
@@ -874,11 +875,7 @@ export function CloudLinkRow({
 }) {
   const gt = useGT();
   const messages = useMessages();
-  const connectDenial = managedCapabilityDenial(
-    useManagedPolicy(environmentId),
-    "connect",
-    messages,
-  );
+  const connectDenial = connectDenialFor(useManagedPolicy(environmentId), messages);
   if (!cloudConfigured()) return null;
   // Managed Policy turns Clerk off on this desktop, so only the organization's reason shows.
   if (!hasCloudPublicConfig()) {

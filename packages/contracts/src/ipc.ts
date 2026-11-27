@@ -1112,8 +1112,8 @@ export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getDatabaseMigrationProgress?: () => Promise<DatabaseMigrationProgress | null>;
-  /** False when Managed Policy turns T3 Connect off; Clerk must not start then. */
-  getConnectEnabled: () => boolean;
+  /** Whether this desktop's Managed Policy allows T3 Connect; `organization` names whose policy turned it off. */
+  getConnectPolicy: () => { readonly enabled: boolean; readonly organization: string | null };
   /** `null` until the desktop host has read the login shell's environment; ask again later. */
   getRelayTelemetryEnabled: () => boolean | null;
   getPathForFile: (file: File) => string;

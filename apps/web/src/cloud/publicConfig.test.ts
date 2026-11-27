@@ -72,7 +72,7 @@ describe("hasCloudPublicConfig", () => {
     it("keeps production keys available in the Electron auth shell", () => {
       vi.stubGlobal("window", {
         location: new URL("file:///app/index.html"),
-        desktopBridge: { getConnectEnabled: () => true },
+        desktopBridge: { getConnectPolicy: () => ({ enabled: true, organization: null }) },
       });
 
       expect(hasCloudPublicConfig()).toBe(true);
@@ -81,15 +81,18 @@ describe("hasCloudPublicConfig", () => {
     it("keeps Clerk out of Electron when managed policy turns T3 Connect off", async () => {
       vi.stubGlobal("window", {
         location: new URL("file:///app/index.html"),
-        desktopBridge: { getConnectEnabled: () => false },
+        desktopBridge: {
+          getConnectPolicy: () => ({ enabled: false, organization: "Example Corp" }),
+        },
       });
       // The desktop answer is cached per session, so evaluate the module fresh for this case.
       vi.resetModules();
       const fresh = await import("./publicConfig.ts");
 
       expect(fresh.hasCloudPublicConfig()).toBe(false);
-      // Copy that explains a managed denial still knows cloud is configured.
+      // Copy that explains a managed denial still knows cloud is configured, and whose policy it is.
       expect(fresh.cloudConfigured()).toBe(true);
+      expect(fresh.desktopConnectDeniedBy()).toBe("Example Corp");
     });
   });
 });

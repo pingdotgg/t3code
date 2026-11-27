@@ -3,7 +3,7 @@ import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 
 import { usePrimaryCloudLinkState } from "~/cloud/cloudLinkState";
-import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { cloudConfigured } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { desktopWslStateAtom } from "~/state/desktopWslState";
@@ -74,7 +74,9 @@ export function useAvailableSettingsSearchItems() {
     isElectron && canManageLocalBackend ? desktopWslStateAtom : null,
     useMessages(),
   );
-  const cloudPublicConfig = hasCloudPublicConfig() === true;
+  // Search entries open pages that gate their own Clerk surfaces; a managed desktop's T3 Connect
+  // reason lives on the Access page, so the entry stays findable while Clerk is off.
+  const cloudPublicConfig = cloudConfigured() === true;
   const wslSettingsRowVisible =
     isWslSettingsRowVisible({ state: desktopWsl.data, error: desktopWsl.error }) === true;
 

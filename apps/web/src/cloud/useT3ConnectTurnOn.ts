@@ -1,12 +1,9 @@
-import {
-  AuthRelayReadScope,
-  AuthRelayWriteScope,
-  type EnvironmentId,
-  managedCapabilityDenial,
-} from "@t3tools/contracts";
+import { AuthRelayReadScope, AuthRelayWriteScope, type EnvironmentId } from "@t3tools/contracts";
+import { useMessages } from "gt-react";
 
 import { useManagedPolicy } from "../state/managedPolicy";
 import { useEnvironmentCanConfigureRelay, useEnvironmentScope } from "../state/session";
+import { connectDenialFor } from "./connectDenial";
 import { useCloudLinkState } from "./cloudLinkState";
 import { hasCloudPublicConfig } from "./publicConfig";
 import { resolveT3ConnectTurnOn } from "./t3ConnectState";
@@ -16,7 +13,7 @@ export function useT3ConnectTurnOn(environmentId: EnvironmentId | null) {
   const canReadRelay = useEnvironmentScope(environmentId, AuthRelayReadScope);
   const canWriteRelay = useEnvironmentScope(environmentId, AuthRelayWriteScope);
   const canConfigureRelay = useEnvironmentCanConfigureRelay(environmentId);
-  const connectDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "connect");
+  const connectDenial = connectDenialFor(useManagedPolicy(environmentId), useMessages());
   const linkState = useCloudLinkState(environmentId).data;
   return resolveT3ConnectTurnOn({
     // Unknown while loading and on older servers, which keep today's switch in Settings.

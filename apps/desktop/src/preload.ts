@@ -113,7 +113,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
   },
-  getConnectEnabled: () => ipcRenderer.sendSync(IpcChannels.GET_CONNECT_ENABLED_CHANNEL) === true,
+  getConnectPolicy: () => ipcRenderer.sendSync(IpcChannels.GET_CONNECT_POLICY_CHANNEL),
   getRelayTelemetryEnabled: () => {
     const enabled = ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL);
     return enabled === null ? null : enabled === true;
