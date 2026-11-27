@@ -942,7 +942,7 @@ function ScheduledTaskRow({
               <MenuSeparator />
               <MenuItem onClick={() => void act("delete")}>
                 <Trash2Icon />
-                Delete
+                <T context="verb, delete the scheduled task">Delete</T>
               </MenuItem>
             </MenuPopup>
           </Menu>

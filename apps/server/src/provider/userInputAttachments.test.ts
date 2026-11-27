@@ -1450,6 +1450,23 @@ describe("question answer paths", () => {
         },
         {
           ext: "odt",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:meta="urn:example:metadata"><office:body><office:text>' +
+              "<text:p>Station timetable</text:p>" +
+              '<text:section text:name="Draft" text:display="none"><text:p>Old timetable</text:p></text:section>' +
+              '<t:section xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" t:name="Alternate" t:display="none"><t:p>Draft schedule</t:p></t:section>' +
+              '<text:section text:name="Padded" text:display=" &#x9;none&#xD;&#xA; "><text:p>Draft notes</text:p></text:section>' +
+              '<section xmlns="urn:oasis:names:tc:opendocument:xmlns:text:1.0" meta:xmlns="urn:example:metadata" text:name="Default" text:display="none"><text:p>Draft date</text:p></section>' +
+              '<text:section text:name="Published" text:display="true"><text:p>Gates open at nine.</text:p></text:section>' +
+              '<section xmlns="urn:example:metadata" meta:xmlns="urn:oasis:names:tc:opendocument:xmlns:text:1.0" text:display="none"><text:p>Visible section</text:p></section>' +
+              "</office:text></office:body></office:document-content>",
+          },
+          expected: ["Station timetable\nGates open at nine.\n\nVisible section"],
+          absent: ["Old timetable", "Draft schedule", "Draft notes", "Draft date"],
+        },
+        {
+          ext: "odt",
           bounded: true,
           parts: {
             "content.xml":
