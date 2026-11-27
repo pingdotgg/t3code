@@ -245,7 +245,7 @@ export function startThreadNotifications(
     );
     const delegatedUnderParent = registry.get(environmentThreadShells.delegatedUnderParentAtom);
     const changed: Array<[NotificationState | undefined, NotificationState]> = [];
-    // A Bot that mutes its crew hears only what its crew asks, never that it finished.
+    // A Bot that mutes its workers hears only what its workers ask, never that it finished.
     const mutingBotIds = new Set(
       threads.flatMap((thread) => (thread.botConfig?.muteChildren === true ? [thread.id] : [])),
     );

@@ -135,7 +135,7 @@ export interface ThreadActionMenuState {
     | {
         readonly isBot: boolean;
         readonly isGrouped: boolean;
-        readonly hasCrew: boolean;
+        readonly hasWorkers: boolean;
       }
     | undefined;
 }
@@ -271,7 +271,7 @@ export function buildThreadActionMenuItems(
                 },
               ]
             : []),
-          ...(state.grouping.hasCrew
+          ...(state.grouping.hasWorkers
             ? [{ id: "ungroup" as const, label: resolve(msg("Ungroup")), icon: "layers" }]
             : []),
         ]),

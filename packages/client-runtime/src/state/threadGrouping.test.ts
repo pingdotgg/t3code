@@ -2,12 +2,12 @@ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts"
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  crewMemberSurfaces,
-  foldedCrewSummary,
+  workerSurfaces,
+  foldedWorkersSummary,
   groupBots,
   groupThreads,
   type GroupableThread,
-  visibleCrew,
+  visibleWorkers,
 } from "./threadGrouping.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -51,7 +51,7 @@ function thread(
 const ids = (threads: ReadonlyArray<GroupableThread>) => threads.map((thread) => thread.id);
 
 describe("groupThreads", () => {
-  it("nests crew under a listed leader and keeps orphans, released and other environments listed", () => {
+  it("nests workers under a listed leader and keeps orphans, released and other environments listed", () => {
     const grouped = groupThreads([
       thread("bot"),
       thread("a", { under: "bot" }),
@@ -69,10 +69,10 @@ describe("groupThreads", () => {
       "settled-bot",
       "released",
     ]);
-    expect(ids(grouped.groupByLeaderKey.get("environment-1:bot")!.crew)).toEqual(["a"]);
+    expect(ids(grouped.groupByLeaderKey.get("environment-1:bot")!.workers)).toEqual(["a"]);
   });
 
-  it("marks a group live when crew works, so a settled leader is lifted into Active", () => {
+  it("marks a group live when a worker works, so a settled leader is lifted into Active", () => {
     const grouped = groupThreads([thread("bot"), thread("a", { under: "bot", working: true })]);
     expect(grouped.groupByLeaderKey.get("environment-1:bot")!.live).toBe(true);
     const idle = groupThreads([thread("bot"), thread("a", { under: "bot" })]);
@@ -80,7 +80,7 @@ describe("groupThreads", () => {
   });
 });
 
-describe("folded crew", () => {
+describe("folded workers", () => {
   const grouped = groupThreads([
     thread("bot", { mutedBot: true }),
     thread("idle", { under: "bot" }),
@@ -89,19 +89,19 @@ describe("folded crew", () => {
   ]);
   const group = grouped.groupByLeaderKey.get("environment-1:bot")!;
 
-  it("summarizes the crew and keeps a member needing input visible", () => {
-    expect(foldedCrewSummary(group)).toEqual({
+  it("summarizes the workers and keeps a worker needing input visible", () => {
+    expect(foldedWorkersSummary(group)).toEqual({
       count: 3,
       statuses: ["needs-input", "working", "idle"],
-      alwaysVisible: [group.crew[2]],
+      alwaysVisible: [group.workers[2]],
     });
-    expect(ids(visibleCrew(group, true))).toEqual(["asking"]);
-    expect(ids(visibleCrew(group, false))).toEqual(["idle", "working", "asking"]);
+    expect(ids(visibleWorkers(group, true))).toEqual(["asking"]);
+    expect(ids(visibleWorkers(group, false))).toEqual(["idle", "working", "asking"]);
   });
 
-  it("mutes crew noise except members that need input", () => {
+  it("mutes worker updates except workers that need input", () => {
     expect(group.muted).toBe(true);
-    expect(group.crew.map((member) => crewMemberSurfaces(member, group))).toEqual([
+    expect(group.workers.map((member) => workerSurfaces(member, group))).toEqual([
       false,
       false,
       true,
@@ -110,7 +110,7 @@ describe("folded crew", () => {
 });
 
 describe("groupBots", () => {
-  it("lists unarchived Bots oldest first and sorts their crew, settled or not, onto the board", () => {
+  it("lists unarchived Bots oldest first and sorts their workers, settled or not, onto the board", () => {
     const at = (
       base: GroupableThread,
       createdAt: string,
@@ -138,7 +138,7 @@ describe("groupBots", () => {
       ["busy"],
       ["finished"],
     ]);
-    expect([...groups.botAndCrewKeys].toSorted()).toEqual(
+    expect([...groups.botAndWorkerKeys].toSorted()).toEqual(
       ["bot", "newer-bot", "asking", "busy", "finished", "gone"]
         .map((id) => `environment-1:${id}`)
         .toSorted(),

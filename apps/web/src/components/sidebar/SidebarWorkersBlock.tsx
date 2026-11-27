@@ -1,10 +1,10 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
-  type CrewStatus,
-  crewStatus,
-  foldedCrewSummary,
+  type WorkerStatus,
+  workerStatus,
+  foldedWorkersSummary,
   type ThreadGroup,
-  visibleCrew,
+  visibleWorkers,
 } from "@t3tools/client-runtime/state/thread-grouping";
 import type { ContextMenuSource, ScopedThreadRef } from "@t3tools/contracts";
 import { useGT } from "gt-react";
@@ -16,16 +16,16 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { useThreadShell } from "../../state/entities";
 import { cn } from "~/lib/utils";
 
-const STATUS_DOT: Record<CrewStatus, string> = {
+const STATUS_DOT: Record<WorkerStatus, string> = {
   "needs-input": "bg-warning",
   working: "bg-info",
   idle: "bg-muted-foreground/40",
 };
 
-// More crew than this reads as a count; dots past it add width without information.
+// More workers than this read as a count; dots past it add width without information.
 const MAX_DOTS = 8;
 
-function CrewRow(props: {
+function WorkerRow(props: {
   thread: EnvironmentThreadShell;
   isActive: boolean;
   onNavigate: (threadRef: ScopedThreadRef) => void;
@@ -37,7 +37,7 @@ function CrewRow(props: {
 }) {
   const threadRef = scopeThreadRef(props.thread.environmentId, props.thread.id);
   const thread = useThreadShell(threadRef) ?? props.thread;
-  const status = crewStatus(thread);
+  const status = workerStatus(thread);
   return (
     <li role="presentation" className="list-none">
       <button
@@ -66,8 +66,8 @@ function CrewRow(props: {
   );
 }
 
-/** The crew under a leader's row: a fold toggle, then every member or only those needing input. */
-export const SidebarCrewBlock = memo(function SidebarCrewBlock(props: {
+/** The workers under a leader's row: a fold toggle, then every worker or only those needing input. */
+export const SidebarWorkersBlock = memo(function SidebarWorkersBlock(props: {
   leaderKey: string;
   group: ThreadGroup<EnvironmentThreadShell>;
   folded: boolean;
@@ -81,8 +81,8 @@ export const SidebarCrewBlock = memo(function SidebarCrewBlock(props: {
   ) => void;
 }) {
   const gt = useGT();
-  const summary = foldedCrewSummary(props.group);
-  const rows = visibleCrew(props.group, props.folded);
+  const summary = foldedWorkersSummary(props.group);
+  const rows = visibleWorkers(props.group, props.folded);
   return (
     <>
       <li role="presentation" className="list-none">
@@ -97,12 +97,12 @@ export const SidebarCrewBlock = memo(function SidebarCrewBlock(props: {
             className={cn("size-3 shrink-0", !props.folded && "rotate-90")}
           />
           <span>
-            {gt("{count, plural, one {{count} crew} other {{count} crew}}", {
+            {gt("{count, plural, one {{count} worker} other {{count} workers}}", {
               count: summary.count,
             })}
           </span>
           {props.group.muted ? (
-            <BellOffIcon aria-label={gt("Crew muted")} className="size-3 shrink-0" />
+            <BellOffIcon aria-label={gt("Workers muted")} className="size-3 shrink-0" />
           ) : null}
           <span aria-hidden className="ml-auto flex items-center gap-0.5">
             {summary.statuses.slice(0, MAX_DOTS).map((status, index) => (
@@ -115,7 +115,7 @@ export const SidebarCrewBlock = memo(function SidebarCrewBlock(props: {
       {rows.map((thread) => {
         const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
         return (
-          <CrewRow
+          <WorkerRow
             key={key}
             thread={thread}
             isActive={props.routeThreadKey === key}

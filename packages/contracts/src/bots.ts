@@ -4,13 +4,13 @@ import { EnvironmentId, IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./b
 import { ModelSelection } from "./modelSelection.ts";
 
 /**
- * A Bot is a coordinator thread: it keeps notes, leads the crew grouped under it, and is woken
- * when its crew or what it watches reaches a milestone.
+ * A Bot is a coordinator thread: it keeps notes, leads the workers grouped under it, and is woken
+ * when its workers or what it watches reaches a milestone.
  * Set when the thread is created; a thread never changes role mid-conversation.
  */
 export const ThreadBotConfig = Schema.Struct({
   enabled: Schema.Literal(true),
-  /** Crew threads surface only when they need input; their other updates stay quiet. */
+  /** Worker threads surface only when they need input; their other updates stay quiet. */
   muteChildren: Schema.Boolean,
 });
 export type ThreadBotConfig = typeof ThreadBotConfig.Type;
@@ -76,7 +76,7 @@ export type BotNoteWriteInput = typeof BotNoteWriteInput.Type;
 export const BotNoteDeleteInput = BotNoteReadInput;
 export type BotNoteDeleteInput = typeof BotNoteDeleteInput.Type;
 
-/** Starts a new Bot seeded with a handoff of `threadId`, which becomes its first crew member. */
+/** Starts a new Bot seeded with a handoff of `threadId`, which becomes its first worker. */
 export const BotStartInput = Schema.Struct({ threadId: ThreadId });
 export type BotStartInput = typeof BotStartInput.Type;
 
@@ -109,8 +109,8 @@ export const BotWorkflowRunWatch = Schema.Struct({
 });
 
 /**
- * A thread or workflow run outside a Bot's crew whose milestones wake it until it settles.
- * Crew threads need no watch: they always wake their Bot.
+ * A thread or workflow run, other than a Bot's workers, whose milestones wake it until it settles.
+ * Worker threads need no watch: they always wake their Bot.
  */
 export const BotWatch = Schema.Union([BotThreadWatch, BotWorkflowRunWatch]);
 export type BotWatch = typeof BotWatch.Type;

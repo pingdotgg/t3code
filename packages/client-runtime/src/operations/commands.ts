@@ -159,7 +159,7 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly expectedEmpty?: boolean;
   /** Group under a top-level thread, or ungroup with null. */
   readonly groupedUnderThreadId?: ThreadId | null;
-  /** Mute or unmute a Bot's crew. */
+  /** Mute or unmute a Bot's workers. */
   readonly botMuteChildren?: boolean;
 }
 

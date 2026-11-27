@@ -132,7 +132,7 @@ export interface ThreadLaunchInput {
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
   /** The workflow run this thread is an agent step of. */
   readonly workflowRun?: OrchestrationV2WorkflowOrigin;
-  /** The thread that launched this one, whose group it joins as crew. */
+  /** The thread that launched this one, whose group it joins as a worker. */
   readonly groupedUnderThreadId?: ThreadId;
   /** Starts the thread as a Bot. */
   readonly botConfig?: ThreadBotConfig;

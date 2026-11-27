@@ -39,7 +39,7 @@ const WatchTargetInput = Schema.Struct({
 const MemoryRead = Tool.make("t3_bot_memory_read", {
   ...shared,
   description:
-    "Read your memory: the user's instructions (preferences.md), the index of your notes (slug, title, one-line summary), and the threads and workflow runs you watch beyond your crew. Read a note with t3_bot_note_read when its summary says you need it.",
+    "Read your memory: the user's instructions (preferences.md), the index of your notes (slug, title, one-line summary), and the threads and workflow runs you watch beyond your workers. Read a note with t3_bot_note_read when its summary says you need it.",
   // No `parameters`: an explicit Schema.Struct({}) advertises `anyOf: [object, array]`,
   // which MCP clients reject. The default EmptyParams advertises `type: "object"`.
   success: Schema.Struct({
@@ -141,7 +141,7 @@ const PreferencesAppend = Tool.make("t3_bot_preferences_append", {
 const WatchAdd = Tool.make("t3_bot_watch_add", {
   ...shared,
   description:
-    "Wake you when a thread outside your crew, or a workflow run, here finishes or needs input. Ends when it settles. Your crew is always watched.",
+    "Wake you when another thread that is not one of your workers, or a workflow run, here finishes or needs input. Ends when it settles. Your workers are always watched.",
   parameters: WatchTargetInput,
   success: Watches,
 })

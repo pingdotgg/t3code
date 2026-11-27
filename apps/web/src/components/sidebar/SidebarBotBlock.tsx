@@ -2,9 +2,9 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
-  type BotCrewBoard,
+  type BotWorkersBoard,
   type BotGroups,
-  botCrewBoard,
+  botWorkersBoard,
 } from "@t3tools/client-runtime/state/thread-grouping";
 import type { ContextMenuSource, ScopedThreadRef } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
@@ -34,7 +34,7 @@ const ROW_CLASS =
 
 function BotRow(props: {
   bot: EnvironmentThreadShell;
-  board: BotCrewBoard<EnvironmentThreadShell>;
+  board: BotWorkersBoard<EnvironmentThreadShell>;
   isActive: boolean;
   onNavigate: (threadRef: ScopedThreadRef) => void;
   onContextMenu: ThreadContextMenuHandler;
@@ -87,12 +87,9 @@ function BotRow(props: {
         <span className="min-w-0 flex-1 truncate">{props.bot.title}</span>
         {status.needsYou > 0 ? (
           <Badge variant="warning" size="sm">
-            <span aria-hidden>{status.needsYou}</span>
-            <span className="sr-only">
-              {gt("{count, plural, one {{count} needs you} other {{count} need you}}", {
-                count: status.needsYou,
-              })}
-            </span>
+            {gt("{count, plural, one {Needs you} other {{count} need you}}", {
+              count: status.needsYou,
+            })}
           </Badge>
         ) : status.state === "blocked" ? (
           <span className="shrink-0 text-2xs text-destructive-foreground">
@@ -130,7 +127,7 @@ function NewBotRow() {
   );
 }
 
-/** Bots sit above the thread list as their own rows; their crew lives on the Bot's page. */
+/** Bots sit above the thread list as their own rows; their workers live on the Bot's page. */
 export function SidebarBotBlock(props: {
   botGroups: BotGroups<EnvironmentThreadShell>;
   routeThreadKey: string | null;
@@ -142,9 +139,9 @@ export function SidebarBotBlock(props: {
     <ul aria-label={gt("Bots")} className="mb-2 flex flex-col gap-px">
       {props.botGroups.bots.map((bot) => {
         const key = scopedThreadKey(scopeThreadRef(bot.environmentId, bot.id));
-        const board = botCrewBoard(props.botGroups, key);
+        const board = botWorkersBoard(props.botGroups, key);
         const routeKey = props.routeThreadKey;
-        // A crew thread opens inside its Bot, so the Bot's row stays current there.
+        // A worker thread opens inside its Bot, so the Bot's row stays current there.
         const isActive =
           routeKey !== null &&
           (routeKey === key ||

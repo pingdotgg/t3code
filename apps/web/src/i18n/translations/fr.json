@@ -13022,9 +13022,6 @@
   "69d31508eb4d8dbb": "Impossible de mettre à jour le groupe",
   "b7266adde1825b8c": "Comment vous souhaitez que le Bot travaille.",
   "2f4ef70d15027bb0": "Notes",
-  "de21972169ea02a3": "Couper le bruit de l’équipe",
-  "68499884f89d6072": "{count, plural, one {{count} membre d’équipe} other {{count} membres d’équipe}}",
-  "9816f4a0873af05c": "Équipe en sourdine",
   "ae4ee49c01c45edf": "Bot",
   "e9dbf0e54b6ab352": "Lancer un Bot à partir de ce fil",
   "b359236d6d45d8d5": "Impossible de lancer le Bot",
@@ -13038,7 +13035,6 @@
   "d4b3fe97dd0501a8": "Instructions",
   "d25661576338fcf0": "Vous attend",
   "1519a364f1312d30": "Instructions et notes",
-  "af1d8494ba66d623": "Pas encore d’équipe. Les fils que ce Bot lance apparaissent ici.",
   "97884c869683f97f": "{count, plural, one {{count} vous attend} other {{count} vous attendent}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Arrêté",
@@ -13053,5 +13049,11 @@
   "aba29e77e52bca46": "Supprimer",
   "58e20fe508eef1a3": "Toutes les notes",
   "e807fee27e5cd426": "Nouvelle note",
-  "61a43a89f093e3f0": "Le Bot conserve ses notes ici."
+  "61a43a89f093e3f0": "Le Bot conserve ses notes ici.",
+  "066644fe3ef88185": "Exécutants",
+  "a7a52a611ad8c05a": "Exécutants · {count}",
+  "6d6ebf5193fc1046": "Couper les mises à jour des exécutants",
+  "51fdc8323e1628d3": "{count, plural, one {Vous attend} other {{count} vous attendent}}",
+  "6bc353972ad45f48": "{count, plural, one {{count} exécutant} other {{count} exécutants}}",
+  "81fa01957f950cad": "Exécutants en sourdine"
 }

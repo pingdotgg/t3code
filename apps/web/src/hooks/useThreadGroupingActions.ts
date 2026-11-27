@@ -27,7 +27,7 @@ type GroupingThread = Pick<
   "environmentId" | "id" | "lineage" | "groupedUnderThreadId" | "botConfig"
 >;
 
-function crewOf(
+function workersOf(
   leader: Pick<GroupingThread, "environmentId" | "id">,
   threads: ReadonlyArray<GroupingThread>,
 ): ReadonlyArray<GroupingThread> {
@@ -46,13 +46,13 @@ export function threadGroupingMenuState(
   return {
     isBot: thread.botConfig != null,
     isGrouped: thread.groupedUnderThreadId != null,
-    hasCrew: crewOf(thread, threads).length > 0,
+    hasWorkers: workersOf(thread, threads).length > 0,
   };
 }
 
 /**
  * The thread a multi-selection groups under: its Bot, else its first thread. Only threads of one
- * project that can join a group qualify, and a thread already leading crew cannot become crew.
+ * project that can join a group qualify, and a thread already leading workers cannot become a worker.
  */
 export function resolveBulkGroupLeader<
   T extends GroupingThread & Pick<EnvironmentThreadShell, "projectId">,
@@ -71,10 +71,10 @@ export function resolveBulkGroupLeader<
   if (!sameProject) return null;
   const leader = selected.find((thread) => thread.botConfig != null) ?? first;
   if (leader.groupedUnderThreadId != null) return null;
-  const crewLeads = selected.some(
-    (thread) => thread !== leader && crewOf(thread, threads).length > 0,
+  const leadsWorkers = selected.some(
+    (thread) => thread !== leader && workersOf(thread, threads).length > 0,
   );
-  return crewLeads ? null : leader;
+  return leadsWorkers ? null : leader;
 }
 
 export type ThreadGroupingAction = Extract<
@@ -112,7 +112,7 @@ export function useThreadGroupingActions() {
       input: { threadId: threadRef.threadId, groupedUnderThreadId: leaderId },
     });
 
-  const setMuteCrew = async (threadRef: ScopedThreadRef, muted: boolean) => {
+  const setMuteWorkers = async (threadRef: ScopedThreadRef, muted: boolean) => {
     const result = await setBotMuteChildren({
       environmentId: threadRef.environmentId,
       input: { threadId: threadRef.threadId, botMuteChildren: muted },
@@ -120,7 +120,7 @@ export function useThreadGroupingActions() {
     reportFailure(m(msg("Failed to update Bot")), result);
   };
 
-  /** A new Bot that takes this thread as its first crew member; opens the Bot. */
+  /** A new Bot that takes this thread as its first worker; opens the Bot. */
   const startBot = async (threadRef: ScopedThreadRef) => {
     const result = await startBotCommand({
       environmentId: threadRef.environmentId,
@@ -143,11 +143,11 @@ export function useThreadGroupingActions() {
       case "remove-from-group":
         return reportFailure(m(msg("Failed to update group")), await group(threadRef, null));
       case "ungroup": {
-        const crew = crewOf(
+        const workers = workersOf(
           { environmentId: threadRef.environmentId, id: threadRef.threadId },
           readThreadShells(),
         );
-        for (const member of crew) {
+        for (const member of workers) {
           const result = await group(
             { environmentId: member.environmentId, threadId: member.id },
             null,
@@ -172,5 +172,5 @@ export function useThreadGroupingActions() {
     }
   };
 
-  return { run, setMuteCrew, startBot, groupUnder };
+  return { run, setMuteWorkers, startBot, groupUnder };
 }

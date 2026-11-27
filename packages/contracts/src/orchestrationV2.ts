@@ -553,7 +553,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Absent on threads written before tags existed; read as empty. */
   tags: Schema.optional(StoredThreadTags),
-  /** The top-level thread this one is crew of. Groups are one level deep. */
+  /** The top-level thread this one works for. Groups are one level deep. */
   groupedUnderThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   botConfig: Schema.optional(Schema.NullOr(ThreadBotConfig)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
@@ -3346,7 +3346,7 @@ export const OrchestrationV2Command = Schema.Union([
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
     /** Only the server sets this, for a thread that is a workflow run's agent step. */
     workflowRun: Schema.optional(OrchestrationV2WorkflowOrigin),
-    /** Groups the new thread as crew; a crew member's leader is used instead. Dropped when invalid. */
+    /** Groups the new thread as a worker; a worker's leader is used instead. Dropped when invalid. */
     groupedUnderThreadId: Schema.optional(ThreadId),
     /** Only the server sets this, for a Bot it starts (Home, or Start a Bot from a thread). */
     botConfig: Schema.optional(ThreadBotConfig),
@@ -3511,7 +3511,7 @@ export const OrchestrationV2Command = Schema.Union([
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
     /** Group under a top-level thread, or ungroup (null); absent leaves it unchanged. */
     groupedUnderThreadId: Schema.optional(Schema.NullOr(ThreadId)),
-    /** Mutes or unmutes a Bot's crew; refused for a thread that is not a Bot. */
+    /** Mutes or unmutes a Bot's workers; refused for a thread that is not a Bot. */
     botMuteChildren: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({

@@ -13029,9 +13029,6 @@
   "69d31508eb4d8dbb": "Det gick inte att uppdatera gruppen",
   "b7266adde1825b8c": "Hur du vill att Bot ska arbeta.",
   "2f4ef70d15027bb0": "Anteckningar",
-  "de21972169ea02a3": "Tysta besättningens aviseringar",
-  "68499884f89d6072": "{count, plural, one {{count} i besättningen} other {{count} i besättningen}}",
-  "9816f4a0873af05c": "Besättningen tystad",
   "ae4ee49c01c45edf": "Bot",
   "e9dbf0e54b6ab352": "Starta en Bot från den här tråden",
   "b359236d6d45d8d5": "Det gick inte att starta Boten",
@@ -13045,7 +13042,6 @@
   "d4b3fe97dd0501a8": "Instruktioner",
   "d25661576338fcf0": "Behöver dig",
   "1519a364f1312d30": "Instruktioner och anteckningar",
-  "af1d8494ba66d623": "Ingen besättning än. Trådar som den här Bot startar visas här.",
   "97884c869683f97f": "{count, plural, one {{count} behöver dig} other {{count} behöver dig}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Stoppad",
@@ -13060,5 +13056,11 @@
   "aba29e77e52bca46": "Ta bort",
   "58e20fe508eef1a3": "Alla anteckningar",
   "e807fee27e5cd426": "Ny anteckning",
-  "61a43a89f093e3f0": "Bot sparar sina anteckningar här."
+  "61a43a89f093e3f0": "Bot sparar sina anteckningar här.",
+  "066644fe3ef88185": "Arbetare",
+  "a7a52a611ad8c05a": "Arbetare · {count}",
+  "6d6ebf5193fc1046": "Tysta arbetarnas aviseringar",
+  "51fdc8323e1628d3": "{count, plural, one {Behöver dig} other {{count} behöver dig}}",
+  "6bc353972ad45f48": "{count, plural, one {{count} arbetare} other {{count} arbetare}}",
+  "81fa01957f950cad": "Arbetare tystade"
 }

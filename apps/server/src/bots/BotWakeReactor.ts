@@ -8,7 +8,7 @@ import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as BotService from "./BotService.ts";
 
-/** Wakes a Bot when its crew, or a thread or workflow run it watches, reaches a milestone. */
+/** Wakes a Bot when its workers, or a thread or workflow run it watches, reaches a milestone. */
 export class BotWakeReactor extends Context.Service<
   BotWakeReactor,
   { readonly start: () => Effect.Effect<void, never, Scope.Scope> }

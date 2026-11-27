@@ -201,7 +201,7 @@ export interface EnvironmentThreadShell {
   readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecovery | null;
   readonly pinnedAt: string | null;
   readonly autoSettleDisabledAt?: string | null;
-  /** The top-level thread this one is crew of; absent from older servers. */
+  /** The top-level thread this one is a worker of; absent from older servers. */
   readonly groupedUnderThreadId?: ThreadId | null;
   readonly botConfig?: import("@t3tools/contracts").ThreadBotConfig | null;
   readonly pinOrderKey: string | null;

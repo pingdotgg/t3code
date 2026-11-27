@@ -3290,9 +3290,9 @@ it.effect("keeps thread groups one level deep without bumping activity", () =>
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const projectId = ProjectId.make("project:groups");
-    const [leader, crew, other, launched, bot, elsewhere] = [
+    const [leader, worker, other, launched, bot, elsewhere] = [
       "leader",
-      "crew",
+      "worker",
       "other",
       "launched",
       "bot",
@@ -3339,24 +3339,24 @@ it.effect("keeps thread groups one level deep without bumping activity", () =>
         groupedUnderThreadId,
       });
     yield* create(leader);
-    yield* create(crew);
+    yield* create(worker);
     yield* create(other);
     yield* TestClock.adjust("1 minute");
 
-    assert.isTrue(Exit.isFailure(yield* Effect.exit(group(crew, crew))));
-    yield* group(crew, leader);
-    const grouped = yield* projections.getThread(crew);
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(group(worker, worker))));
+    yield* group(worker, leader);
+    const grouped = yield* projections.getThread(worker);
     assert.equal(grouped.groupedUnderThreadId, leader);
     assert.deepEqual(grouped.updatedAt, grouped.createdAt);
-    // Crew never leads, and a leader is never crew.
-    assert.isTrue(Exit.isFailure(yield* Effect.exit(group(other, crew))));
+    // A worker never leads, and a leader is never a worker.
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(group(other, worker))));
     assert.isTrue(Exit.isFailure(yield* Effect.exit(group(leader, other))));
 
-    // A launch from crew joins the crew's leader.
-    yield* create(launched, { groupedUnderThreadId: crew });
+    // A launch from a worker joins the worker's leader.
+    yield* create(launched, { groupedUnderThreadId: worker });
     assert.equal((yield* projections.getThread(launched)).groupedUnderThreadId, leader);
 
-    // Crew of a Bot may work in another project; only a Bot's crew can be muted.
+    // Workers of a Bot may work in another project; only a Bot's worker can be muted.
     yield* create(bot, { botConfig: { enabled: true, muteChildren: false } });
     yield* create(elsewhere, {
       groupedUnderThreadId: bot,
@@ -3377,7 +3377,7 @@ it.effect("keeps thread groups one level deep without bumping activity", () =>
     assert.deepEqual(muted.botConfig, { enabled: true, muteChildren: true });
     assert.deepEqual(muted.updatedAt, muted.createdAt);
 
-    yield* group(crew, null);
-    assert.isNull((yield* projections.getThread(crew)).groupedUnderThreadId);
+    yield* group(worker, null);
+    assert.isNull((yield* projections.getThread(worker)).groupedUnderThreadId);
   }).pipe(Effect.provide(layerTest)),
 );

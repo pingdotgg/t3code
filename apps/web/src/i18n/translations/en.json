@@ -13031,9 +13031,6 @@
   "69d31508eb4d8dbb": "Failed to update group",
   "b7266adde1825b8c": "How you like the Bot to work.",
   "2f4ef70d15027bb0": "Notes",
-  "de21972169ea02a3": "Mute crew noise",
-  "68499884f89d6072": "{count, plural, one {{count} crew} other {{count} crew}}",
-  "9816f4a0873af05c": "Crew muted",
   "ae4ee49c01c45edf": "Bot",
   "e9dbf0e54b6ab352": "Start a Bot from this thread",
   "b359236d6d45d8d5": "Failed to start a Bot",
@@ -13047,7 +13044,6 @@
   "d4b3fe97dd0501a8": "Instructions",
   "d25661576338fcf0": "Needs you",
   "1519a364f1312d30": "Instructions & notes",
-  "af1d8494ba66d623": "No crew yet. Threads this Bot starts show here.",
   "97884c869683f97f": "{count, plural, one {{count} needs you} other {{count} need you}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Stopped",
@@ -13062,5 +13058,11 @@
   "aba29e77e52bca46": "Delete",
   "58e20fe508eef1a3": "All notes",
   "e807fee27e5cd426": "New note",
-  "61a43a89f093e3f0": "The Bot keeps its notes here."
+  "61a43a89f093e3f0": "The Bot keeps its notes here.",
+  "066644fe3ef88185": "Workers",
+  "a7a52a611ad8c05a": "Workers · {count}",
+  "6d6ebf5193fc1046": "Mute worker updates",
+  "51fdc8323e1628d3": "{count, plural, one {Needs you} other {{count} need you}}",
+  "6bc353972ad45f48": "{count, plural, one {{count} worker} other {{count} workers}}",
+  "81fa01957f950cad": "Workers muted"
 }

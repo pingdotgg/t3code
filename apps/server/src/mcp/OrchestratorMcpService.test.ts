@@ -3627,7 +3627,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.equal(started.threads[0]?.threadId, child.threadId);
           const before = yield* orchestrator.getThreadProjection(child.threadId);
           assert.deepEqual(before.runs[0]?.modelSelection, selection);
-          // A thread an agent creates joins its creator's group as crew.
+          // A thread an agent creates joins its creator's group as a worker.
           assert.equal(before.thread.groupedUnderThreadId, parentThreadId);
           assert.equal(before.messages.length, 1);
           const empty = yield* service.createThreads(scope, {

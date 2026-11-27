@@ -1552,7 +1552,7 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:new-bot",
-      searchTerms: ["bot", "new bot", "coordinator", "crew", "chief of staff", "assistant"],
+      searchTerms: ["bot", "new bot", "coordinator", "workers", "chief of staff", "assistant"],
       title: gt("New Bot"),
       icon: <BotIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
@@ -1567,7 +1567,7 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:start-bot",
-      searchTerms: ["bot", "coordinator", "crew", "delegate", "start a bot"],
+      searchTerms: ["bot", "coordinator", "workers", "delegate", "start a bot"],
       title: gt("Start a Bot from this thread"),
       icon: <BotIcon className={ITEM_ICON_CLASS} />,
       run: async () => {

@@ -13022,9 +13022,6 @@
   "69d31508eb4d8dbb": "Gruppe konnte nicht aktualisiert werden",
   "b7266adde1825b8c": "Wie der Bot arbeiten soll.",
   "2f4ef70d15027bb0": "Notizen",
-  "de21972169ea02a3": "Crew-Meldungen stummschalten",
-  "68499884f89d6072": "{count, plural, one {{count} Crew-Thread} other {{count} Crew-Threads}}",
-  "9816f4a0873af05c": "Crew stummgeschaltet",
   "ae4ee49c01c45edf": "Bot",
   "e9dbf0e54b6ab352": "Einen Bot aus diesem Thread starten",
   "b359236d6d45d8d5": "Bot konnte nicht gestartet werden",
@@ -13038,7 +13035,6 @@
   "d4b3fe97dd0501a8": "Anweisungen",
   "d25661576338fcf0": "Braucht dich",
   "1519a364f1312d30": "Anweisungen & Notizen",
-  "af1d8494ba66d623": "Noch keine Crew. Threads, die dieser Bot startet, erscheinen hier.",
   "97884c869683f97f": "{count, plural, one {{count} braucht dich} other {{count} brauchen dich}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Angehalten",
@@ -13053,5 +13049,11 @@
   "aba29e77e52bca46": "Löschen",
   "58e20fe508eef1a3": "Alle Notizen",
   "e807fee27e5cd426": "Neue Notiz",
-  "61a43a89f093e3f0": "Hier bewahrt der Bot seine Notizen auf."
+  "61a43a89f093e3f0": "Hier bewahrt der Bot seine Notizen auf.",
+  "066644fe3ef88185": "Worker",
+  "a7a52a611ad8c05a": "Worker · {count}",
+  "6d6ebf5193fc1046": "Worker-Updates stummschalten",
+  "51fdc8323e1628d3": "{count, plural, one {Braucht dich} other {{count} brauchen dich}}",
+  "6bc353972ad45f48": "{count, plural, one {{count} Worker} other {{count} Worker}}",
+  "81fa01957f950cad": "Worker stummgeschaltet"
 }

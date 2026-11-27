@@ -579,8 +579,8 @@ export interface ProjectionStoreV2Shape {
     limit: number,
   ) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getSubagentCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
-  /** Live threads grouped as crew under this one. Scans thread rows; only grouping uses it. */
-  readonly listGroupedCrewIds: (
+  /** Live threads grouped as workers under this one. Scans thread rows; only grouping uses it. */
+  readonly listGroupedWorkerIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   readonly getRunCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
@@ -6833,8 +6833,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => rows[0]?.count ?? 0),
         Effect.mapError(controlReadError(threadId)),
       );
-    const listGroupedCrewIds: ProjectionStoreV2Shape["listGroupedCrewIds"] = Effect.fn(
-      "ProjectionStore.listGroupedCrewIds",
+    const listGroupedWorkerIds: ProjectionStoreV2Shape["listGroupedWorkerIds"] = Effect.fn(
+      "ProjectionStore.listGroupedWorkerIds",
     )((threadId) =>
       sql<{ readonly threadId: string }>`SELECT thread_id AS "threadId"
         FROM orchestration_v2_projection_threads
@@ -10028,7 +10028,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getMessageCount: readOnReader(getMessageCount),
       getTranscriptByteFloor: readOnReader(getTranscriptByteFloor),
       getSubagentCount: readOnReader(getSubagentCount),
-      listGroupedCrewIds: readOnReader(listGroupedCrewIds),
+      listGroupedWorkerIds: readOnReader(listGroupedWorkerIds),
       getRunCount: readOnReader(getRunCount),
       listAppOwnedChildThreadIds: readOnReader(listAppOwnedChildThreadIds),
       hasPendingDelegatedCompletion: readOnReader(hasPendingDelegatedCompletion),

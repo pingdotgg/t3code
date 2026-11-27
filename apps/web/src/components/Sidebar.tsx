@@ -293,7 +293,7 @@ import {
   useSidebarDrafts,
 } from "./sidebar/SidebarDraftBlock";
 import { SidebarBotBlock } from "./sidebar/SidebarBotBlock";
-import { SidebarCrewBlock } from "./sidebar/SidebarCrewBlock";
+import { SidebarWorkersBlock } from "./sidebar/SidebarWorkersBlock";
 import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
@@ -362,9 +362,9 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
-// Explicit fold choices by leader key; a group without one folds when its Bot mutes crew.
-const CREW_FOLDS_KEY = "t3code:sidebar:crew-folds";
-const CrewFolds = Schema.Record(Schema.String, Schema.Boolean);
+// Explicit fold choices by leader key; a group without one folds when its Bot mutes workers.
+const WORKER_FOLDS_KEY = "t3code:sidebar:worker-folds";
+const WorkerFolds = Schema.Record(Schema.String, Schema.Boolean);
 
 const inboxReturns = createInboxReturnTracker();
 
@@ -381,7 +381,7 @@ type SidebarOptimisticDrop = {
 
 interface SidebarThreadPartitionInput {
   readonly threads: readonly EnvironmentThreadShell[];
-  /** Listed as Bot rows above the threads; their crew is reached from the Bot. */
+  /** Listed as Bot rows above the threads; their workers are reached from the Bot. */
   readonly botGroups: BotGroups<EnvironmentThreadShell>;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   /** Tasks linked environments run for a listed thread; they show under it. */
@@ -504,7 +504,7 @@ function useSidebarThreads(input: {
     false,
     Schema.Boolean,
   );
-  const [crewFolds, setCrewFolds] = useLocalStorage(CREW_FOLDS_KEY, {}, CrewFolds);
+  const [workerFolds, setWorkerFolds] = useLocalStorage(WORKER_FOLDS_KEY, {}, WorkerFolds);
   // Shared with the old per-project sidebar, so folders keep their open state.
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
@@ -614,7 +614,7 @@ function useSidebarThreads(input: {
       ...workingThreads,
       ...snoozedThreads,
       ...settledThreads,
-      ...[...partition.crewGroups.values()].flatMap((group) => group.crew),
+      ...[...partition.workerGroups.values()].flatMap((group) => group.workers),
       ...botGroups.bots,
       ...[...botGroups.boardByBotKey.values()].flatMap((board) => [
         ...board.needsYou,
@@ -622,10 +622,10 @@ function useSidebarThreads(input: {
         ...board.done,
       ]),
     ],
-    isCrewFolded: (leaderKey: string) =>
-      crewFolds[leaderKey] ?? partition.crewGroups.get(leaderKey)?.muted === true,
-    toggleCrewFold: (leaderKey: string, folded: boolean) =>
-      setCrewFolds((current) => ({ ...current, [leaderKey]: !folded })),
+    isWorkersFolded: (leaderKey: string) =>
+      workerFolds[leaderKey] ?? partition.workerGroups.get(leaderKey)?.muted === true,
+    toggleWorkersFold: (leaderKey: string, folded: boolean) =>
+      setWorkerFolds((current) => ({ ...current, [leaderKey]: !folded })),
     settledVisibleCount,
     settledCount,
     olderSettledShelf,
@@ -684,7 +684,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     threads,
     scopedProjectKeys,
     delegatedUnderParent,
-  ).filter((thread) => !botGroups.botAndCrewKeys.has(threadShellKey(thread)));
+  ).filter((thread) => !botGroups.botAndWorkerKeys.has(threadShellKey(thread)));
   const grouping = groupThreads(visible);
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
@@ -705,8 +705,8 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   for (const thread of grouping.listed) {
     const configLoaded = serverConfigs.has(thread.environmentId);
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    // Crew at work keeps its group in view, even when the leader itself is settled or snoozed.
-    const crewLive = grouping.groupByLeaderKey.get(threadKey)?.live === true;
+    // Workers at work keep their group in view, even when the leader itself is settled or snoozed.
+    const workersLive = grouping.groupByLeaderKey.get(threadKey)?.live === true;
     if (optimisticDrop?.key === threadKey) {
       const projected = applySidebarThreadDrop(
         thread,
@@ -726,8 +726,8 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
       );
     } else {
       const section = resolveSidebarThreadSection({
-        snoozed: !crewLive && configLoaded && effectiveSnoozed(thread, { now: preciseNow }),
-        settled: !crewLive && configLoaded && thread.settledOverride === "settled",
+        snoozed: !workersLive && configLoaded && effectiveSnoozed(thread, { now: preciseNow }),
+        settled: !workersLive && configLoaded && thread.settledOverride === "settled",
         pinned: thread.pinnedAt != null,
       });
       (section === "snoozed"
@@ -774,7 +774,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     ),
     settledThreads: sortSettledThreads(settled),
     visibleThreads: visible,
-    crewGroups: grouping.groupByLeaderKey,
+    workerGroups: grouping.groupByLeaderKey,
     snoozeNow: preciseNow,
   };
 }
@@ -1203,9 +1203,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
     delegatedUnderParent,
-    // Bots list whatever the scope, and their crew is not listed at all.
+    // Bots list whatever the scope, and their workers are not listed at all.
     findThread: (key) =>
-      botGroups.botAndCrewKeys.has(key)
+      botGroups.botAndWorkerKeys.has(key)
         ? undefined
         : threads.find((candidate) => threadShellKey(candidate) === key),
   });
@@ -1411,9 +1411,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     visibleWorkingThreads,
     orderedThreadKeys,
     threadByKey,
-    crewGroups,
-    isCrewFolded,
-    toggleCrewFold,
+    workerGroups,
+    isWorkersFolded,
+    toggleWorkersFold,
     settledThreadKeys,
     snoozedThreadKeys,
     sectionByThreadKey,
@@ -3689,17 +3689,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onFileDropThreads={handleThreadFileDrop}
                         />
                       );
-                      const crewGroup = crewGroups.get(threadKey);
-                      if (crewGroup === undefined) return row;
+                      const workerGroup = workerGroups.get(threadKey);
+                      if (workerGroup === undefined) return row;
                       return (
                         <Fragment key={threadKey}>
                           {row}
-                          <SidebarCrewBlock
+                          <SidebarWorkersBlock
                             leaderKey={threadKey}
-                            group={crewGroup}
-                            folded={isCrewFolded(threadKey)}
+                            group={workerGroup}
+                            folded={isWorkersFolded(threadKey)}
                             routeThreadKey={routeThreadKey}
-                            onToggle={toggleCrewFold}
+                            onToggle={toggleWorkersFold}
                             onNavigate={navigateToThread}
                             onContextMenu={handleThreadContextMenu}
                           />

@@ -103,13 +103,13 @@ export class BotService extends Context.Service<
       botThreadId: ThreadId,
       target: BotWatchTarget,
     ) => Effect.Effect<ReadonlyArray<BotWatch>, BotError>;
-    /** Regroups a leader's crew under another Bot. */
-    readonly moveCrew: (from: ThreadId, to: ThreadId) => Effect.Effect<void, BotError>;
-    /** Wakes the Bots that `event` is news for: the leader of its crew thread, and its watchers. */
+    /** Regroups a leader's workers under another Bot. */
+    readonly moveWorkers: (from: ThreadId, to: ThreadId) => Effect.Effect<void, BotError>;
+    /** Wakes the Bots that `event` is news for: the leader of its worker thread, and its watchers. */
     readonly handleMilestone: (event: MilestoneEvent) => Effect.Effect<void>;
     /**
      * Starts a new Bot outside any project, seeded with a summary of the thread, and makes the thread
-     * (and any crew it led) the Bot's crew. The thread itself never changes role.
+     * (and any workers it led) the Bot's workers. The thread itself never changes role.
      */
     readonly start: (input: {
       readonly threadId: ThreadId;
@@ -188,7 +188,7 @@ const wakeNotification = (
   title: string | undefined,
   detail: string,
 ): OrchestrationV2Notification => {
-  const name = title ?? "A crew thread";
+  const name = title ?? "A worker thread";
   switch (event.type) {
     case "thread.run_settled":
       return {
@@ -575,7 +575,7 @@ const make = Effect.gen(function* () {
       Effect.flatMap((id) =>
         threads.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make(`bot-crew:${id}`),
+          commandId: CommandId.make(`bot-worker:${id}`),
           threadId,
           groupedUnderThreadId: leaderId,
         }),
@@ -583,16 +583,16 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) => new BotError({ threadId: leaderId, reason: "io", cause })),
     );
 
-  const moveCrew: BotService["Service"]["moveCrew"] = Effect.fn("BotService.moveCrew")(
+  const moveWorkers: BotService["Service"]["moveWorkers"] = Effect.fn("BotService.moveWorkers")(
     function* (from, to) {
-      const crew = yield* projectionStore
-        .listGroupedCrewIds(from)
+      const workers = yield* projectionStore
+        .listGroupedWorkerIds(from)
         .pipe(Effect.mapError(ioError(from)));
-      yield* Effect.forEach(crew, (member) => regroup(member, to), { discard: true });
+      yield* Effect.forEach(workers, (member) => regroup(member, to), { discard: true });
     },
   );
 
-  /** A Bot that is settled has let its crew go, so it is not woken. */
+  /** A Bot that is settled has let its workers go, so it is not woken. */
   const wakeable = Effect.fn("BotService.wakeable")(function* (threadId: ThreadId) {
     if (!(yield* isBot(threadId))) return false;
     const thread = yield* projectionStore
@@ -703,7 +703,7 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.mapError(ioError(threadId)));
     const environmentId = yield* environment.getEnvironmentId;
     const text = [
-      `You are the new Bot for ${formatThreadLink({ environmentId, threadId }, thread.title)} (threadId ${threadId}). That thread is now your first crew member: it keeps its work, and you are woken when it finishes or needs input.`,
+      `You are the new Bot for ${formatThreadLink({ environmentId, threadId }, thread.title)} (threadId ${threadId}). That thread is now your first worker: it keeps its work, and you are woken when it finishes or needs input.`,
       "Read the handoff below, save what matters as notes with t3_bot_note_write, then tell the user in a few lines what you understand and what you will delegate next.",
       "",
       renderThreadSummaryHandoff({
@@ -737,8 +737,8 @@ const make = Effect.gen(function* () {
         botConfig: { enabled: true, muteChildren: false },
       })
       .pipe(Effect.mapError(launchFailed));
-    // Its crew first: a thread that still leads crew cannot join a group.
-    yield* moveCrew(threadId, botThreadId);
+    // Its workers first: a thread that still leads workers cannot join a group.
+    yield* moveWorkers(threadId, botThreadId);
     yield* regroup(threadId, botThreadId);
     return { threadId: botThreadId };
   });
@@ -751,7 +751,7 @@ const make = Effect.gen(function* () {
     const instructions = input.instructions.trim();
     if (instructions !== "")
       yield* store(botThreadId, preferencesPath(botThreadId), `${instructions}\n`);
-    // A Bot belongs to no project: it runs in a scratch folder and sends crew anywhere.
+    // A Bot belongs to no project: it runs in a scratch folder and sends workers anywhere.
     const { projectId } = yield* managedFolders.ensureScratchProject.pipe(Effect.mapError(failed));
     const text = [
       `You are a new Bot named "${input.title}".`,
@@ -793,7 +793,7 @@ const make = Effect.gen(function* () {
     watches,
     addWatch,
     removeWatch,
-    moveCrew,
+    moveWorkers,
     handleMilestone,
     start,
     create,

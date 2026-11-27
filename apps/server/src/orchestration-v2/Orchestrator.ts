@@ -4134,7 +4134,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       leader === null ||
       leader.deletedAt !== null ||
-      // A Bot's crew may work in any project.
+      // A Bot's workers may work in any project.
       (leader.projectId !== projectId && leader.botConfig == null) ||
       leader.lineage.parentThreadId !== null ||
       leader.groupedUnderThreadId != null
@@ -4668,7 +4668,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           );
         }
         if (thread.botConfig != null) {
-          return yield* refuse(`Thread ${command.threadId} is a Bot; a Bot is never crew.`);
+          return yield* refuse(`Thread ${command.threadId} is a Bot; a Bot is never a worker.`);
         }
         const leader = yield* projectionStore.findThread(leaderId).pipe(mapDispatchError(command));
         if (leader === null || leader.deletedAt !== null) {
@@ -4676,7 +4676,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             `Thread ${leaderId} does not exist, so nothing can be grouped under it.`,
           );
         }
-        // Groups stay one level deep: a leader is never crew, and crew never leads.
+        // Groups stay one level deep: a leader is never a worker, and a worker never leads.
         if (leader.lineage.parentThreadId !== null || leader.groupedUnderThreadId != null) {
           return yield* refuse(`Thread ${leaderId} is not a top-level group leader.`);
         }
@@ -4685,10 +4685,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         if (
           (yield* projectionStore
-            .listGroupedCrewIds(command.threadId)
+            .listGroupedWorkerIds(command.threadId)
             .pipe(mapDispatchError(command))).length > 0
         ) {
-          return yield* refuse(`Thread ${command.threadId} leads a group; ungroup its crew first.`);
+          return yield* refuse(
+            `Thread ${command.threadId} leads a group; ungroup its workers first.`,
+          );
         }
       }
     }
@@ -5369,7 +5371,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(command.botMuteChildren === undefined || thread.botConfig == null
               ? {}
               : { botConfig: { ...thread.botConfig, muteChildren: command.botMuteChildren } }),
-            // Grouping and crew muting arrange the sidebar; they are not activity on the thread.
+            // Grouping and worker muting arrange the sidebar; they are not activity on the thread.
             updatedAt: isOrganizeOnlyMetadataUpdate(command) ? thread.updatedAt : now,
           };
         }

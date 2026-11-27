@@ -493,7 +493,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               }),
           createdBy: "agent",
           creationSource: "mcp",
-          // A thread an agent launches here joins the launcher's group as crew.
+          // A thread an agent launches here joins the launcher's group as a worker.
           ...(caller === undefined || linkOrigin !== undefined
             ? {}
             : { groupedUnderThreadId: caller.id }),

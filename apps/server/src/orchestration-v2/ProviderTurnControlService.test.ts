@@ -172,7 +172,7 @@ function layerProjectionStore(
       getTranscriptByteFloor: () => Effect.die("unused transcript byte floor"),
       hasPendingDelegatedCompletion: () => Effect.die("unused hasPendingDelegatedCompletion"),
       getSubagentCount: () => Effect.die("unused subagent count"),
-      listGroupedCrewIds: () => Effect.die("unused grouped crew"),
+      listGroupedWorkerIds: () => Effect.die("unused grouped workers"),
       getRunCount: () => Effect.die("unused run count"),
       listAppOwnedChildThreadIds: () => Effect.die("unused listAppOwnedChildThreadIds"),
       getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),

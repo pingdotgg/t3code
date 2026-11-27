@@ -351,13 +351,13 @@ function BotFiles(props: {
   );
 }
 
-/** A Bot's instructions, notes and crew muting, on its board. */
+/** A Bot's instructions, notes and worker muting, on its page. */
 export function BotNotes(props: { threadRef: ScopedThreadRef }) {
   const thread = useQuietThreadShell(props.threadRef);
   const canWrite = useAtomValue(
     botFilesEnvironment.writeNote.permissionAtom(props.threadRef.environmentId),
   );
-  const { setMuteCrew } = useThreadGroupingActions();
+  const { setMuteWorkers } = useThreadGroupingActions();
   const files = useEnvironmentQuery(
     botFilesEnvironment.files({
       environmentId: props.threadRef.environmentId,
@@ -377,15 +377,15 @@ export function BotNotes(props: { threadRef: ScopedThreadRef }) {
   return (
     <div className="flex flex-col gap-3 px-2.5">
       <div className="flex items-center justify-between gap-3">
-        <Label htmlFor="bot-mute-crew">
-          <T>Mute crew noise</T>
+        <Label htmlFor="bot-mute-workers">
+          <T>Mute worker updates</T>
         </Label>
         <Switch
-          id="bot-mute-crew"
+          id="bot-mute-workers"
           size="sm"
           checked={botConfig.muteChildren}
           disabled={!canWrite}
-          onCheckedChange={(checked) => void setMuteCrew(props.threadRef, checked)}
+          onCheckedChange={(checked) => void setMuteWorkers(props.threadRef, checked)}
         />
       </div>
       {files.data === null ? (

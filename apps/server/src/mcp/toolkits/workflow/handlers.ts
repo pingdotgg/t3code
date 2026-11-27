@@ -66,7 +66,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
           const { runId } = yield* workflows
             .start(name, input.input === undefined ? {} : input.input, { idempotencyKey })
             .pipe(Effect.mapError(refused));
-          // A Bot hears how the runs it starts go, as it does its crew.
+          // A Bot hears how the runs it starts go, as it does its workers.
           const caller = (yield* McpInvocationContext.McpInvocationContext).thread;
           if (caller?.bot === true && caller.subagent !== true) {
             yield* (yield* BotService.BotService)

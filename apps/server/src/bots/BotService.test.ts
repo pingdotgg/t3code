@@ -136,12 +136,12 @@ it.effect("keeps a Bot's memory in its own folder and refuses writes from other 
 });
 
 it.effect(
-  "wakes a Bot when its crew or a watched run reaches a milestone, and not once it is settled",
+  "wakes a Bot when its workers or a watched run reaches a milestone, and not once it is settled",
   () => {
     const orchestration = makeOrchestration();
     const leader = orchestration.addThread("thread:bot", { botConfig: bot });
-    orchestration.addThread("thread:crew", { groupedUnderThreadId: leader.id });
-    orchestration.addThread("thread:plain-crew", {
+    orchestration.addThread("thread:worker", { groupedUnderThreadId: leader.id });
+    orchestration.addThread("thread:plain-worker", {
       groupedUnderThreadId: orchestration.addThread("thread:plain-leader").id,
     });
     return Effect.gen(function* () {
@@ -150,11 +150,11 @@ it.effect(
 
       yield* bots.handleMilestone(milestone("other", { threadId: "thread:other" }));
       // A leader that is not a Bot is never woken.
-      yield* bots.handleMilestone(milestone("plain", { threadId: "thread:plain-crew" }));
+      yield* bots.handleMilestone(milestone("plain", { threadId: "thread:plain-worker" }));
       yield* bots.handleMilestone(
-        milestone("ask", { threadId: "thread:crew", type: "thread.needs_input" }),
+        milestone("ask", { threadId: "thread:worker", type: "thread.needs_input" }),
       );
-      yield* bots.handleMilestone(milestone("done", { threadId: "thread:crew" }));
+      yield* bots.handleMilestone(milestone("done", { threadId: "thread:worker" }));
       // A watched run's agent step asking wakes the Bot; its turn ending neither wakes nor ends it.
       yield* bots.handleMilestone(
         milestone("step-ask", {
@@ -178,18 +178,18 @@ it.effect(
         ],
       );
       assert.include(orchestration.sent[0]!.text, "waits for an approval");
-      // The settled run's watch ended; crew stay watched with no watch at all.
+      // The settled run's watch ended; workers stay watched with no watch at all.
       assert.deepStrictEqual(yield* bots.watches(leader.id), []);
 
       leader.settledOverride = "settled";
-      yield* bots.handleMilestone(milestone("after-settle", { threadId: "thread:crew" }));
+      yield* bots.handleMilestone(milestone("after-settle", { threadId: "thread:worker" }));
       assert.strictEqual(orchestration.sent.length, 4);
     }).pipe(provideBots(orchestration));
   },
 );
 
 it.effect(
-  "starts a Bot from a thread with a handoff, taking the thread and its crew as crew",
+  "starts a Bot from a thread with a handoff, taking the thread and its workers as workers",
   () => {
     const orchestration = makeOrchestration();
     const source = orchestration.addThread("thread:source", { title: "Fix the flaky test" });

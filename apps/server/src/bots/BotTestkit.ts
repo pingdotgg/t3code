@@ -122,7 +122,7 @@ export const makeOrchestration = () => {
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
       findThread: (threadId) => Effect.succeed(asAppThread(threads.get(threadId))),
-      listGroupedCrewIds: (threadId) =>
+      listGroupedWorkerIds: (threadId) =>
         Effect.succeed(
           [...threads.values()]
             .filter((thread) => thread.groupedUnderThreadId === threadId)
