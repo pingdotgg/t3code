@@ -11,8 +11,9 @@ export const MAX_PAGE_ZOOM = 5;
 const SNAP_TO_UNZOOMED = 1.01;
 const DOM_DELTA_LINE = 1;
 const LINE_HEIGHT_PX = 16;
-// The page shows a requested zoom only after the main process applies it, so the requested zoom
-// stays authoritative while a pinch is under way and the page's own is read once it pauses.
+// The page shows a requested zoom only after the main process applies it. Until then the request
+// stays authoritative; once applied, the page's own zoom is, since scrolling may have panned it.
+// A request the page never shows (DevTools holds the debugger) stops counting after a pause.
 const RESYNC_AFTER_MS = 200;
 
 /** Scales by `factor`, keeping the layout viewport point (`pointX`, `pointY`) still on screen. */
@@ -69,7 +70,8 @@ export const installPinchZoom = (
     frameScheduled = false;
     const viewport = target.visualViewport;
     if (!viewport) return;
-    if (now() - requestedAt > RESYNC_AFTER_MS) {
+    const applied = Math.abs(viewport.scale - zoom.scale) < 0.001 * zoom.scale;
+    if (applied || now() - requestedAt > RESYNC_AFTER_MS) {
       zoom = { scale: viewport.scale, x: viewport.offsetLeft, y: viewport.offsetTop };
     }
     const layoutWidth = viewport.width * viewport.scale;

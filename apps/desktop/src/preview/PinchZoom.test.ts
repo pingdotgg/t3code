@@ -199,4 +199,18 @@ describe("installPinchZoom", () => {
     page.runFrames();
     expect(page.requests[0]).toEqual(zoomPage(UNZOOMED, Math.E, 122, 82, 1000, 800));
   });
+
+  it("anchors a quick pinch on where the user panned since the last zoom applied", () => {
+    const page = makePage();
+    page.pinch(-50);
+    page.runFrames();
+    const applied = page.requests[0]!;
+    page.showZoom({ ...applied, x: applied.x + 100 });
+    page.wait(50);
+    page.pinch(-50 / applied.scale, { clientX: 500, clientY: 400 });
+    page.runFrames();
+    expect(page.requests[1]).toEqual(
+      zoomPage({ ...applied, x: applied.x + 100 }, Math.sqrt(Math.E), 500, 400, 1000, 800),
+    );
+  });
 });
