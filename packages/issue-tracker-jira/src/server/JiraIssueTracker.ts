@@ -63,6 +63,7 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: false,
   events: true,
   search: true,
+  internalComments: true,
 };
 
 const EVERYTHING: IssueViewerPermissions = {
@@ -155,6 +156,7 @@ function toComment(comment: JiraApi.JiraComment, issueUrl: string): IssueComment
     body: adfToMarkdown(comment.body),
     createdAt: iso(comment.created),
     url: `${issueUrl}?focusedCommentId=${comment.id}`,
+    ...(comment.jsdPublic === false ? { internal: true } : {}),
   };
 }
 
@@ -427,6 +429,9 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
                 },
           states: toStates(issue),
           comments: page.comments.map((comment) => toComment(comment, summary.url)),
+          ...(issue.fields.project?.projectTypeKey === "service_desk"
+            ? { commentAudiences: true }
+            : {}),
           commentsCursor: page.total > page.comments.length ? String(page.comments.length) : null,
           events: toEvents(issue.changelog?.histories ?? []),
           linkedPullRequests: [],
@@ -483,7 +488,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
 
       comment: Effect.fn("JiraIssueTracker.comment")(function* (input) {
         const key = yield* requireProjectKey("comment", input);
-        yield* jira.addComment(key, markdownToAdf(input.body));
+        yield* jira.addComment(key, markdownToAdf(input.body), input.audience);
       }),
 
       update: Effect.fn("JiraIssueTracker.update")(function* (input) {

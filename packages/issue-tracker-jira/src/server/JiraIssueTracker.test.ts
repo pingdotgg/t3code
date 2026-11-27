@@ -484,19 +484,26 @@ describe("JiraIssueTracker", () => {
   );
 
   // https://github.com/pingdotgg/t3code/pull/38003#issuecomment-7101618257
-  it.effect("posts a service desk comment as an internal note", () =>
-    Effect.gen(function* () {
-      const { tracker, requests } = fakeJira({
-        "GET /rest/api/3/issue/HELP-3": () =>
-          issue("HELP-3", { project: { key: "HELP", projectTypeKey: "service_desk" } }),
-        "POST /rest/api/3/issue/HELP-3/comment": () => ({}),
-      });
-      const api = yield* tracker;
-      yield* api.comment({ ...target, scope: "HELP", key: "HELP-3", body: "Looking" });
-      expect(requests.at(-1)?.body).toMatchObject({
-        properties: [{ key: "sd.public.comment", value: { internal: true } }],
-      });
-    }),
+  it.effect(
+    "posts a service desk comment as an internal note unless it replies to the customer",
+    () =>
+      Effect.gen(function* () {
+        const { tracker, requests } = fakeJira({
+          "GET /rest/api/3/issue/HELP-3": () =>
+            issue("HELP-3", { project: { key: "HELP", projectTypeKey: "service_desk" } }),
+          "POST /rest/api/3/issue/HELP-3/comment": () => ({}),
+        });
+        const api = yield* tracker;
+        const help = { ...target, scope: "HELP", key: "HELP-3" };
+        yield* api.comment({ ...help, body: "Looking" });
+        expect(requests.at(-1)?.body).toMatchObject({
+          properties: [{ key: "sd.public.comment", value: { internal: true } }],
+        });
+        yield* api.comment({ ...help, body: "Fixed", audience: "public" });
+        expect(requests.at(-1)?.body).toMatchObject({
+          properties: [{ key: "sd.public.comment", value: { internal: false } }],
+        });
+      }),
   );
 
   it.effect("reports Jira's own words for a refusal, and a rate limit with its wait", () =>

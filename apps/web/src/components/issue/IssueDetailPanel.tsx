@@ -50,6 +50,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -960,11 +961,19 @@ export function IssueDetailPanel({
               item.kind === "comment" ? (
                 <article
                   key={`c:${item.comment.id}`}
-                  className="flex flex-col gap-2 rounded-lg border border-border/60 p-3"
+                  className={cn(
+                    "flex flex-col gap-2 rounded-lg border border-border/60 p-3",
+                    item.comment.internal && "border-warning/32 bg-warning-surface",
+                  )}
                 >
                   <h3>
                     <PullRequestMetaLine className="text-xs text-muted-foreground">
                       <PullRequestActorLabel actor={item.comment.author} />
+                      {item.comment.internal ? (
+                        <Badge size="sm" variant="warning">
+                          {gt("Internal note")}
+                        </Badge>
+                      ) : null}
                       {item.comment.url ? (
                         <InlineButton
                           tone="muted"
@@ -1025,6 +1034,7 @@ export function IssueDetailPanel({
           environmentId={environmentId}
           reference={reference}
           blocked={canComment ? null : (blocked ?? gt("You cannot comment here."))}
+          audiences={detail.commentAudiences === true}
         />
       ) : null}
     </div>
