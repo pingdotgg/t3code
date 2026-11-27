@@ -26,15 +26,14 @@ test(
     await expect(editFromHere).toBeEnabled({ timeout: 60_000 });
     await editFromHere.tap();
     await screen.getByText("Editar a partir daqui?", { exact: true }).waitFor();
-    // Measure and capture only once the dialog has finished its entrance animation.
-    await expect
-      .poll(() =>
-        browser.evaluate(() => {
-          const popup = document.querySelector<HTMLElement>('[data-slot="alert-dialog-popup"]');
-          return popup ? getComputedStyle(popup).opacity : null;
-        }),
-      )
-      .toBe("1");
+    // Measure and capture the settled dialog, not its entrance animation.
+    await browser.evaluate(() => {
+      const popup = document.querySelector('[data-slot="alert-dialog-popup"]');
+      for (const animation of popup?.getAnimations({ subtree: true }) ?? []) {
+        if (Number.isFinite(animation.effect?.getComputedTiming().endTime)) animation.finish();
+      }
+      return null;
+    });
 
     const footer = await browser.evaluate(() => {
       const popup = document.querySelector<HTMLElement>('[data-slot="alert-dialog-popup"]');
