@@ -96,7 +96,7 @@ function lineWidth(line: Line): number {
 // Strip oldest styles to bound work on color-per-character output.
 const MAX_LINE_RUNS = 2_048;
 
-function sliceLine(line: Line, start: number, end: number): Array<Run> {
+function sliceLine(line: Line, start: number, end: number, padClipped = true): Array<Run> {
   const out: Array<Run> = [];
   let col = 0;
   let base = 0;
@@ -126,10 +126,8 @@ function sliceLine(line: Line, start: number, end: number): Array<Run> {
         if (base >= start && base < end && baseEnd <= end) text += character;
       } else if (col < end && col + width > start) {
         // Overwriting either half of a wide glyph clears that glyph's other cell.
-        text +=
-          col >= start && col + width <= end
-            ? character
-            : " ".repeat(Math.min(end, col + width) - Math.max(start, col));
+        if (col >= start && col + width <= end) text += character;
+        else if (padClipped) text += " ".repeat(Math.min(end, col + width) - Math.max(start, col));
       }
       col += width;
     }
@@ -196,8 +194,10 @@ function eraseLine(line: Line, col: number, mode: number): Line {
   if (mode === 0) return sliceLine(line, 0, col);
   if (mode === 1) {
     const runs: Array<Run> = [];
-    pushRun(runs, { pen: "", text: " ".repeat(Math.min(col + 1, length)) });
-    for (const run of sliceLine(line, col + 1, length)) pushRun(runs, run);
+    const end = Math.min(col + 1, length);
+    pushRun(runs, { pen: "", text: " ".repeat(end) });
+    // A clipped glyph at the end needs no padding to keep later glyphs aligned.
+    for (const run of sliceLine(line, end, length, length - end > 1)) pushRun(runs, run);
     return runs;
   }
   return mode === 2 ? [] : line;
@@ -530,7 +530,7 @@ class Terminal {
   }
 
   eraseCurrentLine(mode: number): void {
-    const line = this.lines[this.row]!;
+    const line = eraseLine(this.lines[this.row]!, this.col, mode);
     if (
       mode === 2 ||
       (mode === 0 && this.col === 0) ||
@@ -538,7 +538,7 @@ class Terminal {
     ) {
       this.tabOffsets[this.row] = 0;
     }
-    this.lines[this.row] = eraseLine(line, this.col, mode);
+    this.lines[this.row] = line;
   }
 
   csi(params: string, final: string): void {
@@ -1048,20 +1048,23 @@ export function terminalOutputPlainText(text: string): string {
 
 // Tabs can skip cells written by earlier frames. Update only the cells each frame writes.
 function redrawTabbedLine(line: string): string {
-  const cells: Array<string | null> = [];
+  const cells = new Map<number, string | null>();
   let col = 0;
+  let end = 0;
   let leadingMarks = "";
-  for (const part of line.split(/([\r\t])/u)) {
-    if (part === "\r" || part === "\t") {
-      col = part === "\r" ? 0 : nextTabColumn(col);
+  for (const [part] of line.matchAll(/[^\r\t]+|\t+|\r+/gu)) {
+    if (part[0] === "\r") {
+      col = 0;
       continue;
     }
-    if (part === "") continue;
-    while (cells.length < col) cells.push(" ");
+    if (part[0] === "\t") {
+      col = nextTabColumn(col) + (part.length - 1) * TAB_STOP_COLUMNS;
+      continue;
+    }
     // Null is the second cell of a wide glyph. A write boundary inside it clears both cells.
-    if (cells[col] === null) {
-      cells[col - 1] = " ";
-      cells[col] = " ";
+    if (cells.get(col) === null) {
+      cells.delete(col - 1);
+      cells.delete(col);
     }
     let prefix = "";
     for (const character of part) {
@@ -1069,23 +1072,32 @@ function redrawTabbedLine(line: string): string {
       if (width === 0) {
         if (col === 0) prefix += character;
         else {
-          const base = cells[col - 1] === null ? col - 2 : col - 1;
-          cells[base] = cells[base]! + character;
+          const base = cells.get(col - 1) === null ? col - 2 : col - 1;
+          cells.set(base, (cells.get(base) ?? " ") + character);
         }
         continue;
       }
       if (col === 0) {
-        leadingMarks = cells.length === 0 ? leadingMarks + prefix : prefix;
+        leadingMarks = end === 0 ? leadingMarks + prefix : prefix;
         prefix = "";
       }
-      if (cells[col + width] === null) cells[col + width] = " ";
-      cells[col] = character;
-      if (width === 2) cells[col + 1] = null;
+      if (cells.get(col + width) === null) cells.delete(col + width);
+      cells.set(col, character);
+      if (width === 2) cells.set(col + 1, null);
       col += width;
     }
-    leadingMarks = cells.length === 0 ? leadingMarks + prefix : prefix + leadingMarks;
+    end = Math.max(end, col);
+    leadingMarks = end === 0 ? leadingMarks + prefix : prefix + leadingMarks;
   }
-  return leadingMarks + cells.join("");
+  let text = leadingMarks;
+  let emitted = 0;
+  for (const column of [...cells.keys()].sort((a, b) => a - b)) {
+    const cell = cells.get(column);
+    if (cell == null) continue;
+    text += " ".repeat(column - emitted) + cell;
+    emitted = column + (cells.get(column + 1) === null ? 2 : 1);
+  }
+  return text + " ".repeat(end - emitted);
 }
 
 // tqdm redraws a progress bar after a carriage return; JupyterLab shows only what the last

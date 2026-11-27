@@ -56,3 +56,14 @@ it.each(["K", "J"])("resets tab stops when erase-start %s clears the last wide g
   const output = appendTerminalOutput(source, `\u001b[8G\u001b[1${final}\r\tZ`, 16);
   expect(output.text).toBe("        Z");
 });
+
+it("restores scrollback, a saved cursor, and a pending escape before a tabbed redraw", () => {
+  const source = appendTerminalOutput(
+    EMPTY_TERMINAL_OUTPUT,
+    "Build started\n" + "working\n".repeat(63) + "\u001b[2Jabc\tZ\u001b[5G\u001b7\u001b[9G\u001b[3",
+  );
+  const viewer = restoreTerminalOutput(terminalOutputResumeText(source));
+  expect(appendTerminalOutput(viewer, "1m\u001b8X").text).toBe(
+    "Build started\nabc \u001b[0;31mX\u001b[0m   Z",
+  );
+});
