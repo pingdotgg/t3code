@@ -460,11 +460,29 @@ it.effect("a deleted thread keeps only its tombstone", () =>
   Effect.gen(function* () {
     const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
     const now = yield* DateTime.now;
+    const timestamp = DateTime.formatIso(now);
     const deleted = makeThread(ThreadId.make("thread:purge-deleted"), now);
     const live = makeThread(ThreadId.make("thread:purge-live"), now);
     yield* writeThread(deleted, now);
     yield* writeThread(live, now);
+    yield* sql`
+      INSERT INTO projection_threads (
+        thread_id, project_id, title, model_selection_json, runtime_mode,
+        interaction_mode, created_at, updated_at
+      ) VALUES (
+        ${deleted.id}, ${deleted.projectId}, ${deleted.title}, ${JSON.stringify(modelSelection)},
+        ${deleted.runtimeMode}, ${deleted.interactionMode}, ${timestamp}, ${timestamp}
+      )
+    `;
+    yield* sql`
+      INSERT INTO projection_thread_messages (
+        message_id, thread_id, role, text, is_streaming, created_at, updated_at
+      ) VALUES (
+        'legacy-message', ${deleted.id}, 'user', 'Legacy transcript', 0, ${timestamp}, ${timestamp}
+      )
+    `;
     const liveProjection = yield* projections.getThreadProjection(live.id);
     assert.equal(yield* searchMatches("secret in thread:purge-deleted"), 1);
 
@@ -486,6 +504,10 @@ it.effect("a deleted thread keeps only its tombstone", () =>
     );
     assert.isNotNull(tombstone[0]?.deleted_at ?? null);
     assert.equal(tombstone[0]?.title, ProjectionMaintenance.DELETED_THREAD_TITLE);
+    const legacyThread = yield* sql<{ readonly title: string }>`
+      SELECT title FROM projection_threads WHERE thread_id = ${deleted.id}
+    `;
+    assert.equal(legacyThread[0]?.title, ProjectionMaintenance.DELETED_THREAD_TITLE);
     const leaked = yield* Effect.flatMap(
       SqlClient.SqlClient,
       (sql) => sql<{ readonly count: number }>`

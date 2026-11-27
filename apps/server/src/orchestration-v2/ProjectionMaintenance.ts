@@ -13,6 +13,10 @@ import {
   EVENT_LOG_PRUNE_MARK,
   EVENT_LOG_PRUNED_THROUGH,
 } from "../persistence/OrchestrationEventStore.ts";
+import {
+  LEGACY_THREAD_MESSAGES_TABLE,
+  redactLegacyThreadTitle,
+} from "./legacy/LegacyDeletedThreadContent.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 export class ProjectionMaintenanceError extends Schema.TaggedError<ProjectionMaintenanceError>()(
@@ -77,7 +81,7 @@ export const DELETED_THREAD_CONTENT_TABLES = [
   "orchestration_v2_projection_plans",
   "mcp_app_model_context",
   // A legacy thread's transcript source; deleting it means the importer has nothing to restore.
-  "projection_thread_messages",
+  LEGACY_THREAD_MESSAGES_TABLE,
 ] as const;
 
 type MetadataRow = {
@@ -501,9 +505,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           WHERE thread_id = ${threadId} AND transcript_imported_at IS NULL
         `;
         // Last, because the new title is what marks the purge as done.
-        yield* sql`
-          UPDATE projection_threads SET title = ${DELETED_THREAD_TITLE} WHERE thread_id = ${threadId}
-        `;
+        yield* redactLegacyThreadTitle(sql, threadId, DELETED_THREAD_TITLE);
         yield* sql`
           UPDATE orchestration_v2_projection_threads
           SET title = ${DELETED_THREAD_TITLE}, payload_json = ${tombstone}
