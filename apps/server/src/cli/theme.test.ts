@@ -178,6 +178,26 @@ describe("t3 theme", () => {
     }),
   );
 
+  it.effect("refuses --id with a theme id, which has no file to publish", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+
+      const exit = yield* runCli([
+        "theme",
+        "set",
+        "ocean",
+        "--id",
+        "nightfall",
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.exit);
+
+      assert.equal(exit._tag, "Failure");
+      assert.include(String(exit), "--id");
+      assert.equal(NodeFS.existsSync(settingsPathFor(baseDir)), false);
+    }),
+  );
+
   // Win32 resolves both names to one file.
   it.effect.skipIf(windowsHost)("publishes a file whose name ends in a space", () =>
     Effect.gen(function* () {
