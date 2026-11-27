@@ -6,7 +6,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
-import * as PlatformError from "effect/PlatformError";
 
 export interface RotatingFileSinkOptions {
   readonly filePath: string;
@@ -228,36 +227,56 @@ export const makeAsyncRotatingFileSink = Effect.fnUntraced(function* (
       cause.reason._tag === "NotFound" ? Effect.succeed(0) : Effect.fail(failure("read")(cause)),
     ),
   );
-  let currentSize = yield* readSize;
-  const semaphore = yield* Semaphore.make(1);
   const stagedPath = `${options.filePath}.rotating`;
-  const rotate = Effect.gen(function* () {
-    // Move the active log before touching backups so a denied rename leaves history intact.
-    const activeExists = yield* fs.exists(options.filePath);
-    if (activeExists) {
-      if (yield* fs.exists(stagedPath)) {
-        return yield* PlatformError.systemError({
-          _tag: "AlreadyExists",
-          module: "FileSystem",
-          method: "rename",
-          description: "Unfinished log rotation",
-          pathOrDescriptor: stagedPath,
-        });
-      }
-      yield* fs.rename(options.filePath, stagedPath);
-    }
+  const overflowPath = `${options.filePath}.${options.maxFiles + 1}`;
+  const publishStaged = Effect.gen(function* () {
+    const moved: Array<{ source: string; target: string }> = [];
     yield* Effect.gen(function* () {
-      yield* fs.remove(`${options.filePath}.${options.maxFiles}`, { force: true });
-      for (let index = options.maxFiles - 1; index >= 1; index--) {
+      // Park the oldest backup until publication succeeds so a failed rotation can be undone.
+      for (let index = options.maxFiles; index >= 1; index--) {
         const source = `${options.filePath}.${index}`;
-        if (yield* fs.exists(source)) yield* fs.rename(source, `${options.filePath}.${index + 1}`);
+        const target = `${options.filePath}.${index + 1}`;
+        if (yield* fs.exists(source)) {
+          yield* fs.rename(source, target);
+          moved.push({ source, target });
+        }
       }
-      if (activeExists) yield* fs.rename(stagedPath, `${options.filePath}.1`);
+      yield* fs.rename(stagedPath, `${options.filePath}.1`);
     }).pipe(
       Effect.tapError(() =>
-        activeExists ? fs.rename(stagedPath, options.filePath).pipe(Effect.ignore) : Effect.void,
+        Effect.forEach(moved.reverse(), ({ source, target }) => fs.rename(target, source), {
+          discard: true,
+        }).pipe(Effect.ignore),
       ),
     );
+    yield* fs.remove(overflowPath, { force: true });
+  });
+  const recoverStaged = Effect.gen(function* () {
+    if (!(yield* fs.exists(stagedPath))) return;
+    if (!(yield* fs.exists(options.filePath))) {
+      yield* fs.rename(stagedPath, options.filePath);
+    } else if (yield* fs.exists(`${options.filePath}.1`)) {
+      yield* publishStaged;
+    } else {
+      yield* fs.rename(stagedPath, `${options.filePath}.1`);
+    }
+  });
+  yield* recoverStaged.pipe(Effect.mapError(failure("rotate")));
+  let currentSize = yield* readSize;
+  const semaphore = yield* Semaphore.make(1);
+  const rotate = Effect.gen(function* () {
+    yield* recoverStaged;
+    if (yield* fs.exists(options.filePath)) {
+      // A denied active-file rename must leave the backups untouched.
+      yield* fs.rename(options.filePath, stagedPath);
+      yield* publishStaged.pipe(
+        Effect.tapError(() =>
+          Effect.gen(function* () {
+            if (yield* fs.exists(stagedPath)) yield* fs.rename(stagedPath, options.filePath);
+          }).pipe(Effect.ignore),
+        ),
+      );
+    }
     currentSize = 0;
   }).pipe(Effect.mapError(failure("rotate")));
   const write = (chunk: string | Buffer) =>
