@@ -358,6 +358,7 @@ function FallbackModelsField({
     instanceEntries,
     primarySelection,
     fallbacks,
+    getCustomModelOptionsByInstance(settings, providers),
   );
   const updateAt = (index: number, nextSelection: ModelSelection) =>
     onChange(fallbacks.map((entry, at) => (at === index ? nextSelection : entry)));
@@ -379,23 +380,24 @@ function FallbackModelsField({
             )}
           </p>
         </div>
-        <Button
-          className="shrink-0"
-          variant="outline"
-          size="sm"
-          type="button"
-          disabled={
-            disabled ||
-            fallbacks.length >= MAX_SCHEDULED_TASK_FALLBACK_MODELS ||
-            nextCandidate === null
-          }
-          onClick={() => {
-            if (nextCandidate) onChange([...fallbacks, nextCandidate]);
-          }}
-        >
-          <PlusIcon />
-          <T>Add fallback</T>
-        </Button>
+        <div className="shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            type="button"
+            disabled={
+              disabled ||
+              fallbacks.length >= MAX_SCHEDULED_TASK_FALLBACK_MODELS ||
+              nextCandidate === null
+            }
+            onClick={() => {
+              if (nextCandidate) onChange([...fallbacks, nextCandidate]);
+            }}
+          >
+            <PlusIcon />
+            <T>Add fallback</T>
+          </Button>
+        </div>
       </div>
       {fallbacks.map((fallback, index) => {
         const entry = instanceEntries.find((item) => item.instanceId === fallback.instanceId);

@@ -1353,6 +1353,7 @@ it.effect(
 
 it.effect("walks the fallback chain across launch dispatch failures and async rate limits", () =>
   Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-11-01T07:00:00.000Z"));
     const projectId = ProjectId.make("project:test");
     const launchedThread = ThreadId.make("thread:fallback-chain");
     const fable: ModelSelection = {
@@ -1381,7 +1382,7 @@ it.effect("walks the fallback chain across launch dispatch failures and async ra
     const runsByMessage = yield* Ref.make<
       Array<{ id: string; userMessageId: string; status: string; modelSelection: ModelSelection }>
     >([]);
-    const completedNeo = yield* Deferred.make<void>();
+    const logs: Array<string> = [];
 
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
@@ -1425,14 +1426,9 @@ it.effect("walks the fallback chain across launch dispatch failures and async ra
                 },
               ]).pipe(
                 Effect.andThen(() => {
-                  // Astra fails synchronously (provider disabled); SOL fails async with usage limit; Neo completes!
+                  // Astra defects synchronously; SOL fails async with usage limit; Neo completes!
                   if (selected.model === astra.model) {
-                    return Effect.fail(
-                      new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
-                        projectId,
-                        instanceId: astra.instanceId,
-                      }),
-                    );
+                    return Effect.die(new Error("private defect detail /home/user/.secret"));
                   }
                   const runId = `run:${selected.model}`;
                   const status = selected.model === neo.model ? "completed" : "failed";
@@ -1468,11 +1464,6 @@ it.effect("walks the fallback chain across launch dispatch failures and async ra
             waitForThread: (input) =>
               Ref.get(runsByMessage).pipe(
                 Effect.map((runs) => runs.find((candidate) => candidate.id === input.runId)!),
-                Effect.tap((run) =>
-                  run.status === "completed"
-                    ? Deferred.succeed(completedNeo, undefined)
-                    : Effect.void,
-                ),
                 Effect.map(
                   (run) =>
                     ({
@@ -1489,7 +1480,7 @@ it.effect("walks the fallback chain across launch dispatch failures and async ra
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
-          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+          Scheduler.layer,
         ),
       ),
     );
@@ -1501,7 +1492,7 @@ it.effect("walks the fallback chain across launch dispatch failures and async ra
         title: "Fallback chain",
         prompt: "Check alerts",
         enabled: true,
-        schedule: { type: "interval", everyMs: 60_000 },
+        schedule: { type: "once", runAt: "2026-11-01T07:01:00.000Z" },
         projectId,
         workspaceStrategy: { type: "root" },
         modelSelection: fable,
@@ -1510,9 +1501,14 @@ it.effect("walks the fallback chain across launch dispatch failures and async ra
         interactionMode: "default",
       });
 
-      const result = yield* service.runNow({ id: task.id });
-      assert.equal(result.threadId, launchedThread);
-      yield* Deferred.await(completedNeo);
+      // A spent one-time task is removed only once completion handling sees Neo's run complete.
+      const gone = yield* service.subscribeList().pipe(
+        Stream.filter(({ tasks }) => tasks.every((candidate) => candidate.id !== task.id)),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("2 minutes");
+      yield* Fiber.join(gone);
 
       assert.deepEqual(yield* Ref.get(launchAttempts), [fable.model, opus.model]);
       assert.deepEqual(yield* Ref.get(sendAttempts), [
@@ -1520,16 +1516,25 @@ it.effect("walks the fallback chain across launch dispatch failures and async ra
         { model: sol.model, freshContext: true },
         { model: neo.model, freshContext: true },
       ]);
-
-      const stored = (yield* service.list()).tasks.find((item) => item.id === task.id);
-      assert.equal(stored?.lastRunStatus, "succeeded");
-      assert.isNull(stored?.lastRunError);
-    }).pipe(Effect.provide(layer));
+      assert.isTrue(logs.some((line) => line.includes("Scheduled task fallback dispatch failed")));
+      assert.isFalse(logs.some((line) => line.includes("private defect detail")));
+    }).pipe(
+      Effect.provide(
+        Layer.provideMerge(
+          layer,
+          Logger.layer([
+            Logger.make(({ message }) => {
+              logs.push(NodeUtil.inspect(message, { depth: null }));
+            }),
+          ]),
+        ),
+      ),
+    );
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect(
-  "records exhausted fallback errors and skips fallbacks on workspace preparation failure or interrupt",
+  "records exhausted fallback errors, skips fallbacks on workspace failure or interrupt, and reports a stopped fallback as stopped",
   () =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project:test");
@@ -1541,7 +1546,9 @@ it.effect(
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.6-sol",
       };
-      const mode = yield* Ref.make<"exhaust" | "workspace_fail" | "interrupted">("exhaust");
+      const mode = yield* Ref.make<
+        "exhaust" | "workspace_fail" | "interrupted" | "fallback_interrupted"
+      >("exhaust");
       const sends = yield* Ref.make<Array<string>>([]);
       const runRecords = yield* Ref.make<
         Array<{ id: string; userMessageId: string; status: string }>
@@ -1570,10 +1577,15 @@ it.effect(
               getThreadShell: () => Effect.succeed(threadShell(projectId)),
               sendToThread: (input) =>
                 Ref.update(sends, (all) => [...all, input.modelSelection?.model ?? ""]).pipe(
-                  Effect.andThen(
+                  Effect.andThen(Ref.get(mode)),
+                  Effect.flatMap((currentMode) =>
                     Ref.update(runRecords, (all) => [
                       ...all,
-                      { id: "run:fallback", userMessageId: input.messageId, status: "failed" },
+                      {
+                        id: "run:fallback",
+                        userMessageId: input.messageId,
+                        status: currentMode === "fallback_interrupted" ? "interrupted" : "failed",
+                      },
                     ]),
                   ),
                   Effect.as({ run: { id: "run:fallback" } } as never),
@@ -1686,6 +1698,321 @@ it.effect(
         yield* service.runNow({ id: task.id });
         assert.isTrue(Option.isSome(yield* Fiber.join(interrupted)));
         assert.deepEqual(yield* Ref.get(sends), []);
+
+        // A fallback run the user stopped reads as stopped, not as an exhausted chain.
+        yield* Ref.set(mode, "fallback_interrupted");
+        yield* TestClock.adjust("1 second");
+        // The previous case left the same error, so wait for this run's own record.
+        const fallbackStopped = yield* service.subscribeList().pipe(
+          Stream.map(({ tasks }) => tasks.find((item) => item.id === task.id)),
+          Stream.filter(
+            (item) =>
+              item?.runCount === 4 && item.lastRunStatus === "failed" && item.lastRunError !== null,
+          ),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* service.runNow({ id: task.id });
+        assert.equal(
+          Option.getOrUndefined(yield* Fiber.join(fallbackStopped))?.lastRunError,
+          "The run was stopped.",
+        );
+        assert.deepEqual(yield* Ref.get(sends), [sol.model]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("an invalid fallback list is refused before the save consumes a webhook secretRef", () =>
+  Effect.gen(function* () {
+    const consumed = yield* Ref.make(0);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({
+            consume: () => Ref.update(consumed, (count) => count + 1).pipe(Effect.as("secret")),
+          }),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const opus: ModelSelection = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-5-5",
+      };
+      const refused = yield* service
+        .upsert({
+          id: ScheduledTaskId.make("task:webhook-fallbacks"),
+          title: "On push",
+          prompt: "Review the push",
+          enabled: true,
+          schedule: {
+            type: "webhook",
+            signature: {
+              header: "x-signature",
+              encoding: "hex",
+              prefix: "",
+              secretRef: SecretRef.make("secret-ref:00000000000000000000000000000003"),
+            },
+          },
+          projectId: ProjectId.make("project:test"),
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          fallbackModelSelections: [opus, opus],
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        })
+        .pipe(Effect.flip);
+      assert.equal(refused.message, "Fallback models must be distinct.");
+      assert.equal(yield* Ref.get(consumed), 0);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("an occurrence that fails after a later one started still walks its fallbacks", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:test");
+    const fable: ModelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-fable",
+    };
+    const opus: ModelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+    };
+    const launches = yield* Ref.make(0);
+    const runs = yield* Ref.make<
+      Array<{ id: string; userMessageId: string; status: string; modelSelection: ModelSelection }>
+    >([]);
+    const releaseFirst = yield* Deferred.make<void>();
+    const fallbackSent = yield* Deferred.make<{ threadId: string; model: string }>();
+
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: (input) =>
+              Ref.updateAndGet(launches, (count) => count + 1).pipe(
+                Effect.flatMap((count) =>
+                  Ref.update(runs, (all) => [
+                    ...all,
+                    {
+                      id: count === 1 ? "run:first" : "run:second",
+                      userMessageId: input.initialMessage?.messageId ?? "",
+                      status: count === 1 ? "failed" : "completed",
+                      modelSelection: input.modelSelection,
+                    },
+                  ]).pipe(
+                    Effect.as({
+                      threadId: ThreadId.make(count === 1 ? "thread:first" : "thread:second"),
+                      resumed: false,
+                    } as never),
+                  ),
+                ),
+              ),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: () => Effect.succeed(threadShell(projectId)),
+            sendToThread: (input) =>
+              Ref.update(runs, (all) => [
+                ...all,
+                {
+                  id: "run:fallback",
+                  userMessageId: input.messageId,
+                  status: "completed",
+                  modelSelection: input.modelSelection!,
+                },
+              ]).pipe(
+                Effect.andThen(
+                  Deferred.succeed(fallbackSent, {
+                    threadId: input.threadId,
+                    model: input.modelSelection?.model ?? "",
+                  }),
+                ),
+                Effect.as({ run: { id: "run:fallback" } } as never),
+              ),
+            getProjectThreadRecords: () =>
+              Ref.get(runs).pipe(
+                Effect.map(
+                  (all) =>
+                    ({
+                      runs: all.map((entry) => ({ ...entry, rootNodeId: "node:root" })),
+                      messages: all.map((entry) => ({ id: entry.userMessageId, runId: entry.id })),
+                      turnItems: all
+                        .filter((entry) => entry.status === "failed")
+                        .map((entry) => ({
+                          type: "error",
+                          status: "failed",
+                          runId: entry.id,
+                          nodeId: "node:root",
+                          failure: { class: "usage_limit", message: "usage limit reached" },
+                        })),
+                    }) as never,
+                ),
+              ),
+            waitForThread: (input) =>
+              (input.runId === "run:first" ? Deferred.await(releaseFirst) : Effect.void).pipe(
+                Effect.andThen(Ref.get(runs)),
+                Effect.map(
+                  (all) =>
+                    ({
+                      threadId: input.threadId,
+                      run: {
+                        ...all.find((candidate) => candidate.id === input.runId)!,
+                        rootNodeId: "node:root",
+                      },
+                      timedOut: false,
+                    }) as never,
+                ),
+              ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:overlap"),
+        title: "Overlap",
+        prompt: "Check alerts",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId,
+        workspaceStrategy: { type: "root" },
+        modelSelection: fable,
+        fallbackModelSelections: [opus],
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      yield* service.runNow({ id: task.id });
+      yield* TestClock.adjust("1 second");
+      // The second occurrence now owns last_run_at.
+      yield* service.runNow({ id: task.id });
+      yield* Deferred.succeed(releaseFirst, undefined);
+      assert.deepEqual(yield* Deferred.await(fallbackSent), {
+        threadId: "thread:first",
+        model: opus.model,
+      });
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "a bound task left on a fallback model returns to its primary and never retries attempt 0's model",
+  () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:test");
+      const boundThread = ThreadId.make("thread:bound");
+      const primary: ModelSelection = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-5-5",
+      };
+      const fallback: ModelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-6-astra",
+      };
+      const backup: ModelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-sol",
+      };
+      const records = yield* Ref.make<{
+        thread: { modelSelection: ModelSelection };
+        runs: Array<{ ordinal: number; modelSelection: ModelSelection }>;
+      }>({
+        // An earlier occurrence fell back, which moved the thread onto the fallback.
+        thread: { modelSelection: fallback },
+        runs: [
+          { ordinal: 1, modelSelection: primary },
+          { ordinal: 2, modelSelection: fallback },
+        ],
+      });
+      const failFollowingSend = yield* Ref.make(false);
+      const sends = yield* Ref.make<Array<string>>([]);
+
+      const layer = ScheduledTaskService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ManagedPolicy.layerTest(),
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadShell: () => Effect.succeed(threadShell(projectId)),
+              getThreadRecords: () => Ref.get(records).pipe(Effect.map((value) => value as never)),
+              getProjectThreadRecords: () => Effect.succeed({ runs: [] } as never),
+              sendToThread: (input) =>
+                Ref.update(sends, (all) => [...all, input.modelSelection?.model ?? "thread"]).pipe(
+                  Effect.andThen(Ref.get(failFollowingSend)),
+                  Effect.flatMap((fail) =>
+                    fail && input.modelSelection === undefined
+                      ? Effect.fail(
+                          new ThreadManagementService.ThreadManagementProviderInstanceDisabledError(
+                            { projectId, instanceId: fallback.instanceId },
+                          ),
+                        )
+                      : Effect.succeed({} as never),
+                  ),
+                ),
+            }),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/projects",
+              isScratchProject: () => Effect.succeed(false),
+            }),
+            NodeCrypto.layer,
+            Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const base: ScheduledTaskUpsertInput = {
+          id: ScheduledTaskId.make("task:bound-fallback"),
+          title: "Bound",
+          prompt: "Check alerts",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 60_000 },
+          projectId,
+          threadId: boundThread,
+          threadMode: "continue",
+          workspaceStrategy: { type: "root" },
+          modelSelection: primary,
+          fallbackModelSelections: [fallback, backup],
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        };
+        const { task } = yield* service.upsert(base);
+
+        // The fallback applied only to its own run: this occurrence names the primary again.
+        yield* service.runNow({ id: task.id });
+        assert.deepEqual(yield* Ref.get(sends), [primary.model]);
+
+        // With no primary to return to, attempt 0 follows the thread's fallback model, so the
+        // chain skips that model rather than trying it twice.
+        yield* Ref.set(sends, []);
+        yield* Ref.set(records, { thread: { modelSelection: fallback }, runs: [] });
+        yield* Ref.set(failFollowingSend, true);
+        yield* service.upsert({ ...base, modelSelection: fallback });
+        yield* TestClock.adjust("1 second");
+        yield* service.runNow({ id: task.id });
+        assert.deepEqual(yield* Ref.get(sends), ["thread", backup.model]);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

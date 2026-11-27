@@ -3,6 +3,7 @@ import {
   ProjectId,
   DEFAULT_SERVER_SETTINGS,
   type ServerConfig,
+  ProviderDriverKind,
   ProviderInstanceId,
   ScheduledTaskId,
   type ScheduledTask,
@@ -16,6 +17,8 @@ import type {
 } from "../../sidebarProjectGrouping";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   changeDraftProject,
@@ -575,5 +578,43 @@ describe("scheduled task fallback models", () => {
     expect(nextScheduledTaskFallbackModel(entries, primary, [])).toEqual(opus);
     expect(nextScheduledTaskFallbackModel(entries, primary, [opus])).toEqual(astra);
     expect(nextScheduledTaskFallbackModel(entries, primary, [opus, astra])).toBeNull();
+  });
+
+  it("suggests a custom fallback model the picker offers when no catalog model fits", () => {
+    const providers = [
+      {
+        instanceId: claude,
+        driver: "claudeAgent",
+        displayName: "Claude",
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        models: [
+          { slug: "fable", name: "Fable", isCustom: false, capabilities: null },
+          { slug: "haiku", name: "Haiku", isCustom: false, isLegacy: true, capabilities: null },
+        ],
+      },
+    ] as unknown as ServerConfig["providers"];
+    const settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [claude]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { customModels: ["proxy/opus"] },
+        },
+      },
+    };
+    const entries = deriveProviderInstanceEntries(providers);
+
+    expect(nextScheduledTaskFallbackModel(entries, primary, [])).toBeNull();
+    expect(
+      nextScheduledTaskFallbackModel(
+        entries,
+        primary,
+        [],
+        getCustomModelOptionsByInstance(settings, providers),
+      ),
+    ).toEqual({ instanceId: claude, model: "proxy/opus" });
   });
 });

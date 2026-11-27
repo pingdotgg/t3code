@@ -133,6 +133,7 @@ import {
 import * as Metrics from "../observability/Metrics.ts";
 import {
   interactionModeRank,
+  providerOptionDescriptors,
   refuseAgentModePick,
   resolveInteractionMode,
   resolveRuntimeMode,
@@ -2457,6 +2458,27 @@ const make = Effect.gen(function* () {
     return task;
   });
 
+  /** A fallback starts at the task's runtime mode, so it may not pick the agent's own mode either. */
+  const refuseFallbackAgentModePicks = Effect.fn(
+    "OrchestratorMcpService.refuseFallbackAgentModePicks",
+  )(function* (
+    fallbacks: ReadonlyArray<ModelSelection> | undefined,
+    callerRuntimeMode: RuntimeMode,
+  ) {
+    if (fallbacks === undefined || callerRuntimeMode === "full-access") return;
+    const providers = yield* loadProviders;
+    for (const selection of fallbacks) {
+      yield* refuseAgentModePick({
+        callerRuntimeMode,
+        picked: selection.options,
+        descriptors: providerOptionDescriptors(
+          providers.find((provider) => provider.instanceId === selection.instanceId),
+        ),
+        held: undefined,
+      });
+    }
+  });
+
   return OrchestratorMcpService.of({
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
       const { parent, limits } = yield* loadCaller(scope, ["runs"]);
@@ -2474,6 +2496,7 @@ const make = Effect.gen(function* () {
             : "bindToCurrentThread binds to this thread, which belongs to a different project.",
         );
       }
+      yield* refuseFallbackAgentModePicks(input.fallbackModelSelections, limits.runtimeMode);
       const modelSelection =
         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
       // Never end on a lone high surrogate, which renders as a broken character.
@@ -2564,6 +2587,7 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope, ["runs"]);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
+        yield* refuseFallbackAgentModePicks(input.fallbackModelSelections, limits.runtimeMode);
         if (
           input.bindToCurrentThread === true &&
           (parent === undefined || parent.thread.projectId !== existing.projectId)

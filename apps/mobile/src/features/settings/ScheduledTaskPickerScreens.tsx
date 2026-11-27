@@ -110,12 +110,14 @@ export function ScheduledTaskModelPickerRouteScreen() {
       cwd={null}
       providerGroups={providerGroups}
       selectedModel={selectedModel}
-      prompt={editor.draft.prompt}
-      onPromptChange={(prompt) =>
+      // The prompt is shared by the whole chain; only the primary may let it control effort.
+      prompt={pickerTarget.kind === "primary" ? editor.draft.prompt : ""}
+      onPromptChange={(prompt) => {
+        if (pickerTarget.kind !== "primary") return;
         setEditor((current) =>
           current ? { ...current, draft: { ...current.draft, prompt } } : current,
-        )
-      }
+        );
+      }}
       onSelectModel={(option) => {
         if (pickerTarget.kind === "primary") {
           setEditor((current) =>

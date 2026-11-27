@@ -6,6 +6,7 @@ import {
   MAX_SCHEDULED_TASK_FALLBACK_MODELS_PER_FAMILY,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   type ProjectId,
+  type ProviderInstanceId,
   ScheduledTaskId,
   type ScheduledTask,
   type ScheduledTaskSchedule,
@@ -528,6 +529,10 @@ export function nextScheduledTaskFallbackModel(
   entries: readonly ProviderInstanceEntry[],
   primary: Pick<ModelSelection, "instanceId" | "model"> | null,
   existing: ReadonlyArray<ModelSelection>,
+  modelOptionsByInstance?: ReadonlyMap<
+    ProviderInstanceId,
+    ReadonlyArray<{ readonly slug: string; readonly isLegacy?: boolean | undefined }>
+  >,
 ): ModelSelection | null {
   if (existing.length >= MAX_SCHEDULED_TASK_FALLBACK_MODELS) return null;
   const available = entries.filter(
@@ -539,7 +544,7 @@ export function nextScheduledTaskFallbackModel(
   );
   const pool = available.length > 0 ? available : entries.filter((entry) => entry.enabled);
   for (const entry of pool) {
-    for (const model of entry.models) {
+    for (const model of modelOptionsByInstance?.get(entry.instanceId) ?? entry.models) {
       if (model.isLegacy) continue;
       const candidate: ModelSelection = { instanceId: entry.instanceId, model: model.slug };
       if (scheduledTaskFallbackModelIssue([...existing, candidate], primary) === null) {
