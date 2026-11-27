@@ -211,11 +211,7 @@ const traceSummaryCommand = Command.make("summary", {
       const summary = summarizer.finish();
       const failures = reads.filter(Result.isFailure);
       const firstFailure = failures[0];
-      if (
-        firstFailure &&
-        summary.spanCount === 0 &&
-        !reads.some((read) => Result.isSuccess(read) && read.success)
-      ) {
+      if (firstFailure && !reads.some((read) => Result.isSuccess(read) && read.success)) {
         return yield* firstFailure.failure;
       }
       for (const { failure } of failures) {
