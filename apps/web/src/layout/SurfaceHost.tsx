@@ -2211,8 +2211,14 @@ function SurfaceTabFocus({
 function chatKeyboardTarget(pane: HTMLElement): HTMLElement | null {
   return pane.querySelector<HTMLElement>("[contenteditable='true']");
 }
+const SURFACE_KEYBOARD_INPUT_SELECTOR =
+  'textarea:not([disabled]):not([hidden]):not([aria-hidden="true"]):not([tabindex="-1"]), input:not([type="hidden"]):not([disabled]):not([hidden]):not([aria-hidden="true"]):not([tabindex="-1"])';
+
 function surfaceKeyboardTarget(pane: HTMLElement): HTMLElement {
-  return pane.querySelector<HTMLElement>("textarea, input") ?? pane;
+  for (const input of pane.querySelectorAll<HTMLElement>(SURFACE_KEYBOARD_INPUT_SELECTOR)) {
+    if (!input.closest('[hidden], [inert], [aria-hidden="true"]')) return input;
+  }
+  return pane;
 }
 /** Settings takes the keyboard on the pane itself: focusing a field could start a shortcut recorder. */
 function settingsKeyboardTarget(pane: HTMLElement): HTMLElement {

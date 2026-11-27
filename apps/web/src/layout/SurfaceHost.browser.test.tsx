@@ -1218,3 +1218,40 @@ it("keeps a revealed tab inside the viewport on a narrow overflowing tab strip",
     expect(box.right).toBeLessThanOrEqual(bounds.right + 1);
   });
 });
+
+it("skips hidden and aria-hidden inputs when moving keyboard focus into a surface pane", async () => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  const tabFor = (surfaceId: string) =>
+    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
+      ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === surfaceId,
+    );
+  await using screen = await renderHost();
+  await act(() => {
+    requestLayoutSurfacePlacement(pullRequestThreadRef, {
+      kind: "pane",
+      paneId: chatPaneId,
+    });
+    useRightPanelStore.getState().openFile(pullRequestThreadRef, "src/first.ts");
+  });
+  const firstTab = tabFor("file:src/first.ts")!;
+  const host = screen.container.querySelector<HTMLElement>(
+    `[data-layout-tab-id="${firstTab.tab.id}"]`,
+  )!;
+  const hiddenInput = document.createElement("input");
+  hiddenInput.tabIndex = -1;
+  hiddenInput.setAttribute("aria-hidden", "true");
+  host.prepend(hiddenInput);
+
+  const tabButton = screen.container.querySelector<HTMLElement>(
+    `[data-layout-pane-tab="${firstTab.tab.id}"]`,
+  )!;
+  tabButton.focus();
+
+  await act(() => {
+    useRightPanelStore.getState().openFile(pullRequestThreadRef, "src/second.ts");
+  });
+
+  expect(document.activeElement).not.toBe(hiddenInput);
+  expect(document.activeElement).toBe(host);
+});
