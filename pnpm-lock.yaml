@@ -382,6 +382,7 @@ patchedDependencies:
   '@react-native-menu/menu@2.0.0': 6872ba71b9847c5a0210b1b896923dadc3860faedfe28d9f062bcedfe786ef1d
   '@react-navigation/native-stack@7.21.0': 990d575444c4af2ce8218b3b7a8280fe244c03abbdb32b822a2e862f791dbf42
   '@vitest/browser@5.1.1': 92f36cbf5b1f90691fa696db358eaaf7be96c34fb051b218348437998005cf36
+  '@zip.js/zip.js@2.25.0': cb3596293f7a8a6cfe3fade1ab0be9aa33accc3e96e14c1fc8e17bcd333fdb36
   alchemy@2.0.0-beta.85: 07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd
   app-builder-lib@26.16.1: 0fbe9ae51783f5768ebe197d12d1fdb7d477a08c92e5db2f6356bcce62613c53
   dbus-next@0.10.2: cfff57561b0ee59b5addb3b2e6c6f20906e967507a530ab67e8db8108e520ba4
@@ -1060,20 +1061,20 @@ importers:
         specifier: ^1.9.0
         version: 1.9.0(@date-fns/tz@1.5.0)(@types/react@19.3.0)(date-fns@4.4.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@betteroffice/docx':
-        specifier: 0.5.1
-        version: 0.5.1(@betteroffice/fonts@0.4.0(@betteroffice/fonts-cjk@0.4.0))
+        specifier: 0.6.1
+        version: 0.6.1(@betteroffice/fonts-cjk@0.5.0)
       '@betteroffice/fonts':
-        specifier: 0.4.0
-        version: 0.4.0(@betteroffice/fonts-cjk@0.4.0)
+        specifier: 0.5.0
+        version: 0.5.0(@betteroffice/fonts-cjk@0.5.0)
       '@betteroffice/fonts-cjk':
-        specifier: 0.4.0
-        version: 0.4.0
+        specifier: 0.5.0
+        version: 0.5.0
       '@betteroffice/pptx':
-        specifier: 0.5.1
-        version: 0.5.1
+        specifier: 0.6.1
+        version: 0.6.1(@betteroffice/fonts-cjk@0.5.0)
       '@betteroffice/xlsx':
-        specifier: 0.5.1
-        version: 0.5.1
+        specifier: 0.6.1
+        version: 0.6.1(@betteroffice/fonts-cjk@0.5.0)
       '@clerk/clerk-js':
         specifier: 6.47.0
         version: 6.47.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -1107,6 +1108,9 @@ importers:
       '@legendapp/list':
         specifier: 3.9.0
         version: 3.9.0(patch_hash=c25646442029896901845e418ade4eaebb33cc101dc3bb4a38201f6923cf5e67)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
+      '@noble/ciphers':
+        specifier: 2.4.0
+        version: 2.4.0
       '@noble/hashes':
         specifier: 'catalog:'
         version: 1.8.0
@@ -1553,6 +1557,9 @@ importers:
       '@t3tools/source-control-definitions':
         specifier: workspace:*
         version: link:../source-control-definitions
+      '@zip.js/zip.js':
+        specifier: 2.25.0
+        version: 2.25.0(patch_hash=cb3596293f7a8a6cfe3fade1ab0be9aa33accc3e96e14c1fc8e17bcd333fdb36)
       effect:
         specifier: 4.1.5
         version: 4.1.5(patch_hash=14a7acd734809d8dddbf2c19c4ec01fdd2ffae60a612de42b5ed29860216052a)
@@ -3395,30 +3402,31 @@ packages:
       '@types/react':
         optional: true
 
-  '@betteroffice/docx@0.5.1':
-    resolution: {integrity: sha512-90OVOjArTdk7KmHNSGBPMLDPg1sU+k/LI0HooZDdALwidGpjNjFAazkKSTg29K6fpmv6qmygCdJiXCCoxL2GRw==}
-    peerDependencies:
-      '@betteroffice/fonts': ^0
-    peerDependenciesMeta:
-      '@betteroffice/fonts':
-        optional: true
+  '@betteroffice/docx@0.6.1':
+    resolution: {integrity: sha512-CXOiqGF20cloKkw+ej3qktFB8Hl+vsBOZIEGrkdMF3aLcURtBhslhcNBiC32vvwFWsX2DQm/F9PxL000ite6qA==}
 
-  '@betteroffice/fonts-cjk@0.4.0':
-    resolution: {integrity: sha512-gLLqoIdVA02H5GQs+TpGrHWzxYEbpxj8a1Kzkf3cGQUea+cCpzoCuO38sV0zSDmBbub3gRldzf0N5fPpKCsS5g==}
+  '@betteroffice/fonts-cjk@0.5.0':
+    resolution: {integrity: sha512-8Om42yT5vpWqEgjhLkTrmuRkZKsys4grolwYOhCpOj9Mj/rM6KCOMdPwuaoOGPRSq6xP1Fsk0z5ZVtDoLRjhfg==}
 
-  '@betteroffice/fonts@0.4.0':
-    resolution: {integrity: sha512-x1BVwYDAgY5R6TWI4t9NLguSiAEbH5GItN2ZlpBIFoRXTIJgjBsXd6sUxPGpexXOyY6KdhRjG8XvHjyAYxEGCw==}
+  '@betteroffice/fonts-latin@0.5.0':
+    resolution: {integrity: sha512-5UJ1dXI16BP6CpyX+JDJgLb4zrKLIkjts6GUj+mGiSTHMJ2yv4EYn/Ln3zRkOVrJD/I9365+5ORJtwwqi/3U2Q==}
+
+  '@betteroffice/fonts@0.5.0':
+    resolution: {integrity: sha512-Oa4J36vIht33HG9FMZ+JYpxeE7mqUc9osCCdQSBBoYe1+LuD0K6loT5FZ0AF+i/YamA1D8M/6sXnzcZOBzGUaQ==}
     peerDependencies:
       '@betteroffice/fonts-cjk': ^0
+      '@betteroffice/fonts-intl': ^0
     peerDependenciesMeta:
       '@betteroffice/fonts-cjk':
         optional: true
+      '@betteroffice/fonts-intl':
+        optional: true
 
-  '@betteroffice/pptx@0.5.1':
-    resolution: {integrity: sha512-2Rn51fx1GCDfcus1Ly2giDk7CnhLmWjJFPq3QL2DiBAF2BF+A5R9PdRDHYX5gQm0sfWK97C2osTmR3/klJKF2Q==}
+  '@betteroffice/pptx@0.6.1':
+    resolution: {integrity: sha512-bq8Js9wCIezSRKXf95/yBlT2Wn7oOiZLqIVFXLPfv7S6uVVwwGXYI2ELNMbCreHmagYfJXHduL7wp7zDfH9nbw==}
 
-  '@betteroffice/xlsx@0.5.1':
-    resolution: {integrity: sha512-UHOnzcMML6Ud9D1M4d8FZKmw3AAg2/DttE/sVxM858SgiIpOtzGOqlh62RM9/8y/JW8bR8t+wN69EX8UJvR8EQ==}
+  '@betteroffice/xlsx@0.6.1':
+    resolution: {integrity: sha512-KxN1EA/QuBd8pQgxyNUS7ASqicUOREp/MV5lkLOYzzFD8RsxsPymI5RAJ+xnFFNlbLYUzjYqzy+tUQPJxafpJQ==}
 
   '@blazediff/core@1.10.0':
     resolution: {integrity: sha512-AOQff0zgR7cGsZL+4E7hVkmujoPUpm0J9xzWGWZj5wCjd3gmxESXAPfKyuzs93VdpQNFhHlBhfOjrcZ+XTERtQ==}
@@ -5352,6 +5360,10 @@ packages:
 
   '@neon-rs/load@0.0.4':
     resolution: {integrity: sha512-kTPhdZyTQxB+2wpiRcFWrDcejc4JI6tkPuS7UZCG4l6Zvc5kU/gGQ/ozvHTh1XR5tS+UlfAfGuPajjzQjCiHCw==}
+
+  '@noble/ciphers@2.4.0':
+    resolution: {integrity: sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw==}
+    engines: {node: '>= 20.19.0'}
 
   '@noble/curves@1.9.1':
     resolution: {integrity: sha512-k11yZxZg+t+gWvBbIswW0yoJlu8cHOC7dhunwOzoWH/mXGBiYyR4YY6hAEK/3EUs4UpB8la1RfdRpeGsFHkWsA==}
@@ -8010,6 +8022,10 @@ packages:
     engines: {node: '>= 12'}
     cpu: [x64]
     os: [win32]
+
+  '@zip.js/zip.js@2.25.0':
+    resolution: {integrity: sha512-oNRqUuU1XFu6G5d7Z0jufJ9dS9WteO0xiU/PNxsUrb4itZCsSbn191jpJzU00Gmc6S680X3DPZeF5EV4zAEMAg==}
+    engines: {bun: '>=0.7.0', deno: '>=1.0.0', node: '>=18.0.0'}
 
   '@zxcvbn-ts/core@3.0.4':
     resolution: {integrity: sha512-aQeiT0F09FuJaAqNrxynlAwZ2mW/1MdXakKWNmGM1Qp/VaY6CnB/GfnMS2T8gB2231Esp1/maCWd8vTG4OuShw==}
@@ -14079,19 +14095,36 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.3.0
 
-  '@betteroffice/docx@0.5.1(@betteroffice/fonts@0.4.0(@betteroffice/fonts-cjk@0.4.0))':
+  '@betteroffice/docx@0.6.1(@betteroffice/fonts-cjk@0.5.0)':
+    dependencies:
+      '@betteroffice/fonts': 0.5.0(@betteroffice/fonts-cjk@0.5.0)
+    transitivePeerDependencies:
+      - '@betteroffice/fonts-cjk'
+      - '@betteroffice/fonts-intl'
+
+  '@betteroffice/fonts-cjk@0.5.0': {}
+
+  '@betteroffice/fonts-latin@0.5.0': {}
+
+  '@betteroffice/fonts@0.5.0(@betteroffice/fonts-cjk@0.5.0)':
+    dependencies:
+      '@betteroffice/fonts-latin': 0.5.0
     optionalDependencies:
-      '@betteroffice/fonts': 0.4.0(@betteroffice/fonts-cjk@0.4.0)
+      '@betteroffice/fonts-cjk': 0.5.0
 
-  '@betteroffice/fonts-cjk@0.4.0': {}
+  '@betteroffice/pptx@0.6.1(@betteroffice/fonts-cjk@0.5.0)':
+    dependencies:
+      '@betteroffice/fonts': 0.5.0(@betteroffice/fonts-cjk@0.5.0)
+    transitivePeerDependencies:
+      - '@betteroffice/fonts-cjk'
+      - '@betteroffice/fonts-intl'
 
-  '@betteroffice/fonts@0.4.0(@betteroffice/fonts-cjk@0.4.0)':
-    optionalDependencies:
-      '@betteroffice/fonts-cjk': 0.4.0
-
-  '@betteroffice/pptx@0.5.1': {}
-
-  '@betteroffice/xlsx@0.5.1': {}
+  '@betteroffice/xlsx@0.6.1(@betteroffice/fonts-cjk@0.5.0)':
+    dependencies:
+      '@betteroffice/fonts': 0.5.0(@betteroffice/fonts-cjk@0.5.0)
+    transitivePeerDependencies:
+      - '@betteroffice/fonts-cjk'
+      - '@betteroffice/fonts-intl'
 
   '@blazediff/core@1.10.0': {}
 
@@ -16028,6 +16061,8 @@ snapshots:
 
   '@neon-rs/load@0.0.4':
     optional: true
+
+  '@noble/ciphers@2.4.0': {}
 
   '@noble/curves@1.9.1':
     dependencies:
@@ -18100,6 +18135,8 @@ snapshots:
 
   '@yuuang/ffi-rs-win32-x64-msvc@1.3.2':
     optional: true
+
+  '@zip.js/zip.js@2.25.0(patch_hash=cb3596293f7a8a6cfe3fade1ab0be9aa33accc3e96e14c1fc8e17bcd333fdb36)': {}
 
   '@zxcvbn-ts/core@3.0.4':
     dependencies:

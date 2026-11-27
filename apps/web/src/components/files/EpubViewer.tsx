@@ -21,6 +21,9 @@ import { useTheme } from "~/hooks/useTheme";
 import { FileSurfaceAction, FileSurfaceLoading } from "./fileSurfaceChrome";
 import type { EpubLocation, EpubPage, OfficeWorkerResult } from "./officePreviewProtocol";
 import { epubSource, prepareEpubDocument } from "./epubSource";
+import { EpubNarration } from "./EpubNarration";
+import { EpubMediaDialog } from "./EpubMediaDialog";
+import { Button } from "~/components/ui/button";
 import { previewFailureText } from "./previewFailureMessages";
 
 type Book = Extract<OfficeWorkerResult, { type: "epub" }>;
@@ -38,11 +41,14 @@ function ReadingFrame(props: {
   readonly zoom: number;
   readonly navigate: (location: EpubLocation) => void;
 }) {
+  const gt = useGT();
   const { resolvedTheme } = useTheme();
   const container = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const fixed = props.page.fixed;
   const [size, setSize] = useState({ width: 0, height: 0 });
+  const [media, setMedia] = useState<readonly HTMLMediaElement[]>([]);
+  const [openMedia, setOpenMedia] = useState<HTMLMediaElement | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Fit the authored viewport to its container as the preview resizes.
   useEffect(() => {
     const element = container.current;
@@ -57,7 +63,7 @@ function ReadingFrame(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Change the sandboxed document's reading size without reloading or losing position.
   useEffect(() => {
     if (!fixed)
-      frame.current?.contentDocument?.documentElement.style.setProperty(
+      frame.current?.contentDocument?.documentElement?.style.setProperty(
         "zoom",
         String(props.zoom),
         "important",
@@ -72,56 +78,92 @@ function ReadingFrame(props: {
   const darkPage = resolvedTheme === "dark" && !props.page.styles?.length && !fixed;
   const srcDoc = epubSource(props.page, darkPage);
   return (
-    <div ref={container} className="min-h-0 flex-1 overflow-auto scrollbar-gutter-both">
-      <div
-        className={fixed ? "mx-auto" : "size-full"}
-        style={
-          fixed
-            ? { width: fixed.width * scale, height: fixed.height * scale, overflow: "hidden" }
-            : undefined
-        }
-      >
-        <iframe
-          ref={frame}
-          title={props.name}
-          srcDoc={srcDoc}
-          sandbox="allow-same-origin"
-          className={`block border-0 ${fixed ? "origin-top-left" : "size-full"} ${darkPage ? "" : "bg-white"}`}
+    <>
+      {props.page.narration?.length && !openMedia ? (
+        <EpubNarration cues={props.page.narration} frame={frame} />
+      ) : null}
+      {media.length > 0 ? (
+        <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-border/60 px-3 py-1">
+          {media.map((item, index) => (
+            <Button
+              // oxlint-disable-next-line react/no-array-index-key -- The authored media order is fixed within a chapter.
+              key={`${item.localName}:${index}`}
+              variant="outline"
+              size="sm-touch"
+              onClick={() => {
+                for (const element of media) element.pause();
+                setOpenMedia(item);
+              }}
+            >
+              {item.title ||
+                item.getAttribute("aria-label") ||
+                (item.localName === "video" ? gt("Video preview") : gt("Audio preview"))}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+      {openMedia ? <EpubMediaDialog media={openMedia} onClose={() => setOpenMedia(null)} /> : null}
+      <div ref={container} className="min-h-0 flex-1 overflow-auto scrollbar-gutter-both">
+        <div
+          className={fixed ? "mx-auto" : "size-full"}
           style={
             fixed
-              ? { width: fixed.width, height: fixed.height, transform: `scale(${scale})` }
+              ? { width: fixed.width * scale, height: fixed.height * scale, overflow: "hidden" }
               : undefined
           }
-          onLoad={(event) => {
-            const doc = event.currentTarget.contentDocument;
-            if (!doc?.body) return;
-            prepareEpubDocument(doc);
-            if (!fixed)
-              doc.documentElement.style.setProperty("zoom", String(props.zoom), "important");
-            goToAnchor(doc, props.location.anchor);
-            doc.onclick = (click) => {
-              const target = click.target;
-              if (!(target instanceof doc.defaultView!.Element)) return;
-              const link = target.closest("a[href]");
-              if (!link) return;
-              click.preventDefault();
-              const href = link.getAttribute("data-epub-external");
-              if (href !== null) {
-                const url = externalUrl(href);
-                if (url && click.isTrusted) window.open(url, "_blank", "noopener,noreferrer");
-                return;
+        >
+          <iframe
+            ref={frame}
+            title={props.name}
+            srcDoc={srcDoc}
+            sandbox="allow-same-origin"
+            className={`block border-0 ${fixed ? "origin-top-left" : "size-full"} ${darkPage ? "" : "bg-white"}`}
+            style={
+              fixed
+                ? { width: fixed.width, height: fixed.height, transform: `scale(${scale})` }
+                : undefined
+            }
+            onLoad={(event) => {
+              const doc = event.currentTarget.contentDocument;
+              if (!doc?.body) return;
+              prepareEpubDocument(doc);
+              // WKWebView can only start media from controls in the parent of this sandbox.
+              if ("ReactNativeWebView" in window && "webkit" in window) {
+                setMedia(
+                  Array.from(
+                    doc.querySelectorAll<HTMLMediaElement>(
+                      "audio[src],video[src],audio:has(source[src]),video:has(source[src])",
+                    ),
+                  ),
+                );
               }
-              const linkIndex = link.getAttribute("data-epub-index");
-              if (linkIndex === null) return;
-              const index = Number(linkIndex);
-              const anchor = link.getAttribute("data-epub-anchor") ?? undefined;
-              if (index === props.location.index) goToAnchor(doc, anchor);
-              props.navigate({ index, ...(anchor ? { anchor } : {}) });
-            };
-          }}
-        />
+              if (!fixed)
+                doc.documentElement.style.setProperty("zoom", String(props.zoom), "important");
+              goToAnchor(doc, props.location.anchor);
+              doc.onclick = (click) => {
+                const target = click.target;
+                if (!(target instanceof doc.defaultView!.Element)) return;
+                const link = target.closest("a[href]");
+                if (!link) return;
+                click.preventDefault();
+                const href = link.getAttribute("data-epub-external");
+                if (href !== null) {
+                  const url = externalUrl(href);
+                  if (url && click.isTrusted) window.open(url, "_blank", "noopener,noreferrer");
+                  return;
+                }
+                const linkIndex = link.getAttribute("data-epub-index");
+                if (linkIndex === null) return;
+                const index = Number(linkIndex);
+                const anchor = link.getAttribute("data-epub-anchor") ?? undefined;
+                if (index === props.location.index) goToAnchor(doc, anchor);
+                props.navigate({ index, ...(anchor ? { anchor } : {}) });
+              };
+            }}
+          />
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -162,7 +204,7 @@ export default function EpubViewer(props: {
     <div className="flex min-h-0 flex-1 flex-col">
       {props.book.chapters.length > 1 || props.book.contents.length > 1 ? (
         <div
-          className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3 text-xs"
+          className="flex min-h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3 text-xs max-sm:py-1 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
           dir={props.book.rtl ? "rtl" : "ltr"}
         >
           <FileSurfaceAction
@@ -211,7 +253,7 @@ export default function EpubViewer(props: {
           </FileSurfaceAction>
         </div>
       ) : null}
-      <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-3 py-1 text-xs text-muted-foreground">
+      <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-3 py-1 text-xs text-muted-foreground max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11">
         <span className="min-w-0 flex-1 tabular-nums" role="status">
           {gt("Chapter {page} of {count}", {
             page: String(index + 1),

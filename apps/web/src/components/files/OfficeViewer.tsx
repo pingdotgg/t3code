@@ -1,3 +1,4 @@
+import { FilePasswordPrompt } from "./FilePasswordPrompt";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 /* oxlint-disable react/no-array-index-key -- Spreadsheet rows and columns retain their source positions. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
@@ -83,6 +84,7 @@ function ExtendedOfficeViewer(props: {
     OfficeWorkerResult,
     { type: "epub-page" }
   > | null>(null);
+  const [incorrectPassword, setIncorrectPassword] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sheetPages, setSheetPages] = useState(new Map<string, string[][]>());
   const pendingPages = useRef(new Set<string>());
@@ -99,6 +101,7 @@ function ExtendedOfficeViewer(props: {
   const [fileSize, setFileSize] = useState(props.sizeBytes);
   const [page, setPage] = useState(0);
   const workerRef = useRef<Worker | null>(null);
+  const submitPassword = useRef<((password: string) => void) | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the Office fetch, preparation worker, and timeout for this source and release them on cleanup.
   useEffect(() => {
@@ -118,17 +121,26 @@ function ExtendedOfficeViewer(props: {
       worker.terminate();
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-    timerRef.current = setTimeout(
-      () => fail(m(msg("This document took too long to preview. Open it in another app."))),
-      30_000,
-    );
+    const startTimeout = () =>
+      setTimeout(
+        () => fail(m(msg("This document took too long to preview. Open it in another app."))),
+        30_000,
+      );
+    timerRef.current = startTimeout();
+    submitPassword.current = (password) => {
+      timerRef.current = startTimeout();
+      worker.postMessage({ type: "unlock", password }, []);
+    };
     worker.addEventListener("error", () =>
       fail(m(msg("Could not load the Office viewer. Close the file and try again."))),
     );
     worker.addEventListener("message", (event: MessageEvent<OfficeWorkerResult>) => {
       if (controller.signal.aborted) return;
       const result = event.data;
-      if (result.type === "error") fail(previewFailureText(result));
+      if (result.type === "password") {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        setIncorrectPassword(result.incorrect);
+      } else if (result.type === "error") fail(previewFailureText(result));
       else if (result.type === "epub") {
         if (timerRef.current) clearTimeout(timerRef.current);
         setEpub(result);
@@ -167,6 +179,7 @@ function ExtendedOfficeViewer(props: {
         fail(thrownErrorMessage(cause, m) ?? m(msg("Could not read this file."))),
       );
     return () => {
+      submitPassword.current = null;
       controller.abort();
       worker.terminate();
       workerRef.current = null;
@@ -190,6 +203,16 @@ function ExtendedOfficeViewer(props: {
           {gt("{error} Save it or open it in another app.", { error })}
         </p>
       </div>
+    );
+  if (incorrectPassword !== null)
+    return (
+      <FilePasswordPrompt
+        incorrect={incorrectPassword}
+        onSubmit={(password) => {
+          setIncorrectPassword(null);
+          submitPassword.current?.(password);
+        }}
+      />
     );
   if (notebook)
     return (

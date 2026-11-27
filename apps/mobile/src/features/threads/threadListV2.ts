@@ -310,6 +310,18 @@ export function resolveThreadListV2Status(
   return "ready";
 }
 
+export function threadListV2ShowMoreAccessibilityLabel(
+  hiddenCount: number,
+  resolve: MessageResolver = m,
+): string {
+  return resolve(
+    msg(
+      "{count, plural, one {Show {count} more settled thread} other {Show {count} more settled threads}}",
+    ),
+    { count: Math.min(hiddenCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT) },
+  );
+}
+
 export function threadListV2RowAccessibilityLabel(
   input: {
     readonly title: string;
