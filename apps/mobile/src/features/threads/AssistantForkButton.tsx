@@ -19,7 +19,7 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
-import { useCaptureThreadNavigation } from "./thread-preview-route";
+import { useCaptureThreadNavigation } from "./thread-navigation-capture";
 import { waitForThreadShell } from "./threadForkNavigation";
 
 export function AssistantForkButton(props: {

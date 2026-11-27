@@ -21,9 +21,13 @@ import type {
   NativeStackNavigatorProps,
   NativeStackTypeBag,
 } from "@react-navigation/native-stack";
-import { createContext, use, useRef, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 
 import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
+import {
+  PreviewHostNavigationContext,
+  useCaptureThreadNavigation,
+} from "./thread-navigation-capture";
 
 function ThreadPreviewNavigator({
   id,
@@ -73,19 +77,6 @@ function createThreadPreviewNavigator<
 type ThreadPreviewParams = { readonly environmentId: string; readonly threadId: string };
 
 const Preview = createThreadPreviewNavigator<{ Thread: ThreadPreviewParams }>();
-const PreviewHostNavigationContext = createContext<(() => () => boolean) | null>(null);
-
-/** Captures the route and any preview host before work that may navigate on completion. */
-export function useCaptureThreadNavigation() {
-  const navigation = useNavigation();
-  const captureHostNavigation = use(PreviewHostNavigationContext);
-  return () => {
-    const state = navigation.getState();
-    const isHostCurrent = captureHostNavigation?.();
-    return () =>
-      (isHostCurrent?.() ?? true) && navigation.isFocused() && navigation.getState() === state;
-  };
-}
 
 /**
  * A `Thread` route of its own for a thread shown inside another screen. Thread state resolves the
