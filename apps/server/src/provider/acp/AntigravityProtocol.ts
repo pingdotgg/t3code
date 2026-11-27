@@ -260,6 +260,7 @@ const COMMAND_TEXT_FIELDS = new Set([
   "combinedOutput",
   "combined_output",
   "output",
+  "rawOutput",
   "text",
 ]);
 
@@ -330,8 +331,8 @@ function sanitizeToolValue(
   return Object.fromEntries(entries);
 }
 
-export function sanitizeAntigravityToolPayload(payload: unknown): unknown {
-  return sanitizeToolValue(payload, { nodes: 512, text: 64_000 }, 0);
+export function sanitizeAntigravityToolPayload(payload: unknown, field?: "rawOutput"): unknown {
+  return sanitizeToolValue(payload, { nodes: 512, text: 64_000 }, 0, field);
 }
 const isJsonRecord = Schema.is(Schema.Record(Schema.String, Schema.Json));
 
@@ -525,7 +526,7 @@ export function normalizeAntigravitySessionUpdate(
           }
         : {}),
       ...(update.rawOutput !== undefined
-        ? { rawOutput: sanitizeAntigravityToolPayload(update.rawOutput) }
+        ? { rawOutput: sanitizeAntigravityToolPayload(update.rawOutput, "rawOutput") }
         : {}),
       ...(update.content !== undefined ? { content: content ?? [] } : {}),
       ...(update._meta !== undefined ? { _meta: isJsonRecord(meta) ? meta : null } : {}),
@@ -1005,5 +1006,5 @@ export function classifyAntigravitySubagentToolCall(
 
 export function antigravitySubagentOutput(toolCall: AcpToolCallState): string | undefined {
   const output = toolCall.data.rawOutput;
-  return typeof output === "string" && output.trim() ? boundText(output.trim()) : undefined;
+  return typeof output === "string" && output.trim() ? boundCommandText(output.trim()) : undefined;
 }
