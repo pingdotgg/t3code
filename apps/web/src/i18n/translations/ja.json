@@ -974,6 +974,7 @@
   "3ab6b281a0991766": "{count, plural, =1 {リンクされたプルリクエストを確認しました} other {リンクされたプルリクエストを {count} 回確認しました}}",
   "857e92a89b6b6257": "{count, plural, other {{count} 個のファイルを読み取りました}}",
   "466ac7fcdb97bb76": "{count, plural, other {{count} 個のファイルを変更しました}}",
+  "9369ade1ceea1f86": "{count, plural, other {{count} 個のファイルを変更しようとしました}}",
   "85e7e6dd7b82b428": "{count, plural, other {{count} 個のコマンドを実行しました}}",
   "2f32bc94342dfe05": "{count, plural, other {Web を {count} 回検索しました}}",
   "7e912e12cb98dc12": "{count, plural, other {コードを {count} 回検索しました}}",

@@ -974,6 +974,7 @@
   "3ab6b281a0991766": "{count, plural, =1 {Kontrollerade länkade pull requests} other {Kontrollerade länkade pull requests {count} gånger}}",
   "857e92a89b6b6257": "{count, plural, one {Läste {count} fil} other {Läste {count} filer}}",
   "466ac7fcdb97bb76": "{count, plural, one {Ändrade {count} fil} other {Ändrade {count} filer}}",
+  "9369ade1ceea1f86": "{count, plural, one {Försökte ändra {count} fil} other {Försökte ändra {count} filer}}",
   "85e7e6dd7b82b428": "{count, plural, one {Körde {count} kommando} other {Körde {count} kommandon}}",
   "2f32bc94342dfe05": "{count, plural, one {Sökte på webben {count} gång} other {Sökte på webben {count} gånger}}",
   "7e912e12cb98dc12": "{count, plural, one {Sökte i kod {count} gång} other {Sökte i kod {count} gånger}}",

@@ -973,6 +973,7 @@
   "3ab6b281a0991766": "{count, plural, =1 {Pull requests associées vérifiées} other {Pull requests associées vérifiées {count} fois}}",
   "857e92a89b6b6257": "{count, plural, one {{count} fichier lu} other {{count} fichiers lus}}",
   "466ac7fcdb97bb76": "{count, plural, one {{count} fichier modifié} other {{count} fichiers modifiés}}",
+  "9369ade1ceea1f86": "{count, plural, one {Tentative de modification de {count} fichier} other {Tentative de modification de {count} fichiers}}",
   "85e7e6dd7b82b428": "{count, plural, one {{count} commande exécutée} other {{count} commandes exécutées}}",
   "2f32bc94342dfe05": "{count, plural, one {Recherche web effectuée {count} fois} other {Recherche web effectuée {count} fois}}",
   "7e912e12cb98dc12": "{count, plural, one {Recherche dans le code effectuée {count} fois} other {Recherche dans le code effectuée {count} fois}}",
