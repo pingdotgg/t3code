@@ -286,7 +286,7 @@ export const ProjectSearchEntriesInput = Schema.Struct({
 export type ProjectSearchEntriesInput = typeof ProjectSearchEntriesInput.Type;
 
 export const ProjectEntry = Schema.Struct({
-  path: TrimmedNonEmptyString,
+  path: Schema.NonEmptyString,
   kind: ProjectEntryKind,
   ignored: Schema.optional(Schema.Boolean),
 });
@@ -335,27 +335,29 @@ export type ProjectSearchContentsResult = typeof ProjectSearchContentsResult.Typ
 
 export const ProjectListEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  directoryPath: Schema.optional(TrimmedString),
+  directoryPath: Schema.optional(Schema.String),
+  reportSkipped: Schema.optional(Schema.Boolean),
 });
 export type ProjectListEntriesInput = typeof ProjectListEntriesInput.Type;
 
 export const ProjectListEntriesResult = Schema.Struct({
   entries: Schema.Array(ProjectEntry),
   truncated: Schema.Boolean,
+  skippedPaths: Schema.optional(Schema.Array(Schema.NonEmptyString)),
 });
 export type ProjectListEntriesResult = typeof ProjectListEntriesResult.Type;
 
-// Untracked files git ignores. Wholly ignored folders such as `node_modules`
-// are left out, so the list stays small enough to pick from.
 export const ProjectListIgnoredFilesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  includeDirectories: Schema.optional(Schema.Boolean),
   /** Case-insensitive path substring, applied before the listing cap. */
   query: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(256))),
 });
 export type ProjectListIgnoredFilesInput = typeof ProjectListIgnoredFilesInput.Type;
 
 export const ProjectIgnoredFile = Schema.Struct({
-  path: TrimmedNonEmptyString,
+  // Git's trailing / marks a collapsed folder, reported with byteLength 0.
+  path: Schema.NonEmptyString,
   byteLength: NonNegativeInt,
 });
 export type ProjectIgnoredFile = typeof ProjectIgnoredFile.Type;
@@ -475,12 +477,15 @@ export class ProjectListEntriesError extends Schema.TaggedError<ProjectListEntri
   }
 }
 
+const ProjectFileMode = NonNegativeInt.check(Schema.isLessThanOrEqualTo(0o777));
+
 export const ProjectReadFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   // Workspace-relative or absolute host path; only workspace-relative paths are writable.
   relativePath: Schema.NonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
   // Optional files can be absent without failing the read.
   allowMissing: Schema.optional(Schema.Boolean),
+  includeMode: Schema.optional(Schema.Boolean),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 
@@ -491,6 +496,8 @@ export const ProjectReadFileResult = Schema.Struct({
   truncated: Schema.Boolean,
   // Omitted by older servers; false only for an absent optional file.
   exists: Schema.optional(Schema.Boolean),
+  // POSIX permission bits, available only when requested from a POSIX host.
+  mode: Schema.optional(ProjectFileMode),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
@@ -555,11 +562,15 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: Schema.NonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  // Copied files and new parents remain owner-only, subject to destination restrictions.
+  mode: Schema.optional(ProjectFileMode),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
 export const ProjectWriteFileResult = Schema.Struct({
   relativePath: Schema.NonEmptyString,
+  // Observed POSIX permissions; omitted when the destination cannot report them.
+  mode: Schema.optional(ProjectFileMode),
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
 

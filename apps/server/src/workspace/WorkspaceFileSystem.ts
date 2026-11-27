@@ -482,7 +482,15 @@ export const make = Effect.gen(function* () {
               new TextDecoder("utf-8", { fatal: true }).decode(fileBytes, { stream: truncated }),
             catch: binaryFileError,
           });
-          return { relativePath: target.relativePath, contents, byteLength: stat.size, truncated };
+          const includeMode =
+            input.includeMode === true && (yield* HostProcess.Platform) !== "win32";
+          return {
+            relativePath: target.relativePath,
+            contents,
+            byteLength: stat.size,
+            truncated,
+            ...(includeMode ? { mode: stat.mode & 0o777 } : {}),
+          };
         }),
       (handle) =>
         handle === null
@@ -600,29 +608,55 @@ export const make = Effect.gen(function* () {
       (yield* Effect.promise(() => startsWithUtf8Bom(realTargetPath)));
     const contents = keepsBom ? UTF8_BOM + input.contents : input.contents;
 
-    yield* fileSystem.makeDirectory(path.dirname(realTargetPath), { recursive: true }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceFileSystemOperationError({
-            workspaceRoot: input.cwd,
-            relativePath: input.relativePath,
-            resolvedPath: realTargetPath,
-            operationPath: path.dirname(realTargetPath),
-            operation: "make-directory",
-            cause,
-          }),
-      ),
-    );
-    yield* Effect.tryPromise({
+    yield* fileSystem
+      .makeDirectory(path.dirname(realTargetPath), {
+        recursive: true,
+        ...(input.mode !== undefined ? { mode: 0o700 } : {}),
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: realTargetPath,
+              operationPath: path.dirname(realTargetPath),
+              operation: "make-directory",
+              cause,
+            }),
+        ),
+      );
+    const mode =
+      (yield* HostProcess.Platform) === "win32" || input.mode === undefined
+        ? undefined
+        : input.mode & ~(yield* HostProcess.Umask) & 0o700;
+    const writtenMode = yield* Effect.tryPromise({
       // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
-      try: () =>
-        NodeFSP.writeFile(realTargetPath, contents, {
-          flag:
-            NodeFS.constants.O_WRONLY |
-            NodeFS.constants.O_CREAT |
-            NodeFS.constants.O_TRUNC |
-            (NodeFS.constants.O_NOFOLLOW ?? 0),
-        }),
+      try: async () => {
+        const handle = await NodeFSP.open(
+          realTargetPath,
+          NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | (NodeFS.constants.O_NOFOLLOW ?? 0),
+          mode,
+        );
+        try {
+          let actualMode = mode;
+          if (mode !== undefined) {
+            // Adding execute bits must not widen existing read/write permissions.
+            const currentMode = (await handle.stat()).mode;
+            const targetMode = mode & (currentMode | 0o111);
+            await handle.chmod(targetMode);
+            actualMode = (await handle.stat()).mode & 0o777;
+            if ((actualMode & ~targetMode & 0o666) !== 0) {
+              throw new Error("Could not restrict file permissions before writing.");
+            }
+          }
+          await handle.truncate(0);
+          await handle.writeFile(contents);
+          return actualMode;
+        } finally {
+          await handle.close();
+        }
+      },
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,
@@ -639,7 +673,10 @@ export const make = Effect.gen(function* () {
     if (!replacesFile) {
       yield* workspaceEntries.refresh(input.cwd);
     }
-    return { relativePath: target.relativePath };
+    return {
+      relativePath: target.relativePath,
+      ...(writtenMode !== undefined ? { mode: writtenMode } : {}),
+    };
   });
 
   return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile });
