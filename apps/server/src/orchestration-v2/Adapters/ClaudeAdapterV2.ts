@@ -29,7 +29,6 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { pastedUrl } from "@t3tools/shared/oauthCallback";
 import {
   addClaudeLedgerUsage,
-  claudeLedgerCoversResult,
   claudeLedgerDelta,
   claudeModelLedger,
   claudeReportedContextWindows,
@@ -5327,6 +5326,17 @@ function gatewayCooldownResetAt(
 const CLAUDE_UNSUPPORTED_VERSION_ERROR =
   /^API Error: 400 Claude Code (\d+\.\d+\.\d+) does not support this model; version (\d+\.\d+\.\d+) or newer is required\./;
 
+// Claude Code restores a resumed session's model ledger from this version on; earlier ones
+// restart it at zero per process (the claude_idle_resume recording, 2.1.111).
+const CLAUDE_RESUME_RESTORES_MODEL_LEDGER_VERSION = "2.1.280";
+
+function claudeResumeRestoresModelLedger(version: string | undefined): boolean {
+  return (
+    version !== undefined &&
+    compareSemverVersions(version, CLAUDE_RESUME_RESTORES_MODEL_LEDGER_VERSION) >= 0
+  );
+}
+
 /** The version a gateway sent in place of the session's own, when the session itself meets the requirement. */
 function claudeRewrittenVersion(
   message: SDKResultMessage,
@@ -5776,8 +5786,6 @@ interface ClaudeLiveQueryContext {
   handedOffSubagents: ReadonlySet<ActiveClaudeSubagent>;
   // The SDK's model ledger at the last result; only a fresh session starts at zero.
   modelLedger: ClaudeModelLedger | undefined;
-  // Set until the first result checks the earlier process's ledger against this one's.
-  modelLedgerCarriedOver: boolean;
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
@@ -14369,7 +14377,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
             ),
             modelLedger: shouldResume ? modelLedgers.get(nativeThreadId) : new Map(),
-            modelLedgerCarriedOver: shouldResume && modelLedgers.has(nativeThreadId),
             taskOutputRoot: claudeTaskOutputRoot(
               adapterOptions.environment,
               path,
@@ -14413,6 +14420,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.receivedInit = true;
                     context.capabilities = new Set(message.capabilities ?? []);
                     context.claudeCodeVersion = message.claude_code_version;
+                    if (
+                      shouldResume &&
+                      !claudeResumeRestoresModelLedger(message.claude_code_version)
+                    ) {
+                      context.modelLedger = new Map();
+                    }
                   }
                   if (message.type === "system" && message.subtype === "init") {
                     for (const server of message.mcp_servers ?? []) {
@@ -14447,15 +14460,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }
                   if (message.type === "result") {
                     const ledger = claudeModelLedger(message.modelUsage);
-                    let growth = claudeLedgerDelta(context.modelLedger, ledger);
-                    if (context.modelLedgerCarriedOver) {
-                      context.modelLedgerCarriedOver = false;
-                      // Older Claude Code restarts a resumed process's ledger at zero; then growth
-                      // since the earlier process cannot cover this result's own usage.
-                      if (!claudeLedgerCoversResult(growth, message.usage)) {
-                        growth = claudeLedgerDelta(new Map(), ledger);
-                      }
-                    }
+                    const growth = claudeLedgerDelta(context.modelLedger, ledger);
                     if (growth !== undefined) resultLedgerUsage.set(message, growth);
                     // A ledger that went backwards cannot anchor the next turn's growth.
                     context.modelLedger =

@@ -112,21 +112,6 @@ export function claudeLedgerDelta(
   return { inputTokens, outputTokens };
 }
 
-/** Whether ledger growth holds at least the result's own main-agent usage, as any real growth does. */
-export function claudeLedgerCoversResult(
-  growth: ClaudeLedgerUsage | undefined,
-  resultUsage: unknown,
-): boolean {
-  if (growth === undefined) return false;
-  const usage = (resultUsage ?? {}) as Record<string, unknown>;
-  const inputTokens =
-    (finiteNonNegativeInteger(usage.input_tokens) ?? 0) +
-    (finiteNonNegativeInteger(usage.cache_read_input_tokens) ?? 0) +
-    (finiteNonNegativeInteger(usage.cache_creation_input_tokens) ?? 0);
-  const outputTokens = finiteNonNegativeInteger(usage.output_tokens) ?? 0;
-  return growth.inputTokens >= inputTokens && growth.outputTokens >= outputTokens;
-}
-
 export function addClaudeLedgerUsage(
   left: ClaudeLedgerUsage | undefined,
   right: ClaudeLedgerUsage | undefined,

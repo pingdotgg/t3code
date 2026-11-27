@@ -11337,16 +11337,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           scenario === "fresh" ? undefined : WAKE_NATIVE_SESSION,
         );
         const messages = harness.processQueues[reopen ? 1 : 0]!;
+        yield* Queue.offer(
+          messages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "init-current-ledger",
+            session_id: WAKE_NATIVE_SESSION,
+            claude_code_version: scenario === "per-process" ? "2.1.111" : "2.1.332",
+          }),
+        );
         // Claude Code restores a resumed session's model totals, so its first result includes them.
-        const historical = scenario === "fresh" || scenario === "per-process" ? 0 : 1700;
+        // 2.1.111 restarts them, and here its own main usage outgrows the earlier process's ledger.
+        const [historicalInput, historicalOutput] =
+          scenario === "fresh" || scenario === "per-process" ? [0, 0] : [1700, 50];
+        const [ownInput, ownOutput] = scenario === "per-process" ? [2000, 60] : [110, 2];
         yield* Queue.offer(
           messages,
           makeResultFrame({
             uuid: "result-current-ledger",
             result: "OK",
-            usage: { ...zeroUsage, input_tokens: 110, output_tokens: 2 },
+            usage: { ...zeroUsage, input_tokens: ownInput, output_tokens: ownOutput },
             modelUsage: {
-              [main]: modelUsage(historical + 110, (historical ? 50 : 0) + 2),
+              [main]: modelUsage(historicalInput + ownInput, historicalOutput + ownOutput),
               [helper]: modelUsage(90_000, 3000),
             },
           }),
@@ -11357,8 +11370,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           return harness.events.findLast((event) => event.type === "provider_turn.updated");
         });
         assert.include(completed?.providerTurn.turnTokenUsage ?? {}, {
-          inputTokens: 110,
-          outputTokens: 2,
+          inputTokens: ownInput,
+          outputTokens: ownOutput,
         });
         assert.deepEqual(
           completed?.providerTurn.turnTokenUsage?.otherUsage,
