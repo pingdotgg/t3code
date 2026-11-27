@@ -572,11 +572,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
-  it.effect("packages every platform with Node inspector flags off and run-as-Node left on", () =>
+  it.effect("packages every platform with Node inspector flags off unless overridden", () =>
     Effect.gen(function* () {
-      const fuses = (platform: "mac" | "linux" | "win", target: string, signed: boolean) =>
+      const fuses = (
+        platform: "mac" | "linux" | "win",
+        target: string,
+        signed: boolean,
+        env: Record<string, string> = {},
+      ) =>
         createBuildConfig(platform, target, "0.0.33", signed, false, undefined, undefined).pipe(
           Effect.map((config) => config.electronFuses),
+          Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
         );
 
       // The desktop app starts its server and the `t3` shim by running its own binary as Node.
@@ -596,6 +602,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepEqual(yield* fuses("mac", "dmg", true), {
         enableNodeCliInspectArguments: false,
         resetAdHocDarwinSignature: false,
+      });
+
+      assert.deepEqual(yield* fuses("mac", "dmg", false, { T3CODE_DESKTOP_ALLOW_INSPECT: "1" }), {
+        enableNodeCliInspectArguments: true,
+        resetAdHocDarwinSignature: true,
       });
     }),
   );

@@ -2819,6 +2819,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
 ) {
+  const allowNodeCliInspect = yield* Config.Boolean("T3CODE_DESKTOP_ALLOW_INSPECT").pipe(
+    Config.withDefault(false),
+  );
   const buildConfig: Record<string, unknown> = {
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
     appId: DESKTOP_APP_ID,
@@ -2828,7 +2831,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // runAsNode stays on: the app starts its server, helpers and the `t3` shim by running this
     // binary as Node, and that mode still accepts inspector flags.
     electronFuses: {
-      enableNodeCliInspectArguments: false,
+      enableNodeCliInspectArguments: allowNodeCliInspect,
       // Nothing signs an unsigned macOS build after the flip, which voids its ad hoc signature.
       resetAdHocDarwinSignature: platform === "mac" && !signed,
     },
