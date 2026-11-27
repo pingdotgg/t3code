@@ -225,9 +225,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       );
       return;
     }
-    if (currentRouteThreadKeyRef.current !== routeThreadKey || router.latestLocation !== location) {
-      return;
-    }
+    if (router.latestLocation !== location) return;
     await navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(targetThreadRef),
