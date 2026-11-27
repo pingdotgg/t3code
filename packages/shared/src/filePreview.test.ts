@@ -103,6 +103,11 @@ describe("workspace file previews", () => {
     expect(filePreviewKind({ name: "download", mimeType })).toBe(kind);
     expect(filePreviewKind({ name, mimeType: "application/zip" })).toBe("archive");
   });
+  it.each(["docx", "xlsx", "pptx"])("recognizes an encrypted %s with an OLE MIME type", (kind) => {
+    expect(filePreviewKind({ name: `file.${kind}`, mimeType: "application/x-ole-storage" })).toBe(
+      kind,
+    );
+  });
   // regression: #10311 previews classify by the literal filename, not URL-like suffixes
   it.each([
     "image.png.ts",

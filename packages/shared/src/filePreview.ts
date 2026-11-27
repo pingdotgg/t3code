@@ -160,6 +160,8 @@ export function officePreviewKind(file: {
       (!mime ||
         GENERIC_MIME_TYPES.has(mime) ||
         mime === "text/plain" ||
+        ((kind === "docx" || kind === "xlsx" || kind === "pptx") &&
+          (mime === "application/x-ole-storage" || mime === "application/cdfv2")) ||
         (kind === "ipynb" && mime === "application/json")) &&
       file.name.toLowerCase().endsWith(`.${kind}`)
     )

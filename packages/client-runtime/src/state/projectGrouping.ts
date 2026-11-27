@@ -9,7 +9,7 @@ import {
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import type { EnvironmentProject } from "./models.ts";
-import { normalizeProjectPathForComparison } from "./projects.ts";
+import { normalizeProjectPathForComparison, preferredPathSeparator } from "./projects.ts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
@@ -61,8 +61,11 @@ function deriveRepositoryRelativeProjectPath(
     return "";
   }
 
-  const separator = normalizedRootPath.includes("\\") ? "\\" : "/";
-  const rootPrefix = `${normalizedRootPath}${separator}`;
+  const separator = preferredPathSeparator(normalizedRootPath);
+  // A volume root such as `/` or `d:\` already ends with its separator.
+  const rootPrefix = normalizedRootPath.endsWith(separator)
+    ? normalizedRootPath
+    : `${normalizedRootPath}${separator}`;
   if (!normalizedProjectPath.startsWith(rootPrefix)) {
     return null;
   }

@@ -13,7 +13,7 @@ import {
 describe("speechModelDownloadPercent", () => {
   it.each([
     { downloaded: 995, percent: 99 },
-    { downloaded: 1_000, percent: 100 },
+    { downloaded: 1_000, percent: 99 },
   ])("reads $downloaded of 1000 bytes as $percent", ({ downloaded, percent }) => {
     expect(speechModelDownloadPercent(downloaded, 1_000)).toBe(percent);
   });

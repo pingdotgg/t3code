@@ -285,14 +285,16 @@ it("keeps the ZIP filter and archive open when native Back closes a selected ent
   ).toBe("first");
 });
 
-it("explains why an encrypted ZIP cannot be browsed", async () => {
+it("asks for a password before browsing encrypted entries", async () => {
   const screen = setup();
   const bytes = files.get("file:///first.zip")!;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const directory = view.getUint32(bytes.length - 6, true);
   view.setUint16(directory + 8, view.getUint16(directory + 8, true) | 1, true);
   await screen.render();
-  await screen.settle(() => expect(screen.container.textContent).toContain("Encrypted zip"));
+  await screen.settle(() =>
+    expect(screen.container.textContent).toContain("This file requires a password."),
+  );
   expect(screen.container.querySelector('[aria-label="first.txt"]')).toBeNull();
 });
 
