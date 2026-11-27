@@ -2741,40 +2741,47 @@ describe("UsageService", () => {
     }),
   );
 
-  it.effect("does not count T3-managed Antigravity profiles when Antigravity is denied", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const prefix = "usage-service-antigravity-denied-test";
-      const conversations = NodePath.join(
-        home,
-        prefix,
-        "userdata",
-        "providers",
-        "antigravity",
-        // sha256("antigravity"), the default instance's profile key.
-        "ac0a3dfd6dddb20962cecff6ee5fe65e19d3923be20e52c5ab52ff877f7e4c32",
-        "antigravity-acp",
-        "conversations",
-      );
-      yield* Effect.promise(() => writeAntigravityStep(conversations));
-      const denied = {
-        ...settings,
-        providerInstances: {
-          ...settings.providerInstances,
-          [ProviderInstanceId.make("antigravity")]: {
-            driver: ProviderDriverKind.make("antigravity"),
-            usageAccess: "denied" as const,
-          },
-        },
-      };
-      yield* Effect.gen(function* () {
-        const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
-        assert.isFalse(summary.buckets.some((bucket) => bucket.provider === "antigravity"));
-        assert.isFalse(
-          summary.sources.some((source) => source.fingerprint.provider === "antigravity"),
+  it.effect(
+    "does not count a denied Antigravity instance's T3-managed profile beside an allowed one",
+    () =>
+      Effect.gen(function* () {
+        const { settings, home } = yield* setup;
+        const prefix = "usage-service-antigravity-denied-test";
+        const conversations = NodePath.join(
+          home,
+          prefix,
+          "userdata",
+          "providers",
+          "antigravity",
+          // sha256("antigravity"), the default instance's profile key.
+          "ac0a3dfd6dddb20962cecff6ee5fe65e19d3923be20e52c5ab52ff877f7e4c32",
+          "antigravity-acp",
+          "conversations",
         );
-      }).pipe(Effect.provide(layerService({ prefix, home, settings: denied })));
-    }),
+        yield* Effect.promise(() => writeAntigravityStep(conversations));
+        const denied = {
+          ...settings,
+          providerInstances: {
+            ...settings.providerInstances,
+            [ProviderInstanceId.make("antigravity")]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              usageAccess: "denied" as const,
+            },
+            // Allowed, so the scan runs and has to skip the denied instance's profile.
+            [ProviderInstanceId.make("antigravity-work")]: {
+              driver: ProviderDriverKind.make("antigravity"),
+            },
+          },
+        };
+        yield* Effect.gen(function* () {
+          const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
+          assert.isFalse(summary.buckets.some((bucket) => bucket.provider === "antigravity"));
+          assert.notInclude(
+            summary.sources.map((source) => source.fingerprint.resolvedHomePath),
+            conversations,
+          );
+        }).pipe(Effect.provide(layerService({ prefix, home, settings: denied })));
+      }),
   );
 
   it.effect("reads enabled accounts once across shared and aliased homes", () =>
