@@ -14761,6 +14761,73 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("answers a wait on a background task that already finished unlike an unknown id", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+      if (awaitBackgroundTasks === undefined) {
+        throw new Error("Claude adapter runtime must expose awaitBackgroundTasks.");
+      }
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-finished-wait"),
+          text: "Run echo done in the background.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: WAKE_TASK_ID, task_type: "local_bash", description: "echo done" }],
+          uuid: "00000000-0000-4000-8000-000000000401",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      while (
+        ((yield* Queue.take(harness.providerThreadReceipts)).providerThread.pendingBackgroundTasks
+          ?.length ?? 0) === 0
+      ) {}
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({ ...wakeNotification, uuid: "00000000-0000-4000-8000-000000000402" }),
+      );
+      while (
+        ((yield* Queue.take(harness.providerThreadReceipts)).providerThread.pendingBackgroundTasks
+          ?.length ?? 0) !== 0
+      ) {}
+
+      const finished = yield* awaitBackgroundTasks({
+        providerThread: harness.providerThread,
+        taskIds: [WAKE_TASK_ID],
+        awaited: true,
+      });
+      const unknown = yield* awaitBackgroundTasks({
+        providerThread: harness.providerThread,
+        taskIds: ["invented-task-id"],
+        awaited: true,
+      });
+      assert.notDeepEqual(finished, unknown);
+
+      yield* Queue.offer(harness.sdkMessages, turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps a running Claude monitor typed after many newer monitors end", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
