@@ -281,6 +281,15 @@ describe("document preview contents", () => {
     expect(escapedBreak.pages[0]!.html).toBe(
       "<p data-rtf-whitespace><strong>ABC</strong><br><strong>D</strong></p>",
     );
+    const underlines = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi{\ul single} {\uldb double\uldb0  plain} {\ulw words} {\uld dotted} {\ulwave wave} {\ulc1 color}}`,
+      ),
+    );
+    if (underlines.type !== "document") throw new Error("Expected document");
+    expect(underlines.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace><u>single</u> <u>double</u> plain <u>words</u> <u>dotted</u> <u>wave</u> color</p>",
+    );
   });
 
   it("breaks lines at the paragraph and line breaks TextEdit writes", () => {
