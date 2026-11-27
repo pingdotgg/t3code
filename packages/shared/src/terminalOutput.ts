@@ -24,6 +24,8 @@ interface TerminalScreen {
   readonly settled: readonly [head: string, tail: string];
   /** Never empty. */
   readonly lines: ReadonlyArray<Line>;
+  /** Columns dropped from the start of each live line, modulo the tab width. */
+  readonly tabOffsets: ReadonlyArray<number>;
   readonly row: number;
   readonly col: number;
   readonly pen: string;
@@ -34,7 +36,7 @@ export const EMPTY_TERMINAL_OUTPUT: TerminalOutputState = {
   text: "",
   truncated: false,
   pending: "",
-  screen: { settled: ["", ""], lines: [[]], row: 0, col: 0, pen: "", saved: null },
+  screen: { settled: ["", ""], lines: [[]], tabOffsets: [], row: 0, col: 0, pen: "", saved: null },
 };
 
 /** Default command tail, in UTF-16 code units. */
@@ -42,6 +44,10 @@ export const TERMINAL_OUTPUT_TAIL_CHARS = 64 * 1024;
 
 const LIVE_LINES = 64;
 const TAB_STOP_COLUMNS = 8;
+
+function nextTabColumn(col: number): number {
+  return col + TAB_STOP_COLUMNS - (col % TAB_STOP_COLUMNS);
+}
 
 const MAX_PENDING_ESCAPE = 64;
 
@@ -177,16 +183,8 @@ function trimLineStart(runs: Array<Run>, count: number): number {
 
 function writeLine(line: Line, col: number, text: string, pen: string): Line {
   const length = lineWidth(line);
-  if (col === length) {
-    const runs = line.slice();
-    pushRun(runs, { pen, text });
-    lineWidths.set(runs, length + textWidth(text));
-    lineLengths.set(runs, lineLength(line) + text.length);
-    return runs;
-  }
   const runs: Array<Run> = [];
-  for (const run of sliceLine(line, 0, Math.min(col, length))) pushRun(runs, run);
-  if (col > length) pushRun(runs, { pen: "", text: " ".repeat(col - length) });
+  for (const run of sliceLine(line, 0, col)) pushRun(runs, run);
   pushRun(runs, { pen, text });
   for (const run of sliceLine(line, col + textWidth(text), length)) pushRun(runs, run);
   return runs;
@@ -425,6 +423,7 @@ class Terminal {
   settledHead: string;
   settledTail: string;
   lines: Array<Line>;
+  readonly tabOffsets: Array<number>;
   row: number;
   col: number;
   pen: string;
@@ -439,6 +438,7 @@ class Terminal {
     this.maxChars = maxChars;
     [this.settledHead, this.settledTail] = screen.settled;
     this.lines = screen.lines.slice();
+    this.tabOffsets = screen.tabOffsets.slice();
     this.row = screen.row;
     this.col = screen.col;
     this.pen = screen.pen;
@@ -449,11 +449,16 @@ class Terminal {
     let line = this.lines[this.row]!;
     const length = lineWidth(line);
     const width = textWidth(text);
-    if (this.col === length && this.owned.has(line)) {
+    if (this.col >= length) {
+      const gap = this.col - length;
       const units = lineLength(line);
-      pushRun(line as Array<Run>, { pen: this.pen, text });
-      lineWidths.set(line, length + width);
-      lineLengths.set(line, units + text.length);
+      const runs = this.owned.has(line) ? (line as Array<Run>) : line.slice();
+      if (gap > 0) pushRun(runs, { pen: "", text: " ".repeat(gap) });
+      pushRun(runs, { pen: this.pen, text });
+      lineWidths.set(runs, this.col + width);
+      lineLengths.set(runs, units + gap + text.length);
+      this.owned.add(runs);
+      line = runs;
     } else {
       line = writeLine(line, this.col, text, this.pen);
       this.owned.add(line);
@@ -476,14 +481,19 @@ class Terminal {
     // The output budget is UTF-16 units; cursor positions are terminal columns.
     const current = lineLength(line);
     if (current > this.maxChars) {
-      const removed = trimLineStart(line as Array<Run>, current - this.maxChars);
-      this.dropped = true;
-      this.col = Math.max(0, this.col - removed);
-      if (this.saved !== null && this.saved.row === this.row) {
-        this.saved = { ...this.saved, col: Math.max(0, this.saved.col - removed) };
-      }
+      this.trimLine(this.row, line as Array<Run>, current - this.maxChars);
     }
     this.lines[this.row] = line;
+  }
+
+  trimLine(row: number, line: Array<Run>, count: number): void {
+    const removed = trimLineStart(line, count);
+    this.dropped = true;
+    this.tabOffsets[row] = ((this.tabOffsets[row] ?? 0) + removed) % TAB_STOP_COLUMNS;
+    if (row === this.row) this.col = Math.max(0, this.col - removed);
+    if (this.saved?.row === row) {
+      this.saved = { ...this.saved, col: Math.max(0, this.saved.col - removed) };
+    }
   }
 
   newline(): void {
@@ -495,6 +505,7 @@ class Terminal {
 
   scrollOut(): number {
     const line = this.lines.shift()!;
+    this.tabOffsets.shift();
     this.settle(line);
     this.row -= 1;
     if (this.saved !== null) this.saved = { ...this.saved, row: Math.max(0, this.saved.row - 1) };
@@ -562,6 +573,7 @@ class Terminal {
         if (mode === 0) {
           this.lines[this.row] = eraseLine(this.lines[this.row]!, this.col, 0);
           this.lines.length = this.row + 1;
+          this.tabOffsets.length = Math.min(this.tabOffsets.length, this.lines.length);
         } else if (mode === 1) {
           for (let row = 0; row < this.row; row += 1) this.lines[row] = [];
           this.lines[this.row] = eraseLine(this.lines[this.row]!, this.col, 1);
@@ -571,6 +583,7 @@ class Terminal {
           this.settledTail = "";
         } else if (mode === 2) {
           this.lines = [[]];
+          this.tabOffsets.length = 0;
           this.row = 0;
           this.col = 0;
         }
@@ -588,6 +601,12 @@ class Terminal {
 
   escape(sequence: string): void {
     if (sequence[1] === "[") {
+      // Private resume marker for the tab phase of a horizontally trimmed row.
+      if (sequence[2] === ">" && /^\d t$/u.test(sequence.slice(3))) {
+        const tabOffset = Number(sequence[3]);
+        if (tabOffset < TAB_STOP_COLUMNS) this.tabOffsets[this.row] = tabOffset;
+        return;
+      }
       this.csi(sequence.slice(2, -1), sequence.at(-1)!);
     } else if (sequence === `${ESC}7`) {
       this.saved = { row: this.row, col: this.col };
@@ -613,7 +632,8 @@ class Terminal {
       printable = index + 1;
       if (code === 0x0a) this.newline();
       else if (code === 0x09) {
-        this.moveTo(this.row, this.col + TAB_STOP_COLUMNS - (this.col % TAB_STOP_COLUMNS));
+        const offset = this.tabOffsets[this.row] ?? 0;
+        this.moveTo(this.row, nextTabColumn(this.col + offset) - offset);
       } else if (code === 0x0d) this.col = 0;
       else if (code === 0x08) this.col = Math.max(0, this.col - 1);
       else if (code === 0x1b) {
@@ -730,14 +750,8 @@ export function appendTerminalOutput(
       if (keep < length) {
         truncated = true;
         const runs = line.slice();
-        const removed = trimLineStart(runs, length - keep);
+        terminal.trimLine(row, runs, length - keep);
         terminal.lines[row] = runs;
-        if (terminal.saved !== null && terminal.saved.row === row) {
-          terminal.saved = {
-            ...terminal.saved,
-            col: Math.max(0, terminal.saved.col - removed),
-          };
-        }
       }
       budget -= lineLength(terminal.lines[row]!);
     }
@@ -753,6 +767,7 @@ export function appendTerminalOutput(
     screen: {
       settled: [settled.parts[0], settled.parts[1] ?? ""],
       lines: terminal.lines,
+      tabOffsets: terminal.tabOffsets,
       row: terminal.row,
       col: terminal.col,
       pen: terminal.pen,
@@ -771,7 +786,12 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
     // Scroll the history out with blank rows, then clear them before replaying the live window.
     replay += "\n".repeat(LIVE_LINES - 1) + `${ESC}[2J`;
   }
-  replay += screen.lines.map(serializeLine).join("\n");
+  replay += screen.lines
+    .map((line, row) => {
+      const offset = screen.tabOffsets[row] ?? 0;
+      return (offset === 0 ? "" : `${ESC}[>${offset} t`) + serializeLine(line);
+    })
+    .join("\n");
   const up = (row: number) => lastRow - row;
   const goTo = (row: number, col: number) =>
     (up(row) > 0 ? `${ESC}[${up(row)}A` : "") + `${ESC}[${col + 1}G`;
@@ -995,11 +1015,20 @@ export function terminalOutputPlainText(text: string): string {
 }
 
 // tqdm redraws a progress bar after a carriage return; JupyterLab shows only what the last
-// redraws leave on the line. Walking the frames from the last keeps this linear.
+// redraws leave on the line. For frames without tabs, walking backward keeps the fold linear.
 function lastFrame(line: string): string {
+  if (!line.includes("\r")) return line;
+  if (line.includes("\t")) {
+    const terminal = new Terminal(EMPTY_TERMINAL_OUTPUT.screen, line.length * TAB_STOP_COLUMNS);
+    for (const part of line.split(/([\r\t])/u)) {
+      if (part === "\r") terminal.col = 0;
+      else if (part === "\t") terminal.col = nextTabColumn(terminal.col);
+      else if (part !== "") terminal.write(part);
+    }
+    return serializeLine(terminal.lines[0]!);
+  }
   const frames = line.split("\r");
   let row = frames.pop()!;
-  if (frames.length === 0) return row;
   let width = textWidth(row);
   for (const frame of frames.reverse()) {
     const frameWidth = textWidth(frame);
