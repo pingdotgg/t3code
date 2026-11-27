@@ -390,7 +390,7 @@ interface TerminalManagerState {
 
 function truncateTerminalWireLabel(value: string): string {
   if (value.length <= MAX_TERMINAL_LABEL_LENGTH) return value;
-  return value.slice(0, MAX_TERMINAL_LABEL_LENGTH);
+  return value.slice(0, MAX_TERMINAL_LABEL_LENGTH).replace(/\p{Surrogate}$/u, "");
 }
 
 function normalizeChildCommandName(raw: string, platform: NodeJS.Platform): string | null {

@@ -614,7 +614,7 @@ function ReviewThreadEvent({
       ) : null}
       {thread.hasMoreReplies ? (
         <div className="px-2">
-          <PullRequestMoreReplies {...thread} />
+          <PullRequestMoreReplies {...thread} threadRef={reactions.threadRef} />
         </div>
       ) : null}
     </div>

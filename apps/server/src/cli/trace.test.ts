@@ -140,3 +140,26 @@ it("formats large summaries without overflowing the call stack", () => {
     "long-span-name      1   1.0  1ms  1ms  1ms            0       0",
   );
 });
+
+it("uses singular nouns only for counts of one", () => {
+  const summarize = (lines: ReadonlyArray<string>) => {
+    const summarizer = makeTraceSpanSummary();
+    lines.forEach(summarizer.addLine);
+    return formatTraceSummary(summarizer.finish(), 0).split("\n");
+  };
+  const one = summarize([span("a", 1, MINUTE_MS), "{not json"]);
+  const two = summarize([span("a", 1, MINUTE_MS), span("b", 1, MINUTE_MS), "x", "y"]);
+
+  assert.deepStrictEqual(
+    [one[0]?.split(" ended")[0], one[1], one.at(-1)],
+    ["1 span", "Skipped 1 line that is not a span.", "1 more span name. Use --limit to show more."],
+  );
+  assert.deepStrictEqual(
+    [two[0]?.split(" ended")[0], two[1], two.at(-1)],
+    [
+      "2 spans",
+      "Skipped 2 lines that are not spans.",
+      "2 more span names. Use --limit to show more.",
+    ],
+  );
+});

@@ -64,6 +64,14 @@ const agentVersion = process.env.T3_ACP_AGENT_VERSION ?? "0.0.0";
 const geminiApiKey = process.env.GEMINI_API_KEY;
 const idleError = process.env.T3_ACP_IDLE_ERROR;
 const emitTrackedToolCallKindThenHang = process.env.T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG;
+// A JSON array of `update` objects written as they are, valid or not, for the tool call
+// "edit-tracked"; an edit permission request naming only that id follows them.
+const editUpdatesThenRequest =
+  process.env.T3_ACP_EMIT_EDIT_UPDATES_THEN_REQUEST === undefined
+    ? undefined
+    : Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.Unknown)))(
+        process.env.T3_ACP_EMIT_EDIT_UPDATES_THEN_REQUEST,
+      );
 const clientFsProbePath = process.env.T3_ACP_CLIENT_FS_PROBE_PATH;
 const clientFsProbeLogPath = process.env.T3_ACP_CLIENT_FS_PROBE_LOG_PATH;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -1228,6 +1236,13 @@ const program = Effect.gen(function* () {
             title: "skill discovery warning: candidate was skipped because its metadata is invalid",
           },
         });
+        // One notice per remaining severity, including one the protocol doesn't define.
+        for (const severity of ["warning", "error", "_mock.custom"]) {
+          writeJsonRpcNotification("session/update", {
+            sessionId: requestedSessionId,
+            update: { sessionUpdate: "notice", severity, title: `${severity} notice` },
+          });
+        }
         chunk("after the notice");
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
@@ -1636,6 +1651,40 @@ const program = Effect.gen(function* () {
           },
         });
         if (!failPrompt && promptCount !== failPromptOrdinal) return yield* Effect.never;
+      }
+
+      if (editUpdatesThenRequest !== undefined) {
+        for (const update of editUpdatesThenRequest) {
+          writeJsonRpcNotification("session/update", { sessionId: requestedSessionId, update });
+        }
+        const permission = yield* agent.client.requestPermission({
+          sessionId: requestedSessionId,
+          title: "Edit file",
+          subject: {
+            type: "tool_call",
+            toolCall: { toolCallId: "edit-tracked", title: "Edit file", kind: "edit" },
+          },
+          options: [
+            { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
+            { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
+          ],
+        });
+        // The answer is reported as a tool call so a test can read it from the turn's items.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: `edit-answered:${
+              permission.outcome.outcome === "selected"
+                ? permission.outcome.optionId
+                : permission.outcome.outcome
+            }`,
+            title: "Edit answered",
+            kind: "other",
+            status: "completed",
+          },
+        });
+        return yield* Effect.never;
       }
 
       if (failPrompt || promptCount === failPromptOrdinal) {
