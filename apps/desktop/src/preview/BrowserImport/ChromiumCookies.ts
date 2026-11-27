@@ -139,6 +139,53 @@ const decryptGcm = (
   }
 };
 
+const decryptChromiumValueWithOrigin = (
+  encrypted: Uint8Array,
+  keys: ChromiumKeyMaterial,
+  domain: string,
+  schemaVersion: number,
+  platform: NodeJS.Platform,
+): { readonly value: string | null; readonly matchedKeyringKey: boolean } => {
+  const buffer = Buffer.from(encrypted);
+  if (buffer.length === 0) return { value: "", matchedKeyringKey: false };
+  const prefix = buffer.subarray(0, 3).toString("latin1");
+  const payload = buffer.subarray(3);
+
+  // Windows v10 uses AES-256-GCM; app-bound v20 records have no key here.
+  if (platform === "win32") {
+    return {
+      value:
+        prefix === "v10" && keys.gcmV10
+          ? decryptGcm(payload, keys.gcmV10, domain, schemaVersion)
+          : null,
+      matchedKeyringKey: false,
+    };
+  }
+
+  // Retry the empty-passphrase key used by some Linux clients (crbug.com/1195256).
+  if (prefix === "v10") {
+    if (!keys.cbcV10) return { value: null, matchedKeyringKey: false };
+    const primary = decryptCbc(payload, keys.cbcV10, domain, schemaVersion);
+    if (primary !== null) return { value: primary, matchedKeyringKey: platform === "darwin" };
+    const empty = keys.cbcEmpty ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion) : null;
+    return { value: empty, matchedKeyringKey: false };
+  }
+  if (prefix === "v11") {
+    if (!keys.cbcV11) return { value: null, matchedKeyringKey: false };
+    const primary = decryptCbc(payload, keys.cbcV11, domain, schemaVersion);
+    if (primary !== null) return { value: primary, matchedKeyringKey: platform === "linux" };
+    const empty = keys.cbcEmpty ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion) : null;
+    return { value: empty, matchedKeyringKey: false };
+  }
+  if (platform === "darwin" || platform === "linux") {
+    return {
+      value: stripDomainBinding(buffer, domain, schemaVersion)?.toString("utf8") ?? null,
+      matchedKeyringKey: false,
+    };
+  }
+  return { value: null, matchedKeyringKey: false };
+};
+
 export function decryptChromiumValue(
   encrypted: Uint8Array,
   keys: ChromiumKeyMaterial,
@@ -146,37 +193,7 @@ export function decryptChromiumValue(
   schemaVersion = 23,
   platform: NodeJS.Platform = "linux",
 ): string | null {
-  const buffer = Buffer.from(encrypted);
-  if (buffer.length === 0) return "";
-  const prefix = buffer.subarray(0, 3).toString("latin1");
-  const payload = buffer.subarray(3);
-
-  // Windows v10 uses AES-256-GCM; app-bound v20 records have no key here.
-  if (platform === "win32") {
-    return prefix === "v10" && keys.gcmV10
-      ? decryptGcm(payload, keys.gcmV10, domain, schemaVersion)
-      : null;
-  }
-
-  // Retry the empty-passphrase key used by some Linux clients (crbug.com/1195256).
-  if (prefix === "v10") {
-    if (!keys.cbcV10) return null;
-    return (
-      decryptCbc(payload, keys.cbcV10, domain, schemaVersion) ??
-      (keys.cbcEmpty ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion) : null)
-    );
-  }
-  if (prefix === "v11") {
-    if (!keys.cbcV11) return null;
-    return (
-      decryptCbc(payload, keys.cbcV11, domain, schemaVersion) ??
-      (keys.cbcEmpty ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion) : null)
-    );
-  }
-  if (platform === "darwin" || platform === "linux") {
-    return stripDomainBinding(buffer, domain, schemaVersion)?.toString("utf8") ?? null;
-  }
-  return null;
+  return decryptChromiumValueWithOrigin(encrypted, keys, domain, schemaVersion, platform).value;
 }
 
 const readRawChromiumCookieDatabase = Effect.fnUntraced(function* (snapshotPath: string) {
@@ -237,23 +254,29 @@ const decryptChromiumCookieRows = (
         : undefined;
     if (prefix === "v11") hasV11 = true;
     const usesKeyring = keyringPrefix !== undefined && prefix === keyringPrefix;
-    const value =
+    const decrypted =
       row.encrypted_value.length === 0
-        ? row.value
-        : decryptChromiumValue(row.encrypted_value, keys, row.host_key, schemaVersion, platform);
-    if (value === null) {
+        ? { value: row.value, matchedKeyringKey: false }
+        : decryptChromiumValueWithOrigin(
+            row.encrypted_value,
+            keys,
+            row.host_key,
+            schemaVersion,
+            platform,
+          );
+    if (decrypted.value === null) {
       undecryptable += 1;
       if (usesKeyring) keyringFailed += 1;
       undecryptableHosts.add(bareHost(row.host_key));
       continue;
     }
-    if (usesKeyring) keyringDecrypted += 1;
+    if (decrypted.matchedKeyringKey) keyringDecrypted += 1;
     const secure = row.is_secure === 1;
     const scope = cookieScope(row.host_key, row.path, secure);
     cookies.push({
       url: scope.url,
       name: row.name,
-      value,
+      value: decrypted.value,
       domain: scope.domain,
       path: row.path,
       secure,

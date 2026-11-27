@@ -449,9 +449,14 @@ describe("readChromiumCookieDatabase", () => {
         });
         const filename = `${directory}/Cookies`;
         const chromiumKey = NodeCrypto.pbkdf2Sync("chromium-secret", "saltysalt", 1, 16, "sha1");
+        const emptyKey = NodeCrypto.pbkdf2Sync("", "saltysalt", 1, 16, "sha1");
         const bound = Buffer.concat([
           NodeCrypto.createHash("sha256").update("ardia.example").digest(),
           Buffer.from("session-from-chromium-key"),
+        ]);
+        const boundEmpty = Buffer.concat([
+          NodeCrypto.createHash("sha256").update("empty.example").digest(),
+          Buffer.from("empty-v11-value"),
         ]);
 
         yield* Effect.gen(function* () {
@@ -466,6 +471,8 @@ describe("readChromiumCookieDatabase", () => {
               top_frame_site_key text not null default ''
             )
           `;
+          yield* sql`insert into cookies values
+            ('empty.example', 'empty-v11', '', ${encryptChromium("v11", boundEmpty, emptyKey)}, '/', 0, 1, 1, 1, '')`;
           yield* sql`insert into cookies values
             ('ardia.example', 'sid', '', ${encryptChromium("v11", bound, chromiumKey)}, '/', 0, 1, 1, 1, '')`;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
@@ -512,6 +519,7 @@ describe("readChromiumCookieDatabase", () => {
         expect(seenApps).toEqual(["ardia", "chromium"]);
         expect(result.undecryptable).toBe(0);
         expect(result.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
+          { name: "empty-v11", value: "empty-v11-value" },
           { name: "sid", value: "session-from-chromium-key" },
         ]);
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

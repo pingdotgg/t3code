@@ -1064,13 +1064,11 @@ const detectBrowserEngineAtRoot = Effect.fnUntraced(function* (
     const fallbackEntries = yield* fileSystem
       .readDirectory(fallbackDirectory)
       .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
-    if (fallbackEntries.length <= MAX_NESTED_SCAN_ENTRIES) {
-      for (const entry of fallbackEntries) {
-        if (
-          yield* databaseFileExists(context.path.join(fallbackDirectory, entry, "cookies.sqlite"))
-        ) {
-          return { kind: "browser", engine: "firefox" };
-        }
+    for (const entry of fallbackEntries) {
+      if (
+        yield* databaseFileExists(context.path.join(fallbackDirectory, entry, "cookies.sqlite"))
+      ) {
+        return { kind: "browser", engine: "firefox" };
       }
     }
   }
