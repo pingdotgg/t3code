@@ -218,6 +218,8 @@ export function decodeCreatedIssueJson(
   return Result.map(decodeIssue(raw), (issue) => ({ number: issue.iid, url: issue.web_url }));
 }
 
+const ENTITY: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" };
+
 /**
  * The events GitLab records as notes of its own. A label note names its labels by id ("added ~7
  * label"), which is why labellings come from `/resource_label_events` instead and are dropped here.
@@ -243,9 +245,17 @@ function toSystemEvent(
   if (text.startsWith("mentioned in ")) {
     return { kind: "referenced", detail: trimmed(text.slice("mentioned in ".length)) };
   }
+  // GitLab 17.11+ uses HTML <code class="idiff"> diffs; older notes used **…** with {-…-}/{+…+}.
+  if (/^<(?:p|div)>changed title\b/.test(text)) {
+    const html = / to <code class="idiff">(.*?)<\/code><\/(?:p|div)>$/.exec(text)?.[1];
+    const detail = html
+      ?.replace(/<[^<>]*>/g, "")
+      .replace(/&(?:amp|lt|gt|quot|#39);/g, (m) => ENTITY[m.slice(1, -1)] ?? m);
+    return { kind: "renamed", detail: trimmed(detail) };
+  }
   if (text.startsWith("changed title")) {
-    // GitLab marks the new title with its own inline-diff braces.
-    return { kind: "renamed", detail: trimmed(/\{\+(.+)\+\}/.exec(text)?.[1]) };
+    const raw = /\*\* to \*\*(.*)\*\*$/.exec(text.replace(/\{-.*?-\}/g, ""))?.[1];
+    return { kind: "renamed", detail: trimmed(raw?.replace(/\{\+(.*?)\+\}/g, "$1")) };
   }
   return null;
 }
