@@ -142,7 +142,8 @@ class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExit
   }
 }
 
-const KEEP_AWAKE_EVENT_TYPES = new Set<OrchestrationV2DomainEvent["type"]>([
+// Every event that can change what hasActiveWork reads.
+const TRIGGER_EVENT_TYPES = new Set<OrchestrationV2DomainEvent["type"]>([
   "run.created",
   "run.updated",
   "subagent.updated",
@@ -151,10 +152,6 @@ const KEEP_AWAKE_EVENT_TYPES = new Set<OrchestrationV2DomainEvent["type"]>([
   "thread.deleted",
   "thread.provider-switched",
 ]);
-
-function isKeepAwakeTriggerEvent(eventType: OrchestrationV2DomainEvent["type"]): boolean {
-  return KEEP_AWAKE_EVENT_TYPES.has(eventType);
-}
 
 const decodePendingTasksPayload = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -191,6 +188,7 @@ export const hasActiveWork = Effect.fn("KeepAwake.hasActiveWork")(function* (
   `;
   if (activeRows[0]?.active === 1) return true;
 
+  // The pendingBackgroundTasks condition matches migration 098's partial index; keep them identical.
   const providerThreadRows = yield* sql<{ readonly payload_json: string }>`
     SELECT pt.payload_json
     FROM orchestration_v2_projection_provider_threads AS pt
@@ -247,7 +245,7 @@ export const layer = Layer.effectDiscard(
               .streamApplicationEvents({ afterSequence })
               .pipe(
                 Stream.filter(
-                  (stored) => "event" in stored && isKeepAwakeTriggerEvent(stored.event.type),
+                  (stored) => "event" in stored && TRIGGER_EVENT_TYPES.has(stored.event.type),
                 ),
               ),
           ),
@@ -256,9 +254,7 @@ export const layer = Layer.effectDiscard(
     ).pipe(
       Stream.mapEffect(() => checkActiveWork),
       // A failed subscription resubscribes, which re-reads the cursor and the snapshot.
-      Stream.tapCause((cause) =>
-        Effect.logWarning("keep-awake run event stream failed", { cause }),
-      ),
+      Stream.tapCause((cause) => Effect.logWarning("keep-awake event stream failed", { cause })),
       Stream.retry(backoff),
     );
     const enabled = Stream.unwrap(
