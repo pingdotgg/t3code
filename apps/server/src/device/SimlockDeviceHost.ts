@@ -1,8 +1,8 @@
 /**
  * Alpha: devices leased from a Simlock gateway the user runs. Opening a device
  * takes a lease through the gateway's agent-device front, so agents drive it
- * with the same session; closing it returns the device to the pool, wiped.
- * A lease left by a server that crashed ends one TTL after its last renewal.
+ * with the same session; closing it returns the device to the pool. A lease
+ * left by a crashed server ends one TTL after its last renewal.
  */
 import {
   DeviceBootError,
@@ -55,6 +55,7 @@ const Catalog = Schema.Struct({
       modelRuntimes: Schema.Record(Schema.String, Schema.Array(Schema.String)),
       modelClasses: Schema.optional(Schema.Record(Schema.String, Schema.String)),
       modelWorkers: Schema.optional(Schema.Record(Schema.String, Schema.Array(Schema.String))),
+      virtualDevices: Schema.optional(Schema.Literal(false)),
     }),
   ),
 });
@@ -401,7 +402,12 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       ),
     );
     const byPlatform = decoded.platforms.map((entry) => {
-      if (entry.platform !== "ios" && entry.platform !== "android") return null;
+      // A phones-only platform offers no virtual models by design, so it never looks incomplete.
+      if (
+        (entry.platform !== "ios" && entry.platform !== "android") ||
+        entry.virtualDevices === false
+      )
+        return null;
       const platform: DevicePlatform = entry.platform;
       return Object.entries(entry.modelRuntimes).flatMap(([model, runtimes]) => {
         const kind = entry.modelClasses?.[model];
@@ -431,7 +437,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     // extra: a listing without them is returned but not kept either.
     catalog =
       Option.isSome(phones) &&
-      virtual.length > 0 &&
+      devices.length > 0 &&
       byPlatform.every((entry) => entry === null || entry.length > 0)
         ? { at: now, devices }
         : null;
@@ -586,7 +592,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       const opened: Lease = {
         leaseId: record.leaseId,
         platform: target.platform,
-        physical: target.osVersion !== undefined,
+        physical: device.physical,
         name: target.model,
         version: device.version,
         session,
