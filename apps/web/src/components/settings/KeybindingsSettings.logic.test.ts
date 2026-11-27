@@ -13,6 +13,8 @@ import {
   buildKeybindingRows,
   buildWhenVariableOptions,
   commandLabel,
+  filterKeybindingRows,
+  groupKeybindingRows,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
@@ -23,6 +25,37 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("finds a shortcut by the label its row shows", () => {
+    const rows = buildKeybindingRows(
+      compileResolvedKeybindingsConfig([
+        { command: "commandPalette.toggle", key: "mod+k" },
+        { command: "chat.new", key: "mod+shift+o" },
+      ]),
+      "Linux x86_64",
+    );
+    expect(
+      filterKeybindingRows(rows, "Ctrl+K", undefined, "Linux x86_64").map((row) => row.command),
+    ).toEqual(["commandPalette.toggle"]);
+    expect(
+      filterKeybindingRows(rows, "ctrl+shift+o", undefined, "Linux x86_64").map(
+        (row) => row.command,
+      ),
+    ).toEqual(["chat.new"]);
+  });
+
+  it("lists back and forward under Navigation", () => {
+    const groups = groupKeybindingRows(
+      buildKeybindingRows(
+        compileResolvedKeybindingsConfig([
+          { command: "navigation.back", key: "mod+[" },
+          { command: "navigation.forward", key: "mod+]" },
+        ]),
+        "MacIntel",
+      ),
+    );
+    expect(groups.map((group) => group.id)).toEqual(["navigation"]);
+  });
+
   it("keeps sibling row identities when a saved binding moves to the end", () => {
     const bindings = compileResolvedKeybindingsConfig([
       { command: "chat.new", key: "mod+n" },

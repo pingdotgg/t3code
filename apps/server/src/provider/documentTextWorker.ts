@@ -22,6 +22,7 @@ type TextPart =
   | typeof CELL_END
   | typeof LINE_START
   | typeof THEMATIC_BREAK
+  | { columnGap: number }
   | { imageDescription: string }
   | { fallback: string }
   | { notebookOutput: Iterable<string> };
@@ -76,6 +77,7 @@ interface XmlNode {
   hasSelectedChoice?: boolean;
   epubTable?: boolean;
   mathmlFirstChildSeen?: boolean;
+  epubBlock?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -130,14 +132,12 @@ function namespaceOf(tagName: string, scope: readonly XmlNode[]) {
   return scope.findLast((node) => Object.hasOwn(node.attrs, binding))?.attrs[binding];
 }
 
-function isXhtmlTemplate(
+function isXhtmlElement(
   tagName: string,
-  node: XmlNode,
-  ancestors: readonly XmlNode[],
+  scope: readonly XmlNode[],
   rootTagName: string | undefined,
 ) {
-  if (node.name !== "template") return false;
-  const namespace = namespaceOf(tagName, [...ancestors, node]);
+  const namespace = namespaceOf(tagName, scope);
   return (
     namespace === "http://www.w3.org/1999/xhtml" ||
     (namespace === undefined && !tagName.includes(":") && rootTagName === "html")
@@ -183,6 +183,12 @@ function xml(source: string, extension: string): XmlNode {
     )
       node.mathmlFirstChildSeen = false;
     if (
+      extension === ".epub" &&
+      ["nav", "main", "details", "summary"].includes(node.name) &&
+      isXhtmlElement(tag.name, stack, rootTagName)
+    )
+      node.epubBlock = true;
+    if (
       (node.name === "AlternateContent" || node.name === "Choice") &&
       namespaceOf(tag.name, stack) === MARKUP_COMPATIBILITY_NS
     )
@@ -202,7 +208,9 @@ function xml(source: string, extension: string): XmlNode {
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
       isMathmlAlternative ||
-      (extension === ".epub" && isXhtmlTemplate(tag.name, node, stack, rootTagName)) ||
+      (extension === ".epub" &&
+        node.name === "template" &&
+        isXhtmlElement(tag.name, [...stack, node], rootTagName)) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
         Object.hasOwn(tag.attributes, "hidden") &&
@@ -355,6 +363,12 @@ function* xstringText(node: XmlNode): Generator<string, void> {
         literal ? `_${literal}` : String.fromCharCode(Number.parseInt(hex!, 16)),
     );
 }
+
+function hasXstringText(node: XmlNode): boolean {
+  for (const value of xstringText(node)) if (value.trim()) return true;
+  return false;
+}
+
 function* paragraphs(node: XmlNode): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
   if (node.imageDescription !== undefined) {
@@ -384,17 +398,18 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield "\n";
     } else if (
-      [
-        "blockquote",
-        "figure",
-        "figcaption",
-        "aside",
-        "address",
-        "header",
-        "footer",
-        "article",
-      ].includes(child.name) &&
-      child.hasText
+      child.hasText &&
+      (child.epubBlock ||
+        [
+          "blockquote",
+          "figure",
+          "figcaption",
+          "aside",
+          "address",
+          "header",
+          "footer",
+          "article",
+        ].includes(child.name))
     ) {
       yield LINE_START;
       yield* paragraphs(child);
@@ -563,7 +578,7 @@ function* table(node: XmlNode): Generator<TextPart, void> {
         for (let i = 0; i < count; i++) {
           column += span;
           if (column > 512) throw new Truncation("Column limit");
-          if (gap) yield "\t".repeat(gap);
+          if (gap) yield { columnGap: gap };
           gap = span;
           // LibreOffice hides the contents a merge covers; the cell still holds its column.
           if (covered(cell)) continue;
@@ -980,7 +995,33 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       return main && has(main) ? main : fallback;
     };
     if (extension === ".docx") {
-      yield* paragraphs(read(mainPart("word/document.xml")));
+      const main = mainPart("word/document.xml");
+      const doc = read(main);
+      const rels = partRels(main);
+      const target = has(rels)
+        ? all(read(rels), "Relationship").find(
+            (rel) => rel.attrs.Type?.endsWith("/styles") && rel.attrs.TargetMode !== "External",
+          )?.attrs.Target
+        : undefined;
+      const dir = `/${NodePath.posix.dirname(main)}`;
+      const styles = NodePath.posix.resolve(dir, target || "styles.xml").slice(1);
+      if (has(styles)) {
+        // Word localizes style ids while keeping built-in English names.
+        const headings = new Map<string, string>();
+        for (const style of all(read(styles), "style")) {
+          const id = style.attrs.styleId;
+          if ((style.attrs.type ?? "paragraph") !== "paragraph" || !id) continue;
+          const name = children(style).find((c) => c.name === "name")?.attrs.val;
+          const level = name?.match(/^heading ([1-6])$/i)?.[1];
+          if (level && id !== `Heading${level}`) headings.set(id, `Heading${level}`);
+        }
+        if (headings.size)
+          for (const pStyle of all(doc, "pStyle")) {
+            const heading = headings.get(pStyle.attrs.val ?? "");
+            if (heading) pStyle.attrs.val = heading;
+          }
+      }
+      yield* paragraphs(doc);
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
       const content = read("content.xml");
       if (extension === ".odt")
@@ -1036,7 +1077,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       const formats = cellFormats ? children(cellFormats) : [];
       const sharedPath = workbookPartPath("sharedStrings");
       const strings = has(sharedPath) ? [...all(read(sharedPath), "si")] : [];
-      const populatedStrings = strings.map(hasCellText);
+      const populatedStrings = strings.map(hasXstringText);
       for (const sheet of all(workbook, "sheet")) {
         yield `\n## Sheet: ${sheet.attrs.name}\n`;
         const target = rels.get(sheet.attrs["r:id"] ?? sheet.attrs.id)?.Target;
@@ -1051,7 +1092,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             const raw = value?.children.find((child) => typeof child === "string")?.trim();
             return !!raw && !!populatedStrings[Number(raw)];
           }
-          if (cell.attrs.t === "inlineStr") return hasCellText(cell);
+          if (cell.attrs.t === "inlineStr") return hasXstringText(cell);
           if (value && hasCellText(value)) return true;
           for (const formula of all(cell, "f")) if (hasCellText(formula)) return true;
           return false;
@@ -1237,8 +1278,12 @@ export async function extractDocumentText(path: string, extension: string): Prom
       }
       let raw: string;
       let isImageDescription = false;
+      let isColumnGap = false;
       if (typeof part === "string") raw = part;
-      else if ("imageDescription" in part) {
+      else if ("columnGap" in part) {
+        raw = "\t".repeat(part.columnGap);
+        isColumnGap = true;
+      } else if ("imageDescription" in part) {
         raw = part.imageDescription;
         isImageDescription = true;
       } else if ("notebookOutput" in part) {
@@ -1306,6 +1351,8 @@ export async function extractDocumentText(path: string, extension: string): Prom
           value = "";
         }
       } else {
+        // Trim leading text whitespace here so leading table column gaps survive trimEnd().
+        if (!result && !isColumnGap) value = value.trimStart();
         midLine = endsMidLine(value) ?? midLine;
       }
       result += value;
@@ -1324,7 +1371,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
     if (!(error instanceof Truncation)) throw error;
     truncated = true;
   }
-  result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trim();
+  result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trimEnd();
   if (!result && !truncated) throw new Error("No text extracted");
   return truncated ? result.replace(TRAILING_HIGH_SURROGATE, "").trimEnd() + TRUNCATED : result;
 }

@@ -15,7 +15,13 @@ export function epubSource(page: EpubPage, dark: boolean) {
       ? "html,body{width:100%;height:100%;margin:0}body>img,body>svg{display:block}"
       : "body{margin:0;display:grid;place-items:center;min-height:100vh}img,svg{max-width:100vw;max-height:100vh;height:auto;object-fit:contain}"
     : "";
-  return `<!doctype html><html${page.htmlAttrs ?? ""}><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src blob:; font-src data:; media-src blob:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>@layer preview{*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}:root{color-scheme:${dark ? "dark" : "light"}}${layout}</style>${styles}</head><body${page.bodyAttrs ?? ""}>${page.html}</body></html>`;
+  const media = page.fixed
+    ? ""
+    : "@media(max-width:600px){audio,video{max-width:100%}video{height:auto}}";
+  const narration = page.narration?.length
+    ? ".t3-epub-narration-active{outline:2px solid #3195ac!important;outline-offset:2px}"
+    : "";
+  return `<!doctype html><html${page.htmlAttrs ?? ""}><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src blob:; font-src data:; media-src blob:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>@layer preview{*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}${media}}:root{color-scheme:${dark ? "dark" : "light"}}${layout}${narration}</style>${styles}</head><body${page.bodyAttrs ?? ""}>${page.html}</body></html>`;
 }
 
 export function prepareEpubDocument(doc: Document) {

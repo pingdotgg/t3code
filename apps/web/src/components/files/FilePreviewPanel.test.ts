@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import { openRtf, openNotebook, openDocument } from "./extendedDocumentPreview";
 import { openEpub } from "./epubPreview";
 import { parseXml } from "./documentPreviewXml";
+import { unlockOpenDocument } from "./openDocumentEncryption";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ProjectReadFileError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -187,7 +188,7 @@ describe("document preview contents", () => {
     (fallback) => {
       const result = openRtf(bytes(String.raw`{\rtf1{\*\unknown\u945` + fallback + "}Hello}"));
       if (result.type !== "document") throw new Error("Expected document");
-      expect(result.pages[0]!.html).toBe("<p>Hello</p>");
+      expect(result.pages[0]!.html).toBe("<p data-rtf-whitespace>Hello</p>");
     },
   );
 
@@ -209,6 +210,48 @@ describe("document preview contents", () => {
     expect((await book.page(29)).html).toBe("<figcaption></figcaption>".repeat(30_000));
   });
 
+  it("skips broken EPUB encryption metadata and reports declared DRM", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="a" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+      )
+      .file("chapter.xhtml", "<html><body><p>Hello</p></body></html>");
+    const namespace = 'xmlns="http://www.w3.org/2001/04/xmlenc#"';
+    for (const metadata of ["<encryption>", `<EncryptedData ${namespace}/>`]) {
+      archive.file("META-INF/encryption.xml", metadata);
+      expect((await (await openEpub(archive)).page(0)).html).toBe("<p>Hello</p>");
+    }
+    archive.file(
+      "META-INF/encryption.xml",
+      `<EncryptedData ${namespace}><EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc"/></EncryptedData>`,
+    );
+    await expect(openEpub(archive)).rejects.toMatchObject({ code: "epub-drm" });
+  });
+
+  it("reports the aggregate OpenDocument decryption limit for supported encryption", async () => {
+    const parts = Array.from(
+      { length: 3 },
+      (_, index) => `<m:file-entry m:full-path="part-${index}.xml" m:size="1">
+        <m:encryption-data m:checksum-type="SHA1/1K" m:checksum="AA==">
+          <m:algorithm m:algorithm-name="http://www.w3.org/2001/04/xmlenc#aes256-cbc" m:initialisation-vector="AA=="/>
+          <m:key-derivation m:key-derivation-name="PBKDF2" m:iteration-count="1000000" m:salt="AA=="/>
+        </m:encryption-data>
+      </m:file-entry>`,
+    );
+    const archive = new JSZip().file(
+      "META-INF/manifest.xml",
+      `<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">${parts.join("")}</m:manifest>`,
+    );
+    await expect(unlockOpenDocument(archive, "open me")).rejects.toMatchObject({
+      code: "office-decryption-limit",
+    });
+  });
+
   it("decodes rich text formatting and Unicode without showing hidden destinations", () => {
     const result = openRtf(
       bytes(
@@ -227,13 +270,17 @@ describe("document preview contents", () => {
       ),
     );
     if (styled.type !== "document") throw new Error("Expected document");
-    expect(styled.pages[0]!.html).toBe("<p><strong>🚀 Launch</strong> <em>𝔸</em></p>");
+    expect(styled.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace><strong>🚀 Launch</strong> <em>𝔸</em></p>",
+    );
     const fallbacks = openRtf(bytes("{\\rtf1\\b\\uc1\\u-10179\\_\\uc0\\u-8576 }"));
     if (fallbacks.type !== "document") throw new Error("Expected document");
-    expect(fallbacks.pages[0]!.html).toBe("<p><strong>🚀</strong></p>");
+    expect(fallbacks.pages[0]!.html).toBe("<p data-rtf-whitespace><strong>🚀</strong></p>");
     const escapedBreak = openRtf(bytes("{\\rtf1\\b A\\u66\\\nC\\par D}"));
     if (escapedBreak.type !== "document") throw new Error("Expected document");
-    expect(escapedBreak.pages[0]!.html).toBe("<p><strong>ABC</strong><br><strong>D</strong></p>");
+    expect(escapedBreak.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace><strong>ABC</strong><br><strong>D</strong></p>",
+    );
   });
 
   it("breaks lines at the paragraph and line breaks TextEdit writes", () => {
@@ -253,7 +300,7 @@ Third}`;
     expect(html(textEdit)).toEqual(expected);
     expect(html(textEdit.replaceAll("\n", "\r\n"))).toEqual(expected);
     const lineBreak = html(String.raw`{\rtf1\ansi First line\line Second line}`);
-    expect(lineBreak).toEqual(["<p>First line<br>Second line</p>"]);
+    expect(lineBreak).toEqual(["<p data-rtf-whitespace>First line<br>Second line</p>"]);
     expect(html(String.raw`{\rtf1\ansi{\v\line\line\line}First line\line Second line}`)).toEqual(
       lineBreak,
     );
@@ -270,9 +317,9 @@ Third}`;
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.navigation).toBe("page");
     expect(result.pages.map((page) => page.html)).toEqual([
-      "<p><strong>First</strong></p>",
-      "<p><strong>Second</strong></p>",
-      "<p>Third</p>",
+      "<p data-rtf-whitespace><strong>First</strong></p>",
+      "<p data-rtf-whitespace><strong>Second</strong></p>",
+      "<p data-rtf-whitespace>Third</p>",
     ]);
     expect(() => openRtf(bytes(String.raw`{\rtf1 ` + String.raw`\page`.repeat(501) + "}"))).toThrow(
       expect.objectContaining({ code: "rtf-too-many-pages" }),
@@ -287,16 +334,16 @@ Third}`;
     );
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages.map((page) => page.html)).toEqual([
-      "<p>North quota: 120<br>South quota: 240</p>",
-      "<p>East quota: 360<br>West quota: 480<br></p>",
+      "<p data-rtf-whitespace>North quota: 120<br>South quota: 240</p>",
+      "<p data-rtf-whitespace>East quota: 360<br>West quota: 480<br></p>",
     ]);
     const written = openRtf(
       bytes(String.raw`{\rtf1\ansi First\par\sect\sectd Second\par\column Third\page\sect Fourth}`),
     );
     if (written.type !== "document") throw new Error("Expected document");
     expect(written.pages.map((page) => page.html)).toEqual([
-      "<p>First<br>Second<br>Third</p>",
-      "<p>Fourth</p>",
+      "<p data-rtf-whitespace>First<br>Second<br>Third</p>",
+      "<p data-rtf-whitespace>Fourth</p>",
     ]);
   });
 
@@ -307,34 +354,37 @@ Third}`;
     input[input.indexOf(65)] = 0xc0;
     const result = openRtf(input.buffer);
     if (result.type !== "document") throw new Error("Expected document");
-    expect(result.pages[0]!.html).toBe("<p>А А<br>あ</p>");
+    expect(result.pages[0]!.html).toBe("<p data-rtf-whitespace>А А<br>あ</p>");
     for (const header of [String.raw`\mac`, String.raw`\mac\ansicpg10000`]) {
       const mac = openRtf(bytes(String.raw`{\rtf1` + header + String.raw` Caf\'8e Cr\'8fme}`));
       if (mac.type !== "document") throw new Error("Expected document");
-      expect(mac.pages[0]!.html).toBe("<p>Café Crème</p>");
+      expect(mac.pages[0]!.html).toBe("<p data-rtf-whitespace>Café Crème</p>");
     }
     for (const [rtf, expected] of [
-      [String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "<p>Café</p>"],
-      [String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`, "<p>Привет</p>"],
+      [String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "<p data-rtf-whitespace>Café</p>"],
+      [
+        String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`,
+        "<p data-rtf-whitespace>Привет</p>",
+      ],
       [
         String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl\f0\froman\fcharset0 Times-Roman;}\f0 \'805 caf\'e9}`,
-        "<p>€5 café</p>",
+        "<p data-rtf-whitespace>€5 café</p>",
       ],
       [
         String.raw`{\rtf1\mac\ansicpg10000{\fonttbl\f0\fnil\fcharset0 LucidaGrande;}\f0 pridr\'9eana}`,
-        "<p>pridržana</p>",
+        "<p data-rtf-whitespace>pridržana</p>",
       ],
       [
         String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl{\f0\fnil\fcharset0\cpg1251 Arial;}{\f1\fnil\fcharset204 Arial{\*\fontfile\cpg1252 arial.ttf};}}\f0 \'cf\'f0\'e8\f1\'e2\'e5\'f2}`,
-        "<p>Привет</p>",
+        "<p data-rtf-whitespace>Привет</p>",
       ],
       [
         String.raw`{\rtf1\ansi\ansicpg54936 Quarterly notes: \'d6\'d0\'ce\'c4 \'95\'32\'82\'36 \'82\'35\'8f\'33 \uc2\u20320\'c4\'e3 done\par}`,
-        "<p>Quarterly notes: 中文 𠀀 龦 你 done<br></p>",
+        "<p data-rtf-whitespace>Quarterly notes: 中文 𠀀 龦 你 done<br></p>",
       ],
       [
         String.raw`{\rtf1\ansi{\fonttbl{\f0\fnil\fcharset0\cpg54936 SimSun;}}\f0 \'d6\'d0\'ce\'c4}`,
-        "<p>中文</p>",
+        "<p data-rtf-whitespace>中文</p>",
       ],
     ] as const) {
       const decoded = openRtf(bytes(rtf));
@@ -805,6 +855,67 @@ Third}`;
     expect(() => parseXml("<section>".repeat(104) + "text" + "</section>".repeat(104))).toThrow(
       expect.objectContaining({ code: "xml-too-deep" }),
     );
+  });
+
+  it("loads local EPUB captions and the narration cues for the current chapter", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        `<package><manifest>
+          <item id="chapter" href="book/chapter.xhtml" media-type="application/xhtml+xml" media-overlay="read"/>
+          <item id="read" href="overlays/chapter.smil" media-type="application/smil+xml"/>
+          <item id="captions" href="captions.xml" media-type="application/ttml+xml"/>
+          <item id="clip" href="clip.mp4" media-type="video/mp4"/>
+        </manifest><spine><itemref idref="chapter"/></spine></package>`,
+      )
+      .file(
+        "book/chapter.xhtml",
+        `<html><body><p id="line-1">First line</p>
+          <video autoplay=""><track kind="captions" srclang="en" label="English" src="../captions.xml" default=""/>
+          <track kind="captions" src="https://example.test/remote.vtt"/>
+          <source src="../clip.mp4#t=00:01:00,00:02:00"/><source src="../clip.mp4#t=,120"/>
+          <source src="../clip.mp4#t=npt:2.5,4.25"/></video>
+        </body></html>`,
+      )
+      .file(
+        "captions.xml",
+        `<tt xmlns="http://www.w3.org/ns/ttml"><body><div begin="1s" timeContainer="seq">
+          <div><p begin="500ms" dur="2s">Tea &amp; coffee<br/>served.</p></div>
+          <p begin="500ms" end="2s">Thanks.</p>
+        </div></body></tt>`,
+      )
+      .file(
+        "overlays/chapter.smil",
+        `<smil xmlns="http://www.w3.org/ns/SMIL"><body><seq>
+          <par><text src="../book/chapter.xhtml#line%2D1"/><audio src="../read.mp3" clipBegin="npt=2s" clipEnd="00:03.250"/></par>
+          <par><text src="../book/other.xhtml#skip"/><audio src="../read.mp3"/></par>
+          <par><text src="../book/chapter.xhtml#line-1"/><audio src="https://example.test/remote.mp3"/></par>
+        </seq></body></smil>`,
+      )
+      .file("read.mp3", new Uint8Array([255, 251, 16, 0]))
+      .file("clip.mp4", new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]));
+    const page = await (await openEpub(archive)).page(0);
+    try {
+      const tracks = page.html.match(/<track [^>]*>/g);
+      expect(tracks).toHaveLength(1);
+      expect(tracks?.[0]).toContain('kind="captions" srclang="en" label="English" default');
+      expect(page.html).toContain("<video controls playsinline>");
+      const caption = await fetch(tracks?.[0]?.match(/src="([^"]+)"/)?.[1] ?? "");
+      expect(caption.headers.get("Content-Type")).toBe("text/vtt");
+      expect(await caption.text()).toBe(
+        "WEBVTT\n\n00:00:01.500 --> 00:00:03.500\nTea &amp; coffee\nserved.\n\n00:00:04.000 --> 00:00:05.500\nThanks.\n",
+      );
+      expect(page.html.match(/#t=[\d.,]+(?=")/g)).toEqual(["#t=60,120", "#t=0,120", "#t=2.5,4.25"]);
+      expect(page.narration).toEqual([
+        { src: page.assets.at(-1), begin: 2, end: 3.25, anchor: "line-1" },
+      ]);
+    } finally {
+      for (const url of page.assets) URL.revokeObjectURL(url);
+    }
   });
 
   it("preserves the SVG filters used by EPUB artwork", async () => {
