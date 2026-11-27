@@ -6145,6 +6145,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ? originDefaultBranch
         : yield* resolveDefaultBranchName(fetchCwd, fallbackRemoteName, gitDirArgs);
     const defaultRemoteName = fallbackRemoteName ?? "origin";
+    // Status treats main or master as the default when no remote names one.
+    const isDefaultLocalBranch = (name: string) =>
+      name === defaultBranch ||
+      (defaultBranch === null && DEFAULT_BASE_BRANCH_CANDIDATES.some((base) => base === name));
     const localBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
     const remoteBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
 
@@ -6162,7 +6166,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             name,
             current: false,
             isRemote: false,
-            isDefault: name === defaultBranch,
+            isDefault: isDefaultLocalBranch(name),
             worktreePath: worktrees?.paths.get(name) ?? null,
             ...(upstreamRef ? { upstreamRef } : {}),
           },
