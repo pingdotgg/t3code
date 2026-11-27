@@ -1299,12 +1299,6 @@ export const layer: Layer.Layer<
         // continuation. Unlike the root's, these must hold the stream past owner loss.
         const childSnapshotPendingWork = new Set<ProviderThreadId>();
         let rootTurnOwnershipChecked = false;
-        // Earlier tool activity may be missing from a resumed attempt's event stream.
-        let mayHaveChangedPullRequests =
-          input.attempt.reason !== "initial" ||
-          input.attempt.providerTurnId !== null ||
-          inheritedBackgroundTurnItems.length > 0 ||
-          (input.providerThread.pendingBackgroundTasks?.length ?? 0) > 0;
         const assistantStreaming = makeAssistantStreamingFilter(responseStreamingMode);
         // Set when ingestion ends or finalization settles the run's open items, which a later
         // streaming snapshot must not reopen.
@@ -1362,10 +1356,7 @@ export const layer: Layer.Layer<
                 ...(restoredHandoffs === undefined ? {} : { restoredHandoffs }),
                 terminal: settledTerminal,
                 failureItemPersisted: settledTerminal.status === "failed",
-                refreshAfterTurn:
-                  terminal.status === "completed" && !mayHaveChangedPullRequests
-                    ? Effect.void
-                    : refreshAfterTurn,
+                refreshAfterTurn,
               });
             },
             (effect) =>
@@ -1932,19 +1923,6 @@ export const layer: Layer.Layer<
           accepted: boolean;
         }) {
           if (!accepted) return;
-          // Shell commands and opaque tools can write to the forge without going through T3.
-          mayHaveChangedPullRequests ||=
-            (event.type === "turn_item.updated" &&
-              event.turnItem.type !== "assistant_message" &&
-              event.turnItem.type !== "reasoning" &&
-              event.turnItem.type !== "user_message") ||
-            event.type === "subagent.updated" ||
-            event.type === "runtime_request.updated" ||
-            (event.type === "app_thread.created" && event.appThread.id !== input.run.threadId) ||
-            (event.type === "background_work.updated" && event.pending) ||
-            (event.type === "provider_thread.updated" &&
-              (event.pendingBackgroundWork === true ||
-                (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0));
           if (
             event.type === "provider_turn.updated" &&
             event.providerTurn.runAttemptId === input.attempt.id &&
