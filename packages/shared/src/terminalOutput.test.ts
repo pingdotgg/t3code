@@ -37,6 +37,25 @@ describe("appendTerminalOutput", () => {
   });
 
   it.each([
+    { chunks: ["A\tB"], text: "A       B", col: 9 },
+    { chunks: ["A\tB\rXY"], text: "XY      B", col: 2 },
+    { chunks: ["abcdefghij\rA\tX"], text: "AbcdefghXj", col: 9 },
+    { chunks: ["界\tX"], text: "界      X", col: 9 },
+    {
+      chunks: [`${"a".repeat(140_000)}\tX`],
+      maxChars: 200_000,
+      text: `${"a".repeat(140_000)}        X`,
+      col: 140_009,
+    },
+  ])("moves tabs to the next eight-column stop (col $col)", ({ chunks, maxChars, text, col }) => {
+    const state = feed(chunks, maxChars);
+    expect(state.text).toBe(text);
+    expect(state.screen.col).toBe(col);
+    const resumed = feed([terminalOutputResumeText(state), "Z"], maxChars);
+    expect(resumed.text).toBe(appendTerminalOutput(state, "Z", maxChars).text);
+  });
+
+  it.each([
     ["😀\u001b[1Gx", "x "],
     ["界a\u001b[3GZ", "界Z"],
     ["e\u0301a\u001b[2GZ", "e\u0301Z"],
@@ -294,6 +313,7 @@ describe("appendTerminalOutput under adversarial output", () => {
 
   it("gives the same result however the output is split into chunks", () => {
     const input =
+      "A\tB\rXY\nabcdefghij\rA\tX\n" +
       "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n" +
       "\u001b[1;31mbold red\u001b[mplain\u001b[38:2::12:34:56mrgb\u001b[0m\n" +
       "\u001b[1;31mbold red again\u001b[mplain again\u001b[38:2::12:34:56mrgb again\u001b[0m";
