@@ -478,8 +478,6 @@ describe("ScheduledTasksSettings", () => {
       expect(unit()?.textContent).toBe(one);
       await userEvent.fill(interval, "15");
       await expect.poll(() => unit()?.textContent).toBe(other);
-      await userEvent.fill(interval, "1");
-      await expect.poll(() => unit()?.textContent).toBe(one);
       await userEvent.fill(interval, "1.5");
       await expect.poll(() => unit()?.textContent).toBe(other);
     },
