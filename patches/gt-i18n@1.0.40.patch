@@ -1,5 +1,5 @@
 diff --git a/dist/versionId-BDwkPmu8.mjs b/dist/versionId-BDwkPmu8.mjs
-index 48cc2687aec4b8ba06db2295bec60e95dfaf624f..714172248fd680ae708de7524fd89e1a674bd649 100644
+index 48cc2687aec4b8ba06db2295bec60e95dfaf624f..3491922edb661a66f64062b4056cd3a0e93ac866 100644
 --- a/dist/versionId-BDwkPmu8.mjs
 +++ b/dist/versionId-BDwkPmu8.mjs
 @@ -398,8 +398,11 @@ function formatMessage$1(encodedMsg, variables, locales, dataFormat) {
@@ -14,17 +14,18 @@ index 48cc2687aec4b8ba06db2295bec60e95dfaf624f..714172248fd680ae708de7524fd89e1a
  	const source = options.$_fallback;
  	const variables = extractVariables(options);
  	try {
-@@ -637,16 +640,23 @@ function resolveCanonicalLocale$1(locale) {
+@@ -637,16 +640,24 @@ function resolveCanonicalLocale$1(locale) {
  /**
  * Hash a message string
  */
 +// T3 patch: msg() hashes its template on every render; the hash ignores variable values.
++// A <T> source is a tree, keyed by its JSON: joined as a string, different trees share a key.
 +const messageHashCache = new Map();
  function hashMessage(message, options) {
  	const metadataOptions = options;
  	if (metadataOptions.$_hash != null) return metadataOptions.$_hash;
 -	return hashSource({
-+	const cacheKey = [message, metadataOptions.$context ?? "", metadataOptions.$maxChars ?? "", metadataOptions.$requiresReview === true, options.$format ?? ""].join("\0");
++	const cacheKey = [typeof message === "string" ? message : JSON.stringify(message), metadataOptions.$context ?? "", metadataOptions.$maxChars ?? "", metadataOptions.$requiresReview === true, options.$format ?? ""].join("\0");
 +	const cachedHash = messageHashCache.get(cacheKey);
 +	if (cachedHash !== void 0) return cachedHash;
 +	const hash = hashSource({
@@ -40,7 +41,7 @@ index 48cc2687aec4b8ba06db2295bec60e95dfaf624f..714172248fd680ae708de7524fd89e1a
  //#endregion
  //#region src/helpers/versionId.ts
 diff --git a/dist/versionId-WIgaTRdx.cjs b/dist/versionId-WIgaTRdx.cjs
-index 6626b2916861acaf5c2094f88e730feaebacd188..3c7cbcbf375bf1c729af2932e9aa50f28586a2e2 100644
+index 6626b2916861acaf5c2094f88e730feaebacd188..50f03b18f083bc8f7fa2579ca6aade8b32bb6d20 100644
 --- a/dist/versionId-WIgaTRdx.cjs
 +++ b/dist/versionId-WIgaTRdx.cjs
 @@ -398,8 +398,11 @@ function formatMessage(encodedMsg, variables, locales, dataFormat) {
@@ -55,17 +56,18 @@ index 6626b2916861acaf5c2094f88e730feaebacd188..3c7cbcbf375bf1c729af2932e9aa50f2
  	const source = options.$_fallback;
  	const variables = extractVariables(options);
  	try {
-@@ -637,16 +640,23 @@ function resolveCanonicalLocale(locale) {
+@@ -637,16 +640,24 @@ function resolveCanonicalLocale(locale) {
  /**
  * Hash a message string
  */
 +// T3 patch: msg() hashes its template on every render; the hash ignores variable values.
++// A <T> source is a tree, keyed by its JSON: joined as a string, different trees share a key.
 +const messageHashCache = new Map();
  function hashMessage(message, options) {
  	const metadataOptions = options;
  	if (metadataOptions.$_hash != null) return metadataOptions.$_hash;
 -	return (0, generaltranslation_id.hashSource)({
-+	const cacheKey = [message, metadataOptions.$context ?? "", metadataOptions.$maxChars ?? "", metadataOptions.$requiresReview === true, options.$format ?? ""].join("\0");
++	const cacheKey = [typeof message === "string" ? message : JSON.stringify(message), metadataOptions.$context ?? "", metadataOptions.$maxChars ?? "", metadataOptions.$requiresReview === true, options.$format ?? ""].join("\0");
 +	const cachedHash = messageHashCache.get(cacheKey);
 +	if (cachedHash !== void 0) return cachedHash;
 +	const hash = (0, generaltranslation_id.hashSource)({
