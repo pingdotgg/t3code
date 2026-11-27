@@ -1,3 +1,4 @@
+import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -186,7 +187,9 @@ export const make = Effect.gen(function* () {
     // `data:`, `https:` and `//host` icons name no project file, and a long data URL fails `stat`.
     if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href.trim())) return [];
     // Browsers strip surrounding whitespace from URL attributes; file paths keep theirs.
-    const clean = href.trim().replace(/^\//, "");
+    const clean = safeDecodeURIComponent(href.trim().replace(/^\//, ""));
+    // A decoded NUL fails `stat` instead of missing.
+    if (clean.includes("\0")) return [];
     return [path.join("public", clean), clean];
   };
 

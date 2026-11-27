@@ -12,7 +12,7 @@ import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { CheckIcon, MoreVertical, PlusIcon, ServerIcon } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
@@ -280,6 +280,7 @@ function TextGeneratorWizard({
 }) {
   const messages = useMessages();
   const gt = useGT();
+  const formId = useId();
   const existing = editing === "new" ? null : editing.config;
   const [step, setStep] = useState(0);
   const [preset, setPreset] = useState(TEXT_GENERATOR_PRESETS[0]!);
@@ -366,6 +367,7 @@ function TextGeneratorWizard({
         <WizardPanel>
           {step === 0 ? (
             <form
+              id={formId}
               className="grid gap-4"
               onSubmit={(event) => {
                 event.preventDefault();
@@ -516,7 +518,7 @@ function TextGeneratorWizard({
               <Button variant="outline" onClick={onClose}>
                 <T>Cancel</T>
               </Button>
-              <Button onClick={() => void connect()} disabled={!canConnect || checking}>
+              <Button type="submit" form={formId} disabled={!canConnect || checking}>
                 {checking ? <Spinner /> : null}
                 {checking ? gt("Connecting") : existing ? gt("Save and continue") : gt("Connect")}
               </Button>

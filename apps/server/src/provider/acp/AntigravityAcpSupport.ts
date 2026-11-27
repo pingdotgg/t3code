@@ -10,6 +10,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Scope from "effect/Scope";
@@ -527,19 +528,15 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
           : bytes[0] === 0xfe && bytes[1] === 0xff
             ? "UTF-16BE"
             : "UTF-8";
-      const decoded = yield* Effect.try({
-        try: () => new TextDecoder(encoding, { fatal: true }).decode(bytes),
-        catch: () =>
-          EffectAcpErrors.AcpRequestError.invalidParams(
-            `Attachment '${attachment.name}' is not a ${encoding} text file.`,
-          ),
-      });
-      if (decoded.includes("\0")) {
-        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-          `Attachment '${attachment.name}' contains binary data.`,
-        );
+      const decoded = Option.liftThrowable((data: Uint8Array) =>
+        new TextDecoder(encoding, { fatal: true }).decode(data),
+      )(bytes);
+      // Other encodings and binary data stay path-only so the agent reads them with its own tools.
+      if (Option.isNone(decoded) || decoded.value.includes("\0")) {
+        totalBytes -= bytes.length;
+        continue;
       }
-      blocks.push({ type: "resource", resource: { uri, mimeType, text: decoded } });
+      blocks.push({ type: "resource", resource: { uri, mimeType, text: decoded.value } });
     }
   }
   if (blocks.length === 0) {

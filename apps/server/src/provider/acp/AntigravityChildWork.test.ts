@@ -541,6 +541,111 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
     }),
   );
 
+  it.effect(
+    "reads legacy disk-backed swarm worker transcripts and tracks working vs parked or killed members",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-swarm-disk-" });
+        const workerOne = "11111111-1111-4000-8000-111111111111";
+        const workerTwo = "22222222-2222-4000-8000-222222222222";
+        const workerKilled = "33333333-3333-4000-8000-333333333333";
+        const writeFile = (segments: ReadonlyArray<string>, body: string) => {
+          const file = path.join(profile, "antigravity-acp", "brain", ...segments);
+          return fs
+            .makeDirectory(path.dirname(file), { recursive: true })
+            .pipe(Effect.andThen(fs.writeFileString(file, body)));
+        };
+        const writeWorker = (
+          convId: string,
+          name: string,
+          callId: string,
+          args: Record<string, unknown>,
+          reply: string,
+        ) =>
+          Effect.all([
+            writeFile(
+              [ROOT, ".system_generated", "subagents", `${convId}.json`],
+              JSON.stringify({
+                conversationId: convId,
+                subagentDescriptor: { typeName: "self", role: `Swarm Worker (${name})` },
+                state: "SUBAGENT_STATE_ALIVE",
+              }),
+            ),
+            writeFile(
+              [convId, ".system_generated", "messages", "launch.json"],
+              JSON.stringify({
+                sender: ROOT,
+                content: `Task for ${name}`,
+                sourceMetadata: {
+                  tool: {
+                    conversationId: ROOT,
+                    toolCall: { id: callId, name: "swarm", argumentsJson: JSON.stringify(args) },
+                  },
+                },
+              }),
+            ),
+            writeFile(
+              [convId, ".system_generated", "logs", "transcript.jsonl"],
+              `${JSON.stringify({ step_index: 0, type: "PLANNER_RESPONSE", status: "DONE", content: reply })}\n`,
+            ),
+          ]);
+
+        const batchArgs = {
+          action: "add",
+          name: "shard",
+          brief: "Inspect shard",
+          tasks: ["First shard", "Second shard"],
+        };
+        yield* writeWorker(workerOne, "shard-1", "call_batch", batchArgs, "shard-1 finished");
+        yield* writeWorker(workerTwo, "shard-2", "call_batch", batchArgs, "shard-2 working");
+        yield* writeWorker(
+          workerKilled,
+          "retired",
+          "call_retired",
+          { action: "add", name: "retired", brief: "Old task" },
+          "stopped",
+        );
+        yield* writeFile(
+          [ROOT, ".system_generated", "swarm", "members.json"],
+          JSON.stringify({
+            title: "Shard audit",
+            members: {
+              coordinator: { conversation_id: ROOT, role: "coordinator", wake_mode: "mentions" },
+              "shard-1": { conversation_id: workerOne, role: "worker", wake_mode: "mentions" },
+              "shard-2": { conversation_id: workerTwo, role: "worker", wake_mode: "working" },
+              retired: {
+                conversation_id: workerKilled,
+                role: "worker",
+                desired_state: "KILLED",
+                phase: "KILLED",
+                wake_mode: "working",
+              },
+            },
+          }),
+        );
+
+        // shard-1 is parked on mentions and retired is killed; only shard-2 keeps call_batch active.
+        expect(
+          yield* readAntigravityChildrenAtWork({
+            profileDirectory: profile,
+            rootSessionId: ROOT,
+            toolCallIds: ["call_batch", "call_retired"],
+          }),
+        ).toEqual(["call_batch"]);
+
+        const batchChildren = yield* read(profile, "call_batch");
+        expect(batchChildren.map((child) => [child.role, child.prompt])).toEqual([
+          ["@shard-1", "Inspect shard\n\nFirst shard"],
+          ["@shard-2", "Inspect shard\n\nSecond shard"],
+        ]);
+        expect(batchChildren[0]?.steps?.[0]?.text).toBe("shard-1 finished");
+
+        expect(antigravitySubagentLaunches({ action: "add", name: "w", n: 1e9 })).toHaveLength(64);
+      }),
+  );
+
   it.effect("shares one transcript budget across the batch", () =>
     Effect.gen(function* () {
       const filler = JSON.stringify({

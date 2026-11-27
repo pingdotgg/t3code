@@ -328,10 +328,15 @@ describe("KeybindingsSettings.logic", () => {
         },
       },
     });
-    const previewOpenDraft = parseWhenExpressionDraft("previewOpen && !previewFocus");
-    assert(previewOpenDraft.ok);
-    expect(unknownWhenVariables(previewOpenDraft.value)).toEqual([]);
-    expect(buildWhenVariableOptions()).toContain("previewOpen");
+    for (const [expression, condition] of [
+      ["previewOpen && !previewFocus", "previewOpen"],
+      ["composerFocus && turnRunning && composerEmpty", "composerEmpty"],
+    ] as const) {
+      const draft = parseWhenExpressionDraft(expression);
+      assert(draft.ok);
+      expect(unknownWhenVariables(draft.value)).toEqual([]);
+      expect(buildWhenVariableOptions()).toContain(condition);
+    }
     expect(parseWhenExpressionDraft("editorFocus &&")).toEqual({
       ok: false,
       message: "Use variables with !, &&, ||, and parentheses.",
@@ -421,6 +426,18 @@ describe("KeybindingsSettings.logic", () => {
     expect(
       keybindingConflictLabels(rows, { rowId: "new", key: "ctrl+k", when: "" }, expected.platform),
     ).toEqual(["Chat: New Local", ...expected.ctrl].toSorted());
+  });
+
+  it("treats a true condition like no condition when reporting conflicts", () => {
+    const rows = buildKeybindingRows(
+      compileResolvedKeybindingsConfig([
+        { command: "chat.new", key: "mod+k", when: "true" },
+        { command: "chat.newLocal", key: "mod+k", when: "terminalFocus" },
+      ]),
+      "Linux x86_64",
+    );
+
+    expect(rows.map((row) => row.conflicts)).toEqual([["Chat: New Local"], ["Chat: New"]]);
   });
 
   it("keeps mod and ctrl shortcuts apart when their when contexts differ", () => {

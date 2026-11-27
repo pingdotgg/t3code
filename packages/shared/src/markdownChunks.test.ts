@@ -172,9 +172,42 @@ describe("splitMarkdown", () => {
       "",
       "===",
       "[p]: /paragraph-text",
+      "",
+      "```sh",
+      "npm install",
+      "```",
+      "[fence]: /after-fence",
+      "~~~",
+      "~~~",
+      "Text after a fence",
+      "[q]: /continues-the-paragraph",
+      "",
+      "$$",
+      "x",
+      "$$ trailing",
+      "[math]: /inside-math",
+      "",
+      "<!-->",
+      "```",
+      "-->",
+      "```",
+      "[comment]: /after-a-closed-comment",
+      "```",
+      "[code]: /inside-a-fence-after-a-comment",
+      "```",
+      "",
+      "- ```md",
+      "  ~~~",
+      "  ~~~",
+      "  [list]: /inside-a-list-fence",
+      "  ```",
     ].join("\n");
     expect(splitMarkdown(text).definitions).toBe(
-      "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break",
+      "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break\n[fence]: /after-fence\n[comment]: /after-a-closed-comment",
     );
+    const frontmatter = ["---", "title: x", "...", "[fm]: /after-frontmatter", "", "# A"];
+    expect(splitMarkdown(frontmatter.join("\n")).definitions).toBe("[fm]: /after-frontmatter");
+    const unclosed = ["---", ...Array<string>(1000).fill("text"), "[u]: /paragraph-text"];
+    expect(splitMarkdown(unclosed.join("\n")).definitions).toBe("");
   });
 });

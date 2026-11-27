@@ -15,6 +15,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { VcsProcessSpawnError, VcsProcessTimeoutError } from "@t3tools/contracts";
 import { firstNonEmptyLine } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import { userFacingSourceControlDetail } from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -23,6 +24,8 @@ import * as ForgejoCli from "./ForgejoCli.ts";
 import * as ForgejoPullRequestProvider from "./ForgejoPullRequestProvider.ts";
 import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
 import { markRequiredForgejoChecks } from "./forgejoRequiredChecks.ts";
+
+const onPath = (command: string) => `/usr/bin/${command}`;
 
 const processOutput = TestSourceControlHost.processOutput;
 
@@ -2424,6 +2427,7 @@ it.effect(
             ),
           ),
           Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
+          Effect.provideService(SpawnExecutableResolution, onPath),
         );
       }
     }),
@@ -2440,6 +2444,7 @@ it.effect("explains a slow fj instead of advising an install when tea is absent"
     assert.include(result.installHint, "`fj version` timed out");
     assert.notInclude(result.installHint, "Install");
   }).pipe(
+    Effect.provideService(SpawnExecutableResolution, onPath),
     Effect.provide(
       Layer.mergeAll(
         Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
@@ -2484,6 +2489,7 @@ it.effect("does not call a valid fj login on an HTTP-only server unauthenticated
     assert.strictEqual(result.executable, "fj");
     assert.notStrictEqual(result.auth.status, "unauthenticated");
   }).pipe(
+    Effect.provideService(SpawnExecutableResolution, onPath),
     Effect.provideService(
       FileSystem.FileSystem,
       FileSystem.makeNoop({

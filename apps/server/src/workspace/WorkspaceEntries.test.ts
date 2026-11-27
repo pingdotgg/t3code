@@ -102,10 +102,12 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const cwd = yield* makeTempDir({ git: true });
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        const platform = yield* HostProcess.Platform;
         yield* writeTextFile(cwd, "tracked.txt");
         yield* git(cwd, ["add", "tracked.txt"]);
         yield* writeTextFile(cwd, ".gitignore", "node_modules/\n.env\ntracked.txt\n");
         yield* writeTextFile(cwd, ".env", "secret=value");
+        if (platform !== "win32") yield* writeTextFile(cwd, ":(draft).md");
         yield* writeTextFile(cwd, "node_modules/pkg/index.js");
         yield* writeTextFile(cwd, "src/index.ts");
         yield* fileSystem.makeDirectory(path.join(cwd, "empty"));
@@ -127,6 +129,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             { path: "src", kind: "directory" },
             { path: "empty", kind: "directory" },
             { path: "tracked.txt", kind: "file" },
+            ...(platform === "win32" ? [] : [{ path: ":(draft).md", kind: "file" }]),
           ]),
         );
         expect(root.entries.some((entry) => entry.path.includes("/"))).toBe(false);
@@ -268,11 +271,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const platform = yield* HostProcess.Platform;
-        yield* writeTextFile(
-          cwd,
-          ".gitignore",
-          "node_modules/\ndist/\n\\[id\\]/\n*.map\nfoo\n!foo/\n",
-        );
+        yield* writeTextFile(cwd, ".gitignore", "node_modules/\ndist/\n\\[id\\]/\n*.map\n:foo/\n");
         yield* Effect.forEach(
           [
             "node_modules",
@@ -311,8 +310,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             ? [
                 // git refuses to classify paths beyond a symlink, so nothing there is labelled.
                 { directoryPath: "node_modules/link", ignored: false, except: [] },
-                // Leading : is pathspec magic; Git sees foo/pkg-0.js, unignored by !foo/.
-                { directoryPath: ":foo", ignored: false, except: [] },
+                // Git reads ./:foo literally, so :foo/ in .gitignore labels the whole folder.
+                { directoryPath: ":foo", ignored: true, except: [] },
               ]
             : []),
         ]) {

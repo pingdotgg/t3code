@@ -2937,6 +2937,28 @@ it.layer(
       }),
     );
 
+    it.effect("reports a provider's mode limits, and none where it has no say", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        const limitsOf = (id: ProviderInstanceId) =>
+          h.registry.runtimeModeLimits({ instanceId: id, scanCwd: "/workspace" });
+        assert.deepEqual(yield* limitsOf(h.first.instance.instanceId), []);
+        assert.deepEqual(yield* limitsOf(ProviderInstanceId.make("removed")), []);
+        yield* Ref.set(h.instances, [
+          {
+            ...h.first.instance,
+            runtimeModeLimitsForCwd: (cwd) =>
+              Effect.succeed(
+                cwd === "/workspace" ? [{ mode: "auto", reason: "project-settings" }] : [],
+              ),
+          },
+        ]);
+        assert.deepEqual(yield* limitsOf(h.first.instance.instanceId), [
+          { mode: "auto", reason: "project-settings" },
+        ]);
+      }),
+    );
+
     it.effect("rescans a requested cwd whose snapshot is still current", () =>
       Effect.gen(function* () {
         const h = yield* makeWorkspaceRescanHarness;

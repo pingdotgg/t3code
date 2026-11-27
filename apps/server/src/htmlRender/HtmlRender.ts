@@ -105,8 +105,11 @@ export class HtmlRenderViewportHeightError extends Schema.TaggedError<HtmlRender
 // Consume unclosed comments, tags, or quotes through EOF to keep both patterns linear.
 const CSS_SOURCE =
   /<!--[\s\S]*?(?:-->|$)|<style\b[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))/gi;
-// The lookbehind skips base64 runs, such as an inlined image that happens to contain "1vh".
-const VIEWPORT_HEIGHT_UNIT = /(?<![\w.+/])(?:\d+(?:\.\d+)?|\.\d+)[sld]?vh(?![\w-])/i;
+// vb and vmax follow the frame height too; vmin stays, as the frame width caps it.
+// The lookbehind skips base64 runs, such as an inlined image that happens to contain "1vh",
+// and identifiers such as the class `.h-100vmax`, while a negative `-50vh` still counts.
+const VIEWPORT_HEIGHT_UNIT =
+  /(?<![\w.+/]|[\w-]-)(?:\d+(?:\.\d+)?|\.\d+)[sld]?v(?:h|b|max)(?![\w-])/i;
 
 const rejectViewportHeight = (html: string) => {
   for (const [, sheet, doubleQuoted, singleQuoted, unquoted] of html.matchAll(CSS_SOURCE)) {
@@ -197,9 +200,21 @@ const LOCAL_IMAGE_PATTERN = new RegExp(
     String.raw`|url\(\s*(${ABSOLUTE_PATH}[^\s"'\x60()]{0,2048}?\.(?:${IMAGE_EXTENSIONS}))\s*\)`,
   "gid",
 );
+const HTML_TAG_END = String.raw`(?:[^"'<>]|"[^"]*(?:"|$)|'[^']*(?:'|$))*(?:>|$)`;
+const HTML_COMMENT_CONTEXT = new RegExp(
+  String.raw`<!--(?:-?>|[\s\S]*?(?:--!?>|$))|<(script|style|textarea|title|xmp|iframe|noembed|noframes|noscript)(?=[\s/>])${HTML_TAG_END}[\s\S]*?(?:</\1(?=[\s/>])${HTML_TAG_END}|$)|<plaintext(?=[\s/>])[\s\S]*$|<[a-z!/]${HTML_TAG_END}`,
+  "gi",
+);
 
 const findLocalImages = (html: string) =>
-  Array.from(html.matchAll(LOCAL_IMAGE_PATTERN)).flatMap((match) => {
+  Array.from(
+    // Preserve raw text and quoted attributes; blank only comments without shifting offsets.
+    html
+      .replace(HTML_COMMENT_CONTEXT, (source) =>
+        source.startsWith("<!--") ? source.replace(/[^\r\n]/g, " ") : source,
+      )
+      .matchAll(LOCAL_IMAGE_PATTERN),
+  ).flatMap((match) => {
     const span = match.indices?.[2] ?? match.indices?.[3];
     return span ? [{ start: span[0], end: span[1], path: html.slice(span[0], span[1]) }] : [];
   });

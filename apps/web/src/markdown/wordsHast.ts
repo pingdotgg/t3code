@@ -762,8 +762,43 @@ function imageOwnsLine(items: ElementContent[], at: number): boolean {
 const isBlockElement = (node: ElementContent | undefined) =>
   node?.type === "element" && CLOSES_PARAGRAPH.has(node.tagName);
 
+/** Where the images that end a paragraph after its text start: a caption, then its screenshots. */
+function trailingImagesStart(items: ElementContent[]): number | undefined {
+  let start: number | undefined;
+  for (let at = items.length - 1; at >= 0; at--) {
+    const item = items[at]!;
+    if (isMarkdownImage(item)) start = at;
+    else if (!isElement(item, "br") && !(item.type === "text" && !item.value.trim())) return start;
+  }
+  return undefined;
+}
+
 function breakLines(paragraph: Element, breaks: boolean) {
   const items = paragraph.children;
+  // Inline elements recurse here under `breaks`; only a paragraph's own end is a caption's end.
+  const trailing =
+    paragraph.tagName === "p" || paragraph.tagName === "li"
+      ? trailingImagesStart(items)
+      : undefined;
+  const trailingImage = trailing === undefined ? undefined : items[trailing];
+  const beforeTrailing = trailing === undefined ? undefined : items[trailing - 1];
+  // A line ending before the images breaks below; kept indentation already starts a line.
+  if (
+    trailing !== undefined &&
+    beforeTrailing &&
+    !(
+      beforeTrailing.type === "element" &&
+      (beforeTrailing.tagName === "br" ||
+        (beforeTrailing.tagName === "span" && "dataLeadingWhitespace" in beforeTrailing.properties))
+    ) &&
+    !(beforeTrailing.type === "text" && /\n[ \t]*$/.test(beforeTrailing.value))
+  ) {
+    items.splice(trailing, 0, BREAK, { type: "text", value: "\n" });
+    if (beforeTrailing.type === "text") {
+      beforeTrailing.value = beforeTrailing.value.replace(/[ \t]+$/, "");
+      if (!beforeTrailing.value) items.splice(trailing - 1, 1);
+    }
+  }
   for (let at = 0; at < items.length; at++) {
     const item = items[at]!;
     if (
@@ -776,7 +811,9 @@ function breakLines(paragraph: Element, breaks: boolean) {
     }
     if (item.type !== "text" || !item.value.includes("\n")) continue;
     const afterImage = imageOwnsLine(items, at - 1);
-    const beforeImage = imageOwnsLine(items, at + 1);
+    const beforeImage =
+      imageOwnsLine(items, at + 1) ||
+      (trailingImage !== undefined && items[at + 1] === trailingImage);
     const afterBlock = isBlockElement(items[at - 1]) || (at === 0 && paragraph.tagName === "li");
     const beforeBlock =
       isBlockElement(items[at + 1]) || (at === items.length - 1 && paragraph.tagName === "li");

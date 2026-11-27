@@ -70,13 +70,13 @@ const budgetPercent = (spent: number, limit: number) =>
 
 /** Undefined alone permits the legacy credential reader; null data is authoritative. */
 export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(function* (
-  directory: string,
+  directory: string | undefined,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const options =
+    directory === undefined ? undefined : { urlParams: { "location[directory]": directory } };
   return yield* Effect.gen(function* () {
-    const response = yield* HttpClient.get("/api/experimental/usage/limits", {
-      urlParams: { "location[directory]": directory },
-    });
+    const response = yield* HttpClient.get("/api/experimental/usage/limits", options);
     if (
       response.status === 404 ||
       response.status === 405 ||
@@ -112,9 +112,7 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
     const consoleProviders = budgets.some(
       (budget) => budget.coverage === "all" && budget.per === "set",
     )
-      ? yield* HttpClient.get("/api/provider", {
-          urlParams: { "location[directory]": directory },
-        }).pipe(
+      ? yield* HttpClient.get("/api/provider", options).pipe(
           Effect.flatMap(HttpClientResponse.filterStatusOk),
           Effect.flatMap(HttpClientResponse.schemaBodyJson(Providers)),
           Effect.map((page) =>

@@ -105,7 +105,7 @@ const decodeCodeWorkspace = Schema.decodeUnknownEffect(
 /** Submodule paths a `.gitmodules` file declares, relative to its folder with `/` separators. */
 export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> =>
   text.split(/\r?\n/).flatMap((line) => {
-    const value = /^\s*path\s*=\s*(.*?)\s*$/.exec(line)?.[1];
+    const value = /^\s*path\s*=\s*(.*?)\s*$/i.exec(line)?.[1];
     if (value === undefined) return [];
     const normalized = value.replaceAll('"', "").replaceAll("\\", "/").replace(/\/+$/, "");
     return normalized === "" ? [] : [normalized];

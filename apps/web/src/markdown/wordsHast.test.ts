@@ -3,6 +3,10 @@ import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  renderCodexDirectivesForCopy,
+  renderCodexInlineDirectivesAsMarkdown,
+} from "./markdownText";
+import {
   codexDirectiveSources,
   markdownReferenceDefinitions,
   wordsHast,
@@ -328,6 +332,16 @@ describe("wordsHast", () => {
       '<p dir="ltr"><strong>Label</strong><br>\n<a href="https://x.dev"><img src="https://x.dev/b.png" alt="shot"></a><br>\ncontinues</p>',
     ],
     [
+      "**Shot** (dark) ![a](https://x.dev/a.png) ![b](https://x.dev/b.png)",
+      '<p dir="ltr"><strong>Shot</strong> (dark)<br>\n<img src="https://x.dev/a.png" alt="a"> <img src="https://x.dev/b.png" alt="b"></p>',
+      '<p dir="ltr"><strong>Shot</strong> (dark)<br>\n<img src="https://x.dev/a.png" alt="a"> <img src="https://x.dev/b.png" alt="b"></p>',
+    ],
+    [
+      "**A favicon ![i](https://x.dev/i.png)** stays inline",
+      '<p dir="ltr"><strong>A favicon <img src="https://x.dev/i.png" alt="i"></strong> stays inline</p>',
+      '<p dir="ltr"><strong>A favicon <img src="https://x.dev/i.png" alt="i"></strong> stays inline</p>',
+    ],
+    [
       'Status\n<img src="https://x.dev/b.png" />\ncontinues',
       '<p dir="ltr">Status\n<img src="https://x.dev/b.png">\ncontinues</p>',
       '<p dir="ltr">Status<br>\n<img src="https://x.dev/b.png"><br>\ncontinues</p>',
@@ -372,6 +386,28 @@ describe("wordsHast", () => {
         (directive) => directive.label,
       ),
     ).toEqual(["pick {a} or [b]"]);
+  });
+
+  it.each([
+    [
+      ':codex-followup[try :codex-followup[inner]{prompt="i"} then]{prompt="o"} end',
+      "try inner then end",
+    ],
+    [
+      '😀 :codex-followup[[see :codex-file-citation[a]{path="a.ts"}][ref]]{prompt="o"} and :codex-followup[again]{prompt="a"} end\n\n[ref]: https://x.dev',
+      '😀 [see :codex-file-citation[a]{path="a.ts"}][ref] and again end\n\n[ref]: https://x.dev',
+    ],
+    [
+      ':codex-followup[    read :codex-file-citation[a]{path="a.ts"} then]{prompt="o"} end',
+      "    read [a.ts](<a.ts>) then end",
+    ],
+    [
+      ':codex-followup[read :codex-file-citation[a]{path="a.ts"}] end',
+      ":codex-followup[read [a.ts](<a.ts>)] end",
+    ],
+  ])("copies nested directives without losing surrounding text: %s", (markdown, expected) => {
+    expect(renderCodexDirectivesForCopy(markdown)).toBe(expected);
+    expect(renderCodexInlineDirectivesAsMarkdown(markdown)).toBe(expected);
   });
 
   it.each([

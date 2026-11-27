@@ -203,17 +203,21 @@ const make = Effect.gen(function* () {
     dimensions: Partial<ProviderDimensions>,
   ) {
     const { kind, subject, expected, actual, workaround, trace, userRequested, source } = report;
-    const sent = yield* analytics.record("agent.feedback", {
-      kind,
-      subject,
-      expected,
-      actual,
-      workaround,
-      trace,
-      userRequested,
-      source,
-      ...dimensions,
-    });
+    // A report links to no install. One that left without the user seeing it carries only its
+    // categories; the agent's text stays in the local copy.
+    const sent = yield* analytics.record(
+      "agent.feedback",
+      {
+        kind,
+        subject,
+        ...(userRequested ? { expected, actual, workaround } : {}),
+        trace,
+        userRequested,
+        source,
+        ...dimensions,
+      },
+      { anonymous: true },
+    );
     if (!sent) {
       // A failed clear leaves the report reading as sent, on purpose: uncertain reads as sent.
       yield* sql`UPDATE agent_feedback SET sent = 0 WHERE id = ${report.id}`.pipe(
