@@ -556,21 +556,36 @@ function wordStyleOutlineLevel(
   return level;
 }
 
-type WordStyleToggle = { vanish: boolean | undefined; basedOn: string | undefined };
+type WordStyleToggle = {
+  vanish: boolean | undefined;
+  basedOn: string | undefined;
+  toggled?: boolean | undefined;
+};
 
 // Each true vanish along a basedOn chain toggles the inherited state. A false value or a
-// cycle leaves the outcome uncertain, so the caller keeps the text.
+// cycle leaves the outcome uncertain, so the caller keeps the text. Results are cached on
+// every style of the chain so long chains resolve once.
 function wordStyleToggled(styles: Map<string, WordStyleToggle>, id: string): boolean | undefined {
-  let toggled = false;
-  const visited = new Set<string>();
+  const chain = new Set<WordStyleToggle>();
+  let toggled: boolean | undefined = false;
   for (let current: string | undefined = id; current !== undefined;) {
-    if (visited.has(current)) return;
-    visited.add(current);
     const style = styles.get(current);
     if (!style) break;
-    if (style.vanish === false) return;
-    if (style.vanish) toggled = !toggled;
+    if ("toggled" in style) {
+      toggled = style.toggled;
+      break;
+    }
+    if (chain.has(style) || style.vanish === false) {
+      toggled = undefined;
+      chain.add(style);
+      break;
+    }
+    chain.add(style);
     current = style.basedOn;
+  }
+  for (const style of [...chain].toReversed()) {
+    if (toggled !== undefined && style.vanish) toggled = !toggled;
+    style.toggled = toggled;
   }
   return toggled;
 }
