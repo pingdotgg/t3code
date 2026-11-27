@@ -81,26 +81,6 @@ it("opens the thread menu on a desktop title click without waiting", async () =>
   expect(openMenu).toHaveBeenCalledOnce();
 });
 
-it("shows the running environment badge alongside the link origin badge", async () => {
-  await using screen = await render(
-    <ChatHeader
-      activeThreadEnvironmentId={EnvironmentId.make("boat")}
-      activeThreadId={ThreadId.make("thread")}
-      activeThreadTitle="Implement Anzen"
-      activeThreadEnvironment={{ label: "Boat", machine: "server" }}
-      activeThreadLinkOrigin="Omar's MacBook Pro"
-      isServerThread
-      activeProject={null}
-      parentThreadLink={null}
-      onOpenThread={() => {}}
-      rightPanelOpen={false}
-      onNewThreadInProject={() => {}}
-    />,
-  );
-  await expect.element(screen.getByText("Boat", { exact: true })).toBeVisible();
-  await expect.element(screen.getByText("From Omar's MacBook Pro")).toBeVisible();
-});
-
 it("keeps the Escape that cancels a rename from also reaching window shortcuts", async () => {
   persisted.title = "New thread";
   await using screen = await render(header(persisted.title));

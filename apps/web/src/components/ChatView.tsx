@@ -84,7 +84,6 @@ import {
   type ModelSelection,
   type PreviewAnnotationPayload,
   ProviderInstanceId,
-  resolveEnvironmentMachineKind,
   type ServerProvider,
   type ScopedThreadRef,
   type ThreadId,
@@ -965,16 +964,6 @@ export default function ChatView(props: ChatViewProps) {
       ? scopeThreadRef(activeThread.environmentId, activeThread.lineage.parentThreadId)
       : null;
   const sideChatParent = useQuietThreadShell(sideChatParentRef);
-  const currentThreadEnv =
-    activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
-  const runningEnvironment =
-    currentThreadEnv &&
-    (delegatedFrom !== null || activeThread?.linkOrigin != null || environments.length > 1)
-      ? {
-          label: currentThreadEnv.label,
-          machine: resolveEnvironmentMachineKind(currentThreadEnv.serverConfig ?? null),
-        }
-      : null;
   const parentThreadLink = (() => {
     if (sideChatParentRef !== null) {
       const title = sideChatParent?.title ?? gt("Parent thread");
@@ -998,11 +987,10 @@ export default function ChatView(props: ChatViewProps) {
         parentPanel !== undefined &&
         scopedThreadKey(parentPanel.hostRef) === scopedThreadKey(parentSubagentThreadRef)
       ) {
-        return { title, currentEnvironment: runningEnvironment };
+        return { title };
       }
       return {
         title,
-        currentEnvironment: runningEnvironment,
         open: (): void => {
           void navigate({
             to: "/$environmentId/$threadId",
@@ -1029,12 +1017,9 @@ export default function ChatView(props: ChatViewProps) {
     }
     if (delegatedFrom === null || delegatedFromRef === null) return null;
     const parentRef = delegatedFromRef;
-    const parentEnvironmentLabel =
-      delegatedFromEnvironment?.label ?? activeThread?.linkOrigin?.label;
     return {
       title: delegatedFromThread?.title ?? delegatedFrom.title,
-      ...(parentEnvironmentLabel ? { environmentLabel: parentEnvironmentLabel } : {}),
-      currentEnvironment: runningEnvironment,
+      environmentLabel: delegatedFromEnvironment?.label ?? activeThread?.linkOrigin?.label ?? "",
       // Only an environment this client is connected to can open the parent.
       ...(delegatedFromEnvironment === null
         ? {}
@@ -3622,13 +3607,6 @@ export default function ChatView(props: ChatViewProps) {
               activeThreadId={activeThread.id}
               isServerThread={isServerThread}
               activeThreadTitle={activeThread.title}
-              activeThreadEnvironment={
-                activeThread.lineage.relationshipToParent === "subagent" ||
-                delegatedFrom !== null ||
-                activeThreadShell?.linkOrigin != null
-                  ? runningEnvironment
-                  : null
-              }
               activeThreadLinkOrigin={activeThreadShell?.linkOrigin?.label ?? null}
               activeProject={activeProject ?? null}
               parentThreadLink={headerParentThreadLink}

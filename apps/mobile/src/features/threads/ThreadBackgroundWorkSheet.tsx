@@ -5,7 +5,7 @@ import {
   presentPendingBackgroundWork,
   type PendingBackgroundWorkItem,
 } from "@t3tools/client-runtime/state/thread-execution";
-import type { EnvironmentId, OrchestrationV2RemoteTaskChild, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import { Pressable, ScrollView, View } from "react-native";
@@ -82,21 +82,16 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
           <T>Nothing running in the background.</T>
         </Text>
       ) : (
-        rows.map(({ item, remoteChild }) => {
+        rows.map((row) => {
+          const { item } = row;
           const openTarget =
             item.kind === "subagent"
-              ? subagentThreadTarget(
-                  { childThreadId: item.childThreadId ?? null, remoteChild },
-                  target.environmentId,
-                  reach.ownConnection,
-                  reach.isLinked,
-                )
+              ? subagentThreadTarget(row, target.environmentId, reach.ownConnection, reach.isLinked)
               : null;
           return (
             <BackgroundWorkRow
               key={item.taskId}
               item={item}
-              remoteChild={remoteChild}
               openTarget={openTarget}
               onOpen={openThread}
             />
@@ -115,17 +110,12 @@ export function ThreadBackgroundWorkSheet({ route }: StaticScreenProps<Backgroun
 
 function BackgroundWorkRow(props: {
   readonly item: PendingBackgroundWorkItem;
-  readonly remoteChild: OrchestrationV2RemoteTaskChild | undefined;
   readonly openTarget: SubagentThreadTarget | null;
   readonly onOpen: (child: SubagentThreadTarget, title: string) => void;
 }) {
-  const { item, openTarget, remoteChild } = props;
+  const { item, openTarget } = props;
   const gt = useGT();
   const m = useMessages();
-  const subtitle =
-    remoteChild !== undefined
-      ? gt("Subagent on {environment}", { environment: remoteChild.label })
-      : m(KIND_LABELS[item.kind]);
   const row = (
     <View className="flex-row items-center gap-3 border-b border-border py-3.5">
       <SymbolView
@@ -138,7 +128,7 @@ function BackgroundWorkRow(props: {
       />
       <View className="min-w-0 flex-1">
         <Text className="font-t3-medium text-sm text-foreground">{item.label}</Text>
-        <Text className="text-xs text-foreground-muted">{subtitle}</Text>
+        <Text className="text-xs text-foreground-muted">{m(KIND_LABELS[item.kind])}</Text>
       </View>
       {openTarget === null ? null : (
         <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />

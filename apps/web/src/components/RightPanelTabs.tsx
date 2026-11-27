@@ -105,12 +105,6 @@ import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { useDeviceState } from "~/state/device";
-import {
-  useEnvironment,
-  useEnvironmentIdentities,
-  useEnvironmentMachines,
-} from "~/state/environments";
-import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import type { PreviewPanelInlineSize } from "~/hooks/usePreviewPanelInlineSize";
 import {
   newestPullRequestSummary,
@@ -742,7 +736,7 @@ function SurfaceIcon({
     case "thread":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "linked-thread":
-      return <LinkedThreadTabIcon environmentId={surface.environmentId} />;
+      return <MessagesSquare className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -770,16 +764,6 @@ function sideChatTabState(shell: EnvironmentThreadShell | null) {
     return "needs input";
   }
   return threadRuntimeIsActive(shell.runtime) ? "running" : null;
-}
-
-function LinkedThreadTabIcon(props: { environmentId: EnvironmentId }) {
-  const machines = useEnvironmentMachines();
-  return (
-    <EnvironmentMachineIcon
-      kind={machines.get(props.environmentId) ?? "server"}
-      className="size-3 shrink-0"
-    />
-  );
 }
 
 // Static dots: a side chat or subagent tab can stay open for a whole run.
@@ -1063,19 +1047,6 @@ function RightPanelTab(
       ? scopeThreadRef(props.environmentId, surface.threadId)
       : null,
   );
-  const linkedEnvironment = useEnvironment(
-    surface.kind === "linked-thread" ? surface.environmentId : null,
-  );
-  const environmentIdentities = useEnvironmentIdentities();
-  const tabEnvironmentLabel =
-    surface.kind === "linked-thread"
-      ? (linkedEnvironment?.label ?? surface.label)
-      : surface.kind === "thread" &&
-          environmentIdentities.length > 1 &&
-          props.environmentId !== null
-        ? (environmentIdentities.find((entry) => entry.environmentId === props.environmentId)
-            ?.label ?? null)
-        : null;
   const title =
     sideChatShell === null
       ? props.title
@@ -1179,8 +1150,6 @@ function RightPanelTab(
                 environmentId={props.environmentId}
                 title={title}
               />
-            ) : tabEnvironmentLabel !== null ? (
-              gt("{title} on {environment}", { title, environment: tabEnvironmentLabel })
             ) : (
               title
             )

@@ -985,18 +985,11 @@ describe("MessagesTimeline messages", () => {
     await using screen = await renderElement(
       <MessagesTimeline
         {...props}
-        parentThreadLink={{
-          title: "Parent thread",
-          environmentLabel: "MacBook",
-          currentEnvironment: { label: "Boat", machine: "server" },
-          open: () => {},
-        }}
+        parentThreadLink={{ title: "Parent thread", open: () => {} }}
         timelineEntries={[message("Short child reply.", { role: "assistant" }, "child-0")]}
       />,
     );
     expect(screen.text()).toContain("Subagent of");
-    expect(screen.text()).toContain("Parent thread on MacBook");
-    expect(screen.text()).toContain("Running on Boat");
     const viewport = props.listRef.current!.getScrollableNode()!;
     const end = () => viewport.scrollHeight - viewport.clientHeight;
     // Distance from the end as each scroll lands, against the content height at that moment.

@@ -135,7 +135,7 @@ it("gives a subagent the same status as the background work line", async () => {
     .toBeVisible();
 });
 
-it("shows the remote environment for a delegated subagent in the background bar and details", async () => {
+it("offers to open a subagent running in a linked environment", async () => {
   const remoteItemId = TurnItemId.make("subagent-item-1");
   await using screen = await render(
     <ThreadNow
@@ -191,9 +191,7 @@ it("shows the remote environment for a delegated subagent in the background bar 
       })}
     />,
   );
-  await expect.element(page.getByText("Waiting · Implement Anzen on Boat")).toBeVisible();
   await screen.getByRole("button", { name: "Details", exact: true }).click();
-  await expect.element(page.getByRole("dialog").getByText("on Boat")).toBeVisible();
   await expect
     .element(page.getByRole("dialog").getByRole("button", { name: "Open subagent" }))
     .toBeVisible();

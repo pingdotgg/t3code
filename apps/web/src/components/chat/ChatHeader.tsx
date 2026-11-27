@@ -1,7 +1,6 @@
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
-  type EnvironmentMachineKind,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -44,7 +43,6 @@ import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
-import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { GuestShareIndicator } from "./GuestShareControls";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
@@ -52,10 +50,6 @@ interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   activeThreadTitle: string;
-  activeThreadEnvironment?:
-    | { readonly label: string; readonly machine: EnvironmentMachineKind }
-    | null
-    | undefined;
   activeThreadLinkOrigin?: string | null | undefined;
   isServerThread: boolean;
   activeProject: EnvironmentProject | null;
@@ -81,7 +75,6 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
   activeThreadId,
   activeThreadTitle,
-  activeThreadEnvironment,
   activeThreadLinkOrigin,
   isServerThread,
   activeProject,
@@ -397,37 +390,22 @@ export const ChatHeader = memo(function ChatHeader({
               <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
             </SharedTooltipTrigger>
           )}
-          {renamingTitle === null && (activeThreadEnvironment || activeThreadLinkOrigin) ? (
-            <span className="inline-flex shrink-0 items-center gap-1.5">
-              {activeThreadEnvironment ? (
-                <SharedTooltipTrigger
-                  render={<Badge variant="outline" size="sm" />}
-                  label={gt("Running on {environment}", {
-                    environment: activeThreadEnvironment.label,
-                  })}
-                >
-                  <EnvironmentMachineIcon kind={activeThreadEnvironment.machine} aria-hidden />
-                  {activeThreadEnvironment.label}
-                </SharedTooltipTrigger>
-              ) : null}
-              {activeThreadLinkOrigin ? (
-                <SharedTooltipTrigger
-                  render={<Badge variant="info" size="sm" />}
-                  label={
-                    <>
-                      <T>
-                        Started by an agent on <Var>{activeThreadLinkOrigin}</Var> through a linked
-                        environment.
-                      </T>
-                    </>
-                  }
-                >
+          {renamingTitle === null && activeThreadLinkOrigin ? (
+            <SharedTooltipTrigger
+              render={<Badge variant="info" size="sm" />}
+              label={
+                <>
                   <T>
-                    From <Var>{activeThreadLinkOrigin}</Var>
+                    Started by an agent on <Var>{activeThreadLinkOrigin}</Var> through a linked
+                    environment.
                   </T>
-                </SharedTooltipTrigger>
-              ) : null}
-            </span>
+                </>
+              }
+            >
+              <T>
+                From <Var>{activeThreadLinkOrigin}</Var>
+              </T>
+            </SharedTooltipTrigger>
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>

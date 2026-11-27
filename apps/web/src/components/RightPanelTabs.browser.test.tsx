@@ -1,6 +1,6 @@
 import "~/index.css";
 
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { commands, page, userEvent } from "vite-plus/test/browser";
@@ -400,28 +400,5 @@ describe("add surface launcher", () => {
     expect(menuListeners.size).toBe(0);
     expect(await pressModT()).toBe(false);
     expect(page.getByRole("menu").query()).toBeNull();
-  });
-
-  it("includes the remote environment in a linked-thread tab tooltip", async () => {
-    const linkedSurface: RightPanelSurface = {
-      id: "linked-thread:mac:boat:child-1",
-      kind: "linked-thread",
-      viaEnvironmentId: EnvironmentId.make("mac"),
-      environmentId: EnvironmentId.make("boat"),
-      threadId: ThreadId.make("child-1"),
-      label: "Boat",
-      title: "Implement Anzen",
-    };
-    await using screen = await render(
-      <RightPanelTabs
-        {...(panel(DIFF_SURFACE).props as RightPanelTabsProps)}
-        surfaces={[linkedSurface]}
-        activeSurfaceId={linkedSurface.id}
-      >
-        {null}
-      </RightPanelTabs>,
-    );
-    await userEvent.hover(screen.getByRole("button", { name: "Implement Anzen" }));
-    await expect.element(page.getByText("Implement Anzen on Boat")).toBeVisible();
   });
 });
