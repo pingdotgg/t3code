@@ -125,6 +125,7 @@ describe("Azure DevOps remotes", () => {
     for (const remote of [
       "git@ssh.dev.azure.com:v3/org/project/repo",
       "ssh://git@ssh.dev.azure.com:22/v3/org/project/repo",
+      "ssh.dev.azure.com:v3/Org/My Project/My Repo",
       "git@vs-ssh.visualstudio.com:v3/org/project/repo",
       "https://org@dev.azure.com/org/project/_git/repo",
     ]) {
