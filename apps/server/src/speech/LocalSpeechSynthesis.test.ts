@@ -244,7 +244,7 @@ it.effect(
             expect(yield* service.wordTiming).toEqual({ state: "installed", size: 205_171_744 });
             // No installed voice uses the runtime, so removing the model removes it too.
             yield* service.remove(WORD_TIMING_MODEL_ID);
-            expect(removed).toEqual(["audio-t3-2026.11.26-mms-forced-aligner-q4_k.gguf"]);
+            expect(removed).toEqual(["mms-forced-aligner-q4_k.gguf"]);
             expect(yield* service.wordTiming).toEqual({
               state: "downloadable",
               size: 205_171_744 + audioCppRuntime("darwin", "arm64")!.size,

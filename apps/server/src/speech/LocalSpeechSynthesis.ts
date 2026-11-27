@@ -1212,13 +1212,10 @@ export class LocalSpeechSynthesis extends Context.Service<
 >()("t3/speech/LocalSpeechSynthesis") {}
 
 // Meta's MMS-300M forced aligner (CC BY-NC 4.0), quantized to Q4_K by audio.cpp's converter.
-const SPEECH_ALIGNER_RELEASE = "t3-2026.11.26";
-const SPEECH_ALIGNER_FILENAME = `audio-${SPEECH_ALIGNER_RELEASE}-mms-forced-aligner-q4_k.gguf`;
 const SPEECH_ALIGNER_FILE: SpeechModelStore.ModelFile = {
-  id: "pingdotgg/audio.cpp",
-  revision: SPEECH_ALIGNER_RELEASE,
-  filename: SPEECH_ALIGNER_FILENAME,
-  url: `https://github.com/pingdotgg/audio.cpp/releases/download/${SPEECH_ALIGNER_RELEASE}/${SPEECH_ALIGNER_FILENAME}`,
+  id: "yashsingh1/mms-forced-aligner-gguf",
+  revision: "27a009eb567352da0f88adc3e4c02184dd8fe9fe",
+  filename: "mms-forced-aligner-q4_k.gguf",
   size: 205_171_744,
   sha256: "fe9fddf7040a98e3ed5d8792663556b1d35d58f82790917ed600367a6ec1e9c3",
 };
