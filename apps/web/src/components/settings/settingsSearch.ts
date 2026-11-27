@@ -648,7 +648,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "speech-dictionary",
     title: msg("Dictionary"),
     to: "/settings/voice",
-    searchTerms: [msg("speech voice transcription vocabulary names glossary alias")],
+    searchTerms: [
+      msg("Your dictionary"),
+      msg("speech voice transcription vocabulary names glossary alias"),
+    ],
   },
   {
     id: "speech-project-dictionary",
@@ -1780,6 +1783,8 @@ export function searchSettings(
 
   return settingsForThisPlatform(items)
     .flatMap((item, index) => {
+      const navLabel = SETTINGS_NAV_LABELS[item.to];
+      const displayedNavLabel = translate(navLabel);
       const score = scoreSearchFields(
         [
           sourceLabel(item.title),
@@ -1788,6 +1793,10 @@ export function searchSettings(
             weight: SEARCH_SECONDARY_FIELD_WEIGHT,
           },
           translate(item.title),
+          {
+            value: displayedNavLabel === navLabel ? sourceLabel(navLabel) : displayedNavLabel,
+            weight: SEARCH_SECONDARY_FIELD_WEIGHT,
+          },
           {
             value: translate(SETTINGS_SECTION_LABELS[item.to]),
             weight: SEARCH_SECONDARY_FIELD_WEIGHT,

@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
+import { resetCreditFailureText } from "@t3tools/client-runtime/state/usage";
 import {
   type LimitPace,
   paceOf,
@@ -288,11 +289,7 @@ export function useResetCredit(environmentId: EnvironmentId) {
       setStatus(result.value.warning ?? m(OUTCOME_TEXT[result.value.outcome]));
       return;
     }
-    setStatus(
-      "error" in result.cause && result.cause.error instanceof Error
-        ? result.cause.error.message
-        : m(msg("Could not use the reset credit.")),
-    );
+    setStatus(resetCreditFailureText(result, m));
   };
 
   const confirm = (next: ResetCreditChoice) => {

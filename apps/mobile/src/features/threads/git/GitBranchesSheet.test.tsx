@@ -74,9 +74,11 @@ vi.mock("../../../state/use-selected-thread-git-state", () => ({
   useSelectedThreadGitState: () => ({
     vcsTerminology: DEFAULT_VCS_TERMINOLOGY,
     selectedThreadBranches: [{ name: "release/stable", worktreePath: null }],
-    selectedThreadBranchesLoading: false,
     gitOperationLabel: null,
   }),
+}));
+vi.mock("../../../state/queries", () => ({
+  usePaginatedBranches: () => ({ data: null, refs: [], isPending: false }),
 }));
 vi.mock("../../../state/use-selected-thread-git-actions", () => ({
   useSelectedThreadGitActions: () => ({

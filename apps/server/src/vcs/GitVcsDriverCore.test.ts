@@ -3759,23 +3759,37 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("cuts long commit subjects without splitting an emoji", () =>
+    it.effect("keeps selected commit subjects equal to the branch list", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* git(cwd, ["checkout", "-b", "feature/emoji-subject"]);
-        yield* git(cwd, ["commit", "--allow-empty", "-m", `${"a".repeat(299)}😀 tail`]);
-        const sha = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const shas: Array<string> = [];
+        for (const args of [
+          ["commit", "--allow-empty", "-m", `${"a".repeat(299)}😀 tail`],
+          ["commit", "--allow-empty", "--cleanup=verbatim", "-m", "\n\nAdd widget\n\nBody"],
+          ["commit", "--allow-empty", "-m", "Line one\nline two\n\nBody"],
+        ]) {
+          yield* git(cwd, args);
+          shas.unshift(yield* git(cwd, ["rev-parse", "HEAD"]));
+        }
 
         const branch = yield* driver.getReviewBranchCommits({ cwd, baseRef: initialBranch });
-        const preview = yield* driver.getReviewDiffPreview({ cwd, commitSha: sha });
-        const commitSubject = preview.sources.find(
-          (candidate) => candidate.kind === "commit",
-        )?.commitSubject;
+        const previewSubjects = yield* Effect.forEach(shas, (commitSha) =>
+          driver
+            .getReviewDiffPreview({ cwd, commitSha })
+            .pipe(
+              Effect.map(
+                (preview) =>
+                  preview.sources.find((candidate) => candidate.kind === "commit")?.commitSubject,
+              ),
+            ),
+        );
+        const expected = ["Line one line two", "Add widget", "a".repeat(299)];
         assert.deepStrictEqual(
-          [branch.commits[0]?.subject, commitSubject],
-          ["a".repeat(299), "a".repeat(299)],
+          [branch.commits.map((commit) => commit.subject), previewSubjects],
+          [expected, expected],
         );
       }),
     );

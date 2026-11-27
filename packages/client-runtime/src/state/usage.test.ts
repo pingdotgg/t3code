@@ -1,17 +1,20 @@
 import {
   EnvironmentId,
+  ProviderInstanceId,
+  ProviderSetupError,
   UsageDay,
   USAGE_CONTRACT_VERSION,
   type UsageModelFilter,
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
-import { refreshUsage, refreshUsageLimits } from "./usage.ts";
+import { refreshUsage, refreshUsageLimits, resetCreditFailureText } from "./usage.ts";
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -210,5 +213,26 @@ describe("limits refresh cooldown", () => {
     expect(await first).toBe("old limits");
     expect(await manual).toBe("old limits");
     expect(newCheck).not.toHaveBeenCalled();
+  });
+});
+
+describe("reset credit failure text", () => {
+  it("shows the server's reason, falling back only when there is none", () => {
+    const refused = new ProviderSetupError({
+      instanceId: ProviderInstanceId.make("claude"),
+      operation: "consume-reset-credit",
+      detail: "This provider is disabled.",
+    });
+    expect(resetCreditFailureText(AsyncResult.failure(Cause.fail(refused)))).toBe(
+      "This provider is disabled.",
+    );
+    expect(resetCreditFailureText(AsyncResult.failure(Cause.die("Socket closed")))).toBe(
+      "Socket closed",
+    );
+    for (const cause of [Cause.fail({}), Cause.interrupt()]) {
+      expect(resetCreditFailureText(AsyncResult.failure(cause))).toBe(
+        "Could not use the reset credit.",
+      );
+    }
   });
 });

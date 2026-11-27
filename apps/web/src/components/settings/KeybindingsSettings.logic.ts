@@ -259,7 +259,15 @@ const KEYBINDING_GROUPS = [
   {
     id: "navigation",
     title: msg("Navigation"),
-    prefixes: ["sidebar", "rightPanel", "commandPalette", "filePicker", "projectSearch", "editor"],
+    prefixes: [
+      "navigation",
+      "sidebar",
+      "rightPanel",
+      "commandPalette",
+      "filePicker",
+      "projectSearch",
+      "editor",
+    ],
   },
   { id: "threads", title: msg("Threads"), prefixes: ["thread", "chat", "pullRequest"] },
   { id: "composer", title: msg("Composer"), prefixes: ["composer", "modelPicker"] },
@@ -381,12 +389,14 @@ export function filterKeybindingRows(
   rows: ReadonlyArray<KeybindingRow>,
   query: string,
   resolve: MessageResolver = m,
+  platform = navigator.platform,
 ): ReadonlyArray<KeybindingRow> {
   const normalizedQuery = query.trim();
   if (normalizedQuery.length === 0) return rows;
   return searchItems(rows, normalizedQuery, (row) => [
     commandLabel(row.command, resolve),
     row.command,
+    { value: formatShortcutLabel(row.binding.shortcut, platform), weight: 100 },
     { value: row.key, weight: 100 },
     { value: row.when, weight: 200, fuzzy: false },
     { value: row.source, weight: 200 },
@@ -471,6 +481,8 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "terminal.splitVertical": msg("Terminal: Split Vertical"),
   "terminal.new": msg("Terminal: New"),
   "terminal.close": msg("Terminal: Close"),
+  "terminal.previous": msg("Terminal: Previous"),
+  "terminal.next": msg("Terminal: Next"),
   "rightPanel.toggle": msg("Right Panel: Toggle"),
   "rightPanel.new": msg("Right Panel: New"),
   "threadPanel.toggle": msg("Thread Panel: Toggle"),
@@ -578,6 +590,10 @@ function recordedLayoutShortcutKey(
   const physicalKey = shortcutKeyFromEvent(event, platform);
   const layoutKey = event.key.toLowerCase();
   if (event.altKey || layoutKey.length !== 1) return physicalKey;
+  // A non-Latin letter (Cyrillic, Greek, ...) stops matching once the user switches to a Latin layout.
+  if (/^\p{L}$/u.test(layoutKey) && !/\p{Script=Latin}/u.test(layoutKey)) {
+    return /^Key[A-Z]$/.test(event.code) ? event.code.slice(3).toLowerCase() : physicalKey;
+  }
   // Normalize only US shifted glyphs at their US position. Other layouts can
   // produce the same glyph without Shift or at a different position.
   const unshiftedKey = event.shiftKey ? US_SHIFTED_TO_UNSHIFTED_KEYS.get(layoutKey) : undefined;
