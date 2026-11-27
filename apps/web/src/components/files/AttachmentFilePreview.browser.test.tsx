@@ -238,8 +238,8 @@ describe("bounded binary previews", () => {
     }
   });
 
-  it("names archive folders whose paths have leading or repeated slashes", async () => {
-    const bytes = new Uint8Array(2048);
+  it("names archive folders whose paths have leading slashes, repeated slashes or ./", async () => {
+    const bytes = new Uint8Array(3072);
     const write = (offset: number, value: string) =>
       bytes.set(new TextEncoder().encode(value), offset);
     const member = (offset: number, name: string, content: string) => {
@@ -259,6 +259,8 @@ describe("bounded binary previews", () => {
     };
     member(0, "/a//hello.txt", "nested hello");
     member(1024, "a/hello.txt", "plain hello");
+    // `tar cf x.tar .` names every member from "./".
+    member(2048, "./a/dot.txt", "dot hello");
     const src = URL.createObjectURL(new Blob([bytes]));
     try {
       await using screen = await render(<BinaryViewer src={src} name="paths.tar" kind="archive" />);
@@ -271,65 +273,22 @@ describe("bounded binary previews", () => {
       const preview = () => screen.container.querySelector("pre")?.textContent;
       await vi.waitFor(() => expect(rows()).toEqual(["a"]), 10_000);
       await act(() => buttons()[0]!.click());
-      await vi.waitFor(() => expect(rows()).toEqual(["hello.txt", "hello.txt"]));
-      await act(() => buttons()[0]!.click());
+      await vi.waitFor(() => expect(rows()).toEqual(["dot.txt", "hello.txt", "hello.txt"]));
+      await act(() => buttons()[1]!.click());
       await vi.waitFor(() => expect(preview()).toContain("nested hello"), 10_000);
       await act(() => back().click());
-      await act(() => buttons()[1]!.click());
+      await act(() => buttons()[2]!.click());
       await vi.waitFor(() => expect(preview()).toContain("plain hello"), 10_000);
       await act(() => back().click());
-      await vi.waitFor(() => expect(rows()).toEqual(["hello.txt", "hello.txt"]));
+      await act(() => buttons()[0]!.click());
+      await vi.waitFor(() => expect(preview()).toContain("dot hello"), 10_000);
+      await act(() => back().click());
+      await vi.waitFor(() => expect(rows()).toEqual(["dot.txt", "hello.txt", "hello.txt"]));
       const parent = () =>
         screen.container.querySelector<HTMLButtonElement>('[aria-label="Parent folder"]')!;
       await act(() => parent().click());
       expect(parent().disabled).toBe(true);
       expect(rows()).toEqual(["a"]);
-    } finally {
-      URL.revokeObjectURL(src);
-    }
-  });
-
-  it('lists a TAR made from the current folder without a "." folder', async () => {
-    const bytes = new Uint8Array(4096);
-    const write = (offset: number, value: string) =>
-      bytes.set(new TextEncoder().encode(value), offset);
-    const member = (offset: number, name: string, type: string, content = "") => {
-      write(offset, name);
-      write(offset + 124, content.length.toString(8).padStart(11, "0") + "\0");
-      bytes.fill(32, offset + 148, offset + 156);
-      write(offset + 156, type);
-      write(
-        offset + 148,
-        bytes
-          .subarray(offset, offset + 512)
-          .reduce((sum, byte) => sum + byte, 0)
-          .toString(8)
-          .padStart(6, "0") + "\0 ",
-      );
-      write(offset + 512, content);
-    };
-    // `tar cf bundle.tar .` names every member from "./".
-    member(0, "./", "5");
-    member(512, "./src/", "5");
-    member(1024, "./src/a.txt", "0", "hello");
-    member(2048, "./README.md", "0", "readme");
-    const src = URL.createObjectURL(new Blob([bytes]));
-    try {
-      await using screen = await render(
-        <BinaryViewer src={src} name="bundle.tar" kind="archive" />,
-      );
-      const buttons = () => [
-        ...screen.container.querySelectorAll<HTMLButtonElement>("tbody button"),
-      ];
-      const rows = () => buttons().map((button) => button.textContent);
-      await vi.waitFor(() => expect(rows()).toEqual(["src", "README.md"]), 10_000);
-      await act(() => buttons()[0]!.click());
-      await vi.waitFor(() => expect(rows()).toEqual(["a.txt"]));
-      await act(() => buttons()[0]!.click());
-      await vi.waitFor(
-        () => expect(screen.container.querySelector("pre")?.textContent).toContain("hello"),
-        10_000,
-      );
     } finally {
       URL.revokeObjectURL(src);
     }
