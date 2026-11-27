@@ -1199,9 +1199,20 @@ it.effect("creating a project through MCP refuses a model default instead of dro
     const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
     const dependencies = Layer.merge(
       harness.dependencies,
-      Layer.mock(Project.ProjectService)({
-        create: () => Effect.die("the project was created without its model default"),
-      }),
+      Layer.mergeAll(
+        Layer.mock(Project.ProjectService)({
+          create: () => Effect.die("the project was created without its model default"),
+          getById: (id) => Effect.succeedSome({ ...deletedProject(id), deletedAt: null }),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          createNamedProject: () =>
+            Effect.succeed({
+              projectId: harness.projectId,
+              workspaceRoot: "/projects/client-target",
+            }),
+        }),
+      ),
     );
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
@@ -1209,17 +1220,28 @@ it.effect("creating a project through MCP refuses a model default instead of dro
       ),
     );
 
-    const refused = yield* toolkit
-      .handle("t3_project_create", {
-        title: "client-target",
-        workspaceRoot: "/projects/client-target",
-        defaultModelSelection: harness.modelSelection,
-      })
+    for (const workspaceRoot of ["/projects/client-target", undefined]) {
+      const refused = yield* toolkit
+        .handle("t3_project_create", {
+          title: "client-target",
+          ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+          defaultModelSelection: harness.modelSelection,
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+      expect(refused.at(-1)?.result).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("t3_project_update"),
+      });
+    }
+
+    const accepted = yield* toolkit
+      .handle("t3_project_create", { title: "client-target", defaultModelSelection: null })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
-    expect(refused.at(-1)?.result).toMatchObject({
-      code: "invalid_request",
-      message: expect.stringContaining("t3_project_update"),
+    expect(accepted.at(-1)?.result).toMatchObject({
+      id: harness.projectId,
+      defaultModelSelection: null,
     });
   }),
 );

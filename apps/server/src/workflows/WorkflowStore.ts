@@ -1527,9 +1527,8 @@ export const make = Effect.gen(function* () {
       return rows.length > 0;
     }),
     steps: Effect.fn("WorkflowStore.steps")(function* (runId) {
-      // A resumed run waiting to take back a place it held is queued at that step again. Ahead of
-      // it are the resumed runs that asked before it; ahead of a queued one, those and every
-      // resumed run.
+      // A resumed run waiting to take back a held place is queued at that step again, but the
+      // places it takes back together do not queue behind each other.
       return yield* sql<StepRow>`
         SELECT s.name, s.kind,
                CASE WHEN back.seq IS NULL THEN s.status ELSE 'running' END AS status,
@@ -1538,9 +1537,11 @@ export const make = Effect.gen(function* () {
                CASE WHEN s.kind = 'queue' AND (s.status = 'running' OR back.seq IS NOT NULL) THEN (
                  SELECT COUNT(*) FROM workflow_pool_places me
                  JOIN workflow_pool_places other
-                   ON other.pool = me.pool AND other.run_id != me.run_id
-                   AND ((other.state = 'returning' AND (me.state = 'queued' OR other.seq < me.seq))
+                   ON other.pool = me.pool
+                   AND ((other.state = 'returning' AND (me.state = 'queued'
+                     OR (me.state = 'returning' AND other.run_id != me.run_id AND other.seq < me.seq)))
                      OR (other.state = 'queued' AND me.state = 'queued' AND other.seq < me.seq))
+                 JOIN workflow_runs r ON r.run_id = other.run_id AND r.status != 'paused'
                  WHERE me.run_id = s.run_id AND me.name = s.name
                ) END AS ahead
         FROM workflow_steps s

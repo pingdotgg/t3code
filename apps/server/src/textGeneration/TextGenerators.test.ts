@@ -3,7 +3,7 @@ import {
   type ManagedPolicySummary,
   ProviderDriverKind,
   ProviderInstanceId,
-  type TextGeneratorConfig,
+  TextGeneratorConfig,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
@@ -17,6 +17,7 @@ import { SECRET_REDACTED } from "../settingsSecrets.ts";
 import * as TextGenerators from "./TextGenerators.ts";
 
 const ID = ProviderInstanceId.make("router");
+const decodeTextGeneratorConfig = Schema.decodeUnknownEffect(TextGeneratorConfig);
 
 const layer = (generator: Partial<TextGeneratorConfig>, policy?: ManagedPolicySummary) =>
   Layer.effect(TextGenerators.TextGenerators, TextGenerators.make).pipe(
@@ -47,13 +48,13 @@ it.effect.each([
     kind: "openaiCompatible",
     path: "/v1/chat/completions",
     auth: ["authorization", "Bearer secret"],
-    reply: { choices: [{ finish_reason: "stop", message: { content: '{"title":"Fix login"}' } }] },
+    reply: { choices: [{ message: { content: '{"title":"Fix login"}' } }] },
   },
   {
     kind: "anthropic",
     path: "/v1/messages",
     auth: ["x-api-key", "secret"],
-    reply: { stop_reason: "end_turn", content: [{ type: "text", text: '{"title":"Fix login"}' }] },
+    reply: { content: [{ type: "text", text: '{"title":"Fix login"}' }] },
   },
 ] as const)("$kind generates structured text with its API's request shape", (api) =>
   Effect.gen(function* () {
@@ -235,4 +236,52 @@ it.effect("checks unsaved settings, keeping the saved key behind a redaction mar
     expect(refused.detail).toContain("policy");
     expect(seen).toHaveLength(requestsBefore);
   }),
+);
+
+it.effect.each([
+  {
+    kind: "openaiCompatible",
+    generatePath: "/v1/chat/completions",
+    modelsSearch: "",
+    reply: { choices: [{ message: { content: "OK" } }] },
+  },
+  {
+    kind: "anthropic",
+    generatePath: "/v1/messages",
+    modelsSearch: "?limit=1000",
+    reply: { content: [{ type: "text", text: "OK" }] },
+  },
+] as const)(
+  "$kind keeps endpoints in the pathname when baseUrl ends with empty query or fragment",
+  (api) =>
+    Effect.gen(function* () {
+      const generators = yield* TextGenerators.TextGenerators.pipe(Effect.provide(layer({})));
+      for (const baseUrl of [
+        "https://api.test/v1?",
+        "https://api.test/v1#",
+        "https://api.test/v1/?#",
+      ]) {
+        const seen: Array<{ pathname: string; search: string; hash: string }> = [];
+        const upstream = vi.fn<typeof fetch>(async (url, init) => {
+          const parsed = new URL(String(url));
+          seen.push({ pathname: parsed.pathname, search: parsed.search, hash: parsed.hash });
+          return (init?.method ?? "GET") === "GET"
+            ? Response.json({ data: [{ id: "some/model" }] })
+            : Response.json(api.reply);
+        });
+        const config = yield* decodeTextGeneratorConfig({
+          kind: api.kind,
+          baseUrl,
+          apiKey: "secret",
+          enabled: true,
+        });
+        yield* generators
+          .listModels({ id: ID, config, test: true, model: "some/model" })
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+        expect(seen).toEqual([
+          { pathname: "/v1/models", search: api.modelsSearch, hash: "" },
+          { pathname: api.generatePath, search: "", hash: "" },
+        ]);
+      }
+    }),
 );
