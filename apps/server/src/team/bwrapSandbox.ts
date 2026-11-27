@@ -1470,17 +1470,21 @@ function buildBwrapPrefixArgs(
   }
   // Pin child RW subdirectories (such as `antigravity-acp`) as mountpoints so sandboxed processes
   // get `EBUSY` if they attempt to rename or swap the directory with a symlink.
+  const profileRwPinAdded = new Set<string>();
   for (const rwPinSubpath of plan.providerProfileRwPinSubpaths ?? []) {
     const normalized = normalizePosixPath(rwPinSubpath);
-    if (mountedRw.has(normalized)) continue;
+    if (profileRwPinAdded.has(normalized)) continue;
+    profileRwPinAdded.add(normalized);
     mountedRw.add(normalized);
     args.push("--bind", normalized, normalized);
   }
   // Emit profile RO overlays unconditionally (bypassing `pushRo`'s system-prefix skip) so
   // profiles hosted under `/opt/...` still lock `config` and `.t3-team-profile.json` read-only.
+  const profileRoAdded = new Set<string>();
   for (const roSubpath of plan.providerProfileRoSubpaths ?? []) {
     const normalized = normalizePosixPath(roSubpath);
-    if (mountedRo.has(normalized)) continue;
+    if (profileRoAdded.has(normalized)) continue;
+    profileRoAdded.add(normalized);
     mountedRo.add(normalized);
     args.push("--ro-bind", normalized, normalized);
   }

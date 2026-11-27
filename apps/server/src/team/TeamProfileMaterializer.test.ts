@@ -770,6 +770,32 @@ describe("TeamProfileMaterializer", () => {
                   .catch(() => false),
               ),
             ).toBe(false);
+
+            // Directory collision at the token leaf must fail closed without recursive deletion.
+            const collidingTokenDir = NodePath.join(acpDir, TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME);
+            const collidingNestedFile = NodePath.join(collidingTokenDir, "keep.txt");
+            yield* Effect.promise(async () => {
+              await NodeFSP.unlink(acpDir);
+              await NodeFSP.rename(movedPurgeDir, acpDir);
+              await NodeFSP.mkdir(collidingTokenDir, { recursive: true });
+              await NodeFSP.writeFile(collidingNestedFile, "DO_NOT_DELETE", "utf8");
+            });
+            const dirCollisionErr = yield* Effect.promise(() =>
+              writePinnedRelativeTokenFile({
+                rootDir: paths.profileDir,
+                relativeSegments: ["antigravity-acp", TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME],
+                contents: '{"token":"should-refuse"}\n',
+                platform: hostPlatform,
+              }).then(
+                () => undefined,
+                (err) => err as Error,
+              ),
+            );
+            expect(dirCollisionErr).toBeDefined();
+            expect(dirCollisionErr?.message).toContain("Refusing directory collision");
+            expect(yield* Effect.promise(() => NodeFSP.readFile(collidingNestedFile, "utf8"))).toBe(
+              "DO_NOT_DELETE",
+            );
           }
         } finally {
           yield* Effect.promise(() => NodeFSP.rm(tmp, { recursive: true, force: true }));

@@ -312,7 +312,7 @@ export async function writePinnedRelativeTokenFile(input: {
     const tempPath = joinLeaf(`${leafName}.tmp-${NodeCrypto.randomUUID()}`);
     const existing = await NodeFSP.lstat(leafPath).catch(() => undefined);
     if (existing !== undefined && !existing.isSymbolicLink() && existing.isDirectory()) {
-      await NodeFSP.rm(leafPath, { recursive: true, force: true });
+      throw new Error(`Refusing directory collision at team profile token path: ${leafName}`);
     }
     const openFlags =
       NodeFS.constants.O_WRONLY |
@@ -400,23 +400,41 @@ async function writeContainedAtomicFile(
   rootRealDir: string,
   filePath: string,
   contents: string,
+  platform: NodeJS.Platform,
 ): Promise<void> {
   assertPathContainedWithin(rootRealDir, filePath);
   const existing = await NodeFSP.lstat(filePath).catch(() => undefined);
   if (existing !== undefined) {
     if (existing.isSymbolicLink()) {
       await NodeFSP.unlink(filePath);
+    } else if (existing.isDirectory()) {
+      throw new Error(`Refusing directory collision at team profile file path: ${filePath}`);
     } else if (!existing.isFile()) {
-      await NodeFSP.rm(filePath, { recursive: true, force: true });
+      await NodeFSP.unlink(filePath);
     }
   }
   const tempPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
   assertPathContainedWithin(rootRealDir, tempPath);
+  const openFlags =
+    NodeFS.constants.O_WRONLY |
+    NodeFS.constants.O_CREAT |
+    NodeFS.constants.O_EXCL |
+    (platform !== "win32" ? NodeFS.constants.O_NOFOLLOW : 0);
+  let tmpFh: NodeFSP.FileHandle | undefined;
   try {
-    await NodeFSP.writeFile(tempPath, contents, { encoding: "utf8", mode: 0o600 });
+    tmpFh = await NodeFSP.open(tempPath, openFlags, 0o600);
+    await tmpFh.writeFile(contents, "utf8");
+    if (platform !== "win32") {
+      await tmpFh.chmod(0o600);
+    }
+    await tmpFh.close();
+    tmpFh = undefined;
     await NodeFSP.rename(tempPath, filePath);
   } catch (error) {
-    await NodeFSP.rm(tempPath, { force: true }).catch(() => undefined);
+    if (tmpFh !== undefined) {
+      await tmpFh.close().catch(() => undefined);
+    }
+    await NodeFSP.unlink(tempPath).catch(() => undefined);
     throw error;
   }
 }
@@ -424,12 +442,8 @@ async function writeContainedAtomicFile(
 async function ensureContainedRealDirectory(rootRealDir: string, dirPath: string): Promise<string> {
   assertPathContainedWithin(rootRealDir, dirPath);
   const existing = await NodeFSP.lstat(dirPath).catch(() => undefined);
-  if (existing !== undefined) {
-    if (existing.isSymbolicLink()) {
-      await NodeFSP.unlink(dirPath);
-    } else if (!existing.isDirectory()) {
-      await NodeFSP.rm(dirPath, { recursive: true, force: true });
-    }
+  if (existing !== undefined && (existing.isSymbolicLink() || !existing.isDirectory())) {
+    await NodeFSP.unlink(dirPath);
   }
   await NodeFSP.mkdir(dirPath, { recursive: true, mode: 0o700 });
   const postStat = await NodeFSP.lstat(dirPath);
@@ -480,7 +494,7 @@ async function syncAntigravityPersonalConfigAndPlugins(input: {
       ? await NodeFSP.readFile(skillsConfigPath, "utf8").catch(() => undefined)
       : undefined;
   if (currentSkillsConfig !== nextSkillsConfig) {
-    await writeContainedAtomicFile(configDir, skillsConfigPath, nextSkillsConfig);
+    await writeContainedAtomicFile(configDir, skillsConfigPath, nextSkillsConfig, input.platform);
   }
 
   // Mirror enabled personal plugins from `~/.gemini/config/plugins/*` into `<teamProfile>/config/plugins/*`
@@ -883,6 +897,7 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
                   revision: input.revision,
                   assetsHash,
                 })}\n`,
+                platform,
               );
             },
             catch: () => undefined,
