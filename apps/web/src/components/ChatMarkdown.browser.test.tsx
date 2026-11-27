@@ -368,6 +368,36 @@ it("finds a paragraph whose last word is a rendered formula, not an earlier head
   readAloudMath.words = undefined;
 });
 
+it("tints a block formula while its words are spoken", async () => {
+  settingsOverrides.mathRenderingEnabled = true;
+  readAloudMath.words = (tex) =>
+    tex.includes("\\pi") ? "e to the i pi plus one equals zero" : undefined;
+  const markdown = "Euler wrote:\n\n$$\ne^{i\\pi} + 1 = 0\n$$\n\nAnd that was that.";
+  await using _screen = await render(
+    <div ref={readAloudHighlightRoot("reply")}>
+      <ChatMarkdown cwd={undefined} text={markdown} />
+    </div>,
+  );
+  const reading = readAloudController.start("reply", markdown, {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+  });
+  await vi.waitFor(() => expect(readAloudController.getSnapshot().status).toBe("playing"));
+  const spoken = readAloudText(markdown, true, { math: readAloudMath.words });
+  const plus = spoken.indexOf("plus");
+  await act(() => readAloudWords.emit({ start: plus, end: plus + 4 }));
+  const tinted = document.querySelector<HTMLElement>('[data-read-aloud="word"]');
+  expect(tinted?.dataset.markdownMath).toBe("display");
+  // The next paragraph is read as text again.
+  const after = spoken.indexOf("that.");
+  await act(() => readAloudWords.emit({ start: after, end: after + 4 }));
+  expect(document.querySelector('[data-read-aloud="word"]')).toBeNull();
+  expect([...(CSS.highlights.get("t3-read-aloud-word") ?? [])].map(String)).toEqual(["that"]);
+  readAloudController.stop();
+  await reading;
+  readAloudMath.words = undefined;
+});
+
 function setup() {
   appearance.value = "light";
   parsedSources.length = 0;

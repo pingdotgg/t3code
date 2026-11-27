@@ -172,6 +172,19 @@ it("leaves rendered formulas out of the cues a renderer searches its text for", 
   expect(readAloudPosition(plain, tex, tex + 3)?.word.cue).toEqual({ text: "$i$", occurrence: 0 });
 });
 
+it("places words spoken for a block formula, which shows no text a renderer can search", () => {
+  const markdown = "Euler wrote:\n\n$$\ne^{i\\pi} + 1 = 0\n$$\n\nAnd that was that.";
+  const math = () => "e to the i pi plus one equals zero";
+  const speech = readAloudSpeech(markdown, true, { math });
+  const plus = speech.text.indexOf("plus");
+  const position = readAloudPosition(speech, plus, plus + 4);
+  const formula = { start: markdown.indexOf("$$"), end: markdown.lastIndexOf("$$") + 2 };
+  expect(position?.block).toMatchObject({ ...formula, first: null, last: null });
+  expect(position?.word.cue).toBeNull();
+  expect(position?.word.start).toBeGreaterThanOrEqual(formula.start);
+  expect(position?.word.end).toBeLessThanOrEqual(formula.end);
+});
+
 it("finds the block and word being read in text a renderer shows", () => {
   const markdown = [
     "# Plan",

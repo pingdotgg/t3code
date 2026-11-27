@@ -382,11 +382,12 @@ export interface ReadAloudCue {
 
 /** What is being read, as markdown offsets plus cues for renderers that search their text. */
 export interface ReadAloudPosition {
+  /** `first` and `last` are null for a block shown only as math, such as a block formula. */
   readonly block: {
     readonly start: number;
     readonly end: number;
-    readonly first: ReadAloudCue;
-    readonly last: ReadAloudCue;
+    readonly first: ReadAloudCue | null;
+    readonly last: ReadAloudCue | null;
   };
   /** `cue` is null for a word spoken for a formula, which renderers show as math. */
   readonly word: {
@@ -437,14 +438,17 @@ export function readAloudPosition(
       cue(block.spokenStart + word.index, block.spokenStart + word.index + word[0].length),
     )
     .filter((entry) => entry !== undefined);
-  const firstCue = cues[0];
-  const lastCue = cues.at(-1);
   const wordSources = speech.sources
     .slice(spokenStart, spokenEnd)
     .filter((source) => source !== ADDED);
-  if (!firstCue || !lastCue || wordSources.length === 0) return null;
+  if (wordSources.length === 0) return null;
   return {
-    block: { start: block.sourceStart, end: block.sourceEnd, first: firstCue, last: lastCue },
+    block: {
+      start: block.sourceStart,
+      end: block.sourceEnd,
+      first: cues[0] ?? null,
+      last: cues.at(-1) ?? null,
+    },
     word: {
       start: Math.min(...wordSources),
       end: Math.max(...wordSources) + 1,

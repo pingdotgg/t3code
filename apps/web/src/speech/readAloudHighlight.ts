@@ -227,20 +227,23 @@ function blockElement(root: HTMLElement, block: ReadAloudHighlight["block"]) {
  * carry no range. Take the first innermost block whose text holds the block's first and last words.
  */
 function blockElementByText(root: HTMLElement, block: ReadAloudHighlight["block"]) {
+  // A block shown only as math has no text to match; its formula is tinted instead.
+  const { first: firstCue, last: lastCue } = block;
+  if (!firstCue || !lastCue) return null;
   const candidates = [...root.querySelectorAll<HTMLElement>(SPEECH_BLOCK_SELECTOR)]
     .filter((element) => !element.querySelector(SPEECH_BLOCK_SELECTOR))
     .map((element) => ({ element, text: spokenText(element) }));
   for (const { element, text } of candidates) {
-    const first = locate(text, block.first);
-    const last = locate(text, block.last);
+    const first = locate(text, firstCue);
+    const last = locate(text, lastCue);
     if (first && last && first.start <= last.start) return element;
   }
   // A chip, footnote mark, or rendered formula can show an end word differently from how it is
   // spoken; the block still starts or ends with the other one.
   const edge = (text: string) => text.trim().replace(/[^\p{L}\p{N}]+$/u, "");
   return (
-    candidates.find(({ text }) => text.value.trimStart().startsWith(block.first.text))?.element ??
-    candidates.find(({ text }) => edge(text.value).endsWith(edge(block.last.text)))?.element ??
+    candidates.find(({ text }) => text.value.trimStart().startsWith(firstCue.text))?.element ??
+    candidates.find(({ text }) => edge(text.value).endsWith(edge(lastCue.text)))?.element ??
     null
   );
 }
@@ -386,7 +389,8 @@ function textOffset(text: SpokenText, node: Node, offset: number) {
 }
 
 /** The cue's place in the rendered text: its `occurrence`-th appearance, counted as the cue was. */
-function locate(text: SpokenText, cue: ReadAloudCue) {
+function locate(text: SpokenText, cue: ReadAloudCue | null) {
+  if (!cue) return null;
   let at = text.value.indexOf(cue.text);
   for (let seen = 0; at !== -1 && seen < cue.occurrence; seen++)
     at = text.value.indexOf(cue.text, at + cue.text.length);
