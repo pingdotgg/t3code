@@ -142,7 +142,7 @@ language. The list starts filtered to your language, so clear the filter to see 
 Kokoro (about 220 MB) is the default, with natural English voices plus Spanish, French, Hindi,
 Italian, and Portuguese. Qwen3-TTS 1.7B (about 2.8 GB) sounds the most natural and reads numbers
 and units best in ten languages, but needs a GPU and about 7 GB of memory; Qwen3-TTS 0.6B (about
-2 GB) is close behind and lighter. Tiny models such as Piper, Inflect Micro, Kitten TTS Mini, and
+2 GB) is close behind and lighter. Tiny models such as Kale TTS, Piper, Kitten TTS Mini, and
 Pocket TTS stay fast without a GPU, while the largest need a GPU and several gigabytes of memory.
 Models with recorded voices imitate speakers from LibriTTS-R audiobook recordings. A few models
 are licensed for non-commercial use only, and their descriptions say so. Like dictation models,

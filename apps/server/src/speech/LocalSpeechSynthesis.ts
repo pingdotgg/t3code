@@ -70,7 +70,7 @@ type LocalModel = {
 };
 
 const AUDIO_CPP_GGUF = "audio-cpp/audio.cpp-gguf";
-const GGUF_REVISION = "7a103b33f04120535bdfe97b5f65b79d3c90d708";
+const GGUF_REVISION = "dac3915042a8ddfbb79f87b108214fda57e4b753";
 // Each Pocket TTS language ships its own weights and voice files, under the same voice names.
 const pocketModel = (
   language: string,
@@ -393,7 +393,7 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
     description: "Fastest with a GPU.",
     file: {
       id: AUDIO_CPP_GGUF,
-      revision: "ca0b203eb1bb87f333a7cfbad2d5f6672b4ccba7",
+      revision: GGUF_REVISION,
       filename: "Supertonic-3-GGUF/supertonic-3-f16.gguf",
       size: 312_785_732,
       sha256: "7a44c47d1f387e4fb163e2eed9615b58470c77e26ac8b2b1a6be49dfb8670899",
@@ -1009,6 +1009,136 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
     voices: CLIP_VOICES,
     clipText: "reference_text",
     languages: ["zh", "en"],
+  },
+  {
+    id: "kale-tts-1-nano",
+    name: "Kale TTS Nano",
+    description: "Ten English voices in 39 MB. Fast on any computer.",
+    file: gguf(
+      "kale-tts-1-GGUF/kale-tts-1-nano-f32.gguf",
+      39_357_540,
+      "55e1eb425bf378fc5d028dd4cdff71dd3f30e2e72163b0a6d52f2e5afa51c29a",
+    ),
+    appliesSpeed: true,
+    takesLanguage: false,
+    voices: [
+      "kenzie",
+      "simone",
+      "amy",
+      "frankie",
+      "darlene",
+      "owen",
+      "toby",
+      "jack",
+      "earl",
+      "magnus",
+    ].map(capitalized),
+    languages: ["en"],
+    // Reads words outside its lexicon, such as numbers, through eSpeak-ng.
+    espeakData: {
+      id: "pingdotgg/audio.cpp",
+      revision: AUDIO_CPP_VERSION,
+      ...AUDIO_CPP_ESPEAK_DATA,
+    },
+  },
+  {
+    id: "kale-tts-1-tiny",
+    name: "Kale TTS Tiny",
+    description: "Ten English voices. Small, and fast on any computer.",
+    file: gguf(
+      "kale-tts-1-GGUF/kale-tts-1-tiny-f32.gguf",
+      194_146_596,
+      "507337d5c9b215d8e605245bb6bb3b15ec85f6dbd28f0b27e6fca7b915d827c3",
+    ),
+    appliesSpeed: true,
+    takesLanguage: false,
+    voices: [
+      "kenzie",
+      "simone",
+      "amy",
+      "frankie",
+      "darlene",
+      "owen",
+      "toby",
+      "jack",
+      "earl",
+      "magnus",
+    ].map(capitalized),
+    languages: ["en"],
+    espeakData: {
+      id: "pingdotgg/audio.cpp",
+      revision: AUDIO_CPP_VERSION,
+      ...AUDIO_CPP_ESPEAK_DATA,
+    },
+  },
+  {
+    id: "gradium-phonon-multilingual",
+    name: "Gradium Phonon",
+    description: "One voice in 5 languages. Tiny and fast. For non-commercial use only.",
+    file: gguf(
+      "Gradium-Phonon-GGUF/40m-multilingual/phonon-40m-multilingual-q8_0.gguf",
+      95_272_800,
+      "7b45487841095aade29d48b520d9564b651f08538fc7b32e6afa92bfb43ac26b",
+    ),
+    appliesSpeed: false,
+    takesLanguage: false,
+    voices: [
+      {
+        id: "default",
+        name: "Default",
+        file: {
+          id: AUDIO_CPP_GGUF,
+          revision: GGUF_REVISION,
+          filename: "phonon-40m-multilingual-default-voice.safetensors",
+          url: `https://huggingface.co/${AUDIO_CPP_GGUF}/resolve/${GGUF_REVISION}/Gradium-Phonon-GGUF/40m-multilingual/default-voice.safetensors`,
+          size: 256_136,
+          sha256: "dc537478eaadc1a5257fcda2e3501ab81e14c111a5d95a5838f350db2afd0f1a",
+        },
+      },
+    ],
+    languages: ["en", "fr", "de", "es", "pt"],
+  },
+  {
+    id: "gradium-phonon-french",
+    name: "Gradium Phonon Français",
+    description: "One voice, made for French. Tiny and fast. For non-commercial use only.",
+    file: gguf(
+      "Gradium-Phonon-GGUF/40m-fr/phonon-40m-fr-q8_0.gguf",
+      95_272_672,
+      "229aa1d140cf8c4d3ebc56a3b7bf70651a12bfc0e71d5ee7fe842e96d82fe939",
+    ),
+    appliesSpeed: false,
+    takesLanguage: false,
+    voices: [
+      {
+        id: "default",
+        name: "Default",
+        file: {
+          id: AUDIO_CPP_GGUF,
+          revision: GGUF_REVISION,
+          filename: "phonon-40m-fr-default-voice.safetensors",
+          url: `https://huggingface.co/${AUDIO_CPP_GGUF}/resolve/${GGUF_REVISION}/Gradium-Phonon-GGUF/40m-fr/default-voice.safetensors`,
+          size: 256_136,
+          sha256: "a8c97074fdb4044fc8da2873bdccd8b2a64beeedab859d241d5fc11c0c400aad",
+        },
+      },
+    ],
+    languages: ["fr"],
+  },
+  {
+    id: "voxmel-tts-0.6b",
+    name: "VoxMel 0.6B",
+    description: "Recorded voices, for English and Chinese.",
+    file: gguf(
+      "VoxMel-TTS-GGUF/voxmel-tts-0.6b-q8_0.gguf",
+      1_039_806_112,
+      "9d7288219258fc249b7d8f976d45d71a0423bfeaacb58d3768c82e94cb3d7acb",
+    ),
+    appliesSpeed: false,
+    takesLanguage: false,
+    voices: CLIP_VOICES,
+    clipText: "reference_text",
+    languages: ["en", "zh"],
   },
 ];
 
