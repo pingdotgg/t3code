@@ -622,7 +622,11 @@ export class TeamRepository extends Context.Service<
       readonly status: TeamMemberStatus;
       readonly updatedAt: string;
     }) => Effect.Effect<
-      Option.Option<TeamMember>,
+      Option.Option<{
+        readonly member: TeamMember;
+        readonly updatedViews: ReadonlyArray<TeamView>;
+        readonly updatedEnvironments: ReadonlyArray<TeamEnvironment>;
+      }>,
       TeamRepositoryError | TeamLastOwnerProtectedError | TeamMemberForbiddenError
     >;
     readonly leaveTeam: (input: {
@@ -1432,7 +1436,7 @@ const make = Effect.gen(function* () {
             `;
             const current = currentRows[0];
             if (!current) {
-              return Option.none<TeamMember>();
+              return Option.none();
             }
             if (!canModifyTeamMember(actor.role, current.role)) {
               return yield* new TeamMemberForbiddenError({
@@ -1465,7 +1469,75 @@ const make = Effect.gen(function* () {
               RETURNING id
             `;
             if (!updatedIds[0]) {
-              return Option.none<TeamMember>();
+              return Option.none();
+            }
+            const updatedViews: Array<TeamView> = [];
+            const updatedEnvironments: Array<TeamEnvironment> = [];
+            if (input.status === "removed") {
+              const views = yield* sql<ViewRow>`
+                SELECT id, team_id, name, description, is_default,
+                       read_roles_json, read_member_ids_json,
+                       post_roles_json, post_member_ids_json,
+                       created_at, updated_at
+                FROM team_views
+                WHERE team_id = ${input.teamId}
+              `;
+              for (const view of views) {
+                const readIds = parseMemberIdArray(view.read_member_ids_json);
+                const postIds = parseMemberIdArray(view.post_member_ids_json);
+                const nextReadIds = readIds.filter((id) => id !== input.memberId);
+                const nextPostIds = postIds.filter((id) => id !== input.memberId);
+                if (
+                  nextReadIds.length !== readIds.length ||
+                  nextPostIds.length !== postIds.length
+                ) {
+                  const nextReadJson = encodeStringArrayJson(nextReadIds);
+                  const nextPostJson = encodeStringArrayJson(nextPostIds);
+                  yield* sql`
+                    UPDATE team_views
+                    SET
+                      read_member_ids_json = ${nextReadJson},
+                      post_member_ids_json = ${nextPostJson},
+                      updated_at = ${input.updatedAt}
+                    WHERE id = ${view.id}
+                  `;
+                  updatedViews.push(
+                    mapViewRow({
+                      ...view,
+                      read_member_ids_json: nextReadJson,
+                      post_member_ids_json: nextPostJson,
+                      updated_at: input.updatedAt,
+                    }),
+                  );
+                }
+              }
+              const envs = yield* sql<TeamEnvironmentRow>`
+                SELECT id, team_id, environment_id, name, is_default, peer_link_id,
+                       access_roles_json, access_member_ids_json, created_at, updated_at
+                FROM team_environments
+                WHERE team_id = ${input.teamId}
+              `;
+              for (const env of envs) {
+                const accessIds = parseMemberIdArray(env.access_member_ids_json);
+                const nextAccessIds = accessIds.filter((id) => id !== input.memberId);
+                if (nextAccessIds.length !== accessIds.length) {
+                  const nextAccessJson = encodeStringArrayJson(nextAccessIds);
+                  yield* sql`
+                    UPDATE team_environments
+                    SET
+                      access_member_ids_json = ${nextAccessJson},
+                      updated_at = ${input.updatedAt}
+                    WHERE id = ${env.id}
+                  `;
+                  updatedEnvironments.push(
+                    mapEnvironmentRow({
+                      ...env,
+                      access_member_ids_json: nextAccessJson,
+                      updated_at: input.updatedAt,
+                    }),
+                  );
+                }
+              }
             }
             const updatedRows = yield* sql<MemberRow>`
               SELECT
@@ -1482,7 +1554,13 @@ const make = Effect.gen(function* () {
               WHERE m.id = ${input.memberId} AND m.team_id = ${input.teamId}
               LIMIT 1
             `;
-            return updatedRows[0] ? Option.some(mapMemberRow(updatedRows[0])) : Option.none();
+            return updatedRows[0]
+              ? Option.some({
+                  member: mapMemberRow(updatedRows[0]),
+                  updatedViews,
+                  updatedEnvironments,
+                })
+              : Option.none();
           }),
         )
         .pipe(

@@ -2436,7 +2436,7 @@ const make = Effect.gen(function* () {
       });
     }
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    const updatedMember = yield* withMembershipMutationGate(
+    const updatedResult = yield* withMembershipMutationGate(
       Effect.gen(function* () {
         const updated = yield* repository
           .updateMemberStatus({
@@ -2471,13 +2471,20 @@ const make = Effect.gen(function* () {
             message: "Team member could not be found.",
           });
         }
-        if (updated.value.status !== "active") {
-          yield* revokeSessionsForMember(updated.value.id);
-          yield* revokePairingLinksForMember(updated.value.id);
+        if (updated.value.member.status !== "active") {
+          yield* revokeSessionsForMember(updated.value.member.id);
+          yield* revokePairingLinksForMember(updated.value.member.id);
         }
         return updated.value;
       }),
     );
+    const updatedMember = updatedResult.member;
+    for (const updatedView of updatedResult.updatedViews) {
+      yield* publish({ version: 1, type: "viewUpserted", payload: updatedView });
+    }
+    for (const updatedEnvironment of updatedResult.updatedEnvironments) {
+      yield* publish({ version: 1, type: "environmentUpserted", payload: updatedEnvironment });
+    }
     if (updatedMember.status !== "active") {
       if (Option.isSome(assetsRepositoryOption)) {
         yield* assetsRepositoryOption.value
@@ -3050,32 +3057,51 @@ const make = Effect.gen(function* () {
         : null;
     const readRule = normalizeAccessRule(input.payload.readRule);
     const postRule = normalizeAccessRule(input.payload.postRule);
-    yield* validateAccessRuleMemberIds(team.id, [readRule, postRule]);
-    const nowIso = DateTime.formatIso(yield* DateTime.now);
-    const viewId = TeamViewId.make(
-      `view_${yield* random.uuidV4().pipe(Effect.mapError(toInternalError))}`,
-    );
-    const view: TeamView = {
-      id: viewId,
-      teamId: team.id,
-      name,
-      description,
-      isDefault: false,
-      readRule,
-      postRule,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    };
-    yield* repository.createView(view).pipe(
-      Effect.catchTags({
-        TeamViewNameAlreadyTakenError: (error) =>
-          Effect.fail(
-            new TeamOperationError({
-              code: "view_name_taken",
-              message: error.message,
-            }),
-          ),
-        TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+    const view = yield* withMembershipMutationGate(
+      Effect.gen(function* () {
+        const activeTeam = yield* requireWorkspace();
+        if (activeTeam.id !== team.id) {
+          return yield* new TeamOperationError({
+            code: "not_found",
+            message: "The target team workspace changed before creating the view.",
+          });
+        }
+        const activeActor = yield* requireActiveMember(input.sessionId);
+        if (activeActor.teamId !== activeTeam.id || !canManageTeamViews(activeActor.role)) {
+          return yield* new TeamOperationError({
+            code: "forbidden",
+            message: "Only owner and admin members can create team views.",
+          });
+        }
+        yield* validateAccessRuleMemberIds(activeTeam.id, [readRule, postRule]);
+        const nowIso = DateTime.formatIso(yield* DateTime.now);
+        const viewId = TeamViewId.make(
+          `view_${yield* random.uuidV4().pipe(Effect.mapError(toInternalError))}`,
+        );
+        const nextView: TeamView = {
+          id: viewId,
+          teamId: activeTeam.id,
+          name,
+          description,
+          isDefault: false,
+          readRule,
+          postRule,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        yield* repository.createView(nextView).pipe(
+          Effect.catchTags({
+            TeamViewNameAlreadyTakenError: (error) =>
+              Effect.fail(
+                new TeamOperationError({
+                  code: "view_name_taken",
+                  message: error.message,
+                }),
+              ),
+            TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+          }),
+        );
+        return nextView;
       }),
     );
     yield* publish({ version: 1, type: "viewUpserted", payload: view });
@@ -3136,30 +3162,48 @@ const make = Effect.gen(function* () {
       input.payload.postRule !== undefined
         ? normalizeAccessRule(input.payload.postRule)
         : undefined;
-    yield* validateAccessRuleMemberIds(team.id, [nextReadRule, nextPostRule]);
-    const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    const updated = yield* repository
-      .updateView({
-        teamId: team.id,
-        viewId: existing.id,
-        ...(nextName !== undefined ? { name: nextName } : {}),
-        ...(nextDescription !== undefined ? { description: nextDescription } : {}),
-        ...(nextReadRule !== undefined ? { readRule: nextReadRule } : {}),
-        ...(nextPostRule !== undefined ? { postRule: nextPostRule } : {}),
-        updatedAt,
-      })
-      .pipe(
-        Effect.catchTags({
-          TeamViewNameAlreadyTakenError: (error) =>
-            Effect.fail(
-              new TeamOperationError({
-                code: "view_name_taken",
-                message: error.message,
-              }),
-            ),
-          TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
-        }),
-      );
+    const updated = yield* withMembershipMutationGate(
+      Effect.gen(function* () {
+        const activeTeam = yield* requireWorkspace();
+        if (activeTeam.id !== team.id) {
+          return yield* new TeamOperationError({
+            code: "not_found",
+            message: "The target team workspace changed before updating the view.",
+          });
+        }
+        const activeActor = yield* requireActiveMember(input.sessionId);
+        if (activeActor.teamId !== activeTeam.id || !canManageTeamViews(activeActor.role)) {
+          return yield* new TeamOperationError({
+            code: "forbidden",
+            message: "Only owner and admin members can edit team views.",
+          });
+        }
+        yield* validateAccessRuleMemberIds(activeTeam.id, [nextReadRule, nextPostRule]);
+        const updatedAt = DateTime.formatIso(yield* DateTime.now);
+        return yield* repository
+          .updateView({
+            teamId: activeTeam.id,
+            viewId: existing.id,
+            ...(nextName !== undefined ? { name: nextName } : {}),
+            ...(nextDescription !== undefined ? { description: nextDescription } : {}),
+            ...(nextReadRule !== undefined ? { readRule: nextReadRule } : {}),
+            ...(nextPostRule !== undefined ? { postRule: nextPostRule } : {}),
+            updatedAt,
+          })
+          .pipe(
+            Effect.catchTags({
+              TeamViewNameAlreadyTakenError: (error) =>
+                Effect.fail(
+                  new TeamOperationError({
+                    code: "view_name_taken",
+                    message: error.message,
+                  }),
+                ),
+              TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+            }),
+          );
+      }),
+    );
     if (Option.isNone(updated)) {
       return yield* new TeamOperationError({
         code: "not_found",
@@ -8098,17 +8142,35 @@ const make = Effect.gen(function* () {
       input.payload.accessRule !== undefined
         ? normalizeAccessRule(input.payload.accessRule)
         : undefined;
-    yield* validateAccessRuleMemberIds(team.id, [nextAccessRule]);
-    const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    const updated = yield* repository
-      .updateEnvironment({
-        teamId: team.id,
-        environmentId: input.payload.environmentId,
-        ...(nextName !== undefined ? { name: nextName } : {}),
-        ...(nextAccessRule !== undefined ? { accessRule: nextAccessRule } : {}),
-        updatedAt,
-      })
-      .pipe(Effect.mapError(toInternalError));
+    const updated = yield* withMembershipMutationGate(
+      Effect.gen(function* () {
+        const activeTeam = yield* requireWorkspace();
+        if (activeTeam.id !== team.id) {
+          return yield* new TeamOperationError({
+            code: "not_found",
+            message: "The target team workspace changed before updating the environment.",
+          });
+        }
+        const activeActor = yield* requireActiveMember(input.sessionId);
+        if (activeActor.teamId !== activeTeam.id || !canManageTeamEnvironments(activeActor.role)) {
+          return yield* new TeamOperationError({
+            code: "forbidden",
+            message: "Only owner and admin members can update team environment ACLs.",
+          });
+        }
+        yield* validateAccessRuleMemberIds(activeTeam.id, [nextAccessRule]);
+        const updatedAt = DateTime.formatIso(yield* DateTime.now);
+        return yield* repository
+          .updateEnvironment({
+            teamId: activeTeam.id,
+            environmentId: input.payload.environmentId,
+            ...(nextName !== undefined ? { name: nextName } : {}),
+            ...(nextAccessRule !== undefined ? { accessRule: nextAccessRule } : {}),
+            updatedAt,
+          })
+          .pipe(Effect.mapError(toInternalError));
+      }),
+    );
     if (Option.isNone(updated)) {
       return yield* new TeamOperationError({
         code: "not_found",

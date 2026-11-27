@@ -4575,7 +4575,8 @@ describe("TeamService", () => {
             }),
         } as never;
 
-        // Departed member IDs must be rejected by attachEnvironment ACL validation.
+        // Departed member IDs must be rejected by attachEnvironment ACL validation, and
+        // admin removal (updateMemberStatus -> removed) must also scrub existing view ACLs.
         const departedMemberAttachExit = yield* Effect.exit(
           team.attachEnvironment({
             sessionId: aliceSession.sessionId,
@@ -4593,6 +4594,31 @@ describe("TeamService", () => {
             code: "invalid_input",
           });
         }
+        const eveInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "eve" },
+        });
+        const eveJoined = yield* team.redeemInvite({
+          token: eveInvite.token,
+          pseudo: "eve",
+          client: testClient,
+        });
+        yield* team.updateView({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            viewId: customView.id,
+            readRule: { roles: ["owner"], memberIds: [eveJoined.member.id] },
+            postRule: { roles: ["owner"], memberIds: [eveJoined.member.id] },
+          },
+        });
+        yield* team.updateMemberStatus({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: eveJoined.member.id, status: "removed" },
+        });
+        const stateAfterEveRemoved = yield* team.getState(aliceSession.sessionId);
+        const viewAfterEveRemoved = stateAfterEveRemoved.views.find((v) => v.id === customView.id);
+        expect(viewAfterEveRemoved?.readRule.memberIds).not.toContain(eveJoined.member.id);
+        expect(viewAfterEveRemoved?.postRule.memberIds).not.toContain(eveJoined.member.id);
 
         // Simulate an offline peer link during deleteTeam so we verify pending remote revocations
         // survive workspace deletion and still drain once the peer comes back online.

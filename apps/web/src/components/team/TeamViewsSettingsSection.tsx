@@ -148,11 +148,13 @@ export function TeamViewsSettingsSection({
     const trimmedDescription = draft.description.trim();
     const readRule: TeamAccessRule = {
       roles: draft.isDefault ? [...ALL_TEAM_ROLES] : [...draft.readRoles],
-      memberIds: draft.isDefault ? [] : [...draft.readMemberIds],
+      memberIds: draft.isDefault
+        ? []
+        : draft.readMemberIds.filter((id) => memberById.get(id)?.status !== "removed"),
     };
     const postRule: TeamAccessRule = {
       roles: [...draft.postRoles],
-      memberIds: [...draft.postMemberIds],
+      memberIds: draft.postMemberIds.filter((id) => memberById.get(id)?.status !== "removed"),
     };
 
     setSaving(true);

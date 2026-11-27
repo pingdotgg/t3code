@@ -262,7 +262,7 @@ export function TeamEnvironmentsSettingsSection({
         ...(editDraft.name.trim().length > 0 ? { name: editDraft.name.trim() } : {}),
         accessRule: {
           roles: [...editDraft.roles],
-          memberIds: [...editDraft.memberIds],
+          memberIds: editDraft.memberIds.filter((id) => memberById.get(id)?.status !== "removed"),
         },
       },
     });
