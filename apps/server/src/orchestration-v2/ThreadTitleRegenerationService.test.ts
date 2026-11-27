@@ -982,6 +982,42 @@ describe("ThreadTitleRegenerationService", () => {
     }),
   );
 
+  it.effect("retries an initial title after a transient failure", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        generateTitle: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: "generateThreadTitle",
+              detail: "Codex CLI request timed out.",
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:timeout:create",
+          thread: "thread:title:timeout",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:timeout:message",
+          threadId,
+          text: "Fix the flaky login test",
+        });
+        const requestId = yield* armRegeneration({ command: "command:title:timeout", threadId });
+        const messageId = MessageId.make("command:title:timeout:message:message");
+
+        const fiber = yield* Effect.forkChild(
+          service.execute({ threadId, requestId, kind: { type: "initial", messageId } }),
+        );
+        yield* TestClock.adjust("1 minute");
+        yield* Fiber.join(fiber);
+
+        assert.equal(harness.generateThreadTitle.mock.calls.length, 3);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("cuts a long failure message without splitting an emoji", () =>
     Effect.gen(function* () {
       const harness = makeHarness({
