@@ -2,6 +2,8 @@ import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwarene
 import { applyOrchestrationV2ThreadVisit, pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - a synchronous digest per row inside the pull request sweep decode.
+import * as NodeCrypto from "node:crypto";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
@@ -9142,16 +9144,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
 
-    // The minute sweeps reread mostly unchanged rows; reuse a decode whose payload is byte-identical.
-    const decodedPullRequestThreads = {
-      active: new Map<string, ProjectionThreadPullRequests>(),
-      includeArchived: new Map<string, ProjectionThreadPullRequests>(),
+    // The minute sweeps reread mostly unchanged rows; reuse a thread's decode while its payload digest matches.
+    const decodedPullRequestThreads = new Map<
+      string,
+      { readonly digest: string; readonly thread: ProjectionThreadPullRequests }
+    >();
+    const pullRequestSweepIds = {
+      active: new Set<string>(),
+      includeArchived: new Set<string>(),
     };
     const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] =
       Effect.fn("ProjectionStore.getThreadsWithPullRequests")(
         function* (threadId, options) {
-          const rows = yield* sql<PayloadRow>`
-          SELECT payload_json
+          const rows = yield* sql<PayloadRow & { readonly thread_id: string }>`
+          SELECT thread_id, payload_json
           FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND thread_id = ${threadId}`}
             ${
@@ -9163,15 +9169,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
           ORDER BY updated_at ASC, thread_id ASC
         `;
-          const decoded = new Map<string, ProjectionThreadPullRequests>();
           const threads = yield* Effect.forEach(rows, (row) => {
-            const cached =
-              decodedPullRequestThreads.active.get(row.payload_json) ??
-              decodedPullRequestThreads.includeArchived.get(row.payload_json);
-            if (cached !== undefined) {
-              decoded.set(row.payload_json, cached);
-              return Effect.succeed(cached);
-            }
+            const digest = NodeCrypto.createHash("sha256")
+              .update(row.payload_json)
+              .digest("base64");
+            const cached = decodedPullRequestThreads.get(row.thread_id);
+            if (cached?.digest === digest) return Effect.succeed(cached.thread);
             return decodeThreadPayload(row.payload_json).pipe(
               Effect.map((thread): ProjectionThreadPullRequests => ({
                 id: thread.id,
@@ -9181,13 +9184,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 settledAt: thread.settledAt,
                 pullRequests: thread.pullRequests ?? [],
               })),
-              Effect.tap((thread) => Effect.sync(() => decoded.set(row.payload_json, thread))),
+              Effect.tap((thread) =>
+                Effect.sync(() => decodedPullRequestThreads.set(row.thread_id, { digest, thread })),
+              ),
             );
           });
           if (threadId === undefined) {
-            decodedPullRequestThreads[
-              options?.includeArchived === true ? "includeArchived" : "active"
-            ] = decoded;
+            pullRequestSweepIds[options?.includeArchived === true ? "includeArchived" : "active"] =
+              new Set(rows.map((row) => row.thread_id));
+            for (const id of decodedPullRequestThreads.keys()) {
+              if (
+                !pullRequestSweepIds.active.has(id) &&
+                !pullRequestSweepIds.includeArchived.has(id)
+              ) {
+                decodedPullRequestThreads.delete(id);
+              }
+            }
           }
           return threads;
         },

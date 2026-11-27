@@ -530,6 +530,29 @@ it.effect("sql: pull request sweeps decode only threads written since the last r
   }).pipe(Effect.provide(layerSql)),
 );
 
+it.effect("sql: pull request sweeps evict threads that leave both variants", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const leaving = yield* createThread("sweep-leaving", { pullRequests: [pullRequestLink(1)] });
+    const readBoth = Effect.gen(function* () {
+      const active = yield* store.getThreadsWithPullRequests();
+      yield* store.getThreadsWithPullRequests(undefined, { includeArchived: true });
+      return active.find((thread) => thread.id === leaving);
+    });
+
+    const first = yield* readBoth;
+    assert.isDefined(first);
+    yield* createThread("sweep-leaving", { pullRequests: [] });
+    assert.isUndefined(yield* readBoth);
+
+    // The identical payload returns, so only an evicted entry decodes afresh.
+    yield* createThread("sweep-leaving", { pullRequests: [pullRequestLink(1)] });
+    const restored = yield* readBoth;
+    assert.deepEqual(restored, first);
+    assert.notStrictEqual(restored, first);
+  }).pipe(Effect.provide(layerSql)),
+);
+
 it.effect("sql: an unsettled-only shell read skips settled threads", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
