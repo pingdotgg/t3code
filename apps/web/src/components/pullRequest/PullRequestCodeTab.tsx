@@ -1455,6 +1455,20 @@ function PullRequestCodeTab({
   const fileCount = Math.max(scopeFileCount, files.length);
   const fileCountSuffix =
     nextCursor !== null && (scopeFileCount === 0 || scopeFileCount < fileCount) ? "+" : "";
+  const usePullRequestViewedCount =
+    viewedFilesStore === "host" &&
+    commit === null &&
+    !hideTestFiles &&
+    filesViewed.viewedCount <= fileCount;
+  const viewedCount = usePullRequestViewedCount
+    ? filesViewed.viewedCount
+    : filePaths.filter(isFileViewed).length;
+  const viewedCountSuffix =
+    !usePullRequestViewedCount &&
+    (nextCursor !== null || files.length < fileCount) &&
+    viewedCount < filesViewed.viewedCount
+      ? "+"
+      : "";
   const hiddenTestFilesLabel =
     hiddenTestFileCount > 0
       ? gt("{count, plural, one {{count} test file hidden} other {{count} test files hidden}}", {
@@ -1553,7 +1567,8 @@ function PullRequestCodeTab({
           {filesViewed.enabled && files.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
-                {filePaths.filter(isFileViewed).length} / {fileCount}
+                {viewedCount}
+                {viewedCountSuffix} / {fileCount}
                 {fileCountSuffix}
               </span>
               <span className="truncate">
