@@ -44,6 +44,7 @@ import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import JSZip from "jszip";
 import { OFFICE_PREVIEW_MAX_COLUMNS, type OfficeWorkerResult } from "./officePreviewProtocol";
 import { WORD_LIMITS } from "./officeArchive";
+import { previewErrorText, previewFailureText } from "./previewFailureMessages";
 
 it.each(["<w:body/>", "<w:body></w:body>"])(
   "opens an empty Word document with %s",
@@ -214,8 +215,6 @@ it.each([
       });
       expect(result.type).toBe("xlsx");
       if (result.type !== "xlsx") throw new Error("Expected bounded workbook");
-      // The engine counts the chart sheet before it.
-      expect(result.view?.hiddenGridlines).toEqual([1]);
       const bounded = await JSZip.loadAsync(result.bytes);
       const sheet = new DOMParser().parseFromString(
         await bounded.file("xl/worksheets/sheet1.xml")!.async("string"),
@@ -232,15 +231,17 @@ it.each([
       }
       expect(sheet.getElementsByTagNameNS(ns, "dimension")).toHaveLength(0);
       expect(sheet.getElementsByTagNameNS(ns, "mergeCell")).toHaveLength(0);
+      const sheetView = sheet.getElementsByTagNameNS(ns, "sheetView")[0]!;
+      expect(sheetView.getAttribute("showGridLines")).toBe("0");
+      const sheetFormat = sheet.getElementsByTagNameNS(ns, "sheetFormatPr")[0]!;
+      expect(sheetFormat.getAttribute("defaultColWidth")).toBe("30");
       const columns = [...sheet.getElementsByTagNameNS(ns, "col")].map((column) =>
         ["min", "max", "width"].map((name) => column.getAttribute(name)),
       );
-      // The engine ignores `defaultColWidth`, so the columns it sizes are spelled out.
       expect(columns).toEqual([
         [String(OFFICE_PREVIEW_MAX_COLUMNS - 1), String(OFFICE_PREVIEW_MAX_COLUMNS), "20"],
         // Hidden columns keep their span past the limit, so they stay hidden.
         [String(OFFICE_PREVIEW_MAX_COLUMNS + 1), String(OFFICE_PREVIEW_MAX_COLUMNS + 30), null],
-        ["1", String(OFFICE_PREVIEW_MAX_COLUMNS - 2), "30"],
       ]);
     } finally {
       worker.terminate();
@@ -256,7 +257,7 @@ it("reports the final slide at maximum scroll after page visibility changes", as
   await using screen = await render(
     <OfficePages
       pages={Array.from({ length: 6 }, () => ({ width: 400, height: 240 }))}
-      label="Slide"
+      kind="slide"
       paint={async () => undefined}
       onPageChange={changed}
       onError={(error) => {
@@ -285,6 +286,8 @@ it("preserves merged text across tile clears", async () => {
     context,
     {
       viewport: { x: 0, y: 0, width: 400, height: 80 },
+      behind: { x: 0, y: 0 },
+      panes: { width: 0, height: 0 },
       list: { width: 400, height: 80, commands: [] },
       tiles: [
         {
@@ -373,7 +376,7 @@ it.each([
       ) {
         expect(result).toMatchObject({
           type: "error",
-          message: expect.stringContaining("Preview limited"),
+          code: expect.stringMatching(/^word-limited-/),
         });
       } else {
         expect(result.type).toBe("docx");
@@ -455,7 +458,7 @@ it.each([
     });
     expect(result).toMatchObject({
       type: "error",
-      message: expect.stringContaining("Preview limited"),
+      code: expect.stringMatching(/^word-limited-/),
     });
   } finally {
     worker.terminate();
@@ -850,10 +853,9 @@ it.each(["repeated binary", "XML relationship alias", "duplicate relationship ID
         );
         worker.postMessage({ type: "open", kind: "docx", bytes }, [bytes]);
       });
-      expect(result).toMatchObject({
-        type: "error",
-        message: expect.stringContaining("expanded markup"),
-      });
+      expect(result.type === "error" ? previewFailureText(result) : result.type).toContain(
+        "expanded markup",
+      );
     } finally {
       worker.terminate();
     }
@@ -892,10 +894,9 @@ it.each(["XFD200", "XFD300", "XFD1048576", "AX500", "AZ9999999"])(
         worker.postMessage({ type: "open", kind: "xlsx", bytes }, [bytes]);
       });
       if (ref === "AZ9999999" || ref === "XFD1048576") {
-        expect(result).toMatchObject({
-          type: "error",
-          message: expect.stringContaining(ref === "AZ9999999" ? "invalid" : "preview limit"),
-        });
+        expect(result.type === "error" ? previewFailureText(result) : result.type).toContain(
+          ref === "AZ9999999" ? "invalid" : "preview limit",
+        );
       } else {
         expect(result.type).toBe("xlsx");
         if (result.type !== "xlsx") throw new Error("Expected workbook values");
@@ -947,7 +948,8 @@ it.each(['<u val="double"/>', '<u val="double"></u>'])(
     )
       .file("xl/styles.xml")!
       .async("string");
-    expect(styles).toContain("<font><u/>");
+    expect(styles).toContain(underline);
+    expect(styles).toContain('numFmtId="007"');
     const worker = new Worker(new URL("./office/spreadsheet.worker.ts", import.meta.url), {
       type: "module",
     });
@@ -967,8 +969,10 @@ it.each(['<u val="double"/>', '<u val="double"></u>'])(
     }
     archive.file("xl/styles.xml", "<styleSheet><numFmts/><numFmts/></styleSheet>");
     await expect(
-      prepareOffice(await archive.generateAsync({ type: "arraybuffer" }), "xlsx"),
-    ).rejects.toThrow("duplicate stylesheet blocks");
+      prepareOffice(await archive.generateAsync({ type: "arraybuffer" }), "xlsx").catch(
+        (cause: unknown) => previewErrorText(cause, ""),
+      ),
+    ).resolves.toContain("duplicate stylesheet blocks");
   },
 );
 
@@ -1034,7 +1038,7 @@ it("keeps spreadsheet dates on their calendar day west of UTC", async () => {
       "open",
       {
         bytes,
-        view: { hiddenGridlines: [], themeFonts: { major: "Calibri Light", minor: "Calibri" } },
+        view: { digitWidth: 7, themeFonts: { major: "Calibri Light", minor: "Calibri" } },
       },
       { transfer: [bytes] },
     );
@@ -1083,4 +1087,51 @@ it.each([60, 100])("prepares all %i pages of a table-heavy Word report", async (
   });
   expect(screen.container.textContent).not.toContain("Preview limited");
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it.each([
+  [
+    new URL("../../../test/fixtures/file-passwords/locked.docx", import.meta.url),
+    "docx",
+    "Unlocked Word",
+  ],
+  [
+    new URL("../../../test/fixtures/file-passwords/standard.docx", import.meta.url),
+    "docx",
+    "Unlocked Word",
+  ],
+  [
+    new URL("../../../test/fixtures/file-passwords/locked.odt", import.meta.url),
+    "odt",
+    "Unlocked Writer",
+  ],
+  [
+    new URL("../../../test/fixtures/file-passwords/locked.epub", import.meta.url),
+    "epub",
+    "Unlocked EPUB",
+  ],
+] as const)("opens the password-protected document at %s", async (src, kind, content) => {
+  const blob = await fetch(src).then((response) => response.blob());
+  const file = new File([blob], `locked.${kind}`, { type: "application/octet-stream" });
+  await using screen = await render(
+    <AttachmentFilePreview
+      name={file.name}
+      mimeType={file.type}
+      file={file}
+      sizeBytes={file.size}
+    />,
+  );
+  const password = screen.getByLabelText("File password");
+  await password.fill("wrong");
+  await screen.getByRole("button", { name: "Unlock" }).click();
+  await expect.element(screen.getByText("Incorrect password. Try again.")).toBeVisible();
+  await password.fill("open me");
+  await screen.getByRole("button", { name: "Unlock" }).click();
+  if (kind === "docx") await expect.element(screen.getByText(content)).toBeVisible();
+  else {
+    await vi.waitFor(() => {
+      const frame = screen.container.querySelector("iframe");
+      expect(frame?.getAttribute("srcdoc")).toContain(content);
+    });
+  }
 });

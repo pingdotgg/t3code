@@ -8,8 +8,11 @@
   replacement: "effect/sql/Statement#defaultEscape"
   note: "Moved with the same signature."
 "@effect/sql/Statement#FragmentId":
-  replacement: "none"
-  note: "The v4 fragment brand is private; use Fragment, fragment, and isFragment instead of direct type-id access."
+  replacement: "effect/sql/Statement#FragmentTypeId"
+  note: "Renamed to FragmentTypeId, now with a different Symbol.for key. Fragment values store the symbol itself under this key instead of a function; prefer Statement.isFragment for runtime checks."
+"@effect/sql/Statement#Fragment":
+  replacement: "effect/sql/Statement#Fragment"
+  note: "Moved with the same segments field, but the brand key is now Statement.FragmentTypeId and its value is the symbol itself rather than a function. Build fragments with the sql template or Statement.fragment and check them with Statement.isFragment; sql interpolation binds unbranded objects as parameters."
 "@effect/sql/Statement#join":
   replacement: "effect/sql/Statement#join"
   note: "Moved with the same empty, single, and multiple-clause behavior."

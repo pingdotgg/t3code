@@ -78,6 +78,15 @@ describe("cloneUrlForProtocol", () => {
     );
   });
 
+  it("switches Bitbucket Cloud between its SSH and HTTPS hosts", () => {
+    expect(cloneUrlForProtocol("https://bitbucket.org/workspace/repo.git", "ssh")).toBe(
+      "git@ssh.bitbucket.org:workspace/repo.git",
+    );
+    expect(cloneUrlForProtocol("git@ssh.bitbucket.org:workspace/repo.git", "https")).toBe(
+      "https://bitbucket.org/workspace/repo.git",
+    );
+  });
+
   it("preserves encoded Azure repository components and same-protocol URLs", () => {
     const ssh = "git@ssh.dev.azure.com:v3/Fabrikam/Project%20One/fab%20repo";
     const https = "https://dev.azure.com/Fabrikam/Project%20One/_git/fab%20repo";
@@ -140,6 +149,9 @@ describe("cloneUrlForProtocol", () => {
       expect(cloneUrlForProtocol(scp, "https")).toBe(https);
       expect(cloneUrlForProtocol(`ssh://git@host.example/team/${encoded}`, "https")).toBe(https);
     }
+    expect(cloneUrlForProtocol("ssh://git@host.example/team/repo%20name#1?.git", "https")).toBe(
+      "https://host.example/team/repo%20name%231%3F.git",
+    );
   });
 
   it("keeps the URL as is for its own protocol and drops HTTPS credentials on switch", () => {
@@ -208,6 +220,12 @@ describe("cloneUrlRepositoryPath", () => {
       expect(cloneUrlRepositoryPath(`${prefix}team/repo%20.git`)).toBeNull();
       expect(cloneUrlRepositoryPath(`${prefix}team/bad%FF.git`)).toBeNull();
     }
+    expect(cloneUrlRepositoryPath("git@forge.example:team#1/spec#2026.git")).toBe(
+      "forge.example/team#1/spec#2026",
+    );
+    expect(cloneUrlRepositoryPath("https://forge.example/team/spec.git#readme")).toBe(
+      "forge.example/team/spec",
+    );
     expect(cloneUrlRepositoryPath("git@host.example:team/repo%20name.git")).toBe(
       "host.example/team/repo%20name",
     );

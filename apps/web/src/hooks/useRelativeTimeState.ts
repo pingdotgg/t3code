@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import { useSyncExternalStore } from "react";
 
 import {
@@ -8,6 +9,7 @@ import {
 } from "../timestampFormat";
 
 export function useRelativeTimeState(isoDate: string | null): RelativeTimeState {
+  const resolve = useMessages();
   const subscribe = (onChange: () => void) => {
     if (isoDate === null) return () => {};
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -27,5 +29,5 @@ export function useRelativeTimeState(isoDate: string | null): RelativeTimeState 
 
   if (isoDate === null) return { status: "missing" };
   if (elapsedMs === null) return { status: "invalid" };
-  return { status: "relative", ...formatRelativeElapsed(elapsedMs) };
+  return { status: "relative", ...formatRelativeElapsed(elapsedMs, resolve) };
 }

@@ -4,7 +4,7 @@ import {
   type AuthEnvironmentScope,
   ORCHESTRATION_PROTOCOL_VERSION,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -14,6 +14,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { fetchRemoteSessionState } from "../authorization/remote.ts";
 import {
@@ -61,6 +62,7 @@ function layerPairingHttp(
     readonly selfUpdate?: boolean;
     readonly grantScopes?: ReadonlyArray<AuthEnvironmentScope>;
     readonly exchangeGate?: { readonly reached: () => void; readonly release: Promise<void> };
+    readonly accessTokenRenewal?: boolean;
   },
 ) {
   const grantScopes = options?.grantScopes ?? AuthStandardClientScopes;
@@ -88,6 +90,7 @@ function layerPairingHttp(
           capabilities: {
             repositoryIdentity: true,
             ...(options?.selfUpdate === true ? { serverSelfUpdate: "boot-service" } : {}),
+            ...(options?.accessTokenRenewal === true ? { accessTokenRenewal: true } : {}),
           },
         }),
       );
@@ -124,10 +127,11 @@ function layerPairingHttp(
           ),
         );
       }
+      const dpop = new Headers(init.headers).has("dpop");
       const granted = Response.json({
-        access_token: "bearer-token",
+        access_token: dpop ? "dpop-token" : "bearer-token",
         issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-        token_type: "Bearer",
+        token_type: dpop ? "DPoP" : "Bearer",
         expires_in: 3600,
         scope: sessionScopes.join(" "),
       });
@@ -162,6 +166,7 @@ function layerPairingHttp(
 function layerPairingOnboarding(
   options?: Parameters<typeof layerPairingHttp>[1],
   calls: Array<{ readonly url: string; readonly init: RequestInit }> = [],
+  provision?: ClientCapabilities.SshEnvironmentGateway["Service"]["provision"],
 ) {
   const dependencies = Layer.mergeAll(
     layerClientPresentation,
@@ -180,7 +185,7 @@ function layerPairingOnboarding(
       get: () => Effect.succeedNone,
       put: () => Effect.void,
     }),
-    Layer.mock(ClientCapabilities.SshEnvironmentGateway)({}),
+    Layer.mock(ClientCapabilities.SshEnvironmentGateway)(provision ? { provision } : {}),
     Layer.succeed(
       Connectivity.Connectivity,
       Connectivity.Connectivity.of({ status: Effect.succeed("online"), changes: Stream.never }),
@@ -323,6 +328,47 @@ describe("connection onboarding", () => {
       ]);
     }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls)));
   });
+
+  it.effect(
+    "refuses to add an SSH route to a saved environment during untargeted onboarding",
+    () => {
+      const target = {
+        alias: "devbox",
+        hostname: "devbox.example.test",
+        username: "developer",
+        port: 22,
+      };
+      return Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const onboarding = yield* Onboarding.ConnectionOnboarding;
+        const before = yield* registerSwitchedOffEnvironment;
+
+        const result = yield* onboarding.registerSsh({ target }).pipe(Effect.result);
+
+        expect(result).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "ConnectionBlockedError", reason: "configuration" },
+        });
+        expect(yield* SubscriptionRef.get(registry.entries)).toEqual(before);
+      }).pipe(
+        Effect.provide(
+          layerPairingOnboarding(undefined, [], () =>
+            Effect.succeed({
+              environmentId: PAIRED_ENVIRONMENT_ID,
+              label: "Remote development box",
+              bootstrap: {
+                target,
+                httpBaseUrl: "http://127.0.0.1:3201",
+                wsBaseUrl: "ws://127.0.0.1:3201",
+                pairingToken: "pairing-token",
+              },
+              bearerToken: "bearer-token",
+            }),
+          ),
+        ),
+      );
+    },
+  );
 
   it.effect("refuses a new address when the environment is saved during the exchange", () => {
     let reached!: () => void;
@@ -510,6 +556,7 @@ describe("connection onboarding", () => {
         pairingCode: "pairing-token",
       });
 
+      assert(registration.credential._tag === "BearerConnectionCredential");
       const session = yield* fetchRemoteSessionState({
         httpBaseUrl: registration.profile.httpBaseUrl,
         bearerToken: registration.credential.token,
@@ -518,6 +565,39 @@ describe("connection onboarding", () => {
       expect(session.authenticated).toBe(true);
       expect(session.scopes).toEqual(scopes);
     }).pipe(Effect.provide(layerPairingOnboarding({ grantScopes: scopes }))),
+  );
+
+  it.effect.each([
+    { name: "a host that renews, with a device key", renews: true, signer: true, dpop: true },
+    { name: "a host that renews, without a device key", renews: true, signer: false, dpop: false },
+    { name: "an older host, with a device key", renews: false, signer: true, dpop: false },
+  ])("pairs with $name as DPoP: $dpop", ({ renews, signer, dpop }) =>
+    Effect.gen(function* () {
+      const registration = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      });
+      expect(registration.credential).toMatchObject(
+        dpop
+          ? { _tag: "DpopConnectionCredential", accessToken: "dpop-token" }
+          : { _tag: "BearerConnectionCredential", token: "bearer-token" },
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          layerPairingOnboarding({ accessTokenRenewal: renews }),
+          signer
+            ? Layer.succeed(
+                ManagedRelay.ManagedRelayDpopSigner,
+                ManagedRelay.ManagedRelayDpopSigner.of({
+                  thumbprint: Effect.succeed("device-key"),
+                  createProof: (proof) => Effect.succeed(`proof:${proof.url}`),
+                }),
+              )
+            : Layer.empty,
+        ),
+      ),
+    ),
   );
 
   it.effect("refuses to add a route that reaches a different machine, keeping the code", () =>

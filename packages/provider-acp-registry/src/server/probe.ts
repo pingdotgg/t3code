@@ -16,10 +16,13 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -33,6 +36,7 @@ import {
 import {
   acpProviderOptionDescriptors,
   flattenSelectChoices,
+  isAcpThoughtLevelOption,
 } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -49,6 +53,10 @@ const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
 // settle it in seconds, not milliseconds; commands arrive much sooner.
 const MODEL_ADVERTISEMENT_GRACE = "5 seconds";
 const PROBE_SESSION_DELETE_TIMEOUT = "5 seconds";
+const MODEL_DISCOVERY_BATCH_TIMEOUT = "30 seconds";
+// Large catalogs list well over a hundred models; batches let the picker fill in as they finish.
+const MODEL_DISCOVERY_BATCH_SIZE = 24;
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const boundedText = (value: string, maximumLength: number): string =>
   value.trim().slice(0, maximumLength);
@@ -210,10 +218,20 @@ export interface AcpRegistryLiveConfiguration {
   readonly modelsFromModelSelect?: boolean;
 }
 
+export function acpRegistryLiveCatalogKey(
+  configuration: Pick<AcpRegistryLiveConfiguration, "models" | "modelsFromModelSelect">,
+): string {
+  if (configuration.models.length === 0) return "";
+  return `${configuration.modelsFromModelSelect ? "select" : "list"}:${configuration.models
+    .map((model) => `${model.id}\0${model.name}`)
+    .join("\u001f")}`;
+}
+
 export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
   modelState?: EffectAcpSchema.SessionModelState | null,
+  options?: { readonly includeCatalog?: boolean },
 ): AcpRegistryLiveConfiguration {
   const modelOption = findModelConfigOption(configOptions);
   const currentModelId =
@@ -234,7 +252,9 @@ export function normalizeAcpRegistryLiveConfiguration(
     currentModelId === undefined
       ? null
       : (boundedOpaqueValue(currentModelId, MAX_ID_LENGTH) ?? null);
-  const effortOption = configOptions.find((option) => option.category === "thought_level");
+  const effortOption =
+    configOptions.find((option) => option.category === "thought_level") ??
+    configOptions.find(isAcpThoughtLevelOption);
   const models = normalizeModels(candidates, boundedCurrentModelId).map((model) => {
     const reasoningEffort = advertisedReasoningEffort(
       effortOption,
@@ -245,11 +265,12 @@ export function normalizeAcpRegistryLiveConfiguration(
   const descriptors = acpProviderOptionDescriptors({ configOptions, modeState });
   const modelOptionIds = new Set(
     configOptions
-      .filter((option) => option.category === "thought_level" || option.category === "model_config")
+      .filter((option) => isAcpThoughtLevelOption(option) || option.category === "model_config")
       .map((option) => option.id),
   );
+  const includeCatalog = options?.includeCatalog !== false;
   return {
-    models,
+    models: includeCatalog ? models : [],
     currentModelId: models.some((model) => model.id === boundedCurrentModelId)
       ? boundedCurrentModelId
       : null,
@@ -257,7 +278,7 @@ export function normalizeAcpRegistryLiveConfiguration(
     modelOptionIds: descriptors
       .filter((descriptor) => modelOptionIds.has(descriptor.id))
       .map((descriptor) => descriptor.id),
-    modelsFromModelSelect: modelOption !== undefined,
+    modelsFromModelSelect: includeCatalog && modelOption !== undefined,
   };
 }
 
@@ -366,11 +387,27 @@ export function acpRegistryProbeFailure(
   });
 }
 
+/**
+ * Agents report model-specific options only for the session's current model, so the
+ * probe opens each requested model once in its session to read them.
+ */
+export interface AcpRegistryModelDiscovery {
+  /**
+   * Publishes the probe result with what discovery has learned so far and answers the models
+   * still to open, in priority order; asked again after each batch until none are left.
+   */
+  readonly onProbed: (
+    result: AcpRegistryConfigurationProbeResult,
+  ) => Effect.Effect<ReadonlyArray<string>>;
+  readonly onDiscovered: (configuration: AcpRegistryLiveConfiguration) => Effect.Effect<void>;
+}
+
 export interface AcpRegistryConfigurationProbeInput {
   readonly instanceId: ProviderInstanceId;
   readonly settings: AcpRegistrySettings;
   readonly cwd: string;
   readonly environment: NodeJS.ProcessEnv;
+  readonly modelDiscovery?: AcpRegistryModelDiscovery;
 }
 
 type AcpRegistryManagementInput = AcpRegistryConfigurationProbeInput;
@@ -379,22 +416,105 @@ export interface AcpRegistryConfigurationProbeResult {
   readonly probe: AcpRegistryProbeResult;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly modelsFromModelSelect?: boolean;
 }
 
 export type AcpRegistryConfigurationProbe<Requirements = never> = (
   input: AcpRegistryConfigurationProbeInput,
 ) => Effect.Effect<AcpRegistryConfigurationProbeResult, AcpRegistryOperationError, Requirements>;
 
-export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeConfiguration")(
+const discoverAcpRegistryModelOptions = Effect.fn("AcpRegistryProbe.discoverModelOptions")(
   function* (
-    input: AcpRegistryConfigurationProbeInput,
-  ): Effect.fn.Return<
-    AcpRegistryConfigurationProbeResult,
-    AcpRegistryOperationError,
-    | AcpRegistrySupport.AcpRegistryCatalog
-    | ChildProcessSpawner.ChildProcessSpawner
-    | SecureRandom.SecureRandom
-  > {
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+    originalModelId: string | null,
+    result: AcpRegistryConfigurationProbeResult,
+    discovery: AcpRegistryModelDiscovery,
+  ) {
+    const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
+    if (modelOption === undefined || originalModelId === null) return;
+    const offered = new Set(flattenSelectChoices(modelOption.options).map(({ value }) => value));
+    const attempted = new Set([originalModelId]);
+    const discoverBatches = Effect.gen(function* () {
+      // Each answer is a bounded batch; asking again after it publishes progress and
+      // continues, and every model is tried at most once per probe.
+      while (true) {
+        const modelIds = (yield* discovery.onProbed(result))
+          .filter((modelId) => !attempted.has(modelId) && offered.has(modelId))
+          .slice(0, MODEL_DISCOVERY_BATCH_SIZE);
+        if (modelIds.length === 0) return;
+        for (const modelId of modelIds) attempted.add(modelId);
+        const finished = yield* Effect.forEach(
+          modelIds,
+          (modelId) =>
+            runtime.setConfigOption(modelOption.id, modelId).pipe(
+              Effect.andThen(Effect.all([runtime.getConfigOptions, runtime.getModeState])),
+              Effect.flatMap(([configOptions, modeState]) => {
+                const configuration = normalizeAcpRegistryLiveConfiguration(
+                  configOptions,
+                  modeState,
+                );
+                return configuration.currentModelId === modelId
+                  ? discovery.onDiscovered(configuration)
+                  : Effect.void;
+              }),
+              // A model the agent refuses keeps no options; the rest still count.
+              Effect.ignore,
+            ),
+          { discard: true },
+        ).pipe(Effect.timeoutOption(MODEL_DISCOVERY_BATCH_TIMEOUT));
+        // An agent too slow for one batch is left for a later probe.
+        if (Option.isNone(finished)) return;
+      }
+    });
+    yield* discoverBatches.pipe(
+      // Some agents save the selected model as the user's default. A switch that timed out
+      // may still have landed while the runtime reports the original, so always resend.
+      Effect.ensuring(
+        Effect.suspend(() =>
+          attempted.size === 1
+            ? Effect.void
+            : runtime
+                .setConfigOption(modelOption.id, originalModelId, { resendCurrentValue: true })
+                .pipe(Effect.timeoutOption(PROBE_SESSION_DELETE_TIMEOUT), Effect.ignore),
+        ),
+      ),
+    );
+  },
+);
+
+const isolateDeepSeekProbeHistory = Effect.fn("AcpRegistryProbe.isolateDeepSeekProbeHistory")(
+  function* (commandPath: string, spawn: AcpSessionRuntime.AcpSpawnInput) {
+    const executable = (commandPath || spawn.command).split(/[\\/]/u).at(-1) ?? "";
+    if (!/^dsh(?:\.cmd|\.exe)?$/iu.test(executable)) return spawn;
+
+    const argumentSeparator = spawn.args.indexOf("--");
+    const launcherArgs =
+      argumentSeparator === -1 ? spawn.args : spawn.args.slice(0, argumentSeparator);
+    const usesAcpProfile =
+      launcherArgs[0] === "acp" ||
+      launcherArgs.includes("--profile=acp") ||
+      launcherArgs.some((arg, index) => arg === "--profile" && launcherArgs[index + 1] === "acp");
+    if (!usesAcpProfile) return spawn;
+
+    // DeepSeek persists session/new before any prompt and does not advertise session/delete.
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dsh-acp-probe-" });
+    const patchPath = path.join(directory, "probe.json");
+    const patch = yield* encodeJson([
+      { id: "session-persistence-jsonl", config: { root: path.join(directory, "sessions") } },
+      { id: "session-projection-cache", disabled: true },
+    ]);
+    yield* fs.writeFileString(patchPath, patch);
+    return {
+      ...spawn,
+      args: [...launcherArgs, "--patch", patchPath, ...spawn.args.slice(launcherArgs.length)],
+    };
+  },
+);
+
+export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeConfiguration")(
+  function* (input: AcpRegistryConfigurationProbeInput) {
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
     const probeTimeoutMs = resolveProviderProbeTimeoutMs(
       "acp_registry",
@@ -405,11 +525,25 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     const random = yield* SecureRandom.SecureRandom;
     const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
 
-    const result = yield* Effect.gen(function* () {
-      // Resolution may install packages; bound it by the probe deadline.
-      const resolved = yield* catalog
-        .resolve(input.settings, input.cwd, input.environment)
-        .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError));
+    // Downloads and package installs have their own bounded timeouts inside AcpRegistryCatalog.
+    const resolved = yield* catalog
+      .resolve(input.settings, input.cwd, input.environment)
+      .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError));
+
+    const openSession = Effect.gen(function* () {
+      const spawn = yield* isolateDeepSeekProbeHistory(
+        input.settings.commandPath,
+        resolved.spawn,
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AcpRegistryOperationError({
+              reason: "probe_failed",
+              message: "Could not prepare temporary history for the DeepSeek Harness probe.",
+              cause,
+            }),
+        ),
+      );
       const authMethodsRef = yield* Ref.make<ReadonlyArray<AcpRegistryProbeAuthMethod>>([]);
       const authActionRef = yield* Ref.make<AcpRegistryUrlAuthAction | undefined>(undefined);
       const runtimeCoordinator = yield* Effect.serviceOption(
@@ -417,7 +551,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       );
       const runtimeContext = yield* Layer.build(
         AcpSessionRuntime.layer({
-          spawn: resolved.spawn,
+          spawn,
           cwd: input.cwd,
           clientCapabilities: {
             auth: { terminal: Option.isSome(pty) },
@@ -552,43 +686,59 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         started,
         commands: yield* Ref.get(commandsRef),
         liveConfiguration,
+        runtime,
       };
     }).pipe(
-      Effect.scoped,
       Effect.timeoutOrElse({
         duration: probeTimeoutMs,
         orElse: () =>
           Effect.fail(
             new AcpRegistryOperationError({
               reason: "probe_failed",
-              message: `The ACP agent did not resolve and create a test session within ${probeTimeoutMs / 1_000} seconds. Package installation or agent startup may be slow; this check retries on the next provider refresh.`,
+              message: `The ACP agent did not create a test session within ${probeTimeoutMs / 1_000} seconds. Agent startup may be slow; this check retries on the next provider refresh.`,
             }),
           ),
       }),
+    );
+    return yield* Effect.gen(function* () {
+      const session = yield* openSession;
+      const result: AcpRegistryConfigurationProbeResult = {
+        probe: acpRegistryProbeResult(
+          input.instanceId,
+          session.started,
+          session.resolved.agent?.icon ?? null,
+          {
+            command: session.resolved.spawn.command,
+            args: session.resolved.spawn.args,
+          },
+          session.liveConfiguration,
+        ),
+        slashCommands: session.commands.slashCommands,
+        skills: session.commands.skills,
+        modelsFromModelSelect: session.liveConfiguration.modelsFromModelSelect === true,
+      };
+      // Runs in the probe session before it is deleted, outside the setup deadline.
+      if (input.modelDiscovery !== undefined) {
+        yield* discoverAcpRegistryModelOptions(
+          session.runtime,
+          session.liveConfiguration.currentModelId,
+          result,
+          input.modelDiscovery,
+        );
+      }
+      return result;
+    }).pipe(
       Effect.mapError((error) =>
         error._tag === "AcpRegistryOperationError" ? error : acpRegistryProbeFailure(error),
       ),
     );
-    return {
-      probe: acpRegistryProbeResult(
-        input.instanceId,
-        result.started,
-        result.resolved.agent?.icon ?? null,
-        {
-          command: result.resolved.spawn.command,
-          args: result.resolved.spawn.args,
-        },
-        result.liveConfiguration,
-      ),
-      slashCommands: result.commands.slashCommands,
-      skills: result.commands.skills,
-    };
   },
+  Effect.scoped,
 );
 
 const MANAGEMENT_TIMEOUT = Duration.seconds(60);
 
-const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagementRuntime")(
+export const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagementRuntime")(
   function* (input: AcpRegistryManagementInput) {
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

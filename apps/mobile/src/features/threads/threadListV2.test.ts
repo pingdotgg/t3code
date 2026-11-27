@@ -45,6 +45,7 @@ import {
   resolveThreadListV2WokeAt,
   threadListV2ListItemsAreEqual,
   threadListV2RowAccessibilityLabel,
+  threadListV2ShowMoreAccessibilityLabel,
   threadHasUnseenCompletion,
   type ThreadListV2ListItem,
 } from "./threadListV2";
@@ -243,6 +244,16 @@ describe("resolveThreadListV2Status", () => {
       expect(threadHasUnseenCompletion(thread)).toBe(false);
     },
   );
+});
+
+describe("threadListV2ShowMoreAccessibilityLabel", () => {
+  it.each([
+    [1, "Show 1 more settled thread"],
+    [2, "Show 2 more settled threads"],
+    [26, "Show 25 more settled threads"],
+  ])("announces the next page for %i hidden settled threads", (hiddenCount, expected) => {
+    expect(threadListV2ShowMoreAccessibilityLabel(hiddenCount)).toBe(expected);
+  });
 });
 
 describe("threadListV2RowAccessibilityLabel", () => {
@@ -887,6 +898,9 @@ describe("buildThreadListV2ListItems", () => {
               : "settled-shelf",
       ),
     ).toEqual(["unsent", "queued-1", "queued-2", "active", "settled-shelf", "settled"]);
+    expect(threadJumpTarget(items, "thread.jump.1")).toMatchObject({
+      pendingTask: { draftKey: "new-task:unsent" },
+    });
     expect(
       items.flatMap((item) => (item.type === "v2-pending" ? [item.showPendingDivider] : [])),
     ).toEqual([true, false, false]);
@@ -935,9 +949,17 @@ describe("buildThreadListV2ListItems", () => {
       "v2-settled-shelf",
       "v2-thread",
     ]);
-    expect(threadJumpTarget(items, "thread.jump.1")?.id).toBe("active");
-    expect(threadJumpTarget(items, "thread.jump.2")?.id).toBe("settled");
-    expect(threadJumpTarget(items, "thread.jump.3")).toBeNull();
+    expect(threadJumpTarget(items, "thread.jump.1")).toMatchObject({
+      type: "v2-pending",
+      pendingTask: { key: "pending-task:queued" },
+    });
+    expect(threadJumpTarget(items, "thread.jump.2")).toMatchObject({
+      item: { thread: { id: "active" } },
+    });
+    expect(threadJumpTarget(items, "thread.jump.3")).toMatchObject({
+      item: { thread: { id: "settled" } },
+    });
+    expect(threadJumpTarget(items, "thread.jump.4")).toBeNull();
   });
 });
 
@@ -1188,11 +1210,12 @@ describe("thread drag destinations", () => {
         assignments,
       });
       expect(pending.orderedIds).toEqual([ids[3], ids[0], ids[1], ids[2]]);
+      const field = section === "pinned" ? "pinOrderKey" : "activeOrderKey";
       const confirmed = ordered.map((row) => ({
         ...row,
-        [section === "pinned" ? "pinOrderKey" : "activeOrderKey"]: assignments.find(
-          (a) => a.id === `${row.environmentId}:${row.id}`,
-        )!.orderKey,
+        [field]:
+          assignments.find((a) => a.id === `${row.environmentId}:${row.id}`)?.orderKey ??
+          row[field],
       }));
       expect(
         getThreadListV2OrderedSection({ threads: confirmed, section, now: NOW }).map(
@@ -1205,7 +1228,7 @@ describe("thread drag destinations", () => {
     },
   );
 
-  it("refuses a drop that would need to rewrite an old server's keyless row", () => {
+  it("moves past an old server's keyless row by writing only the moved row", () => {
     const old = EnvironmentId.make("old-server");
     const ordered = [environmentId, old, environmentId].map((env, index) =>
       makeThread({
@@ -1220,11 +1243,11 @@ describe("thread drag destinations", () => {
         section: "active",
         reorderableEnvironmentIds: new Set([environmentId]),
       })(`${environmentId}:2`, { targetId: `${environmentId}:0`, placement: "before" }),
-    ).toBeNull();
+    ).toEqual([{ id: `${environmentId}:2`, orderKey: expect.any(String) }]);
   });
 });
 
-it("allows a long drop past an old server even when both adjacent moves fail", () => {
+it("moves past an old server one step or in a long drop", () => {
   const old = EnvironmentId.make("old-server");
   const ordered = [
     makeThread({ id: ThreadId.make("a"), title: "a" }),
@@ -1239,7 +1262,7 @@ it("allows a long drop past an old server even when both adjacent moves fail", (
   });
   const movedId = `${environmentId}:a`;
   expect(planner(movedId, "up")).toBeNull();
-  expect(planner(movedId, "down")).toBeNull();
+  expect(planner(movedId, "down")?.map(({ id }) => id)).toEqual([movedId]);
   const assignments = planner(movedId, { targetId: `${environmentId}:d`, placement: "after" });
   expect(assignments).toHaveLength(1);
   expect(assignments![0]!.id).toBe(movedId);

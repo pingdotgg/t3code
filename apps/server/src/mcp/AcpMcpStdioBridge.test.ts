@@ -89,6 +89,51 @@ describe("AcpMcpStdioBridge", () => {
     );
   });
 
+  it("reads the arguments from stdin when given -", async () => {
+    const originalEnvironment = process.env;
+    using _environment = {
+      [Symbol.dispose]: () => {
+        process.env = originalEnvironment;
+      },
+    };
+    process.env = {
+      ...originalEnvironment,
+      T3_ACP_MCP_ENDPOINT: "http://127.0.0.1:1/mcp",
+      T3_ACP_MCP_AUTHORIZATION: "Bearer bridge-test",
+    };
+    const calls: Array<unknown> = [];
+    using _fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      const message = JSON.parse(String(init?.body)) as {
+        id?: string;
+        method: string;
+        params?: unknown;
+      };
+      if (message.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      if (message.method === "tools/call") calls.push(message.params);
+      return Response.json({
+        jsonrpc: "2.0",
+        id: message.id,
+        result:
+          message.method === "initialize" ? { protocolVersion: "2025-06-18" } : { content: [] },
+      });
+    });
+    using _output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    using _stdin = vi
+      .spyOn(process, "stdin", "get")
+      .mockReturnValue(
+        NodeStream.Readable.from(['{"task":"say \\"hi\\"",', '"mode":"async"}\r\n']) as never,
+      );
+
+    await runAcpMcpCliFastPath("acp-mcp-call", ["delegate_task", "-"]);
+
+    expect(calls).toEqual([
+      { name: "delegate_task", arguments: { task: 'say "hi"', mode: "async" } },
+    ]);
+  });
+
   it.effect("forwards requests and replays the session id and protocol version", () =>
     Effect.gen(function* () {
       const { input, written, requests, bridge } = makeHarness((request) => {
@@ -427,6 +472,33 @@ describe("AcpMcpStdioBridge", () => {
     }),
   );
 
+  it.effect("keeps the server's JSON-RPC error on a failed tool call", () =>
+    Effect.gen(function* () {
+      const rpcError = { code: -32602, message: "Tool 't3_feedback' not found" };
+      const error = yield* mcpToolSession({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        clientName: "t3-thread-cli",
+        fetchImplementation: async (_url, init) => {
+          if (init?.method === "DELETE") return new Response(null, { status: 204 });
+          const message = JSON.parse(String(init?.body)) as { id?: unknown; method?: string };
+          if (message.method === "initialize") {
+            return Response.json({ jsonrpc: "2.0", id: message.id, result: {} });
+          }
+          if (message.method !== "tools/call") return new Response(null, { status: 202 });
+          return Response.json({ jsonrpc: "2.0", id: message.id, error: rpcError });
+        },
+      }).pipe(
+        Effect.flatMap((session) => session.call("t3_feedback", {})),
+        Effect.scoped,
+        Effect.asVoid,
+        Effect.flip,
+      );
+
+      expect(error.rpcError).toEqual(rpcError);
+    }),
+  );
+
   it.effect("aborts the pending fetch when the stdio bridge is interrupted", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<AbortSignal | undefined>();
@@ -443,6 +515,35 @@ describe("AcpMcpStdioBridge", () => {
       const signal = yield* Deferred.await(started);
       yield* Fiber.interrupt(fiber);
       expect(signal?.aborted).toBe(true);
+    }),
+  );
+
+  it.effect("forwards t3-tool-exposure when toolExposure is configured on the stdio bridge", () =>
+    Effect.gen(function* () {
+      const seenHeaders: Array<string | null> = [];
+      const input = new NodeStream.PassThrough();
+      const written: Array<string> = [];
+      const bridge = runAcpMcpStdioBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        toolExposure: "deferred-proxy",
+        input,
+        output: {
+          write: (chunk: string) => {
+            written.push(chunk);
+          },
+        },
+        fetchImplementation: async (_url, init) => {
+          seenHeaders.push(
+            new Request("http://127.0.0.1:1/mcp", init).headers.get("t3-tool-exposure"),
+          );
+          return Response.json({ jsonrpc: "2.0", id: 1, result: { tools: [] } });
+        },
+      });
+      input.end(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`);
+      yield* bridge;
+      expect(seenHeaders).toEqual(["deferred-proxy"]);
+      expect(written).toHaveLength(1);
     }),
   );
 });

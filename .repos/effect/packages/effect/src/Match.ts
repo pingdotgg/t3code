@@ -8,6 +8,10 @@
  * patterns, and common checks such as strings, numbers, records, and class
  * instances.
  *
+ * Object patterns use their own enumerable string and symbol properties.
+ * Non-enumerable and inherited pattern properties are ignored. The selected
+ * properties may be non-enumerable or inherited on the value being matched.
+ *
  * @stability stable
  * @since 4.0.0
  */
@@ -59,8 +63,10 @@ type PartialLiteralHandlers<R, Ret> = {
   readonly [K in LiteralKeys<R>]?: ((_: K) => Ret) | undefined
 }
 
-// Only keys with a defined handler remove a literal from the remaining input.
-type HandledLiterals<P> = { readonly [K in keyof P]-?: undefined extends P[K] ? never : K }[keyof P]
+// Map keys separately so handler-map unions do not distribute.
+type HandledKeys<P, Keys extends keyof P = keyof P> = {
+  readonly [K in Keys]-?: undefined extends P[K] ? never : K
+}[Keys]
 
 /**
  * Marker used by `Matcher` to distinguish matchers created with `Match.value`.
@@ -628,6 +634,9 @@ type ExactPatterns<R, P> = {
  * Supports both direct value comparisons and predicate functions. If the
  * pattern matches, the associated function is executed and the matched input is
  * removed from the remaining cases tracked by the matcher.
+ * Object patterns, including nested patterns, use only own enumerable string
+ * and symbol properties. Non-enumerable and inherited pattern properties are
+ * ignored. Selected properties on the input may be non-enumerable or inherited.
  *
  * **Example** (Matching with values and predicates)
  *
@@ -696,6 +705,9 @@ export const when: <
  * Unlike {@link when}, which requires separate conditions for each pattern,
  * this function enables combining them into a single statement, making the
  * matcher more concise.
+ * Object patterns, including nested patterns, use only own enumerable string
+ * and symbol properties. Non-enumerable and inherited pattern properties are
+ * ignored. Selected properties on the input may be non-enumerable or inherited.
  *
  * **Example** (Matching one of several patterns)
  *
@@ -765,6 +777,9 @@ export const whenOr: <
  * ensures that multiple conditions are met before executing the callback. It is
  * useful when checking for values that need to fulfill multiple criteria at
  * once.
+ * Object patterns, including nested patterns, use only own enumerable string
+ * and symbol properties. Non-enumerable and inherited pattern properties are
+ * ignored. Selected properties on the input may be non-enumerable or inherited.
  *
  * **Example** (Matching all provided patterns)
  *
@@ -989,8 +1004,8 @@ export const discriminators: <D extends string>(
   self: Matcher<I, F, R, A, Pr, Ret>
 ) => Matcher<
   I,
-  Types.AddWithout<F, Extract<R, Record<D, keyof P>>>,
-  Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, Record<D, keyof P>>>>,
+  Types.AddWithout<F, Extract<R, Record<D, HandledKeys<P>>>>,
+  Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, Record<D, HandledKeys<P>>>>>,
   A | ReturnType<P[keyof P] & {}>,
   Pr,
   Ret
@@ -1216,8 +1231,8 @@ export const tags: <
   self: Matcher<I, F, R, A, Pr, Ret>
 ) => Matcher<
   I,
-  Types.AddWithout<F, Extract<R, Record<"_tag", keyof P>>>,
-  Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, Record<"_tag", keyof P>>>>,
+  Types.AddWithout<F, Extract<R, Record<"_tag", HandledKeys<P>>>>,
+  Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, Record<"_tag", HandledKeys<P>>>>>,
   A | ReturnType<P[keyof P] & {}>,
   Pr,
   Ret
@@ -1320,8 +1335,8 @@ export const literals: <
   self: Matcher<I, F, R, A, Pr, Ret>
 ) => Matcher<
   I,
-  Types.AddWithout<F, Extract<R, HandledLiterals<P>>>,
-  Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, HandledLiterals<P>>>>,
+  Types.AddWithout<F, Extract<R, HandledKeys<P>>>,
+  Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, HandledKeys<P>>>>,
   A | ReturnType<P[keyof P] & {}>,
   Pr,
   Ret
@@ -1387,6 +1402,9 @@ export const literalsExhaustive: <
  *
  * Any excluded value bypasses the provided function and continues matching
  * through later cases.
+ * Object patterns, including nested patterns, use only own enumerable string
+ * and symbol properties. Non-enumerable and inherited pattern properties are
+ * ignored. Selected properties on the input may be non-enumerable or inherited.
  *
  * **Example** (Ignoring a specific value)
  *
