@@ -15,7 +15,6 @@ import { cn } from "~/lib/utils";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 
 import { Badge } from "../ui/badge";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import { pullRequestPanelReference } from "./usePullRequestDetail";
 import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
@@ -31,6 +30,7 @@ import { observeResize } from "~/lib/observeResize";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { PullRequestLabelChip } from "./pullRequestPresentation";
 import { PullRequestPrivateMark } from "./PullRequestDetailLayout";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 /** The most label chips a row lays out; the rest only ever count toward its "+N". */
 const MAX_ROW_LABELS = 3;
@@ -365,32 +365,32 @@ function PullRequestRowImpl({
           meta={
             <>
               {matchedElsewhere ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-micro" />
-                    }
-                  >
-                    <span className="sr-only">
-                      <T>matched in the description</T>
-                    </span>
-                    <SearchIcon aria-hidden className="size-3 shrink-0" />
-                    <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
-                      <T>matched in the description</T>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">
-                    <T>Matched in the description</T>
-                  </TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={
+                    <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-micro" />
+                  }
+                  label={
+                    <>
+                      <T>Matched in the description</T>
+                    </>
+                  }
+                >
+                  <span className="sr-only">
+                    <T>matched in the description</T>
+                  </span>
+                  <SearchIcon aria-hidden className="size-3 shrink-0" />
+                  <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
+                    <T>matched in the description</T>
+                  </span>
+                </SharedTooltipTrigger>
               ) : null}
               {showProvider ? (
-                <Tooltip>
-                  <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-                    <Icon aria-label={providerName} className="size-3" />
-                  </TooltipTrigger>
-                  <TooltipPopup>{providerName}</TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={<span className="inline-flex shrink-0" />}
+                  label={providerName}
+                >
+                  <Icon aria-label={providerName} className="size-3" />
+                </SharedTooltipTrigger>
               ) : null}
               {/* A narrow row (the list beside an open review, or a narrow window) keeps the branch, which tells
                 rows apart, over the repository, which the scope above already names, and over the
@@ -401,21 +401,19 @@ function PullRequestRowImpl({
                 labelClassName="sr-only @3xl/pr-row-meta:not-sr-only @3xl/pr-row-meta:truncate"
               />
 
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="min-w-12 truncate font-mono text-caption text-dim-foreground" />
-                  }
-                >
-                  {entry.headBranch}
-                </TooltipTrigger>
-                <TooltipPopup>
+              <SharedTooltipTrigger
+                render={
+                  <span className="min-w-12 truncate font-mono text-caption text-dim-foreground" />
+                }
+                label={
                   <span className="flex flex-col gap-0.5">
                     {showProjectTitle ? <span>{entry.repository}</span> : null}
                     <span>{entry.headBranch}</span>
                   </span>
-                </TooltipPopup>
-              </Tooltip>
+                }
+              >
+                {entry.headBranch}
+              </SharedTooltipTrigger>
               {environmentLabel ? (
                 <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>
               ) : null}

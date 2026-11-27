@@ -2,7 +2,7 @@ import { RegistryProvider } from "@effect/atom-react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent, type Locator } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import * as atomCommands from "../../state/use-atom-command";
 
@@ -115,6 +115,34 @@ describe("Esc in a shortcut recorder", () => {
     await userEvent.keyboard("{Escape}");
     expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
   });
+
+  it.each([
+    { name: "existing binding", field: existingField, open: () => activate(existingPill, "click") },
+    {
+      name: "new binding",
+      field: newField,
+      open: async () => {
+        await activate(page.getByRole("button", { name: "Add keybinding" }), "click");
+        await activate(newField, "focus");
+      },
+    },
+  ])("records Shift+Esc in the $name field", async ({ field, open }) => {
+    const onOpenChange = vi.fn();
+    await using _screen = await render(
+      <Dialog open onOpenChange={onOpenChange}>
+        <DialogPopup>
+          <DialogTitle>Settings</DialogTitle>
+          <KeybindingsSettingsPanel />
+        </DialogPopup>
+      </Dialog>,
+    );
+
+    await open();
+    await userEvent.keyboard("{Shift>}{Escape}{/Shift}");
+
+    await expect.element(field).toHaveValue("shift+esc");
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
 });
 
 it("unassigns a default shortcut and restores its condition when one is assigned again", async () => {
@@ -173,11 +201,50 @@ it("Esc in the keybindings search clears the query without closing Settings", as
   );
   const search = page.getByRole("searchbox", { name: "Search keybindings" });
   await search.fill("sidebar");
+  for (const composition of [
+    { key: "Escape", isComposing: true, keyCode: 27 },
+    { key: "Escape", isComposing: false, keyCode: 229 },
+  ]) {
+    const keydown = new KeyboardEvent("keydown", {
+      ...composition,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(() => {
+      // Safari ends the composition just before the Escape keydown.
+      if (!composition.isComposing)
+        search.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      search.element().dispatchEvent(keydown);
+    });
+    expect(keydown.defaultPrevented).toBe(false);
+    await expect.element(search).toHaveValue("sidebar");
+    await expect.element(search).toHaveFocus();
+  }
+  expect(search.element().getAttribute("type")).toBe("text");
 
   await userEvent.keyboard("{Escape}");
-
   await expect.element(search).toHaveValue("");
+  await expect.element(search).toHaveFocus();
+
+  await act(() =>
+    search.element().dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        repeat: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    ),
+  );
+  await expect.element(search).toHaveValue("");
+  await expect.element(search).toHaveFocus();
   expect(onOpenChange).not.toHaveBeenCalled();
+
+  await search.fill("sidebar");
+  await userEvent.keyboard("{Shift>}{Escape}{/Shift}");
+  await expect.element(search).toHaveValue("sidebar");
+  await expect.element(search).toHaveFocus();
+  expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
 });
 
 it("re-enables Save when a When editor closes on an expression it could not parse", async () => {
@@ -235,3 +302,58 @@ it("filters actions and allows additional shortcuts for assigned commands", asyn
     .element(screen.getByRole("combobox", { name: "Command", exact: true }))
     .toHaveTextContent("Composer: Cycle Host");
 });
+
+it.each([
+  {
+    name: "macOS",
+    platform: "MacIntel",
+    terminalPreviousMac: {
+      ariaLabel: "Edit shortcut for Terminal: Previous: ⇧⌘[",
+      keys: ["⇧", "⌘", "["],
+    },
+    terminalPreviousCtrl: {
+      ariaLabel: "Edit shortcut for Terminal: Previous: ⌃⌥[",
+      keys: ["⌃", "⌥", "["],
+    },
+    editQueued: {
+      ariaLabel: "Edit shortcut for Edit last queued message: ⌥Up",
+      keys: ["⌥", "Up"],
+    },
+    focusNext: { ariaLabel: "Edit shortcut for Focus next workspace area: F6", keys: ["F6"] },
+  },
+  {
+    name: "Linux",
+    platform: "Linux x86_64",
+    terminalPreviousMac: {
+      ariaLabel: "Edit shortcut for Terminal: Previous: Shift+Meta+[",
+      keys: ["Shift", "Meta", "["],
+    },
+    terminalPreviousCtrl: {
+      ariaLabel: "Edit shortcut for Terminal: Previous: Ctrl+Alt+[",
+      keys: ["Ctrl", "Alt", "["],
+    },
+    editQueued: {
+      ariaLabel: "Edit shortcut for Edit last queued message: Alt+Up",
+      keys: ["Alt", "Up"],
+    },
+    focusNext: { ariaLabel: "Edit shortcut for Focus next workspace area: F6", keys: ["F6"] },
+  },
+])(
+  "renders platform modifier symbols and formatted key labels in shortcut pills on $name",
+  async ({ name, platform, terminalPreviousMac, terminalPreviousCtrl, editQueued, focusNext }) => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    await using screen = await render(<KeybindingsSettingsPanel />);
+    // The list leaves out a binding whose condition cannot hold on this platform.
+    const terminalPrevious = name === "macOS" ? terminalPreviousMac : terminalPreviousCtrl;
+
+    for (const expected of [terminalPrevious, editQueued, focusNext]) {
+      const button = screen.getByRole("button", { name: expected.ariaLabel, exact: true });
+      await expect.element(button).toBeVisible();
+      const kbdTexts = Array.from(
+        button.element().querySelectorAll('[data-slot="kbd"]'),
+        (el) => el.textContent,
+      );
+      expect(kbdTexts).toEqual(expected.keys);
+    }
+  },
+);

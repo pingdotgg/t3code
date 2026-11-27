@@ -1,7 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
 import type { ChildThreadApproval } from "@t3tools/client-runtime/state/thread-requests";
-import { fullAccessOverrideExplanation } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  fullAccessOverrideExplanation,
+  PUSH_HOOKS_APPROVAL_QUESTION,
+} from "@t3tools/client-runtime/state/thread-requests";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -13,7 +16,9 @@ import { ComposerRequestCard } from "./ComposerRequestCard";
 import { useEnvironmentScope } from "../../state/session";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ApprovalText } from "./ApprovalText";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
+import { PushHooksApprovalDetails } from "./PushHooksApprovalDetails";
 
 function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
   const canRespond = useEnvironmentScope(entry.thread.environmentId, AuthOrchestrationOperateScope);
@@ -34,9 +39,16 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
         title={gt("Approval needed from {title}", { title: entry.title })}
       />
       <ComposerRequestCard.Well>
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap p-2 font-mono text-meta text-foreground wrap-anywhere">
-          {approval.detail || approval.requestKind}
-        </pre>
+        {approval.pushHooks ? (
+          <div className="flex min-w-0 flex-col gap-2 p-2.5">
+            <span className="block min-w-0 text-meta text-foreground select-text! wrap-anywhere">
+              {messages(PUSH_HOOKS_APPROVAL_QUESTION)}
+            </span>
+            <PushHooksApprovalDetails pushHooks={approval.pushHooks} />
+          </div>
+        ) : (
+          <ApprovalText className="p-2" text={approval.detail || approval.requestKind} />
+        )}
       </ComposerRequestCard.Well>
       {approval.appName ? (
         <p className="px-2.5 text-meta text-muted-foreground">{approval.appName}</p>

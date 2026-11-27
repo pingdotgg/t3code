@@ -54,7 +54,6 @@ import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { StatusDot, type StatusDotTone } from "../ui/status-dot";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
   formatCpuTime,
@@ -65,6 +64,8 @@ import {
   shouldShowResourceMonitorRetry,
   visibleResourceTelemetryProcesses,
 } from "./ResourceTelemetryDiagnostics.logic";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { SettingsNote, SettingsSection } from "./settingsLayout";
 
 const HISTORY_WINDOWS = [
@@ -279,7 +280,9 @@ function AggregateCard({
       <div className="flex items-center justify-between gap-3">
         <div className="text-3xs font-normal text-dim-foreground">{label}</div>
         <div className="rounded-badge bg-secondary px-1.5 py-0.5 font-mono text-3xs tabular-nums text-dim-foreground">
-          {aggregate.processCount} {aggregate.processCount === 1 ? "process" : "processes"}
+          {gt("{count, plural, one {{count} process} other {{count} processes}}", {
+            count: aggregate.processCount,
+          })}
         </div>
       </div>
       <div className="mt-3.5 grid grid-cols-2 gap-x-4 gap-y-2.5">
@@ -441,38 +444,40 @@ function ResourceHistoryChart({
             minimumVisiblePercent: 1,
           });
           return (
-            <Tooltip key={DateTime.formatIso(bucket.startedAt)}>
-              <TooltipTrigger
-                render={
-                  <div className="grid h-full min-w-1 flex-1 grid-cols-3 items-end gap-px">
-                    <span
-                      className="block rounded-t-sm bg-foreground/65"
-                      style={{ height: `${cpuHeight}%` }}
-                    />
-                    <span
-                      className="block rounded-t-sm bg-info/70"
-                      style={{ height: `${readHeight}%` }}
-                    />
-                    <span
-                      className="block rounded-t-sm bg-warning/80"
-                      style={{ height: `${writeHeight}%` }}
-                    />
-                  </div>
-                }
-              />
-              <TooltipPopup side="top" className="text-left">
-                <div className="space-y-0.5">
-                  <div>
-                    {gt("CPU avg {percent}%", { percent: bucket.avgCpuPercent.toFixed(1) })}
-                  </div>
-                  <div>
-                    {gt("CPU peak {percent}%", { percent: bucket.maxCpuPercent.toFixed(1) })}
-                  </div>
-                  <div>{gt("Read {bytes}", { bytes: formatBytes(bucket.ioReadBytes) })}</div>
-                  <div>{gt("Write {bytes}", { bytes: formatBytes(bucket.ioWriteBytes) })}</div>
+            <SharedTooltipTrigger
+              key={DateTime.formatIso(bucket.startedAt)}
+              render={
+                <div className="grid h-full min-w-1 flex-1 grid-cols-3 items-end gap-px">
+                  <span
+                    className="block rounded-t-sm bg-foreground/65"
+                    style={{ height: `${cpuHeight}%` }}
+                  />
+                  <span
+                    className="block rounded-t-sm bg-info/70"
+                    style={{ height: `${readHeight}%` }}
+                  />
+                  <span
+                    className="block rounded-t-sm bg-warning/80"
+                    style={{ height: `${writeHeight}%` }}
+                  />
                 </div>
-              </TooltipPopup>
-            </Tooltip>
+              }
+              label={
+                <>
+                  <div className="space-y-0.5">
+                    <div>
+                      {gt("CPU avg {percent}%", { percent: bucket.avgCpuPercent.toFixed(1) })}
+                    </div>
+                    <div>
+                      {gt("CPU peak {percent}%", { percent: bucket.maxCpuPercent.toFixed(1) })}
+                    </div>
+                    <div>{gt("Read {bytes}", { bytes: formatBytes(bucket.ioReadBytes) })}</div>
+                    <div>{gt("Write {bytes}", { bytes: formatBytes(bucket.ioWriteBytes) })}</div>
+                  </div>
+                </>
+              }
+              className="text-left"
+            />
           );
         })}
       </div>
@@ -516,14 +521,11 @@ function ProcessTreeName({
       )}
       <StatusDot tone={categoryDotTone(process.category)} />
       <div className="min-w-0">
-        <Tooltip>
-          <TooltipTrigger
-            render={<div className="truncate text-label text-strong-foreground">{name}</div>}
-          />
-          <TooltipPopup side="top" variant="code">
-            {process.command || process.name}
-          </TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={<div className="truncate text-label text-strong-foreground">{name}</div>}
+          label={process.command || process.name}
+          variant="code"
+        />
         <ProcessDetail>
           <span>{categoryLabel(process.category, messages)}</span>
           <span>
@@ -573,14 +575,7 @@ function IoPair({ read, write, tooltip }: { read: string; write: string; tooltip
     </div>
   );
   if (!tooltip) return pair;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={pair} />
-      <TooltipPopup side="top" className="text-left">
-        {tooltip}
-      </TooltipPopup>
-    </Tooltip>
-  );
+  return <SharedTooltipTrigger render={pair} label={tooltip} className="text-left" />;
 }
 
 function canSignalProcess(process: ResourceTelemetryProcess): boolean {
@@ -804,18 +799,15 @@ function HistoryProcessTable({
             {processes.map((process) => (
               <tr key={processIdentityKey(process)} className="hover:surface-ghost-hover">
                 <td className="px-4 py-2 sm:pl-5">
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span className="block truncate text-label text-strong-foreground">
-                          {process.name || process.command}
-                        </span>
-                      }
-                    />
-                    <TooltipPopup side="top" variant="code">
-                      {process.command || process.name}
-                    </TooltipPopup>
-                  </Tooltip>
+                  <SharedTooltipTrigger
+                    render={
+                      <span className="block truncate text-label text-strong-foreground">
+                        {process.name || process.command}
+                      </span>
+                    }
+                    label={process.command || process.name}
+                    variant="code"
+                  />
                   <ProcessDetail>
                     <span>{categoryLabel(process.category, messages)}</span>
                     <span>
@@ -1124,24 +1116,24 @@ function ResourceTelemetryDiagnosticsBody({
               <SourceStatusBadge label={gt("Native")} status={snapshot.health.native.status} />
             ) : null}
             <LastSampleLabel sampledAt={snapshot?.readAt ?? null} />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-micro"
-                    variant="ghost"
-                    disabled={telemetry.isPending}
-                    onClick={telemetry.refresh}
-                    aria-label={gt("Refresh resource telemetry")}
-                  >
-                    <RefreshIcon size="xs" refreshing={telemetry.isPending} />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">
-                <T>Refresh telemetry snapshot</T>
-              </TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost"
+                  disabled={telemetry.isPending}
+                  onClick={telemetry.refresh}
+                  aria-label={gt("Refresh resource telemetry")}
+                >
+                  <RefreshIcon size="xs" refreshing={telemetry.isPending} />
+                </Button>
+              }
+              label={
+                <>
+                  <T>Refresh telemetry snapshot</T>
+                </>
+              }
+            />
           </div>
         }
       >
@@ -1225,13 +1217,21 @@ function ResourceTelemetryDiagnosticsBody({
               icon={<HardDriveIcon className="size-3.5" />}
               label={gt("Read throughput")}
               value={measured ? formatRate(measured.ioReadBytesPerSecond) : pendingValue}
-              detail={measured ? `${formatBytes(measured.ioReadBytes)} observed` : undefined}
+              detail={
+                measured
+                  ? gt("{bytes} observed", { bytes: formatBytes(measured.ioReadBytes) })
+                  : undefined
+              }
             />
             <IconStat
               icon={<DatabaseIcon className="size-3.5" />}
               label={gt("Write throughput")}
               value={measured ? formatRate(measured.ioWriteBytesPerSecond) : pendingValue}
-              detail={measured ? `${formatBytes(measured.ioWriteBytes)} observed` : undefined}
+              detail={
+                measured
+                  ? gt("{bytes} observed", { bytes: formatBytes(measured.ioWriteBytes) })
+                  : undefined
+              }
               tone={
                 measured && measured.ioWriteBytesPerSecond >= 10 * 1_024 * 1_024
                   ? "danger"
@@ -1421,7 +1421,10 @@ function ResourceTelemetryDiagnosticsBody({
                   value={
                     nativeUnavailableReason
                       ? "-"
-                      : `${snapshot.health.retainedProcessCount}/${snapshot.health.scannedProcessCount} retained`
+                      : gt("{retained}/{scanned} retained", {
+                          retained: snapshot.health.retainedProcessCount,
+                          scanned: snapshot.health.scannedProcessCount,
+                        })
                   }
                 />
                 <DetailRow

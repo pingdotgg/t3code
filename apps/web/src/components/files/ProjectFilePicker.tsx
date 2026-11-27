@@ -18,6 +18,7 @@ import { CommandPaletteResults } from "../CommandPaletteResults";
 import { Kbd } from "../ui/kbd";
 import {
   getProjectFilePickerMatches,
+  groupMatchRanges,
   PROJECT_FILE_PICKER_RESULT_LIMIT,
 } from "./ProjectFilePicker.logic";
 import { useProjectFilePickerQuery } from "./projectFilesQueryState";
@@ -50,17 +51,17 @@ function HighlightedFuzzyText(props: {
   if (!props.active) return props.value;
 
   const parts: ReactNode[] = [];
-  let start = 0;
-  for (const index of props.indices) {
-    if (start < index) parts.push(props.value.slice(start, index));
+  let cursor = 0;
+  for (const [start, end] of groupMatchRanges(props.indices)) {
+    if (cursor < start) parts.push(props.value.slice(cursor, start));
     parts.push(
-      <strong className="font-semibold text-foreground" key={index}>
-        {props.value[index]}
+      <strong className="font-semibold text-foreground" key={start}>
+        {props.value.slice(start, end)}
       </strong>,
     );
-    start = index + 1;
+    cursor = end;
   }
-  if (start < props.value.length) parts.push(props.value.slice(start));
+  if (cursor < props.value.length) parts.push(props.value.slice(cursor));
 
   return <span className="text-muted-foreground">{parts}</span>;
 }

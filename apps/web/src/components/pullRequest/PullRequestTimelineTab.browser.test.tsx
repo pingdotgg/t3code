@@ -2,9 +2,22 @@ import {
   EnvironmentId,
   ProjectId,
   SourceControlProviderKind,
+  ThreadId,
   type PullRequestDetailView,
 } from "@t3tools/contracts";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+
+const linkState = vi.hoisted(() => ({
+  openLink: vi.fn(async () => {}),
+  useOpenLink: vi.fn(),
+}));
+vi.mock(import("~/browser/useOpenLink"), () => ({
+  useOpenLink: (threadRef: unknown) => {
+    linkState.useOpenLink(threadRef);
+    return linkState.openLink;
+  },
+}));
 
 import { render } from "../../../test/render";
 import "../../index.css";
@@ -125,4 +138,59 @@ it("gives each review a heading for screen reader navigation", async () => {
     </div>,
   );
   await expect.element(screen.getByRole("heading", { name: /bob approved/i })).toBeVisible();
+});
+
+it("opens activity host links through the link-target setting", async () => {
+  linkState.openLink.mockClear();
+  linkState.useOpenLink.mockClear();
+  const reviewUrl = `${detail.url}#pullrequestreview-1`;
+  const commentUrl = `${detail.url}#issuecomment-2`;
+  const threadRef = {
+    environmentId: EnvironmentId.make("environment"),
+    threadId: ThreadId.make("thread-1"),
+  };
+  const commented: PullRequestDetailView = {
+    ...detail,
+    commits: [],
+    comments: [
+      {
+        id: "review",
+        kind: "review",
+        author: { login: "bob", name: null, avatarUrl: null },
+        body: "Looks good",
+        createdAt: "2026-10-01T00:00:00Z",
+        url: reviewUrl,
+        path: null,
+        reviewState: "APPROVED",
+      },
+      {
+        id: "comment",
+        kind: "issue-comment",
+        author: { login: "alice", name: null, avatarUrl: null },
+        body: "One question",
+        createdAt: "2026-10-01T00:01:00Z",
+        url: commentUrl,
+        path: null,
+        reviewState: null,
+      },
+    ],
+  };
+  await using screen = await render(
+    <div style={{ height: 600 }}>
+      <PullRequestTimelineTab
+        scrollerRef={() => {}}
+        detail={commented}
+        environmentId={threadRef.environmentId}
+        threadRef={threadRef}
+        order="oldest"
+        onOpenCommit={() => {}}
+      />
+    </div>,
+  );
+  // The rail links reviews to the host; its comments have no host button.
+  await userEvent.click(screen.getByRole("button", { name: "Open review on host" }));
+  expect(linkState.useOpenLink).toHaveBeenCalledWith(threadRef);
+  expect(linkState.openLink).toHaveBeenLastCalledWith(reviewUrl, {
+    event: expect.objectContaining({ metaKey: false, ctrlKey: false }),
+  });
 });

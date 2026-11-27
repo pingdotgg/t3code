@@ -64,6 +64,7 @@ import { pullRequestQuickActions } from "./pullRequestList.logic";
 import { PullRequestSpeedActions, PullRequestSpeedModeContext } from "./PullRequestSpeedActions";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const SOURCE_LABELS: Record<ThreadPullRequestLink["source"], string> = {
   manual: msg("Linked by you"),
@@ -81,16 +82,16 @@ function ChecksGlyph({
   const resolve = useMessages();
   const presentation = pullRequestChecksStatePresentation(state, resolve);
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <presentation.Icon
-          role="img"
-          aria-label={presentation.label}
-          className={cn("size-3.5", presentation.toneClassName)}
-        />
-      </TooltipTrigger>
-      <TooltipPopup>{presentation.label}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={<span className="inline-flex shrink-0" />}
+      label={presentation.label}
+    >
+      <presentation.Icon
+        role="img"
+        aria-label={presentation.label}
+        className={cn("size-3.5", presentation.toneClassName)}
+      />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -202,12 +203,10 @@ function LinkRowImpl({
       >
         <PullRequestRowLines
           number={
-            <Tooltip>
-              <TooltipTrigger render={<span className={PULL_REQUEST_ROW_NUMBER_CLASS} />}>
-                #{link.number}
-              </TooltipTrigger>
-              {/* The repository lives here, not on the meta line, so the branches get its room. */}
-              <TooltipPopup>
+            // The repository lives here, not on the meta line, so the branches get its room.
+            <SharedTooltipTrigger
+              render={<span className={PULL_REQUEST_ROW_NUMBER_CLASS} />}
+              label={
                 <span className="flex flex-col gap-0.5">
                   <span>{link.repository}</span>
                   <span>{resolve(SOURCE_LABELS[link.source])}</span>
@@ -220,25 +219,29 @@ function LinkRowImpl({
                     </T>
                   </span>
                 </span>
-              </TooltipPopup>
-            </Tooltip>
+              }
+            >
+              #{link.number}
+            </SharedTooltipTrigger>
           }
           title={snapshot?.title ?? link.repository}
           signals={
             open ? (
               <>
                 {watching ? (
-                  <Tooltip>
-                    <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-                      <EyeIcon role="img" aria-label={gt("Watching")} className="size-3.5" />
-                    </TooltipTrigger>
-                    <TooltipPopup>
-                      <T>
-                        Watching: the agent wakes when checks finish, someone comments, or the
-                        branch conflicts
-                      </T>
-                    </TooltipPopup>
-                  </Tooltip>
+                  <SharedTooltipTrigger
+                    render={<span className="inline-flex shrink-0" />}
+                    label={
+                      <>
+                        <T>
+                          Watching: the agent wakes when checks finish, someone comments, or the
+                          branch conflicts
+                        </T>
+                      </>
+                    }
+                  >
+                    <EyeIcon role="img" aria-label={gt("Watching")} className="size-3.5" />
+                  </SharedTooltipTrigger>
                 ) : null}
                 {snapshot?.checksState ? <ChecksGlyph state={snapshot.checksState} /> : null}
                 {snapshot?.reviewDecision ? (
@@ -272,17 +275,12 @@ function LinkRowImpl({
           meta={
             <>
               {stack ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span className="inline-flex shrink-0 items-center gap-0.5 text-foreground/70" />
-                    }
-                  >
-                    <PullRequestGlyph.stack aria-hidden className="size-3" />
-                    {stack.size}
-                  </TooltipTrigger>
-                  <TooltipPopup>
-                    {stack.kind === "native"
+                <SharedTooltipTrigger
+                  render={
+                    <span className="inline-flex shrink-0 items-center gap-0.5 text-foreground/70" />
+                  }
+                  label={
+                    stack.kind === "native"
                       ? gt("{host} stack of {size}: merging a layer lands the ones below it.", {
                           host: sourceControlClients.hostLabelForChangeRequestUrl(link.url),
                           size: stack.size,
@@ -293,9 +291,12 @@ function LinkRowImpl({
                             size: stack.size,
                             terms: changeRequestTermKind(linkHost.changeRequest),
                           },
-                        )}
-                  </TooltipPopup>
-                </Tooltip>
+                        )
+                  }
+                >
+                  <PullRequestGlyph.stack aria-hidden className="size-3" />
+                  {stack.size}
+                </SharedTooltipTrigger>
               ) : null}
               {snapshot?.author ? (
                 <PullRequestRowAuthor

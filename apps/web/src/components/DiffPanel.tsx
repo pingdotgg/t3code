@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   CHECKPOINT_DIFF_TRUNCATED_MARKER,
   type ReviewBranchCommitsResult,
@@ -32,7 +32,7 @@ import { useCodeViewScrollRestore } from "./diffs/useCodeViewScrollRestore";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { useFileContextMenuHandler } from "../fileContextMenu";
-import { type DraftId } from "../composerDraftStore";
+import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { toolCallDiff } from "../lib/toolCallDiff";
 import { useCheckpointDiff, useTurnItemDetail } from "~/state/queries";
@@ -105,6 +105,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 import { useEnvironmentQuery, useEnvironmentQueryRefresh } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import { serverEnvironment } from "../state/server";
@@ -166,45 +167,43 @@ function DiffFileCollapseToggle({
 }) {
   const gt = useGT();
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-micro"
-            variant="ghost"
-            className="-ms-0.5"
-            aria-label={
-              collapsed
-                ? gt("Expand {path}", { path: filePath })
-                : gt("Collapse {path}", { path: filePath })
-            }
-            aria-expanded={!collapsed}
-            ref={(node) => {
-              if (!node || !load) return;
-              return observeIntersection(
-                node,
-                (entry) => {
-                  if (entry.isIntersecting) load();
-                },
-                { rootMargin: "600px" },
-              );
-            }}
-            data-diff-file-key={fileKey}
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggle(fileKey);
-            }}
-          />
-        }
-      >
-        {collapsed ? (
-          <ChevronRightIcon className={cn("size-4", iconClassName)} />
-        ) : (
-          <ChevronDownIcon className={cn("size-4", iconClassName)} />
-        )}
-      </TooltipTrigger>
-      <TooltipPopup side="top">{collapsed ? gt("Expand diff") : gt("Collapse diff")}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          size="icon-micro"
+          variant="ghost"
+          className="-ms-0.5"
+          aria-label={
+            collapsed
+              ? gt("Expand {path}", { path: filePath })
+              : gt("Collapse {path}", { path: filePath })
+          }
+          aria-expanded={!collapsed}
+          ref={(node) => {
+            if (!node || !load) return;
+            return observeIntersection(
+              node,
+              (entry) => {
+                if (entry.isIntersecting) load();
+              },
+              { rootMargin: "600px" },
+            );
+          }}
+          data-diff-file-key={fileKey}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle(fileKey);
+          }}
+        />
+      }
+      label={collapsed ? gt("Expand diff") : gt("Collapse diff")}
+    >
+      {collapsed ? (
+        <ChevronRightIcon className={cn("size-4", iconClassName)} />
+      ) : (
+        <ChevronDownIcon className={cn("size-4", iconClassName)} />
+      )}
+    </SharedTooltipTrigger>
   );
 }
 
@@ -294,7 +293,17 @@ export default function DiffPanel({
 
   const routeThreadRef = useThreadRouteRef();
   const activeThreadId = routeThreadRef?.threadId ?? null;
-  const activeThread = useQuietThreadShell(routeThreadRef);
+  const serverThread = useQuietThreadShell(routeThreadRef);
+  // A new thread has no server thread yet; its draft names the checkout to diff.
+  const draftThread = useComposerDraftStore((store) =>
+    routeThreadRef === null && typeof composerDraftTarget === "string"
+      ? store.getDraftSession(composerDraftTarget)
+      : null,
+  );
+  const activeThread = serverThread ?? draftThread;
+  const panelThreadRef =
+    routeThreadRef ??
+    (draftThread ? scopeThreadRef(draftThread.environmentId, draftThread.threadId) : null);
   const fileAccess = useFilesystemReadAccess(activeThread?.environmentId ?? null, messages);
   const { canReadFiles } = fileAccess;
   const activeProjectId = activeThread?.projectId ?? null;
@@ -328,7 +337,7 @@ export default function DiffPanel({
     gitStatusQuery.data?.workingTree.rootPath ??
     (activeThread?.worktreePath ? undefined : activeProject?.repositoryIdentity?.rootPath);
   const storedDiffSelection = useDiffPanelStore((state) =>
-    selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
+    selectThreadDiffPanelSelection(state.byThreadKey, panelThreadRef),
   );
   const threadFolderIsRepo = gitStatusQuery.data?.isRepo ?? true;
   // The checkout the Git scopes read: the thread's folder, or a repository the thread changed.
@@ -390,7 +399,7 @@ export default function DiffPanel({
       ? { kind: "turn", turnId: latestTurn.runId, filePath: null, revealRequestId: 0 }
       : storedDiffSelection;
   const rememberedBaseRef = useDiffPanelStore((state) =>
-    selectThreadBranchBaseRef(state, routeThreadRef),
+    selectThreadBranchBaseRef(state, panelThreadRef),
   );
   const toolCallSelection = diffSelection.kind === "tool-call" ? diffSelection : null;
   // Turn and git diffs name files from the repository root; a tool call's diff names them as
@@ -446,8 +455,8 @@ export default function DiffPanel({
       : selectedCommitSha !== null
         ? `commit:${selectedCommitSha}`
         : selectedGitScope;
-  const collapseScopeKey = routeThreadRef
-    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
+  const collapseScopeKey = panelThreadRef
+    ? `${panelThreadRef.environmentId}:${panelThreadRef.threadId}:${reviewSectionId}`
     : null;
   const codeViewMountKey = collapseScopeKey ?? reviewSectionId;
   const selectedCheckpointRange =
@@ -514,8 +523,8 @@ export default function DiffPanel({
     messages,
   );
   const branchCommits = openCommitMenu ?? branchCommitsQuery.data;
-  const activeThreadRefreshKey = routeThreadRef
-    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
+  const activeThreadRefreshKey = panelThreadRef
+    ? `${panelThreadRef.environmentId}:${panelThreadRef.threadId}`
     : null;
 
   const selectedGitSource = branchDiffPreview.data?.sources.find(
@@ -885,7 +894,7 @@ export default function DiffPanel({
     const repositoryFile = repositoryFileTarget(filePath);
     openDiffFilePrimaryAction({
       // The file viewer reads below the thread's folder; a repository outside it opens in the editor.
-      threadRef: repositoryFile?.insideThreadFolder === false ? null : routeThreadRef,
+      threadRef: repositoryFile?.insideThreadFolder === false ? null : panelThreadRef,
       filePath: repositoryFile?.insideThreadFolder === false ? repositoryFile.path : filePath,
       activeCwd: repositoryFile?.insideThreadFolder === false ? repositoryFile.cwd : activeCwd,
       repositoryRoot: repositoryFile ? undefined : diffPathRepositoryRoot,
@@ -942,12 +951,12 @@ export default function DiffPanel({
     useDiffPanelStore.getState().selectTurn(routeThreadRef, runId);
   };
   const selectGitScope = (scope: "branch" | "unstaged") => {
-    if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectGitScope(routeThreadRef, scope);
+    if (!panelThreadRef) return;
+    useDiffPanelStore.getState().selectGitScope(panelThreadRef, scope);
   };
   const selectBranchBaseRef = (baseRef: string | null) => {
-    if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
+    if (!panelThreadRef) return;
+    useDiffPanelStore.getState().selectBranchBaseRef(panelThreadRef, baseRef);
   };
   const selectGitRepository = (value: string) => {
     const nextPath = value === THREAD_FOLDER ? null : value;
@@ -983,8 +992,8 @@ export default function DiffPanel({
     } else if (value === selectedCommitValue) {
       selectGitScope("branch");
     } else if (value.startsWith("commit:")) {
-      if (routeThreadRef) {
-        useDiffPanelStore.getState().selectCommit(routeThreadRef, value.slice("commit:".length));
+      if (panelThreadRef) {
+        useDiffPanelStore.getState().selectCommit(panelThreadRef, value.slice("commit:".length));
       }
     } else if (value === "latest") {
       if (latestTurn) selectTurn(latestTurn.runId);
@@ -1013,25 +1022,23 @@ export default function DiffPanel({
           </DropdownMenuTrigger>
           {headerCommitSha !== null ? (
             selectedCommitUrl ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <InlineButton
-                      tone="muted"
-                      className="shrink-0"
-                      render={
-                        <a href={selectedCommitUrl} target="_blank" rel="noopener noreferrer" />
-                      }
-                      onClick={(event) => openCommitUrl(event, selectedCommitUrl)}
-                    />
-                  }
-                >
-                  <Text variant="meta" mono>
-                    {headerCommitSha.slice(0, 7)}
-                  </Text>
-                </TooltipTrigger>
-                <TooltipPopup side="top">{selectedCommitUrl}</TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                render={
+                  <InlineButton
+                    tone="muted"
+                    className="shrink-0"
+                    render={
+                      <a href={selectedCommitUrl} target="_blank" rel="noopener noreferrer" />
+                    }
+                    onClick={(event) => openCommitUrl(event, selectedCommitUrl)}
+                  />
+                }
+                label={selectedCommitUrl}
+              >
+                <Text variant="meta" mono>
+                  {headerCommitSha.slice(0, 7)}
+                </Text>
+              </SharedTooltipTrigger>
             ) : (
               <span className="shrink-0 font-mono text-meta text-muted-foreground">
                 {headerCommitSha.slice(0, 7)}
@@ -1118,31 +1125,29 @@ export default function DiffPanel({
                             selectedCommitSha === commit.sha && "surface-selected-soft",
                           )}
                         >
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <DropdownMenuRadioItem
-                                  className="min-w-0 flex-1"
-                                  value={`commit:${commit.sha}`}
-                                  closeOnClick
-                                />
-                              }
-                            >
-                              <span className="flex items-center gap-3">
-                                <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
-                                <span className="shrink-0 text-meta tabular-nums text-muted-foreground">
-                                  {formatRelativeTimeLabel(
-                                    commit.committedAt,
-                                    Date.parse(now),
-                                    messages,
-                                  )}
-                                </span>
+                          <SharedTooltipTrigger
+                            render={
+                              <DropdownMenuRadioItem
+                                className="min-w-0 flex-1"
+                                value={`commit:${commit.sha}`}
+                                closeOnClick
+                              />
+                            }
+                            label={commit.subject}
+                            side="right"
+                            className="max-w-80"
+                          >
+                            <span className="flex items-center gap-3">
+                              <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
+                              <span className="shrink-0 text-meta tabular-nums text-muted-foreground">
+                                {formatRelativeTimeLabel(
+                                  commit.committedAt,
+                                  Date.parse(now),
+                                  messages,
+                                )}
                               </span>
-                            </TooltipTrigger>
-                            <TooltipPopup side="right" className="max-w-80">
-                              {commit.subject}
-                            </TooltipPopup>
-                          </Tooltip>
+                            </span>
+                          </SharedTooltipTrigger>
                           {commitUrl ? (
                             <DropdownMenuItem
                               className="shrink-0"
@@ -1296,16 +1301,12 @@ export default function DiffPanel({
                 {`${comparisonHeadRef} → ${comparisonBaseRef}`}
               </TooltipPopup>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={<span aria-hidden className="hidden @max-[20rem]/diff-refs:inline" />}
-              >
-                <T>vs</T>
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                {`${comparisonHeadRef} → ${comparisonBaseRef}`}
-              </TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={<span aria-hidden className="hidden @max-[20rem]/diff-refs:inline" />}
+              label={`${comparisonHeadRef} → ${comparisonBaseRef}`}
+            >
+              <T>vs</T>
+            </SharedTooltipTrigger>
             <Combobox
               items={baseRefItems}
               filteredItems={filteredBaseRefItems}
@@ -1351,7 +1352,7 @@ export default function DiffPanel({
                 <ComboboxEmpty>
                   <T>No matching refs.</T>
                 </ComboboxEmpty>
-                <ComboboxList className="max-h-64 min-w-0 overflow-x-hidden">
+                <ComboboxList className="min-w-0 overflow-x-hidden" scrollAreaClassName="max-h-64">
                   <ComboboxItem
                     className="w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)]"
                     value={AUTOMATIC_BASE_REF}
@@ -1393,22 +1394,22 @@ export default function DiffPanel({
                               />
                             </div>
                           ) : choice.remote ? (
-                            <Tooltip>
-                              <TooltipTrigger
-                                render={
-                                  <span className="flex justify-end text-muted-foreground">
-                                    <CheckIcon
-                                      role="img"
-                                      aria-label={gt("Remote only")}
-                                      className="size-3"
-                                    />
-                                  </span>
-                                }
-                              />
-                              <TooltipPopup side="top">
-                                <T>Remote only</T>
-                              </TooltipPopup>
-                            </Tooltip>
+                            <SharedTooltipTrigger
+                              render={
+                                <span className="flex justify-end text-muted-foreground">
+                                  <CheckIcon
+                                    role="img"
+                                    aria-label={gt("Remote only")}
+                                    className="size-3"
+                                  />
+                                </span>
+                              }
+                              label={
+                                <>
+                                  <T>Remote only</T>
+                                </>
+                              }
+                            />
                           ) : null}
                         </div>
                       </ComboboxItem>
@@ -1588,6 +1589,18 @@ export default function DiffPanel({
                   description={gt("There is nothing to show for this selection.")}
                 />
               )
+            ) : shownFileEntries.length === 0 && testFileCount > 0 ? (
+              <div className="flex h-full flex-wrap items-center justify-center gap-2 px-3 py-2 text-xs text-muted-foreground/70">
+                <p>
+                  {gt(
+                    "{count, plural, one {{count} test file hidden} other {{count} test files hidden}}",
+                    { count: testFileCount },
+                  )}
+                </p>
+                <InlineButton onClick={() => setHideTestFiles(false)}>
+                  {gt("Show test files")}
+                </InlineButton>
+              </div>
             ) : lazySource || renderablePatch?.kind === "files" ? (
               <div className="flex min-h-0 flex-1 overflow-hidden">
                 <div

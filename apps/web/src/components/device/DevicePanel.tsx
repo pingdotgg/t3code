@@ -97,19 +97,17 @@ export function DevicePanel(props: {
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const open = useAtomCommand(deviceEnvironment.open);
   const close = useAtomCommand(deviceEnvironment.close);
-  const shutdown = useAtomCommand(deviceEnvironment.shutdown);
-  // The panel stays mounted across thread switches, so an in-flight open or
-  // power-off is tagged with the thread it belongs to and only shown there.
+  const shutdown = useAtomCommand(deviceEnvironment.shutdown, { reportFailure: false });
+  // The panel stays mounted across thread switches, so an in-flight open is
+  // tagged with the thread it belongs to and only shown there.
   const scope = `${environmentId}\u0000${threadId}`;
   const [operation, setOperation] = useState<{
     readonly scope: string;
     readonly pending: DeviceSummary | null;
-    readonly poweringOffKey: string | null;
     readonly error: string | null;
   } | null>(null);
   const pendingDevice = operation?.scope === scope ? operation.pending : null;
   const operationError = operation?.scope === scope ? operation.error : null;
-  const poweringOffKey = operation?.scope === scope ? operation.poweringOffKey : null;
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   // Persistent: when on, a device opened from this list floats over chat
   // instead of taking the panel. The workspace's own Float action still works.
@@ -126,6 +124,19 @@ export function DevicePanel(props: {
     Schema.String,
   );
   const pendingDeviceKey = pendingDevice ? deviceKey(pendingDevice) : null;
+  // Power-offs act on the environment, not the thread, so they outlive thread switches.
+  const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
+  const [stopErrors, setStopErrors] = useState<Readonly<Record<string, string>>>({});
+  const stopError = stopErrors[environmentId];
+  const setStopError = (message: string | undefined) =>
+    setStopErrors((current) => {
+      const next = { ...current };
+      if (message === undefined) delete next[environmentId];
+      else next[environmentId] = message;
+      return next;
+    });
+  const stoppingKey = (device: DeviceSummary) => `${environmentId}\u0000${deviceKey(device)}`;
+  const isStopping = (device: DeviceSummary) => stopping.has(stoppingKey(device));
 
   const hostDisabled = state.hostStatus === "disabled";
 
@@ -159,14 +170,17 @@ export function DevicePanel(props: {
     null;
   const selectedHostKey = selectedHost?.id ?? null;
   const grouped = groupDevices(state, selectedHostKey);
+  const stoppable = grouped
+    .flatMap((group) => group.devices)
+    .filter((device) => device.booted && !device.physical);
 
-  const startOperation = (pending: DeviceSummary | null, poweringOffKey: string | null = null) => {
-    const started = { scope, pending, poweringOffKey, error: null };
+  const startOperation = (pending: DeviceSummary | null) => {
+    const started = { scope, pending, error: null };
     setOperation(started);
     // Returning to the same thread can start a newer operation before this one settles.
     return (error: string | null) =>
       setOperation((current) =>
-        current === started ? { ...started, pending: null, poweringOffKey: null, error } : current,
+        current === started ? { ...started, pending: null, error } : current,
       );
   };
 
@@ -202,15 +216,25 @@ export function DevicePanel(props: {
     }
   };
 
-  const powerOffDevice = (device: DeviceSummary) => {
-    const key = deviceKey(device);
-    const settleOperation = startOperation(null, key);
-    void shutdown({
-      environmentId,
-      input: { hostId: device.hostId, deviceId: device.id, platform: device.platform },
-    }).then((result) => {
-      settleOperation(result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null);
-    });
+  const stopDevices = async (devices: readonly DeviceSummary[]) => {
+    setStopError(undefined);
+    setStopping((current) => new Set([...current, ...devices.map(stoppingKey)]));
+    const results = await Promise.all(
+      devices.map((device) =>
+        shutdown({
+          environmentId,
+          input: { hostId: device.hostId, deviceId: device.id, platform: device.platform },
+        }).finally(() =>
+          setStopping((current) => {
+            const next = new Set(current);
+            next.delete(stoppingKey(device));
+            return next;
+          }),
+        ),
+      ),
+    );
+    const failure = results.find((result) => result._tag === "Failure");
+    if (failure?._tag === "Failure") setStopError(formatEnvironmentQueryError(failure.cause));
   };
 
   const floatActive = () => {
@@ -353,6 +377,24 @@ export function DevicePanel(props: {
               </Button>
             </div>
           ) : null}
+          {stopError !== undefined ? (
+            <Alert role="alert" variant="error" controlAlignment="first-line">
+              <TriangleAlert />
+              <AlertDescription className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words">
+                {stopError}
+              </AlertDescription>
+              <AlertAction>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label={gt("Dismiss device error")}
+                  onClick={() => setStopError(undefined)}
+                >
+                  <X />
+                </Button>
+              </AlertAction>
+            </Alert>
+          ) : null}
         </div>
         <div className="@container relative flex min-h-0 flex-1">
           {activeDevice && activeSession ? (
@@ -486,7 +528,9 @@ export function DevicePanel(props: {
                         <h3 className="text-xs font-medium text-dim-foreground">
                           {group.platform === "ios"
                             ? gt("iOS Simulators")
-                            : gt("Android Emulators")}
+                            : group.devices.some((device) => device.physical)
+                              ? gt("Android Devices")
+                              : gt("Android Emulators")}
                         </h3>
                         <DiscoveryList>
                           {group.devices.map((device) => (
@@ -494,13 +538,11 @@ export function DevicePanel(props: {
                               key={deviceKey(device)}
                               device={device}
                               simlock={selectedHost?.kind === "simlock"}
-                              pending={
-                                pendingDeviceKey === deviceKey(device) ||
-                                poweringOffKey === deviceKey(device)
-                              }
-                              disabled={pendingDeviceKey !== null || poweringOffKey !== null}
+                              opening={pendingDeviceKey === deviceKey(device)}
+                              stopping={isStopping(device)}
+                              anyOpening={pendingDeviceKey !== null}
                               onOpen={() => void selectDevice(deviceKey(device))}
-                              onPowerOff={() => powerOffDevice(device)}
+                              onStop={() => void stopDevices([device])}
                             />
                           ))}
                         </DiscoveryList>
@@ -535,14 +577,27 @@ export function DevicePanel(props: {
                   </Alert>
                 ) : null}
                 {loaded && !hostBusy && grouped.length > 0 ? (
-                  <Button
-                    className="self-start"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void list({ environmentId, input: {} })}
-                  >
-                    <T>Refresh devices</T>
-                  </Button>
+                  <div className="flex flex-wrap gap-2 self-start">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void list({ environmentId, input: {} })}
+                    >
+                      <T>Refresh devices</T>
+                    </Button>
+                    {stoppable.length > 0 ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={stoppable.every(isStopping)}
+                        onClick={() =>
+                          void stopDevices(stoppable.filter((device) => !isStopping(device)))
+                        }
+                      >
+                        <T>Stop all devices</T>
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -560,10 +615,11 @@ export function DevicePanel(props: {
 function DeviceRow(props: {
   readonly device: DeviceSummary;
   readonly simlock: boolean;
-  readonly pending: boolean;
-  readonly disabled: boolean;
+  readonly opening: boolean;
+  readonly stopping: boolean;
+  readonly anyOpening: boolean;
   readonly onOpen: () => void;
-  readonly onPowerOff: () => void;
+  readonly onStop: () => void;
 }) {
   const gt = useGT();
   const { device } = props;
@@ -574,7 +630,7 @@ function DeviceRow(props: {
         type="button"
         variant="bare"
         size="sm-multiline"
-        disabled={props.disabled}
+        disabled={props.anyOpening || props.stopping}
         aria-label={
           device.booted
             ? gt("Open {name}", { name: device.name })
@@ -602,14 +658,14 @@ function DeviceRow(props: {
               ? gt("Available", { $context: "device state" })
               : gt("Shut down", { $context: "device state" })}
       </Badge>
-      {props.pending ? (
+      {props.opening ? (
         <Spinner size="xs" />
       ) : device.physical ? (
         <Button
           type="button"
           variant="secondary"
           size="xs"
-          disabled={props.disabled}
+          disabled={props.anyOpening}
           aria-label={gt("Open {name}", { name: device.name })}
           onClick={props.onOpen}
         >
@@ -621,25 +677,25 @@ function DeviceRow(props: {
           type="button"
           variant="secondary"
           size="xs"
-          disabled={props.disabled}
+          disabled={props.stopping || props.opening}
           aria-label={
             props.simlock
               ? gt("Return to pool {name}", { name: device.name })
-              : gt("Power off {name}", { name: device.name })
+              : gt("Stop {name}", { name: device.name })
           }
-          onClick={props.onPowerOff}
+          onClick={props.onStop}
         >
-          <Power />
+          {props.stopping ? <Spinner size="xs" /> : <Power />}
           {props.simlock
             ? gt("Return to pool", { $context: "verb, releases a leased device" })
-            : gt("Power off", { $context: "verb, shuts down a device" })}
+            : gt("Stop", { $context: "verb, powers off a running device" })}
         </Button>
       ) : (
         <Button
           type="button"
           variant="secondary"
           size="xs"
-          disabled={props.disabled}
+          disabled={props.anyOpening || props.stopping}
           aria-label={
             props.simlock
               ? gt("Lease {name}", { name: device.name })

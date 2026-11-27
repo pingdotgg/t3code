@@ -3,6 +3,7 @@ import {
   BearerConnectionTarget,
   type ConnectionCatalogEntry,
   type ConnectionRoute,
+  mergeLearnedRoutes,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -90,4 +91,24 @@ it("shows a route added after a reorder was saved, once another route is removed
   await expect
     .element(screen.getByRole("button", { name: "Remove desk.example.com route" }))
     .toBeVisible();
+});
+
+it("does not offer to remove the only route a found-automatically route depends on", async () => {
+  const paired: ConnectionCatalogEntry = {
+    target: LAN.target,
+    profile: LAN.profile,
+    alternateRoutes: [],
+    enabled: true,
+  };
+  const learned = mergeLearnedRoutes({
+    entry: paired,
+    activeRoute: LAN,
+    reported: [{ httpBaseUrl: "https://desk.tail1234.ts.net/", kind: "tailnet" }],
+    allowInsecure: true,
+  })!;
+  await using screen = await render(routesList(learned));
+  // The learned route says it was found automatically in its address tooltip.
+  await expect.element(screen.getByText(/desk\.tail1234\.ts\.net/)).toBeVisible();
+
+  expect(screen.getByRole("button", { name: "Remove LAN route" }).elements()).toHaveLength(0);
 });

@@ -71,6 +71,7 @@ const CORE_WHEN_VARIABLES = [
   "terminalFocus",
   "terminalOpen",
   "previewOpen",
+  "composerEmpty",
   "isWeb",
   "isDesktop",
   "true",
@@ -218,7 +219,9 @@ function keybindingRowId(command: KeybindingCommand, key: string, when: string):
 
 function conflictsWithWhen(leftWhen: string, rightWhen: string): boolean {
   if (leftWhen === "false" || rightWhen === "false") return false;
-  return leftWhen.length === 0 || rightWhen.length === 0 || leftWhen === rightWhen;
+  // An empty condition and "true" are both always active.
+  const always = (when: string) => when.length === 0 || when === "true";
+  return always(leftWhen) || always(rightWhen) || leftWhen === rightWhen;
 }
 
 export function keybindingConflictLabels(
@@ -245,6 +248,65 @@ export function keybindingConflictLabels(
   return [...new Set(conflicts)].toSorted();
 }
 
+export interface KeybindingGroup {
+  readonly id: string;
+  readonly title: string;
+  readonly rows: ReadonlyArray<KeybindingRow>;
+}
+
+const KEYBINDING_GROUPS = [
+  {
+    id: "navigation",
+    title: msg("Navigation"),
+    prefixes: [
+      "navigation",
+      "sidebar",
+      "rightPanel",
+      "commandPalette",
+      "filePicker",
+      "projectSearch",
+      "editor",
+    ],
+  },
+  { id: "threads", title: msg("Threads"), prefixes: ["thread", "chat", "pullRequest"] },
+  { id: "composer", title: msg("Composer"), prefixes: ["composer", "modelPicker"] },
+  { id: "terminal", title: msg("Terminal"), prefixes: ["terminal"] },
+  { id: "preview", title: msg("Preview & diff"), prefixes: ["preview", "diff"] },
+  {
+    id: "appearance",
+    title: msg("Appearance"),
+    prefixes: ["theme", "appearance", "themeEditor"],
+  },
+  { id: "scripts", title: msg("Project scripts"), prefixes: ["script"] },
+] as const;
+const OTHER_KEYBINDING_GROUP = {
+  id: "other",
+  title: msg("Other", { $context: "keybinding group" }),
+} as const;
+
+function keybindingGroupFor(command: KeybindingCommand): { id: string; title: string } {
+  const prefix = String(command).split(".")[0] ?? "";
+  return (
+    KEYBINDING_GROUPS.find((group) => (group.prefixes as ReadonlyArray<string>).includes(prefix)) ??
+    OTHER_KEYBINDING_GROUP
+  );
+}
+
+export function groupKeybindingRows(
+  rows: ReadonlyArray<KeybindingRow>,
+): ReadonlyArray<KeybindingGroup> {
+  const rowsByGroup = new Map<string, Array<KeybindingRow>>();
+  for (const row of rows) {
+    const group = keybindingGroupFor(row.command);
+    const bucket = rowsByGroup.get(group.id);
+    if (bucket) bucket.push(row);
+    else rowsByGroup.set(group.id, [row]);
+  }
+  return [...KEYBINDING_GROUPS, OTHER_KEYBINDING_GROUP].flatMap((group) => {
+    const groupRows = rowsByGroup.get(group.id);
+    return groupRows ? [{ id: group.id, title: group.title, rows: groupRows }] : [];
+  });
+}
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   platform = navigator.platform,
@@ -325,6 +387,7 @@ export function filterKeybindingRows(
   rows: ReadonlyArray<KeybindingRow>,
   query: string,
   resolve: MessageResolver = m,
+  platform = navigator.platform,
 ): ReadonlyArray<KeybindingRow> {
   const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length === 0) return rows;
@@ -333,6 +396,8 @@ export function filterKeybindingRows(
       row.command.toLowerCase().includes(normalizedQuery) ||
       commandLabel(row.command, resolve).toLowerCase().includes(normalizedQuery) ||
       row.key.toLowerCase().includes(normalizedQuery) ||
+      // The row shows the platform label ("Ctrl+K"), not the stored "mod+k".
+      formatShortcutLabel(row.binding.shortcut, platform).toLowerCase().includes(normalizedQuery) ||
       row.when.toLowerCase().includes(normalizedQuery) ||
       row.source.toLowerCase().includes(normalizedQuery)
     );
@@ -410,6 +475,8 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "terminal.splitVertical": msg("Split terminal vertically"),
   "terminal.new": msg("New terminal"),
   "terminal.close": msg("Close terminal"),
+  "terminal.previous": msg("Terminal: Previous"),
+  "terminal.next": msg("Terminal: Next"),
   "rightPanel.toggle": msg("Toggle right panel"),
   "threadPanel.toggle": msg("Toggle thread panel"),
   "rightPanel.close": msg("Close right panel"),
@@ -460,7 +527,7 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "thread.pin": msg("Pin thread"),
   "thread.undo": msg("Undo last thread action"),
   "git.commitPush": msg("Commit and push"),
-  "usage.open": msg("Open usage"),
+  "usage.open": msg("Toggle usage"),
   "usage.cost": msg("Show usage by cost"),
   "usage.tokens": msg("Show usage by tokens"),
   "usage.limits": msg("Show usage limits"),

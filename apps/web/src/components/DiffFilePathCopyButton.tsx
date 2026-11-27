@@ -6,7 +6,7 @@ import { useRef } from "react";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { ANCHORED_COPY_TOAST_TIMEOUT_MS, showAnchoredCopyErrorToast } from "./ui/anchoredCopyToast";
 import { Button } from "./ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 export function DiffFilePathCopyButton({
   filePath,
@@ -23,29 +23,25 @@ export function DiffFilePathCopyButton({
   });
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            ref={ref}
-            size="icon-micro"
-            variant="ghost-muted"
-            aria-label={gt("Copy file path")}
-            onClick={() =>
-              copyToClipboard(formatFilePathForClipboard(filePath, workspaceRoot), undefined)
-            }
-          />
-        }
-      >
-        {isCopied ? (
-          <CheckIcon className={cn("size-3", isCopied ? "text-success" : "text-dim-foreground")} />
-        ) : (
-          <CopyIcon className={cn("size-3", isCopied ? "text-success" : "text-dim-foreground")} />
-        )}
-      </TooltipTrigger>
-      <TooltipPopup>
-        <p>{isCopied ? gt("Copied") : gt("Copy path")}</p>
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          ref={ref}
+          size="icon-micro"
+          variant="ghost-muted"
+          aria-label={gt("Copy file path")}
+          onClick={() =>
+            copyToClipboard(formatFilePathForClipboard(filePath, workspaceRoot), undefined)
+          }
+        />
+      }
+      label={<p>{isCopied ? gt("Copied") : gt("Copy path")}</p>}
+    >
+      {isCopied ? (
+        <CheckIcon className={cn("size-3", isCopied ? "text-success" : "text-dim-foreground")} />
+      ) : (
+        <CopyIcon className={cn("size-3", isCopied ? "text-success" : "text-dim-foreground")} />
+      )}
+    </SharedTooltipTrigger>
   );
 }

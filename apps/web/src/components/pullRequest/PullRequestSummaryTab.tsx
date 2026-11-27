@@ -3,7 +3,7 @@ import {
   pullRequestAnchorMatchesUrl,
   resolvePullRequestReviewAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
-import { holdLinkedNodeInView } from "./holdLinkedNodeInView";
+import { holdLinkedNodeInView, holdScrollTop } from "./holdLinkedNodeInView";
 import { useAtomValue } from "@effect/atom-react";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -30,7 +30,15 @@ import {
 } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 
@@ -52,6 +60,7 @@ import {
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import { ScrollArea } from "../ui/scroll-area";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   PullRequestActorLabel,
@@ -107,13 +116,16 @@ import { PullRequestResolveThreadButton } from "./PullRequestResolveThreadButton
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
 import { changeRequestTermKind } from "./changeRequestTerm";
+import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
 
 function CommentIdentity({
   comment,
   detail,
+  threadRef,
 }: {
   comment: PullRequestComment;
   detail: PullRequestDetailView;
+  threadRef: ScopedThreadRef | null;
 }) {
   const actor = comment.author;
   const profileUrl = actor
@@ -121,8 +133,17 @@ function CommentIdentity({
     : null;
   return (
     <h2 className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-meta">
-      <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
-      <PullRequestCommentTime createdAt={comment.createdAt} url={comment.url} />
+      <PullRequestActorLabel
+        actor={actor}
+        profileUrl={profileUrl}
+        threadRef={threadRef}
+        className="max-w-full"
+      />
+      <PullRequestCommentTime
+        createdAt={comment.createdAt}
+        url={comment.url}
+        threadRef={threadRef}
+      />
     </h2>
   );
 }
@@ -139,10 +160,9 @@ function CommentLocation({
   const label = `${path}${thread?.line ? `:${thread.line}` : ""}`;
   return (
     <div className="mt-2 flex min-w-0 items-center gap-2 text-meta text-muted-foreground">
-      <Tooltip>
-        <TooltipTrigger render={<span className="truncate font-mono" />}>{label}</TooltipTrigger>
-        <TooltipPopup>{label}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger render={<span className="truncate font-mono" />} label={label}>
+        {label}
+      </SharedTooltipTrigger>
       {thread?.isOutdated ? (
         <span className="shrink-0">
           <T context="review thread state">Outdated</T>
@@ -390,11 +410,20 @@ export function PullRequestSection({
 
 const COMMENT_PAGE = 10;
 
+interface SummaryView {
+  readonly order: "newest" | "oldest";
+  readonly shown: number;
+  readonly scrollTop: number;
+}
+// Session-only: switching right-panel tabs unmounts the Summary, which comes back as it was left.
+const summaryViewByScopeKey = new Map<string, SummaryView>();
+
 const COMMENT_FILTER_STORAGE_KEY = "t3code:pull-request-comment-filter:v1";
 const CommentFilterSchema = Schema.Struct({ bots: Schema.Boolean, resolved: Schema.Boolean });
 const DEFAULT_COMMENT_FILTER: typeof CommentFilterSchema.Type = { bots: false, resolved: false };
 
-export function PullRequestSummaryTab({
+// Memoized: it renders every comment, and the panel re-renders on each query state change.
+export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
   revealUrl,
   onRevealSettled,
   scrollerRef,
@@ -403,6 +432,7 @@ export function PullRequestSummaryTab({
   threadRef,
   reference,
   detail,
+  observedAt,
   activityPending,
   activityError,
   pendingFinding,
@@ -421,6 +451,8 @@ export function PullRequestSummaryTab({
   threadRef: ScopedThreadRef | null;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
+  /** When the detail was last read; the detail itself keeps its older stamp across refreshes. */
+  observedAt: number | undefined;
   activityPending: boolean;
   activityError: string | null;
   pendingFinding?: string | null;
@@ -434,7 +466,23 @@ export function PullRequestSummaryTab({
   const resolve = useMessages();
   const fixFindingLabel = requestedFixFindingLabel ?? gt("Fix in a thread");
   const terminology = sourceControlClients.get(detail.provider).changeRequest;
-  const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
+  const viewKey = `${environmentId}:${detail.url}`;
+  const rememberView = (patch: Partial<SummaryView>) => {
+    const view = summaryViewByScopeKey.get(viewKey) ?? {
+      order: "newest",
+      shown: COMMENT_PAGE,
+      scrollTop: 0,
+    };
+    summaryViewByScopeKey.set(viewKey, { ...view, ...patch });
+  };
+  const [shown, setShownState] = useState(() => ({
+    url: detail.url,
+    count: summaryViewByScopeKey.get(viewKey)?.shown ?? COMMENT_PAGE,
+  }));
+  const setShown = (next: { url: string; count: number }) => {
+    setShownState(next);
+    rememberView({ shown: next.count });
+  };
   const shownConversations = shown.url === detail.url ? shown.count : COMMENT_PAGE;
   const [commentFilter, setCommentFilter] = useLocalStorage(
     COMMENT_FILTER_STORAGE_KEY,
@@ -513,7 +561,9 @@ export function PullRequestSummaryTab({
   const recentItems = extraLinkedItem ? [...page.shown, extraLinkedItem] : page.shown;
   const hiddenTalkCount = page.hidden - (extraLinkedItem ? 1 : 0);
   const hiddenConversationCount = openThreads.length - visibleOpenThreads.length + hiddenTalkCount;
-  const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
+  const [commentOrder, setCommentOrder] = useState(
+    () => summaryViewByScopeKey.get(viewKey)?.order ?? "newest",
+  );
   const visibleItems = orderPullRequestComments(recentItems, commentOrder);
   const showOldestCommentsButton =
     hiddenConversationCount > 0 ? (
@@ -572,11 +622,7 @@ export function PullRequestSummaryTab({
     readonly body: string;
   } | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState<DescriptionDraft | null>(null);
-  const descriptionDraftKept = descriptionDraftInForce(
-    descriptionDraft,
-    detail.url,
-    detail.observedAt,
-  );
+  const descriptionDraftKept = descriptionDraftInForce(descriptionDraft, detail.url, observedAt);
   if (descriptionDraftKept !== descriptionDraft) setDescriptionDraft(descriptionDraftKept);
   const description = descriptionDraftKept?.body ?? detail.body;
   const descriptionSaving = (descriptionDraftKept?.saves ?? 0) > 0;
@@ -601,6 +647,8 @@ export function PullRequestSummaryTab({
     }
   }
   const stopHolding = useRef<(() => void) | null>(null);
+  // A restore clamped by content still loading must not overwrite the saved position.
+  const restoringScroll = useRef(false);
   const revealSummary = useEffectEvent(() => {
     const root = scrollRef.current;
     if (revealUrl === undefined || !root) return;
@@ -651,12 +699,25 @@ export function PullRequestSummaryTab({
     detail.overviewThreads,
     activityPending,
   ]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- puts a remounted Summary back at the scroll position it left, before paint
+  useLayoutEffect(() => {
+    const scrollTop = summaryViewByScopeKey.get(viewKey)?.scrollTop ?? 0;
+    if (!scrollRef.current || scrollTop === 0) return;
+    restoringScroll.current = true;
+    stopHolding.current = holdScrollTop(scrollRef.current, scrollTop, () => {
+      restoringScroll.current = false;
+    });
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- restores once per mount
+  }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the hold observes DOM outside React and must end with the tab
   useEffect(() => () => stopHolding.current?.(), []);
   // Checkbox ticks and the editor share one draft, so each starts from the other's latest body.
   const saveDescription = async (body: string) => {
     const key = detail.url;
-    setDescriptionDraft((draft) => startDescriptionSave(draft, detail, body));
+    // The shown detail keeps its older stamp across refreshes; the draft must use the live one.
+    setDescriptionDraft((draft) =>
+      startDescriptionSave(draft, { url: detail.url, observedAt }, body),
+    );
     descriptionSavesRunning.current += 1;
     const result = await update({ environmentId, input: { ...reference, body } });
     descriptionSavesRunning.current -= 1;
@@ -756,7 +817,7 @@ export function PullRequestSummaryTab({
       >
         <div className="flex flex-wrap items-center gap-1.5 px-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-meta text-muted-foreground">
-            <CommentIdentity comment={comment} detail={detail} />
+            <CommentIdentity comment={comment} detail={detail} threadRef={threadRef} />
             {outcome ? (
               <PullRequestReviewOutcomeBadge outcome={outcome} />
             ) : comment.reviewState ? (
@@ -791,7 +852,7 @@ export function PullRequestSummaryTab({
             <CommentLocation comment={comment} thread={thread} />
           </div>
         )}
-        {body === null && !commentEditing.canEdit(comment) ? null : (
+        {body === null && !canEditPullRequestComment(detail, comment) ? null : (
           <CommentBody
             revealCount={matchesLink(comment.url) ? (linked?.count ?? 0) : 0}
             className="mt-2 px-3"
@@ -831,6 +892,7 @@ export function PullRequestSummaryTab({
           }
           createdAt={comment.createdAt}
           url={comment.url}
+          threadRef={threadRef}
           outcome={outcome}
           stateLabel={
             comment.reviewState
@@ -899,6 +961,7 @@ export function PullRequestSummaryTab({
       canResolve={canResolveThreads && canResolvePullRequestThread(detail, thread)}
       canReact={detail.capabilities.reactions === true}
       environmentId={environmentId}
+      threadRef={threadRef}
       reference={reference}
       pending={threadPending}
       fixPending={pendingFinding === pullRequestFindingKey({ kind: "thread", thread })}
@@ -983,7 +1046,9 @@ export function PullRequestSummaryTab({
         </div>
       ) : null;
     const moreReplies =
-      item.kind === "thread" && item.hasMoreReplies ? <PullRequestMoreReplies {...item} /> : null;
+      item.kind === "thread" && item.hasMoreReplies ? (
+        <PullRequestMoreReplies {...item} threadRef={threadRef} />
+      ) : null;
     if (item.kind === "thread" && isPullRequestCommentFinished(comment, thread)) {
       const chat = chatSubject(comment, item.thread);
       return (
@@ -1035,12 +1100,31 @@ export function PullRequestSummaryTab({
         scrollRef.current = node;
         scrollerRef?.(node);
       }}
+      onScroll={(event) => {
+        if (!restoringScroll.current) rememberView({ scrollTop: event.currentTarget.scrollTop });
+      }}
       tabIndex={-1}
       data-workspace-focus-default
       className="h-full overflow-y-auto outline-none"
       data-pull-request-summary-scroll
     >
       {readiness ? <section className="px-4 pt-3.5 pb-1.5">{readiness}</section> : null}
+      <div className="px-4">
+        <WorkflowRunsAbout
+          environmentId={environmentId}
+          item={{
+            subject: detail.url,
+            pullRequest: {
+              projectId: reference.projectId,
+              repository: reference.repository,
+              number: reference.number,
+              host:
+                reference.host ??
+                (URL.canParse(detail.url) ? new URL(detail.url).hostname : undefined),
+            },
+          }}
+        />
+      </div>
 
       <PullRequestSection
         key={`description:${detail.url}`}
@@ -1208,7 +1292,11 @@ export function PullRequestSummaryTab({
                   ? gt("Show oldest comments first")
                   : gt("Show newest comments first")
               }
-              onClick={() => setCommentOrder((value) => (value === "newest" ? "oldest" : "newest"))}
+              onClick={() => {
+                const order = commentOrder === "newest" ? "oldest" : "newest";
+                setCommentOrder(order);
+                rememberView({ order });
+              }}
             >
               <ArrowDownUpIcon aria-hidden className="size-3" />
               {commentOrder === "newest" ? gt("Newest first") : gt("Oldest first")}
@@ -1310,4 +1398,4 @@ export function PullRequestSummaryTab({
       </PullRequestSection>
     </div>
   );
-}
+});

@@ -39,7 +39,11 @@ import {
   formatCodexModelName,
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import {
+  codexAppServerArgs,
+  codexUsesStrictConfig,
+  resolveCodexLaunchArgs,
+} from "./codexLaunchArgs.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -649,7 +653,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   const environment = yield* codexProcessEnvironment(input);
   const spawnCommand = yield* resolveSpawnCommand(
     input.binaryPath,
-    codexAppServerArgs(input.launchArgs),
+    yield* resolveCodexAppServerArgs(input),
     { env: environment, extendEnv: true },
   );
   const child = yield* spawner
@@ -863,6 +867,19 @@ const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
     Effect.logDebug("Codex --version fallback failed.", { cause }).pipe(Effect.as(null)),
   ),
 );
+
+export const resolveCodexAppServerArgs = Effect.fn("resolveCodexAppServerArgs")(function* (input: {
+  readonly binaryPath: string;
+  readonly homePath?: string | undefined;
+  readonly launchArgs?: string | undefined;
+  readonly cwd: string;
+  readonly environment?: NodeJS.ProcessEnv | undefined;
+}) {
+  const version = codexUsesStrictConfig(input.launchArgs)
+    ? yield* probeCodexCliVersion(input)
+    : undefined;
+  return codexAppServerArgs(input.launchArgs, version);
+});
 
 export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(function* (input: {
   readonly binaryPath: string;

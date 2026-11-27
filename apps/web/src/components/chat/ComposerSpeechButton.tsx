@@ -1,4 +1,5 @@
 import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
+import { speechModelDownloadPercent } from "@t3tools/shared/speech";
 import { msg, useGT, useMessages } from "gt-react";
 import { CheckIcon, MicIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent, type ReactElement } from "react";
@@ -15,7 +16,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Text } from "../ui/text";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 type DownloadProgress = { downloaded: number; total: number } | null;
 
@@ -37,7 +38,10 @@ export function resolveSpeechPresentation(
         status: progress
           ? resolve(
               msg("Downloading model {percent}%", {
-                percent: Math.round((progress.downloaded / Math.max(1, progress.total)) * 100),
+                percent: speechModelDownloadPercent(
+                  progress.downloaded,
+                  Math.max(1, progress.total),
+                ),
               }),
             )
           : resolve(msg("Starting…")),
@@ -109,13 +113,15 @@ function ShortcutTooltip(props: {
   children: ReactElement;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger render={props.children} />
-      <TooltipPopup side="top">
-        {props.label}
-        {props.shortcut ? ` (${props.shortcut})` : ""}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={props.children}
+      label={
+        <>
+          {props.label}
+          {props.shortcut ? ` (${props.shortcut})` : ""}
+        </>
+      }
+    />
   );
 }
 
@@ -260,44 +266,44 @@ export function ComposerSpeechButton(props: {
   };
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          inPill ? (
-            <button
-              type="button"
-              {...accessibilityProps}
-              disabled={phase === "idle" && props.disabled}
-              onPointerDown={keepFocus}
-              onClick={onClick}
-              className={
-                unavailable
-                  ? COMPOSER_PILL_SLOT_BUTTON_UNAVAILABLE_CLASS_NAME
-                  : COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME
-              }
-            />
-          ) : (
-            <Button
-              type="button"
-              size={props.size === "compact" ? "icon-xs" : "icon-sm"}
-              variant="ghost"
-              {...accessibilityProps}
-              disabled={phase === "idle" && props.disabled}
-              onPointerDown={keepFocus}
-              onClick={onClick}
-              className="shrink-0"
-            />
-          )
-        }
-      >
-        {glyph}
-      </TooltipTrigger>
-      <TooltipPopup side="top">
-        {unavailable ?? label}
-        {showsShortcut && props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
-        {phase !== "idle" && !isRecording ? ` ${gt("(Esc cancels)")}` : ""}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        inPill ? (
+          <button
+            type="button"
+            {...accessibilityProps}
+            disabled={phase === "idle" && props.disabled}
+            onPointerDown={keepFocus}
+            onClick={onClick}
+            className={
+              unavailable
+                ? COMPOSER_PILL_SLOT_BUTTON_UNAVAILABLE_CLASS_NAME
+                : COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME
+            }
+          />
+        ) : (
+          <Button
+            type="button"
+            size={props.size === "compact" ? "icon-xs" : "icon-sm"}
+            variant="ghost"
+            {...accessibilityProps}
+            disabled={phase === "idle" && props.disabled}
+            onPointerDown={keepFocus}
+            onClick={onClick}
+            className="shrink-0"
+          />
+        )
+      }
+      label={
+        <>
+          {unavailable ?? label}
+          {showsShortcut && props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
+          {phase !== "idle" && !isRecording ? ` ${gt("(Esc cancels)")}` : ""}
+        </>
+      }
+    >
+      {glyph}
+    </SharedTooltipTrigger>
   );
 }
 

@@ -176,6 +176,7 @@ export function start(configuration: PreviewStreamConfiguration) {
         onClipboard: (text) => post({ type: "clipboard", text }),
         onDownload: (download) => post({ type: "download", ...download }),
         onFileChooser: (chooser) => post({ type: "fileChooser", chooser }),
+        onSelectMenu: (menu) => post({ type: "selectMenu", menu }),
         onViewport: (page) => {
           if (viewport?.width === page.width && viewport.height === page.height) return;
           viewport = page;
@@ -205,6 +206,9 @@ export function start(configuration: PreviewStreamConfiguration) {
         onControl: (nextControl) => {
           const previous = control;
           control = nextControl;
+          // An HTTP challenge can pause the page before it draws the first frame.
+          if (nextControl.dialog?.type === "auth" && !streaming && !stopped)
+            reportStatus("streaming");
           post({ type: "control", ...nextControl });
           if (nextControl.controller === "you") agentCursor.style.opacity = "0";
           if (nextControl.controller !== "you") clearInput();

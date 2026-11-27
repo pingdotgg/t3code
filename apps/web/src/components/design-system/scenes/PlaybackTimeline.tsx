@@ -66,7 +66,6 @@ export function PlaybackTimeline({
         turnDiffSummaries={[]}
         runs={[]}
         routeThreadKey="design-system:playback"
-        onOpenTurnDiff={noop}
         onOpenThread={noop}
         onForkFromRun={async () => {}}
         supportsConversationRollback={false}
