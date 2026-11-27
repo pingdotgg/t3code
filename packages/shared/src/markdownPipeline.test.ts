@@ -1,6 +1,7 @@
 import { expect, it } from "vite-plus/test";
 import { type PluggableList, unified } from "unified";
 import rehypeRaw from "rehype-raw";
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import type { Link, Root, RootContent } from "mdast";
@@ -8,6 +9,8 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  chatMarkdownImageSources,
   remarkAssistantInsights,
   remarkEnableOrderedListNumbers,
 } from "./markdownPipeline.ts";
@@ -547,6 +550,100 @@ it("keeps mixed-case local editor file links by lowercasing the scheme before sa
   ]);
 });
 
+it("keeps uppercase HTTP(S) link and image URLs by lowercasing the scheme before sanitizing", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  type Node = { tagName?: string; properties?: object; children?: Node[] };
+  const elements = (node: Node): Node[] => [
+    ...(node.tagName === "a" || node.tagName === "img" ? [node] : []),
+    ...(node.children ?? []).flatMap(elements),
+  ];
+  const tree = processor.runSync(
+    processor.parse(
+      [
+        "[upper](HTTPS://Example.com/A?Key=Value#Part) [mixed](hTtP://Example.com/B) [js](JAVASCRIPT:alert(1))",
+        "",
+        "![shot](HTTPS://Example.com/Shot.png)",
+        "",
+        '<picture><source media="(prefers-color-scheme: dark)" srcset="HTTPS://Example.com/Dark.png"><img src="HTTP://Example.com/Light.png"></picture>',
+      ].join("\n"),
+    ),
+  ) as Node;
+  expect(elements(tree).map((node) => node.properties)).toEqual([
+    { href: "https://Example.com/A?Key=Value#Part" },
+    { href: "http://Example.com/B" },
+    {},
+    { src: "https://Example.com/Shot.png", alt: "shot", dataStandalone: true },
+    { src: "http://Example.com/Light.png", dataDarkSrc: "https://Example.com/Dark.png" },
+  ]);
+});
+
+it("keeps uppercase FILE link and image URLs by lowercasing the scheme before sanitizing", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  type Node = { tagName?: string; properties?: object; children?: Node[] };
+  const elements = (node: Node): Node[] => [
+    ...(node.tagName === "a" || node.tagName === "img" ? [node] : []),
+    ...(node.children ?? []).flatMap(elements),
+  ];
+  const markdown = [
+    '[upper](FILE:///tmp/A.md) <a href="FiLe:///C:/Demo%20A.md">raw</a>',
+    "",
+    "![shot](FILE:///tmp/Shot.png)",
+    "",
+    '<picture><source media="(prefers-color-scheme: dark)" srcset="FILE:///tmp/Dark.png"><source media="(prefers-color-scheme: light)" srcset="FILE:///tmp/Light.png"><img src="FILE://host/tmp/Fallback.png"></picture>',
+  ].join("\n");
+  const tree = processor.runSync(processor.parse(markdown)) as Node;
+  expect(elements(tree).map((node) => node.properties)).toEqual([
+    { href: "file:///tmp/A.md" },
+    { href: "file:///C:/Demo%20A.md" },
+    { src: "file:///tmp/Shot.png", alt: "shot", dataStandalone: true },
+    {
+      src: "file://host/tmp/Fallback.png",
+      dataDarkSrc: "file:///tmp/Dark.png",
+      dataLightSrc: "file:///tmp/Light.png",
+    },
+  ]);
+  expect(chatMarkdownImageSources(markdown)).toHaveLength(4);
+});
+
+it("keeps raw and percent-encoded Windows drive file links through the shared Markdown sanitizer", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  type Node = { tagName?: string; properties?: { href?: string }; children?: Node[] };
+  const hrefs = (node: Node): Array<string | undefined> => [
+    ...(node.tagName === "a" ? [node.properties?.href] : []),
+    ...(node.children ?? []).flatMap(hrefs),
+  ];
+  const tree = processor.runSync(
+    processor.parse(
+      [
+        "[report.md](<C:%5CUsers%5Ctest%5Creport.md#L7>)",
+        "[lower](c:%5cUsers/test%5creport.md)",
+        "[raw](C:\\Users\\test\\report.md)",
+        "[ref][win]",
+        "",
+        "[win]: <D:%5Cwork%5Creport.md#L12>",
+      ].join("\n"),
+    ),
+  ) as Node;
+  expect(hrefs(tree)).toEqual([
+    "file:///C:/Users/test/report.md#L7",
+    "file:///c:/Users/test/report.md",
+    "file:///C:/Users/test/report.md",
+    "file:///D:/work/report.md#L12",
+  ]);
+});
+
 it("keeps backslashes that CommonMark would read as escapes in prose Windows paths", () => {
   const processor = unified()
     .use(remarkParse)
@@ -593,6 +690,9 @@ it("keeps an image on its own line under a label but leaves inline images inline
     render("**Palette**\n![Palette](/tmp/palette.png)\n**Hero** (dark)\n![Hero](/tmp/hero.png)"),
   ).toBe("Palette<br>\n<img><br>\nHero (dark)<br>\n<img>");
   expect(render("Built [![CI](/ci.svg)](/ci)\nand wrapped")).toBe("Built <img>\nand wrapped");
+  expect(render("**Dialog** (native) ![a](/a.png) ![b](/b.png)")).toBe(
+    "Dialog (native)<br>\n<img> <img>",
+  );
   expect(render("Hard-wrapped\nprose")).toBe("Hard-wrapped\nprose");
 });
 
@@ -637,6 +737,242 @@ it("keeps the number written on each ordered list item only when enabled", () =>
   ).toEqual([undefined, undefined, undefined, undefined, undefined]);
 });
 
+type ShownNode = {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: ShownNode[];
+};
+const SHOWN_BLOCKS = new Set([
+  "p",
+  "li",
+  "blockquote",
+  "ul",
+  "ol",
+  "pre",
+  "h1",
+  "h2",
+  "table",
+  "tr",
+]);
+
+/** The text a browser shows, by line: whitespace collapses except in `pre` and kept whitespace. */
+function shownText(tree: ShownNode): string {
+  let out = "";
+  const visit = (node: ShownNode, keep: boolean) => {
+    if (node.type === "text") {
+      const value = node.value ?? "";
+      // Only spaces, tabs and line endings collapse; a no-break space shows.
+      out += keep
+        ? value.replace(/ /g, "\u0001").replace(/\t/g, "\u0002")
+        : value.replace(/[ \t\r\n]/g, " ");
+    }
+    // An image shows as something, which its alt text stands in for.
+    if (node.properties?.alt !== undefined) out += String(node.properties.alt);
+    if (node.tagName === "br" || SHOWN_BLOCKS.has(node.tagName ?? "")) out += "\n";
+    const inner =
+      keep || node.tagName === "pre" || node.properties?.dataLeadingWhitespace !== undefined;
+    node.children?.forEach((child) => visit(child, inner));
+    if (SHOWN_BLOCKS.has(node.tagName ?? "")) out += "\n";
+  };
+  visit(tree, false);
+  return out
+    .split("\n")
+    .map((line) => line.replace(/ +/g, " ").replace(/^ | $/g, ""))
+    .filter(Boolean)
+    .join("\n")
+    .replace(/\u0001/g, " ")
+    .replace(/\u0002/g, "\t");
+}
+
+const hastRenderer = (plugins: PluggableList) => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(plugins)
+    .use(remarkRehype, { allowDangerousHtml: true });
+  return (markdown: string) => processor.runSync(processor.parse(markdown), markdown) as ShownNode;
+};
+const userMessage = hastRenderer([
+  ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  ...CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+]);
+// The user pipeline as it was before leading whitespace was kept.
+const commonMarkUserMessage = hastRenderer([
+  ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  [remarkGfm, { singleTilde: false }],
+]);
+/** The tree with the restored indentation taken out, with the empty texts and positions it leaves. */
+const withoutRestoredWhitespace = ({
+  position: _position,
+  ...node
+}: ShownNode & { position?: unknown }): ShownNode => ({
+  ...node,
+  ...(node.children && {
+    children: node.children
+      .filter(
+        (child) =>
+          child.properties?.dataLeadingWhitespace === undefined &&
+          !(child.type === "text" && child.value === ""),
+      )
+      .map(withoutRestoredWhitespace),
+  }),
+});
+/** Each link's text and where it goes. */
+const linkTargets = (node: ShownNode): [string, unknown][] =>
+  node.properties?.href === undefined
+    ? (node.children ?? []).flatMap(linkTargets)
+    : [[shownText(node), node.properties.href]];
+
+it("shows the spaces and tabs typed at the start of each line of a user message", () => {
+  const shown = (markdown: string) => shownText(userMessage(markdown));
+  const outline = "Plan\n   Step one\n   Step two\n        Detail a\n        Detail b";
+  expect(shown(outline)).toBe(outline);
+  expect(shown(outline.replaceAll("\n", "\r\n"))).toBe(outline);
+  expect(shown("   First line\nnext\n\n  New paragraph")).toBe(
+    "   First line\nnext\n  New paragraph",
+  );
+  expect(shown("Plan\n\tTabbed\n \t Mixed")).toBe("Plan\n\tTabbed\n \t Mixed");
+  expect(shown("Plan  \n   After a hard break\\\n   and an escaped one")).toBe(
+    "Plan\n   After a hard break\n   and an escaped one",
+  );
+  // In a container, only whitespace past its own structure counts.
+  expect(shown("- item\n  continued")).toBe("item\ncontinued");
+  expect(shown("- item\n    more")).toBe("item\n  more");
+  expect(shown("- item\ncontinued")).toBe("item\ncontinued");
+  expect(shown("- item\n continued")).toBe("item\ncontinued");
+  expect(shown("1. one\n      two")).toBe("one\n   two");
+  expect(shown("- item\n\tsplit tab")).toBe("item\n  split tab");
+  expect(shown("- item\n\n     second paragraph")).toBe("item\n   second paragraph");
+  // An item's content starts after its marker and the marker's spacing. A task's checkbox is
+  // content, so it does not move where continuation lines start, however the task begins.
+  expect(shown("- [ ] task\n      under the task")).toBe("task\n    under the task");
+  for (const task of ["task", "**task**", "[task](https://example.com)", "`task`"]) {
+    expect(shown(`- [ ] ${task}\n    detail`), task).toBe("task\n  detail");
+  }
+  expect(shown("-   x\n     y")).toBe("x\n y");
+  expect(shown("-    x\n         y")).toBe("x\n    y");
+  expect(shown("-\tx\n\t  y")).toBe("x\n  y");
+  expect(shown("10.  x\n       y")).toBe("x\n  y");
+  expect(shown("> a\n>    b")).toBe("a\n   b");
+  expect(shown(">    first")).toBe("   first");
+  expect(shown("> a\n   lazy")).toBe("a\nlazy");
+  expect(shown("> - item\n>     more")).toBe("item\n  more");
+  expect(shown("- > a\n  >    b")).toBe("a\n   b");
+  expect(shown("- a\n  - b\n      c")).toBe("a\nb\n  c");
+  // List recovery reparses over-indented content; its first line sets the indentation.
+  expect(shown("-       first block\n        continued\n          deeper")).toBe(
+    "first block\ncontinued\n  deeper",
+  );
+
+  // A space or tab written as a character reference after the indentation is dropped, as it is
+  // without the indentation; only the typed indentation is added.
+  for (const reference of ["&#32;", "&#x20;", "&#9;", "&Tab;"]) {
+    expect(shown(`a\n ${reference}b`), reference).toBe("a\n b");
+    expect(shown(`a  \n\t${reference}b`), reference).toBe("a\n\tb");
+    expect(shown(`a\\\r\n  ${reference}${reference}b`), reference).toBe("a\n  b");
+  }
+  // Converting to HTML also drops the spaces that start code or a link's text after a line break.
+  expect(shown("a\n   ` npm i`")).toBe("a\n   npm i");
+  expect(shown("a\n  [ docs](https://example.com)")).toBe("a\n  docs");
+  // A line whose text starts with whitespace the browser hides keeps no indentation, as without it.
+  expect(shown("  &#32;b")).toBe("b");
+  expect(shown("a\n   ***&#32;b***")).toBe("a\nb");
+
+  // Only the indentation is added: formatting, code, links and alerts render as without it.
+  const inline = "Plan\n   **bold** [link](https://example.com) `code` ~/a and ~~gone~~ /tmp/a.ts";
+  const alert = ">  [!NOTE]\n>    indented body";
+  expect(shown(inline)).toBe("Plan\n   bold link code ~/a and gone /tmp/a.ts");
+  expect(shown(alert)).toBe("   indented body");
+  for (const markdown of [inline, alert]) {
+    expect(withoutRestoredWhitespace(userMessage(markdown)), markdown).toEqual(
+      withoutRestoredWhitespace(commonMarkUserMessage(markdown)),
+    );
+  }
+  expect(linkTargets(userMessage(inline))).toEqual(linkTargets(commonMarkUserMessage(inline)));
+  expect(linkTargets(userMessage(inline)).map(([label]) => label)).toEqual(["link", "/tmp/a.ts"]);
+
+  // A line ending written as a character reference is not a source line: it never takes a typed
+  // line's indentation, and no typed line's indentation moves onto it.
+  const decoded = shown("a &#10; b\n  c").split("\n");
+  expect(decoded.slice(0, 2)).toEqual(["a", "b"]);
+  expect(["c", "  c"]).toContain(decoded[2]);
+
+  // Code, and agent replies, keep CommonMark's reading.
+  for (const markdown of [
+    "```\n   code\n  more\n```",
+    "Plan\n\n    code\n      deeper",
+    "- item\n\n      code",
+  ]) {
+    expect(userMessage(markdown), markdown).toEqual(commonMarkUserMessage(markdown));
+  }
+  for (const plugins of [CHAT_MARKDOWN_REMARK_PLUGINS, CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS]) {
+    expect(shownText(hastRenderer(plugins)(outline)).replaceAll("\n", " ")).toBe(
+      "Plan Step one Step two Detail a Detail b",
+    );
+  }
+});
+
+it("adds only the typed indentation, and renders what follows it as without it", () => {
+  const starts = [
+    "b",
+    "*b*",
+    "`b`",
+    "~~b~~",
+    "[b](https://example.com)",
+    "![b](https://example.com/b.png)",
+    "https://example.com/b",
+    "/tmp/b.ts",
+    "~/b",
+    "@b",
+    "$b",
+    "&amp;b",
+    "&nbsp;b",
+    // Spaces and tabs written as character references, which a line start drops.
+    "&#32;b",
+    "&#x20;b",
+    "&#9;b",
+    "&Tab;b",
+    "&#32;&#9;b",
+    "&#32;* b",
+    "&#32;`b`",
+    "&#32;**b**",
+    // Content whose first character is a space.
+    "` b`",
+    "[ b](https://example.com)",
+    "**&#32;b**",
+    "***&#32;b***",
+    "[ b]",
+  ];
+  const lines = [
+    (indent: string, start: string, join: string) => `a${join}${indent}${start}`,
+    (indent: string, start: string, join: string) => `> a${join}> ${indent}${start}`,
+    (indent: string, start: string, join: string) => `- a${join}  ${indent}${start}`,
+  ];
+  for (const indent of ["", " ", "   ", "\t", " \t"]) {
+    for (const start of starts) {
+      const joins = ["\n", "\r\n", "  \n", "\\\n"];
+      const markdowns = [
+        ...joins.flatMap((join) => lines.map((line) => line(indent, start, join))),
+        // A paragraph's first line takes at most three spaces before it reads as code.
+        ...(indent.includes("\t") ? [] : [`${indent}${start}`, `> ${indent}${start}`]),
+      ];
+      for (const markdown of markdowns) {
+        const label = JSON.stringify(markdown);
+        expect(withoutRestoredWhitespace(userMessage(markdown)), label).toEqual(
+          withoutRestoredWhitespace(commonMarkUserMessage(markdown)),
+        );
+        const shown = shownText(userMessage(markdown)).split("\n");
+        const before = shownText(commonMarkUserMessage(markdown)).split("\n");
+        expect(shown.length, label).toBe(before.length);
+        shown.forEach((line, index) =>
+          expect([before[index], `${indent}${before[index]}`], label).toContain(line),
+        );
+      }
+    }
+  }
+});
+
 it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer resolves", () => {
   const processor = unified()
     .use(remarkParse)
@@ -663,52 +999,101 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
         '<picture><source media="(prefers-color-scheme: light)" srcset="javascript:alert(1)"><img src="docs/dark.webp"></picture>',
         "",
         String.raw`<picture><source media="(prefers-color-scheme: dark)" srcset="C:\shots\dark.png"><img src="C:\shots\light.png"></picture>`,
+        "",
+        '<picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/a\u00a0b.png 2x"><img src="https://example.com/light.png"></picture>',
+        "",
+        '<picture><source media="(prefers-color-scheme: light)" srcset=" \thttps://example.com/\u00a0light\u00a0v2.png,\thttps://example.com/2x.png 2x"><img src="https://example.com/dark.png"></picture>',
       ].join("\n"),
     ),
   ) as Node;
 
-  expect(tags(tree)).toEqual(["picture", "img", "p", "picture", "img", "p", "picture", "img"]);
+  expect(tags(tree)).toEqual([
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+  ]);
   expect(images(tree).map((image) => image.properties)).toEqual([
     { src: "docs/light.webp", alt: "Studio", dataDarkSrc: "docs/dark.webp" },
     { src: "docs/dark.webp" },
     { dataLocalSrc: String.raw`C:\shots\light.png`, dataDarkSrc: "file:///C:/shots/dark.png" },
+    { src: "https://example.com/light.png", dataDarkSrc: "https://example.com/a\u00a0b.png" },
+    {
+      src: "https://example.com/dark.png",
+      dataLightSrc: "https://example.com/\u00a0light\u00a0v2.png",
+    },
   ]);
 });
 
-it("links complete absolute paths in prose and skips shortened ones", () => {
-  const path =
-    "/tmp/claude-1000/-home-user--t3-worktrees-app-t3-abc123/session/scratchpad/notes.md";
-  const processor = unified().use(remarkParse).use(CHAT_MARKDOWN_REMARK_PLUGINS);
-  const links = (markdown: string) => {
-    const urls: string[] = [];
-    const visit = (node: Root | RootContent) => {
-      if (node.type === "link") urls.push(node.url);
-      if ("children" in node) node.children.forEach(visit);
+it.each([
+  ["default", CHAT_MARKDOWN_REMARK_PLUGINS],
+  ["with breaks", CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
+] as const)(
+  "links complete absolute paths in prose and skips shortened ones (%s)",
+  (_, plugins) => {
+    const path =
+      "/tmp/claude-1000/-home-user--t3-worktrees-app-t3-abc123/session/scratchpad/notes.md";
+    const processor = unified().use(remarkParse).use(plugins);
+    const links = (markdown: string) => {
+      const urls: string[] = [];
+      const visit = (node: Root | RootContent) => {
+        if (node.type === "link") urls.push(node.url);
+        if ("children" in node) node.children.forEach(visit);
+      };
+      visit(processor.runSync(processor.parse(markdown), markdown) as Root);
+      return urls;
     };
-    visit(processor.runSync(processor.parse(markdown), markdown) as Root);
-    return urls;
-  };
-  expect(links(`Saved to ${path} and /tmp/other.txt.`)).toEqual([path, "/tmp/other.txt"]);
-  expect(links(`See (${path}:12).`)).toEqual([`${path}:12`]);
-  expect(links("See /tmp/report(1).txt. and /tmp/app/[id]/page.tsx.")).toEqual([
-    "/tmp/report(1).txt",
-    "/tmp/app/[id]/page.tsx",
-  ]);
-  expect(links("(see /tmp/claude-1000/...). and /tmp/claude-1000/….")).toEqual([]);
-  expect(links("Served at /index.html; GET /api/users.json; see /tmp/x.md:3.")).toEqual([
-    "/tmp/x.md:3",
-  ]);
-  expect(
-    links(
-      '<a title="</a>" href="https://example.com">/tmp/notes.md</a> and **<a href="x">/tmp/a.md</a>**',
-    ),
-  ).toEqual([]);
-  expect(
-    links("Config lives in /Users/me/Library/Application Support/T3 Code/settings.json now."),
-  ).toEqual([]);
-  expect(links(`/chat/settings and https://example.com${path}`)).toEqual([
-    `https://example.com${path}`,
-  ]);
-  expect(links(`[notes](${path}) and \`${path}\``)).toEqual([path]);
-  expect(links(`\`\`\`\n${path}\n\`\`\``)).toEqual([]);
-});
+    expect(links(`Saved to ${path} and /tmp/other.txt.`)).toEqual([path, "/tmp/other.txt"]);
+    expect(links("-       /Users/me/app.ts:42")).toEqual(["/Users/me/app.ts:42"]);
+    expect(links("-       `/Users/me/app.ts:42`")).toEqual([]);
+    expect(links("    /Users/me/code.ts:42")).toEqual([]);
+    expect(links(`See (${path}:12).`)).toEqual([`${path}:12`]);
+    expect(links("See /tmp/report(1).txt. and /tmp/app/[id]/page.tsx.")).toEqual([
+      "/tmp/report(1).txt",
+      "/tmp/app/[id]/page.tsx",
+    ]);
+    expect(links("(see /tmp/claude-1000/...). and /tmp/claude-1000/….")).toEqual([]);
+    expect(links("Served at /index.html; GET /api/users.json; see /tmp/x.md:3.")).toEqual([
+      "/tmp/x.md:3",
+    ]);
+    expect(
+      links(
+        '<a title="</a>" href="https://example.com">/tmp/notes.md</a> and **<a href="x">/tmp/a.md</a>**',
+      ),
+    ).toEqual([]);
+    expect(links("Use <a> for links.\n\nSee /Users/me/app.ts:42")).toEqual(["/Users/me/app.ts:42"]);
+    expect(
+      links(
+        'Use <a> for /Users/me/a.ts and <a href="https://example.com">/Users/me/b.ts</a> then /Users/me/c.ts',
+      ),
+    ).toEqual(["/Users/me/a.ts", "/Users/me/c.ts"]);
+    expect(
+      links("<a>/Users/me/closed.ts</a> <a/>/Users/me/also-closed.ts</a> /Users/me/after.ts"),
+    ).toEqual(["/Users/me/after.ts"]);
+    expect(links("Use <textarea><a></textarea> and /Users/me/app.ts:42")).toEqual([
+      "/Users/me/app.ts:42",
+    ]);
+    expect(links('[<a href="x">label](https://example.com) /Users/me/app.ts:42')).toEqual([
+      "https://example.com",
+      "/Users/me/app.ts:42",
+    ]);
+    expect(
+      links("Config lives in /Users/me/Library/Application Support/T3 Code/settings.json now."),
+    ).toEqual([]);
+    expect(links(`/chat/settings and https://example.com${path}`)).toEqual([
+      `https://example.com${path}`,
+    ]);
+    expect(links(`[notes](${path}) and \`${path}\``)).toEqual([path]);
+    expect(links(`\`\`\`\n${path}\n\`\`\``)).toEqual([]);
+  },
+);

@@ -4,6 +4,7 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -42,7 +43,29 @@ function withUsageLimits(
   return usageLimits ? { ...rest, usageLimits } : rest;
 }
 
+// A probe cannot know the latest version, so until enrichment looks it up again, keep the last
+// answer for the same installed version. Otherwise known updates blink out on every recheck.
+function keepKnownLatestVersion(previous: ServerProvider, probed: ServerProvider): ServerProvider {
+  const known = previous.versionAdvisory;
+  const currentVersion =
+    probed.installedVersion !== undefined ? probed.installedVersion : probed.version;
+  return probed.enabled &&
+    known?.latestVersion &&
+    !probed.versionAdvisory?.latestVersion &&
+    known.currentVersion === currentVersion
+    ? { ...probed, versionAdvisory: known }
+    : probed;
+}
+
 const FAILED_CHECK_RECHECK_DELAY = "30 seconds";
+
+/**
+ * True inside a `checkProvider` whose failure over a ready provider is discarded for a recheck.
+ * A provider that also records check results in its own state must leave that failure out of it.
+ */
+export const DeferringFailedCheck = Context.Reference<boolean>("t3/provider/DeferringFailedCheck", {
+  defaultValue: () => false,
+});
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
@@ -178,7 +201,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
     // A probe without usage must not erase a report published while its I/O was in flight.
     const usageBeforeProbe = (yield* Ref.get(snapshotStateRef)).snapshot.usageLimits;
-    const probedSnapshot = yield* input.checkProvider;
+    const probedSnapshot = yield* input.checkProvider.pipe(
+      Effect.provideService(DeferringFailedCheck, options?.deferFailure === true),
+    );
     // One failed periodic check over a ready provider is often transient; recheck before showing it.
     if (
       options?.deferFailure === true &&
@@ -227,12 +252,15 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
                 ...probedSnapshot,
                 auth: { ...probedSnapshot.auth, label: usageAuthLabel ?? undefined },
               };
-        const snapshot = withUsageLimits(
+        const usageSnapshot = withUsageLimits(
           workspaceId && !probedSnapshot.auth.workspaceId
             ? { ...labeledProbe, auth: { ...labeledProbe.auth, workspaceId } }
             : labeledProbe,
           usageLimits,
         );
+        const snapshot = input.enrichSnapshot
+          ? keepKnownLatestVersion(state.snapshot, usageSnapshot)
+          : usageSnapshot;
         return [
           { snapshot, generation },
           { snapshot, enrichmentGeneration: generation, usageAuthLabel, checked: true },

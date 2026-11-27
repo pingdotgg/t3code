@@ -4,6 +4,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { FolderPlusIcon } from "lucide-react";
+import { useGT } from "gt-react";
 import { useState, type DragEvent, type ReactNode } from "react";
 
 import { useOpenLocalWorkspace } from "../../hooks/useOpenLocalWorkspace";
@@ -27,6 +28,7 @@ function isFileDrag(event: DragEvent) {
  * Browsers expose no absolute paths, so only the desktop app can add them.
  */
 export function SidebarFolderDrop(props: { children: ReactNode }) {
+  const gt = useGT();
   const [isActive, setIsActive] = useState(false);
   const openLocalWorkspace = useOpenLocalWorkspace();
   const bridge = window.desktopBridge;
@@ -37,8 +39,10 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
       toastManager.add(
         stackedThreadToast({
           type: "info",
-          title: "Dropping folders needs the desktop app",
-          description: "Browsers do not share folder paths. Use Add project to choose a folder.",
+          title: gt("Dropping folders needs the desktop app"),
+          description: gt(
+            "Browsers do not share folder paths. Use Add project to choose a folder.",
+          ),
         }),
       );
       return;
@@ -48,8 +52,8 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "This computer's server is not connected yet",
-          description: "Try again when it connects.",
+          title: gt("This computer's server is not connected yet"),
+          description: gt("Try again when it connects."),
         }),
       );
       return;
@@ -71,8 +75,8 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `Could not add "${folder.name}"`,
-          description: response?.message ?? "T3 Code could not read the folder's path.",
+          title: gt('Could not add "{name}"', { name: folder.name }),
+          description: response?.message ?? gt("T3 Code could not read the folder's path."),
         }),
       );
     }
@@ -110,8 +114,8 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
           toastManager.add(
             stackedThreadToast({
               type: "info",
-              title: "Only folders can be added as projects",
-              description: "Drop files on a thread to attach them.",
+              title: gt("Only folders can be added as projects"),
+              description: gt("Drop files on a thread to attach them."),
             }),
           );
         }
@@ -125,8 +129,8 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
         >
           <FolderPlusIcon className="size-5 text-sidebar-muted-foreground" />
           {bridge === undefined
-            ? "Dropping folders needs the desktop app"
-            : "Drop folders to add projects"}
+            ? gt("Dropping folders needs the desktop app")
+            : gt("Drop folders to add projects")}
         </div>
       ) : null}
     </div>

@@ -15,6 +15,7 @@ import {
 } from "@t3tools/shared/desktopBootstrapToken";
 
 import * as ServerConfig from "../config.ts";
+import { MCP_APPROVAL_SUBJECT_PREFIX } from "../persistence/AuthPairingLinks.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 
@@ -68,6 +69,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
         SecureRandom.make((size) => new Uint8Array(size).fill(8)),
       ),
     ),
+  );
+
+  it.effect("accepts a one-time token typed in hyphen- or space-separated groups", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const issued = yield* bootstrapCredentials.issueOneTimeToken();
+      const formatted = issued.credential.match(/.{1,4}/g)!.join("-");
+      const consumed = yield* bootstrapCredentials.consume(formatted.toLowerCase());
+      const second = yield* bootstrapCredentials.issueOneTimeToken();
+      const spaced = yield* bootstrapCredentials.consume(
+        second.credential.match(/.{1,4}/g)!.join(" "),
+      );
+
+      expect(consumed.method).toBe("one-time-token");
+      expect(spaced.method).toBe("one-time-token");
+    }).pipe(Effect.provide(layerPairingGrantStore())),
   );
 
   it.effect("atomically consumes a one-time token when multiple requests race", () =>
@@ -220,7 +237,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
       );
       // An app approval code sends no update, issued or spent; the next belongs to a plain code.
       const approval = yield* grants.issueOneTimeToken({ mcpApproval: "auto" });
-      yield* grants.consume(approval.credential, { mcpApproval: "auto" });
+      yield* grants.consume(approval.credential, {
+        allowedSubject: `${MCP_APPROVAL_SUBJECT_PREFIX}auto`,
+      });
       for (const input of [{}, { label: "Synthetic phone" }]) {
         const issued = yield* grants.issueOneTimeToken(input);
         const change = yield* Queue.take(changes);

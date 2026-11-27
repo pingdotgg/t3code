@@ -4,6 +4,7 @@ import {
   isProviderWorkspaceSnapshotPending,
   ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderRuntimeModeLimit,
   type SecretReference,
   type ServerProvider,
   type ServerProviderUpdateState,
@@ -11,6 +12,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -20,15 +22,19 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
+import { refreshPathFromLoginShell, refreshWindowsPath } from "../os-jank.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import {
@@ -71,6 +77,12 @@ export class ProviderRegistry extends Context.Service<
       instanceId?: ProviderInstanceId,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+    /**
+     * Rebuilds and re-checks enabled instances not yet found installed after the host environment
+     * changed. Drivers copy the environment when built, so only a rebuild sees a later PATH.
+     */
+    readonly rebuildMissingAndRefresh: Effect.Effect<ReadonlyArray<ServerProvider>>;
+
     /** Rebuilds and refreshes only the instances that read a secret, with the value the caller just read. */
     readonly applySecretAndRefresh: (
       reference: SecretReference,
@@ -90,6 +102,15 @@ export class ProviderRegistry extends Context.Service<
       readonly scanCwd?: string;
       readonly fresh?: boolean;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    /**
+     * Modes the instance offers that cannot run in `scanCwd`. Empty for an unknown instance and
+     * for a provider that reports none.
+     */
+    readonly runtimeModeLimits: (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly scanCwd: string;
+    }) => Effect.Effect<ReadonlyArray<ProviderRuntimeModeLimit>>;
 
     /**
      * Drop T3-owned model caches before an explicit model refresh. Pass the
@@ -209,20 +230,26 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     );
   }
 
-  if (
-    provider.driver === ProviderDriverKind.make("grok") ||
-    provider.driver === ProviderDriverKind.make("cursor")
-  ) {
-    // Grok and Cursor report ready only after they discover a model list; the pending,
-    // failed, empty-inventory, and logged-out probes are warning/error.
-    return !(provider.installed && provider.status === "ready");
+  if (provider.driver === ProviderDriverKind.make("kiro")) {
+    // Kiro is ready once `whoami` confirms the account, even when `--list-models` failed and
+    // the snapshot fell back to the built-in list.
+    return true;
+  }
+
+  if (provider.driver === ProviderDriverKind.make("claudeAgent")) {
+    // Claude Code keeps one gateway model cache per Claude home, for one base URL at a time, so a
+    // ready probe can omit this instance's gateway models after another instance or a terminal
+    // `claude` on a different gateway rewrote that cache.
+    return provider.status !== "ready" || provider.modelsIncomplete === true;
   }
 
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
   const isCodex = provider.driver === ProviderDriverKind.make("codex");
   const isOpenCode = provider.driver === ProviderDriverKind.make("opencode");
   if (!isAntigravity && !isCodex && !isOpenCode) {
-    return true;
+    // Any other driver must report ready only after a completed model listing, or opt out above:
+    // a ready list is authoritative, and warning/error probes keep the old models.
+    return !(provider.installed && provider.status === "ready");
   }
 
   if (
@@ -255,8 +282,16 @@ const mergeProviderModels = (
 ): ReadonlyArray<ServerProvider["models"][number]> => {
   const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider);
   const updateRequiredSlugs = new Set(provider.updateRequiredModels?.map((model) => model.slug));
+  const unavailableSubProviders = new Set(
+    provider.subProviders?.flatMap((subProvider) =>
+      subProvider.unavailableReason === undefined ? [] : [subProvider.name],
+    ),
+  );
   const retainablePreviousModels = previousModels.filter(
-    (model) => !model.isCustom && !updateRequiredSlugs.has(model.slug),
+    (model) =>
+      !model.isCustom &&
+      !updateRequiredSlugs.has(model.slug) &&
+      !unavailableSubProviders.has(model.subProvider ?? ""),
   );
 
   if (shouldRetainMissingModels && nextModels.length === 0 && retainablePreviousModels.length > 0) {
@@ -264,14 +299,30 @@ const mergeProviderModels = (
   }
 
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
+  const preserveDefault =
+    nextModels.length > 0 && !nextModels.some((model) => model.isDefault === true);
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
-    if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
+    if (!previousModel) {
       return model;
     }
+    const retainCapabilities = !hasModelCapabilities(model) && hasModelCapabilities(previousModel);
+    const retainDefault = preserveDefault && previousModel.isDefault === true;
+    if (!retainCapabilities && !retainDefault) {
+      return model;
+    }
+    const aliases = retainDefault
+      ? [...new Set([...(model.aliases ?? []), ...(previousModel.aliases ?? [])])]
+      : undefined;
     return {
       ...model,
-      capabilities: previousModel.capabilities,
+      ...(retainCapabilities ? { capabilities: previousModel.capabilities } : {}),
+      ...(retainDefault
+        ? {
+            isDefault: true,
+            ...(aliases && aliases.length > 0 ? { aliases } : {}),
+          }
+        : {}),
     };
   });
   const nextSlugs = new Set(nextModels.map((model) => model.slug));
@@ -303,6 +354,23 @@ const carrySavedAntigravityAccount = (
   return { auth: previousProvider.auth, status };
 };
 
+/** One failed check after a ready one is often transient, so its retained catalog stays offered. */
+const retainsReadyCatalog = (
+  previousProvider: ServerProvider,
+  nextProvider: ServerProvider,
+  status: ServerProvider["status"],
+  models: ServerProvider["models"],
+): boolean =>
+  nextProvider.enabled &&
+  nextProvider.installed &&
+  (status === "error" || status === "warning") &&
+  nextProvider.auth.status !== "unauthenticated" &&
+  models.length > 0 &&
+  (previousProvider.status === "ready" ||
+    // Usage and metadata updates republish the same check.
+    (previousProvider.modelsRetained === true &&
+      previousProvider.checkedAt === nextProvider.checkedAt));
+
 export const mergeProviderSnapshot = (
   previousProvider: ServerProvider | undefined,
   nextProvider: ServerProvider,
@@ -320,15 +388,37 @@ export const mergeProviderSnapshot = (
         ...snapshot,
         modelsPending: true,
       }));
+  const nextWorkspaceSnapshots = nextProvider.workspaceSnapshots;
+  // A provider reports only folders its own sessions saw, so registry scans of other folders stay.
+  const workspaceSnapshots =
+    nextWorkspaceSnapshots === undefined ||
+    !nextProvider.enabled ||
+    nextProvider.auth.status === "unauthenticated" ||
+    (!nextProvider.installed && nextProvider.status === "error")
+      ? (nextWorkspaceSnapshots ?? previousWorkspaceSnapshots)
+      : [
+          ...(previousWorkspaceSnapshots ?? []).filter(
+            ({ cwd }) => !nextWorkspaceSnapshots.some((snapshot) => snapshot.cwd === cwd),
+          ),
+          ...nextWorkspaceSnapshots,
+        ].slice(-MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER);
   return {
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
     models,
-    ...(nextProvider.workspaceSnapshots !== undefined
-      ? { workspaceSnapshots: nextProvider.workspaceSnapshots }
-      : previousWorkspaceSnapshots !== undefined
-        ? { workspaceSnapshots: previousWorkspaceSnapshots }
-        : {}),
+    ...(retainsReadyCatalog(
+      previousProvider,
+      nextProvider,
+      savedAccount?.status ?? nextProvider.status,
+      models,
+    )
+      ? { modelsRetained: true }
+      : {}),
+    ...(workspaceSnapshots === undefined ? {} : { workspaceSnapshots }),
+    ...(nextProvider.workspaceRescannedAt === undefined &&
+    previousProvider.workspaceRescannedAt !== undefined
+      ? { workspaceRescannedAt: previousProvider.workspaceRescannedAt }
+      : {}),
     ...(shouldRetainMissingOpenCodeMetadata(nextProvider)
       ? {
           slashCommands:
@@ -481,6 +571,10 @@ export const layer = Layer.effect(
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
     >(new Map());
+    const workspaceRescans = yield* Queue.unbounded<{
+      readonly instance: ProviderInstance;
+      readonly cwd: string;
+    }>();
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<
         ProviderInstanceId,
@@ -501,7 +595,11 @@ export const layer = Layer.effect(
         cacheDir: config.providerStatusCacheDir,
         instanceId: key,
       }).pipe(Effect.provideService(Path.Path, path));
-      const { workspaceSnapshots: _workspaceSnapshots, ...machineProvider } = provider;
+      const {
+        workspaceSnapshots: _workspaceSnapshots,
+        workspaceRescannedAt: _workspaceRescannedAt,
+        ...machineProvider
+      } = provider;
       yield* writeProviderStatusCache({ filePath, provider: machineProvider }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -680,6 +778,38 @@ export const layer = Layer.effect(
     });
 
     type RefreshAllCompletion = Deferred.Deferred<ReadonlyArray<ServerProvider>>;
+    // A refresh is how a user asks T3 to see a CLI installed since launch; a burst shares one probe.
+    // Drivers copy the environment when built, so instances still missing their CLI are rebuilt
+    // on the new PATH. They cannot have live sessions, and installed ones keep theirs.
+    // Compared with the last PATH seen here, since other features re-read the login shell too.
+    const hostEnvironment = yield* HostProcess.Environment;
+    const readHostPath = () => hostEnvironment.PATH ?? hostEnvironment.Path ?? hostEnvironment.path;
+    const lastHostPathRef = yield* Ref.make(readHostPath());
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const refreshHostPath = yield* refreshWindowsPath().pipe(
+      Effect.andThen(refreshPathFromLoginShell()),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.andThen(
+        Effect.suspend(() => {
+          const path = readHostPath();
+          return Ref.getAndSet(lastHostPathRef, path).pipe(Effect.map((last) => last !== path));
+        }),
+      ),
+      Effect.flatMap((changed) =>
+        changed
+          ? Ref.get(providersRef).pipe(
+              Effect.flatMap((providers) =>
+                instanceRegistryMutator.rebuild(
+                  providers
+                    .filter((provider) => provider.enabled && !provider.installed)
+                    .map((provider) => provider.instanceId),
+                ),
+              ),
+            )
+          : Effect.void,
+      ),
+      Effect.cachedWithTTL(Duration.seconds(10)),
+    );
     const refreshAllInFlightRef = yield* Ref.make<Option.Option<RefreshAllCompletion>>(
       Option.none(),
     );
@@ -688,6 +818,7 @@ export const layer = Layer.effect(
     const probedManifestUpdatedAt = yield* Ref.make(initialManifest.updatedAt);
 
     const refreshAll = Effect.fn("refreshAll")(function* () {
+      yield* refreshHostPath;
       const claimed = yield* Ref.modify(
         refreshAllInFlightRef,
         (
@@ -735,16 +866,13 @@ export const layer = Layer.effect(
       if (provider === undefined) {
         return yield* refreshAll();
       }
-      const instance = (yield* Ref.get(liveSubsRef)).get(defaultInstanceIdForDriver(provider));
-      if (!instance) {
-        return yield* Ref.get(providersRef);
-      }
-      return yield* refreshOneSource(instance);
+      return yield* refreshInstance(defaultInstanceIdForDriver(provider));
     });
 
     const refreshInstance = Effect.fn("refreshInstance")(function* (
       instanceId: ProviderInstanceId,
     ) {
+      yield* refreshHostPath;
       yield* syncLiveSourcesAndContinue;
       const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
       if (!instance) {
@@ -758,6 +886,35 @@ export const layer = Layer.effect(
     ) {
       yield* instanceRegistryMutator.reloadSecrets(instanceId);
       return yield* instanceId === undefined ? refresh() : refreshInstance(instanceId);
+    });
+
+    // Only instances whose CLI was not found are rebuilt; installed ones may have live sessions.
+    const rebuildMissingAndRefresh = Effect.fn("rebuildMissingAndRefresh")(function* () {
+      const instances = yield* instanceRegistry.listInstances;
+      yield* refresh().pipe(Effect.catchCause(recoverRefreshFailure));
+      const missing = yield* Effect.filter(instances, (instance) =>
+        Effect.gen(function* () {
+          // ACP also reports installed:false for setup states unrelated to executable discovery.
+          if (
+            !instance.enabled ||
+            instance.driverKind === "acpRegistry" ||
+            !(yield* isCurrentInstance(instance))
+          )
+            return false;
+          const snapshot = yield* instance.snapshot.getSnapshot;
+          return !snapshot.installed;
+        }),
+      );
+      if (missing.length === 0) return yield* Ref.get(providersRef);
+      yield* instanceRegistryMutator.rebuild(missing.map((instance) => instance.instanceId));
+      // A shared pass already in flight may hold the retired instances, so probe each rebuilt one.
+      yield* Effect.forEach(
+        missing,
+        (instance) =>
+          refreshInstance(instance.instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+        { concurrency: "unbounded", discard: true },
+      );
+      return yield* Ref.get(providersRef);
     });
 
     const applySecretAndRefresh = Effect.fn("applySecretAndRefresh")(function* (
@@ -927,6 +1084,11 @@ export const layer = Layer.effect(
           yield* Stream.runForEach(source.streamChanges, (provider) =>
             correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
           ).pipe(Effect.forkScoped);
+          if (instance.workspaceRescans) {
+            yield* Stream.runForEach(instance.workspaceRescans, (cwd) =>
+              Queue.offer(workspaceRescans, { instance, cwd }),
+            ).pipe(Effect.forkScoped);
+          }
         }
         yield* Effect.yieldNow;
 
@@ -946,6 +1108,27 @@ export const layer = Layer.effect(
               yield* correlateSnapshotWithSource(source, provider).pipe(
                 Effect.flatMap(syncProvider),
               );
+            }).pipe(Effect.ignoreCause({ log: true })),
+          { concurrency: "unbounded", discard: true },
+        );
+        // A rename keeps the instance live, so its new label only arrives from a fresh read.
+        const published = new Map(
+          (yield* Ref.get(providersRef)).map((provider) => [provider.instanceId, provider]),
+        );
+        yield* Effect.forEach(
+          carriedOver.values(),
+          (instance) =>
+            Effect.gen(function* () {
+              // Its first check publishes the new label anyway; the placeholder must not replace the cache.
+              if (yield* instance.snapshot.isAwaitingFirstCheck ?? Effect.succeed(false)) return;
+              const provider = yield* instance.snapshot.getSnapshot;
+              const previous = published.get(instance.instanceId);
+              if (
+                previous?.displayName !== provider.displayName ||
+                previous?.accentColor !== provider.accentColor
+              ) {
+                yield* syncProvider(provider);
+              }
             }).pipe(Effect.ignoreCause({ log: true })),
           { concurrency: "unbounded", discard: true },
         );
@@ -1043,7 +1226,25 @@ export const layer = Layer.effect(
       readonly cwd: string;
       readonly scanCwd?: string;
       readonly fresh?: boolean;
+      // Set by an instance's own report that its workspace skills changed.
+      readonly rescan?: ProviderInstance;
     }) {
+      const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
+        candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
+      // What clients saw before the awaited scan, which may already have published the change.
+      const heldBeforeWait = input.rescan
+        ? workspaceSnapshotOf(
+            (yield* Ref.get(providersRef)).find(
+              (candidate) => candidate.instanceId === input.instanceId,
+            ),
+          )
+        : undefined;
+      // A rescan waits for a running scan, which may have read files before the hook linked them.
+      // Claims are read before snapshots: a scan publishes before it releases its claim.
+      const runningScan = input.rescan
+        ? (yield* Ref.get(workspaceRefreshesRef)).get(input.rescan)?.get(input.cwd)
+        : undefined;
+      if (runningScan) yield* Deferred.await(runningScan);
       if (input.fresh) {
         yield* updateProviders((providers) =>
           providers.map((candidate) =>
@@ -1055,14 +1256,13 @@ export const layer = Layer.effect(
       }
       const providers = yield* Ref.get(providersRef);
       const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
-      const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
-        candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
       const scannedFrom = workspaceSnapshotOf(provider);
       const now = yield* DateTime.now;
       if (
         !provider ||
         !provider.enabled ||
         (!input.fresh &&
+          !input.rescan &&
           scannedFrom &&
           !isProviderWorkspaceSnapshotPending(scannedFrom) &&
           isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now)))
@@ -1074,6 +1274,10 @@ export const layer = Layer.effect(
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       const snapshotForCwd = instance?.snapshotForCwd;
       if (!instance || !snapshotForCwd) return providers;
+      // A report never enrolls a cwd nobody requested, nor outlives the instance that made it.
+      if (input.rescan && (input.rescan !== instance || (!runningScan && !scannedFrom))) {
+        return providers;
+      }
       const token = yield* Deferred.make<void>();
       // A machine refresh can change this cwd's snapshot, so the scan publishes against the result.
       const refreshMachineSnapshot = input.fresh
@@ -1104,18 +1308,32 @@ export const layer = Layer.effect(
                 if (Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token) {
                   return currentProviders;
                 }
-                return currentProviders.map((candidate) =>
-                  candidate.instanceId === input.instanceId &&
-                  Equal.equals(workspaceSnapshotOf(candidate), scanBase)
-                    ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                        ...scopedSnapshot,
-                        checkedAt: scannedAt,
-                        // Without driver command discovery, retain previous commands after failed health checks and retry.
-                        slashCommandsPending:
-                          scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
-                      })
-                    : candidate,
-                );
+                return currentProviders.map((candidate) => {
+                  if (
+                    candidate.instanceId !== input.instanceId ||
+                    !Equal.equals(workspaceSnapshotOf(candidate), scanBase)
+                  ) {
+                    return candidate;
+                  }
+                  const scanned = upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                    ...scopedSnapshot,
+                    checkedAt: scannedAt,
+                    // Without driver command discovery, retain previous commands after failed health checks and retry.
+                    slashCommandsPending:
+                      scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
+                  });
+                  // Clients keep fetched snapshots, so a changed rescan must tell them to fetch again.
+                  const rescanned = workspaceSnapshotOf(scanned);
+                  const held = heldBeforeWait ?? scanBase;
+                  return input.rescan &&
+                    !(
+                      Equal.equals(rescanned?.skills, held?.skills) &&
+                      Equal.equals(rescanned?.models, held?.models) &&
+                      Equal.equals(rescanned?.slashCommands, held?.slashCommands)
+                    )
+                    ? { ...scanned, workspaceRescannedAt: scannedAt }
+                    : scanned;
+                });
               });
             }),
           ),
@@ -1157,6 +1375,21 @@ export const layer = Layer.effect(
         return yield* Deferred.await(claim.inFlight).pipe(Effect.andThen(Ref.get(providersRef)));
       }
       return yield* Fiber.join(claim.scan);
+    });
+    yield* Stream.runForEach(Stream.fromQueue(workspaceRescans), ({ instance, cwd }) =>
+      refreshWorkspaceSnapshot({ instanceId: instance.instanceId, cwd, rescan: instance }).pipe(
+        Effect.ignoreCause({ log: true }),
+      ),
+    ).pipe(Effect.forkScoped);
+
+    const runtimeModeLimits = Effect.fn("ProviderRegistry.runtimeModeLimits")(function* (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly scanCwd: string;
+    }) {
+      const instance = yield* instanceRegistry.getInstance(input.instanceId);
+      return instance?.runtimeModeLimitsForCwd === undefined
+        ? []
+        : yield* instance.runtimeModeLimitsForCwd(input.scanCwd);
     });
 
     const invalidateModelCaches = Effect.fn("ProviderRegistry.invalidateModelCaches")(function* (
@@ -1206,11 +1439,15 @@ export const layer = Layer.effect(
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       reloadSecretsAndRefresh: (instanceId?: ProviderInstanceId) =>
         reloadSecretsAndRefresh(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      rebuildMissingAndRefresh: rebuildMissingAndRefresh().pipe(
+        Effect.catchCause(recoverRefreshFailure),
+      ),
       applySecretAndRefresh: (reference: SecretReference, value: string) =>
         applySecretAndRefresh(reference, value).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshAfterUpdate,
+      runtimeModeLimits,
       invalidateModelCaches,
       refreshModelCatalog: refreshModelCatalog().pipe(
         Effect.catchCause(recoverRefreshFailure),

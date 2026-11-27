@@ -7,6 +7,7 @@ import {
 import { readEnvironmentScope } from "../../state/session";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
+import { msg } from "gt-react";
 import {
   DEFAULT_SERVER_SETTINGS,
   type EnvironmentId,
@@ -16,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 
 import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
+import { m } from "../../i18n/messages";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readEnvironment } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
@@ -67,7 +69,7 @@ function useRunScopedPlan() {
     if (plan.unavailableReason) {
       toastManager.add({
         type: "warning",
-        title: "Setting not saved",
+        title: m(msg("Setting not saved")),
         description: plan.unavailableReason,
       });
       onFailed?.();
@@ -99,7 +101,7 @@ function useRunScopedPlan() {
               Cause.fail(
                 new EnvironmentAuthorizationError({
                   requiredScope: missing,
-                  message: "This connection lacks permission to change these settings.",
+                  message: m(msg("This connection lacks permission to change these settings.")),
                 }),
               ),
             )
@@ -117,13 +119,21 @@ function useRunScopedPlan() {
       toastManager.add({
         type: "error",
         title:
-          savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
+          savedEnvironmentCount > 0
+            ? m(msg("Setting saved on some environments"))
+            : m(msg("Setting not saved")),
         description: [
-          ...failedEnvironments.map(
-            ({ label, message }) => `Could not save on ${label}: ${message}`,
+          ...failedEnvironments.map(({ label, message }) =>
+            m(msg("Could not save on {label}: {message}", { label, message })),
           ),
           ...(savedEnvironmentCount > 0
-            ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
+            ? [
+                m(
+                  msg("Saved on {environments}.", {
+                    environments: savedEnvironments.map(({ label }) => label).join(", "),
+                  }),
+                ),
+              ]
             : []),
         ].join("\n"),
       });

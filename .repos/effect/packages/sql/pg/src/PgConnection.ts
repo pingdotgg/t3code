@@ -300,7 +300,9 @@ export const PgConnection = Context.Service<PgConnection>("@effect/sql-pg/PgConn
  * Password resolution, transport, optional `SSLRequest`, startup, and
  * authentication run under `connectTimeout` (5 seconds by default). The effect
  * resolves when the backend sends `ReadyForQuery`. Closing the scope sends
- * `Terminate` and ends the socket.
+ * `Terminate`, ends the socket, and destroys the transport (a custom `stream`
+ * included) once the message has flushed, or after one second if the flush
+ * stalls. Release does not wait for the peer.
  *
  * Use `sslmode=require` or explicit `ssl: true` to require encryption.
  * Unix sockets and custom streams should set `ssl.servername` explicitly.
@@ -349,6 +351,8 @@ interface Session {
  */
 interface Consumer {
   readonly onMessage: (message: PgProtocol.BackendMessage<unknown>) => void
+  /** A `DataRow` its field reader rejected; the row itself is dropped. */
+  readonly onDecodeFailure: (error: SqlError) => void
   readonly onBatchEnd?: (() => void) | undefined
   readonly onFatal: (error: SqlError) => void
 }
@@ -366,6 +370,7 @@ const abortDrainGraceMillis = 10
 /** PostgreSQL `query_canceled` SQLSTATE. */
 const queryCanceledCode = "57014"
 const cancelRequestTimeoutMillis = 5000
+const terminateTimeoutMillis = 1000
 const unlistenTimeoutMillis = 5000
 /** How many statements a multiplexed session keeps on the wire at once. */
 const maxPipelineDepth = 128
@@ -419,6 +424,7 @@ class PgConnectionImpl implements PgConnection {
       deadError: () => this.deadWith,
       retireHooks: this.retireHooks
     }
+    session.parser.onFieldError = this.onFieldError
     session.socket.on("data", this.onData)
     session.socket.on("error", this.onSocketError)
     session.socket.on("close", this.onSocketClose)
@@ -428,8 +434,8 @@ class PgConnectionImpl implements PgConnection {
     try {
       this.session.parser.pushEach(chunk, this.dispatch)
     } catch (cause) {
-      // A field reader that threw reports the row it could not decode; anything
-      // else came out of the framing itself.
+      // Field-reader errors go to `onFieldError`, so a `ParseError` means the
+      // framing is broken; anything else was thrown while handling a message.
       return this.fatal(
         cause instanceof PgProtocol.ParseError
           ? connectionQueryError(cause, "PgConnection: Failed to parse server messages")
@@ -437,6 +443,17 @@ class PgConnectionImpl implements PgConnection {
       )
     }
     if (this.deadWith === undefined) this.consumer?.onBatchEnd?.()
+  }
+
+  /**
+   * Codecs are pure and the parser has consumed the whole row, so a value that
+   * cannot be decoded fails only the statement that read it.
+   */
+  private readonly onFieldError = (cause: unknown): void => {
+    if (this.deadWith !== undefined) return
+    const error = queryError(cause, "PgConnection: Failed to decode row")
+    if (this.consumer !== undefined) return this.consumer.onDecodeFailure(error)
+    this.fatal(error)
   }
 
   private readonly onSocketError = (cause: Error): void =>
@@ -516,10 +533,18 @@ class PgConnectionImpl implements PgConnection {
 
   closeUnsafe(): void {
     this.closed = true
+    const socket = this.session.socket
     let destroySocket = true
-    if (this.deadWith === undefined && this.session.socket.writable) {
+    if (this.deadWith === undefined && socket.writable) {
       try {
-        this.session.socket.end(PgProtocol.encodeTerminate())
+        // Once Terminate and our FIN have reached the kernel there is nothing
+        // left to read, so the descriptor is released without waiting for the
+        // peer's FIN, which a half-open proxy may never send.
+        const timeout = setTimeout(() => socket.destroy(), terminateTimeoutMillis)
+        timeout.unref()
+        socket.once("finish", () => socket.destroy())
+        socket.once("close", () => clearTimeout(timeout))
+        socket.end(PgProtocol.encodeTerminate())
         destroySocket = false
       } catch {
         // Fall back to the fatal path's immediate destroy below.
@@ -535,7 +560,6 @@ class PgConnectionImpl implements PgConnection {
       }),
       destroySocket
     )
-    const socket = this.session.socket
     socket.off("data", this.onData)
     socket.off("error", this.onSocketError)
     socket.off("close", this.onSocketClose)
@@ -567,6 +591,11 @@ class PgConnectionImpl implements PgConnection {
         ))
       }
       entry.machine.onMessage(message)
+    },
+    onDecodeFailure: (error) => {
+      const entry = this.pipelineInFlight[this.pipelineHead]
+      if (entry === undefined) return this.fatal(error)
+      entry.machine.onDecodeFailure(error)
     },
     onBatchEnd: () => this.flushPipeline(),
     onFatal: (error) => {
@@ -1324,7 +1353,16 @@ const pinReleasedError = (): SqlError =>
 
 const escapeIdentifier = (identifier: string): string => `"${identifier.replaceAll("\"", "\"\"")}"`
 
-type QueryPhase = "close" | "parse" | "bind" | "describe" | "rows" | "complete" | "error"
+type QueryPhase = "close" | "parse" | "bind" | "describe" | "rows" | "complete" | "error" | "drain"
+
+/**
+ * After a row fails to decode the server has seen no error, so the cycle runs
+ * to its `ReadyForQuery` and these are skipped on the way. The decode failure
+ * is kept even over a later `ErrorResponse`.
+ */
+const skippedWhileDraining = (message: PgProtocol.BackendMessage<unknown>): boolean =>
+  message._tag === "DataRow" || message._tag === "CommandComplete" || message._tag === "EmptyQueryResponse" ||
+  message._tag === "ErrorResponse"
 
 /**
  * Splits a command tag such as `SELECT 3` or `INSERT 0 1`. Reading the two
@@ -1436,6 +1474,15 @@ class QueryMachine implements Consumer {
     else this.finish(Effect.fail(this.failure ?? error))
   }
 
+  onDecodeFailure(error: SqlError): void {
+    if (this.done || this.aborted || this.phase === "drain") return
+    if (this.phase !== "rows") return this.failDesync(`Unexpected DataRow during ${this.phase}`)
+    this.failure = error
+    this.phase = "drain"
+    // The rest of the result is discarded, so skip decoding it.
+    this.conn.session.parser.readField = undefined
+  }
+
   onMessage(message: PgProtocol.BackendMessage<unknown>): void {
     if (this.aborted) {
       if (message._tag === "ReadyForQuery") {
@@ -1443,6 +1490,11 @@ class QueryMachine implements Consumer {
         this.drainDone?.()
       }
       return
+    }
+    if (this.phase === "drain") {
+      if (message._tag === "ReadyForQuery") return this.complete(Effect.fail(this.failure!))
+      if (skippedWhileDraining(message)) return
+      return this.failDesync(`Unexpected ${message._tag} after a row failed to decode`)
     }
     if (this.phase === "error") {
       if (message._tag === "ReadyForQuery") {
@@ -1708,10 +1760,7 @@ const streamRows = (
 ): Stream.Stream<Row, SqlError> =>
   Stream.fromChannel(Channel.fromTransform(Effect.fnUntraced(function*(_, scope) {
     const pinned = yield* Scope.provide(pin, scope)
-    yield* Scope.provide(
-      Effect.acquireRelease(conn.wire.take(1), () => conn.wire.release(1)),
-      scope
-    )
+    yield* Scope.provide(conn.wire.takeScoped(1), scope)
     if (pinned.released) return yield* pinReleasedError()
     // Streams stay on the unnamed path: a stream pays its setup once over the
     // whole result, so naming the statement buys little and would need the
@@ -1785,17 +1834,17 @@ const streamRows = (
         }
         return
       }
-      if (phase === "error") {
-        switch (message._tag) {
-          case "ReadyForQuery":
-            finished = true
-            done = true
-            conn.consumer = undefined
-            deliver()
-            return
-          default:
-            return failDesync(`Unexpected ${message._tag} after ErrorResponse`)
+      if (phase === "error" || phase === "drain") {
+        if (message._tag === "ReadyForQuery") {
+          finished = true
+          done = true
+          conn.consumer = undefined
+          deliver()
+          return
         }
+        if (phase === "error") return failDesync(`Unexpected ${message._tag} after ErrorResponse`)
+        if (skippedWhileDraining(message)) return
+        return failDesync(`Unexpected ${message._tag} after a row failed to decode`)
       }
       switch (message._tag) {
         case "ParseComplete":
@@ -1866,6 +1915,14 @@ const streamRows = (
       }
     }
 
+    const onDecodeFailure = (error: SqlError): void => {
+      if (done || aborted || phase === "drain") return
+      if (phase !== "rows") return failDesync(`Unexpected DataRow during ${phase}`)
+      failure = error
+      phase = "drain"
+      parser.readField = undefined
+    }
+
     const onBatchEnd = (): void => {
       if (done || aborted) return
       if (pending !== undefined) deliver()
@@ -1889,7 +1946,7 @@ const streamRows = (
     // Checked as the consumer is registered: a session that dies any earlier
     // has no consumer to tell through `onFatal`.
     if (conn.deadWith !== undefined) return yield* conn.deadWith
-    conn.consumer = { onMessage, onBatchEnd, onFatal }
+    conn.consumer = { onMessage, onDecodeFailure, onBatchEnd, onFatal }
     parser.readField = undefined
     // @effect-diagnostics-next-line tryCatchInEffectGen:off
     try {

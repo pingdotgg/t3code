@@ -1,9 +1,12 @@
-import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import type { OrchestrationV2ProjectedTurnItem, OrchestrationV2Subagent } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
-import { mergeOlderHistoryIntoProjection } from "./threadHistoryMerge.ts";
+import {
+  mergeOlderHistoryIntoProjection,
+  mergeOlderSubagentsIntoProjection,
+} from "./threadHistoryMerge.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { derivePendingThreadRequests } from "./threadRequests.ts";
 
@@ -132,6 +135,22 @@ describe("threadHistoryMerge", () => {
     ]);
   });
 
+  it("adds older subagent records and keeps the newer record of one already held", () => {
+    const subagent = (id: string, model: string) =>
+      ({ id, model, status: "completed" }) as unknown as OrchestrationV2Subagent;
+    const live = subagent("agent-live", "claude-sonnet-live");
+    const projection = { ...v2Projection, subagents: [live] };
+    const merged = mergeOlderSubagentsIntoProjection(projection, [
+      subagent("agent-old", "claude-haiku-4-5-20251001"),
+      subagent("agent-live", "claude-sonnet-stale"),
+    ]);
+    expect(merged.subagents.map((agent) => [agent.id, agent.model])).toEqual([
+      ["agent-old", "claude-haiku-4-5-20251001"],
+      ["agent-live", "claude-sonnet-live"],
+    ]);
+    expect(mergeOlderSubagentsIntoProjection(projection, undefined)).toBe(projection);
+  });
+
   it("fills inherited activity without confusing identical item IDs from different source threads", () => {
     const inherited = (index: number) => ({
       ...row(index),
@@ -172,6 +191,44 @@ describe("threadHistoryMerge", () => {
       "item-4",
       "item-5",
       "item-6",
+    ]);
+  });
+
+  it("keeps an older answer before a full page that only covers the later part of a conversation page", () => {
+    const [question, olderAnswer, reasoningA, reasoningB, reasoningC, newerAnswer] = [
+      row(0),
+      row(1),
+      row(2),
+      row(3),
+      row(4),
+      row(5),
+    ];
+    const window = [row(6), row(7)];
+    const projection = {
+      ...v2Projection,
+      turnItems: window.map((entry) => entry.item),
+      visibleTurnItems: window.map((entry, position) => ({ ...entry, position })),
+    };
+    const conversation = mergeOlderHistoryIntoProjection(projection, [
+      question,
+      olderAnswer,
+      newerAnswer,
+    ]);
+    const full = mergeOlderHistoryIntoProjection(conversation, [
+      reasoningA,
+      reasoningB,
+      reasoningC,
+      newerAnswer,
+    ]);
+    expect(full.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+      "item-0",
+      "item-1",
+      "item-2",
+      "item-3",
+      "item-4",
+      "item-5",
+      "item-6",
+      "item-7",
     ]);
   });
 
@@ -288,8 +345,11 @@ describe("threadHistoryMerge", () => {
         visibleTurnItems: [{ ...recent, position: 0 }],
       };
 
+      // A row of the run that was never in the window, such as one paged in after a rollback.
+      const ran = { ...row(1), item: { ...row(1).item, runId } };
       const merged = mergeOlderHistoryIntoProjection(coldOpen, [
         { ...row(0), position: 0 },
+        ran,
         {
           position: 1,
           visibility: "local",
@@ -300,7 +360,9 @@ describe("threadHistoryMerge", () => {
       ]);
 
       expect(merged.visibleTurnItems.map((entry) => String(entry.sourceItemId))).toEqual(
-        status === "rolled_back" ? ["item-0", "item-5"] : ["item-0", "item-question", "item-5"],
+        status === "rolled_back"
+          ? ["item-0", "item-5"]
+          : ["item-0", "item-1", "item-question", "item-5"],
       );
       expect(merged.turnItems).toContain(card);
       const pending = derivePendingThreadRequests(merged).userInputs;

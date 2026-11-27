@@ -7,6 +7,8 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export function createDeviceEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -93,28 +95,61 @@ export function createDeviceEnvironmentAtoms<R, E>(
   };
 }
 
-export function deviceToolVersionLabels(tools: DeviceToolVersions | undefined) {
-  if (!tools) return ["Device tool versions have not been checked."];
+export function deviceToolVersionLabels(
+  tools: DeviceToolVersions | undefined,
+  resolve: MFunctionType = mFallback,
+) {
+  if (!tools) return [resolve(msg("Device tool versions have not been checked."))];
   return (
     [
-      ["Device hub", tools.hub],
-      ["Agent tools", tools.agent],
+      [resolve(msg("Device hub")), tools.hub],
+      [resolve(msg("Agent tools")), tools.agent],
     ] as const
   ).map(([name, tool]) => {
-    const installed = tool.installedVersions.length ? tool.installedVersions.join(", ") : "none";
-    return `${name}: installed ${installed}; required ${tool.requiredVersion}${tool.runningVersion ? `; running ${tool.runningVersion}` : ""}.`;
+    const installed = tool.installedVersions.length
+      ? tool.installedVersions.join(", ")
+      : resolve(msg("none", { $context: "no installed versions" }));
+    return tool.runningVersion
+      ? resolve(
+          msg("{name}: installed {installed}; required {required}; running {running}.", {
+            name,
+            installed,
+            required: tool.requiredVersion,
+            running: tool.runningVersion,
+          }),
+        )
+      : resolve(
+          msg("{name}: installed {installed}; required {required}.", {
+            name,
+            installed,
+            required: tool.requiredVersion,
+          }),
+        );
   });
 }
 
-export function deviceToolUpdatePolicy(tools: DeviceToolVersions | undefined) {
-  if (!tools) return "Versions have not been checked. Reconnect the host and check versions.";
+export function deviceToolUpdatePolicy(
+  tools: DeviceToolVersions | undefined,
+  resolve: MFunctionType = mFallback,
+) {
+  if (!tools)
+    return resolve(msg("Versions have not been checked. Reconnect the host and check versions."));
   const outdated = [tools.hub, tools.agent].filter(
     (tool) =>
       tool.installedVersions.length > 0 && !tool.installedVersions.includes(tool.requiredVersion),
   );
   return outdated.length > 0
-    ? "Update pending. Required tools will install automatically when next used. The host needs network access; an older install is not used as a fallback."
-    : "Required tools are installed automatically when needed. Checking versions does not install or start anything.";
+    ? resolve(
+        msg(
+          "Update pending. Required tools will install automatically when next used. The host needs network access; an older install is not used as a fallback.",
+        ),
+      )
+    : resolve(
+        msg(
+          "Required tools are installed automatically when needed. Checking versions does not install or start anything.",
+        ),
+      );
 }
-export const deviceToolUpdateOwnership =
-  "This environment's T3 server chooses device tool versions for itself and its SSH hosts. Update that server to receive newer tool versions; updating only your browser or mobile app does not update a remote server.";
+export const deviceToolUpdateOwnership = msg(
+  "This environment's T3 server chooses device tool versions for itself and its SSH hosts. Update that server to receive newer tool versions; updating only your browser or mobile app does not update a remote server.",
+);

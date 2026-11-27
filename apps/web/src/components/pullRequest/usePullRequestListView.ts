@@ -47,12 +47,12 @@ export interface PullRequestsSearch extends PullRequestListPreferences {
   readonly selectedUrl?: string;
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
-  readonly host?: string;
+  readonly host?: string | undefined;
   readonly repository?: string;
   readonly number?: number;
-  readonly selectedProjectId?: ProjectId;
-  readonly selectedHost?: string;
-  readonly selectedEnvironmentId?: EnvironmentId;
+  readonly selectedProjectId?: ProjectId | undefined;
+  readonly selectedHost?: string | undefined;
+  readonly selectedEnvironmentId?: EnvironmentId | undefined;
 }
 
 const SEARCH_DEBOUNCE_MS = 250;

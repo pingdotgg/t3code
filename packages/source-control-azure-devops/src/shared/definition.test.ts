@@ -54,6 +54,18 @@ describe("Azure DevOps change request URLs", () => {
     }
   });
 
+  it("takes a pull request URL that leaves the project out as a checkout reference", () => {
+    for (const url of [
+      "https://dev.azure.com/acme/_git/web/pullrequest/17",
+      "https://acme.visualstudio.com/_git/web/pullrequest/17",
+    ]) {
+      expect(definition.isChangeRequestReference(url), url).toBe(true);
+    }
+    expect(
+      definition.isChangeRequestReference("https://dev.azure.com/_git/web/pullrequest/17"),
+    ).toBe(false);
+  });
+
   it.each([
     ["ssh.dev.azure.com", "v3/org/project/web"],
     ["org.visualstudio.com", "defaultcollection/project/_git/web"],
@@ -250,5 +262,51 @@ describe("Azure DevOps repository selector", () => {
         name: "checkout%20(eu)",
       }),
     ).toBe("checkout (eu)");
+  });
+});
+
+describe("Azure DevOps issue scope", () => {
+  it("places work items in the project rather than the repository", () => {
+    const kind = SourceControlProviderKind.make("azure-devops");
+    expect(
+      definition.issueScope?.({ provider: kind, displayName: "acme/Web%20App/_git/web" }),
+    ).toBe("acme/Web App");
+    expect(definition.issueScope?.({ provider: kind, displayName: "web" })).toBeNull();
+    // One segment before `_git` is a different thing on each kind of host, so it needs the host.
+    expect(definition.issueScope?.({ provider: kind, displayName: "acme/_git/web" })).toBeNull();
+    const scopeOn = (canonicalKey: string, displayName: string) =>
+      definition.issueScope?.({ provider: kind, canonicalKey, displayName });
+    expect(scopeOn("dev.azure.com/acme/_git/web", "acme/_git/Web")).toBe("acme/Web");
+    expect(scopeOn("acme.visualstudio.com/web/_git/web", "Web%20App/_git/web")).toBe("Web App");
+    expect(scopeOn("acme.visualstudio.com/_git/web", "_git/Web")).toBe("Web");
+    // Its work items are at `acme.visualstudio.com/Web/_workitems/...`, without the collection.
+    expect(
+      scopeOn("acme.visualstudio.com/defaultcollection/_git/web", "DefaultCollection/_git/Web"),
+    ).toBe("Web");
+    expect(scopeOn("dev.azure.com/_git/web", "_git/web")).toBeNull();
+    // A legacy host keeps the organization in its name, and so does its work item URL.
+    expect(
+      definition.parseIssueUrl?.(
+        new URL("https://acme.visualstudio.com/Web%20App/_workitems/edit/9"),
+      ),
+    ).toEqual({
+      host: "acme.visualstudio.com",
+      scope: "web app",
+      scopeAlias: "defaultcollection/web app",
+      key: "9",
+    });
+    expect(
+      definition.parseIssueUrl?.(
+        new URL("https://acme.visualstudio.com/DefaultCollection/Web%20App/_workitems/edit/9"),
+      ),
+    ).toEqual({
+      host: "acme.visualstudio.com",
+      scope: "defaultcollection/web app",
+      scopeAlias: "web app",
+      key: "9",
+    });
+    expect(
+      definition.parseIssueUrl?.(new URL("https://dev.azure.com/acme/_workitems/edit/9")),
+    ).toBeNull();
   });
 });

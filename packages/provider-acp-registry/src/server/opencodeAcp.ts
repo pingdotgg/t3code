@@ -105,6 +105,7 @@ export const extractOpenCodeElicitationForm: NonNullable<
       const content: Record<string, string> = {};
       for (const question of questions) {
         const answer = Object.hasOwn(answers, question.id) ? answers[question.id] : undefined;
+        if (answer === undefined) continue;
         if (!Predicate.isString(answer)) return { action: "cancel" };
         const companionId = `${question.id}${companionSuffix}`;
         const exact = findChoice(question.options, answer);

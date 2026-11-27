@@ -1,6 +1,33 @@
 {
   "customNotices": [
     {
+      "bundles": ["desktop", "mobile"],
+      "license": "MIT",
+      "name": "Apple Speech engine (adapted from @react-native-ai/apple)",
+      "sourceUrl": "https://github.com/callstackincubator/ai",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": [
+            "Copyright (c) 2024-2025 Szymon Rybczak",
+            "Copyright (c) 2025-present Callstack"
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop", "mobile", "web"],
+      "license": "MIT",
+      "name": "GitHub gemoji alias data",
+      "sourceUrl": "https://github.com/github/gemoji/blob/fadaeaf1f1a9be82b321316a6c5502e43138b2f6/db/emoji.json",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2019 GitHub, Inc."]
+        }
+      ]
+    },
+    {
       "name": "opencode Office viewers",
       "bundles": ["web"],
       "license": "MIT",
@@ -260,33 +287,6 @@
       "sourceUrl": "https://github.com/NaturalIntelligence/fast-xml-parser"
     },
     {
-      "name": "@betteroffice/xlsx",
-      "version": "0.5.1",
-      "license": "Apache-2.0",
-      "sourceUrl": "https://github.com/openooxml/betteroffice",
-      "generatedNotice": {
-        "licenseId": "Apache-2.0"
-      }
-    },
-    {
-      "name": "@betteroffice/pptx",
-      "version": "0.5.1",
-      "license": "Apache-2.0",
-      "sourceUrl": "https://github.com/openooxml/betteroffice",
-      "generatedNotice": {
-        "licenseId": "Apache-2.0"
-      }
-    },
-    {
-      "name": "@betteroffice/docx",
-      "version": "0.5.1",
-      "license": "Apache-2.0",
-      "sourceUrl": "https://github.com/openooxml/betteroffice",
-      "generatedNotice": {
-        "licenseId": "Apache-2.0"
-      }
-    },
-    {
       "name": "character-entities",
       "version": "2.0.2",
       "license": "MIT",
@@ -315,35 +315,6 @@
       "version": "6.4.299",
       "license": "Apache-2.0",
       "sourceUrl": "https://github.com/mozilla/pdf.js"
-    },
-    {
-      "name": "@betteroffice/fonts",
-      "version": "0.4.0",
-      "license": "Apache-2.0 AND OFL-1.1",
-      "generatedNotices": [
-        { "licenseId": "Apache-2.0" },
-        {
-          "licenseId": "OFL-1.1",
-          "copyrights": [
-            "Copyright 2013 The Carlito Project Authors (https://github.com/googlefonts/carlito), with Reserved Font Name \"Carlito\""
-          ]
-        }
-      ]
-    },
-    {
-      "name": "@betteroffice/fonts-cjk",
-      "version": "0.4.0",
-      "license": "Apache-2.0 AND OFL-1.1",
-      "generatedNotices": [
-        { "licenseId": "Apache-2.0" },
-        {
-          "licenseId": "OFL-1.1",
-          "copyrights": [
-            "Copyright 2014-2021 Adobe (https://adobe.com/), with Reserved Font Name 'Source'",
-            "Copyright 2017-2024 Adobe (https://adobe.com/), with Reserved Font Name 'Source'"
-          ]
-        }
-      ]
     },
     {
       "name": "remark-math",
@@ -594,17 +565,6 @@
       "generatedNotice": {
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) Meta Platforms, Inc. and affiliates."]
-      }
-    },
-    {
-      "name": "@react-native-ai/apple",
-      "sourceUrl": "https://github.com/callstackincubator/ai",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": [
-          "Copyright (c) 2024-2025 Szymon Rybczak",
-          "Copyright (c) 2025-present Callstack"
-        ]
       }
     },
     {

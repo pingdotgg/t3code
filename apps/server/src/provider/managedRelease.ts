@@ -1,7 +1,6 @@
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 
-// Older pins recorded non-semver versions such as `agy_acp_server_1.1.1`; any
-// other release is an update from those.
+// A non-semver installed version counts any other release as an update.
 const isNewer = (candidate: string, current: string) =>
   parseSemver(candidate) && parseSemver(current)
     ? compareSemverVersions(candidate, current) > 0

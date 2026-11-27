@@ -89,6 +89,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       width = 300;
       height = 150;
       value = "";
+      children: TerminalTestElement[] = [];
       private readonly captures = new Set<number>();
 
       setAttribute() {}
@@ -96,6 +97,7 @@ describe("GhosttyTerminalSurface visibility", () => {
         for (const child of children) child.parentElement = this;
       }
       replaceChildren(...children: TerminalTestElement[]) {
+        this.children = children;
         this.append(...children);
       }
       remove() {
@@ -105,6 +107,7 @@ describe("GhosttyTerminalSurface visibility", () => {
         return context;
       }
       focus() {
+        fakeDocument.activeElement = this;
         this.dispatchEvent(new Event("focus"));
       }
       setPointerCapture(pointerId: number) {
@@ -142,10 +145,12 @@ describe("GhosttyTerminalSurface visibility", () => {
         actualBoundingBoxDescent: 3,
       }),
     };
-    vi.stubGlobal("document", {
+    const fakeDocument = {
+      activeElement: null as TerminalTestElement | null,
       createElement: (tag: string) => (tag === "canvas" ? canvas : new TerminalTestElement()),
       fonts: Object.assign(new EventTarget(), { load: async () => [], add() {} }),
-    });
+    };
+    vi.stubGlobal("document", fakeDocument);
     vi.stubGlobal(
       "window",
       Object.assign(new EventTarget(), {
@@ -244,6 +249,8 @@ describe("GhosttyTerminalSurface visibility", () => {
             cursor: { r: 255, g: 255, b: 255 },
           },
           onData,
+          onBinary() {},
+          onReply: onData,
           onResize() {},
           onSelectionChange() {},
           beforeKey: () => false,
@@ -298,6 +305,26 @@ describe("GhosttyTerminalSurface visibility", () => {
     // Russian layout: Cyrillic Es (U+0421) on the physical C key.
     key(surface, "С", "KeyC", { ctrlKey: true, shiftKey: true });
     expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(harness.onData).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing for Ctrl+Shift+C or Ctrl+Insert without a selection but keeps Ctrl+C", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    key(surface, "C", "KeyC", { ctrlKey: true, shiftKey: true });
+    key(surface, "Insert", "Insert", { ctrlKey: true });
+    expect(harness.onData).not.toHaveBeenCalled();
+    key(surface, "c", "KeyC", { ctrlKey: true });
+    key(surface, "Insert", "Insert", { ctrlKey: true, altKey: true });
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["\x03", "\x1b[2;7~"]);
+  });
+
+  it("sends nothing for Cmd+C on macOS without a selection", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    key(surface, "c", "KeyC", { metaKey: true });
     expect(harness.onData).not.toHaveBeenCalled();
   });
 
@@ -398,6 +425,39 @@ describe("GhosttyTerminalSurface visibility", () => {
       "\x1b[97;1:2u",
       "\x1b[97;1:3u",
     ]);
+  });
+
+  it("reports focus transitions only while DEC 1004 is enabled", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create();
+    const blur = () => surface.input.dispatchEvent(new Event("blur"));
+    const reports = () => harness.onData.mock.calls.map(([data]) => data);
+
+    surface.write("\x1b[?1004h");
+    surface.focus();
+    surface.focus();
+    blur();
+    blur();
+    expect(reports()).toEqual(["\x1b[I", "\x1b[O"]);
+
+    harness.onData.mockClear();
+    surface.write("\x1b[?1004l");
+    surface.focus();
+    blur();
+    expect(reports()).toEqual([]);
+  });
+
+  it("reports the blur of an input focused while the surface was still loading", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const pending = harness.create();
+    harness.mount.children[1]?.focus();
+    const surface = await pending;
+
+    surface.write("\x1b[?1004h");
+    surface.input.dispatchEvent(new Event("blur"));
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["\x1b[O"]);
   });
 
   it("honors host interception, IME candidates, and AltGr before local shortcuts", async () => {
@@ -522,6 +582,38 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(surface.getSelectionPosition()).toBeNull();
   });
 
+  it("keeps a multiline selection when Control-click opens the context menu on macOS", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const harness = createHarness();
+    let selectionAtContextMenu: string | null = null;
+    const surface = await harness.create({
+      onContextMenu: () => {
+        selectionAtContextMenu = surface.getSelection();
+      },
+    });
+    surface.write("alpha\r\nbravo\r\ncharlie");
+    harness.flushFrame();
+    harness.pointer("pointerdown", 1, 1, {}, 0, 1);
+    harness.pointer("pointermove", 55, 1, {}, 0, 30);
+    harness.pointer("pointerup", 55, 0, {}, 0, 30);
+    const selected = surface.getSelection();
+    expect(selected.split("\n").length).toBeGreaterThan(1);
+
+    // macOS Chromium reports Control-click as a primary press, then fires contextmenu on press.
+    harness.pointer("pointerdown", 9, 1, { ctrlKey: true }, 0, 1);
+    harness.canvas.dispatchEvent(
+      Object.assign(new Event("contextmenu", { cancelable: true }), {
+        clientX: 9,
+        clientY: 1,
+        button: 0,
+        buttons: 1,
+        ctrlKey: true,
+      }),
+    );
+
+    expect(selectionAtContextMenu).toBe(selected);
+  });
+
   it("reports where a selection sits after output scrolls it", async () => {
     const harness = createHarness();
     const surface = await harness.create();
@@ -638,6 +730,37 @@ describe("GhosttyTerminalSurface visibility", () => {
     },
   );
 
+  it.each([
+    { scenario: "the whole candidate exists", existing: "./a:1:22:DD", opened: "./a:1:22:DD" },
+    { scenario: "only its location exists", existing: "./a:1:22", opened: "./a:1:22" },
+    { scenario: "neither exists", existing: "", opened: null },
+  ])("opens a path with text after its location when $scenario", async ({ existing, opened }) => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const onLinkActivate = vi.fn();
+    const onLinkHover = vi.fn();
+    const validateLink = vi.fn(async (text: string) => text === existing);
+    const surface = await harness.create({
+      beforeKey: () => true,
+      canActivateLink: () => false,
+      validateLink,
+      onLinkActivate,
+      onLinkHover,
+    });
+    surface.write("./a:1:22:DD");
+    harness.flushFrame();
+    vi.advanceTimersByTime(250);
+    harness.pointer("pointermove", 5, 0);
+    expect(onLinkHover).toHaveBeenLastCalledWith("./a:1:22:DD", "./a:1:22");
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointerup", 5, 0);
+    await vi.waitFor(() =>
+      expect(validateLink).toHaveBeenCalledTimes(existing === "./a:1:22:DD" ? 1 : 2),
+    );
+    await Promise.resolve();
+    expect(onLinkActivate.mock.calls.map(([text]) => text)).toEqual(opened ? [opened] : []);
+  });
+
   it("only requests validation for a stable visible link under the pointer", async () => {
     const harness = createHarness();
     const onLinkHover = vi.fn();
@@ -735,7 +858,9 @@ describe("GhosttyTerminalSurface visibility", () => {
         return core;
       });
       let currentVisible = !visible;
+      const onReply = vi.fn();
       const pending = harness.create({
+        onReply,
         get visible() {
           return currentVisible;
         },
@@ -749,7 +874,8 @@ describe("GhosttyTerminalSurface visibility", () => {
       expect(harness.snapshot).toHaveBeenCalledTimes(visible ? 1 : 0);
       if (!visible) expect(harness.paint).not.toHaveBeenCalled();
       surface.write("ready\x1b[5n");
-      expect(harness.onData).toHaveBeenCalledWith("\x1b[0n");
+      expect(onReply).toHaveBeenCalledWith("\x1b[0n");
+      expect(harness.onData).not.toHaveBeenCalled();
       if (!visible) {
         expect(harness.frames.size).toBe(0);
         surface.setVisible(true);
@@ -810,6 +936,25 @@ describe("terminalLinkAtPositionWithRange", () => {
     } finally {
       core.dispose();
     }
+  });
+
+  it("offers the location of a grep hit as the fallback only from the pointer on it", () => {
+    const text = "./src/a.js:1:function inner() {";
+    const row: GhosttyRow = {
+      cells: Array.from(text, (character) => cell(character)),
+      text,
+      isWrapContinuation: false,
+      wrapsToNext: false,
+    };
+    const whole = {
+      text: "./src/a.js:1:function",
+      range: { start: { x: 0, y: 0 }, end: { x: 20, y: 0 } },
+    };
+    expect(terminalLinkAtPositionWithRange([row], 0, 11)).toEqual({
+      ...whole,
+      fallback: { text: "./src/a.js:1", range: { start: { x: 0, y: 0 }, end: { x: 11, y: 0 } } },
+    });
+    expect(terminalLinkAtPositionWithRange([row], 0, 12)).toEqual(whole);
   });
 
   it("activates a wrapped quoted Windows path from its spaces and position suffix", () => {
@@ -1018,19 +1163,24 @@ describe("isTerminalCompositionKey", () => {
 
 describe("application mouse reporting", () => {
   it("drops repeated motion reports until another mouse action resets the cell", () => {
-    const first = resolveTerminalMouseData("motion", "\u001b[<35;8;4M", "");
-    expect(first).toEqual({ send: true, nextMotionData: "\u001b[<35;8;4M" });
+    const data = "\u001b[<35;8;4M";
+    const report = { data, binary: false };
+    const first = resolveTerminalMouseData("motion", report, null);
+    expect(first).toEqual({ send: true, nextMotionData: report });
 
-    const duplicate = resolveTerminalMouseData("motion", "\u001b[<35;8;4M", first.nextMotionData);
-    expect(duplicate).toEqual({ send: false, nextMotionData: "\u001b[<35;8;4M" });
+    const duplicate = resolveTerminalMouseData("motion", report, first.nextMotionData);
+    expect(duplicate).toEqual({ send: false, nextMotionData: report });
 
-    const press = resolveTerminalMouseData("press", "\u001b[<0;8;4M", duplicate.nextMotionData);
-    expect(press).toEqual({ send: true, nextMotionData: "" });
+    const press = resolveTerminalMouseData("press", report, duplicate.nextMotionData);
+    expect(press).toEqual({ send: true, nextMotionData: null });
+    expect(resolveTerminalMouseData("motion", report, press.nextMotionData).send).toBe(true);
 
-    expect(resolveTerminalMouseData("motion", "\u001b[<35;8;4M", press.nextMotionData)).toEqual({
-      send: true,
-      nextMotionData: "\u001b[<35;8;4M",
-    });
+    const legacy = { data: "\x1b[M@\x80$", binary: true };
+    const utf8 = { ...legacy, binary: false };
+    const legacyMotion = resolveTerminalMouseData("motion", legacy, null);
+    const utf8Motion = resolveTerminalMouseData("motion", utf8, legacyMotion.nextMotionData);
+    expect(utf8Motion.send).toBe(true);
+    expect(resolveTerminalMouseData("motion", legacy, utf8Motion.nextMotionData).send).toBe(true);
   });
 });
 

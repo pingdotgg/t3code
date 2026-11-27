@@ -7,6 +7,7 @@ import {
   type TextPreviewRequest,
   type TextPreviewResult,
 } from "./largeTextProtocol";
+import { PreviewError, previewFailure } from "./previewFailure";
 
 const chunks: { start: number; blob: Blob }[] = [];
 const offsets: Uint32Array[] = [new Uint32Array(65536)];
@@ -17,6 +18,16 @@ let complete = false;
 let columns = 1;
 function reply(value: TextPreviewResult) {
   self.postMessage(value, { transfer: [] });
+}
+function meta() {
+  reply({
+    type: "meta",
+    count: entries - 1,
+    columns: Math.min(LARGE_TEXT_MAX_COLUMNS, columns),
+    columnsTruncated: columns > LARGE_TEXT_MAX_COLUMNS,
+    complete,
+    sizeBytes: size,
+  });
 }
 function at(index: number) {
   return offsets[index >>> 16]![index & 65535]!;
@@ -39,7 +50,9 @@ async function read(start: number, end: number) {
     if (part.start >= end) break;
     parts.push(part.blob.slice(Math.max(0, start - part.start), end - part.start));
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(await new Blob(parts).arrayBuffer());
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: start > 0 }).decode(
+    await new Blob(parts).arrayBuffer(),
+  );
 }
 async function page(index: number) {
   const start = index * PREVIEW_PAGE_ROWS;
@@ -52,6 +65,7 @@ async function page(index: number) {
         maxColumns: LARGE_TEXT_MAX_COLUMNS,
         maxCellLength: 1024 * 1024,
         detectCsv: false,
+        stripBom: false,
       }).rows
     : text
         .replace(/\r?\n$|\r$/, "")
@@ -74,14 +88,13 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
     await response.body?.cancel();
     response = new Response(new Blob([]));
   }
-  if (!response.ok || !response.body)
-    throw new Error("The file could not be loaded. Close it and try again.");
+  if (!response.ok || !response.body) throw new PreviewError({ code: "file-load-failed" });
   const total = Number(
     response.headers.get("content-range")?.split("/")[1] ?? response.headers.get("content-length"),
   );
   if (total > LARGE_TEXT_MAX_BYTES) {
     await response.body.cancel();
-    throw new Error("Text previews support files up to 256 MB.");
+    throw new PreviewError({ code: "text-too-large" });
   }
   const reader = response.body.getReader();
   let state = 0;
@@ -109,14 +122,14 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
         }
       }
       prefix = new Uint8Array(await new Blob(parts).arrayBuffer());
-      delimiter = csvPreviewDelimiter(new TextDecoder().decode(prefix));
+      delimiter = csvPreviewDelimiter(new TextDecoder().decode(prefix), false);
     }
     while (true) {
       const { value, done } = prefix ? { value: prefix, done: false } : await reader.read();
       prefix = undefined;
       if (done) break;
       if (size + value.length > LARGE_TEXT_MAX_BYTES)
-        throw new Error("Text previews support files up to 256 MB.");
+        throw new PreviewError({ code: "text-too-large" });
       chunks.push({ start: size, blob: new Blob([value]) });
       for (let i = 0; i < value.length; i++) {
         const byte = value[i]!;
@@ -127,9 +140,9 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
           (pos === 2 && byte === 191)
         )
           continue;
-        if (byte === 0) throw new Error("This file contains binary data.");
+        if (byte === 0) throw new PreviewError({ code: "text-binary" });
         if (pos - at(entries - 1) > 1024 * 1024)
-          throw new Error("A line or record exceeds the 1 MB preview limit.");
+          throw new PreviewError({ code: "text-line-too-long" });
         if (cr) {
           cr = false;
           if (byte === 10) {
@@ -161,10 +174,9 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
           }
         }
         if (byte === 10 || byte === 13) {
-          if (entries > LARGE_TEXT_MAX_ROWS)
-            throw new Error("Text previews support up to 5 million rows.");
+          if (entries > LARGE_TEXT_MAX_ROWS) throw new PreviewError({ code: "text-too-many-rows" });
           set(entries++, pos + 1);
-          columns = Math.min(LARGE_TEXT_MAX_COLUMNS, Math.max(columns, rowColumns));
+          columns = Math.max(columns, rowColumns);
           rowColumns = 1;
           fieldStart = true;
           cr = byte === 13;
@@ -172,21 +184,19 @@ async function open(input: Extract<TextPreviewRequest, { type: "open" }>) {
       }
       size += value.length;
       if (!first && entries > 1) {
-        reply({ type: "meta", count: entries - 1, columns, complete: false, sizeBytes: size });
+        meta();
         await page(0);
         first = true;
       }
     }
-    if (total > 0 && size !== total)
-      throw new Error("The file download was incomplete. Close it and try again.");
+    if (total > 0 && size !== total) throw new PreviewError({ code: "text-download-incomplete" });
     if (size > at(entries - 1)) {
-      if (entries > LARGE_TEXT_MAX_ROWS)
-        throw new Error("Text previews support up to 5 million rows.");
+      if (entries > LARGE_TEXT_MAX_ROWS) throw new PreviewError({ code: "text-too-many-rows" });
       set(entries++, size);
-      columns = Math.min(LARGE_TEXT_MAX_COLUMNS, Math.max(columns, rowColumns));
+      columns = Math.max(columns, rowColumns);
     }
     complete = true;
-    reply({ type: "meta", count: entries - 1, columns, complete, sizeBytes: size });
+    meta();
     await page(0);
   } finally {
     await reader.cancel();
@@ -201,12 +211,12 @@ self.addEventListener("message", (event: MessageEvent<TextPreviewRequest>) => {
         ? page(input.index)
         : complete
           ? read(0, size).then((text) => reply({ type: "copy", text }))
-          : Promise.reject(new Error("Wait for the file to finish loading before copying."))
+          : Promise.reject(new PreviewError({ code: "text-copy-before-loaded" }))
   ).catch((cause: unknown) =>
     reply({
       type: "error",
       operation: input.type,
-      message: cause instanceof Error ? cause.message : "Could not read this file.",
+      ...previewFailure(cause, "read-failed"),
     }),
   );
 });

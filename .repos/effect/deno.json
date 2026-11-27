@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/denoland/deno/refs/heads/main/cli/schemas/config-file.v1.json",
   "nodeModulesDir": "manual",
   "unstable": ["bare-node-builtins", "node-globals", "net"],
-  "workspace": ["./packages/*", "./packages/platform/*"],
+  "workspace": ["./packages/*", "./packages/chat/*", "./packages/platform/*"],
   "exclude": [
     "**/*.mjs",
     "**/*.cjs",
@@ -27,6 +27,7 @@
     "packages/opentelemetry/",
     "packages/platform/browser/",
     "packages/platform/bun/",
+    "packages/platform/cloudflare/",
     "packages/platform/node/",
     "packages/platform/node-shared/",
     "packages/tools/",

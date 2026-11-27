@@ -1,4 +1,26 @@
+import type { EnvironmentId } from "@t3tools/contracts";
+import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
 import type { FilePreviewItem, FilePreviewSource } from "../components/ui/FilePreviewModal.types";
+
+export function remoteAttachmentImageSource(
+  environmentId: EnvironmentId,
+  attachmentId: string,
+  { name, mimeType }: { readonly name: string; readonly mimeType: string },
+) {
+  const resource = {
+    _tag: "attachment" as const,
+    attachmentId,
+    fileName: name,
+    mimeType,
+  };
+  return {
+    kind: "image",
+    name,
+    environmentId,
+    resource,
+    actionsSource: { name, mimeType, environmentId, resource },
+  } satisfies FilePreviewItem;
+}
 
 export function filePreviewKey(source: FilePreviewItem): string {
   if ("resource" in source)
@@ -10,6 +32,11 @@ export function filePreviewKey(source: FilePreviewItem): string {
     ]);
   if ("attachment" in source) return `attachment:${source.attachment.id}`;
   return source.uri;
+}
+
+/** The thumbnail a gallery page opens from and closes into, including pages that were not tapped. */
+export function filePreviewSourceIdentifier(source: FilePreviewItem): string {
+  return source.sourceIdentifier ?? `preview:${filePreviewKey(source)}`;
 }
 
 export function filePreviewGallery(source: FilePreviewSource, group: readonly FilePreviewItem[]) {
@@ -29,7 +56,10 @@ export function filePreviewGallery(source: FilePreviewSource, group: readonly Fi
 }
 
 export function filePreviewName(source: FilePreviewItem): string {
-  const uriName = "uri" in source ? source.uri.split(/[?#]/)[0]?.split("/").pop() : undefined;
+  const uriName =
+    "uri" in source
+      ? safeDecodeURIComponent(source.uri.split(/[?#]/)[0]?.split("/").pop() ?? "")
+      : undefined;
   const name =
     source.name ?? ("attachment" in source ? source.attachment.name : uriName) ?? "Preview";
   const extension = /\.(png|jpe?g|gif|webp|heic|heif|avif|svg|pdf|docx?|xlsx?|pptx?|txt|rtf)$/i;
