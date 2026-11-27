@@ -17,7 +17,7 @@ const NUMBERED_LINE = /^\s*(?:(?:Line |L)(\d+): ?|(\d+):)(.*)$/;
 const CONTEXT_LINE = /^\s*\d+-/;
 const PATH_LINE_TEXT = /^(\S.*?):(\d+):(.*)$/;
 const COLON_HEADING = /^(\S.*):$/;
-const OPENCODE_NUMBERED_LINE = /^\s*Line \d+:/;
+const OPENCODE_NUMBERED_LINE = /^\s+Line \d+:/;
 
 /**
  * Grep tool text as one result per matched line, from ripgrep's `path:line:text` and `--heading`
@@ -49,7 +49,7 @@ export function parseGrepOutput(
     }
     // ripgrep context lines (`N-text`) can't be told apart from a file named like one.
     if (file !== undefined && CONTEXT_LINE.test(line)) return undefined;
-    // `dir/a:12:b.txt:` is both an inline match and an OpenCode heading; its next line decides.
+    // `dir/a:12:b.txt:` is both an inline match and an OpenCode heading; an indented `Line N:` next decides.
     const colonHeading = COLON_HEADING.exec(line.trimEnd());
     const inline =
       colonHeading && OPENCODE_NUMBERED_LINE.test(lines[index + 1] ?? "")

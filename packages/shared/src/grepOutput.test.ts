@@ -39,6 +39,10 @@ describe("parseGrepOutput", () => {
     expect(parseGrepOutput("/tmp/a:12:b.txt:", "/tmp")).toEqual([
       { fileName: "/tmp/a", line: 12, preview: "b.txt:" },
     ]);
+    expect(parseGrepOutput("a.ts:1:needle:\nLine 2:3:needle", ".")).toEqual([
+      { fileName: "a.ts", line: 1, preview: "needle:" },
+      { fileName: "Line 2", line: 3, preview: "needle" },
+    ]);
     expect(parseGrepOutput("src/a.ts\n4:  const a = 1;\n7:a();", ".")).toEqual([
       { fileName: "src/a.ts", line: 4, preview: "  const a = 1;" },
       { fileName: "src/a.ts", line: 7, preview: "a();" },
