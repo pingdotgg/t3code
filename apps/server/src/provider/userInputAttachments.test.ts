@@ -1789,7 +1789,7 @@ describe("question answer paths", () => {
             "META-INF/container.xml":
               '<container><rootfile full-path="OEBPS/book.opf"/></container>',
             "OEBPS/book.opf":
-              '<package><manifest><item id="a" href="a.xhtml"/><item id="b" href="b.xhtml"/><item id="c" href="c.xhtml"/></manifest><spine><itemref idref="b"/><itemref idref="a" hidden=""/><itemref idref="c"/></spine></package>',
+              '<package><manifest><item id="a" href="a.xhtml"/><item id="b" href="b.xhtml"/><item id="c" href="c.xhtml"/><item id="d" href="d.xhtml"/></manifest><spine><itemref idref="b"/><itemref idref="a" hidden=""/><itemref idref="c"/><itemref idref="d"/></spine></package>',
             "OEBPS/a.xhtml":
               '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><body><p>Last chapter</p><div>Totals<table><caption>Table 1: Revenue</caption><tr><th>Q1</th><th>Q2</th></tr><tr><td>100</td><td>200</td></tr></table></div><table><caption><p>Table 2: Costs</p></caption><tr><td>Rent</td></tr></table><p>Price <s>10</s> 8 <del>old</del></p><p><ruby>山路<rt>やまみち</rt></ruby>を歩く。<ruby>東京<rp>（</rp><script type="application/json">{}</script><rt>とうきょう</rt><script type="application/json">{}</script><rp>）</rp></ruby>に着く。<ruby>川<rt/></ruby>を見る。<ruby>海<rp/><rt>うみ</rt><rp> </rp></ruby>まで。</p></body></html>',
             "OEBPS/b.xhtml":
@@ -1798,6 +1798,9 @@ describe("question answer paths", () => {
               '<div>Board<template><h2>Sample berth</h2><img alt="Sample map"/></template> now.</div>' +
               "<p>Keep <template>Example sailing at dawn.</template>reading.</p></body></html>",
             "OEBPS/c.xhtml": '<html hidden=""><body><p>Root hidden</p></body></html>',
+            "OEBPS/d.xhtml":
+              '<xh:html xmlns:xh="http://www.w3.org/1999/xhtml"><xh:body><xh:p>Start <template>Visible excerpt</template>' +
+              "<xh:template>Hidden excerpt</xh:template> end.</xh:p></xh:body></xh:html>",
           },
           expected: [
             "## Chapter 1",
@@ -1825,6 +1828,7 @@ describe("question answer paths", () => {
             "Price 10 8 old",
             "山路(やまみち)を歩く。東京（とうきょう）に着く。川を見る。海(うみ) まで。",
             "## Chapter 3",
+            "## Chapter 4\nStart Visible excerpt end.",
           ],
           absent: [
             "My Novel",
@@ -1839,6 +1843,7 @@ describe("question answer paths", () => {
             "Sample berth",
             "Sample map",
             "Example sailing at dawn.",
+            "Hidden excerpt",
           ],
         },
       ];

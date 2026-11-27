@@ -122,7 +122,12 @@ function separateRubyReadings(ruby: XmlNode) {
   }
 }
 
-function isXhtmlElement(name: string, node: XmlNode, ancestors: readonly XmlNode[]) {
+function isXhtmlElement(
+  name: string,
+  node: XmlNode,
+  ancestors: readonly XmlNode[],
+  rootTagName: string | undefined,
+) {
   const colon = name.lastIndexOf(":");
   const binding = colon === -1 ? "xmlns" : `xmlns:${name.slice(0, colon)}`;
   const namespace =
@@ -130,7 +135,7 @@ function isXhtmlElement(name: string, node: XmlNode, ancestors: readonly XmlNode
     ancestors.findLast((ancestor) => Object.hasOwn(ancestor.attrs, binding))?.attrs[binding];
   return (
     namespace === "http://www.w3.org/1999/xhtml" ||
-    (namespace === undefined && colon === -1 && ancestors[1]?.name === "html")
+    (namespace === undefined && colon === -1 && rootTagName === "html")
   );
 }
 
@@ -138,11 +143,13 @@ function xml(source: string, extension: string): XmlNode {
   const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
   const stack = [root];
+  let rootTagName: string | undefined;
   let nodes = 0;
   const parser = new SaxesParser();
   if (extension === ".epub") Object.assign(parser.ENTITIES, characterEntities);
   parser.on("opentag", (tag) => {
     if (++nodes > 200_000 || stack.length > 128) throw new Truncation("XML structure limit");
+    rootTagName ??= tag.name;
     const node: XmlNode = {
       name: tag.name.split(":").at(-1)!,
       attrs: Object.fromEntries(
@@ -186,7 +193,7 @@ function xml(source: string, extension: string): XmlNode {
     if (
       (extension === ".epub" &&
         node.name === "template" &&
-        isXhtmlElement(tag.name, node, stack)) ||
+        isXhtmlElement(tag.name, node, stack, rootTagName)) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
         Object.hasOwn(tag.attributes, "hidden") &&
