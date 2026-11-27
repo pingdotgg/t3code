@@ -685,13 +685,25 @@ it("keeps the destination of a link dropped from a web page", async () => {
   );
 });
 
-it("pastes a linked word into inline code as plain code text", async () => {
-  await using screen = await mountEditor("`sumBy` after");
+it.each([
+  {
+    label: "inside inline code as plain text",
+    value: "`sumBy` after",
+    caret: "su".length,
+    pasted: "`suGuidemBy` after",
+  },
+  {
+    label: "as a link in italic text that also holds inline code",
+    value: "*`a` bold* after",
+    caret: "a bo".length,
+    pasted: "*`a` bo[Guide](https://example.com/guide)ld* after",
+  },
+])("pastes a linked word $label", async ({ value, caret, pasted }) => {
+  await using screen = await mountEditor(value);
   const { editor } = screen;
   await act(async () => {
-    editor.commands.setTextSelection("su".length + 1);
+    editor.commands.setTextSelection(caret + 1);
   });
-  expect(editor.state.doc.textContent).toBe("`sumBy` after");
   await act(async () => {
     const clipboardData = new DataTransfer();
     clipboardData.setData("text/plain", "Guide");
@@ -701,7 +713,7 @@ it("pastes a linked word into inline code as plain code text", async () => {
   await act(async () => {
     editor.commands.setTextSelection(editor.state.doc.content.size - 1);
   });
-  expect(serializeEditorDoc(editor.state.doc).value).toBe("`suGuidemBy` after");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
 });
 
 it("keeps a pasted web link beside an imported thread chip", async () => {

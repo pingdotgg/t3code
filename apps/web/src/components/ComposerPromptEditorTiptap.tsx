@@ -77,7 +77,7 @@ import {
   collapseShownMarkdownSource,
   ComposerMarkdownSourceExtension,
 } from "~/composer-markdown-source";
-import { MARKDOWN_SOURCE_MARK } from "~/composer-rich-text";
+import { inlineMarkdownUnitMarks, MARKDOWN_SOURCE_MARK } from "~/composer-rich-text";
 import {
   collectComposerPromptInlineTokens,
   selectionTouchesMentionBoundary,
@@ -793,12 +793,24 @@ function isInCode(view: EditorView): boolean {
     schema,
   } = view.state;
   if (schema.marks.code?.isInSet($from.marks())) return true;
-  const node = $from.textOffset > 0 ? $from.parent.child($from.index()) : $from.nodeBefore;
-  return (
-    node?.isText === true &&
-    schema.marks[MARKDOWN_SOURCE_MARK]?.isInSet(node.marks) !== undefined &&
-    /^[*_~]*`/.test(node.text ?? "")
+  const sourceType = schema.marks[MARKDOWN_SOURCE_MARK];
+  if (!sourceType) return false;
+  const regions: { from: number; to: number }[] = [];
+  $from.parent.forEach((child, offset) => {
+    if (!sourceType.isInSet(child.marks)) return;
+    const last = regions.at(-1);
+    if (last?.to === offset) last.to += child.nodeSize;
+    else regions.push({ from: offset, to: offset + child.nodeSize });
+  });
+  const caret = $from.parentOffset;
+  const region = regions.find(({ from, to }) => from <= caret && caret <= to);
+  if (!region) return false;
+  // Shown source keeps its delimiters as text, so parse it to see whether the caret sits in a code span.
+  const units = inlineMarkdownUnitMarks(
+    $from.parent.textBetween(region.from, region.to, undefined, "￼"),
   );
+  const at = caret - region.from;
+  return Boolean(units[at - 1]?.includes("code") || units[at]?.includes("code"));
 }
 
 const ChipSelectionPluginKey = new PluginKey<DecorationSet>("composer-chip-range-selection");
