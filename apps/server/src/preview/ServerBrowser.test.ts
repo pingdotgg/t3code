@@ -5118,126 +5118,499 @@ it.effect("downloads returns captured downloads and clear empties the list", () 
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect("workflow recording stores redacted steps and returns markdown after teardown", () =>
+interface WorkflowFakeElement {
+  readonly nodeType: 1;
+  readonly tagName: string;
+  id: string;
+  className: string;
+  innerText: string;
+  textContent: string;
+  value: string;
+  checked: boolean;
+  labels: Array<WorkflowFakeElement>;
+  readonly ownerDocument: WorkflowFakeDocument;
+  parentElement: WorkflowFakeElement | null;
+  readonly children: Array<WorkflowFakeElement>;
+  readonly isContentEditable: boolean;
+  hasAttribute(name: string): boolean;
+  getAttribute(name: string): string | null;
+  closest(): WorkflowFakeElement;
+}
+
+interface WorkflowFakeDocument {
+  readonly elements: Array<WorkflowFakeElement>;
+  getElementById(id: string): WorkflowFakeElement | null;
+  querySelector(selector: string): WorkflowFakeElement | null;
+  querySelectorAll(): Array<WorkflowFakeElement>;
+}
+
+interface WorkflowHarnessStep {
+  readonly action?: string;
+  readonly event?: string;
+  readonly url?: string;
+  readonly role?: string;
+  readonly ariaLabel?: string;
+  readonly placeholder?: string;
+  readonly dataTestId?: string;
+  readonly selector?: string;
+  readonly value?: string;
+  readonly checked?: boolean;
+}
+
+const workflowFakeDocument = () => {
+  const document: WorkflowFakeDocument = {
+    elements: [],
+    getElementById: (id) => document.elements.find((element) => element.id === id) ?? null,
+    querySelector: (selector) => {
+      const labelFor = /^label\[for="([^"]+)"\]$/.exec(selector)?.[1];
+      if (labelFor === undefined) return null;
+      return (
+        document.elements.find(
+          (element) => element.tagName === "LABEL" && element.getAttribute("for") === labelFor,
+        ) ?? null
+      );
+    },
+    querySelectorAll: () => [],
+  };
+  return document;
+};
+
+const workflowFakeElement = (
+  document: WorkflowFakeDocument,
+  input: {
+    readonly tagName: string;
+    readonly id?: string;
+    readonly className?: string;
+    readonly attributes?: Record<string, string>;
+    readonly innerText?: string;
+    readonly textContent?: string;
+    readonly value?: string;
+    readonly checked?: boolean;
+    readonly labels?: Array<WorkflowFakeElement>;
+    readonly parent?: WorkflowFakeElement;
+    readonly isContentEditable?: boolean;
+  },
+) => {
+  const attributes: Record<string, string> = {
+    ...(input.id === undefined ? {} : { id: input.id }),
+    ...input.attributes,
+  };
+  let element: WorkflowFakeElement;
+  element = {
+    nodeType: 1,
+    tagName: input.tagName.toUpperCase(),
+    id: input.id ?? "",
+    className: input.className ?? "",
+    innerText: input.innerText ?? "",
+    textContent: input.textContent ?? input.innerText ?? "",
+    value: input.value ?? "",
+    checked: input.checked ?? false,
+    labels: input.labels ?? [],
+    ownerDocument: document,
+    parentElement: input.parent ?? null,
+    children: [],
+    isContentEditable: input.isContentEditable ?? false,
+    hasAttribute: (name) => attributes[name] !== undefined,
+    getAttribute: (name) => attributes[name] ?? null,
+    closest: () => element,
+  };
+  input.parent?.children.push(element);
+  document.elements.push(element);
+  return element;
+};
+
+const workflowRecorderDetails = (cdp: ReturnType<typeof makeSession>) => {
+  const bindingCall = cdp.send.mock.calls.find(([method]) => method === "Runtime.addBinding");
+  if (!bindingCall) throw new Error("workflow binding was not registered");
+  const bindingName = (bindingCall[1] as { name: string }).name;
+  const scriptCall = cdp.send.mock.calls.find(
+    ([method, input]) =>
+      method === "Page.addScriptToEvaluateOnNewDocument" &&
+      typeof (input as { source?: unknown }).source === "string" &&
+      (input as { source: string }).source.includes("__t3WorkflowRecorder"),
+  );
+  if (!scriptCall) throw new Error("workflow script was not installed");
+  const source = (scriptCall[1] as { source: string }).source;
+  const token = /const token = "([^"]+)"/u.exec(source)?.[1];
+  if (!token) throw new Error("workflow token was not embedded");
+  return { bindingName, source, token };
+};
+
+const startMockWorkflow = (startUrl?: string) =>
+  Effect.gen(function* () {
+    const { broker, tabId } = yield* ready;
+    const { page } = contexts[0]!;
+    if (startUrl !== undefined) page.commit(startUrl);
+    const started = yield* broker.invoke<PreviewAutomationWorkflowStartResult>({
+      scope,
+      tabId,
+      operation: "workflowStart",
+      input: {},
+    });
+    expect(started).toMatchObject({ tabId, recording: true });
+    const cdp = contexts[0]!.sessions[0]!;
+    return { broker, tabId, page, cdp, ...workflowRecorderDetails(cdp) };
+  });
+
+const workflowRecorderHarness = (source: string, bindingName: string) => {
+  const emitted: Array<{ token: string; step: WorkflowHarnessStep }> = [];
+  const listeners = new Map<string, (event: { target?: unknown }) => void>();
+  const location = { href: "https://spa.test/start" };
+  const navigateTo = (url: string | URL | null | undefined) => {
+    if (url === null || url === undefined) return;
+    const value = String(url);
+    location.href = value.startsWith("https://") ? value : `https://spa.test${value}`;
+  };
+  const history = {
+    pushState: (_state: unknown, _unused: unknown, url?: string | URL | null) => navigateTo(url),
+    replaceState: (_state: unknown, _unused: unknown, url?: string | URL | null) => navigateTo(url),
+  };
+  const sandbox: Record<string, unknown> = {
+    location,
+    history,
+    CSS: { escape: (value: string) => value },
+    addEventListener: (type: string, listener: (event: { target?: unknown }) => void) => {
+      listeners.set(type, listener);
+    },
+    removeEventListener: (type: string) => {
+      listeners.delete(type);
+    },
+    setTimeout,
+    clearTimeout,
+    [bindingName]: (payload: string) =>
+      emitted.push(JSON.parse(payload) as { token: string; step: WorkflowHarnessStep }),
+  };
+  const recorderContext = NodeVM.createContext(sandbox);
+  NodeVM.runInContext(source, recorderContext);
+  return {
+    emitted,
+    history,
+    location,
+    fire: (type: string, target?: unknown) => listeners.get(type)?.({ target }),
+    navigateThenFire: (type: "popstate" | "hashchange", url: string) => {
+      location.href = url;
+      listeners.get(type)?.({});
+    },
+    teardown: () =>
+      (sandbox.__t3WorkflowRecorder as { teardown: () => void } | undefined)?.teardown(),
+  };
+};
+
+it.effect("workflow recorder prioritizes resilient spa locators", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      const { page } = contexts[0]!;
-      const started = yield* broker.invoke<PreviewAutomationWorkflowStartResult>({
-        scope,
-        tabId,
-        operation: "workflowStart",
-        input: {},
+      const { source, bindingName } = yield* startMockWorkflow();
+      const harness = workflowRecorderHarness(source, bindingName);
+      const document = workflowFakeDocument();
+      const click = (input: Parameters<typeof workflowFakeElement>[1]) =>
+        harness.fire("click", workflowFakeElement(document, input));
+
+      click({
+        tagName: "button",
+        attributes: { "data-testid": "save-button", "aria-label": "Ignored label" },
+        innerText: "Visible label",
       });
-      expect(started).toMatchObject({ tabId, recording: true });
-      const cdp = contexts[0]!.sessions[0]!;
-      const bindingCall = cdp.send.mock.calls.find(([method]) => method === "Runtime.addBinding");
-      if (!bindingCall) throw new Error("workflow binding was not registered");
-      const bindingName = (bindingCall[1] as { name: string }).name;
-      const scriptCall = cdp.send.mock.calls.find(
-        ([method, input]) =>
-          method === "Page.addScriptToEvaluateOnNewDocument" &&
-          typeof (input as { source?: unknown }).source === "string" &&
-          (input as { source: string }).source.includes("__t3WorkflowRecorder"),
-      );
-      if (!scriptCall) throw new Error("workflow script was not installed");
-      const source = (scriptCall[1] as { source: string }).source;
-      const token = /const token = "([^"]+)"/u.exec(source)?.[1];
-      expect(token).toBeDefined();
-      expect(source).toContain("<REDACTED_PASSWORD>");
+      click({ tagName: "button", attributes: { "data-test-id": "dash-test" }, innerText: "Dash" });
+      click({ tagName: "button", attributes: { "data-cy": "cy-save" }, innerText: "Cypress" });
+      click({
+        tagName: "button",
+        attributes: { "aria-label": "Explicit save" },
+        innerText: "Visible",
+      });
+      click({ tagName: "button", innerText: " Visible   save " });
+      click({ tagName: "input", attributes: { name: "email", type: "email" } });
+      click({ tagName: "input", attributes: { placeholder: "Search projects", type: "search" } });
+      click({
+        tagName: "div",
+        className:
+          "composer-actions flex-row text-white pointer-events-none items-center px-4 save_button__abc123",
+        attributes: { role: "button", tabindex: "0" },
+      });
+      const longText = `Save ${"x".repeat(100)}`;
+      click({ tagName: "button", innerText: longText });
+      click({
+        tagName: "div",
+        id: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+        attributes: { role: "button", tabindex: "0" },
+      });
 
-      // Run the injected listener against a minimal DOM event target; a password never leaves the page.
-      const emittedPayloads: Array<{ token: string; step: { value?: string } }> = [];
-      const domListeners = new Map<string, (event: { target: unknown }) => void>();
-      const document = {
-        getElementById: () => null,
-        querySelectorAll: () => [],
-      };
-      const password = {
-        nodeType: 1,
-        tagName: "INPUT",
-        id: "password",
-        labels: [],
-        ownerDocument: document,
-        parentElement: null,
-        isContentEditable: false,
-        value: "correct horse battery staple",
-        textContent: "",
-        closest: () => password,
-        hasAttribute: () => false,
-        getAttribute: (name: string) =>
-          name === "type" ? "password" : name === "aria-label" ? "Password" : null,
-      };
-      const sandbox: Record<string, unknown> = {
-        location: { href: "https://example.com/login" },
-        CSS: { escape: (value: string) => value },
-        addEventListener: (type: string, listener: (event: { target: unknown }) => void) =>
-          domListeners.set(type, listener),
-        removeEventListener: (type: string) => domListeners.delete(type),
-        setTimeout,
-        clearTimeout,
-        [bindingName]: (payload: string) => emittedPayloads.push(JSON.parse(payload)),
-      };
-      const recorderContext = NodeVM.createContext(sandbox);
-      NodeVM.runInContext(source, recorderContext);
-      domListeners.get("change")?.({ target: password });
-      expect(emittedPayloads).toHaveLength(1);
-      expect(emittedPayloads[0]?.step.value).toBe("<REDACTED_PASSWORD>");
-      expect(JSON.stringify(emittedPayloads)).not.toContain("correct horse");
-      (sandbox.__t3WorkflowRecorder as { teardown: () => void } | undefined)?.teardown();
-      domListeners.get("change")?.({ target: password });
-      expect(emittedPayloads).toHaveLength(1);
+      const selectors = harness.emitted.map(({ step }) => step.selector);
+      expect(selectors).toEqual([
+        '[data-testid="save-button"]',
+        '[data-test-id="dash-test"]',
+        '[data-cy="cy-save"]',
+        'role=button[name="Explicit save"]',
+        'role=button[name="Visible save"]',
+        'input[name="email"]',
+        'input[placeholder="Search projects"]',
+        "div.composer-actions",
+        `role=button[name="${longText.slice(0, 80)}"]`,
+        "div",
+      ]);
+      expect(selectors[7]).not.toContain("save_button__abc123");
+      expect(selectors[7]).not.toContain("flex");
+      expect(selectors[7]).not.toContain("px-4");
+      expect(selectors[7]).not.toContain("flex-row");
+      expect(selectors[7]).not.toContain("text-white");
+      expect(selectors[7]).not.toContain("pointer-events-none");
+      expect(selectors[9]).not.toContain("f47ac10b");
+      harness.teardown();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
 
-      yield* Effect.promise(() =>
-        cdp.emitAsync("Runtime.bindingCalled", {
-          name: bindingName,
-          payload: JSON.stringify({
-            token,
-            step: {
-              action: "input",
-              event: "change",
-              url: "https://example.com/login",
-              timestamp: "2026-01-01T00:00:00.000Z",
-              ariaLabel: "Password",
-              selector: "#password",
-              value: "<REDACTED_PASSWORD>",
-            },
-          }),
+it.effect("workflow recorder extracts accessible names from spa labelling patterns", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { source, bindingName } = yield* startMockWorkflow();
+      const harness = workflowRecorderHarness(source, bindingName);
+      const document = workflowFakeDocument();
+      workflowFakeElement(document, {
+        tagName: "label",
+        attributes: { for: "email-field" },
+        innerText: "Email address",
+      });
+      const labelledById = workflowFakeElement(document, {
+        tagName: "span",
+        id: "name-copy",
+        innerText: "Display name",
+      });
+      const targets = [
+        workflowFakeElement(document, { tagName: "input", id: "email-field" }),
+        workflowFakeElement(document, {
+          tagName: "input",
+          attributes: { "aria-labelledby": labelledById.id },
         }),
-      );
-      yield* Effect.promise(() => page.emitAsync("framenavigated", page));
+        workflowFakeElement(document, {
+          tagName: "input",
+          attributes: { "aria-label": "Explicit API label" },
+        }),
+        workflowFakeElement(document, {
+          tagName: "input",
+          attributes: { placeholder: "you@example.com" },
+        }),
+        workflowFakeElement(document, { tagName: "input", attributes: { title: "Field title" } }),
+        workflowFakeElement(document, { tagName: "button", innerText: "Visible text" }),
+      ];
+      for (const target of targets) harness.fire("click", target);
 
-      const stopped = yield* broker.invoke<PreviewAutomationWorkflowResult>({
-        scope,
-        tabId,
-        operation: "workflowStop",
-        input: {},
-      });
-      expect(stopped.steps).toEqual([
+      expect(harness.emitted.map(({ step }) => step.ariaLabel)).toEqual([
+        "Email address",
+        "Display name",
+        "Explicit API label",
+        "you@example.com",
+        "Field title",
+        "Visible text",
+      ]);
+      harness.teardown();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("workflow recorder redacts password otp api-key token and card secrets", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { source, bindingName } = yield* startMockWorkflow();
+      const harness = workflowRecorderHarness(source, bindingName);
+      const document = workflowFakeDocument();
+      const cases: ReadonlyArray<{ attributes: Record<string, string>; secret: string }> = [
+        { attributes: { type: "password" }, secret: "correct horse battery staple" },
         {
+          attributes: { type: "text", autocomplete: "section-login current-password" },
+          secret: "current-password-value",
+        },
+        {
+          attributes: { type: "text", autocomplete: "new-password" },
+          secret: "new-password-value",
+        },
+        { attributes: { type: "text", autocomplete: "one-time-code" }, secret: "123456" },
+        { attributes: { type: "text", autocomplete: "cc-number" }, secret: "4242424242424242" },
+        { attributes: { type: "text", autocomplete: "cc-csc" }, secret: "123" },
+        { attributes: { type: "text", name: "api_key" }, secret: "sk-live-secret" },
+        { attributes: { type: "text", id: "login_otp" }, secret: "987654" },
+        { attributes: { type: "text", name: "passcode" }, secret: "passcode-value" },
+        { attributes: { type: "text", name: "user_secret" }, secret: "secret-value" },
+        { attributes: { type: "text", name: "auth_token" }, secret: "token-value" },
+        { attributes: { type: "text", "aria-label": "One time code" }, secret: "654321" },
+        { attributes: { type: "text", name: "cc-number" }, secret: "5555555555554444" },
+        { attributes: { type: "text", "aria-label": "CVV" }, secret: "456" },
+      ];
+      for (const { attributes, secret } of cases) {
+        const field = workflowFakeElement(document, { tagName: "input", attributes });
+        field.value = secret;
+        harness.fire("change", field);
+      }
+
+      expect(harness.emitted).toHaveLength(cases.length);
+      expect(harness.emitted.map(({ step }) => step.value)).toEqual(
+        cases.map(() => "<REDACTED_PASSWORD>"),
+      );
+      const serialized = JSON.stringify(harness.emitted);
+      for (const { secret } of cases) expect(serialized).not.toContain(secret);
+      harness.teardown();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("workflow recorder coalesces repeated edits into one final input step", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { source, bindingName } = yield* startMockWorkflow();
+      const harness = workflowRecorderHarness(source, bindingName);
+      const document = workflowFakeDocument();
+      const field = workflowFakeElement(document, {
+        tagName: "input",
+        attributes: { name: "email", type: "email" },
+      });
+
+      for (const value of ["h", "he", "hel", "hello", "hello@example.com"]) {
+        field.value = value;
+        harness.fire("input", field);
+      }
+      harness.fire("change", field);
+
+      expect(harness.emitted).toHaveLength(1);
+      expect(harness.emitted[0]?.step).toMatchObject({
+        action: "input",
+        event: "change",
+        selector: 'input[name="email"]',
+        value: "hello@example.com",
+      });
+      harness.teardown();
+      expect(harness.emitted).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "workflow recorder captures spa pushState popstate and hashchange without duplicates",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { source, bindingName } = yield* startMockWorkflow();
+        const harness = workflowRecorderHarness(source, bindingName);
+
+        harness.history.pushState(null, "", "/inbox");
+        harness.history.pushState(null, "", "/inbox");
+        harness.history.replaceState(null, "", "/inbox#details");
+        harness.navigateThenFire("popstate", "https://spa.test/start");
+        harness.navigateThenFire("hashchange", "https://spa.test/start#details");
+        harness.navigateThenFire("hashchange", "https://spa.test/start#details");
+
+        expect(
+          harness.emitted
+            .filter(({ step }) => step.action === "navigate")
+            .map(({ step }) => step.url),
+        ).toEqual([
+          "https://spa.test/inbox",
+          "https://spa.test/inbox#details",
+          "https://spa.test/start",
+          "https://spa.test/start#details",
+        ]);
+        harness.teardown();
+        harness.history.pushState(null, "", "/after-teardown");
+        expect(harness.emitted.filter(({ step }) => step.action === "navigate")).toHaveLength(4);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "workflow recording deduplicates navigations coalesces inputs redacts secrets and formats markdown",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const startUrl = "https://spa.test/start";
+        const { broker, tabId, page, cdp, bindingName, token } = yield* startMockWorkflow(startUrl);
+        const emitStep = (step: Record<string, unknown>) =>
+          Effect.promise(() =>
+            cdp.emitAsync("Runtime.bindingCalled", {
+              name: bindingName,
+              payload: JSON.stringify({ token, step }),
+            }),
+          );
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        for (const [event, value] of [
+          ["input", "h"],
+          ["input", "hello"],
+          ["change", "hello@example.com"],
+        ] as const) {
+          yield* emitStep({
+            action: "input",
+            event,
+            url: startUrl,
+            timestamp,
+            ariaLabel: "Email",
+            selector: 'input[name="email"]',
+            value,
+          });
+        }
+        yield* emitStep({
           action: "input",
           event: "change",
-          url: "https://example.com/login",
-          timestamp: "2026-01-01T00:00:00.000Z",
+          url: startUrl,
+          timestamp,
           ariaLabel: "Password",
-          selector: "#password",
-          value: "<REDACTED_PASSWORD>",
-        },
-        expect.objectContaining({ action: "navigate", url: "about:blank" }),
-      ]);
-      expect(stopped.markdown).toContain("<REDACTED_PASSWORD>");
-      expect(stopped.markdown).toContain("# Browser workflow");
-      expect(cdp.send.mock.calls.some(([method]) => method === "Runtime.removeBinding")).toBe(true);
+          selector: 'input[type="password"]',
+          value: "correct horse battery staple",
+        });
 
-      const inactive = yield* broker
-        .invoke<PreviewAutomationWorkflowResult>({
+        yield* Effect.promise(() => page.emitAsync("framenavigated", page));
+        page.commit("https://spa.test/inbox");
+        yield* Effect.promise(() => page.emitAsync("framenavigated", page));
+        yield* Effect.promise(() => page.emitAsync("framenavigated", page));
+        page.commit(startUrl);
+        yield* Effect.promise(() => page.emitAsync("framenavigated", page));
+
+        const stopped = yield* broker.invoke<PreviewAutomationWorkflowResult>({
           scope,
           tabId,
           operation: "workflowStop",
           input: {},
-        })
-        .pipe(Effect.flip);
-      expect(inactive.message).toContain("No Show Me recording is active");
-    }),
-  ).pipe(Effect.provide(layer)),
+        });
+        expect(stopped.steps).toHaveLength(4);
+        expect(stopped.steps[0]).toMatchObject({
+          action: "input",
+          event: "change",
+          ariaLabel: "Email",
+          selector: 'input[name="email"]',
+          value: "hello@example.com",
+        });
+        expect(stopped.steps[1]).toMatchObject({
+          action: "input",
+          ariaLabel: "Password",
+          value: "<REDACTED_PASSWORD>",
+        });
+        expect(stopped.steps.slice(2)).toEqual([
+          expect.objectContaining({ action: "navigate", url: "https://spa.test/inbox" }),
+          expect.objectContaining({ action: "navigate", url: startUrl }),
+        ]);
+        expect(JSON.stringify(stopped)).not.toContain("correct horse battery staple");
+        expect(stopped.markdown).toContain("# Browser workflow");
+        expect(stopped.markdown).toContain(`- Start URL: \`${startUrl}\``);
+        expect(stopped.markdown).toContain("- Steps recorded: 4");
+        expect(stopped.markdown).toContain(
+          "Run each step with `preview_act`, except Navigate steps with `preview_navigate`; pause and ask the user if `<REDACTED_PASSWORD>`, login, or 2FA is encountered.",
+        );
+        expect(stopped.markdown).toContain(
+          '1. Type `hello@example.com` in `Email` (locator: `input[name="email"]`)',
+        );
+        expect(stopped.markdown).toContain(
+          '2. Type `<REDACTED_PASSWORD>` in `Password` (locator: `input[type="password"]`)',
+        );
+        expect(stopped.markdown).toContain("3. Navigate to `https://spa.test/inbox`");
+        expect(cdp.send.mock.calls.some(([method]) => method === "Runtime.removeBinding")).toBe(
+          true,
+        );
+
+        const inactive = yield* broker
+          .invoke<PreviewAutomationWorkflowResult>({
+            scope,
+            tabId,
+            operation: "workflowStop",
+            input: {},
+          })
+          .pipe(Effect.flip);
+        expect(inactive.message).toContain("No Show Me recording is active");
+      }),
+    ).pipe(Effect.provide(layer)),
 );

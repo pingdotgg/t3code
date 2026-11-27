@@ -288,6 +288,8 @@ const WORKFLOW_STEP_LIMIT = 500;
 const WORKFLOW_WORLD = "t3-preview-workflow";
 const REDACTED_HEADER_VALUE = "<REDACTED>";
 const REDACTED_PASSWORD_VALUE = "<REDACTED_PASSWORD>";
+const WORKFLOW_SENSITIVE_FIELD =
+  /password|passcode|otp|one[-_\s]?time[-_\s]?code|secret|token|api[-_]?key|cc[-_\s]?number|cc[-_\s]?csc|cvv|cvc/i;
 
 const boundedHeaders = (headers: Record<string, string>) => {
   const bounded: Record<string, string> = {};
@@ -304,13 +306,22 @@ const isTextualResponse = (contentType: string) =>
     contentType.trim(),
   );
 
-const workflowRecorderSource = (bindingName: string, token: string) => `(() => {
-  const bindingName = ${JSON.stringify(bindingName)};
-  const token = ${JSON.stringify(token)};
+const workflowRecorderSource = (bindingName: string, token: string) =>
+  String.raw`(() => {
+  const bindingName = %T3_BINDING_NAME%;
+  const token = %T3_TOKEN%;
+  const redactedPassword = %T3_REDACTED_PASSWORD%;
   const prior = globalThis.__t3WorkflowRecorder;
   if (prior && prior.teardown) prior.teardown();
-  const cap = (value, limit) => String(value ?? "").replace(/\\s+/g, " ").trim().slice(0, limit);
-  const cssEscape = (value) => globalThis.CSS?.escape ? CSS.escape(value) : String(value).replace(/[^a-zA-Z0-9_-]/g, (char) => "\\\\" + char);
+  const cap = (value, limit) => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, limit);
+  const exactCap = (value, limit) => String(value ?? "").slice(0, limit);
+  const cssEscape = (value) => globalThis.CSS?.escape ? CSS.escape(value) : String(value).replace(/[^a-zA-Z0-9_-]/g, (char) => "\\" + char);
+  const cssString = (value) => '"' + String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\" + '"') + '"';
+  const attribute = (element, name) => {
+    const value = element.getAttribute?.(name);
+    return typeof value === "string" && value.length > 0 ? value : undefined;
+  };
+  const fullTextOf = (element) => String(element.innerText ?? element.textContent ?? "").replace(/\s+/g, " ").trim();
   const textOf = (element) => cap(element.innerText ?? element.textContent, 300);
   const implicitRole = (element) => {
     const tag = element.tagName ? element.tagName.toLowerCase() : "";
@@ -320,7 +331,7 @@ const workflowRecorderSource = (bindingName: string, token: string) => `(() => {
     if (tag === "textarea") return "textbox";
     if (tag === "summary") return "button";
     if (tag !== "input") return undefined;
-    const type = (element.getAttribute("type") || "text").toLowerCase();
+    const type = (attribute(element, "type") || "text").toLowerCase();
     if (["button", "submit", "reset"].includes(type)) return "button";
     if (type === "checkbox") return "checkbox";
     if (type === "radio") return "radio";
@@ -328,42 +339,146 @@ const workflowRecorderSource = (bindingName: string, token: string) => `(() => {
     if (!["hidden", "file"].includes(type)) return "textbox";
     return undefined;
   };
-  const labelOf = (element) => {
-    const aria = cap(element.getAttribute("aria-label"), 300);
-    if (aria) return aria;
-    const labelledBy = element.getAttribute("aria-labelledby");
-    if (labelledBy) {
-      const label = labelledBy.split(/\\s+/).map((id) => element.ownerDocument.getElementById(id)).filter(Boolean).map(textOf).filter(Boolean).join(" ");
-      if (label) return cap(label, 300);
-    }
-    if (element.labels && element.labels.length) return cap(Array.from(element.labels).map(textOf).filter(Boolean).join(" "), 300);
-    return textOf(element) || cap(element.getAttribute("value"), 300) || undefined;
+  const validRoles = new Set(("alertdialog application article banner button cell checkbox columnheader combobox complementary contentinfo definition dialog directory document feed figure form grid gridcell group heading img link list listbox listitem log main marquee math menu menubar menuitem menuitemcheckbox menuitemradio navigation none note option presentation progressbar radio radiogroup region row rowgroup rowheader scrollbar search searchbox separator slider spinbutton status switch tab table tablist tabpanel term textbox timer toolbar tooltip tree treegrid treeitem").split(" "));
+  const semanticRoleOf = (element) => {
+    const explicit = (attribute(element, "role") || "").split(/\s+/).map((token) => cap(token, 100).toLowerCase()).find((token) => validRoles.has(token));
+    const implicit = implicitRole(element);
+    const role = explicit ?? implicit;
+    if (!role || ["generic", "none", "presentation"].includes(role)) return undefined;
+    return role;
   };
-  const selectorOf = (element) => {
-    const testId = element.getAttribute("data-testid") || element.getAttribute("data-test-id");
-    if (testId) return "[data-testid=\\"" + testId.replace(/"/g, "\\\\\\"") + "\\"]";
-    if (element.id) return "#" + cssEscape(element.id);
+  const ariaReferenceOf = (element) => {
+    const labelledBy = attribute(element, "aria-labelledby");
+    if (!labelledBy) return undefined;
+    const label = labelledBy.split(/\s+/)
+      .map((id) => element.ownerDocument?.getElementById?.(id))
+      .filter(Boolean)
+      .map(textOf)
+      .filter(Boolean)
+      .join(" ");
+    return cap(label, 300) || undefined;
+  };
+  const explicitAriaOf = (element) => ariaReferenceOf(element) || cap(attribute(element, "aria-label"), 300) || undefined;
+  const labelsOf = (element) => {
+    const labels = [];
+    if (element.labels && element.labels.length) labels.push(...Array.from(element.labels));
+    const id = attribute(element, "id") || element.id;
+    if (labels.length === 0 && id && element.ownerDocument?.querySelector) {
+      try {
+        const explicitLabel = element.ownerDocument.querySelector("label[for=" + cssString(id) + "]");
+        if (explicitLabel) labels.push(explicitLabel);
+      } catch {}
+    }
+    return cap(labels.map(textOf).filter(Boolean).join(" "), 300) || undefined;
+  };
+  const labelOf = (element) => {
+    const explicit = explicitAriaOf(element);
+    if (explicit) return explicit;
+    const labelled = labelsOf(element);
+    if (labelled) return labelled;
+    const placeholder = cap(attribute(element, "placeholder"), 300);
+    if (placeholder) return placeholder;
+    const title = cap(attribute(element, "title"), 300);
+    if (title) return title;
+    const tag = element.tagName ? element.tagName.toLowerCase() : "";
+    const type = (attribute(element, "type") || "text").toLowerCase();
+    const text = textOf(element);
+    if (tag === "input" && ["button", "submit", "reset"].includes(type))
+      return cap(attribute(element, "value") || element.value, 300) || text || undefined;
+    return text || undefined;
+  };
+  const testIdOf = (element) => {
+    for (const name of ["data-testid", "data-test-id", "data-cy"]) {
+      const value = cap(attribute(element, name), 200);
+      if (value) return { name, value };
+    }
+    return undefined;
+  };
+  const roleLocator = (role, name) => "role=" + role + "[name=" + cssString(name) + "]";
+  const locatorText = (value) => {
+    const text = String(value ?? "").replace(/\s+/g, " ").trim();
+    return text.length > 0 ? text.slice(0, 80) : undefined;
+  };
+  const utilityClass = (name) =>
+    name.startsWith("-") ||
+    /[:\[\]\/%]/.test(name) ||
+    /^(?:(?:inline-)?flex(?:-.+)?|grid(?:-.+)?|pointer-events-.+|sr-only|not-sr-only|italic|not-italic|block|inline-block|inline|hidden|relative|absolute|fixed|sticky|static|visible|invisible|overflow(?:-.+)?|z-.+|w-.+|h-.+|min-w-.+|min-h-.+|max-w-.+|max-h-.+|size-.+|m[trblxy]?-.+|p[trblxy]?-.+|gap(?:-[xy])?-.+|space-[xy]-.+|inset-.+|top-.+|right-.+|bottom-.+|left-.+|order-.+|col-.+|row-.+|items-.+|content-.+|self-.+|justify-.+|place-.+|font-.+|text-(?:xs|sm|base|lg|xl|[2-9]xl|left|right|center|justify|start|end|wrap|nowrap|balance|pretty|ellipsis|clip|white|black|inherit|current|transparent|[a-z]+-\d{2,3}.*)|leading-.+|tracking-.+|bg-.+|border(?:-.+)?|rounded(?:-.+)?|shadow(?:-.+)?|opacity-.+|transition(?:-.+)?|duration-.+|ease-.+|delay-.+|animate-.+|cursor-.+|select-.+|resize(?:-.+)?|list-.+|appearance-.+|outline-.+|ring(?:-.+)?|blur(?:-.+)?|brightness-.+|contrast-.+|drop-shadow(?:-.+)?|grayscale(?:-.+)?|hue-rotate-.+|invert(?:-.+)?|saturate-.+|sepia(?:-.+)?|filter(?:-.+)?|backdrop-.+|stroke-.+|fill-.+|accent-.+|caret-.+|decoration-.+|underline|overline|line-through|no-underline|uppercase|lowercase|capitalize|normal-case|truncate|whitespace-.+|break-.+|align-.+|float-.+|clear-.+|isolate|isolation-.+|object-.+|aspect-.+|basis-.+|grow(?:-.+)?|shrink(?:-.+)?|transform(?:-.+)?|origin-.+|scale-.+|rotate-.+|translate-.+|skew-.+)$/.test(name);
+  const generatedClass = (name) =>
+    /__[a-z0-9]{4,}$/i.test(name) ||
+    /^(?:css|sc|emotion|jss)-[a-z0-9]{4,}$/i.test(name) ||
+    (/^[a-z0-9]{8,}$/i.test(name) && /[a-z]/i.test(name) && /\d/.test(name)) ||
+    (/_[a-z0-9]{6,}$/i.test(name) && /\d/.test(name));
+  const stableClass = (name) =>
+    /^[a-zA-Z][a-zA-Z0-9_-]{0,48}$/.test(name) &&
+    !utilityClass(name) &&
+    !generatedClass(name) &&
+    !/^(?:active|selected|checked|open|opened|closed|disabled|enabled|focus|focused|hover|current|show)$/i.test(name);
+  const classNamesOf = (element) =>
+    (typeof element.className === "string" ? element.className : "")
+      .split(/\s+/)
+      .filter(stableClass)
+      .slice(0, 2);
+  const generatedId = (id) =>
+    id.length > 100 ||
+    /:r[0-9a-z]+:/i.test(id) ||
+    /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id) ||
+    /__[a-z0-9]{4,}$/i.test(id) ||
+    (/^[a-z0-9]{8,}$/i.test(id) && /[a-z]/i.test(id) && /\d/.test(id));
+  const stableCssSelectorOf = (element) => {
     const parts = [];
     for (let current = element; current && current.nodeType === 1 && parts.length < 5; current = current.parentElement) {
-      const tag = current.tagName.toLowerCase();
+      const tag = current.tagName ? current.tagName.toLowerCase() : "*";
       let part = tag;
-      if (current.parentElement) {
-        const siblings = Array.from(current.parentElement.children).filter((sibling) => sibling.tagName === current.tagName);
+      const id = attribute(current, "id") || current.id;
+      const stableId = id && !generatedId(id) ? String(id) : undefined;
+      const classes = stableId === undefined ? classNamesOf(current) : [];
+      if (stableId !== undefined) part += "#" + cssEscape(stableId);
+      else if (classes.length > 0) part += classes.map((name) => "." + cssEscape(name)).join("");
+      if (tag === "input") {
+        const type = cap(attribute(current, "type"), 100);
+        if (type) part += "[type=" + cssString(type) + "]";
+      }
+      const strong = stableId !== undefined || classes.length > 0;
+      if (!strong && current.parentElement) {
+        const siblings = Array.from(current.parentElement.children || []).filter((sibling) => sibling.tagName === current.tagName);
         if (siblings.length > 1) part += ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")";
       }
       parts.unshift(part);
-      if (current.ownerDocument && current.ownerDocument.querySelectorAll(parts.join(" > ")).length === 1) break;
+      const selector = parts.join(" > ");
+      try {
+        if (current.ownerDocument?.querySelectorAll?.(selector).length === 1) return selector.slice(0, 500);
+      } catch {}
     }
     return parts.join(" > ").slice(0, 500);
   };
+  const selectorOf = (element) => {
+    const testId = testIdOf(element);
+    if (testId) return "[" + testId.name + "=" + cssString(testId.value) + "]";
+    const role = semanticRoleOf(element);
+    const explicitName = locatorText(explicitAriaOf(element));
+    if (role && explicitName) return roleLocator(role, explicitName);
+    const tag = element.tagName ? element.tagName.toLowerCase() : "";
+    const type = (attribute(element, "type") || "").toLowerCase();
+    const visibleText = tag === "input" && ["button", "submit", "reset"].includes(type)
+      ? locatorText(attribute(element, "value") || element.value)
+      : locatorText(fullTextOf(element));
+    if (role && ["button", "link"].includes(role) && visibleText) return roleLocator(role, visibleText);
+    const name = cap(attribute(element, "name"), 200);
+    if (name) return tag + "[name=" + cssString(name) + "]";
+    const placeholder = cap(attribute(element, "placeholder"), 200);
+    if (placeholder) return tag + "[placeholder=" + cssString(placeholder) + "]";
+    const accessibleName = locatorText(labelOf(element));
+    if (role && accessibleName) return roleLocator(role, accessibleName);
+    return stableCssSelectorOf(element);
+  };
   const describe = (element) => {
     if (!element || element.nodeType !== 1) return {};
-    const testId = cap(element.getAttribute("data-testid") || element.getAttribute("data-test-id"), 200);
+    const testId = testIdOf(element);
     return {
-      role: cap(element.getAttribute("role")?.split(/\\s+/)[0] ?? implicitRole(element), 100),
+      role: semanticRoleOf(element),
       ariaLabel: labelOf(element),
-      placeholder: cap(element.getAttribute("placeholder"), 300),
-      dataTestId: testId,
+      placeholder: cap(attribute(element, "placeholder"), 300),
+      dataTestId: testId?.value,
       selector: selectorOf(element),
     };
   };
@@ -374,81 +489,150 @@ const workflowRecorderSource = (bindingName: string, token: string) => `(() => {
       if (binding) binding(JSON.stringify({ token, step: clean({ url: location.href, timestamp: new Date().toISOString(), ...step }) }));
     } catch {}
   };
-  const interactive = (target) => target?.closest?.("button,a,input,select,textarea,summary,[role],[tabindex]") ?? target;
-  const editable = (target) => target?.closest?.("input,textarea,select,[contenteditable=true],[contenteditable='']") ?? target;
-  const onClick = (event) => {
-    const element = interactive(event.target);
-    if (element) emit({ action: "click", ...clean(describe(element)) });
+  const interactive = (target) => target?.closest?.("button,a,input,select,textarea,summary,[role],[tabindex],[data-testid],[data-test-id],[data-cy]") ?? target;
+  const editable = (target) => target?.closest?.("input,textarea,select,[contenteditable]") ?? target;
+  const eventTarget = (event) => event.composedPath?.()[0] ?? event.target;
+  const sensitiveAutocomplete = new Set(["current-password", "new-password", "one-time-code", "cc-number", "cc-csc"]);
+  const sensitivePattern = /password|passcode|otp|one[-_\s]?time[-_\s]?code|secret|token|api[-_]?key|cc[-_\s]?number|cc[-_\s]?csc|cvv|cvc/i;
+  const sensitiveField = (element) => {
+    const tag = element.tagName ? element.tagName.toLowerCase() : "";
+    const type = (attribute(element, "type") || "").toLowerCase();
+    if (tag === "input" && type === "password") return true;
+    const autocomplete = (attribute(element, "autocomplete") || "").toLowerCase().split(/\s+/).filter(Boolean);
+    if (autocomplete.some((token) => sensitiveAutocomplete.has(token))) return true;
+    const markers = [attribute(element, "name"), attribute(element, "id") || element.id, attribute(element, "aria-label"), labelOf(element)];
+    return markers.some((value) => typeof value === "string" && sensitivePattern.test(value));
   };
-  const timers = new Set();
-  const pending = new WeakMap();
   const valueOf = (element) => {
     const tag = element.tagName ? element.tagName.toLowerCase() : "";
-    const type = (element.getAttribute("type") || "").toLowerCase();
-    if (tag === "input" && type === "password") return { value: ${JSON.stringify(REDACTED_PASSWORD_VALUE)} };
+    const type = (attribute(element, "type") || "").toLowerCase();
     if (tag === "input" && type === "file") return {};
     if ((tag === "input" || tag === "textarea") && ["checkbox", "radio"].includes(type)) return { checked: element.checked === true };
-    if (tag === "input" || tag === "textarea" || tag === "select") return { value: cap(element.value, 1000) };
-    if (element.isContentEditable) return { value: cap(element.textContent, 1000) };
+    if (sensitiveField(element)) return { value: redactedPassword };
+    if (tag === "input" || tag === "textarea" || tag === "select") return { value: exactCap(element.value, 1000) };
+    if (element.isContentEditable) return { value: exactCap(element.textContent, 1000) };
     return {};
   };
-  const emitInput = (element, eventName) => {
-    if (!element || element.nodeType !== 1) return;
-    emit({ action: "input", event: eventName, ...clean({ ...describe(element), ...valueOf(element) }) });
+  const timers = new Set();
+  const pendingInputs = new Map();
+  const lastInputValues = new WeakMap();
+  const flushInput = (element, eventName) => {
+    const pending = pendingInputs.get(element);
+    if (pending) {
+      clearTimeout(pending.timer);
+      timers.delete(pending.timer);
+    }
+    pendingInputs.delete(element);
+    const value = valueOf(element);
+    const signature = JSON.stringify(value);
+    if (lastInputValues.get(element) === signature) return;
+    lastInputValues.set(element, signature);
+    emit({ action: "input", event: eventName, ...clean({ ...describe(element), ...value }) });
+  };
+  const flushPendingInputs = () => {
+    for (const element of Array.from(pendingInputs.keys())) flushInput(element, "input");
   };
   const onInput = (event) => {
-    const element = editable(event.target);
+    const element = editable(eventTarget(event));
     if (!element || element.nodeType !== 1) return;
-    const priorTimer = pending.get(element);
-    if (priorTimer) clearTimeout(priorTimer);
+    const pending = pendingInputs.get(element);
+    if (pending) {
+      clearTimeout(pending.timer);
+      timers.delete(pending.timer);
+    }
     const timer = setTimeout(() => {
       timers.delete(timer);
-      pending.delete(element);
-      emitInput(element, "input");
+      flushInput(element, "input");
     }, 300);
     timers.add(timer);
-    pending.set(element, timer);
+    pendingInputs.set(element, { timer });
   };
   const onChange = (event) => {
-    const element = editable(event.target);
-    const timer = element && pending.get(element);
-    if (timer) {
-      clearTimeout(timer);
-      timers.delete(timer);
-      pending.delete(element);
-    }
-    emitInput(element, "change");
+    const element = editable(eventTarget(event));
+    if (!element || element.nodeType !== 1) return;
+    flushInput(element, "change");
+  };
+  const onClick = (event) => {
+    flushPendingInputs();
+    const element = interactive(eventTarget(event));
+    if (element) emit({ action: "click", ...clean(describe(element)) });
   };
   const onSubmit = (event) => {
-    const form = event.target?.closest?.("form") ?? event.target;
+    flushPendingInputs();
+    const target = eventTarget(event);
+    const form = target?.closest?.("form") ?? target;
     if (form) emit({ action: "submit", ...clean(describe(form)) });
   };
-  for (const [type, listener] of [["click", onClick], ["input", onInput], ["change", onChange], ["submit", onSubmit]]) {
-    addEventListener(type, listener, true);
+  let lastNavigationUrl = location.href;
+  const emitNavigate = () => {
+    const url = location.href;
+    if (url === lastNavigationUrl) return;
+    lastNavigationUrl = url;
+    flushPendingInputs();
+    emit({ action: "navigate", url });
+  };
+  const historyObject = globalThis.history;
+  const patchedHistory = [];
+  for (const name of ["pushState", "replaceState"]) {
+    const original = historyObject?.[name];
+    if (typeof original !== "function") continue;
+    const priorDescriptor = Object.getOwnPropertyDescriptor(historyObject, name);
+    const wrapped = function () {
+      const result = original.apply(this, arguments);
+      emitNavigate();
+      return result;
+    };
+    try {
+      Object.defineProperty(historyObject, name, { configurable: true, writable: true, value: wrapped });
+      patchedHistory.push({ name, priorDescriptor });
+    } catch {}
   }
+  const listeners = [
+    ["click", onClick],
+    ["input", onInput],
+    ["change", onChange],
+    ["submit", onSubmit],
+    ["popstate", emitNavigate],
+    ["hashchange", emitNavigate],
+  ];
+  for (const [type, listener] of listeners) addEventListener(type, listener, true);
   const teardown = () => {
+    flushPendingInputs();
     for (const timer of timers) clearTimeout(timer);
     timers.clear();
-    for (const [type, listener] of [["click", onClick], ["input", onInput], ["change", onChange], ["submit", onSubmit]]) {
-      removeEventListener(type, listener, true);
+    for (const [type, listener] of listeners) removeEventListener(type, listener, true);
+    for (const { name, priorDescriptor } of patchedHistory) {
+      try {
+        if (priorDescriptor) Object.defineProperty(historyObject, name, priorDescriptor);
+        else delete historyObject[name];
+      } catch {}
     }
     if (globalThis.__t3WorkflowRecorder?.token === token) delete globalThis.__t3WorkflowRecorder;
   };
   globalThis.__t3WorkflowRecorder = { token, teardown };
-})();`;
+})();`
+    .replaceAll("%T3_BINDING_NAME%", JSON.stringify(bindingName))
+    .replaceAll("%T3_TOKEN%", JSON.stringify(token))
+    .replaceAll("%T3_REDACTED_PASSWORD%", JSON.stringify(REDACTED_PASSWORD_VALUE));
 
 const workflowMarkdown = (
   steps: ReadonlyArray<PreviewAutomationWorkflowStep>,
   input: { readonly startedAt: string; readonly stoppedAt: string; readonly startUrl: string },
 ) => {
-  const inlineCode = (value: string) => `\`${value.replaceAll("`", "\\`")}\``;
+  const inlineCode = (value: string) => {
+    const delimiter = "`".repeat(
+      Math.max(0, ...(value.match(/`+/g) ?? []).map((run) => run.length)) + 1,
+    );
+    const padding = /^[ `]|[ `]$/.test(value) ? " " : "";
+    return `${delimiter}${padding}${value}${padding}${delimiter}`;
+  };
   const target = (step: PreviewAutomationWorkflowStep) => {
     const label =
       step.ariaLabel ?? step.placeholder ?? step.dataTestId ?? step.role ?? step.selector;
-    return label === undefined ? "the page" : inlineCode(label);
+    return label === undefined ? "the target" : inlineCode(label);
   };
   const locator = (step: PreviewAutomationWorkflowStep) =>
-    step.selector === undefined ? "" : ` (${inlineCode(step.selector)})`;
+    step.selector === undefined ? "" : ` (locator: ${inlineCode(step.selector)})`;
   const lines = steps.map((step, index) => {
     const number = `${index + 1}.`;
     switch (step.action) {
@@ -465,7 +649,9 @@ const workflowMarkdown = (
               : step.checked === false
                 ? "unchecked"
                 : "changed";
-        return `${number} Enter ${value} in ${target(step)}${locator(step)}`;
+        if (step.checked !== undefined)
+          return `${number} Set ${target(step)} to ${step.checked ? "checked" : "unchecked"}${locator(step)}`;
+        return `${number} Type ${value} in ${target(step)}${locator(step)}`;
       }
       case "submit":
         return `${number} Submit ${target(step)}${locator(step)}`;
@@ -474,9 +660,12 @@ const workflowMarkdown = (
   return [
     "# Browser workflow",
     "",
+    `- Start URL: ${inlineCode(input.startUrl)}`,
+    `- Steps recorded: ${steps.length}`,
     `- Started: ${inlineCode(input.startedAt)}`,
     `- Stopped: ${inlineCode(input.stoppedAt)}`,
-    `- Start URL: ${inlineCode(input.startUrl)}`,
+    "",
+    "Run each step with `preview_act`, except Navigate steps with `preview_navigate`; pause and ask the user if `<REDACTED_PASSWORD>`, login, or 2FA is encountered.",
     "",
     ...(lines.length > 0 ? lines : ["No steps were recorded."]),
     "",
@@ -670,6 +859,7 @@ interface WorkflowRecording {
   frameId: string | undefined;
   readonly startedAt: string;
   readonly startUrl: string;
+  lastUrl: string;
   readonly steps: Array<PreviewAutomationWorkflowStep>;
   readonly onBinding: (event: { readonly name?: string; readonly payload?: string }) => void;
   readonly onExecutionContext: (event: {
@@ -809,6 +999,56 @@ const pushBounded = <A>(
 ) => {
   buffer.push(entry);
   if (buffer.length > limit) buffer.splice(0, buffer.length - limit);
+};
+
+const recordWorkflowStep = (workflow: WorkflowRecording, step: PreviewAutomationWorkflowStep) => {
+  if (step.action !== "navigate") {
+    pushBounded(workflow.steps, step, WORKFLOW_STEP_LIMIT);
+    return;
+  }
+  const url = ServerBrowserPage.withoutDataPayload(step.url).slice(0, 2048);
+  if (!url || url === workflow.lastUrl) return;
+  workflow.lastUrl = url;
+  pushBounded(workflow.steps, { ...step, url }, WORKFLOW_STEP_LIMIT);
+};
+
+const workflowInputTarget = (step: PreviewAutomationWorkflowStep) => {
+  const parts = [
+    step.url,
+    step.role,
+    step.ariaLabel,
+    step.placeholder,
+    step.dataTestId,
+    step.selector,
+  ];
+  return parts.some((part) => part !== undefined) ? parts.join("\u0000") : undefined;
+};
+
+const coalesceWorkflowInputSteps = (steps: ReadonlyArray<PreviewAutomationWorkflowStep>) => {
+  const coalesced: Array<PreviewAutomationWorkflowStep> = [];
+  for (const step of steps) {
+    const prior = coalesced[coalesced.length - 1];
+    const target = step.action === "input" ? workflowInputTarget(step) : undefined;
+    if (
+      step.action === "input" &&
+      prior?.action === "input" &&
+      target !== undefined &&
+      target === workflowInputTarget(prior)
+    ) {
+      coalesced[coalesced.length - 1] = { ...prior, ...step };
+    } else {
+      coalesced.push(step);
+    }
+  }
+  return coalesced;
+};
+
+const redactWorkflowStep = (step: PreviewAutomationWorkflowStep) => {
+  if (step.action !== "input" || step.value === undefined) return step;
+  const markers = [step.ariaLabel, step.placeholder, step.dataTestId, step.selector];
+  if (!markers.some((marker) => marker !== undefined && WORKFLOW_SENSITIVE_FIELD.test(marker)))
+    return step;
+  return { ...step, value: REDACTED_PASSWORD_VALUE };
 };
 
 const viewportSettingsEqual = (left: PreviewViewportSetting, right: PreviewViewportSetting) =>
@@ -1689,15 +1929,11 @@ const make = Effect.gen(function* () {
         });
       }
       if (frame === page.mainFrame() && tab.workflow) {
-        pushBounded(
-          tab.workflow.steps,
-          {
-            action: "navigate",
-            url: ServerBrowserPage.withoutDataPayload(frame.url()).slice(0, 2048),
-            timestamp: new Date().toISOString(),
-          },
-          WORKFLOW_STEP_LIMIT,
-        );
+        recordWorkflowStep(tab.workflow, {
+          action: "navigate",
+          url: frame.url(),
+          timestamp: new Date().toISOString(),
+        });
       }
       // Same-document navigations (SPA routes) fire no load event.
       if (frame === page.mainFrame() && !tab.loading) void reportLoaded(tab);
@@ -3098,7 +3334,7 @@ const make = Effect.gen(function* () {
     const url = workflowString(step.url, 2048);
     const timestamp = workflowString(step.timestamp, 128);
     if (!url || !timestamp) return null;
-    return {
+    return redactWorkflowStep({
       action: action as PreviewAutomationWorkflowStep["action"],
       url: ServerBrowserPage.withoutDataPayload(url),
       timestamp,
@@ -3120,7 +3356,7 @@ const make = Effect.gen(function* () {
       ...(step.event === "input" || step.event === "change" ? { event: step.event } : {}),
       ...(typeof step.value === "string" ? { value: step.value.slice(0, 1000) } : {}),
       ...(typeof step.checked === "boolean" ? { checked: step.checked } : {}),
-    };
+    });
   };
 
   const startWorkflow = (tab: ServerTab): Promise<WorkflowRecording> => {
@@ -3136,7 +3372,7 @@ const make = Effect.gen(function* () {
           const payload = JSON.parse(event.payload) as { token?: unknown; step?: unknown };
           if (payload.token !== token) return;
           const step = sanitizeWorkflowStep(payload.step);
-          if (step) pushBounded(steps, step, WORKFLOW_STEP_LIMIT);
+          if (step) recordWorkflowStep(workflow, step);
         } catch {}
       };
       const workflow: WorkflowRecording = {
@@ -3147,6 +3383,7 @@ const make = Effect.gen(function* () {
         frameId: undefined,
         startedAt: new Date().toISOString(),
         startUrl: ServerBrowserPage.withoutDataPayload(tab.page.url()).slice(0, 2048),
+        lastUrl: ServerBrowserPage.withoutDataPayload(tab.page.url()).slice(0, 2048),
         steps,
         onBinding,
         onExecutionContext: (event) => {
@@ -3165,11 +3402,13 @@ const make = Effect.gen(function* () {
       tab.cdp.on("Runtime.bindingCalled", onBinding);
       tab.cdp.on("Runtime.executionContextCreated", workflow.onExecutionContext);
       try {
+        const source = workflowRecorderSource(bindingName, token);
+        const { frameTree } = await tab.cdp.send("Page.getFrameTree");
+        workflow.frameId = frameTree.frame.id;
         await tab.cdp.send("Runtime.enable").catch(constVoid);
         await tab.cdp
           .send("Runtime.addBinding", { name: bindingName, executionContextName: WORKFLOW_WORLD })
           .catch(() => tab.cdp.send("Runtime.addBinding", { name: bindingName }));
-        const source = workflowRecorderSource(bindingName, token);
         const added = await tab.cdp.send("Page.addScriptToEvaluateOnNewDocument", {
           source,
           worldName: WORKFLOW_WORLD,
@@ -3179,8 +3418,6 @@ const make = Effect.gen(function* () {
           typeof (added as { identifier?: unknown }).identifier === "string"
             ? (added as { identifier: string }).identifier
             : undefined;
-        const { frameTree } = await tab.cdp.send("Page.getFrameTree");
-        workflow.frameId = frameTree.frame.id;
         const { executionContextId } = await tab.cdp.send("Page.createIsolatedWorld", {
           frameId: frameTree.frame.id,
           worldName: WORKFLOW_WORLD,
@@ -3240,7 +3477,7 @@ const make = Effect.gen(function* () {
     }
     const stoppedAt = new Date().toISOString();
     const result = {
-      steps: [...workflow.steps],
+      steps: coalesceWorkflowInputSteps(workflow.steps),
       startedAt: workflow.startedAt,
       stoppedAt,
       startUrl: workflow.startUrl,
