@@ -1206,6 +1206,68 @@ describe("ThreadSettlementServiceV2 worker", () => {
       }).pipe(Effect.provide(projectionStoreSql)),
   );
 
+  it.effect("settles a finished subagent whose pinned parent never settles", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const parent = { ...appThread("pinned-parent", null), pinnedAt: DateTime.makeUnsafe(NOW) };
+      const child = {
+        ...appThread("finished-child", null),
+        lineage: {
+          rootThreadId: parent.id,
+          parentThreadId: parent.id,
+          relationshipToParent: "subagent" as const,
+        },
+      };
+      for (const thread of [parent, child]) {
+        yield* store.apply({
+          type: "thread.created",
+          id: EventId.make(`created:${thread.id}`),
+          threadId: thread.id,
+          occurredAt: thread.createdAt,
+          payload: thread,
+        });
+      }
+      const run: OrchestrationV2Run = {
+        id: RunId.make(`run:${child.id}`),
+        threadId: child.id,
+        ordinal: 1,
+        providerInstanceId: parent.providerInstanceId,
+        modelSelection: parent.modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make(`message:${child.id}`),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "completed",
+        requestedAt: DateTime.makeUnsafe(NOW),
+        startedAt: DateTime.makeUnsafe(NOW),
+        completedAt: DateTime.makeUnsafe(NOW),
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      yield* store.apply({
+        type: "run.created",
+        id: EventId.make(`created:${run.id}`),
+        threadId: child.id,
+        occurredAt: DateTime.makeUnsafe(NOW),
+        payload: run,
+      });
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([]),
+        projections: store,
+        settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 2 },
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+        yield* service.drain;
+        expect(yield* Ref.get(fixture.commands)).toEqual([
+          expect.objectContaining({ type: "thread.auto-settle", threadId: child.id }),
+        ]);
+      }).pipe(Effect.provide(fixture.layer));
+    }).pipe(Effect.provide(projectionStoreSql)),
+  );
+
   it.effect(
     "manual parent settlement drains hidden children with automatic settlement disabled",
     () =>
