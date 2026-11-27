@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
+  PREVIEW_AUTOMATION_SERVER_OPERATIONS,
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
@@ -26,6 +27,12 @@ import { liveThreadsLayer } from "../../McpToolAccess.testkit.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { claimPreviewRecording, layerStandard } from "./handlers.ts";
 import { PreviewStandardToolkit } from "./tools.ts";
+
+const testDependencies = Layer.mergeAll(
+  PreviewAutomationBroker.layer,
+  liveThreadsLayer,
+  ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-handler-" }),
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 it.effect("preview_open navigates the opened tab to a dev server in one tool call", () =>
   Effect.gen(function* () {
@@ -94,11 +101,108 @@ it.effect("preview_open navigates the opened tab to a dev server in one tool cal
       capabilities: new Set(["preview"] as const),
       issuedAt: 1,
     }),
-    Effect.provide(
-      Layer.mergeAll(PreviewAutomationBroker.layer, liveThreadsLayer).pipe(
-        Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-      ),
-    ),
+    Effect.provide(testDependencies),
+  ),
+);
+
+it.effect("new preview tools forward to their server operations", () =>
+  Effect.gen(function* () {
+    const scope = yield* McpInvocationContext.McpInvocationContext;
+    const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const connected = yield* Deferred.make<void>();
+    const tabId = PreviewTabId.make("target-tab");
+    const requests: PreviewAutomationRequest[] = [];
+    const events = yield* broker.connect({
+      clientId: "client-new-tools",
+      environmentId: scope.environmentId,
+      supportedOperations: [...PREVIEW_AUTOMATION_SERVER_OPERATIONS],
+    });
+    yield* Stream.runForEach(events, (event) => {
+      if (event.type === "connected") return Deferred.succeed(connected, undefined);
+      requests.push(event.request);
+      const result =
+        event.request.operation === "profileCreate"
+          ? { profile: { id: "profile-agent", name: "Agent" }, profiles: [] }
+          : event.request.operation === "downloads"
+            ? { downloads: [] }
+            : event.request.operation === "consoleLogs"
+              ? { consoleEntries: [] }
+              : event.request.operation === "networkLogs"
+                ? { networkEntries: [] }
+                : event.request.operation === "workflowStop"
+                  ? {
+                      steps: [],
+                      startedAt: "2026-01-01T00:00:00.000Z",
+                      stoppedAt: "2026-01-01T00:00:01.000Z",
+                      startUrl: "https://example.com",
+                      markdown: "# Browser workflow\n",
+                    }
+                  : {
+                      available: true,
+                      visible: false,
+                      tabId,
+                      url: "https://example.com",
+                      title: "Example",
+                      loading: false,
+                    };
+      return broker.respond({
+        clientId: "client-new-tools",
+        connectionId: event.connectionId,
+        requestId: event.request.requestId,
+        ok: true,
+        result,
+      });
+    }).pipe(Effect.forkScoped);
+    yield* Deferred.await(connected);
+    const toolkit = yield* PreviewStandardToolkit.pipe(
+      Effect.provide(McpToolAccess.HandlersLayer.layer(layerStandard)),
+    );
+    const invokeTool = <Name extends keyof typeof PreviewStandardToolkit.tools>(
+      name: Name,
+      input: Parameters<typeof toolkit.handle<Name>>[1],
+    ) => toolkit.handle(name, input).pipe(Stream.unwrap, Stream.runCollect);
+
+    yield* invokeTool("preview_profile_create", { name: "Agent" });
+    yield* invokeTool("preview_history", {
+      tabId,
+      action: "reload",
+      hardReload: true,
+      readiness: "none",
+    });
+    yield* invokeTool("preview_downloads", { tabId, limit: 5 });
+    yield* invokeTool("preview_console_logs", { tabId, level: "error" });
+    yield* invokeTool("preview_network_logs", { tabId, failedOnly: true });
+    yield* invokeTool("preview_workflow_stop", { tabId });
+
+    expect(
+      requests.map(({ operation, input, tabId: target }) => ({ operation, input, target })),
+    ).toEqual([
+      { operation: "profileCreate", input: { name: "Agent" }, target: undefined },
+      {
+        operation: "reload",
+        input: { hardReload: true, readiness: "none" },
+        target: tabId,
+      },
+      { operation: "downloads", input: { limit: 5 }, target: tabId },
+      { operation: "consoleLogs", input: { level: "error" }, target: tabId },
+      { operation: "networkLogs", input: { failedOnly: true }, target: tabId },
+      { operation: "workflowStop", input: {}, target: tabId },
+    ]);
+    expect(requests.slice(1).every((request) => request.tabIdExplicit === true)).toBe(true);
+  }).pipe(
+    Effect.provideService(McpInvocationContext.McpInvocationContext, {
+      environmentId: EnvironmentId.make("environment-1"),
+      requestNamespace: "provider-session-1",
+      thread: {
+        threadId: ThreadId.make("thread-1"),
+        providerSessionId: "provider-session-1",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+      client: undefined,
+      capabilities: new Set(["preview"] as const),
+      issuedAt: 1,
+    }),
+    Effect.provide(testDependencies),
   ),
 );
 

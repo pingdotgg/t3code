@@ -10,7 +10,11 @@ import {
   PreviewViewportSize,
 } from "./preview.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { BrowserProfileId } from "./browserProfile.ts";
+import {
+  BrowserProfileId,
+  BrowserProfileName,
+  INCOGNITO_BROWSER_PROFILE_ID,
+} from "./browserProfile.ts";
 
 const BoundedUrl = Schema.String.check(Schema.isTrimmed())
   .check(Schema.isNonEmpty())
@@ -51,6 +55,17 @@ export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
   "hover",
   "select",
   "drag",
+  "profileCreate",
+  "profileRename",
+  "profileDelete",
+  "back",
+  "forward",
+  "reload",
+  "downloads",
+  "consoleLogs",
+  "networkLogs",
+  "workflowStart",
+  "workflowStop",
 ] as const;
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_SERVER_OPERATIONS);
 export type PreviewAutomationOperation = typeof PreviewAutomationOperation.Type;
@@ -70,6 +85,46 @@ export const PreviewAutomationProfile = Schema.Struct({
   incognito: Schema.optional(Schema.Boolean),
 });
 export type PreviewAutomationProfile = typeof PreviewAutomationProfile.Type;
+
+export const PreviewAutomationProfileCreateInput = Schema.Struct({
+  name: BrowserProfileName,
+});
+export type PreviewAutomationProfileCreateInput = typeof PreviewAutomationProfileCreateInput.Type;
+
+export const PreviewAutomationProfileRenameInput = Schema.Struct({
+  profileId: BrowserProfileId,
+  name: BrowserProfileName,
+});
+export type PreviewAutomationProfileRenameInput = typeof PreviewAutomationProfileRenameInput.Type;
+
+export const PreviewAutomationProfileDeleteInput = Schema.Struct({
+  profileId: BrowserProfileId,
+});
+export type PreviewAutomationProfileDeleteInput = typeof PreviewAutomationProfileDeleteInput.Type;
+
+export const PreviewAutomationProfileMutationResult = Schema.Struct({
+  profile: PreviewAutomationProfile,
+  profiles: Schema.Array(PreviewAutomationProfile),
+  defaultProfileId: Schema.optional(BrowserProfileId),
+});
+export type PreviewAutomationProfileMutationResult =
+  typeof PreviewAutomationProfileMutationResult.Type;
+
+export const PreviewAutomationProfileDeleteResult = Schema.Struct({
+  deletedProfileId: BrowserProfileId,
+  profiles: Schema.Array(PreviewAutomationProfile),
+  defaultProfileId: Schema.optional(BrowserProfileId),
+});
+export type PreviewAutomationProfileDeleteResult = typeof PreviewAutomationProfileDeleteResult.Type;
+
+export const PreviewAutomationDownloadEntry = Schema.Struct({
+  fileName: Schema.String,
+  path: Schema.String,
+  sizeBytes: Schema.Number,
+  url: Schema.String,
+  completedAt: Schema.String,
+});
+export type PreviewAutomationDownloadEntry = typeof PreviewAutomationDownloadEntry.Type;
 
 const VISIBLE_DESCRIPTION =
   "True while a client shows this tab: a streamed live view, or the desktop app's own browser panel.";
@@ -111,17 +166,7 @@ export const PreviewAutomationStatus = Schema.Struct({
   fileChooser: Schema.optional(
     Schema.NullOr(Schema.Struct({ multiple: Schema.Boolean, accept: Schema.String })),
   ),
-  downloads: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        fileName: Schema.String,
-        path: Schema.String,
-        sizeBytes: Schema.Number,
-        url: Schema.String,
-        completedAt: Schema.String,
-      }),
-    ),
-  ),
+  downloads: Schema.optional(Schema.Array(PreviewAutomationDownloadEntry)),
   /** Server hosts: all thread tabs are readable; actions require ownedByCaller or an unclaimed tab without human control. */
   tabs: Schema.optional(
     Schema.Array(
@@ -171,12 +216,29 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   profileId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))).annotate({
     description: PROFILE_GUIDANCE,
   }),
-}).check(
-  Schema.makeFilter(
-    (input) =>
-      !(input.tabId !== undefined && input.reuseExistingTab === false) ||
-      "tabId cannot be combined with reuseExistingTab=false.",
+  ephemeral: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Open a new throwaway tab isolated from every other tab, including other ephemeral tabs. Implies reuseExistingTab=false.",
+    }),
   ),
+}).check(
+  Schema.makeFilter((input) => {
+    if (input.tabId !== undefined && input.reuseExistingTab === false) {
+      return "tabId cannot be combined with reuseExistingTab=false.";
+    }
+    if (input.ephemeral === true && input.tabId !== undefined) {
+      return "ephemeral cannot be combined with tabId because it always opens a new tab.";
+    }
+    if (
+      input.ephemeral === true &&
+      input.profileId !== undefined &&
+      input.profileId !== INCOGNITO_BROWSER_PROFILE_ID
+    ) {
+      return "ephemeral cannot be combined with a persistent profileId.";
+    }
+    return true;
+  }),
 );
 export type PreviewAutomationOpenInput = typeof PreviewAutomationOpenInput.Type;
 
@@ -224,6 +286,27 @@ export const PreviewAutomationNavigateInput = Schema.Struct({
   ),
 );
 export type PreviewAutomationNavigateInput = typeof PreviewAutomationNavigateInput.Type;
+
+const NavigationReadiness = Schema.optional(
+  Schema.Literals(["load", "domContentLoaded", "none"]),
+).annotate({
+  description: "Default 'load'. 'none': return at once.",
+});
+
+export const PreviewAutomationHistoryInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  readiness: NavigationReadiness,
+  timeoutMs: OptionalTimeoutMs,
+});
+export type PreviewAutomationHistoryInput = typeof PreviewAutomationHistoryInput.Type;
+
+export const PreviewAutomationReloadInput = Schema.Struct({
+  ...PreviewAutomationHistoryInput.fields,
+  hardReload: Schema.optional(
+    Schema.Boolean.annotate({ description: "Ignore the browser cache. Default false." }),
+  ),
+});
+export type PreviewAutomationReloadInput = typeof PreviewAutomationReloadInput.Type;
 
 export const PreviewAutomationResizeInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
@@ -513,6 +596,8 @@ export const PreviewAutomationConsoleEntry = Schema.Struct({
 });
 export type PreviewAutomationConsoleEntry = typeof PreviewAutomationConsoleEntry.Type;
 
+const HeaderMap = Schema.Record(Schema.String, Schema.String);
+
 export const PreviewAutomationNetworkEntry = Schema.Struct({
   url: Schema.String,
   method: Schema.String,
@@ -520,8 +605,98 @@ export const PreviewAutomationNetworkEntry = Schema.Struct({
   failed: Schema.Boolean,
   errorText: Schema.optional(Schema.String),
   timestamp: Schema.String,
+  requestHeaders: Schema.optional(HeaderMap),
+  responseHeaders: Schema.optional(HeaderMap),
+  responseBodyPreview: Schema.optional(Schema.String),
+  durationMs: Schema.optional(Schema.Number),
 });
 export type PreviewAutomationNetworkEntry = typeof PreviewAutomationNetworkEntry.Type;
+
+const LogLimit = Schema.optional(
+  Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThanOrEqualTo(1_000)),
+);
+const LogClear = Schema.optional(
+  Schema.Boolean.annotate({
+    description: "Clear the captured entries after reading. Default false.",
+  }),
+);
+
+export const PreviewAutomationDownloadsInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  clear: LogClear,
+  limit: LogLimit,
+});
+export type PreviewAutomationDownloadsInput = typeof PreviewAutomationDownloadsInput.Type;
+
+export const PreviewAutomationDownloadsResult = Schema.Struct({
+  downloads: Schema.Array(PreviewAutomationDownloadEntry),
+});
+export type PreviewAutomationDownloadsResult = typeof PreviewAutomationDownloadsResult.Type;
+
+export const PreviewAutomationConsoleLogsInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  level: Schema.optional(Schema.Literals(["error", "warning", "info", "log", "debug"])),
+  since: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))).annotate({
+    description: "ISO timestamp; only entries at or after it are returned.",
+  }),
+  limit: LogLimit,
+  clear: LogClear,
+});
+export type PreviewAutomationConsoleLogsInput = typeof PreviewAutomationConsoleLogsInput.Type;
+
+export const PreviewAutomationConsoleLogsResult = Schema.Struct({
+  consoleEntries: Schema.Array(PreviewAutomationConsoleEntry),
+});
+export type PreviewAutomationConsoleLogsResult = typeof PreviewAutomationConsoleLogsResult.Type;
+
+export const PreviewAutomationNetworkLogsInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  urlIncludes: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+  method: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(16))),
+  statusMin: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 }))),
+  statusMax: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 }))),
+  failedOnly: Schema.optional(Schema.Boolean),
+  limit: LogLimit,
+  clear: LogClear,
+});
+export type PreviewAutomationNetworkLogsInput = typeof PreviewAutomationNetworkLogsInput.Type;
+
+export const PreviewAutomationNetworkLogsResult = Schema.Struct({
+  networkEntries: Schema.Array(PreviewAutomationNetworkEntry),
+});
+export type PreviewAutomationNetworkLogsResult = typeof PreviewAutomationNetworkLogsResult.Type;
+
+export const PreviewAutomationWorkflowStep = Schema.Struct({
+  action: Schema.Literals(["click", "input", "submit", "navigate"]),
+  url: Schema.String,
+  timestamp: Schema.String,
+  role: Schema.optional(Schema.String),
+  ariaLabel: Schema.optional(Schema.String),
+  placeholder: Schema.optional(Schema.String),
+  dataTestId: Schema.optional(Schema.String),
+  selector: Schema.optional(Schema.String),
+  event: Schema.optional(Schema.Literals(["input", "change"])),
+  value: Schema.optional(Schema.String),
+  checked: Schema.optional(Schema.Boolean),
+});
+export type PreviewAutomationWorkflowStep = typeof PreviewAutomationWorkflowStep.Type;
+
+export const PreviewAutomationWorkflowStartResult = Schema.Struct({
+  tabId: PreviewTabId,
+  recording: Schema.Boolean,
+  startedAt: Schema.String,
+  startUrl: Schema.String,
+});
+export type PreviewAutomationWorkflowStartResult = typeof PreviewAutomationWorkflowStartResult.Type;
+
+export const PreviewAutomationWorkflowResult = Schema.Struct({
+  steps: Schema.Array(PreviewAutomationWorkflowStep),
+  startedAt: Schema.String,
+  stoppedAt: Schema.String,
+  startUrl: Schema.String,
+  markdown: Schema.String,
+});
+export type PreviewAutomationWorkflowResult = typeof PreviewAutomationWorkflowResult.Type;
 
 export const PreviewAutomationActionEvent = Schema.Struct({
   id: Schema.String,

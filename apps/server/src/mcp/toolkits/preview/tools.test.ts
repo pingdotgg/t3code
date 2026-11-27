@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
+import { PreviewAutomationNetworkEntry } from "@t3tools/contracts";
 
 import { PreviewToolkit } from "./tools.ts";
 
@@ -31,10 +32,14 @@ it("exports provider-compatible object schemas", () => {
     if (tool.name === "preview_navigate") {
       expect(schemaHasMultipleAllOfDescriptions(schema)).toBe(false);
     }
-    expect(
-      schema.properties?.tabId,
-      `${tool.name} must allow an explicit collaborative browser tab target`,
-    ).toBeDefined();
+    if (tool.name.startsWith("preview_profile_")) {
+      expect(schema.properties?.tabId, `${tool.name} is not tab-targeted`).toBeUndefined();
+    } else {
+      expect(
+        schema.properties?.tabId,
+        `${tool.name} must allow an explicit collaborative browser tab target`,
+      ).toBeDefined();
+    }
   }
 });
 
@@ -50,4 +55,57 @@ it("preview_open accepts a target while preserving open input constraints", () =
   });
   expect(() => decode({ target: { ...target, port: 0 } })).toThrow();
   expect(() => decode({ target, tabId: "tab-1", reuseExistingTab: false })).toThrow();
+});
+
+it("exports the expanded browser tool surface with compatible schemas", () => {
+  expect(Object.keys(PreviewToolkit.tools)).toEqual(
+    expect.arrayContaining([
+      "preview_profile_create",
+      "preview_profile_rename",
+      "preview_profile_delete",
+      "preview_history",
+      "preview_downloads",
+      "preview_console_logs",
+      "preview_network_logs",
+      "preview_workflow_start",
+      "preview_workflow_stop",
+    ]),
+  );
+
+  const decodeOpen = Schema.decodeUnknownSync(PreviewToolkit.tools.preview_open.parametersSchema);
+  expect(decodeOpen({ ephemeral: true })).toEqual({ ephemeral: true });
+  expect(decodeOpen({ ephemeral: true, profileId: "incognito" })).toEqual({
+    ephemeral: true,
+    profileId: "incognito",
+  });
+  expect(() => decodeOpen({ ephemeral: true, profileId: "default" })).toThrow();
+
+  const decodeHistory = Schema.decodeUnknownSync(
+    PreviewToolkit.tools.preview_history.parametersSchema,
+  );
+  expect(decodeHistory({ action: "reload", hardReload: true, readiness: "none" })).toEqual({
+    action: "reload",
+    hardReload: true,
+    readiness: "none",
+  });
+  expect(() => decodeHistory({ action: "home" })).toThrow();
+});
+
+it("keeps existing network entries valid while new inspection fields stay optional", () => {
+  const decode = Schema.decodeUnknownSync(PreviewAutomationNetworkEntry);
+  expect(
+    decode({
+      url: "https://example.com",
+      method: "GET",
+      status: 200,
+      failed: false,
+      timestamp: "2026-01-01T00:00:00.000Z",
+    }),
+  ).toEqual({
+    url: "https://example.com",
+    method: "GET",
+    status: 200,
+    failed: false,
+    timestamp: "2026-01-01T00:00:00.000Z",
+  });
 });

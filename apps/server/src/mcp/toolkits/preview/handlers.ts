@@ -13,13 +13,20 @@ import {
   type ToolActivityIcon,
   type ThreadId,
   type PreviewAutomationOperation,
+  type PreviewAutomationConsoleLogsResult,
+  type PreviewAutomationDownloadsResult,
+  type PreviewAutomationNetworkLogsResult,
   type PreviewAutomationOpenInput,
+  type PreviewAutomationProfileDeleteResult,
+  type PreviewAutomationProfileMutationResult,
   type PreviewAutomationRecordingStatus,
   type PreviewAutomationResizeResult,
   type PreviewAutomationSetColorSchemeResult,
   type PreviewAutomationSnapshot,
   type PreviewAutomationSnapshotMetadata,
   type PreviewAutomationStatus,
+  type PreviewAutomationWorkflowResult,
+  type PreviewAutomationWorkflowStartResult,
   type PreviewTabId,
 } from "@t3tools/contracts";
 
@@ -73,7 +80,26 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(tabId === undefined ? {} : { tabId }),
   });
-  if (["status", "open", "navigate", "snapshot"].includes(operation)) return { result };
+  if (
+    [
+      "status",
+      "open",
+      "navigate",
+      "snapshot",
+      "back",
+      "forward",
+      "reload",
+      "profileCreate",
+      "profileRename",
+      "profileDelete",
+      "downloads",
+      "consoleLogs",
+      "networkLogs",
+      "workflowStart",
+      "workflowStop",
+    ].includes(operation)
+  )
+    return { result };
   const statusTabId =
     (operation !== "evaluate" && typeof result === "object" && result !== null
       ? (result as { tabId?: PreviewTabId }).tabId
@@ -112,6 +138,14 @@ const invokeTargeted = <A extends object>(
     })),
   );
 };
+
+const invokeDirect = <A extends object>(operation: PreviewAutomationOperation, input: unknown) =>
+  invoke<A>(operation, input).pipe(
+    Effect.map(({ result, toolIcon }) => ({
+      ...result,
+      ...(toolIcon ? { toolIcon } : {}),
+    })),
+  );
 
 const decodeActInput = Record.map(PreviewAutomationActInputs, (schema) =>
   Schema.decodeUnknownEffect(schema),
@@ -257,6 +291,40 @@ const handlers = {
   ),
   preview_wait_for: McpToolAccess.readsAsCaller((input) =>
     invokeTargeted<object>("waitFor", input, input.timeoutMs),
+  ),
+  preview_history: McpToolAccess.actsAsCaller(({ action, hardReload, ...input }) =>
+    invokeTargeted<PreviewAutomationStatus>(
+      action,
+      {
+        ...input,
+        ...(action === "reload" && hardReload !== undefined ? { hardReload } : {}),
+      },
+      input.timeoutMs,
+    ),
+  ),
+  preview_profile_create: McpToolAccess.actsAsCaller((input) =>
+    invokeDirect<PreviewAutomationProfileMutationResult>("profileCreate", input),
+  ),
+  preview_profile_rename: McpToolAccess.actsAsCaller((input) =>
+    invokeDirect<PreviewAutomationProfileMutationResult>("profileRename", input),
+  ),
+  preview_profile_delete: McpToolAccess.actsAsCaller((input) =>
+    invokeDirect<PreviewAutomationProfileDeleteResult>("profileDelete", input),
+  ),
+  preview_downloads: McpToolAccess.readsAsCaller((input) =>
+    invokeTargeted<PreviewAutomationDownloadsResult>("downloads", input ?? {}),
+  ),
+  preview_console_logs: McpToolAccess.readsAsCaller((input) =>
+    invokeTargeted<PreviewAutomationConsoleLogsResult>("consoleLogs", input ?? {}),
+  ),
+  preview_network_logs: McpToolAccess.readsAsCaller((input) =>
+    invokeTargeted<PreviewAutomationNetworkLogsResult>("networkLogs", input ?? {}),
+  ),
+  preview_workflow_start: McpToolAccess.actsAsCaller((input) =>
+    invokeTargeted<PreviewAutomationWorkflowStartResult>("workflowStart", input ?? {}),
+  ),
+  preview_workflow_stop: McpToolAccess.actsAsCaller((input) =>
+    invokeTargeted<PreviewAutomationWorkflowResult>("workflowStop", input ?? {}),
   ),
   preview_recording_start: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationRecordingStatus>("recordingStart", input ?? {}),

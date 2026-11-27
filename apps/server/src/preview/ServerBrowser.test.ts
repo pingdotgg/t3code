@@ -13,10 +13,17 @@ import {
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
+  type PreviewAutomationConsoleLogsResult,
+  type PreviewAutomationDownloadsResult,
   type PreviewAutomationLoadError,
+  type PreviewAutomationNetworkLogsResult,
+  type PreviewAutomationProfileDeleteResult,
+  type PreviewAutomationProfileMutationResult,
   type PreviewAutomationResizeResult,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
+  type PreviewAutomationWorkflowResult,
+  type PreviewAutomationWorkflowStartResult,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -54,6 +61,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
     async contextFor(profileId: string, isolationKey?: string) {
       if (realContextOverride) return realContextOverride;
       contextRequests.push({ profileId, isolated: isolationKey !== undefined });
+      contextIsolationKeys.push(isolationKey ?? null);
       if (contextFailure) throw contextFailure;
       await contextGate?.promise;
       const context = makeContext(this.onClose);
@@ -65,6 +73,9 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       }
       contexts.push(context);
       return context as unknown as BrowserContext;
+    }
+    async clearProfile(profileId: string) {
+      clearedProfiles.push(profileId);
     }
     async scratchPage() {
       return encoderPageOverride ?? (makeEncoderPage() as unknown as Page);
@@ -109,6 +120,9 @@ function makeSession(
   const events = new NodeEvents.EventEmitter();
   return {
     on: vi.fn((name: string, callback: (...args: unknown[]) => void) => events.on(name, callback)),
+    off: vi.fn((name: string, callback: (...args: unknown[]) => void) =>
+      events.off(name, callback),
+    ),
     emit: (name: string, ...args: unknown[]) => events.emit(name, ...args),
     emitAsync: (name: string, ...args: unknown[]) =>
       Promise.all(events.listeners(name).map((listener) => listener(...args))),
@@ -129,6 +143,7 @@ function makeSession(
           "t3-preview-viewport": 9,
           "t3-preview-title": 11,
           "t3-preview": 1,
+          "t3-preview-workflow": 13,
         };
         return {
           executionContextId: worldContexts[(input as { worldName: string }).worldName] ?? 7,
@@ -394,6 +409,8 @@ let realContextOverride: BrowserContext | undefined;
 const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: number }> = [];
 let decodeGate: PromiseWithResolvers<void> | null = null;
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
+const contextIsolationKeys: Array<string | null> = [];
+const clearedProfiles: Array<string> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
 let heldStill: (() => Promise<void>) | null = null;
 let pageCopy = "";
@@ -599,6 +616,8 @@ beforeEach(() => {
   encoderStreams.length = 0;
   decodeGate = null;
   contextRequests.length = 0;
+  contextIsolationKeys.length = 0;
+  clearedProfiles.length = 0;
   contextGate = null;
   heldStill = null;
   contextFailure = null;
@@ -4718,4 +4737,507 @@ it.live("a page's title change without navigation reaches its session", () =>
       });
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.scoped),
+);
+
+it.effect("server browser profiles support create, rename, delete, and built-in protection", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker } = yield* ready;
+      const created = yield* broker.invoke<PreviewAutomationProfileMutationResult>({
+        scope,
+        operation: "profileCreate",
+        input: { name: "  Agent Work  " },
+      });
+      expect(created.profile).toMatchObject({ name: "Agent Work" });
+      expect(created.profile.id).toMatch(/^profile-/u);
+      expect(created.profiles).toContainEqual({ id: created.profile.id, name: "Agent Work" });
+
+      const renamed = yield* broker.invoke<PreviewAutomationProfileMutationResult>({
+        scope,
+        operation: "profileRename",
+        input: { profileId: created.profile.id, name: "Renamed Work" },
+      });
+      expect(renamed.profile).toEqual({ id: created.profile.id, name: "Renamed Work" });
+
+      const report = yield* browser.profileReporter;
+      yield* report({
+        profiles: [{ id: created.profile.id, name: "Client Copy", kind: "persistent" }],
+        defaultProfileId: created.profile.id,
+      });
+      const afterReport = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+      });
+      expect(afterReport.profiles).toContainEqual({
+        id: created.profile.id,
+        name: "Renamed Work",
+      });
+      expect(afterReport.profiles).not.toContainEqual({
+        id: created.profile.id,
+        name: "Client Copy",
+      });
+
+      const builtInRenameError = yield* broker
+        .invoke<PreviewAutomationProfileMutationResult>({
+          scope,
+          operation: "profileRename",
+          input: { profileId: "default", name: "Renamed Default" },
+        })
+        .pipe(Effect.flip);
+      expect(builtInRenameError.message).toContain("built-in browser profiles cannot be renamed");
+
+      const builtInError = yield* broker
+        .invoke<PreviewAutomationProfileDeleteResult>({
+          scope,
+          operation: "profileDelete",
+          input: { profileId: "incognito" },
+        })
+        .pipe(Effect.flip);
+      expect(builtInError.message).toContain("built-in browser profiles cannot be deleted");
+
+      const deleted = yield* broker.invoke<PreviewAutomationProfileDeleteResult>({
+        scope,
+        operation: "profileDelete",
+        input: { profileId: created.profile.id },
+      });
+      expect(deleted.deletedProfileId).toBe(created.profile.id);
+      expect(deleted.defaultProfileId).toBe("default");
+      expect(deleted.profiles).not.toContainEqual({
+        id: created.profile.id,
+        name: "Renamed Work",
+      });
+      expect(clearedProfiles).toEqual([created.profile.id]);
+
+      // A later client report of the same id does not resurrect the deleted profile.
+      yield* report({
+        profiles: [{ id: created.profile.id, name: "Client Copy", kind: "persistent" }],
+        defaultProfileId: created.profile.id,
+      });
+      const afterDeleteReport = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+      });
+      expect(afterDeleteReport.profiles?.some((profile) => profile.id === created.profile.id)).toBe(
+        false,
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a server-created profile persists across a server restart", () =>
+  Effect.gen(function* () {
+    let profileId = "";
+    yield* Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      const created = yield* broker.invoke<PreviewAutomationProfileMutationResult>({
+        scope,
+        operation: "profileCreate",
+        input: { name: "Restarted" },
+      });
+      profileId = created.profile.id;
+    }).pipe(Effect.scoped, Effect.provide(Layer.fresh(ServerBrowser.layer)));
+
+    yield* Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false, profileId },
+      });
+      expect(opened.profiles).toContainEqual({ id: profileId, name: "Restarted" });
+    }).pipe(Effect.scoped, Effect.provide(Layer.fresh(ServerBrowser.layer)));
+    expect(contextRequests).toEqual([{ profileId, isolated: false }]);
+  }).pipe(Effect.provide(dependencies)),
+);
+
+it.effect(
+  "ephemeral preview tabs are isolated from each other and reject persistent profiles",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker } = yield* ready;
+        const first = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false, ephemeral: true },
+        });
+        const second = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false, ephemeral: true },
+        });
+        expect(first.tabId).not.toBe(second.tabId);
+        expect(contextRequests.slice(-2)).toEqual([
+          { profileId: "default", isolated: true },
+          { profileId: "default", isolated: true },
+        ]);
+        const keys = contextIsolationKeys.slice(-2);
+        expect(keys[0]).not.toBeNull();
+        expect(keys[1]).not.toBeNull();
+        expect(keys[0]).not.toBe(keys[1]);
+
+        const rejected = yield* broker
+          .invoke<PreviewAutomationStatus>({
+            scope,
+            operation: "open",
+            input: {
+              reuseExistingTab: false,
+              show: false,
+              ephemeral: true,
+              profileId: "profile-work",
+            },
+          })
+          .pipe(Effect.flip);
+        expect(rejected.message).toContain("cannot target an existing tab or use a persistent");
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.effect("history operations reuse page navigation and hard reload bypasses the cache", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const { page } = contexts[0]!;
+      yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "back",
+        input: { readiness: "none" },
+      });
+      yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "forward",
+        input: { readiness: "none" },
+      });
+      yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "reload",
+        input: { readiness: "none" },
+      });
+      yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "reload",
+        input: { readiness: "none", hardReload: true },
+      });
+
+      expect(page.goBack).toHaveBeenCalledTimes(1);
+      expect(page.goForward).toHaveBeenCalledTimes(1);
+      expect(page.reload).toHaveBeenCalledTimes(1);
+      expect(
+        contexts[0]!.sessions[0]!.send.mock.calls.some(
+          ([method, input]) =>
+            method === "Page.reload" &&
+            (input as { ignoreCache?: boolean } | undefined)?.ignoreCache === true,
+        ),
+      ).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("consoleLogs filters, limits, and clears captured console entries", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const { page } = contexts[0]!;
+      const message = (level: string, text: string) => ({
+        type: () => level,
+        text: () => text,
+        args: () => [],
+      });
+      page.emit("console", message("info", "ordinary"));
+      page.emit("console", message("error", "broken"));
+
+      const errors = yield* broker.invoke<PreviewAutomationConsoleLogsResult>({
+        scope,
+        tabId,
+        operation: "consoleLogs",
+        input: { level: "error", since: "1970-01-01T00:00:00.000Z" },
+      });
+      expect(errors.consoleEntries).toHaveLength(1);
+      expect(errors.consoleEntries[0]).toMatchObject({ level: "error", text: "broken" });
+
+      const cleared = yield* broker.invoke<PreviewAutomationConsoleLogsResult>({
+        scope,
+        tabId,
+        operation: "consoleLogs",
+        input: { clear: true, limit: 1 },
+      });
+      expect(cleared.consoleEntries).toHaveLength(1);
+      const empty = yield* broker.invoke<PreviewAutomationConsoleLogsResult>({
+        scope,
+        tabId,
+        operation: "consoleLogs",
+        input: {},
+      });
+      expect(empty.consoleEntries).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("networkLogs redacts secrets, previews textual bodies, filters, and clears", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const { page } = contexts[0]!;
+      const request = {
+        url: () => "https://example.com/api",
+        method: () => "POST",
+        headers: () => ({
+          authorization: "Bearer secret",
+          cookie: "session=secret",
+          "x-trace": "trace",
+        }),
+      };
+      page.emit("request", request);
+      yield* Effect.promise(() =>
+        page.emitAsync("response", {
+          url: () => "https://example.com/api",
+          request: () => request,
+          status: () => 200,
+          headers: () => ({
+            "content-type": "application/json",
+            "set-cookie": "session=secret",
+          }),
+          body: async () => Buffer.from(JSON.stringify({ ok: true })),
+        }),
+      );
+      const failedRequest = {
+        url: () => "https://example.com/missing",
+        method: () => "GET",
+        headers: () => ({}),
+        failure: () => ({ errorText: "net::ERR_FAILED" }),
+        isNavigationRequest: () => false,
+        frame: () => page,
+      };
+      page.emit("request", failedRequest);
+      page.emit("requestfailed", failedRequest);
+
+      const logs = yield* broker.invoke<PreviewAutomationNetworkLogsResult>({
+        scope,
+        tabId,
+        operation: "networkLogs",
+        input: { urlIncludes: "/api", method: "post", statusMin: 200, statusMax: 299 },
+      });
+      expect(logs.networkEntries).toHaveLength(1);
+      expect(logs.networkEntries[0]).toMatchObject({
+        method: "POST",
+        status: 200,
+        responseBodyPreview: '{"ok":true}',
+      });
+      expect(logs.networkEntries[0]?.requestHeaders).toMatchObject({
+        authorization: "<REDACTED>",
+        cookie: "<REDACTED>",
+        "x-trace": "trace",
+      });
+      expect(logs.networkEntries[0]?.responseHeaders?.["set-cookie"]).toBe("<REDACTED>");
+      expect(logs.networkEntries[0]?.durationMs).toBeTypeOf("number");
+
+      const failures = yield* broker.invoke<PreviewAutomationNetworkLogsResult>({
+        scope,
+        tabId,
+        operation: "networkLogs",
+        input: { failedOnly: true },
+      });
+      expect(failures.networkEntries).toHaveLength(1);
+      expect(failures.networkEntries[0]).toMatchObject({
+        url: "https://example.com/missing",
+        failed: true,
+      });
+
+      const beforeClear = yield* broker.invoke<PreviewAutomationNetworkLogsResult>({
+        scope,
+        tabId,
+        operation: "networkLogs",
+        input: { clear: true },
+      });
+      expect(beforeClear.networkEntries.length).toBeGreaterThan(0);
+      const afterClear = yield* broker.invoke<PreviewAutomationNetworkLogsResult>({
+        scope,
+        tabId,
+        operation: "networkLogs",
+        input: {},
+      });
+      expect(afterClear.networkEntries).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("downloads returns captured downloads and clear empties the list", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const { page } = contexts[0]!;
+      const saved = Promise.withResolvers<void>();
+      page.emit("download", {
+        failure: async () => null,
+        delete: async () => saved.resolve(),
+        saveAs: async (path: string) => {
+          await NodeFSP.writeFile(path, "a,b");
+        },
+        suggestedFilename: () => "report.csv",
+        url: () => "https://example.com/report.csv",
+      });
+      yield* Effect.promise(() => saved.promise);
+
+      const result = yield* broker.invoke<PreviewAutomationDownloadsResult>({
+        scope,
+        tabId,
+        operation: "downloads",
+        input: {},
+      });
+      expect(result.downloads).toHaveLength(1);
+      expect(result.downloads[0]).toMatchObject({
+        fileName: "report.csv",
+        sizeBytes: 3,
+        url: "https://example.com/report.csv",
+      });
+      const cleared = yield* broker.invoke<PreviewAutomationDownloadsResult>({
+        scope,
+        tabId,
+        operation: "downloads",
+        input: { clear: true },
+      });
+      expect(cleared.downloads).toHaveLength(1);
+      const empty = yield* broker.invoke<PreviewAutomationDownloadsResult>({
+        scope,
+        tabId,
+        operation: "downloads",
+        input: {},
+      });
+      expect(empty.downloads).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("workflow recording stores redacted steps and returns markdown after teardown", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const { page } = contexts[0]!;
+      const started = yield* broker.invoke<PreviewAutomationWorkflowStartResult>({
+        scope,
+        tabId,
+        operation: "workflowStart",
+        input: {},
+      });
+      expect(started).toMatchObject({ tabId, recording: true });
+      const cdp = contexts[0]!.sessions[0]!;
+      const bindingCall = cdp.send.mock.calls.find(([method]) => method === "Runtime.addBinding");
+      if (!bindingCall) throw new Error("workflow binding was not registered");
+      const bindingName = (bindingCall[1] as { name: string }).name;
+      const scriptCall = cdp.send.mock.calls.find(
+        ([method, input]) =>
+          method === "Page.addScriptToEvaluateOnNewDocument" &&
+          typeof (input as { source?: unknown }).source === "string" &&
+          (input as { source: string }).source.includes("__t3WorkflowRecorder"),
+      );
+      if (!scriptCall) throw new Error("workflow script was not installed");
+      const source = (scriptCall[1] as { source: string }).source;
+      const token = /const token = "([^"]+)"/u.exec(source)?.[1];
+      expect(token).toBeDefined();
+      expect(source).toContain("<REDACTED_PASSWORD>");
+
+      // Run the injected listener against a minimal DOM event target; a password never leaves the page.
+      const emittedPayloads: Array<{ token: string; step: { value?: string } }> = [];
+      const domListeners = new Map<string, (event: { target: unknown }) => void>();
+      const document = {
+        getElementById: () => null,
+        querySelectorAll: () => [],
+      };
+      const password = {
+        nodeType: 1,
+        tagName: "INPUT",
+        id: "password",
+        labels: [],
+        ownerDocument: document,
+        parentElement: null,
+        isContentEditable: false,
+        value: "correct horse battery staple",
+        textContent: "",
+        closest: () => password,
+        hasAttribute: () => false,
+        getAttribute: (name: string) =>
+          name === "type" ? "password" : name === "aria-label" ? "Password" : null,
+      };
+      const sandbox: Record<string, unknown> = {
+        location: { href: "https://example.com/login" },
+        CSS: { escape: (value: string) => value },
+        addEventListener: (type: string, listener: (event: { target: unknown }) => void) =>
+          domListeners.set(type, listener),
+        removeEventListener: (type: string) => domListeners.delete(type),
+        setTimeout,
+        clearTimeout,
+        [bindingName]: (payload: string) => emittedPayloads.push(JSON.parse(payload)),
+      };
+      const recorderContext = NodeVM.createContext(sandbox);
+      NodeVM.runInContext(source, recorderContext);
+      domListeners.get("change")?.({ target: password });
+      expect(emittedPayloads).toHaveLength(1);
+      expect(emittedPayloads[0]?.step.value).toBe("<REDACTED_PASSWORD>");
+      expect(JSON.stringify(emittedPayloads)).not.toContain("correct horse");
+      (sandbox.__t3WorkflowRecorder as { teardown: () => void } | undefined)?.teardown();
+      domListeners.get("change")?.({ target: password });
+      expect(emittedPayloads).toHaveLength(1);
+
+      yield* Effect.promise(() =>
+        cdp.emitAsync("Runtime.bindingCalled", {
+          name: bindingName,
+          payload: JSON.stringify({
+            token,
+            step: {
+              action: "input",
+              event: "change",
+              url: "https://example.com/login",
+              timestamp: "2026-01-01T00:00:00.000Z",
+              ariaLabel: "Password",
+              selector: "#password",
+              value: "<REDACTED_PASSWORD>",
+            },
+          }),
+        }),
+      );
+      yield* Effect.promise(() => page.emitAsync("framenavigated", page));
+
+      const stopped = yield* broker.invoke<PreviewAutomationWorkflowResult>({
+        scope,
+        tabId,
+        operation: "workflowStop",
+        input: {},
+      });
+      expect(stopped.steps).toEqual([
+        {
+          action: "input",
+          event: "change",
+          url: "https://example.com/login",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          ariaLabel: "Password",
+          selector: "#password",
+          value: "<REDACTED_PASSWORD>",
+        },
+        expect.objectContaining({ action: "navigate", url: "about:blank" }),
+      ]);
+      expect(stopped.markdown).toContain("<REDACTED_PASSWORD>");
+      expect(stopped.markdown).toContain("# Browser workflow");
+      expect(cdp.send.mock.calls.some(([method]) => method === "Runtime.removeBinding")).toBe(true);
+
+      const inactive = yield* broker
+        .invoke<PreviewAutomationWorkflowResult>({
+          scope,
+          tabId,
+          operation: "workflowStop",
+          input: {},
+        })
+        .pipe(Effect.flip);
+      expect(inactive.message).toContain("No Show Me recording is active");
+    }),
+  ).pipe(Effect.provide(layer)),
 );

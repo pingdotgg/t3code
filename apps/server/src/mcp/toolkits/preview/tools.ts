@@ -3,11 +3,22 @@ import {
   OrchestratorMcpFailure,
   ToolActivityIcon,
   PreviewAutomationActInput,
+  PreviewAutomationConsoleLogsInput,
+  PreviewAutomationConsoleLogsResult,
   PreviewAutomationDialogInput,
+  PreviewAutomationDownloadsInput,
+  PreviewAutomationDownloadsResult,
   PreviewAutomationError,
   PreviewAutomationEvaluateInput,
   PreviewAutomationNavigateInput,
+  PreviewAutomationNetworkLogsInput,
+  PreviewAutomationNetworkLogsResult,
   PreviewAutomationOpenInput,
+  PreviewAutomationProfileCreateInput,
+  PreviewAutomationProfileDeleteInput,
+  PreviewAutomationProfileDeleteResult,
+  PreviewAutomationProfileMutationResult,
+  PreviewAutomationProfileRenameInput,
   PreviewAutomationRecordingArtifact,
   PreviewAutomationRecordingStatus,
   PreviewAutomationResizeInput,
@@ -20,6 +31,8 @@ import {
   PreviewAutomationStatus,
   PreviewAutomationTabTargetInput,
   PreviewAutomationWaitForInput,
+  PreviewAutomationWorkflowResult,
+  PreviewAutomationWorkflowStartResult,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
@@ -209,6 +222,131 @@ const PreviewWaitForTool = readonlyBrowserTool(
   }).annotate(Tool.Title, "Wait for preview page condition"),
 );
 
+const HistoryAction = Schema.Literals(["back", "forward", "reload"]);
+const HistoryTimeout = Schema.optional(
+  Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThanOrEqualTo(30_000)),
+);
+
+const PreviewHistoryInput = Schema.Struct({
+  ...PreviewAutomationTabTargetInput.fields,
+  action: HistoryAction,
+  hardReload: Schema.optional(
+    Schema.Boolean.annotate({ description: "For action='reload', ignore the browser cache." }),
+  ),
+  readiness: Schema.optional(Schema.Literals(["load", "domContentLoaded", "none"])),
+  timeoutMs: HistoryTimeout,
+});
+
+const PreviewHistoryTool = safeBrowserTool(
+  Tool.make("preview_history", {
+    description:
+      "Move the chosen tab back or forward in its history, or reload it. `hardReload` applies only to reload.",
+    parameters: PreviewHistoryInput,
+    success: Schema.Struct({ ...PreviewAutomationStatus.fields, ...presentationFields }),
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Use browser history"),
+);
+
+const PreviewProfileCreateTool = safeBrowserTool(
+  Tool.make("preview_profile_create", {
+    description:
+      "Create a persistent server browser profile. Use the returned id with `preview_open` `profileId`.",
+    parameters: PreviewAutomationProfileCreateInput,
+    success: Schema.Struct({
+      ...PreviewAutomationProfileMutationResult.fields,
+      ...presentationFields,
+    }),
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Create browser profile"),
+);
+
+const PreviewProfileRenameTool = safeBrowserTool(
+  Tool.make("preview_profile_rename", {
+    description: "Rename a non-built-in browser profile.",
+    parameters: PreviewAutomationProfileRenameInput,
+    success: Schema.Struct({
+      ...PreviewAutomationProfileMutationResult.fields,
+      ...presentationFields,
+    }),
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Rename browser profile"),
+);
+
+const PreviewProfileDeleteTool = browserTool(
+  Tool.make("preview_profile_delete", {
+    description:
+      "Delete a non-built-in browser profile, close its open tabs, and clear its stored browser data.",
+    parameters: PreviewAutomationProfileDeleteInput,
+    success: Schema.Struct({
+      ...PreviewAutomationProfileDeleteResult.fields,
+      ...presentationFields,
+    }),
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Delete browser profile"),
+);
+
+const PreviewDownloadsTool = safeBrowserTool(
+  Tool.make("preview_downloads", {
+    description:
+      "List downloads captured by the chosen tab. Optional filters include `limit`; `clear=true` empties the captured list after reading.",
+    parameters: PreviewAutomationDownloadsInput,
+    success: Schema.Struct({ ...PreviewAutomationDownloadsResult.fields, ...presentationFields }),
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "List browser downloads"),
+);
+
+const PreviewConsoleLogsTool = safeBrowserTool(
+  Tool.make("preview_console_logs", {
+    description:
+      "Read console entries captured by the chosen tab, filtered by level, timestamp, and limit. `clear=true` empties the log after reading.",
+    parameters: PreviewAutomationConsoleLogsInput,
+    success: Schema.Struct({ ...PreviewAutomationConsoleLogsResult.fields, ...presentationFields }),
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Read browser console logs"),
+);
+
+const PreviewNetworkLogsTool = safeBrowserTool(
+  Tool.make("preview_network_logs", {
+    description:
+      "Read network entries captured by the chosen tab, with redacted headers and short textual response previews. Filter by URL, method, status range, failures, and limit. `clear=true` empties the log after reading.",
+    parameters: PreviewAutomationNetworkLogsInput,
+    success: Schema.Struct({ ...PreviewAutomationNetworkLogsResult.fields, ...presentationFields }),
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Read browser network logs"),
+);
+
+const PreviewWorkflowStartTool = safeBrowserTool(
+  Tool.make("preview_workflow_start", {
+    description:
+      "Start a Show Me recording of user clicks, inputs, submits, and navigations in the chosen tab. Password values are redacted.",
+    parameters: PreviewAutomationTabTargetInput,
+    success: Schema.Struct({
+      ...PreviewAutomationWorkflowStartResult.fields,
+      ...presentationFields,
+    }),
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Start workflow recording"),
+);
+
+const PreviewWorkflowStopTool = safeBrowserTool(
+  Tool.make("preview_workflow_stop", {
+    description:
+      "Stop the Show Me recording in the chosen tab and return structured steps plus a markdown playbook.",
+    parameters: PreviewAutomationTabTargetInput,
+    success: Schema.Struct({ ...PreviewAutomationWorkflowResult.fields, ...presentationFields }),
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Stop workflow recording"),
+);
+
 const PreviewRecordingStartTool = safeBrowserTool(
   Tool.make("preview_recording_start", {
     description: "Start recording the chosen tab.",
@@ -241,6 +379,15 @@ export const PreviewToolkit = Toolkit.make(
   PreviewActTool,
   PreviewEvaluateTool,
   PreviewWaitForTool,
+  PreviewHistoryTool,
+  PreviewProfileCreateTool,
+  PreviewProfileRenameTool,
+  PreviewProfileDeleteTool,
+  PreviewDownloadsTool,
+  PreviewConsoleLogsTool,
+  PreviewNetworkLogsTool,
+  PreviewWorkflowStartTool,
+  PreviewWorkflowStopTool,
   PreviewRecordingStartTool,
   PreviewRecordingStopTool,
 );
@@ -255,6 +402,15 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewActTool,
   PreviewEvaluateTool,
   PreviewWaitForTool,
+  PreviewHistoryTool,
+  PreviewProfileCreateTool,
+  PreviewProfileRenameTool,
+  PreviewProfileDeleteTool,
+  PreviewDownloadsTool,
+  PreviewConsoleLogsTool,
+  PreviewNetworkLogsTool,
+  PreviewWorkflowStartTool,
+  PreviewWorkflowStopTool,
   PreviewRecordingStartTool,
   PreviewRecordingStopTool,
 );

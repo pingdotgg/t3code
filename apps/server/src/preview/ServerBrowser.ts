@@ -4,6 +4,8 @@
 import {
   BrowserProfile,
   BrowserProfileId,
+  BROWSER_PROFILE_MAX_COUNT,
+  BROWSER_PROFILE_NAME_MAX_LENGTH,
   BUILT_IN_BROWSER_PROFILES,
   DEFAULT_BROWSER_PROFILE_ID,
   DEFAULT_BROWSER_RECORDING_FRAME_RATE,
@@ -28,6 +30,15 @@ import {
   type PreviewAutomationNavigateInput,
   type PreviewAutomationNetworkEntry,
   type PreviewAutomationOpenInput,
+  type PreviewAutomationConsoleLogsInput,
+  type PreviewAutomationDownloadsInput,
+  type PreviewAutomationHistoryInput,
+  type PreviewAutomationNetworkLogsInput,
+  type PreviewAutomationProfileCreateInput,
+  type PreviewAutomationProfileDeleteInput,
+  type PreviewAutomationProfileRenameInput,
+  type PreviewAutomationReloadInput,
+  type PreviewAutomationWorkflowStep,
   type PreviewAutomationPressInput,
   type PreviewAutomationRequest,
   type PreviewAutomationResizeInput,
@@ -101,7 +112,12 @@ import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNaviga
 const SERVER_HOST_CLIENT_ID = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
 // Each client's report is capped, but the saved catalog is their union, so it has no cap.
 const SavedProfilesJson = Schema.fromJsonString(
-  Schema.Struct({ profiles: Schema.Array(BrowserProfile), defaultProfileId: BrowserProfileId }),
+  Schema.Struct({
+    profiles: Schema.Array(BrowserProfile),
+    defaultProfileId: BrowserProfileId,
+    serverProfiles: Schema.optional(Schema.Array(BrowserProfile)),
+    deletedServerProfileIds: Schema.optional(Schema.Array(BrowserProfileId)),
+  }),
 );
 const decodeSavedProfiles = Schema.decodeUnknownEffect(SavedProfilesJson);
 const encodeSavedProfiles = Schema.encodeSync(SavedProfilesJson);
@@ -265,11 +281,212 @@ const NAVIGATION_TIMEOUT_MS = 15_000;
 const STATUS_READ_MS = 250;
 const VIEWER_NAVIGATION_OPTIONS = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
 const ACTION_TIMELINE_LIMIT = 50;
+const NETWORK_HEADER_LIMIT = 64;
+const NETWORK_HEADER_VALUE_LIMIT = 1024;
+const NETWORK_BODY_PREVIEW_LIMIT = 4096;
+const WORKFLOW_STEP_LIMIT = 500;
+const WORKFLOW_WORLD = "t3-preview-workflow";
+const REDACTED_HEADER_VALUE = "<REDACTED>";
+const REDACTED_PASSWORD_VALUE = "<REDACTED_PASSWORD>";
 
-export class ServerBrowserTabNotFoundError extends Schema.TaggedError<ServerBrowserTabNotFoundError>()(
-  "ServerBrowserTabNotFoundError",
-  { threadId: Schema.String, tabId: Schema.String },
-) {
+const boundedHeaders = (headers: Record<string, string>) => {
+  const bounded: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers).slice(0, NETWORK_HEADER_LIMIT)) {
+    bounded[name] = ["authorization", "cookie", "set-cookie"].includes(name.toLowerCase())
+      ? REDACTED_HEADER_VALUE
+      : value.slice(0, NETWORK_HEADER_VALUE_LIMIT);
+  }
+  return bounded;
+};
+
+const isTextualResponse = (contentType: string) =>
+  /^(?:text\/|application\/(?:json|xml|graphql)\b|application\/[^;\s]+\+(?:json|xml)\b)/i.test(
+    contentType.trim(),
+  );
+
+const workflowRecorderSource = (bindingName: string, token: string) => `(() => {
+  const bindingName = ${JSON.stringify(bindingName)};
+  const token = ${JSON.stringify(token)};
+  const prior = globalThis.__t3WorkflowRecorder;
+  if (prior && prior.teardown) prior.teardown();
+  const cap = (value, limit) => String(value ?? "").replace(/\\s+/g, " ").trim().slice(0, limit);
+  const cssEscape = (value) => globalThis.CSS?.escape ? CSS.escape(value) : String(value).replace(/[^a-zA-Z0-9_-]/g, (char) => "\\\\" + char);
+  const textOf = (element) => cap(element.innerText ?? element.textContent, 300);
+  const implicitRole = (element) => {
+    const tag = element.tagName ? element.tagName.toLowerCase() : "";
+    if (tag === "a" && element.hasAttribute("href")) return "link";
+    if (tag === "button") return "button";
+    if (tag === "select") return "combobox";
+    if (tag === "textarea") return "textbox";
+    if (tag === "summary") return "button";
+    if (tag !== "input") return undefined;
+    const type = (element.getAttribute("type") || "text").toLowerCase();
+    if (["button", "submit", "reset"].includes(type)) return "button";
+    if (type === "checkbox") return "checkbox";
+    if (type === "radio") return "radio";
+    if (type === "range") return "slider";
+    if (!["hidden", "file"].includes(type)) return "textbox";
+    return undefined;
+  };
+  const labelOf = (element) => {
+    const aria = cap(element.getAttribute("aria-label"), 300);
+    if (aria) return aria;
+    const labelledBy = element.getAttribute("aria-labelledby");
+    if (labelledBy) {
+      const label = labelledBy.split(/\\s+/).map((id) => element.ownerDocument.getElementById(id)).filter(Boolean).map(textOf).filter(Boolean).join(" ");
+      if (label) return cap(label, 300);
+    }
+    if (element.labels && element.labels.length) return cap(Array.from(element.labels).map(textOf).filter(Boolean).join(" "), 300);
+    return textOf(element) || cap(element.getAttribute("value"), 300) || undefined;
+  };
+  const selectorOf = (element) => {
+    const testId = element.getAttribute("data-testid") || element.getAttribute("data-test-id");
+    if (testId) return "[data-testid=\\"" + testId.replace(/"/g, "\\\\\\"") + "\\"]";
+    if (element.id) return "#" + cssEscape(element.id);
+    const parts = [];
+    for (let current = element; current && current.nodeType === 1 && parts.length < 5; current = current.parentElement) {
+      const tag = current.tagName.toLowerCase();
+      let part = tag;
+      if (current.parentElement) {
+        const siblings = Array.from(current.parentElement.children).filter((sibling) => sibling.tagName === current.tagName);
+        if (siblings.length > 1) part += ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")";
+      }
+      parts.unshift(part);
+      if (current.ownerDocument && current.ownerDocument.querySelectorAll(parts.join(" > ")).length === 1) break;
+    }
+    return parts.join(" > ").slice(0, 500);
+  };
+  const describe = (element) => {
+    if (!element || element.nodeType !== 1) return {};
+    const testId = cap(element.getAttribute("data-testid") || element.getAttribute("data-test-id"), 200);
+    return {
+      role: cap(element.getAttribute("role")?.split(/\\s+/)[0] ?? implicitRole(element), 100),
+      ariaLabel: labelOf(element),
+      placeholder: cap(element.getAttribute("placeholder"), 300),
+      dataTestId: testId,
+      selector: selectorOf(element),
+    };
+  };
+  const clean = (value) => Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined && entry !== ""));
+  const emit = (step) => {
+    try {
+      const binding = globalThis[bindingName];
+      if (binding) binding(JSON.stringify({ token, step: clean({ url: location.href, timestamp: new Date().toISOString(), ...step }) }));
+    } catch {}
+  };
+  const interactive = (target) => target?.closest?.("button,a,input,select,textarea,summary,[role],[tabindex]") ?? target;
+  const editable = (target) => target?.closest?.("input,textarea,select,[contenteditable=true],[contenteditable='']") ?? target;
+  const onClick = (event) => {
+    const element = interactive(event.target);
+    if (element) emit({ action: "click", ...clean(describe(element)) });
+  };
+  const timers = new Set();
+  const pending = new WeakMap();
+  const valueOf = (element) => {
+    const tag = element.tagName ? element.tagName.toLowerCase() : "";
+    const type = (element.getAttribute("type") || "").toLowerCase();
+    if (tag === "input" && type === "password") return { value: ${JSON.stringify(REDACTED_PASSWORD_VALUE)} };
+    if (tag === "input" && type === "file") return {};
+    if ((tag === "input" || tag === "textarea") && ["checkbox", "radio"].includes(type)) return { checked: element.checked === true };
+    if (tag === "input" || tag === "textarea" || tag === "select") return { value: cap(element.value, 1000) };
+    if (element.isContentEditable) return { value: cap(element.textContent, 1000) };
+    return {};
+  };
+  const emitInput = (element, eventName) => {
+    if (!element || element.nodeType !== 1) return;
+    emit({ action: "input", event: eventName, ...clean({ ...describe(element), ...valueOf(element) }) });
+  };
+  const onInput = (event) => {
+    const element = editable(event.target);
+    if (!element || element.nodeType !== 1) return;
+    const priorTimer = pending.get(element);
+    if (priorTimer) clearTimeout(priorTimer);
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      pending.delete(element);
+      emitInput(element, "input");
+    }, 300);
+    timers.add(timer);
+    pending.set(element, timer);
+  };
+  const onChange = (event) => {
+    const element = editable(event.target);
+    const timer = element && pending.get(element);
+    if (timer) {
+      clearTimeout(timer);
+      timers.delete(timer);
+      pending.delete(element);
+    }
+    emitInput(element, "change");
+  };
+  const onSubmit = (event) => {
+    const form = event.target?.closest?.("form") ?? event.target;
+    if (form) emit({ action: "submit", ...clean(describe(form)) });
+  };
+  for (const [type, listener] of [["click", onClick], ["input", onInput], ["change", onChange], ["submit", onSubmit]]) {
+    addEventListener(type, listener, true);
+  }
+  const teardown = () => {
+    for (const timer of timers) clearTimeout(timer);
+    timers.clear();
+    for (const [type, listener] of [["click", onClick], ["input", onInput], ["change", onChange], ["submit", onSubmit]]) {
+      removeEventListener(type, listener, true);
+    }
+    if (globalThis.__t3WorkflowRecorder?.token === token) delete globalThis.__t3WorkflowRecorder;
+  };
+  globalThis.__t3WorkflowRecorder = { token, teardown };
+})();`;
+
+const workflowMarkdown = (
+  steps: ReadonlyArray<PreviewAutomationWorkflowStep>,
+  input: { readonly startedAt: string; readonly stoppedAt: string; readonly startUrl: string },
+) => {
+  const inlineCode = (value: string) => `\`${value.replaceAll("`", "\\`")}\``;
+  const target = (step: PreviewAutomationWorkflowStep) => {
+    const label =
+      step.ariaLabel ?? step.placeholder ?? step.dataTestId ?? step.role ?? step.selector;
+    return label === undefined ? "the page" : inlineCode(label);
+  };
+  const locator = (step: PreviewAutomationWorkflowStep) =>
+    step.selector === undefined ? "" : ` (${inlineCode(step.selector)})`;
+  const lines = steps.map((step, index) => {
+    const number = `${index + 1}.`;
+    switch (step.action) {
+      case "navigate":
+        return `${number} Navigate to ${inlineCode(step.url)}`;
+      case "click":
+        return `${number} Click ${target(step)}${locator(step)}`;
+      case "input": {
+        const value =
+          step.value !== undefined
+            ? inlineCode(step.value)
+            : step.checked === true
+              ? "checked"
+              : step.checked === false
+                ? "unchecked"
+                : "changed";
+        return `${number} Enter ${value} in ${target(step)}${locator(step)}`;
+      }
+      case "submit":
+        return `${number} Submit ${target(step)}${locator(step)}`;
+    }
+  });
+  return [
+    "# Browser workflow",
+    "",
+    `- Started: ${inlineCode(input.startedAt)}`,
+    `- Stopped: ${inlineCode(input.stoppedAt)}`,
+    `- Start URL: ${inlineCode(input.startUrl)}`,
+    "",
+    ...(lines.length > 0 ? lines : ["No steps were recorded."]),
+    "",
+  ].join("\n");
+};
+
+export class ServerBrowserTabNotFoundError extends Schema.TaggedError<
+  ServerBrowserTabNotFoundError,
+  { readonly brand: unique symbol }
+>()("ServerBrowserTabNotFoundError", { threadId: Schema.String, tabId: Schema.String }) {
   override get message(): string {
     return "The server preview tab does not exist.";
   }
@@ -284,19 +501,19 @@ const isHostSetupError = Schema.is(
   ]),
 );
 
-class ServerBrowserDownloadsCleanupError extends Schema.TaggedError<ServerBrowserDownloadsCleanupError>()(
-  "ServerBrowserDownloadsCleanupError",
-  { cause: Schema.Defect() },
-) {
+class ServerBrowserDownloadsCleanupError extends Schema.TaggedError<
+  ServerBrowserDownloadsCleanupError,
+  { readonly brand: unique symbol }
+>()("ServerBrowserDownloadsCleanupError", { cause: Schema.Defect() }) {
   override get message(): string {
     return "The server preview could not clear earlier downloads.";
   }
 }
 
-export class ServerBrowserLaunchError extends Schema.TaggedError<ServerBrowserLaunchError>()(
-  "ServerBrowserLaunchError",
-  { cause: Schema.Defect() },
-) {
+export class ServerBrowserLaunchError extends Schema.TaggedError<
+  ServerBrowserLaunchError,
+  { readonly brand: unique symbol }
+>()("ServerBrowserLaunchError", { cause: Schema.Defect() }) {
   override get message(): string {
     return "The server preview browser could not start.";
   }
@@ -445,6 +662,25 @@ interface Recording {
   readonly framesInFlight: Set<Promise<void>>;
 }
 
+interface WorkflowRecording {
+  readonly token: string;
+  readonly bindingName: string;
+  scriptId: string | undefined;
+  executionContextId: number | undefined;
+  frameId: string | undefined;
+  readonly startedAt: string;
+  readonly startUrl: string;
+  readonly steps: Array<PreviewAutomationWorkflowStep>;
+  readonly onBinding: (event: { readonly name?: string; readonly payload?: string }) => void;
+  readonly onExecutionContext: (event: {
+    readonly context?: {
+      readonly id?: unknown;
+      readonly name?: unknown;
+      readonly auxData?: unknown;
+    };
+  }) => void;
+}
+
 interface ServerTab {
   readonly threadId: ThreadId;
   readonly tabId: string;
@@ -505,6 +741,8 @@ interface ServerTab {
   crashedUrl: string | undefined;
   closing: boolean;
   recording: Recording | null;
+  workflow: WorkflowRecording | null;
+  workflowStart: Promise<WorkflowRecording> | null;
   initialNavigation: Promise<void> | null;
   pendingInitialRequestUrl: string | null;
   navigationGeneration: number;
@@ -538,7 +776,19 @@ const READ_OPERATIONS: ReadonlySet<PreviewAutomationRequest["operation"]> = new 
   "status",
   "snapshot",
   "waitFor",
+  "downloads",
+  "consoleLogs",
+  "networkLogs",
 ]);
+
+const readOnlyRequest = (request: PreviewAutomationRequest) =>
+  READ_OPERATIONS.has(request.operation) &&
+  !(
+    typeof request.input === "object" &&
+    request.input !== null &&
+    "clear" in request.input &&
+    request.input.clear === true
+  );
 
 const AGENT_TAB_LIMIT = 8;
 const SERVER_TAB_LIMIT = 32;
@@ -708,12 +958,13 @@ const make = Effect.gen(function* () {
   const tabs = new Map<string, ServerTab>();
   const pendingTabs = new Map<
     string,
-    { readonly agentId: string | null; promise?: Promise<ServerTab> }
+    { readonly agentId: string | null; readonly profileId?: string; promise?: Promise<ServerTab> }
   >();
 
   const closedPendingTabs = new Set<string>();
   const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
   const closedSessions = new Set<string>();
+  const ephemeralTabKeys = new Set<string>();
   let hostConnectionId: string | null = null;
   let viewerResizeOrder = 0;
 
@@ -1124,6 +1375,7 @@ const make = Effect.gen(function* () {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
+    ephemeralTabKeys.delete(key);
     tab.closing = true;
     tab.viewerAttached?.resolve();
     clearAbortedNavigation(tab);
@@ -1216,8 +1468,9 @@ const make = Effect.gen(function* () {
     opened: Array<() => Promise<void>>,
     crashedUrl: string | undefined,
   ): Promise<ServerTab> => {
-    const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
-    adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
+    const key = tabKey(snapshot.threadId, snapshot.tabId);
+    const adopted = adoptedPages.get(key);
+    adoptedPages.delete(key);
     const desktop =
       adopted === undefined && (await desktopRenders(snapshot))
         ? await connectDesktop(snapshot)
@@ -1237,13 +1490,14 @@ const make = Effect.gen(function* () {
       adopted === undefined &&
       desktop === null &&
       ((snapshot.automationOwner !== undefined && snapshot.profileId === undefined) ||
-        snapshot.profileId === INCOGNITO_BROWSER_PROFILE_ID);
+        snapshot.profileId === INCOGNITO_BROWSER_PROFILE_ID ||
+        ephemeralTabKeys.has(key));
     const context =
       adopted?.page.context() ??
       desktop?.page.context() ??
       (await contexts.contextFor(
         snapshot.profileId ?? "default",
-        isolatedContext ? tabKey(snapshot.threadId, snapshot.tabId) : undefined,
+        isolatedContext ? key : undefined,
       ));
     if (isolatedContext) opened.push(() => context.close());
     if (adopted?.page.isClosed()) throw new Error("The popup closed before it opened.");
@@ -1316,6 +1570,8 @@ const make = Effect.gen(function* () {
       crashedUrl,
       closing: false,
       recording: null,
+      workflow: null,
+      workflowStart: null,
       recordingStart: null,
       initialNavigation: null,
       pendingInitialRequestUrl: null,
@@ -1372,7 +1628,20 @@ const make = Effect.gen(function* () {
       frame(): unknown;
     }) => appLinkUrl(request.url()) === null && isMainFrameNavigation(request);
     const navigationGenerations = new WeakMap<object, number>();
+    const requestStartedAt = new WeakMap<object, number>();
+    const requestHeaders = (request: { headers(): Record<string, string> }) => {
+      try {
+        return boundedHeaders(request.headers());
+      } catch {
+        return undefined;
+      }
+    };
+    const durationOf = (request: object) => {
+      const started = requestStartedAt.get(request);
+      return started === undefined ? undefined : Math.max(0, performance.now() - started);
+    };
     page.on("request", (request) => {
+      requestStartedAt.set(request, performance.now());
       if (appLinkUrl(request.url()) !== null && isMainFrameNavigation(request)) {
         // A redirect into an app link ends the navigation that led there.
         const redirectedFrom = request.redirectedFrom();
@@ -1419,6 +1688,17 @@ const make = Effect.gen(function* () {
           if (!current && tab.fileChooser?.chooser === open.chooser) closeFileChooser(tab);
         });
       }
+      if (frame === page.mainFrame() && tab.workflow) {
+        pushBounded(
+          tab.workflow.steps,
+          {
+            action: "navigate",
+            url: ServerBrowserPage.withoutDataPayload(frame.url()).slice(0, 2048),
+            timestamp: new Date().toISOString(),
+          },
+          WORKFLOW_STEP_LIMIT,
+        );
+      }
       // Same-document navigations (SPA routes) fire no load event.
       if (frame === page.mainFrame() && !tab.loading) void reportLoaded(tab);
       if (!desktop) void recordFrameCopies(tab, frame);
@@ -1427,6 +1707,8 @@ const make = Effect.gen(function* () {
     if (adopted) for (const frame of page.frames()) void recordFrameCopies(tab, frame);
     page.on("requestfailed", (request) => {
       const errorText = request.failure()?.errorText ?? "";
+      const headers = requestHeaders(request);
+      const durationMs = durationOf(request);
       pushBounded(tab.networkEntries, {
         url: ServerBrowserPage.withoutDataPayload(request.url()),
         method: request.method(),
@@ -1434,6 +1716,8 @@ const make = Effect.gen(function* () {
         failed: true,
         errorText,
         timestamp: new Date().toISOString(),
+        ...(headers === undefined ? {} : { requestHeaders: headers }),
+        ...(durationMs === undefined ? {} : { durationMs }),
       });
       if (!isMainNavigation(request)) return;
       // Newer navigations own status; untracked initial popup requests yield to any tracked navigation.
@@ -1466,13 +1750,33 @@ const make = Effect.gen(function* () {
       report(tab, { _tag: "LoadFailed", url, title: "", code, description });
     });
     page.on("response", (response) => {
-      pushBounded(tab.networkEntries, {
+      const request = response.request();
+      const headers = requestHeaders(request);
+      const durationMs = durationOf(request);
+      const entry: {
+        -readonly [K in keyof PreviewAutomationNetworkEntry]: PreviewAutomationNetworkEntry[K];
+      } = {
         url: ServerBrowserPage.withoutDataPayload(response.url()),
-        method: response.request().method(),
+        method: request.method(),
         status: response.status(),
         failed: false,
         timestamp: new Date().toISOString(),
-      });
+        ...(headers === undefined ? {} : { requestHeaders: headers }),
+        ...(durationMs === undefined ? {} : { durationMs }),
+      };
+      try {
+        entry.responseHeaders = boundedHeaders(response.headers());
+      } catch {}
+      pushBounded(tab.networkEntries, entry);
+      void (async () => {
+        const contentType = entry.responseHeaders?.["content-type"] ?? "";
+        if (!isTextualResponse(contentType)) return;
+        const body = await response.body().catch(() => null);
+        if (body === null) return;
+        entry.responseBodyPreview = body
+          .toString("utf8", 0, Math.min(body.length, NETWORK_BODY_PREVIEW_LIMIT * 2))
+          .slice(0, NETWORK_BODY_PREVIEW_LIMIT);
+      })().catch(constVoid);
     });
     page.on("console", (message) => {
       pushBounded(tab.consoleEntries, {
@@ -1494,7 +1798,6 @@ const make = Effect.gen(function* () {
     updateFileChooserInterception(tab);
     // Popups become tabs and keep `window.opener`, so sign-in popups can report back.
     page.on("popup", (popup) => void adoptPopup(tab, popup));
-    const key = tabKey(tab.threadId, tab.tabId);
     if (closedPendingTabs.delete(key)) {
       if (desktop) {
         tab.closing = true;
@@ -1967,7 +2270,10 @@ const make = Effect.gen(function* () {
     options: { readonly reclaimIdleSlot?: boolean } = {},
   ) {
     let key: string = NodeCrypto.randomUUID();
-    const reservation = { agentId: input.automationOwner ?? null };
+    const reservation = {
+      agentId: input.automationOwner ?? null,
+      ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
+    };
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
         try: async () => {
@@ -2075,11 +2381,7 @@ const make = Effect.gen(function* () {
   );
   const reportsByClient = new Map<number, PreviewReportProfilesInput>();
   let nextClient = 0;
-  let reportedProfiles: {
-    readonly profiles: ReadonlyArray<BrowserProfile>;
-    readonly defaultProfileId: string;
-  } | null = yield* decodeSavedProfiles(savedProfiles).pipe(
-    Effect.map(resolveReportedProfiles),
+  const savedCatalog = yield* decodeSavedProfiles(savedProfiles).pipe(
     Effect.tapError((cause) =>
       savedProfiles === ""
         ? Effect.void
@@ -2090,9 +2392,35 @@ const make = Effect.gen(function* () {
     ),
     Effect.orElseSucceed(() => null),
   );
-  // Only reports change what is saved, so the order clients disconnect in at shutdown,
-  // even while a save waits for the lock, cannot shrink the saved catalog.
-  let catalogToSave = reportedProfiles;
+  let serverProfiles = (savedCatalog?.serverProfiles ?? []).filter(
+    (profile) => profile.kind === "persistent" && !isBuiltInBrowserProfileId(profile.id),
+  );
+  const deletedServerProfileIds = new Set(savedCatalog?.deletedServerProfileIds ?? []);
+  let clientCatalog: {
+    readonly profiles: ReadonlyArray<BrowserProfile>;
+    readonly defaultProfileId: string;
+  } | null = savedCatalog
+    ? resolveReportedProfiles({
+        profiles: savedCatalog.profiles,
+        defaultProfileId: savedCatalog.defaultProfileId,
+      })
+    : null;
+  const mergeReportedProfiles = () => {
+    const clientProfiles = (clientCatalog?.profiles ?? []).filter(
+      (profile) => !deletedServerProfileIds.has(profile.id),
+    );
+    return resolveReportedProfiles({
+      profiles: [...serverProfiles, ...clientProfiles],
+      defaultProfileId: clientCatalog?.defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID,
+    });
+  };
+  let reportedProfiles: {
+    readonly profiles: ReadonlyArray<BrowserProfile>;
+    readonly defaultProfileId: string;
+  } | null = savedCatalog ? mergeReportedProfiles() : null;
+  // Only reports change the client catalog saved under `profiles`; server-owned entries are
+  // separate so disconnect ordering cannot shrink either part of the catalog.
+  let catalogToSave = clientCatalog;
   // Agent recordings encode here, so they need the client's Browser recording frame rate. The
   // last report outlives the client, which lets agents record while no client is connected.
   let recordingFrameRate = DEFAULT_BROWSER_RECORDING_FRAME_RATE;
@@ -2108,17 +2436,23 @@ const make = Effect.gen(function* () {
       latest = report;
     }
     if (latest === undefined) return;
-    reportedProfiles = resolveReportedProfiles({
+    clientCatalog = resolveReportedProfiles({
       profiles: [...byId.values()],
       defaultProfileId: latest.defaultProfileId,
     });
+    reportedProfiles = mergeReportedProfiles();
   };
 
   const saveReportedProfiles = Effect.fn("ServerBrowser.saveReportedProfiles")(function* () {
-    if (catalogToSave === null) return;
     const contents = encodeSavedProfiles({
-      profiles: catalogToSave.profiles.filter((profile) => !isBuiltInBrowserProfileId(profile.id)),
-      defaultProfileId: catalogToSave.defaultProfileId,
+      profiles: (catalogToSave?.profiles ?? []).filter(
+        (profile) => !isBuiltInBrowserProfileId(profile.id),
+      ),
+      defaultProfileId: catalogToSave?.defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID,
+      ...(serverProfiles.length > 0 ? { serverProfiles } : {}),
+      ...(deletedServerProfileIds.size > 0
+        ? { deletedServerProfileIds: [...deletedServerProfileIds] }
+        : {}),
     });
     if (contents === savedProfiles) return;
     yield* writeFileStringAtomically({ filePath: savedProfilesPath, contents }).pipe(
@@ -2151,7 +2485,7 @@ const make = Effect.gen(function* () {
             reportsByClient.delete(client);
             reportsByClient.set(client, input);
             rebuildReportedProfiles();
-            catalogToSave = reportedProfiles;
+            catalogToSave = clientCatalog;
           }).pipe(
             Effect.andThen(saveReportedProfiles),
             // A disconnect, even while an earlier save holds the lock, must not drop this
@@ -2171,6 +2505,107 @@ const make = Effect.gen(function* () {
       })),
       ...(reportedProfiles ? { defaultProfileId: reportedProfiles.defaultProfileId } : {}),
     };
+  };
+
+  const profileError = (message: string) =>
+    new ServerBrowserPage.ServerBrowserOperationError({
+      tag: "PreviewAutomationExecutionError",
+      message,
+    });
+
+  const profileNameInput = (value: string) => {
+    const name = value.trim();
+    if (name.length === 0) throw profileError("Profile name cannot be empty.");
+    if (name.length > BROWSER_PROFILE_NAME_MAX_LENGTH)
+      throw profileError(
+        `Profile names are limited to ${BROWSER_PROFILE_NAME_MAX_LENGTH} characters.`,
+      );
+    return name;
+  };
+
+  const profileIdInput = (value: string) => {
+    const profileId = value.trim();
+    if (profileId.length === 0 || profileId.length > 64 || /\p{Cc}/u.test(profileId))
+      throw profileError("Profile id is invalid.");
+    return profileId;
+  };
+
+  const catalogProfile = (profileId: string) => {
+    const profiles = reportedProfiles?.profiles ?? BUILT_IN_BROWSER_PROFILES;
+    return findBrowserProfile(profiles, profileId);
+  };
+
+  const refreshServerProfiles = async () => {
+    reportedProfiles = mergeReportedProfiles();
+    await runPromise(saveReportedProfiles());
+  };
+
+  const createProfile = async (input: PreviewAutomationProfileCreateInput) => {
+    const name = profileNameInput(input.name);
+    const profiles = reportedProfiles?.profiles ?? BUILT_IN_BROWSER_PROFILES;
+    const customCount = profiles.filter((profile) => !isBuiltInBrowserProfileId(profile.id)).length;
+    if (customCount >= BROWSER_PROFILE_MAX_COUNT)
+      throw profileError(`At most ${BROWSER_PROFILE_MAX_COUNT} browser profiles can exist.`);
+    const profile: BrowserProfile = {
+      id: BrowserProfileId.make(`profile-${NodeCrypto.randomUUID()}`),
+      name,
+      kind: "persistent",
+    };
+    serverProfiles = [...serverProfiles, profile];
+    deletedServerProfileIds.delete(profile.id);
+    await refreshServerProfiles();
+    return { profile: { id: profile.id, name: profile.name }, ...profileStatus() };
+  };
+
+  const renameProfile = async (input: PreviewAutomationProfileRenameInput) => {
+    const profileId = profileIdInput(input.profileId);
+    if (isBuiltInBrowserProfileId(profileId))
+      throw profileError("The built-in browser profiles cannot be renamed.");
+    const existing = catalogProfile(profileId);
+    if (!existing) throw profileError(`No browser profile has id "${profileId}".`);
+    const renamed: BrowserProfile = {
+      id: existing.id,
+      name: profileNameInput(input.name),
+      kind: "persistent",
+    };
+    serverProfiles = [...serverProfiles.filter((profile) => profile.id !== profileId), renamed];
+    await refreshServerProfiles();
+    return { profile: { id: renamed.id, name: renamed.name }, ...profileStatus() };
+  };
+
+  const closeTabsInProfile = async (profileId: string) => {
+    const pending = [...pendingTabs.values()]
+      .filter((opening) => opening.profileId === profileId && opening.promise !== undefined)
+      .map((opening) => opening.promise!);
+    await Promise.allSettled(pending);
+    for (const tab of [...tabs.values()].filter((candidate) => candidate.profileId === profileId)) {
+      await runPromise(manager.close({ threadId: tab.threadId, tabId: tab.tabId }));
+      dropTab(tab, false);
+    }
+  };
+
+  const deleteProfile = async (input: PreviewAutomationProfileDeleteInput) => {
+    const profileId = profileIdInput(input.profileId);
+    if (isBuiltInBrowserProfileId(profileId))
+      throw profileError("The built-in browser profiles cannot be deleted.");
+    if (!catalogProfile(profileId)) throw profileError(`No browser profile has id "${profileId}".`);
+    await closeTabsInProfile(profileId);
+    await runPromise(clearProfile(profileId));
+    serverProfiles = serverProfiles.filter((profile) => profile.id !== profileId);
+    deletedServerProfileIds.add(profileId);
+    const withoutDeletedDefault = (
+      catalog: {
+        readonly profiles: ReadonlyArray<BrowserProfile>;
+        readonly defaultProfileId: string;
+      } | null,
+    ) =>
+      catalog?.defaultProfileId === profileId
+        ? { ...catalog, defaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
+        : catalog;
+    clientCatalog = withoutDeletedDefault(clientCatalog);
+    catalogToSave = withoutDeletedDefault(catalogToSave);
+    await refreshServerProfiles();
+    return { deletedProfileId: profileId, ...profileStatus() };
   };
 
   const resolveOpenProfile = (requested: string | undefined): string | undefined => {
@@ -2622,6 +3057,244 @@ const make = Effect.gen(function* () {
     );
   };
 
+  const navigateHistory = async (
+    tab: ServerTab,
+    operation: "back" | "forward" | "reload",
+    input: PreviewAutomationHistoryInput | PreviewAutomationReloadInput,
+    timeoutMs: number,
+  ) => {
+    await recordAction(tab, operation, async () => {
+      tab.pendingInitialRequestUrl = null;
+      const timeout = input.timeoutMs ?? timeoutMs;
+      const startedAt = performance.now();
+      const remaining = () => Math.max(1, timeout - (performance.now() - startedAt));
+      await leaveBusyPage(tab, tab.cdp, timeout / 2);
+      const options = { waitUntil: "commit", timeout: remaining() } as const;
+      let navigated = true;
+      if (operation === "back") navigated = (await tab.page.goBack(options)) !== null;
+      else if (operation === "forward") navigated = (await tab.page.goForward(options)) !== null;
+      else if ((input as PreviewAutomationReloadInput).hardReload === true)
+        await tab.cdp.send("Page.reload", { ignoreCache: true });
+      else await tab.page.reload(options);
+      const readiness = input.readiness ?? "load";
+      if (navigated && readiness !== "none") {
+        await tab.page.waitForLoadState(
+          readiness === "domContentLoaded" ? "domcontentloaded" : "load",
+          { timeout: remaining() },
+        );
+      }
+    });
+    assertNavigationSucceeded(tab);
+  };
+
+  const workflowString = (value: unknown, limit: number) =>
+    typeof value === "string" && value.length > 0 ? value.slice(0, limit) : undefined;
+
+  const sanitizeWorkflowStep = (value: unknown): PreviewAutomationWorkflowStep | null => {
+    const step = asRecord(value);
+    if (!step) return null;
+    const action = step.action;
+    if (!["click", "input", "submit", "navigate"].includes(String(action))) return null;
+    const url = workflowString(step.url, 2048);
+    const timestamp = workflowString(step.timestamp, 128);
+    if (!url || !timestamp) return null;
+    return {
+      action: action as PreviewAutomationWorkflowStep["action"],
+      url: ServerBrowserPage.withoutDataPayload(url),
+      timestamp,
+      ...(workflowString(step.role, 100) === undefined
+        ? {}
+        : { role: workflowString(step.role, 100) }),
+      ...(workflowString(step.ariaLabel, 300) === undefined
+        ? {}
+        : { ariaLabel: workflowString(step.ariaLabel, 300) }),
+      ...(workflowString(step.placeholder, 300) === undefined
+        ? {}
+        : { placeholder: workflowString(step.placeholder, 300) }),
+      ...(workflowString(step.dataTestId, 200) === undefined
+        ? {}
+        : { dataTestId: workflowString(step.dataTestId, 200) }),
+      ...(workflowString(step.selector, 500) === undefined
+        ? {}
+        : { selector: workflowString(step.selector, 500) }),
+      ...(step.event === "input" || step.event === "change" ? { event: step.event } : {}),
+      ...(typeof step.value === "string" ? { value: step.value.slice(0, 1000) } : {}),
+      ...(typeof step.checked === "boolean" ? { checked: step.checked } : {}),
+    };
+  };
+
+  const startWorkflow = (tab: ServerTab): Promise<WorkflowRecording> => {
+    if (tab.workflow) return Promise.resolve(tab.workflow);
+    if (tab.workflowStart) return tab.workflowStart;
+    const started = (async (): Promise<WorkflowRecording> => {
+      const token = NodeCrypto.randomUUID();
+      const bindingName = `__t3Workflow${token.replaceAll("-", "")}`;
+      const steps: Array<PreviewAutomationWorkflowStep> = [];
+      const onBinding: WorkflowRecording["onBinding"] = (event) => {
+        if (event.name !== bindingName || typeof event.payload !== "string") return;
+        try {
+          const payload = JSON.parse(event.payload) as { token?: unknown; step?: unknown };
+          if (payload.token !== token) return;
+          const step = sanitizeWorkflowStep(payload.step);
+          if (step) pushBounded(steps, step, WORKFLOW_STEP_LIMIT);
+        } catch {}
+      };
+      const workflow: WorkflowRecording = {
+        token,
+        bindingName,
+        scriptId: undefined,
+        executionContextId: undefined,
+        frameId: undefined,
+        startedAt: new Date().toISOString(),
+        startUrl: ServerBrowserPage.withoutDataPayload(tab.page.url()).slice(0, 2048),
+        steps,
+        onBinding,
+        onExecutionContext: (event) => {
+          const auxData = asRecord(event.context?.auxData);
+          const eventFrameId = typeof auxData?.frameId === "string" ? auxData.frameId : undefined;
+          if (
+            event.context?.name === WORKFLOW_WORLD &&
+            typeof event.context.id === "number" &&
+            (eventFrameId === undefined ||
+              workflow.frameId === undefined ||
+              eventFrameId === workflow.frameId)
+          )
+            workflow.executionContextId = event.context.id;
+        },
+      };
+      tab.cdp.on("Runtime.bindingCalled", onBinding);
+      tab.cdp.on("Runtime.executionContextCreated", workflow.onExecutionContext);
+      try {
+        await tab.cdp.send("Runtime.enable").catch(constVoid);
+        await tab.cdp
+          .send("Runtime.addBinding", { name: bindingName, executionContextName: WORKFLOW_WORLD })
+          .catch(() => tab.cdp.send("Runtime.addBinding", { name: bindingName }));
+        const source = workflowRecorderSource(bindingName, token);
+        const added = await tab.cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+          source,
+          worldName: WORKFLOW_WORLD,
+          runImmediately: true,
+        });
+        workflow.scriptId =
+          typeof (added as { identifier?: unknown }).identifier === "string"
+            ? (added as { identifier: string }).identifier
+            : undefined;
+        const { frameTree } = await tab.cdp.send("Page.getFrameTree");
+        workflow.frameId = frameTree.frame.id;
+        const { executionContextId } = await tab.cdp.send("Page.createIsolatedWorld", {
+          frameId: frameTree.frame.id,
+          worldName: WORKFLOW_WORLD,
+        });
+        workflow.executionContextId = executionContextId;
+        await tab.cdp.send("Runtime.evaluate", {
+          contextId: executionContextId,
+          expression: source,
+        });
+        tab.workflow = workflow;
+        return workflow;
+      } catch (cause) {
+        tab.cdp.off("Runtime.bindingCalled", onBinding);
+        tab.cdp.off("Runtime.executionContextCreated", workflow.onExecutionContext);
+        if (workflow.scriptId !== undefined)
+          await tab.cdp
+            .send("Page.removeScriptToEvaluateOnNewDocument", { identifier: workflow.scriptId })
+            .catch(constVoid);
+        await tab.cdp.send("Runtime.removeBinding", { name: bindingName }).catch(constVoid);
+        throw cause;
+      }
+    })().finally(() => {
+      if (tab.workflowStart === started) tab.workflowStart = null;
+    });
+    tab.workflowStart = started;
+    return started;
+  };
+
+  const stopWorkflow = async (tab: ServerTab) => {
+    if (tab.workflowStart) await tab.workflowStart.catch(constVoid);
+    const workflow = tab.workflow;
+    if (!workflow) {
+      throw new ServerBrowserPage.ServerBrowserOperationError({
+        tag: "PreviewAutomationExecutionError",
+        message: "No Show Me recording is active for this tab.",
+      });
+    }
+    try {
+      if (workflow.executionContextId !== undefined) {
+        await tab.cdp
+          .send("Runtime.evaluate", {
+            contextId: workflow.executionContextId,
+            expression: "globalThis.__t3WorkflowRecorder?.teardown?.()",
+          })
+          .catch(constVoid);
+      }
+      if (workflow.scriptId !== undefined) {
+        await tab.cdp
+          .send("Page.removeScriptToEvaluateOnNewDocument", { identifier: workflow.scriptId })
+          .catch(constVoid);
+      }
+      await tab.cdp.send("Runtime.removeBinding", { name: workflow.bindingName }).catch(constVoid);
+    } finally {
+      tab.cdp.off("Runtime.bindingCalled", workflow.onBinding);
+      tab.cdp.off("Runtime.executionContextCreated", workflow.onExecutionContext);
+      tab.workflow = null;
+    }
+    const stoppedAt = new Date().toISOString();
+    const result = {
+      steps: [...workflow.steps],
+      startedAt: workflow.startedAt,
+      stoppedAt,
+      startUrl: workflow.startUrl,
+    };
+    return { ...result, markdown: workflowMarkdown(result.steps, result) };
+  };
+
+  const takeLimited = <A>(entries: ReadonlyArray<A>, limit: number | undefined) =>
+    limit === undefined ? [...entries] : entries.slice(-limit);
+
+  const downloadEntries = (tab: ServerTab, input: PreviewAutomationDownloadsInput) => ({
+    downloads: takeLimited(
+      tab.downloads.map(({ fileName, path, sizeBytes, url, completedAt }) => ({
+        fileName,
+        path,
+        sizeBytes,
+        url,
+        completedAt,
+      })),
+      input.limit,
+    ),
+  });
+
+  const consoleLogEntries = (tab: ServerTab, input: PreviewAutomationConsoleLogsInput) => {
+    const sinceMs = input.since === undefined ? undefined : Date.parse(input.since);
+    if (sinceMs !== undefined && Number.isNaN(sinceMs)) {
+      throw new ServerBrowserPage.ServerBrowserOperationError({
+        tag: "PreviewAutomationExecutionError",
+        message: "consoleLogs `since` must be an ISO timestamp.",
+      });
+    }
+    const entries = tab.consoleEntries.filter(
+      (entry) =>
+        (input.level === undefined || entry.level === input.level) &&
+        (sinceMs === undefined || Date.parse(entry.timestamp) >= sinceMs),
+    );
+    return { consoleEntries: takeLimited(entries, input.limit) };
+  };
+
+  const networkLogEntries = (tab: ServerTab, input: PreviewAutomationNetworkLogsInput) => {
+    const method = input.method?.toUpperCase();
+    const entries = tab.networkEntries.filter(
+      (entry) =>
+        (input.urlIncludes === undefined || entry.url.includes(input.urlIncludes)) &&
+        (method === undefined || entry.method.toUpperCase() === method) &&
+        (input.statusMin === undefined ||
+          (entry.status !== null && entry.status >= input.statusMin)) &&
+        (input.statusMax === undefined ||
+          (entry.status !== null && entry.status <= input.statusMax)) &&
+        (input.failedOnly !== true || entry.failed),
+    );
+    return { networkEntries: takeLimited(entries, input.limit) };
+  };
+
   const requireTab = async (request: PreviewAutomationRequest) => {
     if (!request.agentSessionId)
       throw new BrowserControlInterrupted({
@@ -2648,7 +3321,7 @@ const make = Effect.gen(function* () {
         message: "No server preview tab is open for this thread. Call preview_open first.",
       });
     }
-    if (!READ_OPERATIONS.has(request.operation) && !tab.control.agentMayAct(request.agentSessionId))
+    if (!readOnlyRequest(request) && !tab.control.agentMayAct(request.agentSessionId))
       throw new BrowserControlInterrupted({
         message:
           "This tab belongs to another agent session. You can read it, but open your own tab to act.",
@@ -2681,14 +3354,32 @@ const make = Effect.gen(function* () {
             : tabs.get(tabKey(request.threadId, request.tabId)),
           request.agentSessionId,
         );
+      case "profileCreate":
+        return createProfile(input as PreviewAutomationProfileCreateInput);
+      case "profileRename":
+        return renameProfile(input as PreviewAutomationProfileRenameInput);
+      case "profileDelete":
+        return deleteProfile(input as PreviewAutomationProfileDeleteInput);
       case "open": {
         if (!request.agentSessionId)
           throw new BrowserControlInterrupted({
             message: "The agent session is missing. Reconnect the provider.",
           });
         const open = input as PreviewAutomationOpenInput;
+        if (
+          open.ephemeral === true &&
+          (open.tabId !== undefined ||
+            request.tabIdExplicit === true ||
+            (open.profileId !== undefined && open.profileId !== INCOGNITO_BROWSER_PROFILE_ID))
+        ) {
+          throw new ServerBrowserPage.ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message:
+              "An ephemeral tab cannot target an existing tab or use a persistent browser profile.",
+          });
+        }
         const url = open.url === undefined ? undefined : normalizePreviewUrl(open.url);
-        const reuse = open.reuseExistingTab ?? true;
+        const reuse = (open.reuseExistingTab ?? true) && open.ephemeral !== true;
         if (
           reuse &&
           !request.tabIdExplicit &&
@@ -2732,7 +3423,8 @@ const make = Effect.gen(function* () {
             ? found
             : undefined;
         const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
-        const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
+        const profileId =
+          existing || open.ephemeral === true ? undefined : resolveOpenProfile(open.profileId);
         if (!existing) closeIdleAgentTabs();
         const tab =
           existing ??
@@ -2745,6 +3437,13 @@ const make = Effect.gen(function* () {
                 runtime: "server",
                 reveal: false,
                 automationOwner: request.agentSessionId,
+                ...(open.ephemeral === true
+                  ? {
+                      beforePublish: (snapshot) => {
+                        ephemeralTabKeys.add(tabKey(snapshot.threadId, snapshot.tabId));
+                      },
+                    }
+                  : {}),
               },
               { reclaimIdleSlot: true },
             ),
@@ -2882,7 +3581,7 @@ const make = Effect.gen(function* () {
     const agentSessionId = request.agentSessionId!;
 
     if (
-      READ_OPERATIONS.has(request.operation) &&
+      readOnlyRequest(request) &&
       tab.control.agentId !== agentSessionId &&
       !tab.control.agentCanActNow(agentSessionId)
     ) {
@@ -2905,7 +3604,7 @@ const make = Effect.gen(function* () {
             reason: "dialogPending",
           });
         const generation = tab.control.generation;
-        tab.agentOperating = !READ_OPERATIONS.has(request.operation);
+        tab.agentOperating = !readOnlyRequest(request);
         updateFileChooserInterception(tab);
         try {
           return await executeTabOperation(tab, request, deadlineMs);
@@ -2938,6 +3637,45 @@ const make = Effect.gen(function* () {
         );
         return statusWithTitle(tab, request.agentSessionId);
       }
+      case "back":
+      case "forward":
+      case "reload":
+        await navigateHistory(
+          tab,
+          request.operation,
+          input as PreviewAutomationReloadInput,
+          request.timeoutMs,
+        );
+        return statusWithTitle(tab, request.agentSessionId);
+      case "downloads": {
+        const downloadsInput = input as PreviewAutomationDownloadsInput;
+        const result = downloadEntries(tab, downloadsInput);
+        if (downloadsInput.clear === true) tab.downloads.length = 0;
+        return result;
+      }
+      case "consoleLogs": {
+        const logsInput = input as PreviewAutomationConsoleLogsInput;
+        const result = consoleLogEntries(tab, logsInput);
+        if (logsInput.clear === true) tab.consoleEntries.length = 0;
+        return result;
+      }
+      case "networkLogs": {
+        const logsInput = input as PreviewAutomationNetworkLogsInput;
+        const result = networkLogEntries(tab, logsInput);
+        if (logsInput.clear === true) tab.networkEntries.length = 0;
+        return result;
+      }
+      case "workflowStart": {
+        const workflow = await startWorkflow(tab);
+        return {
+          tabId: tab.tabId,
+          recording: true,
+          startedAt: workflow.startedAt,
+          startUrl: workflow.startUrl,
+        };
+      }
+      case "workflowStop":
+        return stopWorkflow(tab);
       case "resize": {
         const setting = resolvePreviewViewport(input as PreviewAutomationResizeInput);
         const from = fixedViewportSize(tab.setting);
