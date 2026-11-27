@@ -201,6 +201,7 @@ import {
   type ActiveThreadListEntry,
   type OlderSettledThreadsQuery,
   type ShellSnapshotOptions,
+  rollbackAbandonment,
 } from "./ProjectionStore.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -14941,51 +14942,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       }
 
-      const rolledBackProviderThreadIds = new Set(
-        runsToRollback.flatMap((run) =>
-          run.providerThreadId === null ? [] : [run.providerThreadId],
+      const abandonment = rollbackAbandonment({
+        target: providerThread,
+        targetOrdinal,
+        activeProviderThreadId: projection.thread.activeProviderThreadId,
+        rootProviderThreads: projection.providerThreads.filter(
+          (candidate) =>
+            candidate.appThreadId === command.threadId && candidate.ownerNodeId === null,
         ),
-      );
-      const rootProviderThreads = projection.providerThreads.filter(
-        (candidate) => candidate.appThreadId === command.threadId && candidate.ownerNodeId === null,
-      );
-      const abandonedProviderThreads = rootProviderThreads.filter(
-        (candidate) =>
-          candidate.id !== providerThread.id &&
-          !isRetiredProviderThread(candidate) &&
-          (rolledBackProviderThreadIds.has(candidate.id) ||
-            candidate.id === projection.thread.activeProviderThreadId ||
-            (candidate.lastRunOrdinal !== null && candidate.lastRunOrdinal > targetOrdinal) ||
-            (candidate.firstRunOrdinal !== null && candidate.firstRunOrdinal > targetOrdinal)),
-      );
-      const abandonedIds = new Set(abandonedProviderThreads.map((candidate) => candidate.id));
-      const retainedSessionIds = new Set(
-        rootProviderThreads.flatMap((candidate) =>
-          !isRetiredProviderThread(candidate) &&
-          !abandonedIds.has(candidate.id) &&
-          candidate.providerSessionId !== null
-            ? [candidate.providerSessionId]
-            : [],
-        ),
-      );
-      retainedSessionIds.add(providerThread.providerSessionId);
-      const abandonedSessionIds = new Set(
-        abandonedProviderThreads.flatMap((candidate) =>
-          candidate.providerSessionId !== null &&
-          !retainedSessionIds.has(candidate.providerSessionId)
-            ? [candidate.providerSessionId]
-            : [],
-        ),
-      );
-      for (const session of projection.providerSessions) {
-        if (
-          !abandonedSessionIds.has(session.id) ||
-          session.status === "stopped" ||
-          session.status === "error" ||
-          session.capabilities.sessions.supportsMultipleProviderThreadsPerSession
-        ) {
-          continue;
-        }
+        runsToRollback,
+        sessions: projection.providerSessions,
+      });
+      for (const session of abandonment.sessions) {
         if (yield* sessionHasBackgroundWork(session, projection.providerThreads)) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,

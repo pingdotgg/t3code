@@ -958,7 +958,6 @@ export async function waitForRevertedMessage(
     turnCount === 0 || initial === null
       ? initialActiveProviderThreadId
       : (resolveTargetProviderThreadIdForRun(initial, turnCount) ?? initialActiveProviderThreadId);
-  const expectedProviderThreadId = targetProviderThreadId;
   // Paging can omit the source run. Rollback commits the entire settled suffix atomically.
   const witness = initial?.runs.reduce<(typeof initial.runs)[number] | undefined>((latest, run) => {
     if (
@@ -1001,7 +1000,7 @@ export async function waitForRevertedMessage(
         thread.providerThreads.some(
           (providerThread) =>
             !isRetiredProviderThread(providerThread) &&
-            (providerThread.id === expectedProviderThreadId ||
+            (providerThread.id === targetProviderThreadId ||
               // When the target run was paged out, cross-provider rewind activates its provider thread.
               (turnCount > 0 &&
                 providerThread.id === thread.thread.activeProviderThreadId &&

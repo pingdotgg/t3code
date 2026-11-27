@@ -228,6 +228,8 @@ it.effect.each([
       targetAttempt: undefined,
       rolledBackAttemptIds: [],
       staleCheckpoints: [],
+      abandonedProviderThreads: [],
+      abandonedSessions: [],
       rootNodes: [],
       providerTurns: [],
     } as unknown as ProjectionStore.ProjectionCheckpointRollbackContext;
@@ -452,6 +454,8 @@ it.effect.each([
         targetAttempt: undefined,
         rolledBackAttemptIds: [],
         staleCheckpoints: [],
+        abandonedProviderThreads: [],
+        abandonedSessions: [],
         rootNodes: [],
         providerTurns: [],
       } as unknown as ProjectionStore.ProjectionCheckpointRollbackContext;

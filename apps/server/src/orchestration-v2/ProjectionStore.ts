@@ -1025,6 +1025,52 @@ function preserveCompletionDelivery(
   return { ...next, completionDelivery: current.completionDelivery };
 }
 
+/**
+ * Root provider threads a rewind to `targetOrdinal` discards in favour of `target`, and the live
+ * sessions only they hold. Shared sessions host other provider threads and stay attached.
+ */
+export function rollbackAbandonment(input: {
+  readonly target: OrchestrationV2ProviderThread;
+  readonly targetOrdinal: number;
+  readonly activeProviderThreadId: ProviderThreadId | null;
+  readonly rootProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
+  readonly runsToRollback: ReadonlyArray<Pick<OrchestrationV2Run, "providerThreadId">>;
+  readonly sessions: ReadonlyArray<OrchestrationV2ThreadProjection["providerSessions"][number]>;
+}) {
+  const rolledBackProviderThreadIds = new Set(
+    input.runsToRollback.map((run) => run.providerThreadId),
+  );
+  const providerThreads = input.rootProviderThreads.filter(
+    (candidate) =>
+      candidate.id !== input.target.id &&
+      !isRetiredProviderThread(candidate) &&
+      (rolledBackProviderThreadIds.has(candidate.id) ||
+        candidate.id === input.activeProviderThreadId ||
+        (candidate.lastRunOrdinal ?? 0) > input.targetOrdinal ||
+        (candidate.firstRunOrdinal ?? 0) > input.targetOrdinal),
+  );
+  const abandonedIds = new Set(providerThreads.map((candidate) => candidate.id));
+  const retainedSessionIds = new Set([
+    input.target.providerSessionId,
+    ...input.rootProviderThreads
+      .filter((candidate) => !isRetiredProviderThread(candidate) && !abandonedIds.has(candidate.id))
+      .map((candidate) => candidate.providerSessionId),
+  ]);
+  const abandonedSessionIds = new Set(
+    providerThreads
+      .map((candidate) => candidate.providerSessionId)
+      .filter((id) => id !== null && !retainedSessionIds.has(id)),
+  );
+  const sessions = input.sessions.filter(
+    (session) =>
+      abandonedSessionIds.has(session.id) &&
+      session.status !== "stopped" &&
+      session.status !== "error" &&
+      !session.capabilities.sessions.supportsMultipleProviderThreadsPerSession,
+  );
+  return { providerThreads, sessions };
+}
+
 export function emptyProjection(
   event: Extract<OrchestrationV2DomainEvent, { readonly type: "thread.created" }>,
 ): OrchestrationV2ThreadProjection {
@@ -6636,49 +6682,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               decodeProviderThreadPayload,
               threadId,
             )(rootProviderThreadRows);
-            const rolledBackProviderThreadIds = new Set(
-              runsToRollback.flatMap((run) =>
-                run.providerThreadId === null ? [] : [run.providerThreadId],
-              ),
-            );
-            const abandonedProviderThreads = rootProviderThreads.filter(
-              (candidate) =>
-                candidate.id !== providerThread.id &&
-                !isRetiredProviderThread(candidate) &&
-                (rolledBackProviderThreadIds.has(candidate.id) ||
-                  candidate.id === thread.activeProviderThreadId ||
-                  (candidate.lastRunOrdinal !== null && candidate.lastRunOrdinal > targetOrdinal) ||
-                  (candidate.firstRunOrdinal !== null &&
-                    candidate.firstRunOrdinal > targetOrdinal)),
-            );
-            const abandonedIds = new Set(abandonedProviderThreads.map((candidate) => candidate.id));
-            const retainedSessionIds = new Set(
-              rootProviderThreads.flatMap((candidate) =>
-                !isRetiredProviderThread(candidate) &&
-                !abandonedIds.has(candidate.id) &&
-                candidate.providerSessionId !== null
-                  ? [candidate.providerSessionId]
-                  : [],
-              ),
-            );
-            if (providerThread.providerSessionId !== null) {
-              retainedSessionIds.add(providerThread.providerSessionId);
-            }
-            const abandonedSessionIds = new Set(
-              abandonedProviderThreads.flatMap((candidate) =>
-                candidate.providerSessionId !== null &&
-                !retainedSessionIds.has(candidate.providerSessionId)
-                  ? [candidate.providerSessionId]
-                  : [],
-              ),
-            );
-            const abandonedSessions = allSessions.filter(
-              (session) =>
-                abandonedSessionIds.has(session.id) &&
-                session.status !== "stopped" &&
-                session.status !== "error" &&
-                !session.capabilities.sessions.supportsMultipleProviderThreadsPerSession,
-            );
+            const abandonment = rollbackAbandonment({
+              target: providerThread,
+              targetOrdinal,
+              activeProviderThreadId: thread.activeProviderThreadId,
+              rootProviderThreads,
+              runsToRollback,
+              sessions: allSessions,
+            });
             const [nodeRows, turnRows] = yield* Effect.all([
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_nodes
             WHERE thread_id = ${threadId} AND ${sql.in(
@@ -6705,8 +6716,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               rootNodes: yield* decodeRows(decodeNodePayload, threadId)(nodeRows),
               providerTurns: yield* decodeRows(decodeProviderTurnPayload, threadId)(turnRows),
               staleCheckpoints: yield* decodeRows(decodeCheckpointPayload, threadId)(staleRows),
-              abandonedProviderThreads,
-              abandonedSessions,
+              abandonedProviderThreads: abandonment.providerThreads,
+              abandonedSessions: abandonment.sessions,
             };
           }),
         )

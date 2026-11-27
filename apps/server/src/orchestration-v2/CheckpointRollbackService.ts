@@ -497,7 +497,7 @@ export const layer: Layer.Layer<
               }),
             );
           }
-          for (const abandoned of context.abandonedProviderThreads ?? []) {
+          for (const abandoned of context.abandonedProviderThreads) {
             events.push(
               yield* makeEvent({
                 type: "provider-thread.updated",
@@ -532,7 +532,7 @@ export const layer: Layer.Layer<
           const detachCommandId =
             input.requestId ??
             CommandId.make(`command:rollback-detach:${input.threadId}:${input.checkpointId}`);
-          for (const abandonedSession of context.abandonedSessions ?? []) {
+          for (const abandonedSession of context.abandonedSessions) {
             events.push(
               yield* makeEvent({
                 type: "provider-session.detached",
