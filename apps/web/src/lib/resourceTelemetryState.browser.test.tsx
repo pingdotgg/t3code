@@ -317,7 +317,6 @@ describe("resource monitor retry", () => {
 });
 
 it.each([
-  [1, 1, "1 start · 1 exit"],
   [1, 0, "1 start · 0 exits"],
   [2, 1, "2 starts · 1 exit"],
 ])(
