@@ -2556,19 +2556,24 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   // GitHub merges a BLOCKED pull request for a viewer who may bypass branch rules, with none of
   // the opt-in github.com asks for, so the merge mutation must never be sent while it is blocked.
-  it.effect("refuses an immediate merge while branch rules block the pull request", () =>
+  it.effect.each([
+    { description: "a pull request", stack: {} },
+    { description: "a stack", stack: { stackNumber: 3 } },
+  ])("refuses an immediate merge of $description while branch rules block it", ({ stack }) =>
     Effect.gen(function* () {
       route(
         ["query PullRequestActionState", actionState({ mergeStateStatus: "BLOCKED" })],
         ["mergePullRequest(", { data: { mergePullRequest: { pullRequest: { state: "MERGED" } } } }],
+        ["merge-async", { status: "merged", details: {} }],
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
       const error = yield* Effect.flip(
-        cli.runPullRequestAction({ ...pullRequestInput, action: "merge" }),
+        cli.runPullRequestAction({ ...pullRequestInput, ...stack, action: "merge" }),
       );
       expect(error._tag).toBe("GitHubMergeBlockedError");
-      // Only the action-state read ran; the merge mutation was never sent.
+      // Only the action-state read ran; no merge request was sent.
       expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(restCallsTo("merge-async")).toEqual([]);
     }),
   );
 

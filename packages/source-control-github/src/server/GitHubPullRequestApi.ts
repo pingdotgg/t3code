@@ -2706,6 +2706,32 @@ export const make = Effect.gen(function* () {
     }),
 
     runPullRequestAction: Effect.fn("GitHubPullRequestApi.runPullRequestAction")(function (input) {
+      const readActionState = () => {
+        const { owner, name } = parseRepositorySelector(input.repository);
+        const target = { ...input, operation: "runPullRequestAction" };
+        return client
+          .PullRequestActionState({
+            owner,
+            name,
+            number: input.number,
+            headRef: `refs/pull/${input.number}/head`,
+          })
+          .pipe(
+            toleratingMissingPullRef(decodePullRequestActionState),
+            graphql({ ...target, allowReserve: true }),
+            Effect.map((result) => result.repository?.pullRequest ?? null),
+            Effect.flatMap(found(target)),
+          );
+      };
+      // BLOCKED also covers pending required checks and reviews. A viewer who may bypass branch
+      // rules would merge straight past them, so an immediate merge is refused while blocked.
+      const refuseBlockedMerge = (state: {
+        readonly isMergeQueueEnabled?: boolean | null | undefined;
+        readonly mergeStateStatus?: string | null | undefined;
+      }) =>
+        state.isMergeQueueEnabled !== true && state.mergeStateStatus?.toUpperCase() === "BLOCKED"
+          ? Effect.fail(new GitHubMergeBlockedError({ number: input.number }))
+          : Effect.void;
       if (input.action === "delete-branch") {
         return Effect.gen(function* () {
           if (input.stackNumber !== undefined) {
@@ -2807,6 +2833,11 @@ export const make = Effect.gen(function* () {
             Effect.provideService(HttpClient.HttpClient, httpClient),
             Effect.provideService(SourceControlHost.SourceControlHost, sourceControlHost),
             Effect.provideService(FileSystem.FileSystem, fileSystem),
+          );
+        if (input.action === "merge")
+          return readActionState().pipe(
+            Effect.flatMap(refuseBlockedMerge),
+            Effect.andThen(stackAction("merge")),
           );
         if (input.action !== "enable-auto-merge") return stackAction(input.action);
         const expectedHeadOid = input.expectedStackHeads?.find(
@@ -2939,21 +2970,9 @@ export const make = Effect.gen(function* () {
       }
       return Effect.gen(function* () {
         const { owner, name } = parseRepositorySelector(input.repository);
-        // Fresh head and merge-queue state determine the mutation's revision and route.
         const target = { ...input, operation: "runPullRequestAction" };
-        const state = yield* client
-          .PullRequestActionState({
-            owner,
-            name,
-            number: input.number,
-            headRef: `refs/pull/${input.number}/head`,
-          })
-          .pipe(
-            toleratingMissingPullRef(decodePullRequestActionState),
-            graphql({ ...target, allowReserve: true }),
-            Effect.map((result) => result.repository?.pullRequest ?? null),
-            Effect.flatMap(found(target)),
-          );
+        // Fresh head and merge-queue state determine the mutation's revision and route.
+        const state = yield* readActionState();
         if (action === "update-branch") {
           if (state.baseRef?.compare?.behindBy === 0) return;
           return yield* client
@@ -2998,11 +3017,7 @@ export const make = Effect.gen(function* () {
           state.isMergeQueueEnabled === true ||
           (action === "enable-auto-merge" &&
             !IMMEDIATELY_MERGEABLE.has(state.mergeStateStatus?.toUpperCase() ?? ""));
-        // BLOCKED also covers pending required checks and reviews. A viewer who may bypass branch
-        // rules would merge straight past them here, so an immediate merge is refused while blocked.
-        if (!auto && state.mergeStateStatus?.toUpperCase() === "BLOCKED") {
-          return yield* new GitHubMergeBlockedError({ number: input.number });
-        }
+        if (action === "merge") yield* refuseBlockedMerge(state);
         const merge = {
           pullRequestId: state.id,
           mergeMethod: GRAPHQL_MERGE_METHODS[input.mergeMethod ?? "merge"] ?? "MERGE",

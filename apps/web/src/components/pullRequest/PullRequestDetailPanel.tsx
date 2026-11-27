@@ -1643,12 +1643,20 @@ export function PullRequestDetailPanel({
                   onSelect={onSelectPullRequest}
                   mergeMethod={selectedMergeMethod}
                   stale={!nativeStackQuery.isFresh}
-                  canMerge={supportsStackActions && can("merge") && allowedMergeMethods.length > 0}
+                  canMerge={
+                    supportsStackActions &&
+                    can("merge") &&
+                    detail.mergeBlocked !== true &&
+                    allowedMergeMethods.length > 0
+                  }
                   canRebase={supportsStackActions && detail.viewerPermissions.stackRebase === true}
                   canAutoMerge={
                     stackAutoMerge && can("enable-auto-merge") && allowedMergeMethods.length > 0
                   }
-                  preferAutoMerge={checksState !== null && checksState !== "passing"}
+                  preferAutoMerge={
+                    detail.mergeBlocked === true ||
+                    (checksState !== null && checksState !== "passing")
+                  }
                   autoMergeArmed={stackAutoMerge && autoMergeArmed}
                   canCancelAutoMerge={stackAutoMerge && can("disable-auto-merge")}
                   onActed={() => {
