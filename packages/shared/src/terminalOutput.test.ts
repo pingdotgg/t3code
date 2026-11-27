@@ -61,6 +61,11 @@ describe("appendTerminalOutput", () => {
     }
   });
 
+  it("keeps text beyond a tab when a redraw overwrites an earlier column", () => {
+    const output = feed(["abc\tZ", "\u001b[5GX"]).text;
+    expect(terminalOutputPlainText(output)).toBe("abc X   Z");
+  });
+
   it("redraws several lines in place when the cursor moves up", () => {
     const frames = [
       "layer a: 10%\nlayer b: 10%\n",
