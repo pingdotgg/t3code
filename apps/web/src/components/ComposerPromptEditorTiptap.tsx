@@ -506,8 +506,7 @@ function citationResumePlugin() {
           // Let ProseMirror flush the final composition before touching its text.
           queueMicrotask(() =>
             queueMicrotask(() => {
-              const pending = citationResumeKey.getState(view.state);
-              if (!view.isDestroyed && pending && pending.from !== pending.to && !view.composing) {
+              if (!view.isDestroyed && citationResumeKey.getState(view.state)) {
                 view.dispatch(view.state.tr);
               }
             }),
