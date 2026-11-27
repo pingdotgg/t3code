@@ -1,5 +1,5 @@
 import { T } from "gt-react-native";
-import { Platform, ScrollView, type StyleProp, type TextStyle, View } from "react-native";
+import { ScrollView, type StyleProp, type TextStyle, View } from "react-native";
 
 import { AppText as Text } from "../../../../components/ui/AppText";
 import {
@@ -8,12 +8,6 @@ import {
 } from "../../../../lib/appearancePreferences";
 import { getMobileTerminalTheme } from "../../../terminal/terminalTheme";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
-
-const CODE_FONT_FAMILY = Platform.select({
-  ios: "ui-monospace",
-  android: "monospace",
-  default: "monospace",
-});
 
 export function AppearancePreviewSeparator() {
   return <View className="h-px bg-separator" />;
@@ -41,11 +35,11 @@ export function TextAppearancePreview(props: { readonly fontSize: number }) {
 }
 
 export function TerminalAppearancePreview(props: { readonly fontSize: number }) {
-  const { themeAppearance: scheme, themeId } = useAppearancePreferences();
+  const { themeAppearance: scheme, themeId, monoFontFamily } = useAppearancePreferences();
   const theme = getMobileTerminalTheme(themeId, scheme);
   const lineHeight = Math.round(props.fontSize * 1.6);
   const lineStyle = {
-    fontFamily: Platform.OS === "android" ? "monospace" : "Menlo",
+    fontFamily: monoFontFamily,
     fontSize: props.fontSize,
     lineHeight,
   } as const;
@@ -134,13 +128,14 @@ export function CodeAppearancePreview(props: {
   readonly wordBreak: boolean;
 }) {
   const surface = resolveMobileCodeSurface(props.fontSize);
+  const { monoFontFamily } = useAppearancePreferences();
 
   const lineNumber = (line: CodePreviewLine, index: number) => (
     <Text
       className="text-right text-icon-subtle"
       key={line.id}
       style={{
-        fontFamily: CODE_FONT_FAMILY,
+        fontFamily: monoFontFamily,
         fontSize: surface.lineNumberFontSize,
         lineHeight: surface.rowHeight,
         width: 22,
@@ -156,7 +151,7 @@ export function CodeAppearancePreview(props: {
       key={line.id}
       numberOfLines={wrap ? undefined : 1}
       style={{
-        fontFamily: CODE_FONT_FAMILY,
+        fontFamily: monoFontFamily,
         fontSize: surface.fontSize,
         lineHeight: surface.rowHeight,
       }}
@@ -166,7 +161,7 @@ export function CodeAppearancePreview(props: {
           key={token.text}
           className={token.keyword ? "text-md-link" : undefined}
           style={{
-            fontFamily: CODE_FONT_FAMILY,
+            fontFamily: monoFontFamily,
             fontSize: surface.fontSize,
             lineHeight: surface.rowHeight,
           }}

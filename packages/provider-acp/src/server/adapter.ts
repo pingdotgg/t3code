@@ -5887,7 +5887,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
          */
         const emitNotice = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
-          notice: { readonly title: string; readonly description?: string },
+          notice: {
+            readonly severity: string;
+            readonly title: string;
+            readonly description?: string;
+          },
         ) {
           const nativeItemId = `${context.nativeTurnId}:notice:${context.itemOrdinals.size}`;
           const now = yield* DateTime.now;
@@ -5906,6 +5910,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ordinal: yield* resolveItemOrdinal(context, nativeItemId),
               type: "system_notice",
               status: "completed",
+              // Severity is an open set; an unknown value gets the plain presentation.
+              level:
+                notice.severity === "warning" || notice.severity === "error"
+                  ? notice.severity
+                  : "info",
               title: notice.title,
               message:
                 notice.description === undefined
