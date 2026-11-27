@@ -4236,6 +4236,7 @@
   "ac242b57dbfa5259": "Gérer les tâches planifiées",
   "d93c0db04f4c8e46": "Modifier l’automatisation",
   "3fe420ed9b5bdb75": "Exécuter maintenant",
+  "fdf273ca647a967f": "Supprimer",
   "0c433351a8606e50": [
     "Impossible de charger les automatisations : ",
     {
@@ -5369,7 +5370,9 @@
   "4cb21672153c1f18": "Aucun simulateur ni émulateur trouvé dans cet environnement.",
   "c82410197256eb53": "Simulateurs iOS",
   "31a71fec6b5f2bf3": "Appareils Android",
+  "1bd21d5284dc2d8e": "Appareils iOS",
   "ac18a5e35195a258": "Émulateurs Android",
+  "f28d1d2b5f30a8cd": "Physique",
   "94215375ea2558b8": "En cours",
   "f8a65d4d662389b0": "Arrêté",
   "b1687c7b2b91e569": "Ouvrir {name}",
@@ -13052,5 +13055,7 @@
       "k": "_gt_value_1",
       "v": "v"
     }
-  ]
+  ],
+  "eb1fd384ad5919dd": "Note interne",
+  "b45f0b467e9406d0": "Répondre au client"
 }
