@@ -47,13 +47,13 @@ it.effect.each([
     kind: "openaiCompatible",
     path: "/v1/chat/completions",
     auth: ["authorization", "Bearer secret"],
-    reply: { choices: [{ finish_reason: "stop", message: { content: '{"title":"Fix login"}' } }] },
+    reply: { choices: [{ message: { content: '{"title":"Fix login"}' } }] },
   },
   {
     kind: "anthropic",
     path: "/v1/messages",
     auth: ["x-api-key", "secret"],
-    reply: { stop_reason: "end_turn", content: [{ type: "text", text: '{"title":"Fix login"}' }] },
+    reply: { content: [{ type: "text", text: '{"title":"Fix login"}' }] },
   },
 ] as const)("$kind generates structured text with its API's request shape", (api) =>
   Effect.gen(function* () {
