@@ -14,6 +14,7 @@ import {
   buildKeybindingRows,
   buildWhenVariableOptions,
   commandLabel,
+  filterKeybindingRows,
   groupKeybindingRows,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
@@ -36,6 +37,24 @@ describe("KeybindingsSettings.logic", () => {
         .find((group) => group.id === "navigation")
         ?.rows.some((row) => row.command === "projectFilter.toggle"),
     ).toBe(true);
+  });
+
+  it("finds a shortcut by the label its row shows", () => {
+    const rows = buildKeybindingRows(
+      compileResolvedKeybindingsConfig([
+        { command: "commandPalette.toggle", key: "mod+k" },
+        { command: "chat.new", key: "mod+shift+o" },
+      ]),
+      "Linux x86_64",
+    );
+    expect(
+      filterKeybindingRows(rows, "Ctrl+K", undefined, "Linux x86_64").map((row) => row.command),
+    ).toEqual(["commandPalette.toggle"]);
+    expect(
+      filterKeybindingRows(rows, "ctrl+shift+o", undefined, "Linux x86_64").map(
+        (row) => row.command,
+      ),
+    ).toEqual(["chat.new"]);
   });
 
   it("keeps sibling row identities when a saved binding moves to the end", () => {
