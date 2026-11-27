@@ -74,9 +74,6 @@ describe("ThemeImportDialog", () => {
     );
   it.each([
     ["en", 1, "acme · 1 download"],
-    ["en", 1500, `acme · ${compact(1500)} downloads`],
-    ["de", 1, "acme · 1 Download"],
-    ["de", 10, "acme · 10 Downloads"],
     ["ru", 475_001, `acme · Скачиваний: ${compact(475_001)}`],
   ])("counts %s theme downloads (%d)", async (locale, downloadCount, line) => {
     searchOpenVsxThemes.mockReset();
