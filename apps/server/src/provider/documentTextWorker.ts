@@ -104,6 +104,7 @@ interface XmlNode {
   mathmlFirstChildSeen?: boolean;
   epubBlock?: boolean;
   odfInlineParagraphs?: boolean;
+  odfFloating?: boolean;
   odfParagraphHidden?: boolean;
   odfStyleHidden?: boolean;
   odfSpanHidden?: boolean;
@@ -339,6 +340,13 @@ function xml(
     }
     if (odf && node.name === "text-box" && namespaceOf(tag.name, stack) === ODF_DRAW_NS)
       node.odfInlineParagraphs = true;
+    const anchor =
+      odf && namespaceOf(tag.name, stack) === ODF_DRAW_NS
+        ? odfAttribute(tag.attributes, "anchor-type", stack)?.trim()
+        : undefined;
+    // Only a character-anchored drawing sits in the line; other anchors float beside the text.
+    if (anchor === "as-char") node.odfInlineParagraphs = true;
+    else if (anchor) node.odfFloating = true;
     if (
       extension === ".odt" &&
       node.name === "hidden-paragraph" &&
@@ -611,8 +619,8 @@ function* text(node: XmlNode): Generator<TextPart, void> {
     yield { imageDescription: node.imageDescription };
     return;
   }
-  // Word text boxes hold their own paragraphs inside the anchoring paragraph.
-  if (node.name === "txbxContent") yield* paragraphs(node);
+  // Word text boxes and floating ODF drawings hold their own paragraphs inside the anchoring one.
+  if (node.name === "txbxContent" || node.odfFloating) yield* paragraphs(node);
   else if (node.odfInlineParagraphs) {
     // ODF boxes and notes can sit inline, so only add breaks between their own paragraphs.
     let seenParagraph = false;
