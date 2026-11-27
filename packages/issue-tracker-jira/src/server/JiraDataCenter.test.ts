@@ -132,6 +132,7 @@ describe("JiraIssueTracker on Data Center", () => {
       });
       expect(probe).toEqual({
         account: "Julius",
+        workspace: "other.corp",
         scopes: [
           { key: "PROJ", name: "Project" },
           { key: "OPS", name: "Operations" },
@@ -153,7 +154,12 @@ describe("JiraIssueTracker on Data Center", () => {
   it.effect("names the version when a server is too old for access tokens", () =>
     Effect.gen(function* () {
       const { tracker, requests } = fakeDataCenter({
-        "GET /serverInfo": () => ({ version: "8.13.5", versionNumbers: [8, 13, 5] }),
+        // Jira marks a request sent without the token as anonymous.
+        "GET /serverInfo": () =>
+          Response.json(
+            { version: "8.13.5", versionNumbers: [8, 13, 5] },
+            { headers: { "x-ausername": "anonymous" } },
+          ),
         "GET /myself": () => new Response(null, { status: 401 }),
         "GET /project": () => [],
       });
@@ -188,7 +194,14 @@ describe("JiraIssueTracker on Data Center", () => {
     Effect.gen(function* () {
       const { tracker, requests } = fakeDataCenter({});
       const api = yield* tracker;
-      for (const site of ["jira.corp", "ftp://jira.corp", "https://user:pw@jira.corp", ""]) {
+      // Plain http would send the token in the clear.
+      for (const site of [
+        "jira.corp",
+        "http://jira.corp",
+        "ftp://jira.corp",
+        "https://user:pw@jira.corp",
+        "",
+      ]) {
         const refused = yield* api
           .probeCredential({ token: "t", fields: { site } })
           .pipe(Effect.flip);
@@ -271,10 +284,10 @@ describe("JiraIssueTracker on Data Center", () => {
 
   it.effect("reads an issue in markdown with its moves, changelog and comments", () =>
     Effect.gen(function* () {
-      const { tracker, requests } = fakeDataCenter({
+      const { tracker } = fakeDataCenter({
         "GET /myself": () => user("julius", "Julius"),
         "GET /issue/PROJ-7": ({ query }) => {
-          expect(query.get("expand")).toBe("transitions,changelog");
+          expect(query.get("expand")).toBe("transitions,transitions.fields,changelog");
           return issue(
             "PROJ-7",
             {},
@@ -300,6 +313,17 @@ describe("JiraIssueTracker on Data Center", () => {
               },
             },
           );
+        },
+        "GET /mypermissions": ({ query }) => {
+          expect(query.get("issueKey")).toBe("PROJ-7");
+          return {
+            permissions: {
+              TRANSITION_ISSUES: { havePermission: true },
+              ADD_COMMENTS: { havePermission: true },
+              EDIT_ISSUES: { havePermission: false },
+              ASSIGN_ISSUES: { havePermission: true },
+            },
+          };
         },
         "GET /issue/PROJ-7/comment": ({ query }) => {
           expect(query.get("orderBy")).toBe("-created");
@@ -329,12 +353,11 @@ describe("JiraIssueTracker on Data Center", () => {
           { category: "open", name: "In Progress" },
           { category: "closed", name: "Done" },
         ],
-        // Data Center's permission keys differ, so every write is offered and Jira may refuse it.
         viewerPermissions: {
           setState: true,
           comment: true,
-          edit: true,
-          labels: true,
+          edit: false,
+          labels: false,
           assignees: true,
         },
         comments: [
@@ -352,7 +375,6 @@ describe("JiraIssueTracker on Data Center", () => {
         ["unassigned", "Julius"],
         ["assigned", "Theo"],
       ]);
-      expect(requests.some((request) => request.route.includes("mypermissions"))).toBe(false);
     }),
   );
 
@@ -420,10 +442,13 @@ describe("JiraIssueTracker on Data Center", () => {
         }),
         "GET /user/assignable/search": ({ query }) => {
           expect(query.get("username")).toBe("");
-          return [user("julius", "Julius"), user("theo", "Theo")];
+          // Alex's display name is Theo's login, so only the exact login names Theo.
+          return [user("alex", "theo"), user("julius", "Julius"), user("theo", "Theo")];
         },
         "POST /issue": () => ({ id: "1", key: "PROJ-9" }),
         "GET /issue/PROJ-9": () => issue("PROJ-9"),
+        "GET /issue/PROJ-8": () =>
+          issue("PROJ-8", { description: "{code:java|title=A.java}\nclass A {}\n{code}" }),
         "PUT /issue/PROJ-9": () => undefined,
         "POST /issue/PROJ-9/comment": () => ({ id: "c1" }),
       });
@@ -433,7 +458,7 @@ describe("JiraIssueTracker on Data Center", () => {
         title: "New",
         body: "## Plan\nSome **bold** text",
         labels: ["bug"],
-        assignees: ["Theo"],
+        assignees: ["theo"],
       });
       expect(created).toEqual({
         key: "PROJ-9",
@@ -458,6 +483,13 @@ describe("JiraIssueTracker on Data Center", () => {
 
       yield* api.comment({ ...target, key: "PROJ-9", body: "`x`" });
       expect(requests.at(-1)?.body).toEqual({ body: "{{x}}" });
+
+      // Markdown keeps a code block's language, not its title, so that description stays as is.
+      const lossy = yield* api
+        .update({ ...target, key: "PROJ-8", body: "```java\nclass A {}\n```" })
+        .pipe(Effect.flip);
+      expect(lossy.operation).toBe("update");
+      expect(requests.map((request) => request.route)).not.toContain("PUT /issue/PROJ-8");
     }),
   );
 

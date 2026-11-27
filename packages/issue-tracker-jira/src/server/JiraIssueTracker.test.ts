@@ -236,7 +236,7 @@ describe("JiraIssueTracker", () => {
       const { tracker } = fakeJira({
         "GET /rest/api/3/myself": () => JULIUS,
         "GET /rest/api/3/issue/ENG-7": ({ query }) => {
-          expect(query.get("expand")).toBe("transitions,changelog");
+          expect(query.get("expand")).toBe("transitions,transitions.fields,changelog");
           return issue(
             "ENG-7",
             {

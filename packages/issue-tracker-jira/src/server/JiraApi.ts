@@ -210,15 +210,19 @@ export function siteOrigin(site: string): string | null {
     : url.origin;
 }
 
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 /**
- * A Data Center server as requests go to it: http or https with the host's own port and context
- * path (`https://example.com/jira`), no credentials, query or fragment, no trailing slash.
+ * A Data Center server as requests go to it: https, or http on this machine only, since the token
+ * rides on every request. The host's own port and context path (`https://example.com/jira`) stay;
+ * credentials, query, fragment and a trailing slash do not.
  */
 export function serverOrigin(server: string): string | null {
   const url = URL.parse(server.trim());
   if (
     url === null ||
-    (url.protocol !== "https:" && url.protocol !== "http:") ||
+    (url.protocol !== "https:" &&
+      !(url.protocol === "http:" && LOOPBACK.has(url.hostname.toLowerCase()))) ||
     url.username !== "" ||
     url.password !== ""
   ) {
@@ -281,9 +285,12 @@ function movedTo(requestUrl: string, location: string | undefined): string {
 /** Login failures Data Center reports in `X-Seraph-LoginReason`, lower case. */
 const SIGNED_OUT_REASONS = ["authentication_denied", "authenticated_failed", "out"];
 
-/** A proxy or SSO front end answers a rejected token with its own page, or a 200 for anonymous. */
-const isSignInPage = (response: HttpClientResponse.HttpClientResponse) =>
-  response.headers["x-ausername"] === "anonymous" ||
+/**
+ * A proxy or SSO front end answers a rejected token with its own page, or a 200 for anonymous.
+ * A request sent without the token is anonymous by design.
+ */
+const isSignInPage = (response: HttpClientResponse.HttpClientResponse, signed: boolean) =>
+  (signed && response.headers["x-ausername"] === "anonymous") ||
   (response.headers["content-type"] ?? "").toLowerCase().includes("text/html");
 
 type Query = Readonly<Record<string, string | number | undefined>>;
@@ -498,7 +505,9 @@ export const make = Effect.gen(function* () {
       fail(operation, "failed", "Jira could not be reached.", { cause });
     const execution = httpClient
       .execute(
-        request.body === undefined ? base : base.pipe(HttpClientRequest.bodyJsonUnsafe(request.body)),
+        request.body === undefined
+          ? base
+          : base.pipe(HttpClientRequest.bodyJsonUnsafe(request.body)),
       )
       .pipe(
         // Client spans carry the query string, which holds names searched for.
@@ -514,7 +523,7 @@ export const make = Effect.gen(function* () {
       if (response.status < 200 || response.status >= 300) {
         return yield* refusal(operation, response, site.deployment);
       }
-      if (site.deployment === "datacenter" && isSignInPage(response)) {
+      if (site.deployment === "datacenter" && isSignInPage(response, request.anonymous !== true)) {
         return yield* fail(operation, "unauthenticated", "Jira did not accept the access token.");
       }
       // A write answers 204 with no body; `Schema.Void` reads nothing.
@@ -672,7 +681,7 @@ export const make = Effect.gen(function* () {
       path: `/issue/${encodeURIComponent(key)}`,
       query: {
         fields: [...ISSUE_FIELDS, "description"].join(","),
-        expand: "transitions,changelog",
+        expand: "transitions,transitions.fields,changelog",
       },
     });
 

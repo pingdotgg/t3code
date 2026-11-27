@@ -25,7 +25,7 @@ import type {
 
 import { adfToMarkdown, hasUnwritableContent, markdownToAdf } from "./adf.ts";
 import * as JiraApi from "./JiraApi.ts";
-import { markdownToWiki, wikiToMarkdown } from "./wikiMarkup.ts";
+import { hasUnwritableWiki, markdownToWiki, wikiToMarkdown } from "./wikiMarkup.ts";
 
 const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
   tracker: JiraApi.KIND,
@@ -103,7 +103,7 @@ const DATA_CENTER: Dialect = {
   deployment: "datacenter",
   toMarkdown: (raw) => (typeof raw === "string" ? wikiToMarkdown(raw) : ""),
   fromMarkdown: markdownToWiki,
-  loses: () => false,
+  loses: (raw) => typeof raw === "string" && hasUnwritableWiki(raw),
   assignee: (id) => ({ name: id }),
 };
 
@@ -265,10 +265,10 @@ function involvementClause(involvement: IssueInvolvement): string | null {
 const sameText = (a: string | null | undefined, b: string) =>
   a != null && a.trim().toLowerCase() === b.trim().toLowerCase();
 
-const matchesUser = (user: JiraApi.JiraUser, named: string) =>
-  user.accountId === named ||
-  sameText(user.displayName, named) ||
-  sameText(user.emailAddress, named);
+/** An exact id wins over a name, since one person's login can be another's display name. */
+const findUser = (users: ReadonlyArray<JiraApi.JiraUser>, named: string) =>
+  users.find((user) => user.accountId === named) ??
+  users.find((user) => sameText(user.displayName, named) || sameText(user.emailAddress, named));
 
 export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraApi> = Effect.gen(
   function* () {
@@ -323,9 +323,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
       }
       const { users } = yield* jira.assignable(projectKey(scope));
       // Jira hides users after paging, so the pages read never prove someone is missing.
-      const found =
-        users.find((user) => matchesUser(user, first)) ??
-        (yield* jira.findUsers(first)).find((user) => matchesUser(user, first));
+      const found = findUser(users, first) ?? findUser(yield* jira.findUsers(first), first);
       if (found === undefined) {
         return yield* JiraApi.fail(
           operation,
@@ -423,17 +421,14 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
             jira.origin,
             jira.getIssue(key),
             jira.getComments({ key, startAt: 0, limit: COMMENTS_PAGE }),
-            // Data Center names its permissions otherwise; a refused write says what is missing.
-            text.deployment === "cloud"
-              ? jira
-                  .permissions(key, [
-                    "TRANSITION_ISSUES",
-                    "ADD_COMMENTS",
-                    "EDIT_ISSUES",
-                    "ASSIGN_ISSUES",
-                  ])
-                  .pipe(Effect.orElseSucceed(() => null))
-              : Effect.succeed(null),
+            jira
+              .permissions(key, [
+                "TRANSITION_ISSUES",
+                "ADD_COMMENTS",
+                "EDIT_ISSUES",
+                "ASSIGN_ISSUES",
+              ])
+              .pipe(Effect.orElseSucceed(() => null)),
             jira.myself().pipe(Effect.orElseSucceed(() => null)),
           ],
           { concurrency: 5 },

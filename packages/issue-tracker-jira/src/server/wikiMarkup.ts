@@ -32,6 +32,21 @@ function codeLanguage(parameters: string | undefined): string {
   return parts[0] === undefined || parts[0].includes("=") ? "" : parts[0];
 }
 
+/** Whether a code block names more than its language, such as a title, which Markdown drops. */
+export function hasUnwritableWiki(wiki: string): boolean {
+  return [...wiki.matchAll(/(?<!\{)\{(code|noformat):([^}]*)\}/g)].some(([, macro, parameters]) =>
+    parameters!
+      .split("|")
+      .map((part) => part.trim())
+      .some(
+        (part, index) =>
+          part.length > 0 &&
+          (macro === "noformat" ||
+            !(part.startsWith("language=") || (index === 0 && !part.includes("=")))),
+      ),
+  );
+}
+
 export function wikiToMarkdown(wiki: string): string {
   const { hold, release } = stash();
   // A literal NUL would read as a token, so none survives into the text.
