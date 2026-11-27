@@ -426,15 +426,11 @@ it("releases thread.undo on intake and records snapshotted draft indices for emp
   ]);
 
   const recordImageHistory = vi.fn(() => true);
+  // Keep composerImagesRef stale at the pre-paste snapshot to prove intake reads current draft indices via readDraftImages.
   const composerImagesRef = {
     current: store.getComposerDraft(target)?.images ?? [],
   };
-  const addImages = (images: ComposerImageAttachment[]) => {
-    const ids = store.addImages(target, images);
-    composerImagesRef.current =
-      useComposerDraftStore.getState().getComposerDraft(target)?.images ?? [];
-    return ids;
-  };
+  const addImages = (images: ComposerImageAttachment[]) => store.addImages(target, images);
   const input = {
     activeThreadId: ThreadId.make("thread"),
     activePendingProgress: null,
@@ -491,9 +487,10 @@ it("releases thread.undo on intake and records snapshotted draft indices for emp
     await intake.addComposerAttachments([pastedImage(3), pastedImage(4)]);
   });
   expect(releaseThreadUndoShortcut).toHaveBeenCalledOnce();
-  expect(composerImagesRef.current).toHaveLength(3);
+  const storedImages = useComposerDraftStore.getState().getComposerDraft(target)?.images ?? [];
+  expect(storedImages).toHaveLength(3);
   expect(recordImageHistory).toHaveBeenCalledWith("add", target, [
-    expect.objectContaining({ id: composerImagesRef.current[1]!.id, index: 1 }),
-    expect.objectContaining({ id: composerImagesRef.current[2]!.id, index: 2 }),
+    expect.objectContaining({ id: storedImages[1]!.id, index: 1 }),
+    expect.objectContaining({ id: storedImages[2]!.id, index: 2 }),
   ]);
 });
