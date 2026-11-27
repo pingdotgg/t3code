@@ -3,6 +3,8 @@ import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
+import { useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
+import { toastManager } from "../ui/toast";
 import { removeLocalStorageItem } from "../../hooks/useLocalStorage";
 import { isMacPlatform } from "../../lib/utils";
 import {
@@ -87,6 +89,83 @@ it("keeps the draft when stashing while a pasted image is still compressing", as
   expect(usePromptStashStore.getState().entries).toEqual([]);
   expect(promptRef.current).toBe("Describe this screenshot");
   expect(countPreparingComposerImages(target)).toBe(1);
+});
+
+it("reports a failed file upload instead of asking to wait when stashing", async () => {
+  const target = DraftId.make("stash-failed-upload");
+  using _draft = {
+    [Symbol.dispose]: () => useComposerDraftStore.getState().clearComposerContent(target),
+  };
+  using _stash = {
+    [Symbol.dispose]: () => {
+      writePromptStashStorageForTest("");
+      removeLocalStorageItem(PROMPT_STASH_STORAGE_KEY);
+    },
+  };
+  const environmentId = EnvironmentId.make("stash-env");
+  const file = {
+    id: "stash-file",
+    type: "file" as const,
+    name: "notes.txt",
+    mimeType: "text/plain",
+    sizeBytes: 5,
+    file: new File(["notes"], "notes.txt", { type: "text/plain" }),
+  };
+  const uploadingFile = { ...file, id: "stash-uploading-file" };
+  const previousUploads = useAttachmentUploadStore.getState().uploadsByImageId;
+  using _uploads = {
+    [Symbol.dispose]: () =>
+      useAttachmentUploadStore.setState({ uploadsByImageId: previousUploads }),
+  };
+  useAttachmentUploadStore.setState({
+    uploadsByImageId: {
+      [uploadingFile.id]: { status: "uploading", environmentId, progress: 0 },
+      [file.id]: { status: "failed", environmentId, reason: "Upload failed" },
+    },
+  });
+  const promptRef = { current: "Summarize these notes" };
+  const input = {
+    environmentId,
+    composerDraftTarget: target,
+    promptRef,
+    readAttachmentDraft: () => ({ images: [], files: [uploadingFile, file] }),
+    readTerminalContexts: () => [],
+    routeThreadRef: { environmentId, threadId: ThreadId.make("stash-thread") },
+    projectSelectionRequired: false,
+    pendingUserInputs: [],
+    activePendingProgress: null,
+    prompt: promptRef.current,
+    composerMenuOpen: false,
+    isComposerCollapsedMobile: false,
+    composerPreviewAnnotations: [],
+    composerReviewComments: [],
+    composerThreadContexts: [],
+    attachmentTargetKey: target,
+    isComposerDraftTargetOpen: () => true,
+    composerEditorRef: { current: null },
+    isRevertingCheckpoint: () => false,
+    pendingThreadImportsRef: { current: new Map() },
+    setComposerCursor: vi.fn(),
+    setComposerTrigger: vi.fn(),
+    importContextRecords: () => new Map(),
+    expandMobileComposer: vi.fn(),
+  } satisfies StashInput;
+  await using _screen = await render(<Harness input={input} />);
+  using toast = vi.spyOn(toastManager, "add").mockImplementation(() => "stash-toast");
+
+  const mod = isMacPlatform(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
+  await act(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "s", ...mod, bubbles: true, cancelable: true }),
+    );
+  });
+
+  expect(toast).toHaveBeenCalledWith({
+    type: "error",
+    title: "Retry or remove failed file uploads before stashing this prompt",
+  });
+  expect(usePromptStashStore.getState().entries).toEqual([]);
+  expect(promptRef.current).toBe("Summarize these notes");
 });
 
 it("stashes a side chat's prompt when Mod+S is pressed inside its pane", async () => {
