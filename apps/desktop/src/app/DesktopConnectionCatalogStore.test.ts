@@ -242,7 +242,7 @@ describe("DesktopConnectionCatalogStore", () => {
     ),
   );
 
-  it.effect("surfaces malformed catalog documents without deleting them", () =>
+  it.effect("sets malformed catalog documents aside without deleting them", () =>
     withStore(
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -253,14 +253,49 @@ describe("DesktopConnectionCatalogStore", () => {
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
         yield* fileSystem.writeFileString(catalogPath, "{not-json");
 
-        const error = yield* store.get.pipe(Effect.flip);
-        assert.instanceOf(
-          error,
-          DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreDocumentDecodeError,
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        assert.isFalse(yield* fileSystem.exists(catalogPath));
+        const [quarantined] = (yield* fileSystem.readDirectory(environment.stateDir)).filter(
+          (entry) => entry.startsWith("connection-catalog.json.corrupt-"),
         );
-        assert.equal(error.catalogPath, catalogPath);
-        assert.exists(error.cause);
-        assert.equal(yield* fileSystem.readFileString(catalogPath), "{not-json");
+        assert.exists(quarantined);
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(environment.stateDir, quarantined!)),
+          "{not-json",
+        );
+      }),
+    ),
+  );
+
+  it.effect("recovers from a zero-filled catalog left by a power cut, keeping its bytes", () =>
+    withStore(
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+        const damaged = new Uint8Array(1408);
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFile(catalogPath, damaged);
+
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        const catalog = '{"schemaVersion":1,"targets":[]}';
+        assert.isTrue(yield* store.set(catalog));
+        assert.deepStrictEqual(yield* store.get, Option.some(catalog));
+
+        const preserved = [];
+        for (const entry of yield* fileSystem.readDirectory(environment.stateDir)) {
+          const entryPath = path.join(environment.stateDir, entry);
+          if (entryPath === catalogPath || (yield* fileSystem.stat(entryPath)).type !== "File") {
+            continue;
+          }
+          const bytes = yield* fileSystem.readFile(entryPath);
+          if (bytes.length === damaged.length && bytes.every((byte) => byte === 0)) {
+            preserved.push(entry);
+          }
+        }
+        assert.lengthOf(preserved, 1);
       }),
     ),
   );
