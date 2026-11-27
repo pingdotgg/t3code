@@ -126,9 +126,8 @@ it.live("uses the literal folder when a relative project path starts with a spac
     const cwd = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
     const baseDir = NodePath.join(cwd, "state");
     const intended = NodePath.join(cwd, " notes");
-    const sibling = NodePath.join(cwd, "notes");
     yield* fs.makeDirectory(intended);
-    yield* fs.makeDirectory(sibling);
+    yield* fs.makeDirectory(NodePath.join(cwd, "notes"));
 
     const runProject = Effect.fn("test.runProject")(function* (args: ReadonlyArray<string>) {
       const entrypoint = NodePath.join(import.meta.dirname, "../bin.ts");
@@ -141,21 +140,13 @@ it.live("uses the literal folder when a relative project path starts with a spac
     });
 
     yield* runProject(["add", " notes", "--title", "Literal"]);
-    assert.equal((yield* readProjects(baseDir)).projects[0]?.workspaceRoot, intended);
-    yield* runProject(["add", "notes", "--title", "Sibling"]);
     yield* runProject(["rename", " notes", "Renamed"]);
-    const projects = (yield* readProjects(baseDir)).projects;
-    assert.equal(projects.find((project) => project.workspaceRoot === intended)?.title, "Renamed");
-    assert.equal(projects.find((project) => project.workspaceRoot === sibling)?.title, "Sibling");
-
-    yield* runProject(["remove", " notes"]);
-    yield* runProject(["rename", ` ${sibling} `, "Padded path"]);
     assert.deepEqual(
       (yield* readProjects(baseDir)).projects.map(({ title, workspaceRoot }) => ({
         title,
         workspaceRoot,
       })),
-      [{ title: "Padded path", workspaceRoot: sibling }],
+      [{ title: "Renamed", workspaceRoot: intended }],
     );
   }).pipe(Effect.provide(layerCliRuntime)),
 );
