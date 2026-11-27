@@ -495,6 +495,41 @@ it.effect("sql: lists only active threads with pull request links, oldest first"
   }).pipe(Effect.provide(layerSql)),
 );
 
+it.effect("sql: pull request sweeps decode only threads written since the last read", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const unchanged = yield* createThread("sweep-unchanged", {
+      pullRequests: [pullRequestLink(1)],
+    });
+    const changed = yield* createThread("sweep-changed", { pullRequests: [pullRequestLink(2)] });
+    const archived = yield* createThread("sweep-archived", {
+      archivedAt: old,
+      pullRequests: [pullRequestLink(3)],
+    });
+    const byId = (threads: ReadonlyArray<ProjectionStore.ProjectionThreadPullRequests>) =>
+      new Map(threads.map((thread) => [thread.id, thread]));
+
+    const first = byId(yield* store.getThreadsWithPullRequests());
+    const withArchived = byId(
+      yield* store.getThreadsWithPullRequests(undefined, { includeArchived: true }),
+    );
+    // The other variant reuses rows it shares with the active read.
+    assert.strictEqual(withArchived.get(unchanged), first.get(unchanged));
+    assert.isDefined(withArchived.get(archived));
+
+    yield* createThread("sweep-changed", {
+      pullRequests: [pullRequestLink(2), pullRequestLink(4)],
+    });
+    const second = byId(yield* store.getThreadsWithPullRequests());
+    assert.strictEqual(second.get(unchanged), first.get(unchanged));
+    assert.notStrictEqual(second.get(changed), first.get(changed));
+    assert.deepEqual(
+      second.get(changed)?.pullRequests?.map((link) => link.number),
+      [2, 4],
+    );
+  }).pipe(Effect.provide(layerSql)),
+);
+
 it.effect("sql: an unsettled-only shell read skips settled threads", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;

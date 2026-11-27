@@ -9142,6 +9142,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
 
+    // The minute sweeps reread mostly unchanged rows; reuse a decode whose payload is byte-identical.
+    const decodedPullRequestThreads = {
+      active: new Map<string, ProjectionThreadPullRequests>(),
+      includeArchived: new Map<string, ProjectionThreadPullRequests>(),
+    };
     const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] =
       Effect.fn("ProjectionStore.getThreadsWithPullRequests")(
         function* (threadId, options) {
@@ -9158,8 +9163,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
           ORDER BY updated_at ASC, thread_id ASC
         `;
-          return yield* Effect.forEach(rows, (row) =>
-            decodeThreadPayload(row.payload_json).pipe(
+          const decoded = new Map<string, ProjectionThreadPullRequests>();
+          const threads = yield* Effect.forEach(rows, (row) => {
+            const cached =
+              decodedPullRequestThreads.active.get(row.payload_json) ??
+              decodedPullRequestThreads.includeArchived.get(row.payload_json);
+            if (cached !== undefined) {
+              decoded.set(row.payload_json, cached);
+              return Effect.succeed(cached);
+            }
+            return decodeThreadPayload(row.payload_json).pipe(
               Effect.map((thread): ProjectionThreadPullRequests => ({
                 id: thread.id,
                 projectId: thread.projectId,
@@ -9168,8 +9181,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 settledAt: thread.settledAt,
                 pullRequests: thread.pullRequests ?? [],
               })),
-            ),
-          );
+              Effect.tap((thread) => Effect.sync(() => decoded.set(row.payload_json, thread))),
+            );
+          });
+          if (threadId === undefined) {
+            decodedPullRequestThreads[
+              options?.includeArchived === true ? "includeArchived" : "active"
+            ] = decoded;
+          }
+          return threads;
         },
         Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
       );
