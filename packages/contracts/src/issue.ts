@@ -596,6 +596,19 @@ export const StandaloneIssueTrackerDescriptor = Schema.Struct({
     label: TrimmedNonEmptyString,
     /** Where to mint one, or null when the tracker has no stable page for it. */
     helpUrl: Schema.NullOr(TrimmedNonEmptyString),
+    /**
+     * What the tracker must be told beside the secret, in the order a form asks: a Jira site, the
+     * account's email. None of it is secret. Absent for a tracker its key alone identifies.
+     */
+    fields: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          key: TrimmedNonEmptyString,
+          label: TrimmedNonEmptyString,
+          placeholder: Schema.NullOr(TrimmedNonEmptyString),
+        }),
+      ),
+    ),
   }),
 });
 export type StandaloneIssueTrackerDescriptor = typeof StandaloneIssueTrackerDescriptor.Type;
@@ -648,6 +661,8 @@ export const IssueTrackerConnection = Schema.Struct({
   /** The workspace the credential reaches, as its issue URLs name it; links elsewhere are foreign. */
   workspace: Schema.optional(TrimmedNonEmptyString),
   scopes: Schema.Array(IssueTrackerScope),
+  /** What was saved for each of `credential.fields`, so a form can show and resend it. */
+  fields: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 export type IssueTrackerConnection = typeof IssueTrackerConnection.Type;
 
@@ -676,6 +691,10 @@ export const IssueTrackerConnectInput = Schema.Struct({
   accountId: Schema.optional(IssueTrackerAccountId),
   addAccount: Schema.optional(Schema.Boolean),
   token: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(4_096))),
+  /** A value for each of the tracker's `credential.fields`; ignored when disconnecting. */
+  fields: Schema.optional(
+    Schema.Record(Schema.String, TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+  ),
 });
 export type IssueTrackerConnectInput = typeof IssueTrackerConnectInput.Type;
 

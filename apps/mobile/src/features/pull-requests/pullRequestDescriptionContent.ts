@@ -50,7 +50,9 @@ export function pullRequestDescriptionContent(
       const name = mediaReferenceFileName({ kind: "url", url: segment.url });
       attachments.set(segment.url, {
         uri: segment.url,
-        caption: segment.media === "video" ? resolve(msg("Video")) : name || resolve(msg("Image")),
+        caption:
+          segment.label ||
+          (segment.media === "video" ? resolve(msg("Video")) : name || resolve(msg("Image"))),
         kind: segment.media,
       });
     }
