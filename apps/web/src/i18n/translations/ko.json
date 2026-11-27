@@ -9597,7 +9597,7 @@
   "42828d2fd1f35806": "상주 메모리",
   "e97f1b37426da9ff": "프로세스 최대값 합계 {bytes}",
   "3dd6eb5644a6ed8b": "프로세스 수",
-  "85f0adb1de45cbc1": "시작 {processStarts}회 · 종료 {processExits}회",
+  "57320c95780c065c": "시작 {processStarts}회 · 종료 {processExits}회",
   "0f0ae2813abd70e4": "읽기 처리량",
   "dc52330df5cc4586": "관측됨 {bytes}",
   "d032b2addb6f00dc": "쓰기 처리량",
