@@ -141,6 +141,7 @@ function ProviderSetupActions({
   const installed =
     provider.installed || (!usesCustomBinary && installation?.installedVersion != null);
   const queryError = authQuery.error ?? (usesCustomBinary ? null : installQuery.error);
+  const setupError = (usesCustomBinary ? null : error) || queryError;
   const actionsDisabled = pendingLabel !== null || queryError !== null;
   const installationStatusMessage = usesCustomBinary
     ? installed
@@ -347,10 +348,10 @@ function ProviderSetupActions({
         readOnly={false}
       />
 
-      {error || queryError ? (
+      {setupError ? (
         <div className="grid gap-2 px-3 py-3 sm:px-4">
           <p role="alert" className="text-destructive [overflow-wrap:anywhere]">
-            {error ?? queryError}
+            {setupError}
           </p>
           {queryError ? (
             <Button

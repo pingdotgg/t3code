@@ -13,6 +13,7 @@ import { act, render } from "../../../test/render";
 
 const setup = vi.hoisted(() => ({
   auth: null as ProviderAuthState | null,
+  authError: null as string | null,
   installation: null as ProviderInstallState | null,
   authState: vi.fn(() => "auth"),
   installState: vi.fn(() => "installation"),
@@ -63,7 +64,7 @@ vi.mock(import("../../state/query"), async (original) => {
       data: useSyncExternalStore(subscribe, () =>
         atom === "auth" ? setup.auth : setup.installation,
       ),
-      error: null,
+      error: useSyncExternalStore(subscribe, () => (atom === "auth" ? setup.authError : null)),
       isPending: false,
       refresh: vi.fn(),
     })) as never,
@@ -155,6 +156,7 @@ async function renderSetup(options: SectionOptions = {}) {
 function resetSetup() {
   vi.clearAllMocks();
   setup.auth = authState();
+  setup.authError = null;
   setup.installation = {
     driver: ProviderDriverKind.make("antigravity"),
     operationId: null,
@@ -318,5 +320,36 @@ describe("Antigravity setup", () => {
     expect(screen.button("Cancel installation")).toBeNull();
     expect(screen.button("Update Antigravity")).toBeNull();
     expect(screen.button("Remove downloaded runtime")).toBeNull();
+  });
+
+  it("hides a prior managed install error after switching to a custom binary path", async () => {
+    resetSetup();
+    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
+    setup.startInstall.mockRejectedValueOnce(new Error("network error"));
+    await using screen = await renderSetup({ provider: { ...provider, installed: false } });
+
+    await screen.click("Install Antigravity");
+    await expect
+      .element(screen.getByRole("alert"))
+      .toHaveTextContent("Provider setup failed. Try again.");
+
+    await screen.rerender(
+      section({
+        provider: {
+          ...provider,
+          installed: true,
+          setup: { canAuthenticate: true, canInstall: false },
+        },
+        binaryPath: "/custom/agy",
+      }),
+    );
+    await expect.element(screen.getByRole("alert")).not.toBeInTheDocument();
+
+    setup.authError = "Auth status unavailable.";
+    await publish();
+    await expect.element(screen.getByRole("button", { name: "Retry setup status" })).toBeVisible();
+    await expect
+      .element(screen.getByRole("alert").last())
+      .toHaveTextContent("Auth status unavailable.");
   });
 });
