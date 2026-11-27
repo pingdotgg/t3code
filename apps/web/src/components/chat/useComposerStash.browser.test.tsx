@@ -27,7 +27,7 @@ function Harness({ input }: { input: StashInput }) {
   return null;
 }
 
-it.each(["compressing", "failed", "uploading"] as const)("blocks stash for %s", async (status) => {
+it("keeps the draft when stashing while a pasted image is still compressing", async () => {
   const target = DraftId.make("stash-preparing-image");
   using _draft = {
     [Symbol.dispose]: () => useComposerDraftStore.getState().clearComposerContent(target),
@@ -38,17 +38,69 @@ it.each(["compressing", "failed", "uploading"] as const)("blocks stash for %s", 
       removeLocalStorageItem(PROMPT_STASH_STORAGE_KEY);
     },
   };
-  if (status === "compressing")
-    addPreparingComposerImages(target, [
-      {
-        id: "pasted",
-        name: "shot.png",
-        file: new File(["png"], "shot.png", { type: "image/png" }),
-        hidden: false,
-      },
-    ]);
+  addPreparingComposerImages(target, [
+    {
+      id: "pasted",
+      name: "shot.png",
+      file: new File(["png"], "shot.png", { type: "image/png" }),
+      hidden: false,
+    },
+  ]);
   using _preparing = {
     [Symbol.dispose]: () => removePreparingComposerImages(target, new Set(["pasted"])),
+  };
+  const environmentId = EnvironmentId.make("stash-env");
+  const promptRef = { current: "Describe this screenshot" };
+  const input = {
+    environmentId,
+    composerDraftTarget: target,
+    promptRef,
+    readAttachmentDraft: () => ({ images: [], files: [] }),
+    readTerminalContexts: () => [],
+    routeThreadRef: { environmentId, threadId: ThreadId.make("stash-thread") },
+    projectSelectionRequired: false,
+    pendingUserInputs: [],
+    activePendingProgress: null,
+    prompt: promptRef.current,
+    composerMenuOpen: false,
+    isComposerCollapsedMobile: false,
+    composerPreviewAnnotations: [],
+    composerReviewComments: [],
+    composerThreadContexts: [],
+    attachmentTargetKey: target,
+    isComposerDraftTargetOpen: () => true,
+    composerEditorRef: { current: null },
+    isRevertingCheckpoint: () => false,
+    pendingThreadImportsRef: { current: new Map() },
+    setComposerCursor: vi.fn(),
+    setComposerTrigger: vi.fn(),
+    importContextRecords: () => new Map(),
+    expandMobileComposer: vi.fn(),
+  } satisfies StashInput;
+  await using _screen = await render(<Harness input={input} />);
+
+  const mod = isMacPlatform(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
+  await act(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "s", ...mod, bubbles: true, cancelable: true }),
+    );
+  });
+
+  expect(usePromptStashStore.getState().entries).toEqual([]);
+  expect(promptRef.current).toBe("Describe this screenshot");
+  expect(countPreparingComposerImages(target)).toBe(1);
+});
+
+it("reports a failed file upload instead of asking to wait when stashing", async () => {
+  const target = DraftId.make("stash-failed-upload");
+  using _draft = {
+    [Symbol.dispose]: () => useComposerDraftStore.getState().clearComposerContent(target),
+  };
+  using _stash = {
+    [Symbol.dispose]: () => {
+      writePromptStashStorageForTest("");
+      removeLocalStorageItem(PROMPT_STASH_STORAGE_KEY);
+    },
   };
   const environmentId = EnvironmentId.make("stash-env");
   const file = {
@@ -64,22 +116,17 @@ it.each(["compressing", "failed", "uploading"] as const)("blocks stash for %s", 
     [Symbol.dispose]: () =>
       useAttachmentUploadStore.setState({ uploadsByImageId: previousUploads }),
   };
-  if (status !== "compressing") {
-    useAttachmentUploadStore.setState({
-      uploadsByImageId: {
-        [file.id]:
-          status === "failed"
-            ? { status, environmentId, reason: "Upload failed" }
-            : { status, environmentId, progress: 0.5 },
-      },
-    });
-  }
-  const promptRef = { current: "Describe this screenshot" };
+  useAttachmentUploadStore.setState({
+    uploadsByImageId: {
+      [file.id]: { status: "failed", environmentId, reason: "Upload failed" },
+    },
+  });
+  const promptRef = { current: "Summarize these notes" };
   const input = {
     environmentId,
     composerDraftTarget: target,
     promptRef,
-    readAttachmentDraft: () => ({ images: [], files: status === "compressing" ? [] : [file] }),
+    readAttachmentDraft: () => ({ images: [], files: [file] }),
     readTerminalContexts: () => [],
     routeThreadRef: { environmentId, threadId: ThreadId.make("stash-thread") },
     projectSelectionRequired: false,
@@ -111,19 +158,12 @@ it.each(["compressing", "failed", "uploading"] as const)("blocks stash for %s", 
     );
   });
 
+  expect(toast).toHaveBeenCalledWith({
+    type: "error",
+    title: "Retry or remove failed file uploads before stashing this prompt",
+  });
   expect(usePromptStashStore.getState().entries).toEqual([]);
-  expect(promptRef.current).toBe("Describe this screenshot");
-  expect(countPreparingComposerImages(target)).toBe(status === "compressing" ? 1 : 0);
-  if (status !== "compressing") {
-    expect(toast).toHaveBeenCalledWith({
-      type: "error",
-      title:
-        status === "failed"
-          ? "Retry or remove failed file uploads before stashing this prompt"
-          : "Wait for file uploads before stashing this prompt",
-    });
-    expect(useAttachmentUploadStore.getState().uploadsByImageId[file.id]?.status).toBe(status);
-  }
+  expect(promptRef.current).toBe("Summarize these notes");
 });
 
 it("stashes a side chat's prompt when Mod+S is pressed inside its pane", async () => {
