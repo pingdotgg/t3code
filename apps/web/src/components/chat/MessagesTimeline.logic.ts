@@ -2806,9 +2806,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     }
     case "worktree-setup": {
       const bw = b as typeof a;
-      return (
-        a.snapshot === bw.snapshot && a.embedded === bw.embedded && a.createdAt === bw.createdAt
-      );
+      return a.snapshot === bw.snapshot && a.embedded === bw.embedded;
     }
 
     case "assistant-meta": {
