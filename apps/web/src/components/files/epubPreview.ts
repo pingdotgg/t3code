@@ -31,7 +31,7 @@ const staticControls = new Set(["button", "input", "select", "textarea"]);
 const svgTags = new Set(
   (
     "svg g a defs desc title path rect circle ellipse line polyline polygon text tspan image use symbol switch textPath clipPath mask pattern marker linearGradient radialGradient stop " +
-    "filter feGaussianBlur feColorMatrix feSpecularLighting feDistantLight feComposite feOffset feComponentTransfer feFuncA"
+    "filter feGaussianBlur feColorMatrix feSpecularLighting feDistantLight feComposite feOffset feComponentTransfer feFuncA feFlood feBlend feMerge feMergeNode feDropShadow"
   ).split(" "),
 );
 const mathTags = new Set(
@@ -114,7 +114,7 @@ const svgAttrs = (
   "gradientUnits gradientTransform spreadMethod fx fy fr offset stop-color stop-opacity clip-path " +
   "clip-rule clipPathUnits mask maskUnits maskContentUnits patternUnits patternContentUnits patternTransform startOffset " +
   "marker-start marker-mid marker-end markerWidth markerHeight markerUnits refX refY orient " +
-  "filter filterUnits primitiveUnits stdDeviation in in2 result type values color-interpolation-filters " +
+  "filter filterUnits primitiveUnits stdDeviation in in2 result type values color-interpolation-filters flood-color flood-opacity mode " +
   "kernelUnitLength surfaceScale specularExponent specularConstant lighting-color azimuth elevation operator slope intercept"
 ).split(" ");
 const mathAttrs = (
@@ -215,7 +215,8 @@ async function readChapter(archive: JSZip, path: string, mime: string): Promise<
     if (!tree.isElementNode(node)) return [];
     return [
       {
-        name: node.tagName,
+        // parse5 8.0.1 omits feDropShadow from its SVG tag-name adjustment table.
+        name: node.tagName === "fedropshadow" ? "feDropShadow" : node.tagName,
         attrs: Object.fromEntries(
           node.attrs.map(({ name, prefix, value }) => [prefix ? `${prefix}:${name}` : name, value]),
         ),
