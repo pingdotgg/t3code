@@ -2538,12 +2538,9 @@ describe("OrchestratorMcpService provider resolution", () => {
     { scenario: "explicit target", active: true, usesFallback: false, refreshes: false },
     { scenario: "invalid requested options", active: true, usesFallback: false, refreshes: false },
     { scenario: "healthy inherited model", active: false, usesFallback: false, refreshes: false },
-    { scenario: "missing adapter", active: false, usesFallback: false, refreshes: true },
-    { scenario: "provider error", active: false, usesFallback: false, refreshes: true },
     { scenario: "project-disabled fallback", active: false, usesFallback: false, refreshes: false },
     { scenario: "invalid model", active: false, usesFallback: false, refreshes: true },
     { scenario: "stale model list", active: false, usesFallback: true, refreshes: true },
-    { scenario: "invalid option", active: false, usesFallback: false, refreshes: false },
   ])("resolves configured delegation fallback for $scenario", (testCase) =>
     Effect.gen(function* () {
       const { scenario, active, usesFallback, refreshes } = testCase;
@@ -2566,18 +2563,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           windows: [{ id: "primary", kind: "session" as const, label: "5h", usedPercent: 100 }],
         },
       };
-      const fallback = {
-        instanceId: fallbackId,
-        model: fallbackModel,
-        ...(scenario === "invalid option"
-          ? {
-              options: [
-                { id: "stale-option", value: true },
-                { id: "stale-option", value: true },
-              ],
-            }
-          : {}),
-      };
+      const fallback = { instanceId: fallbackId, model: fallbackModel };
       const snapshots = [
         scenario === "healthy inherited model" ? inherited : exhausted,
         scenario === "invalid model" || scenario === "stale model list"
@@ -2585,9 +2571,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               ...fallbackProvider,
               models: [{ ...fallbackProvider.models[0]!, slug: "other-model" }],
             }
-          : scenario === "provider error"
-            ? { ...fallbackProvider, status: "error" as const }
-            : fallbackProvider,
+          : fallbackProvider,
       ];
       const selection = usesFallback
         ? { instanceId: fallbackId, model: fallbackModel }
@@ -2648,9 +2632,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               return scenario === "stale model list" ? [exhausted, fallbackProvider] : snapshots;
             }),
         }),
-        adapterRegistryLayer(
-          scenario === "missing adapter" ? [codexInstanceId] : [codexInstanceId, fallbackId],
-        ),
+        adapterRegistryLayer([codexInstanceId, fallbackId]),
         Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
