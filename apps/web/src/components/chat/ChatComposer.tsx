@@ -62,7 +62,7 @@ import { formatComposerModelMention } from "@t3tools/client-runtime/composer-mod
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { type FolderDropTarget, folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
+import { type FolderDropTarget, folderDropTarget, resolveDroppedPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
@@ -2952,6 +2952,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerFilesToDraft,
       removeComposerImageFromDraft,
       insertAttachmentReferences,
+      referenceFilesByPath: (files) => referenceFilesByPath(files),
     });
 
   const onComposerCommandKeyStable = useStableCallback(onComposerCommandKey);
@@ -2969,14 +2970,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
 
-  const insertComposerFolders = async (
-    folders: File[],
+  const insertComposerLocalPaths = async (
+    entries: File[],
     target: FolderDropTarget,
     draftKey: string,
+    kind: "file" | "folder",
   ) => {
     const bridge = window.desktopBridge;
-    for (const folder of folders) {
-      const droppedPath = resolveDroppedFolderPath(folder, bridge?.getPathForFile);
+    for (const entry of entries) {
+      const droppedPath = resolveDroppedPath(entry, bridge?.getPathForFile);
       const path =
         droppedPath === null || typeof target === "string"
           ? droppedPath
@@ -2988,8 +2990,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (path === null) {
         toastManager.add({
           type: "error",
-          title: gt('Couldn\'t get the path of "{name}"', { name: folder.name }),
-          description: gt("Type the folder path with @ instead."),
+          title: gt('Couldn\'t get the path of "{name}"', { name: entry.name }),
+          description:
+            kind === "file"
+              ? gt("Type the file path with @ instead.")
+              : gt("Type the folder path with @ instead."),
         });
         continue;
       }
@@ -2999,7 +3004,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (!inserted) {
         toastManager.add({
           type: "error",
-          title: gt("Unable to add folder"),
+          title: kind === "file" ? gt("Unable to add file") : gt("Unable to add folder"),
           description: gt("The composer is busy; try again once it is ready."),
         });
         break;
@@ -3008,8 +3013,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     focusComposer();
   };
 
-  const addComposerFolders = (folders: File[]) => {
-    const target = folderDropTarget({
+  const localPathTarget = () =>
+    folderDropTarget({
       localEnvironmentDisabled: isLocalEnvironmentDisabled(),
       environmentId,
       primaryEnvironmentId,
@@ -3024,6 +3029,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               typeof bootstrap.runningDistro === "string",
           ) === true,
     });
+
+  const insertLocalPathsHoldingSend = (
+    entries: File[],
+    target: FolderDropTarget,
+    kind: "file" | "folder",
+  ) => {
+    const draftKey = attachmentTargetKeyRef.current;
+    // Hold send until every conversion lands, or the path misses the message.
+    pendingDraftWork.begin(draftKey);
+    void insertComposerLocalPaths(entries, target, draftKey, kind).finally(() =>
+      pendingDraftWork.end(draftKey),
+    );
+  };
+
+  const referenceFilesByPath = (files: File[]): File[] => {
+    const target = localPathTarget();
+    if (target === "remote") return files;
+    const getPathForFile = window.desktopBridge?.getPathForFile;
+    const linkable = files.filter((file) => resolveDroppedPath(file, getPathForFile) !== null);
+    if (linkable.length > 0) insertLocalPathsHoldingSend(linkable, target, "file");
+    return files.filter((file) => !linkable.includes(file));
+  };
+
+  const addComposerFolders = (folders: File[]) => {
+    const target = localPathTarget();
     if (target === "remote") {
       toastManager.add({
         type: "error",
@@ -3031,12 +3061,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       return;
     }
-    const draftKey = attachmentTargetKeyRef.current;
-    // Hold send until every conversion lands, or the folder misses the message.
-    pendingDraftWork.begin(draftKey);
-    void insertComposerFolders(folders, target, draftKey).finally(() =>
-      pendingDraftWork.end(draftKey),
-    );
+    insertLocalPathsHoldingSend(folders, target, "folder");
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
 

@@ -9,7 +9,7 @@ import { useState, type DragEvent, type ReactNode } from "react";
 
 import { useOpenLocalWorkspace } from "../../hooks/useOpenLocalWorkspace";
 import { randomUUID } from "../../lib/utils";
-import { resolveDroppedFolderPath } from "../chat/folderDrop";
+import { resolveDroppedPath } from "../chat/folderDrop";
 import { splitTransferredFiles } from "../chat/workspaceFileDrop";
 import { setFileDragActive } from "../Sidebar.logic";
 import { toastManager } from "../ui/toast";
@@ -60,7 +60,7 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
     }
     // One at a time, so the last folder is the one left open.
     for (const folder of folders) {
-      const workspaceRoot = resolveDroppedFolderPath(folder, bridge.getPathForFile);
+      const workspaceRoot = resolveDroppedPath(folder, bridge.getPathForFile);
       const response =
         workspaceRoot === null
           ? null

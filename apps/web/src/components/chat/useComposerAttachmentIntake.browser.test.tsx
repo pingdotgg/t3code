@@ -157,6 +157,7 @@ it.each(["available", "full", "duplicate"] as const)(
             addComposerFilesToDraft: () => [],
             removeComposerImageFromDraft: () => {},
             insertAttachmentReferences: () => false,
+            referenceFilesByPath: (files) => files,
           }}
           ready={(value) => {
             intake = value;
@@ -280,6 +281,7 @@ it("prepares a repeated paste without a tile, and still keeps a different image"
     addComposerFilesToDraft: () => [],
     removeComposerImageFromDraft: () => {},
     insertAttachmentReferences: () => false,
+    referenceFilesByPath: (files) => files,
   } satisfies IntakeInput;
   let intake!: Intake;
   await using _screen = await render(
@@ -364,6 +366,7 @@ it.each(["thread", "session"] as const)(
       addComposerFilesToDraft: () => [],
       removeComposerImageFromDraft: (id) => store.removeImage(target, id),
       insertAttachmentReferences: () => false,
+      referenceFilesByPath: (files) => files,
     } satisfies IntakeInput;
     let intake!: Intake;
     await using screen = await render(
@@ -398,3 +401,61 @@ it.each(["thread", "session"] as const)(
     expect(restored?.images).toEqual([]);
   },
 );
+
+it("links files over the upload limit by path, and rejects the ones without a local path", async () => {
+  const target = DraftId.make("intake-oversized-files");
+  const limit = 8;
+  const small = new File(["notes"], "notes.txt", { type: "text/plain" });
+  const local = new File([new Uint8Array(limit + 1)], "dump.bin");
+  const remote = new File([new Uint8Array(limit + 1)], "video.mov");
+  const stagedFiles: string[] = [];
+  const referenceFilesByPath = vi.fn((files: File[]) => files.filter((file) => file !== local));
+  const setThreadError = vi.fn();
+  const input = {
+    activeThreadId: ThreadId.make("thread"),
+    activePendingProgress: null,
+    activePendingIsResponding: false,
+    pendingUserInputs: [],
+    supportsQuestionAttachments: false,
+    isLiteralPendingAnswer: false,
+    projectSelectionRequired: false,
+    questionAttachmentTarget: null,
+    attachmentTargetKey: target,
+    fileStagingLimit: limit,
+    promptRef: { current: "" },
+    composerImagesRef: { current: [] },
+    composerFilesRef: { current: [] },
+    composerEditorRef: { current: null },
+    isRevertingCheckpointRef: { current: false },
+    setThreadError,
+    // A full draft: linking by path must not need an attachment slot.
+    countReservedAttachments: () => PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1,
+    addComposerImage: () => [],
+    addComposerImagesToDraft: () => [],
+    addComposerFilesToDraft: (files) => {
+      stagedFiles.push(...files.map((file) => file.name));
+      return files.map((file) => file.id);
+    },
+    removeComposerImageFromDraft: () => {},
+    insertAttachmentReferences: () => true,
+    referenceFilesByPath,
+  } satisfies IntakeInput;
+  let intake!: Intake;
+  await using _screen = await render(
+    <Harness
+      input={input}
+      ready={(value) => {
+        intake = value;
+      }}
+    />,
+  );
+
+  await act(() => intake.addComposerAttachments([local, small, remote]));
+
+  expect(referenceFilesByPath).toHaveBeenCalledExactlyOnceWith([local, remote]);
+  expect(stagedFiles).toEqual(["notes.txt"]);
+  expect(setThreadError).toHaveBeenLastCalledWith(
+    ThreadId.make("thread"),
+    expect.stringContaining("video.mov"),
+  );
+});

@@ -88,6 +88,8 @@ export function useComposerAttachmentIntake(input: {
   readonly addComposerImagesToDraft: (images: ComposerImageAttachment[]) => string[];
   readonly addComposerFilesToDraft: (files: ComposerFileAttachment[]) => string[];
   readonly removeComposerImageFromDraft: (imageId: string) => void;
+  /** Links files the server can read from this computer by path; returns the ones it cannot. */
+  readonly referenceFilesByPath: (files: File[]) => File[];
   readonly insertAttachmentReferences: (
     references: ReadonlyArray<ComposerContextReference>,
     selection?: { start: number; end: number },
@@ -117,6 +119,7 @@ export function useComposerAttachmentIntake(input: {
     addComposerFilesToDraft,
     removeComposerImageFromDraft,
     insertAttachmentReferences,
+    referenceFilesByPath,
   } = input;
   const pastedTextFileNamesRef = useRef<{ targetKey: string; names: Set<string> }>({
     targetKey: "",
@@ -166,9 +169,15 @@ export function useComposerAttachmentIntake(input: {
     const replacedReattachMarkerIds = new Set<string>();
     const acceptedImages: File[] = [];
     const acceptedFiles: ComposerFileAttachment[] = [];
+    const oversizedFiles: File[] = [];
     let error: string | null = null;
     for (const file of files) {
       const attachmentKind = classifyComposerAttachmentFile(file);
+      // Linked by path instead of uploaded, so they take no attachment slot.
+      if (attachmentKind === "file" && fileStagingLimit !== null && file.size > fileStagingLimit) {
+        oversizedFiles.push(file);
+        continue;
+      }
       const fileMimeType =
         attachmentKind === "file" ? composerFileAttachmentMimeType(file) : file.type;
       const matchingReattachMarker =
@@ -214,10 +223,6 @@ export function useComposerAttachmentIntake(input: {
           error = m(msg("''{name}'' is empty or could not be read.", { name: file.name }));
           continue;
         }
-        if (file.size > fileStagingLimit) {
-          error = fileAttachmentTooLargeMessage(file.name, fileStagingLimit, m);
-          continue;
-        }
         const attachmentFile =
           file.type === fileMimeType
             ? file
@@ -236,8 +241,34 @@ export function useComposerAttachmentIntake(input: {
         reservedCount += 1;
       }
     }
-    setThreadError(threadId, error);
     let insertedAny = false;
+    if (oversizedFiles.length > 0 && fileStagingLimit !== null) {
+      const unlinked = new Set(referenceFilesByPath(oversizedFiles));
+      const linked = oversizedFiles.filter((file) => !unlinked.has(file));
+      const lastUnlinked = [...unlinked].at(-1);
+      if (lastUnlinked)
+        error = fileAttachmentTooLargeMessage(lastUnlinked.name, fileStagingLimit, m);
+      if (linked.length > 0) {
+        insertedAny = true;
+        toastManager.add({
+          type: "info",
+          title:
+            linked.length === 1
+              ? m(msg("Linked {name} by its path", { name: linked[0]!.name }))
+              : m(
+                  msg(
+                    "{count, plural, one {Linked {count} file by its path} other {Linked {count} files by their paths}}",
+                    { count: linked.length },
+                  ),
+                ),
+          description: m(
+            msg("Files this large are not uploaded. The agent reads them from this computer."),
+          ),
+          data: { hideCopyButton: true },
+        });
+      }
+    }
+    setThreadError(threadId, error);
     if (acceptedFiles.length > 0) {
       const storedIds = new Set(addComposerFilesToDraft(acceptedFiles));
       const storedFiles = acceptedFiles.filter((file) => storedIds.has(file.id));

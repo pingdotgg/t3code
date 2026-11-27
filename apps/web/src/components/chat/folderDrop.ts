@@ -42,7 +42,7 @@ function isSavedLoopbackConnection({
   }
 }
 
-export function resolveDroppedFolderPath(
+export function resolveDroppedPath(
   folder: File,
   getPathForFile: ((file: File) => string) | undefined,
 ): string | null {
