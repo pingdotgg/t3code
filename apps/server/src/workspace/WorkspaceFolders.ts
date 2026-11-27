@@ -342,11 +342,21 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
   // Uncapped: the folders outside the project are dropped below, and must not use up the room.
   const scan = yield* scanFolders({ workspaceRoot }, Number.POSITIVE_INFINITY).pipe(Effect.option);
   if (Option.isNone(scan)) return [];
+  const mixDeps = (yield* fileSystem
+    .exists(path.join(root, "mix.exs"))
+    .pipe(Effect.orElseSucceed(() => false)))
+    ? path.join(root, "deps")
+    : null;
   const realRoot = yield* realPath(root);
   const inside = yield* Effect.filter(
     scan.value.folders.filter(
       (folder) =>
         folder.isGitRepository &&
+        !(
+          mixDeps !== null &&
+          folder.source === "child" &&
+          (folder.path === mixDeps || isWithinRoot(path, folder.path, mixDeps))
+        ) &&
         !ignored.some((entry) => folder.path === entry || isWithinRoot(path, folder.path, entry)),
     ),
     // A link to a repository elsewhere is not inside the project, whatever its name says, and a

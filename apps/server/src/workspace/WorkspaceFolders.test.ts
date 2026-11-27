@@ -265,6 +265,49 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
     }),
   );
 
+  it.effect(
+    "does not discover Mix dependencies but keeps explicitly tracked and other ignored repositories",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspaceRoot = yield* makeTempDir;
+        for (const folder of [".git", "deps/heroicons/.git", "deps/other/.git", "code/.git"]) {
+          yield* fileSystem.makeDirectory(path.join(workspaceRoot, folder), { recursive: true });
+        }
+        yield* fileSystem.writeFileString(path.join(workspaceRoot, "mix.exs"), "");
+        yield* fileSystem.writeFileString(
+          path.join(workspaceRoot, ".gitignore"),
+          "/deps/\n/code/\n",
+        );
+        const explicit = { path: path.join(workspaceRoot, "deps/other"), name: "other" };
+        const found = yield* WorkspaceFolders.discoverFolders(workspaceRoot);
+        assert.deepEqual(found, [
+          { path: path.join(workspaceRoot, "code"), name: "code", discovered: true },
+        ]);
+        assert.deepEqual(WorkspaceFolders.mergeProjectFolders(found, [explicit]), [
+          ...found,
+          explicit,
+        ]);
+
+        yield* fileSystem.writeFileString(
+          path.join(workspaceRoot, "team.code-workspace"),
+          JSON.stringify({ folders: [{ path: "deps/heroicons" }] }),
+        );
+        assert.deepEqual(
+          (yield* WorkspaceFolders.discoverFolders(workspaceRoot)).map((folder) => folder.name),
+          ["heroicons", "code"],
+        );
+        yield* fileSystem.remove(path.join(workspaceRoot, "team.code-workspace"));
+
+        yield* fileSystem.remove(path.join(workspaceRoot, "mix.exs"));
+        assert.deepEqual(
+          (yield* WorkspaceFolders.discoverFolders(workspaceRoot)).map((folder) => folder.name),
+          ["code", "heroicons", "other"],
+        );
+      }),
+  );
+
   it.effect("does not walk a project's folders when t3.json ignores the whole project", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
