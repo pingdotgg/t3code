@@ -694,6 +694,29 @@ describe("decodeMergeRequestDiffsJson", () => {
     expect(result.withheldPaths).toEqual(["big.bin"]);
   });
 
+  it("reports a file withheld by GitLab before 18.4, which sends no too_large flag", () => {
+    const result = expectSuccess(
+      decodeMergeRequestDiffsJson(
+        JSON.stringify([
+          {
+            diff: "",
+            new_path: "path/to/file.py",
+            old_path: "path/to/file.py",
+            a_mode: "0",
+            b_mode: "100644",
+            new_file: true,
+            renamed_file: false,
+            deleted_file: false,
+            generated_file: false,
+          },
+        ]),
+      ),
+    );
+
+    expect(result.truncated).toBe(true);
+    expect(result.withheldPaths).toEqual(["path/to/file.py"]);
+  });
+
   it("reports how many files GitLab returned, so the caller can page", () => {
     const result = expectSuccess(
       decodeMergeRequestDiffsJson(
