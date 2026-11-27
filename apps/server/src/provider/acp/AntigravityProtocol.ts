@@ -53,8 +53,25 @@ const NativeToolFields = Schema.Struct({
   exitCode: Schema.optional(Schema.Int),
   exit_code: Schema.optional(Schema.Int),
   imagePath: Schema.optional(Schema.String),
+  toolSummary: Schema.optional(Schema.String),
+  tool_summary: Schema.optional(Schema.String),
 });
 const decodeNativeToolFields = Schema.decodeUnknownOption(NativeToolFields);
+const GENERIC_ANTIGRAVITY_COMMAND_TITLES = new Set([
+  "run command",
+  "running command",
+  "ran command",
+  "command",
+  "run_command",
+  "run run_command",
+  "running run_command",
+  "run run_command?",
+]);
+
+function isGenericAntigravityCommandTitle(title: string | undefined): boolean {
+  const trimmed = title?.trim();
+  return !trimmed || GENERIC_ANTIGRAVITY_COMMAND_TITLES.has(trimmed.toLowerCase());
+}
 const decodeSingleAnswer = Schema.decodeUnknownOption(
   Schema.Union([Schema.String, Schema.Tuple([Schema.String])]),
 );
@@ -729,9 +746,19 @@ export function normalizeAntigravityToolCall(
   const aggregatedOutput = nativeOutput === undefined ? undefined : boundCommandText(nativeOutput);
   const exitCode = output?.exitCode ?? output?.exit_code;
   const imagePath = localImagePath(output?.imagePath);
+  const nativeSummary = input?.toolSummary ?? input?.tool_summary;
+  const toolSummary = nativeSummary?.trim() ? boundText(nativeSummary.trim()) : undefined;
   const sanitizedData = sanitizeAntigravityToolPayload(toolCall.data);
   const data: Record<string, unknown> = Predicate.isObject(sanitizedData) ? sanitizedData : {};
   const kind = toolCall.kind ?? (command !== undefined ? "execute" : undefined);
+  const title =
+    kind === "execute" &&
+    toolSummary !== undefined &&
+    isGenericAntigravityCommandTitle(toolCall.title)
+      ? toolSummary
+      : toolCall.title !== undefined
+        ? boundText(toolCall.title)
+        : undefined;
   if (kind !== undefined) data.kind = kind;
   if (command !== undefined) data.command = command;
   if (cwd !== undefined) data.cwd = cwd;
@@ -760,7 +787,7 @@ export function normalizeAntigravityToolCall(
     ...toolCall,
     ...(kind !== undefined ? { kind } : {}),
     ...(command !== undefined ? { command } : {}),
-    ...(toolCall.title !== undefined ? { title: boundText(toolCall.title) } : {}),
+    ...(title !== undefined ? { title } : {}),
     ...(command !== undefined
       ? { detail: command }
       : toolCall.detail !== undefined

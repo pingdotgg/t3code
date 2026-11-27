@@ -38,6 +38,7 @@ import {
   readAntigravitySubagentTranscript,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
+import { tailAntigravityCommandOutput } from "../../provider/acp/AntigravityTaskOutputTail.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
@@ -347,6 +348,15 @@ export function makeAntigravityAcpAdapterFlavor(
             readAntigravityPendingReply({
               profileDirectory,
               sessionId,
+            }),
+          tailCommandOutput: ({ sessionId, toolCallId, stop, onChunk, onTitle }) =>
+            tailAntigravityCommandOutput({
+              profileDirectory,
+              sessionId,
+              toolCallId,
+              stop,
+              onChunk,
+              onTitle,
             }),
         }),
   };

@@ -174,6 +174,29 @@ const ACP_LOADED_COMMANDS_WAIT: Duration.Input = "2 seconds";
 const ACP_PROMPT_INACTIVITY_SLICE_MILLIS = 60_000;
 const ACP_HOST_SLEEP_TOLERANCE_MILLIS = 10_000;
 
+const GENERIC_ACP_COMMAND_TITLES = new Set([
+  "",
+  "command",
+  "run command",
+  "ran command",
+  "running command",
+  "bash",
+  "run bash",
+  "ran bash",
+  "running bash",
+  "shell",
+  "run shell",
+  "ran shell",
+  "running shell",
+  "run_command",
+  "run run_command",
+  "running run_command",
+]);
+
+function isGenericAcpCommandTitle(title: string | undefined): boolean {
+  return GENERIC_ACP_COMMAND_TITLES.has(title?.trim().toLowerCase() ?? "");
+}
+
 // pi-agent-core agents (oh-my-pi) end a turn while background work runs and reject
 // prompts until it finishes; the prompt is resent rather than failing the turn.
 function isAgentBusyPromptError(error: EffectAcpErrors.AcpError): boolean {
@@ -749,6 +772,18 @@ export interface AcpAdapterV2Flavor {
    * Checked before finalizing a settled prompt or its deferred debounce, so the turn waits
    * through `ACP_OPEN_REPLY_QUIET_LIMIT` instead of closing early.
    */
+  /**
+   * Tails a running command's live output (and optional human summary) from provider-owned
+   * storage when the ACP agent does not stream terminal output chunks itself. Complete `stop`
+   * on command completion or turn end; the adapter awaits the final flush.
+   */
+  readonly tailCommandOutput?: (input: {
+    readonly sessionId: string;
+    readonly toolCallId: string;
+    readonly stop: Deferred.Deferred<void>;
+    readonly onChunk: (chunk: string) => Effect.Effect<void>;
+    readonly onTitle: (title: string) => Effect.Effect<void>;
+  }) => Effect.Effect<void>;
   readonly hasPendingReply?: (sessionId: string) => Effect.Effect<boolean>;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Interrupt the local prompt fiber before `session/cancel` (Grok wedged prompts). */
@@ -1857,6 +1892,7 @@ interface ActiveAcpTurn {
   readonly stoppedToolCallIds: Set<string>;
   readonly toolUpdatesSkipped: Map<string, number>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
+  readonly commandOutputTitles: Map<string, string>;
   readonly subagents: Map<string, ActiveAcpSubagent>;
   readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
   readonly pendingSubagentNotifications: Map<string, Array<EffectAcpSchema.SessionNotification>>;
@@ -2588,6 +2624,42 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         if (clientTerminals !== undefined) {
           yield* Scope.addFinalizer(sessionScope, clientTerminals.disposeAll);
         }
+        const commandOutputTails = new Map<
+          string,
+          {
+            readonly context: ActiveAcpTurn;
+            readonly fiber: Fiber.Fiber<void>;
+            readonly stop: Deferred.Deferred<void>;
+          }
+        >();
+        // Waits for the tail's last read so its output lands before the call settles.
+        const stopCommandOutputTail = Effect.fn("AcpAdapter.stopCommandOutputTail")(function* (
+          nativeItemId: string,
+        ) {
+          const tail = commandOutputTails.get(nativeItemId);
+          if (tail === undefined) return;
+          yield* Deferred.succeed(tail.stop, undefined);
+          yield* Fiber.await(tail.fiber);
+          if (commandOutputTails.get(nativeItemId) === tail) {
+            commandOutputTails.delete(nativeItemId);
+          }
+        });
+        const stopTurnCommandOutputTails = Effect.fn("AcpAdapter.stopTurnCommandOutputTails")(
+          function* (context: ActiveAcpTurn) {
+            const keys = [...commandOutputTails.entries()].flatMap(([key, tail]) =>
+              tail.context === context ? [key] : [],
+            );
+            yield* Effect.forEach(keys, stopCommandOutputTail, { discard: true });
+          },
+        );
+        yield* Scope.addFinalizer(
+          sessionScope,
+          Effect.suspend(() =>
+            Effect.forEach([...commandOutputTails.keys()], stopCommandOutputTail, {
+              discard: true,
+            }),
+          ),
+        );
         const sessionScopedId = (sessionId: string, nativeId: string): string =>
           JSON.stringify([sessionId, nativeId]);
         const embeddedTerminalsByToolCallId = new Map<
@@ -5374,6 +5446,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
           rawPayload?: unknown,
+          preserveTextStreams?: boolean,
         ) => Effect.Effect<void> = () => Effect.void;
 
         const markAwaitingBackgroundHydration =
@@ -5427,15 +5500,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
           rawPayload?: unknown,
+          preserveTextStreams = false,
         ) {
-          if (context.assistant.current?.sourceMessageId == null)
-            yield* closeTextStream(context, "assistant");
-          if (context.reasoning.current?.sourceMessageId == null)
-            yield* closeTextStream(context, "reasoning");
-          yield* closeTextStream(context, "user");
+          if (!preserveTextStreams) {
+            if (context.assistant.current?.sourceMessageId == null)
+              yield* closeTextStream(context, "assistant");
+            if (context.reasoning.current?.sourceMessageId == null)
+              yield* closeTextStream(context, "reasoning");
+            yield* closeTextStream(context, "user");
+          }
           const previous = context.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
-          const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
+          const rawNormalized = flavor.normalizeToolCall?.(merged) ?? merged;
+          const discoveredTitle = context.commandOutputTitles.get(rawNormalized.toolCallId);
+          const normalized =
+            discoveredTitle !== undefined &&
+            isGenericAcpCommandTitle(rawNormalized.title) &&
+            rawNormalized.title !== discoveredTitle
+              ? { ...rawNormalized, title: discoveredTitle }
+              : rawNormalized;
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(normalized);
           const backgroundCommandTaskId =
             flavor.isBackgroundCommandTool?.(normalized) === true
@@ -5911,6 +5994,64 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               projectAsCommandExecution,
               inputVariant,
             });
+          }
+          if (turnItem.type === "command_execution") {
+            if (status !== "pending" && status !== "running") {
+              yield* stopCommandOutputTail(nativeItemId);
+            } else if (
+              status === "running" &&
+              flavor.tailCommandOutput !== undefined &&
+              !commandOutputTails.has(nativeItemId)
+            ) {
+              const stop = yield* Deferred.make<void>();
+              const tailCommandOutput = flavor.tailCommandOutput;
+              const tailedToolCallId = toolCall.toolCallId;
+              const fiber = yield* tailCommandOutput({
+                sessionId: context.nativeThreadId,
+                toolCallId: tailedToolCallId,
+                stop,
+                onChunk: (chunk) =>
+                  emitProviderEvent({
+                    type: "command_output.delta",
+                    driver,
+                    threadId: context.input.threadId,
+                    itemId: turnItem.id,
+                    chunk,
+                  }),
+                onTitle: Effect.fnUntraced(function* (nextTitle: string) {
+                  const trimmed = nextTitle.trim();
+                  if (trimmed.length === 0 || context.finalized) return;
+                  context.commandOutputTitles.set(tailedToolCallId, trimmed);
+                  const current = context.tools.get(tailedToolCallId);
+                  if (
+                    current === undefined ||
+                    !isGenericAcpCommandTitle(current.title) ||
+                    current.title === trimmed
+                  ) {
+                    return;
+                  }
+                  const currentStatus = toolStatus(current.status);
+                  if (currentStatus !== "pending" && currentStatus !== "running") return;
+                  yield* emitTool(
+                    context,
+                    { ...current, title: trimmed },
+                    undefined,
+                    undefined,
+                    true,
+                  );
+                }),
+              }).pipe(
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    if (commandOutputTails.get(nativeItemId)?.stop === stop) {
+                      commandOutputTails.delete(nativeItemId);
+                    }
+                  }),
+                ),
+                Effect.forkIn(sessionScope),
+              );
+              commandOutputTails.set(nativeItemId, { context, fiber, stop });
+            }
           }
           yield* emitProviderEvent({ type: "turn_item.updated", driver, turnItem });
           yield* rearmDeferredFinalize(context);
@@ -9627,6 +9768,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           }
           yield* mcpSessions.clearToolResults(context.input.threadId);
+          yield* stopTurnCommandOutputTails(context);
           yield* closeTextStreams(context);
           // Ingestion may stop at turn.terminal, before a delayed flush would run.
           yield* textEmissionPermit.withPermit(
@@ -10635,6 +10777,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               stoppedToolCallIds: new Set(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
+              commandOutputTitles: new Map(),
               subagents: new Map(),
               subagentsBySessionId: new Map(),
               pendingSubagentNotifications: new Map(),

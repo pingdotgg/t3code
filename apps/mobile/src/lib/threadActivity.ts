@@ -20,6 +20,7 @@ import {
   commandProgramName,
 } from "@t3tools/client-runtime/work-log/command-label";
 import {
+  commandCustomTitle,
   commandlessCommandLabel,
   contextCompactionLabel,
   liveThoughtLine,
@@ -301,6 +302,8 @@ export function workEntryRowLabel(
       : resolve(msg("Thought"));
   const presentation = resolveWorkEntryToolPresentation(entry, undefined, resolve);
   if (presentation) return presentation.displayName;
+  const customCommandTitle = commandCustomTitle(entry);
+  if (customCommandTitle) return compactWorkEntryText(customCommandTitle);
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
   const commandless = commandlessCommandLabel(
     entry,
@@ -971,6 +974,8 @@ function singleToolCallLabel(
       : compactWorkEntryText(activity.workEntry.detail ?? "") || resolve(msg("Thought"));
   const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed", resolve);
   if (presentation) return presentation.displayName;
+  const customCommandTitle = commandCustomTitle(activity.workEntry);
+  if (customCommandTitle) return compactWorkEntryText(customCommandTitle);
   const command = activity.workEntry.command?.trim();
   return command ? truncate(command, WORK_LOG_LABEL_MAX_LENGTH) : activity.summary;
 }
@@ -1837,6 +1842,35 @@ export function deriveThreadFeedPresentation(
       for (const entryId of fold.hiddenEntryIds) collapsedEntryIds.add(entryId);
     }
   }
+  const tailIsActiveActivityGroup =
+    activeTailGroup?.type === "activity-group" && activeTailGroup.runId === activeRunId;
+  const tailActivityIds = new Set(
+    tailIsActiveActivityGroup ? activeTailGroup.activities.map((activity) => activity.id) : [],
+  );
+  const trailingRunningCommands: ThreadFeedActivity[] = [];
+  const trailingRunningCommandIds = new Set<string>();
+  if (
+    !zen &&
+    isWorking &&
+    latestRun?.turnEnded !== true &&
+    (activeRunId !== null || runlessWorkActive)
+  ) {
+    for (const entry of sourceFeed) {
+      if (entry.type !== "activity-group" || collapsedEntryIds.has(entry.id)) continue;
+      for (const activity of entry.activities) {
+        if (
+          activity.projectedItem.item.type === "command_execution" &&
+          activity.lifecycleStatus === "inProgress" &&
+          activity.runId === activeRunId &&
+          !tailActivityIds.has(activity.id)
+        ) {
+          trailingRunningCommands.push(activity);
+          trailingRunningCommandIds.add(activity.id);
+        }
+      }
+    }
+  }
+  let trailingRunningCommandsPlaced = false;
   // The working run's fold row shows its live timer where "Worked for" lands once it settles.
   // Zen never folds, so it keeps only the Thinking row.
   // Runless work folds under its prompt's key once it settles, so the live row takes that key.
@@ -1923,31 +1957,59 @@ export function deriveThreadFeedPresentation(
       continue;
     }
     if (!collapsedEntryIds.has(entry.id)) {
-      if (
+      const filteredEntry =
+        trailingRunningCommandIds.size > 0 &&
         entry.type === "activity-group" &&
-        entry.runId !== null &&
-        failedRunIds.has(entry.runId)
+        entry.activities.some((activity) => trailingRunningCommandIds.has(activity.id))
+          ? {
+              ...entry,
+              activities: entry.activities.filter(
+                (activity) => !trailingRunningCommandIds.has(activity.id),
+              ),
+            }
+          : entry;
+      if (filteredEntry.type === "activity-group" && filteredEntry.activities.length === 0) {
+        continue;
+      }
+      const presentationEntry =
+        isActiveTailGroup &&
+        trailingRunningCommands.length > 0 &&
+        filteredEntry.type === "activity-group"
+          ? {
+              ...filteredEntry,
+              activities: [...filteredEntry.activities, ...trailingRunningCommands],
+            }
+          : filteredEntry;
+      if (isActiveTailGroup && trailingRunningCommands.length > 0) {
+        trailingRunningCommandsPlaced = true;
+      }
+      if (
+        presentationEntry.type === "activity-group" &&
+        presentationEntry.runId !== null &&
+        failedRunIds.has(presentationEntry.runId)
       ) {
-        let rows = failedActivityGroupsCache.get(entry);
+        let rows = presentationEntry === entry ? failedActivityGroupsCache.get(entry) : undefined;
         if (!rows) {
           rows =
-            entry.activities.length === 1
-              ? [entry]
-              : entry.activities.map((activity) => ({
+            presentationEntry.activities.length === 1
+              ? [presentationEntry]
+              : presentationEntry.activities.map((activity) => ({
                   type: "activity-group" as const,
                   id: activity.id,
                   createdAt: activity.createdAt,
                   runId: activity.runId,
                   activities: [activity],
                 }));
-          failedActivityGroupsCache.set(entry, rows);
+          if (presentationEntry === entry) {
+            failedActivityGroupsCache.set(entry, rows);
+          }
         }
         result.push(...rows);
         continue;
       }
       appendPresentedFeedEntry(
         result,
-        entry,
+        presentationEntry,
         expandedWorkGroupIds,
         activeRunId,
         isWorking,
@@ -1958,6 +2020,25 @@ export function deriveThreadFeedPresentation(
     }
   }
   if (liveFold !== null && !liveFoldPlaced) result.push(liveFold);
+  if (trailingRunningCommands.length > 0 && !trailingRunningCommandsPlaced) {
+    const anchor = trailingRunningCommands[0]!;
+    appendPresentedFeedEntry(
+      result,
+      {
+        type: "activity-group",
+        id: anchor.id,
+        createdAt: anchor.createdAt,
+        runId: activeRunId,
+        activities: trailingRunningCommands,
+      },
+      expandedWorkGroupIds,
+      activeRunId,
+      isWorking,
+      true,
+      resolve,
+      locale,
+    );
+  }
   const latestRow = result.at(-1);
   const replyIsStreaming =
     latestRow?.type === "message" &&
@@ -2415,6 +2496,8 @@ function liveToolActivitySummary(
     resolve,
   );
   if (presentation) return presentation.displayName;
+  const customCommandTitle = commandCustomTitle(activity.workEntry);
+  if (customCommandTitle) return compactWorkEntryText(customCommandTitle);
   const command = activity.workEntry.command?.trim();
   if (command) {
     const program = commandProgramName(command);

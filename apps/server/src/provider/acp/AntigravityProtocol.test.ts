@@ -984,3 +984,35 @@ describe("Antigravity served reads", () => {
     expect(foreignCall.data.rawInput).toEqual({ message: "Hello", toolSummary: "Send greeting" });
   });
 });
+
+describe("Antigravity command toolSummary normalization", () => {
+  it("uses rawInput toolSummary when the command carries a generic title", () => {
+    const normalized = normalizeAntigravityToolCall({
+      toolCallId: "call_cmd_1",
+      title: "Run command",
+      kind: "execute",
+      status: "inProgress",
+      data: {
+        rawInput: {
+          CommandLine: "mkdir -p /tmp/out && python3 capture.py",
+          toolSummary: "Check outer moons sky level and capture 60 frames if clean",
+        },
+      },
+    });
+    expect(normalized.title).toBe("Check outer moons sky level and capture 60 frames if clean");
+
+    const preserved = normalizeAntigravityToolCall({
+      toolCallId: "call_cmd_2",
+      title: "Already named task",
+      kind: "execute",
+      status: "inProgress",
+      data: {
+        rawInput: {
+          CommandLine: "echo hi",
+          tool_summary: "Fallback summary",
+        },
+      },
+    });
+    expect(preserved.title).toBe("Already named task");
+  });
+});

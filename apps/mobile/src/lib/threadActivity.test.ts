@@ -2294,3 +2294,119 @@ it("caps live thought previews while preserving reasoning detail", () => {
   expect(JSON.parse(activity.getFullDetail()!).item).toMatchObject({ text });
   expect(activity.getCopyText()).toContain(text);
 });
+
+it("surfaces a running background command with its summary below an interim assistant message", () => {
+  const startedAt = "2026-06-20T00:00:01.000Z";
+  const runningCmd: OrchestrationV2TurnItem = {
+    ...command(),
+    id: TurnItemId.make("item-bg-cmd"),
+    status: "running",
+    completedAt: null,
+    title: "Check outer moons sky level and capture 60 frames if clean",
+    input: "mkdir -p /tmp/out && python3 capture.py",
+  };
+  const interimReply: OrchestrationV2TurnItem = {
+    ...assistantMessage(),
+    text: "Checking 1 frame right now.",
+    streaming: false,
+  };
+  const feed = buildThreadFeed([
+    projected(userMessage(), 0),
+    projected(runningCmd, 1),
+    projected(interimReply, 2),
+  ]);
+  const rows = deriveThreadFeedPresentation(
+    feed,
+    { runId, status: "running", startedAt, completedAt: null },
+    new Set(),
+    new Set(),
+    startedAt,
+  );
+  const replyIdx = rows.findIndex(
+    (row) => row.type === "message" && row.message.role === "assistant",
+  );
+  const liveIdx = rows.findIndex((row) => row.id === "live-activity-row");
+  expect(replyIdx).toBeGreaterThan(-1);
+  expect(liveIdx).toBeGreaterThan(replyIdx);
+  expect(rows.some((row) => row.type === "thinking")).toBe(false);
+  const liveRow = rows[liveIdx];
+  expect(liveRow?.type).toBe("activity-group");
+  if (liveRow?.type === "activity-group") {
+    expect(liveRow.activities[0]?.live).toBe(true);
+    expect(liveRow.activities[0]?.groupStandIn?.label).toBe(
+      "Check outer moons sky level and capture 60 frames if clean",
+    );
+    expect(workEntryRowLabel(liveRow.activities[0]!.workEntry)).toBe(
+      "Check outer moons sky level and capture 60 frames if clean",
+    );
+  }
+
+  // Keep running command pinned when a completed tool lands after the interim reply,
+  // and do not duplicate it when the run also contains a failed error item.
+  const tailTool: OrchestrationV2TurnItem = {
+    ...base("item-tail-tool", "2026-06-20T00:00:04.000Z", 3),
+    type: "dynamic_tool",
+    toolName: "grep_search",
+    input: { query: "capture" },
+  };
+  const withTail = deriveThreadFeedPresentation(
+    buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(runningCmd, 1),
+      projected(interimReply, 2),
+      projected(tailTool, 3),
+    ]),
+    { runId, status: "running", startedAt, completedAt: null },
+    new Set(),
+    new Set(),
+    startedAt,
+  );
+  const tailLive = withTail.find((row) => row.id === "live-activity-row");
+  expect(tailLive).toMatchObject({
+    type: "work-toggle",
+    live: true,
+    summary: "Check outer moons sky level and capture 60 frames if clean",
+  });
+  // Running command must not remain duplicated above the interim reply.
+  const preReplyCmds = withTail
+    .slice(
+      0,
+      withTail.findIndex((row) => row.type === "message" && row.message.role === "assistant"),
+    )
+    .flatMap((row) =>
+      row.type === "activity-group"
+        ? row.activities.filter((a) => a.projectedItem.item.id === "item-bg-cmd")
+        : [],
+    );
+  expect(preReplyCmds).toHaveLength(0);
+
+  const errorItem: OrchestrationV2TurnItem = {
+    ...base("item-err", "2026-06-20T00:00:01.500Z", 1),
+    type: "error",
+    status: "failed",
+    failure: {
+      class: "provider_error",
+      message: "Transient probe failed",
+      code: null,
+      retryable: true,
+    },
+  };
+  const withError = deriveThreadFeedPresentation(
+    buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(errorItem, 1),
+      projected(runningCmd, 2),
+      projected(interimReply, 3),
+    ]),
+    { runId, status: "running", startedAt, completedAt: null },
+    new Set(),
+    new Set(),
+    startedAt,
+  );
+  const errCmdOccurrences = withError.flatMap((row) =>
+    row.type === "activity-group"
+      ? row.activities.filter((a) => a.projectedItem.item.id === "item-bg-cmd")
+      : [],
+  );
+  expect(errCmdOccurrences).toHaveLength(1);
+});

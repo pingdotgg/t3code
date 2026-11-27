@@ -20,6 +20,7 @@ import {
   commandProgramName,
 } from "@t3tools/client-runtime/work-log/command-label";
 import {
+  commandCustomTitle,
   commandlessCommandLabel,
   genericCommandStatusLabel,
   liveActivityToolStatus,
@@ -159,6 +160,8 @@ export function workEntryDisplayLabel(
   }
   const toolPresentation = resolveWorkEntryToolPresentation(entry, undefined, resolve);
   if (toolPresentation) return toolPresentation.displayName;
+  const customCommandTitle = commandCustomTitle(entry);
+  if (customCommandTitle) return customCommandTitle;
   if (entry.command?.trim()) return commandDisplayText(entry.command);
   const commandless = commandlessCommandLabel(
     entry,
@@ -276,6 +279,8 @@ export function liveWorkEntryLabel(
     resolve,
   );
   if (toolPresentation) return toolPresentation.displayName;
+  const customCommandTitle = commandCustomTitle(entry);
+  if (customCommandTitle) return customCommandTitle;
   const command = entry.command?.trim();
   if (command) {
     const program = commandProgramName(command);
@@ -1809,29 +1814,56 @@ export function deriveMessagesTimelineRows(
   const latestThoughtEntry = visibleActiveToolEntries.findLast(
     (entry) => entry.entry.itemType === "reasoning" && (entry.entry.detail?.trim() ?? "") !== "",
   );
+  const activeToolEntryIds = new Set(activeToolEntries.map((entry) => entry.id));
+  const trailingRunningCommandEntries =
+    input.isWorking &&
+    input.latestRun?.turnEnded !== true &&
+    (unsettledRunId !== null || runlessWorkActive)
+      ? timelineEntries.filter(
+          (entry): entry is Extract<TimelineEntry, { kind: "work" }> =>
+            entry.kind === "work" &&
+            entry.entry.itemType === "command_execution" &&
+            workEntryIsInActiveRun(entry.entry) &&
+            !activeToolEntryIds.has(entry.id) &&
+            !collapsedEntryIds.has(entry.id) &&
+            !collapsedSupersededEntryIds.has(entry.id) &&
+            !foldsByAnchorEntryId.has(entry.id) &&
+            !supersededFoldsByAnchorEntryId.has(entry.id),
+        )
+      : [];
   const activeWorkPlacementEntryId = latestVisibleToolEntry?.id;
   const activeWorkRow =
     activeWorkAnchor && latestVisibleToolEntry && !latestToolFailed
       ? (() => {
           const groupId = workGroupId(activeWorkAnchor.id);
+          const mergedEntries = [
+            ...visibleActiveToolEntries.map((entry) => entry.entry),
+            ...trailingRunningCommandEntries.map((entry) => entry.entry),
+          ];
+          const liveEntry =
+            latestRunningToolEntry ??
+            trailingRunningCommandEntries.at(-1) ??
+            latestVisibleToolEntry;
+          const active = latestToolKeepsActivityLive || trailingRunningCommandEntries.length > 0;
           return {
             kind: "work-live" as const,
-            id: latestToolKeepsActivityLive
-              ? LIVE_ACTIVITY_ROW_ID
-              : `work-live:${activeWorkAnchor.id}`,
+            id: active ? LIVE_ACTIVITY_ROW_ID : `work-live:${activeWorkAnchor.id}`,
             createdAt: activeWorkAnchor.createdAt,
-            entry: (latestRunningToolEntry ?? latestVisibleToolEntry).entry,
-            groupedEntries: visibleActiveToolEntries.map((entry) => entry.entry),
+            entry: liveEntry.entry,
+            groupedEntries: mergedEntries,
             groupId,
             expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
-            active: latestToolKeepsActivityLive,
+            active,
             ...(latestThoughtEntry ? { thought: latestThoughtEntry.entry } : {}),
           };
         })()
       : null;
-  const activeWorkEntryIds = new Set(
-    activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
-  );
+  const activeWorkEntryIds = new Set([
+    ...(activeWorkRow !== null || latestToolFailed
+      ? activeToolEntries.map((entry) => entry.id)
+      : []),
+    ...trailingRunningCommandEntries.map((entry) => entry.id),
+  ]);
   // A bare `/compact` turn is the compaction itself: one compaction row stands in for its prompt
   // and working indicator, from the moment the turn starts. Likewise an answered "compact before
   // continuing?" question folds into the compaction it asked for.
@@ -2401,6 +2433,27 @@ export function deriveMessagesTimelineRows(
   const hasWorkingRow = nextRows.some((row) => row.kind === "working");
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
+  }
+  if (activeWorkRow === null && trailingRunningCommandEntries.length > 0) {
+    const anchor = trailingRunningCommandEntries[0]!;
+    const latest = trailingRunningCommandEntries.at(-1)!;
+    const groupId = workGroupId(anchor.id);
+    const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+    const groupedEntries = trailingRunningCommandEntries.map((entry) => entry.entry);
+    nextRows.push({
+      kind: "work-live",
+      id: LIVE_ACTIVITY_ROW_ID,
+      createdAt: anchor.createdAt,
+      entry: latest.entry,
+      groupedEntries,
+      groupId,
+      expanded,
+      active: true,
+    });
+    hasActivityRow = true;
+    if (expanded) {
+      nextRows.push(expandedWorkGroupRow(groupId, anchor.createdAt, groupedEntries));
+    }
   }
   if (
     input.isWorking &&
