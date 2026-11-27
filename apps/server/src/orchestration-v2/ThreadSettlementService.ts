@@ -45,6 +45,7 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import { makeNoPullRequestRechecks } from "./noPullRequestRechecks.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as PendingSettleScripts from "./PendingSettleScripts.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { QUIET_AFTER_MS, QUIET_SYNC_INTERVAL_MS } from "./PullRequestSyncReactor.ts";
 
@@ -55,7 +56,6 @@ export interface SettlementPullRequest {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
-const SETTLE_SCRIPT_SLOT_TIMEOUT = "5 minutes";
 
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
@@ -797,6 +797,7 @@ export const make = Effect.gen(function* () {
   // settlements (a restart sweep, a bulk settle) would otherwise start one shell per thread at once.
   const settleScriptRuns = yield* FiberSet.make<void>();
   const settleScriptSlot = yield* Semaphore.make(1);
+  const pendingSettleScripts = yield* PendingSettleScripts.PendingSettleScripts;
 
   // Skip settle scripts in shared checkouts where other threads may still work.
   const runSettleScript = Effect.fn("ThreadSettlementServiceV2.runSettleScript")(
@@ -843,25 +844,15 @@ export const make = Effect.gen(function* () {
         observeCompletion: {},
       });
       settleActionRunAt.set(threadId, settledAtMs);
+      // Detached so interrupting this run (shutdown) does not close the script's terminal.
       if (run.status === "started" && run.completion) {
-        // Interrupting the completion closes the script's terminal, so only the wait is bounded:
-        // a script that never finishes keeps running but stops holding back later settlements.
-        const completion = yield* run.completion.pipe(Effect.forkDetach);
-        const finished = yield* Fiber.await(completion).pipe(
-          Effect.timeoutOption(SETTLE_SCRIPT_SLOT_TIMEOUT),
-        );
-        if (Option.isNone(finished)) {
-          yield* Effect.logWarning("settle script still running; starting the next one", {
-            threadId,
-            worktreePath,
-            terminalId: run.terminalId,
-          });
-        }
+        yield* Fiber.await(yield* run.completion.pipe(Effect.forkDetach));
       }
     },
     (effect, threadId) =>
       effect.pipe(
         settleScriptSlot.withPermits(1),
+        pendingSettleScripts.track(threadId),
         Effect.catchCauseIf(
           (cause) => !Cause.hasInterruptsOnly(cause),
           (cause) =>

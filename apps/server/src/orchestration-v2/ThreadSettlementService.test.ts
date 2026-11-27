@@ -47,6 +47,7 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as PendingSettleScripts from "./PendingSettleScripts.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -689,6 +690,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   });
 
   const layerDependencies = Layer.mergeAll(
+    PendingSettleScripts.layer,
     Layer.mock(ProjectStore.ProjectStoreV2)({
       listShells: () => Ref.get(snapshots).pipe(Effect.map((snapshot) => snapshot.projects)),
       getShell: (projectId) =>
@@ -809,7 +811,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     layer: Layer.effect(
       ThreadSettlementService.ThreadSettlementServiceV2,
       ThreadSettlementService.make,
-    ).pipe(Layer.provide(layerDependencies)),
+    ).pipe(Layer.provideMerge(layerDependencies)),
   };
 });
 
@@ -2604,7 +2606,11 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         for (const thread of [first, second, marker]) {
           assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: thread.id });
         }
+        // A long first script keeps the slot, and storage cleanup still sees the queued thread.
+        yield* TestClock.adjust("6 minutes");
         assert.strictEqual(yield* Queue.size(fixture.scriptRuns), 0);
+        const pending = yield* PendingSettleScripts.PendingSettleScripts;
+        assert.isTrue(pending.has(second.id));
         yield* Deferred.succeed(firstFinished, undefined);
         assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, second.id);
       }).pipe(Effect.provide(fixture.layer));
