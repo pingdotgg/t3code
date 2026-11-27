@@ -370,7 +370,7 @@ patchedDependencies:
   '@alchemy.run/test@2.0.0-beta.85': 29c0539ea71d9cc372f0b16558640599beb9bc609605feb2a493da268d72713e
   '@clerk/expo-native-components@0.4.8': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
   '@cursor/sdk@1.5.0': 7fe8889d7916196c56006cf15a39abba4099feb2c567b4030b82a09364cee500
-  '@effect/platform-node-shared@4.1.6': af6bf6e9364037fa069fe80678a04acf389d8d5883600500a7afe5ab0ce6e9bc
+  '@effect/platform-node-shared@4.1.6': f6aef893f2212c4eaa4fe97f84cead4d6ef7ba1651be51dfe28506578eb970ed
   '@effect/vitest@4.1.6': f87ba071dd4f5cfa3b1ba14d5d59363e64372cd49af4d8282c322939e6bf3af2
   '@exodus/bytes@1.15.1': ceab67463db8cb74dcb2ced48eff4cc8ae9de925ae4cd2173a59a0dfba667bd8
   '@expo/ui@58.0.29': 2346ac02073363a401e85357e541055e9737bcbc1cdcb63e056cda9368fa79f6
@@ -875,7 +875,7 @@ importers:
         version: 4.1.6(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/platform-node-shared':
         specifier: 4.1.6
-        version: 4.1.6(patch_hash=af6bf6e9364037fa069fe80678a04acf389d8d5883600500a7afe5ab0ce6e9bc)(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(utf-8-validate@6.0.6)
+        version: 4.1.6(patch_hash=f6aef893f2212c4eaa4fe97f84cead4d6ef7ba1651be51dfe28506578eb970ed)(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(utf-8-validate@6.0.6)
       '@ff-labs/fff-node':
         specifier: 0.11.0
         version: 0.11.0(patch_hash=93f62a76399b435a76588b2bef237db0a1e85880c1ac0d0759c416e9cc579252)
@@ -14574,13 +14574,13 @@ snapshots:
 
   '@effect/platform-bun@4.1.6(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(utf-8-validate@6.0.6)':
     dependencies:
-      '@effect/platform-node-shared': 4.1.6(patch_hash=af6bf6e9364037fa069fe80678a04acf389d8d5883600500a7afe5ab0ce6e9bc)(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(utf-8-validate@6.0.6)
+      '@effect/platform-node-shared': 4.1.6(patch_hash=f6aef893f2212c4eaa4fe97f84cead4d6ef7ba1651be51dfe28506578eb970ed)(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(utf-8-validate@6.0.6)
       effect: 4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node-shared@4.1.6(patch_hash=af6bf6e9364037fa069fe80678a04acf389d8d5883600500a7afe5ab0ce6e9bc)(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(utf-8-validate@6.0.6)':
+  '@effect/platform-node-shared@4.1.6(patch_hash=f6aef893f2212c4eaa4fe97f84cead4d6ef7ba1651be51dfe28506578eb970ed)(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(utf-8-validate@6.0.6)':
     dependencies:
       '@types/ws': 8.18.2
       effect: 4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1)
@@ -14591,7 +14591,7 @@ snapshots:
 
   '@effect/platform-node@4.1.6(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(redis@6.2.1)(utf-8-validate@6.0.6)':
     dependencies:
-      '@effect/platform-node-shared': 4.1.6(patch_hash=af6bf6e9364037fa069fe80678a04acf389d8d5883600500a7afe5ab0ce6e9bc)(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(utf-8-validate@6.0.6)
+      '@effect/platform-node-shared': 4.1.6(patch_hash=f6aef893f2212c4eaa4fe97f84cead4d6ef7ba1651be51dfe28506578eb970ed)(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(utf-8-validate@6.0.6)
       effect: 4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1)
       redis: 6.2.1
       undici: 8.12.4
