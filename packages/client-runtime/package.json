@@ -427,6 +427,10 @@
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
     },
+    "./state/bot-avatar": {
+      "types": "./src/state/botAvatar.ts",
+      "default": "./src/state/botAvatar.ts"
+    },
     "./state/bot-files": {
       "types": "./src/state/botFiles.ts",
       "default": "./src/state/botFiles.ts"
@@ -704,6 +708,7 @@
     "effect": "catalog:",
     "gt-i18n": "1.0.40",
     "jszip": "3.10.1",
+    "open-bot-avatar": "catalog:",
     "three": "0.180.0",
     "unbash": "^5.0.0"
   },

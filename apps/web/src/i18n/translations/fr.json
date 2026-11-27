@@ -13023,11 +13023,7 @@
   "ab8ce40d94482b3e": "Impossible d’enregistrer les notes du Bot",
   "77a197a16cc26cc0": "Ce que le Bot retient d’un tour à l’autre.",
   "b7266adde1825b8c": "Comment vous souhaitez que le Bot travaille.",
-  "6076957eb586211e": "Notes du Bot",
   "2f4ef70d15027bb0": "Notes",
-  "1594e99201ab43a1": "Préférences",
-  "4eb9f15722252eaf": "Bot",
-  "9b0ffa17971c05e8": "Notes du Bot",
   "de21972169ea02a3": "Couper le bruit de l’équipe",
   "68499884f89d6072": "{count, plural, one {{count} membre d’équipe} other {{count} membres d’équipe}}",
   "9816f4a0873af05c": "Équipe en sourdine",
@@ -13041,5 +13037,12 @@
   "6a79abf40690e3df": "Créer le Bot",
   "35ba446b79347ddf": "Nouveau Bot",
   "ef9945d356dd1c2b": "Un Bot coordonne d’autres fils pour vous. Indiquez-lui de quoi s’occuper et comment vous souhaitez qu’il travaille.",
-  "d4b3fe97dd0501a8": "Instructions"
+  "d4b3fe97dd0501a8": "Instructions",
+  "d25661576338fcf0": "Vous attend",
+  "1519a364f1312d30": "Instructions et notes",
+  "af1d8494ba66d623": "Pas encore d’équipe. Les fils que ce Bot lance apparaissent ici.",
+  "97884c869683f97f": "{count, plural, one {{count} vous attend} other {{count} vous attendent}}",
+  "085f3d64c434cafd": "Bots",
+  "7cda14a9e8aaefb0": "Arrêté",
+  "ff1728d6a7065373": "En cours"
 }

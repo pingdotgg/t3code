@@ -128,3 +128,55 @@ export function visibleCrew<T extends GroupableThread>(
 ): ReadonlyArray<T> {
   return folded ? group.crew.filter((member) => crewStatus(member) === "needs-input") : group.crew;
 }
+
+/** A Bot's crew by what each member needs; archived crew is left out. */
+export interface BotCrewBoard<T> {
+  readonly needsYou: ReadonlyArray<T>;
+  readonly working: ReadonlyArray<T>;
+  readonly done: ReadonlyArray<T>;
+}
+
+export interface BotGroups<T> {
+  /** Unarchived Bots, oldest first, so rows keep their places. */
+  readonly bots: ReadonlyArray<T>;
+  readonly boardByBotKey: ReadonlyMap<string, BotCrewBoard<T>>;
+  /** Bots and their crew: they live on the Bot's own page, not in the thread list. */
+  readonly botAndCrewKeys: ReadonlySet<string>;
+}
+
+const EMPTY_BOARD: BotCrewBoard<never> = { needsYou: [], working: [], done: [] };
+
+export function groupBots<
+  T extends GroupableThread & Pick<EnvironmentThreadShell, "archivedAt" | "createdAt">,
+>(threads: ReadonlyArray<T>): BotGroups<T> {
+  const bots = threads
+    .filter((thread) => thread.botConfig != null && thread.archivedAt === null)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const boards = new Map<string, { needsYou: T[]; working: T[]; done: T[] }>(
+    bots.map((bot) => [keyOf(bot), { needsYou: [], working: [], done: [] }] as const),
+  );
+  const botAndCrewKeys = new Set(boards.keys());
+  for (const thread of threads) {
+    const botId = thread.groupedUnderThreadId;
+    if (botId == null || botId === thread.id) continue;
+    const board = boards.get(scopedThreadKey(scopeThreadRef(thread.environmentId, botId)));
+    if (board === undefined) continue;
+    botAndCrewKeys.add(keyOf(thread));
+    if (thread.archivedAt !== null) continue;
+    const status = crewStatus(thread);
+    (status === "needs-input"
+      ? board.needsYou
+      : status === "working"
+        ? board.working
+        : board.done
+    ).push(thread);
+  }
+  return { bots, boardByBotKey: boards, botAndCrewKeys };
+}
+
+export function botCrewBoard<T>(
+  groups: Pick<BotGroups<T>, "boardByBotKey">,
+  botKey: string,
+): BotCrewBoard<T> {
+  return groups.boardByBotKey.get(botKey) ?? EMPTY_BOARD;
+}

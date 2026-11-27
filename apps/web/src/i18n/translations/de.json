@@ -13023,11 +13023,7 @@
   "ab8ce40d94482b3e": "Bot-Notizen konnten nicht gespeichert werden",
   "77a197a16cc26cc0": "Was der Bot zwischen den Durchgängen festhält.",
   "b7266adde1825b8c": "Wie der Bot arbeiten soll.",
-  "6076957eb586211e": "Bot-Notizen",
   "2f4ef70d15027bb0": "Notizen",
-  "1594e99201ab43a1": "Vorlieben",
-  "4eb9f15722252eaf": "Bot",
-  "9b0ffa17971c05e8": "Bot-Notizen",
   "de21972169ea02a3": "Crew-Meldungen stummschalten",
   "68499884f89d6072": "{count, plural, one {{count} Crew-Thread} other {{count} Crew-Threads}}",
   "9816f4a0873af05c": "Crew stummgeschaltet",
@@ -13041,5 +13037,12 @@
   "6a79abf40690e3df": "Bot erstellen",
   "35ba446b79347ddf": "Neuer Bot",
   "ef9945d356dd1c2b": "Ein Bot koordiniert andere Threads für dich. Sag ihm, worum er sich kümmern und wie er arbeiten soll.",
-  "d4b3fe97dd0501a8": "Anweisungen"
+  "d4b3fe97dd0501a8": "Anweisungen",
+  "d25661576338fcf0": "Braucht dich",
+  "1519a364f1312d30": "Anweisungen & Notizen",
+  "af1d8494ba66d623": "Noch keine Crew. Threads, die dieser Bot startet, erscheinen hier.",
+  "97884c869683f97f": "{count, plural, one {{count} braucht dich} other {{count} brauchen dich}}",
+  "085f3d64c434cafd": "Bots",
+  "7cda14a9e8aaefb0": "Angehalten",
+  "ff1728d6a7065373": "Arbeitet"
 }

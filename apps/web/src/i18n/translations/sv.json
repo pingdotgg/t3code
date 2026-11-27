@@ -13030,11 +13030,7 @@
   "ab8ce40d94482b3e": "Det gick inte att spara Bot-anteckningar",
   "77a197a16cc26cc0": "Det Bot håller reda på mellan omgångar.",
   "b7266adde1825b8c": "Hur du vill att Bot ska arbeta.",
-  "6076957eb586211e": "Bot-anteckningar",
   "2f4ef70d15027bb0": "Anteckningar",
-  "1594e99201ab43a1": "Önskemål",
-  "4eb9f15722252eaf": "Bot",
-  "9b0ffa17971c05e8": "Bot-anteckningar",
   "de21972169ea02a3": "Tysta besättningens aviseringar",
   "68499884f89d6072": "{count, plural, one {{count} i besättningen} other {{count} i besättningen}}",
   "9816f4a0873af05c": "Besättningen tystad",
@@ -13048,5 +13044,12 @@
   "6a79abf40690e3df": "Skapa Bot",
   "35ba446b79347ddf": "Ny Bot",
   "ef9945d356dd1c2b": "En Bot samordnar andra trådar åt dig. Berätta vad den ska ta hand om och hur du vill att den arbetar.",
-  "d4b3fe97dd0501a8": "Instruktioner"
+  "d4b3fe97dd0501a8": "Instruktioner",
+  "d25661576338fcf0": "Behöver dig",
+  "1519a364f1312d30": "Instruktioner och anteckningar",
+  "af1d8494ba66d623": "Ingen besättning än. Trådar som den här Bot startar visas här.",
+  "97884c869683f97f": "{count, plural, one {{count} behöver dig} other {{count} behöver dig}}",
+  "085f3d64c434cafd": "Bots",
+  "7cda14a9e8aaefb0": "Stoppad",
+  "ff1728d6a7065373": "Arbetar"
 }

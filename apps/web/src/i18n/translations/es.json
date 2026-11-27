@@ -13018,11 +13018,7 @@
   "ab8ce40d94482b3e": "No se pudieron guardar las notas del Bot",
   "77a197a16cc26cc0": "Lo que el Bot recuerda entre turnos.",
   "b7266adde1825b8c": "Cómo prefieres que trabaje el Bot.",
-  "6076957eb586211e": "Notas del Bot",
   "2f4ef70d15027bb0": "Notas",
-  "1594e99201ab43a1": "Preferencias",
-  "4eb9f15722252eaf": "Bot",
-  "9b0ffa17971c05e8": "Notas del Bot",
   "de21972169ea02a3": "Silenciar avisos del equipo",
   "68499884f89d6072": "{count, plural, one {{count} del equipo} other {{count} del equipo}}",
   "9816f4a0873af05c": "Equipo silenciado",
@@ -13036,5 +13032,12 @@
   "6a79abf40690e3df": "Crear Bot",
   "35ba446b79347ddf": "Nuevo Bot",
   "ef9945d356dd1c2b": "Un Bot coordina otros hilos por ti. Dile de qué ocuparse y cómo prefieres que trabaje.",
-  "d4b3fe97dd0501a8": "Instrucciones"
+  "d4b3fe97dd0501a8": "Instrucciones",
+  "d25661576338fcf0": "Te necesita",
+  "1519a364f1312d30": "Instrucciones y notas",
+  "af1d8494ba66d623": "Aún no hay equipo. Los hilos que inicie este Bot aparecerán aquí.",
+  "97884c869683f97f": "{count, plural, one {{count} te necesita} other {{count} te necesitan}}",
+  "085f3d64c434cafd": "Bots",
+  "7cda14a9e8aaefb0": "Detenido",
+  "ff1728d6a7065373": "Trabajando"
 }

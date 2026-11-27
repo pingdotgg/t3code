@@ -13032,11 +13032,7 @@
   "ab8ce40d94482b3e": "Failed to save Bot notes",
   "77a197a16cc26cc0": "What the Bot keeps track of between turns.",
   "b7266adde1825b8c": "How you like the Bot to work.",
-  "6076957eb586211e": "Bot notes",
   "2f4ef70d15027bb0": "Notes",
-  "1594e99201ab43a1": "Preferences",
-  "4eb9f15722252eaf": "Bot",
-  "9b0ffa17971c05e8": "Bot notes",
   "de21972169ea02a3": "Mute crew noise",
   "68499884f89d6072": "{count, plural, one {{count} crew} other {{count} crew}}",
   "9816f4a0873af05c": "Crew muted",
@@ -13050,5 +13046,12 @@
   "6a79abf40690e3df": "Create Bot",
   "35ba446b79347ddf": "New Bot",
   "ef9945d356dd1c2b": "A Bot coordinates other threads for you. Tell it what to look after and how you like it to work.",
-  "d4b3fe97dd0501a8": "Instructions"
+  "d4b3fe97dd0501a8": "Instructions",
+  "d25661576338fcf0": "Needs you",
+  "1519a364f1312d30": "Instructions & notes",
+  "af1d8494ba66d623": "No crew yet. Threads this Bot starts show here.",
+  "97884c869683f97f": "{count, plural, one {{count} needs you} other {{count} need you}}",
+  "085f3d64c434cafd": "Bots",
+  "7cda14a9e8aaefb0": "Stopped",
+  "ff1728d6a7065373": "Working"
 }

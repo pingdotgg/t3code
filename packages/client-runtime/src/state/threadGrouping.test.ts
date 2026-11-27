@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   crewMemberSurfaces,
   foldedCrewSummary,
+  groupBots,
   groupThreads,
   type GroupableThread,
   visibleCrew,
@@ -105,5 +106,42 @@ describe("folded crew", () => {
       false,
       true,
     ]);
+  });
+});
+
+describe("groupBots", () => {
+  it("lists unarchived Bots oldest first and sorts their crew, settled or not, onto the board", () => {
+    const at = (
+      base: GroupableThread,
+      createdAt: string,
+      archived = false,
+    ): GroupableThread & { readonly createdAt: string; readonly archivedAt: string | null } => ({
+      ...base,
+      createdAt,
+      archivedAt: archived ? createdAt : null,
+    });
+    const groups = groupBots([
+      at(thread("newer-bot", { mutedBot: false }), "2026-11-02T00:00:00.000Z"),
+      at(thread("bot", { mutedBot: false, settled: true }), "2026-11-01T00:00:00.000Z"),
+      at(thread("archived-bot", { mutedBot: false }), "2026-11-01T00:00:00.000Z", true),
+      at(thread("asking", { under: "bot", needsInput: true }), "2026-11-03T00:00:00.000Z"),
+      at(thread("busy", { under: "bot", working: true }), "2026-11-03T00:00:00.000Z"),
+      at(thread("finished", { under: "bot", settled: true }), "2026-11-03T00:00:00.000Z"),
+      at(thread("gone", { under: "bot" }), "2026-11-03T00:00:00.000Z", true),
+      at(thread("freed", { under: "archived-bot" }), "2026-11-03T00:00:00.000Z"),
+      at(thread("plain"), "2026-11-03T00:00:00.000Z"),
+    ]);
+    expect(ids(groups.bots)).toEqual(["bot", "newer-bot"]);
+    const board = groups.boardByBotKey.get("environment-1:bot")!;
+    expect([ids(board.needsYou), ids(board.working), ids(board.done)]).toEqual([
+      ["asking"],
+      ["busy"],
+      ["finished"],
+    ]);
+    expect([...groups.botAndCrewKeys].toSorted()).toEqual(
+      ["bot", "newer-bot", "asking", "busy", "finished", "gone"]
+        .map((id) => `environment-1:${id}`)
+        .toSorted(),
+    );
   });
 });

@@ -37,7 +37,11 @@ import {
   createInboxReturnTracker,
   isThreadWorking,
 } from "@t3tools/client-runtime/state/thread-inbox";
-import { groupThreads } from "@t3tools/client-runtime/state/thread-grouping";
+import {
+  type BotGroups,
+  groupBots,
+  groupThreads,
+} from "@t3tools/client-runtime/state/thread-grouping";
 import { activeThreadSortKey, sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import {
   nextShownOrder,
@@ -288,6 +292,7 @@ import {
   useDraftTerminalLabels,
   useSidebarDrafts,
 } from "./sidebar/SidebarDraftBlock";
+import { SidebarBotBlock } from "./sidebar/SidebarBotBlock";
 import { SidebarCrewBlock } from "./sidebar/SidebarCrewBlock";
 import {
   SidebarProjectFolderHeader,
@@ -376,6 +381,8 @@ type SidebarOptimisticDrop = {
 
 interface SidebarThreadPartitionInput {
   readonly threads: readonly EnvironmentThreadShell[];
+  /** Listed as Bot rows above the threads; their crew is reached from the Bot. */
+  readonly botGroups: BotGroups<EnvironmentThreadShell>;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   /** Tasks linked environments run for a listed thread; they show under it. */
   readonly delegatedUnderParent: ReadonlySet<string>;
@@ -448,6 +455,7 @@ function useSidebarThreads(input: {
   readonly connectedEnvironmentIds: readonly EnvironmentId[];
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly threads: readonly EnvironmentThreadShell[];
+  readonly botGroups: BotGroups<EnvironmentThreadShell>;
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly routeRowThreadKey: string | null;
   readonly departingThreadKey: string | null;
@@ -463,6 +471,7 @@ function useSidebarThreads(input: {
     connectedEnvironmentIds,
     optimisticDrop,
     threads,
+    botGroups,
     delegatedUnderParent,
     routeRowThreadKey,
     departingThreadKey,
@@ -511,6 +520,7 @@ function useSidebarThreads(input: {
 
   const partition = partitionSidebarThreads({
     threads,
+    botGroups,
     scopedProjectKeys,
     delegatedUnderParent,
     serverConfigs,
@@ -605,6 +615,12 @@ function useSidebarThreads(input: {
       ...snoozedThreads,
       ...settledThreads,
       ...[...partition.crewGroups.values()].flatMap((group) => group.crew),
+      ...botGroups.bots,
+      ...[...botGroups.boardByBotKey.values()].flatMap((board) => [
+        ...board.needsYou,
+        ...board.working,
+        ...board.done,
+      ]),
     ],
     isCrewFolded: (leaderKey: string) =>
       crewFolds[leaderKey] ?? partition.crewGroups.get(leaderKey)?.muted === true,
@@ -655,6 +671,7 @@ function useSidebarThreads(input: {
 function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const {
     threads,
+    botGroups,
     scopedProjectKeys,
     delegatedUnderParent,
     serverConfigs,
@@ -663,7 +680,11 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     sortActiveBySend,
   } = input;
   const preciseNow = new Date().toISOString();
-  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
+  const visible = filterSidebarV2VisibleThreads(
+    threads,
+    scopedProjectKeys,
+    delegatedUnderParent,
+  ).filter((thread) => !botGroups.botAndCrewKeys.has(threadShellKey(thread)));
   const grouping = groupThreads(visible);
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
@@ -1161,6 +1182,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             ? asLaunchingThread(thread)
             : thread,
         );
+  const botGroups = groupBots(listedThreads);
   const routeRowThreadKey =
     routeThreadRef === null
       ? null
@@ -1181,7 +1203,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
     delegatedUnderParent,
-    findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
+    // Bots list whatever the scope, and their crew is not listed at all.
+    findThread: (key) =>
+      botGroups.botAndCrewKeys.has(key)
+        ? undefined
+        : threads.find((candidate) => threadShellKey(candidate) === key),
   });
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
@@ -1402,6 +1428,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     connectedEnvironmentIds,
     optimisticDrop,
     threads: listedThreads,
+    botGroups,
     delegatedUnderParent,
     routeRowThreadKey,
     departingThreadKey,
@@ -3391,6 +3418,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         }
       >
         <SidebarGroup className="flex-1" role="presentation">
+          {isSearchingThreads ? null : (
+            <SidebarBotBlock
+              botGroups={botGroups}
+              routeThreadKey={routeThreadKey}
+              onNavigate={navigateToThread}
+              onContextMenu={handleThreadContextMenu}
+            />
+          )}
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
               <DndContext

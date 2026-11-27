@@ -13023,11 +13023,7 @@
   "ab8ce40d94482b3e": "Falha ao salvar as notas do Bot",
   "77a197a16cc26cc0": "O que o Bot acompanha entre os turnos.",
   "b7266adde1825b8c": "Como você prefere que o Bot trabalhe.",
-  "6076957eb586211e": "Notas do Bot",
   "2f4ef70d15027bb0": "Notas",
-  "1594e99201ab43a1": "Preferências",
-  "4eb9f15722252eaf": "Bot",
-  "9b0ffa17971c05e8": "Notas do Bot",
   "de21972169ea02a3": "Silenciar avisos da equipe",
   "68499884f89d6072": "{count, plural, one {{count} da equipe} other {{count} da equipe}}",
   "9816f4a0873af05c": "Equipe silenciada",
@@ -13041,5 +13037,12 @@
   "6a79abf40690e3df": "Criar Bot",
   "35ba446b79347ddf": "Novo Bot",
   "ef9945d356dd1c2b": "Um Bot coordena outras threads por você. Diga do que ele deve cuidar e como você prefere que ele trabalhe.",
-  "d4b3fe97dd0501a8": "Instruções"
+  "d4b3fe97dd0501a8": "Instruções",
+  "d25661576338fcf0": "Precisa de você",
+  "1519a364f1312d30": "Instruções e notas",
+  "af1d8494ba66d623": "Ainda não há equipe. As threads que este Bot iniciar aparecem aqui.",
+  "97884c869683f97f": "{count, plural, one {{count} precisa de você} other {{count} precisam de você}}",
+  "085f3d64c434cafd": "Bots",
+  "7cda14a9e8aaefb0": "Parado",
+  "ff1728d6a7065373": "Trabalhando"
 }

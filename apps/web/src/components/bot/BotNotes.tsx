@@ -6,18 +6,16 @@ import {
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import type { BotFileKind, BotFilesReadResult, ScopedThreadRef } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
-import { BotIcon } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { useThreadGroupingActions } from "~/hooks/useThreadGroupingActions";
 import { m } from "~/i18n/messages";
 import { botFilesEnvironment } from "~/state/botFiles";
-import { useThreadShell } from "~/state/entities";
+import { useQuietThreadShell } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
-import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
@@ -58,22 +56,8 @@ function BotFilesForm(props: {
   return (
     <form className="flex flex-col gap-3" onSubmit={save}>
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="bot-notes">
-          <T>Notes</T>
-        </Label>
-        <Textarea
-          id="bot-notes"
-          name="notes"
-          rows={8}
-          size="sm"
-          defaultValue={props.files.notes}
-          disabled={!props.canWrite}
-          placeholder={gt("What the Bot keeps track of between turns.")}
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
         <Label htmlFor="bot-preferences">
-          <T>Preferences</T>
+          <T>Instructions</T>
         </Label>
         <Textarea
           id="bot-preferences"
@@ -85,6 +69,20 @@ function BotFilesForm(props: {
           placeholder={gt("How you like the Bot to work.")}
         />
       </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="bot-notes">
+          <T>Notes</T>
+        </Label>
+        <Textarea
+          id="bot-notes"
+          name="notes"
+          rows={6}
+          size="sm"
+          defaultValue={props.files.notes}
+          disabled={!props.canWrite}
+          placeholder={gt("What the Bot keeps track of between turns.")}
+        />
+      </div>
       <Button type="submit" size="sm" disabled={!props.canWrite || saving} className="self-end">
         <T>Save</T>
       </Button>
@@ -92,60 +90,45 @@ function BotFilesForm(props: {
   );
 }
 
-/** A Bot's memory files and crew muting, reachable from its header. */
-export function BotNotesButton(props: { threadRef: ScopedThreadRef }) {
-  const gt = useGT();
-  const thread = useThreadShell(props.threadRef);
-  const [open, setOpen] = useState(false);
+/** A Bot's instructions, notes and crew muting, on its board. */
+export function BotNotes(props: { threadRef: ScopedThreadRef }) {
+  const thread = useQuietThreadShell(props.threadRef);
   const canWrite = useAtomValue(
     botFilesEnvironment.write.permissionAtom(props.threadRef.environmentId),
   );
   const { setMuteCrew } = useThreadGroupingActions();
   const files = useEnvironmentQuery(
-    open
-      ? botFilesEnvironment.files({
-          environmentId: props.threadRef.environmentId,
-          input: { threadId: props.threadRef.threadId },
-        })
-      : null,
+    botFilesEnvironment.files({
+      environmentId: props.threadRef.environmentId,
+      input: { threadId: props.threadRef.threadId },
+    }),
   );
   const botConfig = thread?.botConfig;
   if (botConfig == null) return null;
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger render={<Button variant="ghost" size="xs" aria-label={gt("Bot notes")} />}>
-        <BotIcon aria-hidden />
-        <T>Bot</T>
-      </PopoverTrigger>
-      <PopoverPopup width="lg" align="end">
-        <div className="flex flex-col gap-3">
-          <PopoverTitle>
-            <T>Bot notes</T>
-          </PopoverTitle>
-          <div className="flex items-center justify-between gap-3">
-            <Label htmlFor="bot-mute-crew">
-              <T>Mute crew noise</T>
-            </Label>
-            <Switch
-              id="bot-mute-crew"
-              size="sm"
-              checked={botConfig.muteChildren}
-              disabled={!canWrite}
-              onCheckedChange={(checked) => void setMuteCrew(props.threadRef, checked)}
-            />
-          </div>
-          {files.data === null ? (
-            <p className="text-muted-foreground text-sm">{files.error ?? <T>Loading…</T>}</p>
-          ) : (
-            <BotFilesForm
-              key={files.dataUpdatedAt}
-              threadRef={props.threadRef}
-              files={files.data}
-              canWrite={canWrite}
-            />
-          )}
-        </div>
-      </PopoverPopup>
-    </Popover>
+    <div className="flex flex-col gap-3 px-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <Label htmlFor="bot-mute-crew">
+          <T>Mute crew noise</T>
+        </Label>
+        <Switch
+          id="bot-mute-crew"
+          size="sm"
+          checked={botConfig.muteChildren}
+          disabled={!canWrite}
+          onCheckedChange={(checked) => void setMuteCrew(props.threadRef, checked)}
+        />
+      </div>
+      {files.data === null ? (
+        <p className="text-muted-foreground text-sm">{files.error ?? <T>Loading…</T>}</p>
+      ) : (
+        <BotFilesForm
+          key={files.dataUpdatedAt}
+          threadRef={props.threadRef}
+          files={files.data}
+          canWrite={canWrite}
+        />
+      )}
+    </div>
   );
 }

@@ -233,6 +233,9 @@ catalogs:
     micromark-util-types:
       specifier: 2.0.2
       version: 2.0.2
+    open-bot-avatar:
+      specifier: 0.3.0
+      version: 0.3.0
     pele:
       specifier: ^1.8.0
       version: 1.8.0
@@ -1237,6 +1240,9 @@ importers:
       lucide-react:
         specifier: ^0.564.0
         version: 0.564.0(react@19.3.0)
+      open-bot-avatar:
+        specifier: 'catalog:'
+        version: 0.3.0
       pdfjs-dist:
         specifier: 6.4.299
         version: 6.4.299
@@ -1557,6 +1563,9 @@ importers:
       jszip:
         specifier: 3.10.1
         version: 3.10.1
+      open-bot-avatar:
+        specifier: 'catalog:'
+        version: 0.3.0
       three:
         specifier: 0.180.0
         version: 0.180.0
@@ -11219,6 +11228,9 @@ packages:
 
   oniguruma-to-es@4.3.6:
     resolution: {integrity: sha512-csuQ9x3Yr0cEIs/Zgx/OEt9iBw9vqIunAPQkx19R/fiMq2oGVTgcMqO/V3Ybqefr1TBvosI6jU539ksaBULJyA==}
+
+  open-bot-avatar@0.3.0:
+    resolution: {integrity: sha512-3P0o8eiClHHiLr7lIFZE/WxUtqHLjVb0xQ0PqYzA48XG/oQlWyeIdcY0egK6H8AgFuoY1aKVhc8QKSaj4z5ZOw==}
 
   open@10.2.0:
     resolution: {integrity: sha512-YgBpdJHPyQ2UE5x+hlSXcnejzAvD0b22U2OuAP+8OnlJT+PjWPxtgmGqKKc+RgTM63U9gN0YzrYc71R2WT/hTA==}
@@ -21966,6 +21978,8 @@ snapshots:
       oniguruma-parser: 0.12.2
       regex: 6.1.0
       regex-recursion: 6.0.2
+
+  open-bot-avatar@0.3.0: {}
 
   open@10.2.0:
     dependencies:
