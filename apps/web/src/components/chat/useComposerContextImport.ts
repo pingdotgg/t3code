@@ -291,10 +291,7 @@ export function useComposerContextImport(input: {
     }
     releaseQuestionPreparation();
     if (stagedImage) {
-      const image: ComposerImageAttachment = {
-        ...stagedImage,
-        previewUrl: URL.createObjectURL(file),
-      };
+      const image = { ...stagedImage, previewUrl: URL.createObjectURL(file) };
       const accepted = addComposerDraftImages(attachmentDraftTarget, [image], {
         allowDuplicates:
           getComposerDraft(composerDraftTarget)?.previewAnnotations.some(
