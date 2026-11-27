@@ -61,8 +61,8 @@ const describeStatus = (label: string, status: number, message: string | undefin
 };
 
 const endpoint = (connection: TextGeneratorConnection, path: string) => {
-  const url = URL.parse(connection.baseUrl);
-  if (url === null) return `${connection.baseUrl.replace(/\/+$/, "")}${path}`;
+  const url = new URL(connection.baseUrl);
+  // The settings schema accepts a trailing empty "?" or "#"; drop them so the path lands in the pathname.
   url.search = "";
   url.hash = "";
   url.pathname = `${url.pathname.replace(/\/+$/, "")}${path}`;
