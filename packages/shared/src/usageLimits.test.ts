@@ -24,6 +24,7 @@ import {
   exhaustedUsageWindow,
   paceOf,
   paceRemainingPercent,
+  remainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
@@ -207,6 +208,18 @@ describe("new thread model fallback", () => {
       ).toEqual(usesFallback ? fallback : defaultSelection);
     },
   );
+});
+
+describe("remaining percent", () => {
+  it.each([
+    { used: 0, left: 100 },
+    { used: 0.4, left: 99 },
+    { used: 40, left: 60 },
+    { used: 99.6, left: 1 },
+    { used: 100, left: 0 },
+  ])("reads $used% used as $left% left", ({ used, left }) => {
+    expect(remainingPercent({ ...window, usedPercent: used })).toBe(left);
+  });
 });
 
 describe("pace", () => {
@@ -1321,6 +1334,16 @@ describe("pooled account columns", () => {
     expect(pool!.windows[1]!.resets.map((reset) => reset.member.account.key)).toEqual(["a", "b"]);
     expect(pool!.windows[1]!.remainingPercent).toBe(50);
     expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual(keys(pool!));
+  });
+
+  it.each([
+    { used: [0.2, 0.4], left: 99 },
+    { used: [99.5, 99.8], left: 1 },
+  ])("reads pooled use of $used as $left% left", ({ used, left }) => {
+    const accounts = used.map((usedPercent, index) =>
+      account(String(index), [{ ...weekly, usedPercent }]),
+    );
+    expect(collectLimitPools(accounts, now)[0]!.windows[0]!.remainingPercent).toBe(left);
   });
 
   it.each([undefined, "invalid", "2026-09-03T11:30:00.000Z"])(
