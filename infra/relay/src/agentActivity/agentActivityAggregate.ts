@@ -57,7 +57,7 @@ function terminalAggregateState(state: RelayAgentActivityState): RelayAgentActiv
 
 export const TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS = 15 * 60 * 1_000;
 
-function isRecentTerminalState(state: RelayAgentActivityState, nowMs: number): boolean {
+export function isRecentTerminalState(state: RelayAgentActivityState, nowMs: number): boolean {
   if (!isTerminalPhase(state)) {
     return false;
   }
