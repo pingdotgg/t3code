@@ -158,6 +158,17 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
   yield* electronApp.quit;
 });
 
+// Matches the server's `hostShellWord`, so the printed command survives `$`, quotes and spaces when pasted.
+const hostShellWord = (platform: NodeJS.Platform, value: string) =>
+  platform === "win32"
+    ? `"${value
+        .replaceAll("`", "``")
+        .replaceAll("$", "`$")
+        .replace(/["“”„]/g, "$&$&")}"`
+    : /^[\w@%+=:,./-]+$/.test(value)
+      ? value
+      : `'${value.replaceAll("'", `'"'"'`)}'`;
+
 // Settings is unreachable from here, so the dialog offers its supported setup: a client of that server.
 const refuseOwnedHome = Effect.fn("desktop.bootstrap.refuseOwnedHome")(function* (
   owner: Option.Option<DesktopHomeOwner.HomeOwner>,
@@ -169,15 +180,16 @@ const refuseOwnedHome = Effect.fn("desktop.bootstrap.refuseOwnedHome")(function*
     yield* electronDialog.showErrorBox(title, DesktopHomeOwner.homeOwnedMessage(owner));
     return yield* electronApp.quit;
   }
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const { response } = yield* electronDialog.showMessageBox({
     type: "warning",
     title,
     message: title,
     detail: `${DesktopHomeOwner.homeOwnedMessage(owner)}\n\n${m(
       msg(
-        'To keep that server running, choose Use the running server. T3 Code restarts without its own server. Then run `t3 pair --base-dir "{home}"` and open the link it prints to connect.',
+        "To keep that server running, choose Use the running server. T3 Code restarts without its own server. Then run `t3 pair --base-dir {home}` and open the link it prints to connect.",
       ),
-      { home: (yield* DesktopEnvironment.DesktopEnvironment).baseDir },
+      { home: hostShellWord(environment.platform, environment.baseDir) },
     )}`,
     buttons: [
       m(msg("Quit", { $context: "button, quits the app" })),
