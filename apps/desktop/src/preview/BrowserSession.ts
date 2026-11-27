@@ -407,6 +407,28 @@ export const make = Effect.gen(function* BrowserSessionMake() {
         ),
     );
   };
+  /**
+   * App links the user declined, by page. A page that retries one is refused without a prompt
+   * until the user presses a key or mouse button in it or it loads another document.
+   */
+  const declinedExternalUrls = new WeakMap<WebContents, Set<string>>();
+  const rememberDeclinedExternal = (requester: WebContents, url: string): void => {
+    const known = declinedExternalUrls.get(requester);
+    if (known !== undefined) {
+      known.add(url);
+      return;
+    }
+    const declined = new Set([url]);
+    declinedExternalUrls.set(requester, declined);
+    requester.on("did-navigate", () => declined.clear());
+    // Main sees these for every frame and for popups, which have no preload to report a press.
+    requester.on("before-input-event", (_event, input) => {
+      if (input.type === "keyDown") declined.clear();
+    });
+    requester.on("before-mouse-event", (_event, mouse) => {
+      if (mouse.type === "mouseDown") declined.clear();
+    });
+  };
   /** Electron launches external protocols after granting openExternal; untrusted pages require confirmation. */
   const confirmOpenExternal = (
     requester: WebContents | null,
@@ -414,7 +436,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     callback: (granted: boolean) => void,
   ): void => {
     const url = externalProtocolPromptUrl(rawUrl);
-    if (url === null) {
+    if (url === null || (requester !== null && declinedExternalUrls.get(requester)?.has(url))) {
       callback(false);
       return;
     }
@@ -432,7 +454,10 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           url: truncateForPrompt(url),
         }),
       },
-      (answer) => callback(answer === true),
+      (answer) => {
+        if (answer === false && requester !== null) rememberDeclinedExternal(requester, url);
+        callback(answer === true);
+      },
     );
   };
 

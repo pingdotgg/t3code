@@ -451,6 +451,23 @@ describe("BrowserSession", () => {
       assert.isFalse(yield* request());
       assert.isFalse(yield* request());
       assert.strictEqual(showMessageBox.mock.calls.length, 1);
+
+      // Each of these means the next request may be the user's own: ask once more.
+      const reasonsToAskAgain = [
+        () => page.emit("before-mouse-event", {}, { type: "mouseDown" }),
+        () => page.emit("before-input-event", {}, { type: "keyDown" }),
+        () => page.emit("did-navigate", {}, "https://example.com/next"),
+      ];
+      for (const [index, reason] of reasonsToAskAgain.entries()) {
+        page.emit("before-mouse-event", {}, { type: "mouseMove" });
+        page.emit("before-input-event", {}, { type: "keyUp" });
+        assert.isFalse(yield* request());
+        assert.strictEqual(showMessageBox.mock.calls.length, index + 1);
+        reason();
+        assert.isFalse(yield* request());
+        assert.isFalse(yield* request());
+        assert.strictEqual(showMessageBox.mock.calls.length, index + 2);
+      }
     }).pipe(Effect.provide(layer)),
   );
 
