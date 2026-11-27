@@ -351,7 +351,6 @@ export function replaceThreadLinks(
   let lines: ReturnType<typeof codeSpanLines> | undefined;
   let lineIndex = 0;
   const { ranges: indentedRanges, rejected } = classifyIndentedFences(markdown);
-  let fencePattern: RegExp | undefined;
   let rangeIndex = 0;
   for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
     while (indentedRanges[rangeIndex] && indentedRanges[rangeIndex]!.end <= match.index) {
@@ -367,9 +366,9 @@ export function replaceThreadLinks(
         // Try inline syntax on this line without treating it as a block opener.
         pattern.lastIndex = match.index + 1;
       } else {
-        fencePattern ??= new RegExp(FENCED_CODE);
-        fencePattern.lastIndex = match.index;
-        if (fencePattern.test(source)) pattern.lastIndex = fencePattern.lastIndex;
+        FENCED_CODE.lastIndex = match.index;
+        FENCED_CODE.test(source);
+        pattern.lastIndex = FENCED_CODE.lastIndex;
       }
       continue;
     }
