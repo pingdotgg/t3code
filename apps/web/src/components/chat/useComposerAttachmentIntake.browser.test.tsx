@@ -402,7 +402,7 @@ it.each(["thread", "session"] as const)(
   },
 );
 
-it("links files over the upload limit by path, and rejects the ones without a local path", async () => {
+it("hands files over the upload limit to path linking without spending an attachment slot", async () => {
   const target = DraftId.make("intake-oversized-files");
   const limit = 8;
   const small = new File(["notes"], "notes.txt", { type: "text/plain" });
@@ -428,7 +428,7 @@ it("links files over the upload limit by path, and rejects the ones without a lo
     composerEditorRef: { current: null },
     isRevertingCheckpointRef: { current: false },
     setThreadError,
-    // A full draft: linking by path must not need an attachment slot.
+    // One slot left: dump.bin comes first and must leave it for notes.txt.
     countReservedAttachments: () => PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1,
     addComposerImage: () => [],
     addComposerImagesToDraft: () => [],

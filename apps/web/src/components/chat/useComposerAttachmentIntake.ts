@@ -88,7 +88,7 @@ export function useComposerAttachmentIntake(input: {
   readonly addComposerImagesToDraft: (images: ComposerImageAttachment[]) => string[];
   readonly addComposerFilesToDraft: (files: ComposerFileAttachment[]) => string[];
   readonly removeComposerImageFromDraft: (imageId: string) => void;
-  /** Links files the server can read from this computer by path; returns the ones it cannot. */
+  /** Starts linking files the server can read from this computer by path; returns the ones it cannot. */
   readonly referenceFilesByPath: (files: File[]) => File[];
   readonly insertAttachmentReferences: (
     references: ReadonlyArray<ComposerContextReference>,
@@ -244,29 +244,11 @@ export function useComposerAttachmentIntake(input: {
     let insertedAny = false;
     if (oversizedFiles.length > 0 && fileStagingLimit !== null) {
       const unlinked = new Set(referenceFilesByPath(oversizedFiles));
-      const linked = oversizedFiles.filter((file) => !unlinked.has(file));
       const lastUnlinked = [...unlinked].at(-1);
       if (lastUnlinked)
         error = fileAttachmentTooLargeMessage(lastUnlinked.name, fileStagingLimit, m);
-      if (linked.length > 0) {
-        insertedAny = true;
-        toastManager.add({
-          type: "info",
-          title:
-            linked.length === 1
-              ? m(msg("Linked {name} by its path", { name: linked[0]!.name }))
-              : m(
-                  msg(
-                    "{count, plural, one {Linked {count} file by its path} other {Linked {count} files by their paths}}",
-                    { count: linked.length },
-                  ),
-                ),
-          description: m(
-            msg("Files this large are not uploaded. The agent reads them from this computer."),
-          ),
-          data: { hideCopyButton: true },
-        });
-      }
+      // Linking finishes after this returns and refocuses the editor itself.
+      if (unlinked.size < oversizedFiles.length) insertedAny = true;
     }
     setThreadError(threadId, error);
     if (acceptedFiles.length > 0) {

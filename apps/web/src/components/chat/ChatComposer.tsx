@@ -2971,19 +2971,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
 
   const insertComposerLocalPaths = async (
-    entries: File[],
+    entries: ReadonlyArray<{ readonly name: string; readonly path: string | null }>,
     target: FolderDropTarget,
     draftKey: string,
     kind: "file" | "folder",
   ) => {
     const bridge = window.desktopBridge;
+    const linkedNames: string[] = [];
     for (const entry of entries) {
-      const droppedPath = resolveDroppedPath(entry, bridge?.getPathForFile);
       const path =
-        droppedPath === null || typeof target === "string"
-          ? droppedPath
+        entry.path === null || typeof target === "string"
+          ? entry.path
           : ((await bridge
-              ?.toLocalBackendPath(target.wslBackendId, droppedPath)
+              ?.toLocalBackendPath(target.wslBackendId, entry.path)
               .catch(() => null)) ?? null);
       // ChatView is reused across threads, so a slow conversion must not land in the next draft.
       if (!composerMountedRef.current || attachmentTargetKeyRef.current !== draftKey) return;
@@ -3009,8 +3009,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         break;
       }
+      linkedNames.push(entry.name);
     }
-    focusComposer();
+    if (kind === "folder") {
+      focusComposer();
+      return;
+    }
+    // No focusComposer here: the insert refocuses after the draft renders, and focusing now
+    // would report the editor's stale text over the link.
+    if (linkedNames.length === 0) return;
+    toastManager.add({
+      type: "info",
+      title:
+        linkedNames.length === 1
+          ? gt("Linked {name} by its path", { name: linkedNames[0]! })
+          : gt(
+              "{count, plural, one {Linked {count} file by its path} other {Linked {count} files by their paths}}",
+              { count: linkedNames.length },
+            ),
+      description: gt(
+        "Files this large are not uploaded. The agent reads them from this computer.",
+      ),
+      data: { hideCopyButton: true },
+    });
   };
 
   const localPathTarget = () =>
@@ -3031,7 +3052,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
 
   const insertLocalPathsHoldingSend = (
-    entries: File[],
+    entries: ReadonlyArray<{ readonly name: string; readonly path: string | null }>,
     target: FolderDropTarget,
     kind: "file" | "folder",
   ) => {
@@ -3043,13 +3064,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
 
+  const droppedPathEntries = (entries: ReadonlyArray<File>) =>
+    entries.map((entry) => ({
+      name: entry.name,
+      path: resolveDroppedPath(entry, window.desktopBridge?.getPathForFile),
+    }));
+
   const referenceFilesByPath = (files: File[]): File[] => {
     const target = localPathTarget();
     if (target === "remote") return files;
-    const getPathForFile = window.desktopBridge?.getPathForFile;
-    const linkable = files.filter((file) => resolveDroppedPath(file, getPathForFile) !== null);
+    const entries = droppedPathEntries(files);
+    const linkable = entries.filter((entry) => entry.path !== null);
     if (linkable.length > 0) insertLocalPathsHoldingSend(linkable, target, "file");
-    return files.filter((file) => !linkable.includes(file));
+    return files.filter((_, index) => entries[index]!.path === null);
   };
 
   const addComposerFolders = (folders: File[]) => {
@@ -3061,7 +3088,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       return;
     }
-    insertLocalPathsHoldingSend(folders, target, "folder");
+    insertLocalPathsHoldingSend(droppedPathEntries(folders), target, "folder");
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
 
