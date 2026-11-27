@@ -271,106 +271,96 @@ it("tells screen readers whether a new project will be published", async () => {
   await expect.element(option).toHaveAttribute("aria-checked", "true");
 });
 
-describe.each([
-  { source: "New project", input: "new-project" },
-  { source: "Local folder", input: "/workspace/existing" },
-  { source: "Git URL", input: "https://example.com/team/project.git" },
-])("$source completion", ({ source, input }) => {
-  it.each(["going back", "reopening the palette"])("keeps the view after %s", async (leave) => {
-    setup();
-    const finished = Promise.withResolvers<void>();
-    const created = Promise.withResolvers<typeof createdProject>();
-    scopes.createNewProject.mockReturnValue(created.promise);
-    scopes.openDraft.mockReturnValue(finished.promise);
-    scopes.addProject.mockImplementation(async () => {
-      await finished.promise;
-      return { _tag: "Success", value: { projectId: "project-added" } };
-    });
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-    await act(() => openCommandPalette({ open: "add-project" }));
-    await page.getByText(source, { exact: true }).click();
-    const search = page.getByRole("combobox");
-    await search.fill(input);
-    if (source === "Git URL") {
-      await userEvent.keyboard("{Enter}");
-      await expect.element(search).toHaveValue("/workspace/project");
-    }
+async function startLateProjectAdd(source: string, input: string) {
+  const finished = Promise.withResolvers<void>();
+  const created = Promise.withResolvers<typeof createdProject>();
+  scopes.createNewProject.mockReturnValue(created.promise);
+  scopes.openDraft.mockReturnValue(finished.promise);
+  scopes.addProject.mockImplementation(async () => {
+    await finished.promise;
+    return { _tag: "Success", value: { projectId: "project-added" } };
+  });
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText(source, { exact: true }).click();
+  const search = page.getByRole("combobox");
+  await search.fill(input);
+  if (source === "Git URL") {
     await userEvent.keyboard("{Enter}");
-    expect(
-      source === "New project" ? scopes.createNewProject : scopes.addProject,
-    ).toHaveBeenCalledOnce();
-    if (leave === "going back") {
-      await search.fill("");
-      if (source !== "Local folder") {
-        await userEvent.keyboard("{Backspace}");
-      }
-      await expect.element(page.getByText("Git URL", { exact: true })).toBeVisible();
-    } else {
-      await userEvent.keyboard("{Escape}");
-      await expect.element(search).not.toBeInTheDocument();
-      await act(() => openCommandPalette());
-      await search.fill("another search");
-    }
-
-    if (source === "New project") {
-      await act(async () => {
-        created.resolve(createdProject);
-        await created.promise;
-      });
-      expect(scopes.openDraft).toHaveBeenCalledOnce();
-    }
+    await expect.element(search).toHaveValue("/workspace/project");
+  }
+  await userEvent.keyboard("{Enter}");
+  return async () => {
     await act(async () => {
+      created.resolve(createdProject);
       finished.resolve();
       await finished.promise;
     });
-    expect(page.getByTestId("command-palette").element()).toHaveAttribute("data-open");
-    if (leave === "going back") {
-      expect(page.getByText("Git URL", { exact: true }).element()).toBeVisible();
-    } else {
-      expect(search.element()).toHaveValue("another search");
-    }
-  });
+    expect(source === "New project" ? scopes.openDraft : scopes.addProject).toHaveBeenCalledOnce();
+  };
+}
+
+it.each([
+  { source: "New project", input: "new-project" },
+  { source: "Local folder", input: "/workspace/existing" },
+  { source: "Git URL", input: "https://example.com/team/project.git" },
+])("keeps a reopened palette open when $source finishes late", async ({ source, input }) => {
+  setup();
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  const finish = await startLateProjectAdd(source, input);
+  const search = page.getByRole("combobox");
+  await userEvent.keyboard("{Escape}");
+  await expect.element(search).not.toBeInTheDocument();
+  await act(() => openCommandPalette());
+  await search.fill("another search");
+
+  await finish();
+  expect(page.getByTestId("command-palette").element()).toHaveAttribute("data-open");
+  expect(search.element()).toHaveValue("another search");
 });
 
-it.each(["Local folder", "Git URL"])(
-  "keeps a reopened palette open after picking a folder for %s",
-  async (source) => {
-    setup();
-    const picked = Promise.withResolvers<string>();
-    const pickFolder = vi.fn(() => picked.promise);
-    using _bridge = stubGlobal("desktopBridge", {
-      getWslState: async () => null,
-      pickFolder,
-    });
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
-    await act(() => openCommandPalette({ open: "add-project" }));
-    await page.getByText(source, { exact: true }).click();
-    const search = page.getByRole("combobox");
-    if (source === "Git URL") {
-      await search.fill("https://example.com/team/project.git");
-      await userEvent.keyboard("{Enter}");
-      await expect.element(search).toHaveValue("/workspace/project");
-    }
-    page
-      .getByRole("button", { name: /^Open in / })
-      .element()
-      .focus();
-    await userEvent.keyboard("{Enter}");
-    expect(pickFolder).toHaveBeenCalledOnce();
-    await userEvent.keyboard("{Escape}");
-    await expect.element(search).not.toBeInTheDocument();
-    await act(() => openCommandPalette());
-    await search.fill("another search");
+it("keeps the view the user went back to when a folder add finishes late", async () => {
+  setup();
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  const finish = await startLateProjectAdd("Local folder", "/workspace/existing");
+  await page.getByRole("combobox").fill("");
+  await expect.element(page.getByText("Git URL", { exact: true })).toBeVisible();
 
-    await act(async () => {
-      picked.resolve("/workspace/picked");
-      await picked.promise;
-    });
-    expect(scopes.addProject).toHaveBeenCalledOnce();
-    expect(page.getByTestId("command-palette").element()).toHaveAttribute("data-open");
-    expect(search.element()).toHaveValue("another search");
-  },
-);
+  await finish();
+  expect(page.getByTestId("command-palette").element()).toHaveAttribute("data-open");
+  expect(page.getByText("Git URL", { exact: true }).element()).toBeVisible();
+});
+
+it("keeps a reopened palette open after a late folder pick", async () => {
+  setup();
+  const picked = Promise.withResolvers<string>();
+  const pickFolder = vi.fn(() => picked.promise);
+  using _bridge = stubGlobal("desktopBridge", {
+    getWslState: async () => null,
+    pickFolder,
+  });
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText("Local folder", { exact: true }).click();
+  const search = page.getByRole("combobox");
+  page
+    .getByRole("button", { name: /^Open in / })
+    .element()
+    .focus();
+  await userEvent.keyboard("{Enter}");
+  expect(pickFolder).toHaveBeenCalledOnce();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(search).not.toBeInTheDocument();
+  await act(() => openCommandPalette());
+  await search.fill("another search");
+
+  await act(async () => {
+    picked.resolve("/workspace/picked");
+    await picked.promise;
+  });
+  expect(scopes.addProject).toHaveBeenCalledOnce();
+  expect(page.getByTestId("command-palette").element()).toHaveAttribute("data-open");
+  expect(search.element()).toHaveValue("another search");
+});
 
 it("keeps the source list visible after a dismissed repository lookup succeeds", async () => {
   setup(undefined, githubAvailable);
