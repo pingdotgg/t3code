@@ -15,6 +15,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-requests";
 import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import * as Option from "effect/Option";
 import { T, useGT, Var } from "gt-react";
 import { useState } from "react";
 
@@ -23,7 +24,7 @@ import {
   usePendingUserInputAnswers,
   usePendingUserInputQuestionIndex,
 } from "~/questionAttachments";
-import { useEnvironmentScope } from "~/state/session";
+import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { buildThreadRouteParams } from "~/threadRoutes";
@@ -66,7 +67,10 @@ function WorkerQuestion({
   const answers = seedUserInputDraftAnswers(userInput.questions, storedAnswers);
   const progress = derivePendingUserInputProgress(userInput.questions, answers, questionIndex);
   const question = progress.activeQuestion;
-  const disabled = !canOperate || responding || userInput.responseCapability === "not_resumable";
+  const connected = Option.isSome(usePreparedConnection(thread.environmentId));
+  const disabled =
+    !canOperate || !connected || responding || userInput.responseCapability === "not_resumable";
+  const notice = !connected ? gt("Not connected") : error;
 
   const readProgress = () =>
     derivePendingUserInputProgress(
@@ -185,15 +189,15 @@ function WorkerQuestion({
         ) : (
           <span className="flex-1" />
         )}
+        {notice !== null ? (
+          <p role="alert" className="min-w-0 truncate text-destructive">
+            {notice}
+          </p>
+        ) : null}
         <Button type="submit" size="xs" disabled={disabled || !progress.canAdvance}>
           {progress.isLastQuestion ? <T>Send answer</T> : <T>Next</T>}
         </Button>
       </form>
-      {error !== null ? (
-        <p role="alert" className="px-3 pb-3 text-xs text-destructive">
-          {error}
-        </p>
-      ) : null}
     </>
   );
 }
