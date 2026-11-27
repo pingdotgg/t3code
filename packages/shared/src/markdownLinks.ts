@@ -475,14 +475,18 @@ const CODE_FENCE_PATTERN =
 
 const BACKTICK_RUN_PATTERN = /`+/g;
 
+const quoteDepth = (line: string) => (/^(?:[ \t]*>)*/.exec(line)?.[0].split(">").length ?? 1) - 1;
+
 export function extractInlineCodeSpans(text: string): string[] {
   if (!text.includes("`")) return [];
   const spans: string[] = [];
-  let openFence: { marker: string; prefix: string } | null = null;
+  let openFence: { marker: string; prefix: string; quoteDepth: number } | null = null;
   for (const line of text.split("\n")) {
     const [, containers = "", indent = "", marker = "", rest = ""] =
       (line.includes("```") || line.includes("~~~") ? CODE_FENCE_PATTERN.exec(line) : null) ?? [];
     const prefix = containers + indent;
+    // Fenced code has no lazy continuation, so leaving the blockquote ends the fence.
+    if (openFence && quoteDepth(line) < openFence.quoteDepth) openFence = null;
     if (openFence) {
       if (
         marker[0] === openFence.marker[0] &&
@@ -501,7 +505,7 @@ export function extractInlineCodeSpans(text: string): string[] {
     // only tilde openers are held to it so backtick fences keep their old behaviour there.
     const tildeIsIndentedCode = indent.replaceAll("\t", "    ").length > (containers ? 4 : 3);
     if (marker && (marker[0] === "~" ? !tildeIsIndentedCode : !rest.includes("`"))) {
-      openFence = { marker, prefix };
+      openFence = { marker, prefix, quoteDepth: quoteDepth(prefix) };
       continue;
     }
     if (line.includes("`")) {
