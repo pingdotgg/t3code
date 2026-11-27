@@ -23,6 +23,8 @@ Select **Set up** to scan the QR code for iOS or Android, then sign in to T3 Con
 
 ## Projects and conversation import
 
+To import more projects or conversations after setup, select an environment in **Settings → Projects**, then select **Open** next to **Import projects and their threads**. The full list opens for review, and the shortcut shows which computer will be scanned.
+
 T3 Code scans directories used by Claude Code, Codex, and Pi (turn on Pi under **Add more agents** to include Pi sessions).
 
 - Git repositories active in the last 30 days with at least three conversations are pre-selected (excluding already-added projects, Codex scratch directories, and `Downloads`). Use **Review all** to customize the selection.
