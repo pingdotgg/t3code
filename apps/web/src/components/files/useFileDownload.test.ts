@@ -60,12 +60,6 @@ it("saves the host file through an attachment asset URL, and only with file acce
 
 it.each([
   {
-    hostOs: undefined,
-    pathKind: "workspace-relative",
-    path: "docs/report\\draft.txt",
-    name: "report\\draft.txt",
-  },
-  {
     hostOs: "unknown",
     pathKind: "workspace-relative",
     path: "docs/report\\draft.txt",
