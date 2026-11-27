@@ -1024,6 +1024,36 @@ Third}`;
     expect((await book.page(1)).html).toContain('<feDropShadow dx="2">');
   });
 
+  it("keeps the RGB channel adjustments in EPUB SVG artwork", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="poster" href="poster.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="poster"/></spine></package>',
+      )
+      .file(
+        "poster.svg",
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <filter id="tint"><feComponentTransfer>
+            <feFuncR type="linear" slope="0.5"/>
+            <feFuncG type="discrete" tableValues="0 0.5 1"/>
+            <feFuncB type="gamma" amplitude="2" exponent="3"/>
+          </feComponentTransfer></filter>
+          <rect width="80" height="80" fill="orange" filter="url(#tint)"/>
+        </svg>`,
+      );
+    const book = await openEpub(archive);
+    const { html } = await book.page(0);
+    expect(html.match(/<feFunc[RGB][^>]*>/g) ?? []).toEqual([
+      '<feFuncR type="linear" slope="0.5">',
+      '<feFuncG type="discrete" tableValues="0 0.5 1">',
+      '<feFuncB type="gamma" amplitude="2" exponent="3">',
+    ]);
+  });
+
   it("keeps embedded raster images in EPUB SVG artwork", async () => {
     const png =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==";
