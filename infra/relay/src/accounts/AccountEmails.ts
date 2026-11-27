@@ -92,8 +92,12 @@ const deletionNoticeHtml = `<!doctype html>
               <td style="padding:48px 0 48px;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #1d1d20;">
                   <tr>
-                    <td style="padding:20px 0 0;font-size:12px;line-height:1.6;color:#8e8e93;">T3 Tools, Inc.</td>
-                    <td align="right" style="padding:20px 0 0;font-size:12px;line-height:1.6;"><a href="https://t3.codes" style="color:#8e8e93;text-decoration:none;">t3.codes</a></td>
+                    <td style="padding:20px 0 0;font-size:13px;line-height:1.6;color:#8e8e93;">
+                      <a href="https://t3.codes" style="color:#8e8e93;text-decoration:none;"><img src="${BRAND_ICON_URL}" width="16" height="16" alt="" style="display:inline-block;width:16px;height:16px;border:0;border-radius:4px;vertical-align:-3px;margin-right:8px;" />T3 Tools Inc</a>
+                    </td>
+                    <td align="right" style="padding:20px 0 0;font-size:13px;line-height:1.6;white-space:nowrap;">
+                      <a href="https://t3.codes/privacy-policy" style="color:#8e8e93;text-decoration:none;">Privacy</a><span style="color:#3f3f46;">&nbsp;&nbsp;&middot;&nbsp;&nbsp;</span><a href="https://t3.codes/terms-of-service" style="color:#8e8e93;text-decoration:none;">Terms</a>
+                    </td>
                   </tr>
                   <tr>
                     <td colspan="2" style="padding:6px 0 0;font-size:12px;line-height:1.6;color:#636368;">Sent because a T3 Code account using this address was deleted.</td>
