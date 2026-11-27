@@ -4426,30 +4426,52 @@ describe("TeamService", () => {
         expect(refreshedView?.postRule.memberIds).not.toContain(bobJoined.member.id);
 
         // With Carol as a second active owner, Carol can leave while Alice remains owner.
-        // Verify deferred caller session revocation (used by WS handler) marks Carol removed
-        // immediately, preserves the socket until disconnect (so the RPC reply flushes cleanly),
-        // and revokes Carol's session immediately once disconnect signals.
+        // Verify disconnect-driven revocation is armed BEFORE async peer cleanup so disconnecting
+        // mid-cleanup revokes Carol's session immediately while cleanup still runs uninterruptibly.
         const carolDisconnected = yield* Deferred.make<void>();
-        const carolLeft = yield* team.leaveTeam({
-          sessionId: carolSession.sessionId,
-          deferCallerSessionRevocation: {
-            awaitDisconnect: Deferred.await(carolDisconnected),
-            fallbackDelay: Duration.millis(500),
-          },
-        });
+        const carolPeerCleanupEntered = yield* Deferred.make<void>();
+        const releaseCarolPeerCleanup = yield* Deferred.make<void>();
+        const carolRevokedPeers: Array<EnvironmentId> = [];
+        const carolLeaveFiber = yield* team
+          .leaveTeam({
+            sessionId: carolSession.sessionId,
+            deferCallerSessionRevocation: {
+              awaitDisconnect: Deferred.await(carolDisconnected),
+              fallbackDelay: Duration.millis(500),
+            },
+            peerLinks: {
+              list: Effect.succeed([{ environmentId: EnvironmentId.make("env-carol-peer") }]),
+            } as never,
+            peerClientPairing: {
+              revokeSubject: (envId: EnvironmentId) =>
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(carolPeerCleanupEntered, undefined);
+                  yield* Deferred.await(releaseCarolPeerCleanup);
+                  carolRevokedPeers.push(envId);
+                  return { ok: true as const };
+                }),
+            } as never,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(carolPeerCleanupEntered);
+        // Mid-cleanup: Carol is already marked removed, and her session is still valid until disconnect.
+        const stateMidCarolLeave = yield* team.getState(aliceSession.sessionId);
+        expect(stateMidCarolLeave.members.find((m) => m.id === carolJoined.member.id)?.status).toBe(
+          "removed",
+        );
+        expect((yield* Effect.exit(sessions.verify(carolJoined.accessToken)))._tag).toBe("Success");
+        // Disconnect mid-cleanup -> session revokes immediately even before peer cleanup unblocks.
+        yield* Deferred.succeed(carolDisconnected, undefined);
+        yield* TestClock.adjust(Duration.millis(1));
+        expect((yield* Effect.exit(sessions.verify(carolJoined.accessToken)))._tag).toBe("Failure");
+        yield* Deferred.succeed(releaseCarolPeerCleanup, undefined);
+        const carolLeft = yield* Fiber.join(carolLeaveFiber);
         expect(carolLeft).toEqual({
           left: true,
           teamId: init.team.id,
           memberId: carolJoined.member.id,
         });
-        const stateRightAfterCarolLeft = yield* team.getState(aliceSession.sessionId);
-        expect(
-          stateRightAfterCarolLeft.members.find((m) => m.id === carolJoined.member.id)?.status,
-        ).toBe("removed");
-        expect((yield* Effect.exit(sessions.verify(carolJoined.accessToken)))._tag).toBe("Success");
-        yield* Deferred.succeed(carolDisconnected, undefined);
-        yield* TestClock.adjust(Duration.millis(1));
-        expect((yield* Effect.exit(sessions.verify(carolJoined.accessToken)))._tag).toBe("Failure");
+        expect(carolRevokedPeers).toEqual([EnvironmentId.make("env-carol-peer")]);
 
         // Invite Dana so we can verify deleteTeam revokes other active members' sessions & emits teamDeleted.
         const danaInvite = yield* team.createInvite({
@@ -4583,6 +4605,23 @@ describe("TeamService", () => {
           }),
         );
         expect(missingSchedulerExit._tag).toBe("Failure");
+
+        // Fail closed when peerLinks.list fails during deleteTeam rather than skipping peer revocation.
+        const peerDiscoveryFailExit = yield* Effect.exit(
+          team.deleteTeam({
+            sessionId: aliceSession.sessionId,
+            payload: { confirmTeamName: "Acme Engineering" },
+            scheduledTaskService: fakeScheduledTaskService,
+            peerClientPairing: fakePeerClientPairing,
+            peerLinks: {
+              list: Effect.fail({ _tag: "PeerStoreUnavailableError" } as const),
+            } as never,
+          }),
+        );
+        expect(peerDiscoveryFailExit._tag).toBe("Failure");
+        expect(deletedTaskIds).toEqual([]);
+        // Verify team still exists after peer discovery failure.
+        expect((yield* team.getState(aliceSession.sessionId)).team?.id).toBe(init.team.id);
 
         // Subscribe Alice's stream to verify `teamDeleted` event broadcast.
         const aliceStreamFiber = yield* team

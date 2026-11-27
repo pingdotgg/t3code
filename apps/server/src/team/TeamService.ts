@@ -189,6 +189,7 @@ import {
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -2580,6 +2581,21 @@ const make = Effect.gen(function* () {
                 message: "Team member could not be found.",
               });
             }
+            // Publish removal and view/environment updates immediately after committing to SQLite
+            // (before async pairing revocation) so live streamState subscribers flip
+            // currentMember.status to "removed" with zero stale-stream window.
+            yield* publish({ version: 1, type: "memberUpserted", payload: left.value.member });
+            for (const updatedView of left.value.updatedViews) {
+              yield* publish({ version: 1, type: "viewUpserted", payload: updatedView });
+            }
+            for (const updatedEnvironment of left.value.updatedEnvironments) {
+              yield* publish({
+                version: 1,
+                type: "environmentUpserted",
+                payload: updatedEnvironment,
+              });
+            }
+            yield* publishAccessChange({ type: "member", memberId: left.value.member.id });
             yield* revokePairingLinksForMember(left.value.member.id);
             return {
               team: activeTeam,
@@ -2591,23 +2607,39 @@ const make = Effect.gen(function* () {
 
         const updatedMember = leftResult.member;
 
-        // Publish removal and view/environment updates immediately so live streamState
-        // subscribers flip currentMember.status to "removed" before async cleanup runs.
-        yield* publish({ version: 1, type: "memberUpserted", payload: updatedMember });
-        for (const updatedView of leftResult.updatedViews) {
-          yield* publish({ version: 1, type: "viewUpserted", payload: updatedView });
-        }
-        for (const updatedEnvironment of leftResult.updatedEnvironments) {
-          yield* publish({ version: 1, type: "environmentUpserted", payload: updatedEnvironment });
-        }
-        yield* publishAccessChange({ type: "member", memberId: updatedMember.id });
-
-        // Revoke all other sessions belonging to the leaving member immediately; revoke the
-        // caller's own session last (or after the client disconnects / reply flush window) so
-        // socket invalidation never interrupts cleanup or drops the completion response.
+        // Inspect caller's proof key and arm disconnect-driven revocation BEFORE async cleanup so
+        // a caller who disconnects mid-cleanup has their session revoked immediately, while a
+        // connected caller still gets the full post-cleanup reply grace period to read `{ left: true }`.
         const callerJkt = yield* sessionStore
           .proofKeyThumbprintOf(input.sessionId)
           .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+        const revokeCallerSession = Effect.gen(function* () {
+          if (Option.isSome(callerJkt)) {
+            yield* sessionStore.revokeByProofKey(callerJkt.value).pipe(Effect.ignore);
+          }
+          yield* sessionStore.revoke(input.sessionId).pipe(Effect.ignore);
+        });
+        const deferSpec = input.deferCallerSessionRevocation;
+        const isDeferredRevocation =
+          deferSpec === true || (deferSpec !== undefined && deferSpec !== false);
+        const cleanupDone = yield* Deferred.make<void>();
+        if (isDeferredRevocation) {
+          const fallbackDelay =
+            typeof deferSpec === "object" && deferSpec.fallbackDelay !== undefined
+              ? deferSpec.fallbackDelay
+              : Duration.millis(500);
+          const awaitDisconnect =
+            typeof deferSpec === "object" ? deferSpec.awaitDisconnect : undefined;
+          const graceAfterCleanup = Deferred.await(cleanupDone).pipe(
+            Effect.andThen(Effect.sleep(fallbackDelay)),
+          );
+          const waitForTrigger =
+            awaitDisconnect !== undefined
+              ? Effect.race(awaitDisconnect, graceAfterCleanup)
+              : graceAfterCleanup;
+          yield* Effect.forkDetach(waitForTrigger.pipe(Effect.andThen(revokeCallerSession)));
+        }
+
         const otherProofKeys = new Set<string>();
         for (const sid of otherSessionIds) {
           const maybeJkt = yield* sessionStore
@@ -2680,28 +2712,8 @@ const make = Effect.gen(function* () {
           }
         }
 
-        const revokeCallerSession = Effect.gen(function* () {
-          if (Option.isSome(callerJkt)) {
-            yield* sessionStore.revokeByProofKey(callerJkt.value).pipe(Effect.ignore);
-          }
-          yield* sessionStore.revoke(input.sessionId).pipe(Effect.ignore);
-        });
-        const deferSpec = input.deferCallerSessionRevocation;
-        if (deferSpec === true || (deferSpec !== undefined && deferSpec !== false)) {
-          // Member is already marked removed in SQLite and live streams (every team guard fails
-          // closed); wait for the client to disconnect after reading the RPC reply, bounded by a
-          // short fallback timeout so non-disconnecting clients are still forcibly invalidated.
-          const fallbackDelay =
-            typeof deferSpec === "object" && deferSpec.fallbackDelay !== undefined
-              ? deferSpec.fallbackDelay
-              : Duration.millis(500);
-          const awaitDisconnect =
-            typeof deferSpec === "object" ? deferSpec.awaitDisconnect : undefined;
-          const waitForFlush =
-            awaitDisconnect !== undefined
-              ? Effect.race(awaitDisconnect, Effect.sleep(fallbackDelay))
-              : Effect.sleep(fallbackDelay);
-          yield* Effect.forkDetach(waitForFlush.pipe(Effect.andThen(revokeCallerSession)));
+        if (isDeferredRevocation) {
+          yield* Deferred.succeed(cleanupDone, undefined);
         } else {
           yield* revokeCallerSession;
         }
@@ -2757,7 +2769,19 @@ const make = Effect.gen(function* () {
               .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamMember>));
             const currentEnvs = yield* repository
               .listEnvironments(activeTeam.id)
-              .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
+              .pipe(Effect.mapError(toInternalError));
+            const allLinkedPeers =
+              input.peerClientPairing && input.peerLinks
+                ? yield* input.peerLinks.list.pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new TeamOperationError({
+                          code: "internal",
+                          message: `Failed to list peer links before deleting team: ${String(cause)}`,
+                        }),
+                    ),
+                  )
+                : [];
             const currentProviders = Option.isSome(assetsRepositoryOption)
               ? yield* assetsRepositoryOption.value
                   .listProviders(activeTeam.id)
@@ -2873,11 +2897,8 @@ const make = Effect.gen(function* () {
               const remoteEnvIds = currentEnvs
                 .filter((env) => !env.isDefault)
                 .map((env) => env.environmentId);
-              if (input.peerLinks) {
-                const allPeers = yield* input.peerLinks.list.pipe(Effect.orElseSucceed(() => []));
-                for (const peer of allPeers) {
-                  remoteEnvIds.push(peer.environmentId);
-                }
+              for (const peer of allLinkedPeers) {
+                remoteEnvIds.push(peer.environmentId);
               }
               const uniqueRemoteEnvIds = [...new Set(remoteEnvIds)];
               if (uniqueRemoteEnvIds.length > 0) {
@@ -9622,13 +9643,21 @@ const make = Effect.gen(function* () {
 
     if (effectiveLinkedServerInstanceId !== null && Option.isSome(serverConfigOption)) {
       const resolvedSettings = Option.isSome(serverSettingsOption)
-        ? yield* serverSettingsOption.value.getSettings.pipe(Effect.orElseSucceed(() => null))
-        : null;
+        ? yield* serverSettingsOption.value.getSettings.pipe(
+            Effect.mapError(
+              (cause) =>
+                new TeamOperationError({
+                  code: "internal",
+                  message: `Could not read server provider settings: ${String(cause)}`,
+                }),
+            ),
+          )
+        : undefined;
       const profileDir = resolveLinkedServerProviderProfileDir({
         stateDir: serverConfigOption.value.stateDir,
         driver: input.payload.driver,
         linkedServerInstanceId: effectiveLinkedServerInstanceId,
-        ...(Option.isSome(serverSettingsOption) ? { serverSettings: resolvedSettings } : {}),
+        ...(resolvedSettings !== undefined ? { serverSettings: resolvedSettings } : {}),
       });
       if (profileDir === null) {
         return yield* new TeamOperationError({

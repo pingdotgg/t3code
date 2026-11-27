@@ -198,6 +198,17 @@ export function TeamEnvironmentsSettingsSection({
     }
   };
 
+  const resetAttachForm = () => {
+    setShowAttachForm(false);
+    setAttachName("");
+    setAttachUrl("");
+    setAttachCode("");
+    setShowAttachCode(false);
+    setAttachRoles([...ALL_TEAM_ROLES]);
+    setAttachMemberIds([]);
+    setSelectedExistingPeerId(NEW_PEER_SENTINEL);
+  };
+
   const handleAttach = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const isExistingPeer = selectedExistingPeer !== null;
@@ -380,7 +391,7 @@ export function TeamEnvironmentsSettingsSection({
                         variant="ghost"
                         data-testid={`team-env-edit-${env.environmentId}`}
                         onClick={() => {
-                          setShowAttachForm(false);
+                          resetAttachForm();
                           setEditDraft({
                             environmentId: env.environmentId,
                             isDefault: env.isDefault,
@@ -626,21 +637,7 @@ export function TeamEnvironmentsSettingsSection({
                 {attaching ? <Spinner size="xs" /> : null}
                 <T>Attach</T>
               </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setShowAttachForm(false);
-                  setAttachName("");
-                  setAttachUrl("");
-                  setAttachCode("");
-                  setShowAttachCode(false);
-                  setAttachRoles([...ALL_TEAM_ROLES]);
-                  setAttachMemberIds([]);
-                  setSelectedExistingPeerId(NEW_PEER_SENTINEL);
-                }}
-              >
+              <Button type="button" size="sm" variant="ghost" onClick={resetAttachForm}>
                 <T>Cancel</T>
               </Button>
             </div>

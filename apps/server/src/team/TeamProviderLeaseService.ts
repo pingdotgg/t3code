@@ -176,9 +176,12 @@ export function resolveLinkedServerProviderProfileDir(input: {
   }
   let matchedInstance: ProviderInstanceConfig | null = null;
   if (input.serverSettings !== undefined) {
-    const candidate = (
-      input.serverSettings.providerInstances as Readonly<Record<string, ProviderInstanceConfig>>
-    )[trimmedId];
+    const providerInstances = input.serverSettings.providerInstances as Readonly<
+      Record<string, ProviderInstanceConfig>
+    >;
+    const candidate = Object.hasOwn(providerInstances, trimmedId)
+      ? providerInstances[trimmedId]
+      : undefined;
     if (candidate !== undefined) {
       if (candidate.driver !== input.driver) {
         return null;

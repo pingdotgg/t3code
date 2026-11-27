@@ -173,30 +173,36 @@ describe("waitForCloneAndAssignProject", () => {
   });
 
   it("skips team assignment when repositoryIdentity never populates before timeout", async () => {
-    const projectState = {
-      id: projectId,
-      environmentId: envId,
-      repositoryIdentity: null,
-    } as unknown as EnvironmentProject;
-    const assign = vi.fn(async () => {});
+    vi.useFakeTimers();
+    try {
+      const projectState = {
+        id: projectId,
+        environmentId: envId,
+        repositoryIdentity: null,
+      } as unknown as EnvironmentProject;
+      const assign = vi.fn(async () => {});
 
-    const deps: WaitForCloneAndAssignDeps = {
-      readClone: () => makeClone("done"),
-      subscribeClone: () => () => {},
-      readProject: () => projectState,
-      subscribeProject: () => () => {},
-      cloneTimeoutMs: 5_000,
-      identityTimeoutMs: 25,
-    };
+      const deps: WaitForCloneAndAssignDeps = {
+        readClone: () => makeClone("done"),
+        subscribeClone: () => () => {},
+        readProject: () => projectState,
+        subscribeProject: () => () => {},
+        cloneTimeoutMs: 5_000,
+        identityTimeoutMs: 25,
+      };
 
-    expect(
-      await waitForCloneAndAssignProject({
+      const pending = waitForCloneAndAssignProject({
         environmentId: envId,
         projectId,
         assign,
         deps,
-      }),
-    ).toBe(false);
-    expect(assign).not.toHaveBeenCalled();
+      });
+      await vi.advanceTimersByTimeAsync(25);
+
+      expect(await pending).toBe(false);
+      expect(assign).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
