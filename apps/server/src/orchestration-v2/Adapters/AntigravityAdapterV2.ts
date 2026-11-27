@@ -35,6 +35,7 @@ import {
   describeAntigravitySubagentLaunches,
   readAntigravityChildrenAtWork,
   readAntigravityPendingReply,
+  readAntigravitySubagentTranscript,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
@@ -46,6 +47,7 @@ import {
   antigravityCommandOutlivesPrompt,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
+  extractAntigravityElicitationForm,
   extractAntigravityUserInputQuestion,
   makeAntigravityReadRepair,
   makeAntigravityUpdateStepsPlans,
@@ -101,6 +103,7 @@ export interface AntigravityAdapterV2Options {
   readonly onSessionStarted?: (
     started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
     cwd: string,
+    session?: { readonly resumed: boolean },
   ) => Effect.Effect<void>;
   readonly onSessionEvent?: AcpAdapterV2Flavor["onSessionEvent"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
@@ -204,13 +207,16 @@ export function makeAntigravityAcpAdapterFlavor(
           });
         },
         start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tap(
-                (started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void,
-              ),
+          runtime.start().pipe(
+            Effect.tap(
+              (started) =>
+                options.onSessionStarted?.(started, input.cwd, {
+                  resumed:
+                    input.resumeSessionId !== undefined &&
+                    started.sessionId === input.resumeSessionId,
+                }) ?? Effect.void,
             ),
+          ),
       } satisfies typeof runtime;
     },
     Effect.provideService(SecureRandom.SecureRandom, options.random),
@@ -228,6 +234,8 @@ export function makeAntigravityAcpAdapterFlavor(
     supportsNativeGoals: options.supportsNativeGoals ?? Effect.succeed(false),
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
     mcpOverHttp: true,
+    // Antigravity freezes its toolbox per turn, so optional T3 tools run through `tool_call`.
+    deferMcpTools: "proxy",
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
     buildAttachmentPrompt: ({ text, attachments, resolveAttachmentPath, promptCapabilities }) =>
@@ -296,6 +304,7 @@ export function makeAntigravityAcpAdapterFlavor(
         respond: (answers) => makeAntigravityUserInputResponse(request, answers),
       };
     },
+    extractElicitationForm: extractAntigravityElicitationForm,
     normalizeToolCall: normalizeAntigravityToolCall,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
@@ -316,6 +325,23 @@ export function makeAntigravityAcpAdapterFlavor(
               profileDirectory,
               rootSessionId: sessionId,
               toolCallIds: nativeTaskIds,
+            }),
+          readSubagentTranscript: ({
+            sessionId,
+            nativeTaskId,
+            childSessionId,
+            launch,
+            siblings,
+            finalize,
+          }) =>
+            readAntigravitySubagentTranscript({
+              profileDirectory,
+              rootSessionId: sessionId,
+              nativeTaskId,
+              childSessionId,
+              launch,
+              siblings,
+              finalize,
             }),
           hasPendingReply: (sessionId: string) =>
             readAntigravityPendingReply({

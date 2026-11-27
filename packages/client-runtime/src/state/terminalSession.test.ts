@@ -386,6 +386,28 @@ describe("terminal session reducers", () => {
     expect(state.output.retainedBytes).toBe(8);
   });
 
+  it("skips the rest of an unfinished title when reading text after a clear", () => {
+    let state = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: BASE_SNAPSHOT,
+    });
+    state = applyTerminalAttachStreamEvent(state, {
+      type: "cleared",
+      ...TARGET,
+      pendingControlSequence: "\u001b]0;Build ",
+    });
+    for (const data of ["pro", "gress"]) {
+      state = applyTerminalAttachStreamEvent(state, { type: "output", ...TARGET, data });
+      expect(terminalOutputText(state.output)).toBe("");
+    }
+    state = applyTerminalAttachStreamEvent(state, {
+      type: "output",
+      ...TARGET,
+      data: "\u0007ready",
+    });
+    expect(terminalOutputText(state.output)).toBe("ready");
+  });
+
   it("resets for repeated snapshots and restart even when output text repeats, and erases on clear", () => {
     let state = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
       type: "snapshot",
