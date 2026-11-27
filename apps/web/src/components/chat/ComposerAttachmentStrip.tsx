@@ -36,7 +36,6 @@ import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { AttachmentImage } from "../media/AttachmentImage";
 import { Button, InlineButton } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import type { PreparingComposerImage } from "./preparingComposerImages";
@@ -51,6 +50,7 @@ import {
   SnapShotAttachmentDetails,
 } from "./SnapShotAttachmentDetails";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 function ComposerAttachmentUploadProgress({
   id,
@@ -293,54 +293,50 @@ export function ComposerAttachmentMediaRow({
                 />
               ) : null}
               {nonPersistedImageIdSet.has(image.id) && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span
-                        role="img"
-                        aria-label={gt("Draft attachment may not persist")}
-                        className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-warning-foreground"
-                      >
-                        <CircleAlertIcon className="size-3" />
-                      </span>
-                    }
-                  />
-                  <TooltipPopup side="top">
-                    <T>
-                      Draft attachment could not be saved locally and may be lost on navigation.
-                    </T>
-                  </TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={
+                    <span
+                      role="img"
+                      aria-label={gt("Draft attachment may not persist")}
+                      className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-warning-foreground"
+                    >
+                      <CircleAlertIcon className="size-3" />
+                    </span>
+                  }
+                  label={
+                    <>
+                      <T>
+                        Draft attachment could not be saved locally and may be lost on navigation.
+                      </T>
+                    </>
+                  }
+                />
               )}
               {(!ready || upload?.status === "uploading") && (
                 <ComposerTileUploadProgress id={image.id} upload={upload} />
               )}
               {ready && upload?.status === "failed" && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="overlay"
-                        size="icon-xs"
-                        className="absolute bottom-1 left-1"
-                        onClick={() =>
-                          retryAttachmentUpload({
-                            environmentId,
-                            image: ready,
-                            draftTarget: attachmentDraftTarget,
-                          })
-                        }
-                        disabled={!canOperateThread}
-                        aria-label={gt("Retry upload for {name}", { name: image.name })}
-                      />
-                    }
-                  >
-                    <RefreshIcon />
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">
-                    {attachmentUploadFailureText(upload, messages)}
-                  </TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={
+                    <Button
+                      variant="overlay"
+                      size="icon-xs"
+                      className="absolute bottom-1 left-1"
+                      onClick={() =>
+                        retryAttachmentUpload({
+                          environmentId,
+                          image: ready,
+                          draftTarget: attachmentDraftTarget,
+                        })
+                      }
+                      disabled={!canOperateThread}
+                      aria-label={gt("Retry upload for {name}", { name: image.name })}
+                    />
+                  }
+                  label={attachmentUploadFailureText(upload, messages)}
+                >
+                  <RefreshIcon />
+                </SharedTooltipTrigger>
               )}
               {/* Tiles reveal their remove button on hover or focus. */}
               <span className={COMPOSER_TILE_REMOVE_CLASS_NAME}>
@@ -409,31 +405,27 @@ export function ComposerAttachmentMediaRow({
               <ComposerTileUploadProgress id={file.id} upload={upload} />
             )}
             {upload?.status === "failed" && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="overlay"
-                      size="icon-xs"
-                      className="absolute bottom-1 left-1"
-                      onClick={() =>
-                        retryAttachmentUpload({
-                          environmentId,
-                          image: file,
-                          draftTarget: attachmentDraftTarget,
-                        })
-                      }
-                      disabled={!canOperateThread}
-                      aria-label={gt("Retry upload for {name}", { name: file.name })}
-                    />
-                  }
-                >
-                  <RefreshIcon />
-                </TooltipTrigger>
-                <TooltipPopup side="top">
-                  {attachmentUploadFailureText(upload, messages)}
-                </TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                render={
+                  <Button
+                    variant="overlay"
+                    size="icon-xs"
+                    className="absolute bottom-1 left-1"
+                    onClick={() =>
+                      retryAttachmentUpload({
+                        environmentId,
+                        image: file,
+                        draftTarget: attachmentDraftTarget,
+                      })
+                    }
+                    disabled={!canOperateThread}
+                    aria-label={gt("Retry upload for {name}", { name: file.name })}
+                  />
+                }
+                label={attachmentUploadFailureText(upload, messages)}
+              >
+                <RefreshIcon />
+              </SharedTooltipTrigger>
             )}
             <span className={COMPOSER_TILE_REMOVE_CLASS_NAME}>
               <Button
@@ -521,30 +513,26 @@ export function ComposerAttachmentFileList({
               )}
             </span>
             {!needsReattach && upload?.status === "failed" ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() =>
-                        retryAttachmentUpload({
-                          environmentId,
-                          image: file,
-                          draftTarget: attachmentDraftTarget,
-                        })
-                      }
-                      disabled={!canOperateThread}
-                      aria-label={gt("Retry upload for {name}", { name: file.name })}
-                    />
-                  }
-                >
-                  <RefreshIcon />
-                </TooltipTrigger>
-                <TooltipPopup side="top">
-                  {attachmentUploadFailureText(upload, messages)}
-                </TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={() =>
+                      retryAttachmentUpload({
+                        environmentId,
+                        image: file,
+                        draftTarget: attachmentDraftTarget,
+                      })
+                    }
+                    disabled={!canOperateThread}
+                    aria-label={gt("Retry upload for {name}", { name: file.name })}
+                  />
+                }
+                label={attachmentUploadFailureText(upload, messages)}
+              >
+                <RefreshIcon />
+              </SharedTooltipTrigger>
             ) : null}
             <Button
               variant="ghost-muted"
@@ -683,7 +671,7 @@ export function ComposerRestingImagePreviews({
           type="button"
           className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border/70 bg-muted/60 font-medium text-secondary-label text-xs tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
           aria-label={gt(
-            "{count, plural, one {Show {count} more image attachments} other {Show {count} more image attachments}}",
+            "{count, plural, one {Show {count} more image attachment} other {Show {count} more image attachments}}",
             {
               count: counts.overflowCount,
             },
@@ -773,24 +761,24 @@ export function ComposerAttachInput({
 export function ComposerAttachButton({ onOpenPicker }: { readonly onOpenPicker: () => void }) {
   const gt = useGT();
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={onOpenPicker}
-            aria-label={gt("Attach files")}
-          />
-        }
-      >
-        <PaperclipIcon className="size-[15px] translate-y-px text-composer-icon" />
-      </TooltipTrigger>
-      <TooltipPopup>
-        <T>Attach files</T>
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={onOpenPicker}
+          aria-label={gt("Attach files")}
+        />
+      }
+      label={
+        <>
+          <T>Attach files</T>
+        </>
+      }
+    >
+      <PaperclipIcon className="size-[15px] translate-y-px text-composer-icon" />
+    </SharedTooltipTrigger>
   );
 }

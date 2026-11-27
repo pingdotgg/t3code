@@ -53,3 +53,46 @@ it("/model clears only its trigger and opens the model picker", async () => {
   expect(onChangeDraftMessage).toHaveBeenCalledWith("fix this ");
   act(() => root.unmount());
 });
+
+it("/ ranks a skill whose name matches exactly above skills that only mention it", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const skill = (name: string, description: string) => ({
+    name,
+    description,
+    path: `/skills/${name}/SKILL.md`,
+    enabled: true,
+  });
+  const provider = {
+    instanceId: "codex",
+    driver: "codex",
+    slashCommands: [],
+    skills: [
+      skill("lint", "Run lint before review"),
+      skill("ship", "Open a pull request after review"),
+      skill("review", "Review the current diff"),
+    ],
+  } as unknown as NonNullable<
+    Parameters<typeof useComposerCommandMenu>[0]["selectedProviderStatus"]
+  >;
+  let menu: ReturnType<typeof useComposerCommandMenu> | undefined;
+  function Probe() {
+    menu = useComposerCommandMenu({
+      draftMessage: "/review",
+      ownerKey: "draft",
+      environmentId: null,
+      projectCwd: null,
+      selectedProviderStatus: provider,
+      hasThread: true,
+      hasCompactableConversation: false,
+      onChangeDraftMessage: vi.fn(),
+      onOpenModelPicker: vi.fn(),
+    });
+    return null;
+  }
+
+  const root = createRoot(document.createElement("div"));
+  await act(async () => root.render(<Probe />));
+
+  expect(menu?.items[0]?.id).toBe("skill:review");
+  act(() => root.unmount());
+});

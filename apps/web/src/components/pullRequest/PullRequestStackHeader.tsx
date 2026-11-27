@@ -1,7 +1,7 @@
 import { T, useGT, Var } from "gt-react";
 
 import { MenuGroupLabel } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export function PullRequestStackHeader({
   number,
@@ -22,12 +22,12 @@ export function PullRequestStackHeader({
           </T>
         </span>
         {notice ? (
-          <Tooltip>
-            <TooltipTrigger render={<span role="status" className="text-xs font-normal" />}>
-              {stale ? gt("May be stale") : gt("Refreshing…")}
-            </TooltipTrigger>
-            <TooltipPopup>{notice}</TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={<span role="status" className="text-xs font-normal" />}
+            label={notice}
+          >
+            {stale ? gt("May be stale") : gt("Refreshing…")}
+          </SharedTooltipTrigger>
         ) : null}
       </div>
     </MenuGroupLabel>

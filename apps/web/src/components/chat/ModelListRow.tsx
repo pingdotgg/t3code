@@ -7,10 +7,10 @@ import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Kbd } from "../ui/kbd";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { modelPickerModelKey } from "./modelPickerKeys";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
@@ -102,35 +102,32 @@ export const ModelListRow = memo(function ModelListRow(props: {
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon-xs"
-                variant="ghost-muted"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  props.onToggleFavorite(props.instanceId, props.slug);
-                }}
-                onKeyDown={(event) => {
-                  event.stopPropagation();
-                }}
-                disabled={Boolean(props.disabledReason)}
-                aria-label={props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
-              >
-                <StarIcon
-                  className={cn(
-                    "size-3.5 sm:size-3",
-                    props.isFavorite && "fill-current text-warning-foreground",
-                  )}
-                />
-              </Button>
-            }
-          />
-          <TooltipPopup side="top" align="center">
-            {props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
-          </TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <Button
+              size="icon-xs"
+              variant="ghost-muted"
+              onClick={(event) => {
+                event.stopPropagation();
+                props.onToggleFavorite(props.instanceId, props.slug);
+              }}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+              }}
+              disabled={Boolean(props.disabledReason)}
+              aria-label={props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
+            >
+              <StarIcon
+                className={cn(
+                  "size-3.5 sm:size-3",
+                  props.isFavorite && "fill-current text-warning-foreground",
+                )}
+              />
+            </Button>
+          }
+          label={props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
+          align="center"
+        />
         {props.jumpLabel ? <Kbd>{props.jumpLabel}</Kbd> : null}
       </div>
     </ComboboxItem>
@@ -141,11 +138,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
   }
 
   return (
-    <Tooltip>
-      <TooltipTrigger render={row} />
-      <TooltipPopup side="left" align="center">
-        {props.disabledReason}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger render={row} label={props.disabledReason} side="left" align="center" />
   );
 });

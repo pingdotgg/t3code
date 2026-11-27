@@ -11,6 +11,7 @@ import { T, useGT, useMessages, Var } from "gt-react";
 import { memo, use } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { shortcutLabelForCommand } from "../../keybindings";
+import type { FileManagerAction } from "./OpenInPicker.logic";
 import { OPEN_FAVORITE_EDITOR_ATTRIBUTE } from "./OpenInPickerShortcut";
 import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
@@ -45,165 +46,24 @@ import {
   MenuSubPopup,
   MenuTrigger,
 } from "../ui/menu";
-import {
-  AntigravityIcon,
-  CursorIcon,
-  FileExplorerIcon,
-  FinderIcon,
-  Icon,
-  KiroIcon,
-  TraeIcon,
-  VisualStudioCode,
-  VisualStudioCodeInsiders,
-  VSCodium,
-  Zed,
-} from "../Icons";
-import {
-  AquaIcon,
-  CLionIcon,
-  DataGripIcon,
-  DataSpellIcon,
-  GoLandIcon,
-  IntelliJIdeaIcon,
-  PhpStormIcon,
-  PyCharmIcon,
-  RiderIcon,
-  RubyMineIcon,
-  RustRoverIcon,
-  WebStormIcon,
-} from "../JetBrainsIcons";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
+import { type EditorIconOption, editorIconOptions } from "../editorIcons";
 import { announce } from "~/lib/announce";
-import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
+import { cn } from "~/lib/utils";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useComposerMenuState } from "./useComposerMenuState";
 
-type OpenInOption = {
-  label: string;
-  Icon: Icon;
-  value: EditorId;
-  kind: "brand" | "generic";
-};
+type OpenInOption = EditorIconOption & { label: string };
 
 const resolveOpenInOptions = (
   platform: string,
   availableEditors: ReadonlyArray<EditorId>,
   resolve: MessageResolver,
-) => {
-  const baseOptions: ReadonlyArray<Omit<OpenInOption, "label">> = [
-    {
-      Icon: CursorIcon,
-      value: "cursor",
-      kind: "brand",
-    },
-    {
-      Icon: TraeIcon,
-      value: "trae",
-      kind: "brand",
-    },
-    {
-      Icon: KiroIcon,
-      value: "kiro",
-      kind: "brand",
-    },
-    {
-      Icon: VisualStudioCode,
-      value: "vscode",
-      kind: "brand",
-    },
-    {
-      Icon: VisualStudioCodeInsiders,
-      value: "vscode-insiders",
-      kind: "brand",
-    },
-    {
-      Icon: VSCodium,
-      value: "vscodium",
-      kind: "brand",
-    },
-    {
-      Icon: Zed,
-      value: "zed",
-      kind: "brand",
-    },
-    {
-      Icon: AntigravityIcon,
-      value: "antigravity",
-      kind: "brand",
-    },
-    {
-      Icon: IntelliJIdeaIcon,
-      value: "idea",
-      kind: "brand",
-    },
-    {
-      Icon: AquaIcon,
-      value: "aqua",
-      kind: "brand",
-    },
-    {
-      Icon: CLionIcon,
-      value: "clion",
-      kind: "brand",
-    },
-    {
-      Icon: DataGripIcon,
-      value: "datagrip",
-      kind: "brand",
-    },
-    {
-      Icon: DataSpellIcon,
-      value: "dataspell",
-      kind: "brand",
-    },
-    {
-      Icon: GoLandIcon,
-      value: "goland",
-      kind: "brand",
-    },
-    {
-      Icon: PhpStormIcon,
-      value: "phpstorm",
-      kind: "brand",
-    },
-    {
-      Icon: PyCharmIcon,
-      value: "pycharm",
-      kind: "brand",
-    },
-    {
-      Icon: RiderIcon,
-      value: "rider",
-      kind: "brand",
-    },
-    {
-      Icon: RubyMineIcon,
-      value: "rubymine",
-      kind: "brand",
-    },
-    {
-      Icon: RustRoverIcon,
-      value: "rustrover",
-      kind: "brand",
-    },
-    {
-      Icon: WebStormIcon,
-      value: "webstorm",
-      kind: "brand",
-    },
-    {
-      Icon: isMacPlatform(platform)
-        ? FinderIcon
-        : isWindowsPlatform(platform)
-          ? FileExplorerIcon
-          : FolderClosedIcon,
-      value: "file-manager",
-      kind: isMacPlatform(platform) || isWindowsPlatform(platform) ? "brand" : "generic",
-    },
-  ];
+): ReadonlyArray<OpenInOption> => {
   const availableEditorSet = new Set(availableEditors);
-  return baseOptions
+  return editorIconOptions(platform)
     .filter((option) => availableEditorSet.has(option.value))
     .map((option) => ({
       ...option,
@@ -225,7 +85,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   compact = false,
   enableShortcut = true,
   displayMode = "toolbar",
-  revealFileManager = false,
+  fileManagerAction = "open",
 }: {
   environmentId: EnvironmentId;
   keybindings: ResolvedKeybindingsConfig;
@@ -236,7 +96,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   compact?: boolean;
   enableShortcut?: boolean;
   displayMode?: "toolbar" | "panel";
-  revealFileManager?: boolean;
+  fileManagerAction?: FileManagerAction;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -253,11 +113,13 @@ export const OpenInPicker = memo(function OpenInPicker({
   // Remote editors run on the viewing machine; only desktop can probe that PATH.
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
+  const isEditorUnavailable = (editor: EditorId | null) =>
+    editor === "file-manager" && fileManagerAction === "unavailable";
 
   const openInEditor = async (editorId: EditorId | null): Promise<boolean> => {
     if (!openInCwd) return false;
     const editor = editorId ?? preferredEditor;
-    if (!editor) return false;
+    if (!editor || isEditorUnavailable(editor)) return false;
     if (remote.mode === "remote-unavailable") return false;
     if (remote.mode === "remote-links") {
       const url = buildRemoteOpenUrl({
@@ -281,7 +143,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       input: {
         cwd: openInCwd,
         editor,
-        ...(revealFileManager && editor === "file-manager" ? { reveal: true } : {}),
+        ...(fileManagerAction === "reveal" && editor === "file-manager" ? { reveal: true } : {}),
       },
     });
     setPreferredEditor(editor);
@@ -336,7 +198,11 @@ export const OpenInPicker = memo(function OpenInPicker({
           {options.map(({ label, Icon, value, kind }) => (
             <MenuItem
               density={presentation === "menu" ? "touch" : "default"}
-              disabled={!openInCwd || !canOpenEditor}
+              disabled={
+                !openInCwd ||
+                !canOpenEditor ||
+                (presentation === "menu" && isEditorUnavailable(value))
+              }
               key={value}
               onClick={() => {
                 if (presentation === "menu") {
@@ -389,8 +255,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         {primaryOption && (
           <MenuItem
             density={presentation === "menu" ? "touch" : "default"}
-
-            disabled={!openInCwd || !canOpenEditor}
+            disabled={!openInCwd || !canOpenEditor || isEditorUnavailable(preferredEditor)}
             onClick={() => openInEditor(preferredEditor)}
           >
             <primaryOption.Icon className={cn("size-4", getOpenInIconClass(primaryOption.kind))} />
@@ -430,7 +295,12 @@ export const OpenInPicker = memo(function OpenInPicker({
               <ThreadDetailsControl
                 part="icon"
                 aria-label={primaryLabel}
-                disabled={!preferredEditor || !openInCwd || !canOpenEditor}
+                disabled={
+                  !preferredEditor ||
+                  !openInCwd ||
+                  !canOpenEditor ||
+                  isEditorUnavailable(preferredEditor)
+                }
                 {...(enableShortcut && !backgroundThread
                   ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" }
                   : {})}
@@ -464,67 +334,66 @@ export const OpenInPicker = memo(function OpenInPicker({
   const primaryControlLabel = compact ? gt("Open file in preferred editor") : primaryLabel;
   return (
     <Group aria-label={gt("Open in editor")} role="group">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <ThreadDetailsControl
-              aria-label={primaryControlLabel}
-              // Tooltip replaces the button data-slot, so toolbar theming needs a separate hook.
-              data-toolbar-control=""
-              size="xs"
-              variant="secondary"
-              panel={false}
-              disabled={!preferredEditor || !openInCwd || !canOpenEditor}
-              {...(enableShortcut && !backgroundThread
-                ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" }
-                : {})}
-              onClick={handleOpenPreferredEditor}
-            />
+      <SharedTooltipTrigger
+        render={
+          <ThreadDetailsControl
+            aria-label={primaryControlLabel}
+            // Tooltip replaces the button data-slot, so toolbar theming needs a separate hook.
+            data-toolbar-control=""
+            size="xs"
+            variant="secondary"
+            panel={false}
+            disabled={
+              !preferredEditor ||
+              !openInCwd ||
+              !canOpenEditor ||
+              isEditorUnavailable(preferredEditor)
+            }
+            {...(enableShortcut && !backgroundThread
+              ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" }
+              : {})}
+            onClick={handleOpenPreferredEditor}
+          />
+        }
+        label={primaryControlLabel}
+      >
+        {primaryOption?.Icon ? (
+          <primaryOption.Icon
+            aria-hidden="true"
+            className={cn("size-3.5", getOpenInIconClass(primaryOption.kind))}
+          />
+        ) : null}
+        <span
+          className={
+            compact
+              ? "sr-only"
+              : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"
           }
         >
-          {primaryOption?.Icon ? (
-            <primaryOption.Icon
-              aria-hidden="true"
-              className={cn("size-3.5", getOpenInIconClass(primaryOption.kind))}
-            />
-          ) : null}
-          <span
-            className={
-              compact
-                ? "sr-only"
-                : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"
-            }
-          >
-            {primaryLabel}
-          </span>
-        </TooltipTrigger>
-        <TooltipPopup side="top">{primaryControlLabel}</TooltipPopup>
-      </Tooltip>
+          {primaryLabel}
+        </span>
+      </SharedTooltipTrigger>
       <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
       <Menu open={menuOpen} onOpenChange={setMenuOpen}>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <MenuTrigger
-                disabled={isHostEditorDenied}
-                render={
-                  <ThreadDetailsControl
-                    aria-label={gt("Choose editor")}
-                    data-toolbar-control=""
-                    size="icon-xs"
-                    variant="secondary"
-                    panel={false}
-                  />
-                }
-              />
-            }
-          >
-            <ChevronDownIcon aria-hidden="true" className="size-4" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            <T>Choose editor</T>
-          </TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <MenuTrigger
+              disabled={isHostEditorDenied}
+              render={
+                <ThreadDetailsControl
+                  aria-label={gt("Choose editor")}
+                  data-toolbar-control=""
+                  size="icon-xs"
+                  variant="secondary"
+                  panel={false}
+                />
+              }
+            />
+          }
+          label={<T>Choose editor</T>}
+        >
+          <ChevronDownIcon aria-hidden="true" className="size-4" />
+        </SharedTooltipTrigger>
         <MenuPopup align="end" className="min-w-60">
           <MenuGroup>
             <MenuGroupLabel>
