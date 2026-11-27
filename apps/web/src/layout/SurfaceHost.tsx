@@ -1255,7 +1255,9 @@ export function LayoutSurfaceHost({
     };
     const compute = (settled = false) => {
       // In shares of the strip, which the window may clip on the right.
-      const measured = scroller !== null && stripPx > 0;
+      // A non-overflowing strip (stripWidth <= 1) is overflow-hidden and always shows [0, 1],
+      // so skip reading scrollLeft/clientWidth to avoid forcing layout on every tab switch.
+      const measured = scroller !== null && stripWidth > 1 && stripPx > 0;
       const viewStart = measured ? scroller.scrollLeft / stripPx : 0;
       const viewEnd = measured ? (scroller.scrollLeft + scroller.clientWidth) / stripPx : 1;
       if (settled && measured && userStripScrollAge() <= USER_SCROLL_SETTLE_WINDOW_MS) {
@@ -1297,7 +1299,7 @@ export function LayoutSurfaceHost({
       setWindowStartPaneId(selectWindowStartPaneId(slots, viewStart * stripPx, stripPx));
     };
     compute();
-    if (!scroller) return;
+    if (!scroller || stripWidth <= 1) return;
     let timer: number | null = null;
     const settle = () => {
       // The user's gesture may still be going between its scroll events.
@@ -1327,6 +1329,7 @@ export function LayoutSurfaceHost({
     stacked,
     staged,
     stripPx,
+    stripWidth,
     unseenTabIds,
   ]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the shared on-screen thread registry when the strip unmounts
