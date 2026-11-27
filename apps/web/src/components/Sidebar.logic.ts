@@ -1,9 +1,13 @@
-import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import {
+  connectionDisplayAddress,
+  type EnvironmentServerConfig,
+} from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
+import { groupBy } from "effect/Array";
 import * as React from "react";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
@@ -21,6 +25,7 @@ import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/sh
 import {
   type ContextMenuItem,
   type EnvironmentId,
+  type ProjectId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
@@ -590,17 +595,34 @@ export async function deleteSelectedThreadEntries<
   return { deletedThreadKeys, firstFailure };
 }
 
+export interface SidebarScope {
+  readonly environmentId: EnvironmentId | null;
+  readonly projectsByEnvironment: ReadonlyMap<EnvironmentId, ReadonlySet<ProjectId>> | null;
+}
+
+export function matchesSidebarScope(
+  item: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
+  scope: SidebarScope | null,
+): boolean {
+  return (
+    scope === null ||
+    ((scope.environmentId === null || scope.environmentId === item.environmentId) &&
+      (scope.projectsByEnvironment === null ||
+        scope.projectsByEnvironment.get(item.environmentId)?.has(item.projectId) === true))
+  );
+}
+
 /**
  * `delegatedUnderParent` holds the tasks linked environments run for a thread
  * the sidebar lists, by thread key; they show under that thread, as subagents do.
  */
 export function filterSidebarV2VisibleThreads<
   T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id" | "lineage"> & {
-    projectId: string;
+    projectId: ProjectId;
   },
 >(
   threads: readonly T[],
-  scopedProjectKeys: ReadonlySet<string> | null,
+  scope: SidebarScope | null,
   delegatedUnderParent: ReadonlySet<string>,
 ): T[] {
   return threads.filter(
@@ -611,8 +633,7 @@ export function filterSidebarV2VisibleThreads<
         thread.lineage,
         delegatedUnderParent,
       ) &&
-      (scopedProjectKeys === null ||
-        scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+      matchesSidebarScope(thread, scope),
   );
 }
 
@@ -1185,6 +1206,41 @@ export function pullRequestMatchesSearchQuery(
 
 export const ADD_PROJECT_SCOPE_ITEM_VALUE = "add-project";
 
+export const ALL_MACHINES_SCOPE_ITEM_VALUE = "all-machines";
+
+export function sidebarMachineHints(
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly displayUrl: string | null;
+  }>,
+): ReadonlyMap<EnvironmentId, string> {
+  const hints = new Map<EnvironmentId, string>();
+  for (const sameName of Object.values(groupBy(environments, (environment) => environment.label))) {
+    if (sameName.length < 2) continue;
+    const peers = sameName.map(({ environmentId, displayUrl }) => ({
+      environmentId,
+      address: displayUrl ? connectionDisplayAddress(displayUrl) : null,
+    }));
+    for (const { environmentId, address } of peers) {
+      const others = peers.filter((peer) => peer.environmentId !== environmentId);
+      if (address && !others.some((peer) => peer.address === address)) {
+        hints.set(environmentId, address);
+        continue;
+      }
+      let length = 8;
+      while (
+        length < environmentId.length &&
+        others.some((peer) => peer.environmentId.endsWith(environmentId.slice(-length)))
+      ) {
+        length += 1;
+      }
+      hints.set(environmentId, `#${environmentId.slice(-length)}`);
+    }
+  }
+  return hints;
+}
+
 export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
   items: readonly TItem[];
   query: string;
@@ -1195,6 +1251,7 @@ export function filterSidebarProjectScopeItems<TItem extends { readonly value: s
   return input.items.filter(
     (item) =>
       item.value !== "all" &&
+      item.value !== ALL_MACHINES_SCOPE_ITEM_VALUE &&
       item.value !== ADD_PROJECT_SCOPE_ITEM_VALUE &&
       input.matches(item, query),
   );
@@ -1458,7 +1515,7 @@ export function sortLogicalProjectsForSidebar<
 export function sortSidebarV2ProjectGroups<
   TProject extends LogicalSidebarProject,
   TThread extends ScopedSidebarThread &
-    Pick<SidebarThreadSummary, "environmentId" | "id" | "lineage">,
+    Pick<SidebarThreadSummary, "environmentId" | "id" | "lineage"> & { projectId: ProjectId },
 >(
   projects: readonly TProject[],
   threads: readonly TThread[],

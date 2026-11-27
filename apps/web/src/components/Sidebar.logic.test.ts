@@ -9,6 +9,7 @@ import { AsyncResult } from "effect/reactivity";
 import {
   ADD_PROJECT_SCOPE_ITEM_VALUE,
   filterSidebarProjectScopeItems,
+  sidebarMachineHints,
   shouldCreateNewThreadInCurrentProject,
   resolveScopedNewThreadProjectRef,
   deleteSelectedThreadEntries,
@@ -40,6 +41,7 @@ import {
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
   withoutRemovedCheckout,
+  matchesSidebarScope,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -65,6 +67,33 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("matchesSidebarScope", () => {
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+  const shared = { environmentId: remoteEnvironmentId, projectId: ProjectId.make("shared") };
+
+  it.each([
+    { machine: null, projectMachine: null, expected: true },
+    { machine: remoteEnvironmentId, projectMachine: null, expected: true },
+    { machine: localEnvironmentId, projectMachine: null, expected: false },
+    { machine: remoteEnvironmentId, projectMachine: localEnvironmentId, expected: false },
+    { machine: remoteEnvironmentId, projectMachine: remoteEnvironmentId, expected: true },
+    { machine: localEnvironmentId, projectMachine: remoteEnvironmentId, expected: false },
+  ])(
+    "checks machine $machine and projects independently",
+    ({ machine, projectMachine, expected }) => {
+      expect(
+        matchesSidebarScope(shared, {
+          environmentId: machine,
+          projectsByEnvironment:
+            projectMachine === null
+              ? null
+              : new Map([[projectMachine, new Set([shared.projectId])]]),
+        }),
+      ).toBe(expected);
+    },
+  );
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
@@ -1591,7 +1620,12 @@ describe("pendingSidebarRouteReveal", () => {
 });
 
 describe("resolveSidebarRouteReveal", () => {
-  const scopedProjectKeys = new Set(["environment-test:project-scoped"]);
+  const scope = {
+    environmentId: null,
+    projectsByEnvironment: new Map([
+      [EnvironmentId.make("environment-test"), new Set([ProjectId.make("project-scoped")])],
+    ]),
+  };
   const hidden = makeThreadFixture({ projectId: ProjectId.make("project-other") });
   const hiddenKey = "environment-test:thread-test";
   const findThread = (key: string) => (key === hiddenKey ? hidden : undefined);
@@ -1603,11 +1637,52 @@ describe("resolveSidebarRouteReveal", () => {
         routeKey: hiddenKey,
         routeKeyInPlace: false,
         isSearching: false,
-        scopedProjectKeys,
+        scope,
         delegatedUnderParent: new Set(),
         findThread,
       }),
     ).toEqual({ pendingKey: hiddenKey, widensScope: true });
+  });
+
+  it.each([
+    { inPlace: false, widensScope: true },
+    { inPlace: true, widensScope: false },
+  ])(
+    "handles a thread outside the selected machine (in-place promotion: $inPlace)",
+    ({ inPlace, widensScope }) => {
+      expect(
+        resolveSidebarRouteReveal({
+          reveal: { observedKey: "other:a", pendingKey: null },
+          routeKey: hiddenKey,
+          routeKeyInPlace: inPlace,
+          isSearching: false,
+          scope: { environmentId: localEnvironmentId, projectsByEnvironment: null },
+          delegatedUnderParent: new Set(),
+          findThread,
+        }),
+      ).toEqual({ pendingKey: hiddenKey, widensScope });
+    },
+  );
+
+  it("keeps a promotion in place through its redirect and reveals the thread after visiting an unsent draft", () => {
+    const reveal = { observedKey: null, pendingKey: null };
+    const resolve = (routeKey: string | null, routeKeyInPlace = false, leftThread = false) =>
+      resolveSidebarRouteReveal({
+        reveal,
+        routeKey,
+        routeKeyInPlace,
+        leftThread,
+        isSearching: false,
+        scope: { environmentId: localEnvironmentId, projectsByEnvironment: null },
+        delegatedUnderParent: new Set(),
+        findThread,
+      });
+    expect(resolve(hiddenKey, true)).toEqual({ pendingKey: hiddenKey, widensScope: false });
+    resolve(null);
+    expect(resolve(hiddenKey)).toEqual({ pendingKey: hiddenKey, widensScope: false });
+
+    expect(resolve(null, false, true)).toEqual({ pendingKey: null, widensScope: false });
+    expect(resolve(hiddenKey)).toEqual({ pendingKey: hiddenKey, widensScope: true });
   });
 
   it("never widens for a thread whose reveal already completed", () => {
@@ -1618,7 +1693,7 @@ describe("resolveSidebarRouteReveal", () => {
         routeKey: hiddenKey,
         routeKeyInPlace: false,
         isSearching: false,
-        scopedProjectKeys,
+        scope,
         delegatedUnderParent: new Set(),
         findThread,
       }),
@@ -1635,7 +1710,7 @@ describe("resolveSidebarRouteReveal", () => {
         routeKey,
         routeKeyInPlace: false,
         isSearching: false,
-        scopedProjectKeys,
+        scope,
         delegatedUnderParent: new Set(),
         findThread,
       });
@@ -1650,7 +1725,7 @@ describe("resolveSidebarRouteReveal", () => {
         routeKey: hiddenKey,
         routeKeyInPlace: false,
         isSearching: true,
-        scopedProjectKeys,
+        scope,
         delegatedUnderParent: new Set(),
         findThread,
       }),
@@ -1835,6 +1910,32 @@ describe("resolveScopedNewThreadProjectRef", () => {
         viewed: viewedWeb,
       }),
     ).toBeNull();
+  });
+});
+
+describe("sidebarMachineHints", () => {
+  it("only annotates duplicate names, with unique addresses or stable ID suffixes", () => {
+    const local = EnvironmentId.make("00000000-0000-0000-0000-000012345678");
+    const first = EnvironmentId.make("11111111-1111-1111-1111-1111aaaaaaaa");
+    const second = EnvironmentId.make("22222222-2222-2222-2222-2222aaaaaaaa");
+    const remote = EnvironmentId.make("remote");
+    const laptop = EnvironmentId.make("laptop");
+    expect(
+      sidebarMachineHints([
+        { environmentId: second, label: "Studio", displayUrl: "http://shared.test" },
+        { environmentId: remote, label: "Studio", displayUrl: "https://studio.test:8443" },
+        { environmentId: first, label: "Studio", displayUrl: "https://shared.test" },
+        { environmentId: local, label: "Studio", displayUrl: null },
+        { environmentId: laptop, label: "Laptop", displayUrl: "https://laptop.test" },
+      ]),
+    ).toEqual(
+      new Map([
+        [second, "#2aaaaaaaa"],
+        [remote, "studio.test:8443"],
+        [first, "#1aaaaaaaa"],
+        [local, "#12345678"],
+      ]),
+    );
   });
 });
 

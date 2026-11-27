@@ -111,10 +111,15 @@ export function createNewThreadHandler(router: AnyRouter) {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       replace?: boolean;
+      environmentSelection?: "auto" | "manual";
       /** Composer text for the draft, set before it shows. A draft with user text keeps it. */
       prompt?: string;
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
+    const environmentContext =
+      options?.environmentSelection === undefined
+        ? {}
+        : { environmentSelection: options.environmentSelection, loadBalancedEnvironmentId: null };
     const projects = readProjects();
     const projectGroupingSettings = selectProjectGroupingSettings(getClientSettings());
     // Read at call time; status pushes replace the config map and would recreate every sidebar handler.
@@ -341,6 +346,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           {
             threadId: emptyStoredDraftThread.threadId,
             ...workspaceContext,
+            ...environmentContext,
             ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode } : {}),
             ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
           },
@@ -388,6 +394,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         runtimeMode: latestActiveDraftThread.runtimeMode,
         interactionMode: latestActiveDraftThread.interactionMode,
         ...pickExplicitWorkspaceOptions(options),
+        ...environmentContext,
       });
       seedPrompt(currentRouteTarget.draftId);
       return Promise.resolve({
@@ -413,6 +420,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           ? { workspaceExplicit: true }
           : {}),
         runtimeMode: defaultRuntimeMode,
+        ...environmentContext,
         ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
       });
       applyStickyState(draftId);

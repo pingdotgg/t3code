@@ -67,6 +67,7 @@ The server automatically links open PRs matching an unsettled thread's branch. O
 
 ## Find and reference work
 
+- **Sidebar filter** (web/desktop): With multiple machines connected, open the **Projects and machines** picker to show one machine's threads and drafts. Project selections also apply to that machine, including in sidebar search. Choose **All machines** to remove the machine filter and keep the project selection. Opening a thread outside the filter from the command palette or a link clears the sidebar filters.
 - **Command palette** (`Cmd/Ctrl+K`): Searches threads across connected environments by title, branch, PR, project, and message contents (use `"exact phrase"` for exact matches). On mobile, use the thread list search (or `Cmd+K` on iPad with a keyboard).
 - **Copy reference**: Copies the linked PR URL if one exists, otherwise a thread link that pastes into any composer as a thread chip. Use **Copy → Thread** (or **Copy thread** on mobile) to force a thread link, or **Thread ID** for scripts and the `t3` CLI.
 

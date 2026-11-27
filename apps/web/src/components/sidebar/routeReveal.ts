@@ -2,12 +2,12 @@ import { useRef } from "react";
 
 import { observeResize } from "~/lib/observeResize";
 
-import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
+import { filterSidebarV2VisibleThreads, type SidebarScope } from "../Sidebar.logic";
 
-// AppSidebarLayout owns this so drawer and Settings remounts preserve the chosen project scope.
+// AppSidebarLayout owns this so drawer and Settings remounts preserve the chosen sidebar scope.
 // Only route changes may widen that scope; scroll position is lost on remount.
 // Leaving Settings commits the router's location before its matches, briefly hiding thread params.
-// Ignore null keys so the same thread does not look new during that gap.
+// A null key during that gap keeps the current reveal. A confirmed departure clears it.
 export interface SidebarRouteReveal {
   observedKey: string | null;
   pendingKey: string | null;
@@ -31,6 +31,7 @@ export function pendingSidebarRouteReveal(
 
 export function completeSidebarRouteReveal(reveal: SidebarRouteReveal): void {
   reveal.pendingKey = null;
+  reveal.pendingInPlace = false;
 }
 
 // Each route change and each mount scroll to the open thread once. Render records
@@ -83,20 +84,25 @@ export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
   readonly reveal: SidebarRouteReveal;
   readonly routeKey: string | null;
   readonly routeKeyInPlace: boolean;
+  readonly leftThread?: boolean;
   readonly isSearching: boolean;
-  readonly scopedProjectKeys: ReadonlySet<string> | null;
+  readonly scope: SidebarScope | null;
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly findThread: (key: string) => T | undefined;
 }): { readonly pendingKey: string | null; readonly widensScope: boolean } {
-  const { reveal, routeKey, isSearching, scopedProjectKeys, delegatedUnderParent, findThread } =
-    input;
+  const { reveal, routeKey, isSearching, scope, delegatedUnderParent, findThread } = input;
+  if (input.leftThread) {
+    reveal.observedKey = null;
+    completeSidebarRouteReveal(reveal);
+  }
   const pendingKey = pendingSidebarRouteReveal(reveal, routeKey, input.routeKeyInPlace);
   // Search results replace the thread list; the reveal waits for it to return.
   const thread = pendingKey === null || isSearching ? undefined : findThread(pendingKey);
   const widensScope =
     thread !== undefined &&
-    scopedProjectKeys !== null &&
-    filterSidebarV2VisibleThreads([thread], scopedProjectKeys, delegatedUnderParent).length === 0 &&
+    scope !== null &&
+    (scope.environmentId === null || reveal.pendingInPlace !== true) &&
+    filterSidebarV2VisibleThreads([thread], scope, delegatedUnderParent).length === 0 &&
     filterSidebarV2VisibleThreads([thread], null, delegatedUnderParent).length === 1;
   return { pendingKey, widensScope };
 }

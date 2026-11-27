@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 
 import {
   BearerConnectionProfile,
+  SshConnectionProfile,
   type ConnectionCatalogEntry,
   type ConnectionRoute,
 } from "./catalog.ts";
@@ -11,9 +12,11 @@ import {
   BearerConnectionTarget,
   ConnectionTransientError,
   RelayConnectionTarget,
+  SshConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
 import {
+  connectionCatalogDisplayUrl,
   connectionStatusText,
   connectionStatusTitle,
   environmentMcpUrl,
@@ -118,6 +121,31 @@ describe("connection presentation", () => {
         relayHttpBaseUrl: "https://tunnel.example.test",
       }),
     ).toBe("https://tunnel.example.test/mcp");
+  });
+
+  it.each([
+    ["dev.example.test", null, "dev.example.test:2222"],
+    ["2001:db8::10", "dev", "dev@[2001:db8::10]:2222"],
+  ])("formats the SSH address for host %s and username %s", (hostname, username, expected) => {
+    const target = new SshConnectionTarget({
+      connectionId: "ssh-1",
+      environmentId: TARGET.environmentId,
+      label: TARGET.label,
+    });
+    const entry: ConnectionCatalogEntry = {
+      target,
+      profile: Option.some(
+        new SshConnectionProfile({
+          connectionId: target.connectionId,
+          environmentId: target.environmentId,
+          label: target.label,
+          target: { alias: "dev", hostname, username, port: 2222 },
+        }),
+      ),
+      enabled: true,
+    };
+
+    expect(connectionCatalogDisplayUrl(entry)).toBe(expected);
   });
 
   it("distinguishes initial connection, reconnect, and retry errors", () => {

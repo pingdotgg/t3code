@@ -141,11 +141,13 @@ import { useNewProject } from "../hooks/useNewProject";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { reportProjectFailure, useProjectPin } from "../hooks/useProjectGroupUpdate";
 import {
+  readEnvironment,
   useEnvironmentProviders,
   useEnvironments,
   usePrimaryEnvironmentId,
 } from "../state/environments";
 import {
+  readProject,
   useAnyEnvironmentHiding,
   useDelegatedUnderParent,
   useHiddenThreadKeys,
@@ -320,6 +322,9 @@ function openIntentView(
       return {
         addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
         groups: [{ value: NEW_THREAD_IN_GROUP, label: resolve(msg("Projects")), items: [] }],
+        ...(intent.environmentId === undefined
+          ? {}
+          : { sidebarPickerEnvironmentId: intent.environmentId }),
       };
     case "change-theme":
       return {
@@ -471,6 +476,7 @@ function OpenCommandPaletteDialog(props: {
       : createCommandPaletteSearchState(initialSearch.query);
   });
   const { query, views: viewStack } = searchState;
+  const sidebarPickerEnvironmentId = viewStack[0]?.view.sidebarPickerEnvironmentId ?? null;
   const setQuery = (query: string) => dispatchSearch({ type: "query", query });
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
@@ -619,8 +625,13 @@ function OpenCommandPaletteDialog(props: {
     handleNewThread,
   });
   const projectPickerEntries = buildSidebarProjectPickerEntries({
-    groups: pickableProjectGroups(projectGroups),
+    groups:
+      sidebarPickerEnvironmentId === null ||
+      environments.some((environment) => environment.environmentId === sidebarPickerEnvironmentId)
+        ? pickableProjectGroups(projectGroups)
+        : [],
     preferredProjectRef: contextualProjectRef,
+    ...(sidebarPickerEnvironmentId === null ? {} : { environmentId: sidebarPickerEnvironmentId }),
   });
   const pickerProjects = projectPickerEntries.map(({ group, targetProject }) => ({
     ...targetProject,
@@ -634,9 +645,12 @@ function OpenCommandPaletteDialog(props: {
   );
   const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
   // A row's target record can change when another machine's copy loads, so the kept
-  // order follows the project group instead.
-  const rowOrderKey = (prefix: string) => (item: CommandPaletteActionItem) =>
-    projectGroupByTargetKey.get(item.value.slice(prefix.length + 1))?.projectKey ?? item.value;
+  // order follows the project group and holds separately for each machine scope.
+  const rowOrderKey = (prefix: string) => (item: CommandPaletteActionItem) => {
+    const key =
+      projectGroupByTargetKey.get(item.value.slice(prefix.length + 1))?.projectKey ?? item.value;
+    return JSON.stringify([sidebarPickerEnvironmentId, key]);
+  };
   const projectPin = (project: CommandPaletteProject) => {
     const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
     return group && canPinProjectGroup(group)
@@ -736,7 +750,10 @@ function OpenCommandPaletteDialog(props: {
         )
       : "";
   const canBrowsePaths =
-    browseEnvironmentId !== null && !isRemoteProjectRepositoryStep && newProjectFlow === null;
+    sidebarPickerEnvironmentId === null &&
+    browseEnvironmentId !== null &&
+    !isRemoteProjectRepositoryStep &&
+    newProjectFlow === null;
   const browsePath = getFilesystemBrowsePath(query, browseEnvironmentPlatform, canBrowsePaths);
   const isBrowsing = browsePath.isBrowsing;
   const browseDirectoryPath = browsePath.directoryPath;
@@ -765,7 +782,12 @@ function OpenCommandPaletteDialog(props: {
   const currentProjectEnvironmentId =
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
-  const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
+  const scratchTargetEnvironmentId =
+    sidebarPickerEnvironmentId === null
+      ? scratchEnvironmentId(currentProjectEnvironmentId)
+      : scratchWorkspaceRootFor(sidebarPickerEnvironmentId) === null
+        ? null
+        : sidebarPickerEnvironmentId;
   const supportsTriage = (environmentId: EnvironmentId | null) =>
     environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
       ?.environment.capabilities.triage === true;
@@ -938,6 +960,18 @@ function OpenCommandPaletteDialog(props: {
         locationByEnvironmentId: projectEnvironmentLocationById,
         pin: projectPin,
         runProject: async (project) => {
+          if (sidebarPickerEnvironmentId !== null) {
+            const ref = scopeProjectRef(sidebarPickerEnvironmentId, project.id);
+            const checkout = readProject(ref);
+            if (
+              checkout &&
+              isPickableProjectMember(checkout) &&
+              readEnvironment(sidebarPickerEnvironmentId)
+            ) {
+              await handleNewThread(ref, { environmentSelection: "manual" });
+            }
+            return;
+          }
           const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
           const contextualProjectIsEligible =
             contextualProjectRef !== null &&
@@ -975,7 +1009,17 @@ function OpenCommandPaletteDialog(props: {
           title: gt("No project"),
           icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
           shortcutCommand: "chat.newWithoutProject" as const,
-          run: () => startScratchThread(scratchTargetEnvironmentId),
+          run: async () => {
+            if (sidebarPickerEnvironmentId === null) {
+              await startScratchThread(scratchTargetEnvironmentId);
+            } else if (
+              readEnvironment(sidebarPickerEnvironmentId)?.connection.phase === "connected"
+            ) {
+              await startScratchThread(sidebarPickerEnvironmentId, {
+                environmentSelection: "manual",
+              });
+            }
+          },
         },
         ...projectItems.slice(noProjectIndex),
       ];
@@ -1899,6 +1943,11 @@ function OpenCommandPaletteDialog(props: {
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems }, messages);
   const sourceSelectionViewValue =
     addProjectEnvironmentId === null ? null : `sources:${addProjectEnvironmentId}`;
+  // An unscoped picker can offer to add a project when it has no targets.
+  const newThreadPickerItems =
+    projectThreadItems.length === 0 && sidebarPickerEnvironmentId === null
+      ? [addProjectAction]
+      : projectThreadItems;
   const activeGroups =
     addProjectEnvironmentId !== null &&
     currentView !== null &&
@@ -1910,14 +1959,9 @@ function OpenCommandPaletteDialog(props: {
       : currentView?.groups[0]?.value === ADD_PROJECT_ENTRY_GROUP
         ? addProjectEntryGroups()
         : currentView?.groups[0]?.value === NEW_THREAD_IN_GROUP
-          ? [
-              {
-                value: NEW_THREAD_IN_GROUP,
-                label: gt("Projects"),
-                // Every project archived and no "No project" home leaves only adding one.
-                items: projectThreadItems.length > 0 ? projectThreadItems : [addProjectAction],
-              },
-            ]
+          ? newThreadPickerItems.length > 0
+            ? [{ value: NEW_THREAD_IN_GROUP, label: gt("Projects"), items: newThreadPickerItems }]
+            : []
           : currentView?.groups[0]?.value.startsWith(PORT_FORWARD_GROUP_PREFIX) && portForwardItem
             ? portForwardItem.groups
             : currentView?.groups[0]?.value === "themes"
@@ -1933,7 +1977,7 @@ function OpenCommandPaletteDialog(props: {
       activeGroups,
       query: deferredQuery,
       isInSubmenu: currentView !== null,
-      ...(deferredQuery.trim().length > 0
+      ...(sidebarPickerEnvironmentId === null && deferredQuery.trim().length > 0
         ? {
             allOptions: {
               rootGroups,
@@ -3200,28 +3244,30 @@ function OpenCommandPaletteDialog(props: {
           isActionsOnly={isActionsOnly}
           keybindings={keybindings}
           onExecuteItem={executeItem}
-          {...(addProjectCloneFlow?.step === "repository"
-            ? {
-                emptyStateMessage:
-                  addProjectCloneFlow.source === "url"
-                    ? gt("Enter a Git clone URL and press Enter to continue.")
-                    : gt("Enter a repository path and press Enter to look it up."),
-              }
-            : addProjectCloneFlow?.step === "confirm"
-              ? { emptyStateMessage: gt("Choose a destination path and press Enter to clone.") }
-              : relativePathNeedsActiveProject
-                ? { emptyStateMessage: gt("Relative paths require an active project.") }
-                : willCreateProjectPath
-                  ? {
-                      emptyStateMessage: gt(
-                        "Press Enter to create this folder and add it as a project.",
-                      ),
-                    }
-                  : isThreadSearchPending
-                    ? { emptyStateMessage: gt("Searching thread messages…") }
-                    : isThreadSearchFailed
-                      ? { emptyStateMessage: gt("Couldn't search thread messages.") }
-                      : {})}
+          {...(sidebarPickerEnvironmentId !== null
+            ? { emptyStateMessage: gt("No matching projects.") }
+            : addProjectCloneFlow?.step === "repository"
+              ? {
+                  emptyStateMessage:
+                    addProjectCloneFlow.source === "url"
+                      ? gt("Enter a Git clone URL and press Enter to continue.")
+                      : gt("Enter a repository path and press Enter to look it up."),
+                }
+              : addProjectCloneFlow?.step === "confirm"
+                ? { emptyStateMessage: gt("Choose a destination path and press Enter to clone.") }
+                : relativePathNeedsActiveProject
+                  ? { emptyStateMessage: gt("Relative paths require an active project.") }
+                  : willCreateProjectPath
+                    ? {
+                        emptyStateMessage: gt(
+                          "Press Enter to create this folder and add it as a project.",
+                        ),
+                      }
+                    : isThreadSearchPending
+                      ? { emptyStateMessage: gt("Searching thread messages…") }
+                      : isThreadSearchFailed
+                        ? { emptyStateMessage: gt("Couldn't search thread messages.") }
+                        : {})}
         />
       </CommandPaletteThreadQueryContext>
     </CommandPaletteContent>

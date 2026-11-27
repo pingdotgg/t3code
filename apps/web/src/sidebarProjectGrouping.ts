@@ -220,10 +220,15 @@ export function buildSidebarProjectSnapshots(
 export function buildSidebarProjectPickerEntries(input: {
   groups: ReadonlyArray<SidebarProjectSnapshot>;
   preferredProjectRef: ScopedProjectRef | null;
+  environmentId?: EnvironmentId;
 }) {
   const preferredProjectRef = input.preferredProjectRef;
   const entries = input.groups.flatMap((group): SidebarProjectPickerEntry[] => {
-    const members = group.memberProjects.filter(isPickableProjectMember);
+    const members = group.memberProjects.filter(
+      (project) =>
+        (input.environmentId === undefined || project.environmentId === input.environmentId) &&
+        isPickableProjectMember(project),
+    );
     const isPreferred = preferredProjectRef
       ? group.memberProjectRefs.some(
           (projectRef) =>

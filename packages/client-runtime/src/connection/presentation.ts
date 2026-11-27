@@ -1,4 +1,5 @@
-import type { ServerConfig } from "@t3tools/contracts";
+import type { DesktopSshEnvironmentTarget, ServerConfig } from "@t3tools/contracts";
+import { formatHostForUrl } from "@t3tools/shared/hostClassification";
 import * as Option from "effect/Option";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -185,6 +186,20 @@ function mcpUrlFromBase(httpBaseUrl: string): string | null {
   return url.toString();
 }
 
+export function connectionDisplayAddress(displayUrl: string): string {
+  try {
+    return new URL(displayUrl).host || displayUrl;
+  } catch {
+    return displayUrl;
+  }
+}
+
+export function formatDesktopSshTarget(target: DesktopSshEnvironmentTarget): string {
+  const host = formatHostForUrl(target.hostname);
+  const authority = target.username ? `${target.username}@${host}` : host;
+  return target.port ? `${authority}:${target.port}` : authority;
+}
+
 export function connectionCatalogDisplayUrl(entry: ConnectionCatalogEntry): string | null {
   switch (entry.target._tag) {
     case "PrimaryConnectionTarget":
@@ -197,7 +212,7 @@ export function connectionCatalogDisplayUrl(entry: ConnectionCatalogEntry): stri
         : null;
     case "SshConnectionTarget":
       return Option.isSome(entry.profile) && entry.profile.value._tag === "SshConnectionProfile"
-        ? `${entry.profile.value.target.username}@${entry.profile.value.target.hostname}`
+        ? formatDesktopSshTarget(entry.profile.value.target)
         : null;
   }
 }

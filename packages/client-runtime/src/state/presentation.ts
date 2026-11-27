@@ -252,16 +252,16 @@ export function createEnvironmentSummaryAtoms(input: {
     const next = [...get(input.catalogValueAtom).entries].map(([environmentId, entry]) => ({
       environmentId,
       label: entry.target.label,
+      displayUrl: connectionCatalogDisplayUrl(entry),
     }));
-    const previous = Option.getOrNull(
-      get.self<ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>>(),
-    );
+    const previous = Option.getOrNull(get.self<ReadonlyArray<Readonly<(typeof next)[number]>>>());
     return previous !== null &&
       previous.length === next.length &&
       next.every(
         (value, index) =>
           value.environmentId === previous[index]?.environmentId &&
-          value.label === previous[index]?.label,
+          value.label === previous[index]?.label &&
+          value.displayUrl === previous[index]?.displayUrl,
       )
       ? previous
       : next;

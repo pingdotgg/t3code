@@ -1,6 +1,10 @@
 import appCss from "../index.css?inline";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import * as shelfHooks from "../state/olderSettledShelf";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -12,9 +16,16 @@ import {
   ThreadId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -24,13 +35,16 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import * as entities from "../state/entities";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
+import * as environments from "../state/environments";
 import { useConnectedEnvironmentIds, usePrimaryEnvironmentId } from "../state/environments";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
+import { useUiStateStore } from "../uiStateStore";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
@@ -136,9 +150,12 @@ describe("sidebar header new thread", () => {
 
 // regression: #41549 a grouped project's folder New thread went to the primary copy
 describe("sidebar project folder new thread", () => {
-  it("starts in the copy of the viewed thread, as the new-thread shortcut does", async () => {
+  it.each(["viewed", "selected", "picker"] as const)("uses the %s target", async (target) => {
     using stack = new DisposableStack();
     const previousSettings = getClientSettings();
+    const previousUi = useUiStateStore.getState();
+    stack.defer(() => useUiStateStore.setState(previousUi, true));
+    previousUi.resetSidebarScope();
     stack.defer(() => __setClientSettingsForTests(previousSettings));
     __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled: true });
     const primary = EnvironmentId.make("local");
@@ -158,6 +175,10 @@ describe("sidebar project folder new thread", () => {
       environmentId: dev1,
       repositoryIdentity,
     };
+    using _identities = vi.spyOn(environments, "useEnvironmentIdentities").mockReturnValue([
+      { environmentId: primary, label: "Local", displayUrl: null },
+      { environmentId: dev1, label: "Development", displayUrl: null },
+    ]);
     vi.mocked(usePrimaryEnvironmentId).mockReturnValue(primary);
     vi.mocked(useConnectedEnvironmentIds).mockReturnValue([primary, dev1]);
     vi.mocked(useProjects).mockReturnValue([primaryCopy, dev1Copy]);
@@ -167,14 +188,18 @@ describe("sidebar project folder new thread", () => {
       projectId: dev1Copy.id,
       title: "dev1 work",
     });
-    vi.mocked(useQuietThreadShells).mockReturnValue([dev1Thread]);
-    const threadRef = scopeThreadRef(dev1, dev1Thread.id);
+    const viewed =
+      target === "viewed"
+        ? dev1Thread
+        : { ...dev1Thread, environmentId: primary, projectId: primaryCopy.id };
+    vi.mocked(useQuietThreadShells).mockReturnValue([viewed]);
+    const threadRef = scopeThreadRef(viewed.environmentId, viewed.id);
     vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef });
     const dev1ProjectRef = scopeProjectRef(dev1, dev1Copy.id);
     const startThread = vi.fn().mockResolvedValue(null);
     vi.mocked(useHandleNewThread).mockReturnValue({
       activeDraftThread: null,
-      activeThread: dev1Thread,
+      activeThread: viewed,
       defaultProjectRef: dev1ProjectRef,
       defaultProjectFallbackReady: true,
       handleNewThread: startThread,
@@ -184,12 +209,260 @@ describe("sidebar project folder new thread", () => {
 
     await using screen = await render(
       <SidebarProvider>
-        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+        <Sidebar routeReveal={{ observedKey: scopedThreadKey(threadRef), pendingKey: null }} />
       </SidebarProvider>,
     );
+    if (target !== "viewed") {
+      await userEvent.click(screen.getByRole("combobox", { name: "Projects and machines" }));
+      await userEvent.click(page.getByRole("option", { name: "Development", exact: true }));
+      expect(useUiStateStore.getState().sidebarEnvironmentScopeId).toBe(dev1);
+      await userEvent.click(screen.getByRole("combobox", { name: "Machine: Development" }));
+      await userEvent.click(page.getByRole("option", { name: /^acme\/demo-repo/ }));
+    }
+    if (target === "picker") {
+      vi.mocked(openCommandPalette).mockClear();
+      await userEvent.click(screen.getByRole("button", { name: "New thread", exact: true }));
+      expect(openCommandPalette).toHaveBeenCalledExactlyOnceWith({
+        open: "new-thread-in",
+        environmentId: dev1,
+      });
+      expect(startThread).not.toHaveBeenCalled();
+      return;
+    }
     await userEvent.click(screen.getByRole("button", { name: "New thread in acme/demo-repo" }));
 
-    expect(startThread).toHaveBeenCalledExactlyOnceWith(dev1ProjectRef);
+    if (target === "selected") {
+      expect(startThread).toHaveBeenCalledExactlyOnceWith(dev1ProjectRef, {
+        environmentSelection: "manual",
+      });
+    } else {
+      expect(startThread).toHaveBeenCalledExactlyOnceWith(dev1ProjectRef, {
+        environmentSelection: "auto",
+      });
+    }
+    if (target === "selected") {
+      const show = vi.fn().mockResolvedValue("copy-path");
+      vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+      stack.defer(() => vi.mocked(readLocalApi).mockReset());
+      using writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+      await userEvent.click(screen.getByRole("button", { name: "acme/demo-repo" }), {
+        button: "right",
+      });
+      await vi.waitFor(() =>
+        expect(writeText).toHaveBeenCalledExactlyOnceWith(dev1Copy.workspaceRoot),
+      );
+
+      await userEvent.click(screen.getByRole("combobox", { name: /Machine: Development/ }));
+      await userEvent.click(page.getByRole("option", { name: "All machines", exact: true }));
+      expect(useUiStateStore.getState().sidebarEnvironmentScopeId).toBeNull();
+      await userEvent.click(screen.getByRole("button", { name: "New thread in acme/demo-repo" }));
+      expect(startThread).toHaveBeenNthCalledWith(2, scopeProjectRef(primary, primaryCopy.id), {
+        environmentSelection: "auto",
+      });
+    }
+  });
+});
+
+describe("sidebar machine scope", () => {
+  it("reveals an in-place promoted thread when it is reopened after visiting Issues", async () => {
+    using stack = new DisposableStack();
+    const ui = useUiStateStore.getState();
+    const drafts = useComposerDraftStore.getState();
+    stack.defer(() => {
+      useUiStateStore.setState(ui, true);
+      useComposerDraftStore.setState(drafts, true);
+    });
+    ui.resetSidebarScope();
+    ui.setSidebarEnvironmentScopeId(EnvironmentId.make("local"));
+    const remote = { ...project("remote-project"), environmentId: EnvironmentId.make("remote") };
+    const thread = makeThreadFixture({
+      environmentId: remote.environmentId,
+      projectId: remote.id,
+      id: ThreadId.make("promoted-thread"),
+      title: "Promoted on remote",
+    });
+    const draftId = DraftId.make("promoting-sidebar-draft");
+    const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+    drafts.setProjectDraftThreadId(scopeProjectRef(remote.environmentId, remote.id), draftId, {
+      threadId: thread.id,
+      createdAt: thread.createdAt,
+    });
+    vi.mocked(useThreadRouteTarget).mockRestore();
+    vi.mocked(useProjects).mockReturnValue([remote]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
+    const reveal = { observedKey: null, pendingKey: null };
+    const root = createRootRoute({
+      component: () => (
+        <SidebarProvider>
+          <Sidebar routeReveal={reveal} />
+        </SidebarProvider>
+      ),
+    });
+    const router = createRouter({
+      routeTree: root.addChildren([
+        createRoute({ getParentRoute: () => root, path: "draft/$draftId" }),
+        createRoute({ getParentRoute: () => root, path: "$environmentId/$threadId" }),
+        createRoute({ getParentRoute: () => root, path: "issues" }),
+        createRoute({ getParentRoute: () => root, path: "settings/general" }),
+        createRoute({ getParentRoute: () => root, path: "usage" }),
+      ]),
+      history: createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }),
+    });
+    await router.load();
+    // Exercise the actual route matches while the sidebar stays mounted.
+    await using screen = await render(<RouterProvider router={router} />, { router: false });
+    await act(() => drafts.markDraftThreadPromoting(draftId, threadRef));
+    await act(() => drafts.finalizePromotedDraftThread(draftId));
+    const threadPath = `/${thread.environmentId}/${thread.id}`;
+    await act(() => router.navigate({ href: threadPath, replace: true }));
+    await act(() => router.navigate({ to: "/settings/general" }));
+    await act(() => router.navigate({ to: "/usage" }));
+    await act(() => router.navigate({ href: threadPath }));
+    expect(useUiStateStore.getState().sidebarEnvironmentScopeId).toBe("local");
+
+    await act(() => router.navigate({ href: "/issues" }));
+    expect(useUiStateStore.getState().sidebarEnvironmentScopeId).toBe("local");
+    await act(() => router.navigate({ href: threadPath }));
+
+    await expect.element(screen.getByText("Promoted on remote", { exact: true })).toBeVisible();
+    expect(useUiStateStore.getState().sidebarEnvironmentScopeId).toBeNull();
+  });
+
+  it("selects a same-named machine with the keyboard and retains its scope while unavailable", async () => {
+    const primary = EnvironmentId.make("local");
+    const remote = EnvironmentId.make("dev1");
+    const localCopy = project("demo");
+    const remoteCopy = { ...localCopy, environmentId: remote, workspaceRoot: "/remote/demo" };
+    const unrelated = project("unrelated");
+    const localThread = makeThreadFixture({
+      environmentId: primary,
+      id: ThreadId.make("test-local"),
+      projectId: localCopy.id,
+      title: "Demo on local",
+    });
+    const remoteThread = makeThreadFixture({
+      environmentId: remote,
+      id: ThreadId.make("test-remote"),
+      projectId: remoteCopy.id,
+      title: "Demo on remote",
+    });
+    const identities = [
+      { environmentId: primary, label: "Workstation", displayUrl: null },
+      { environmentId: remote, label: "Workstation", displayUrl: "https://dev1.example.test:8443" },
+    ];
+    using stack = new DisposableStack();
+    const settings = getClientSettings();
+    const ui = useUiStateStore.getState();
+    const drafts = useComposerDraftStore.getState();
+    stack.defer(() => {
+      __setClientSettingsForTests(settings);
+      useUiStateStore.setState(ui, true);
+      useComposerDraftStore.setState(drafts, true);
+    });
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    ui.resetSidebarScope();
+    for (const copy of [localCopy, remoteCopy]) {
+      const draftId = DraftId.make(`demo-draft-${copy.environmentId}`);
+      drafts.setProjectDraftThreadId(scopeProjectRef(copy.environmentId, copy.id), draftId, {
+        threadId: ThreadId.make(`demo-draft-thread-${copy.environmentId}`),
+        createdAt: "2026-01-02T00:00:00.000Z",
+      });
+      drafts.setPrompt(draftId, `Draft on ${copy.environmentId}`);
+    }
+    using identity = vi.spyOn(environments, "useEnvironmentIdentities").mockReturnValue(identities);
+    using connections = vi
+      .spyOn(environments, "useConnectedEnvironmentIds")
+      .mockReturnValue([primary, remote]);
+    vi.mocked(useProjects).mockReturnValue([localCopy, remoteCopy, unrelated]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([localThread, remoteThread]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: scopeProjectRef(primary, localCopy.id),
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn(),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    const serverConfig = {
+      environment: { capabilities: {} },
+      scratchWorkspaceRoot: null,
+      shellThreadFamilies: false,
+    } as unknown as EnvironmentServerConfig;
+    using _serverConfigs = vi.spyOn(entities, "useServerConfigs").mockReturnValue(
+      new Map([
+        [primary, serverConfig],
+        [remote, serverConfig],
+      ]),
+    );
+    const shelf = vi.mocked(shelfHooks.useOlderSettledShelf);
+    const reveal = { observedKey: null, pendingKey: null };
+    const sidebar = () => (
+      <SidebarProvider>
+        <Sidebar routeReveal={reveal} />
+      </SidebarProvider>
+    );
+    await using screen = await render(sidebar());
+
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Projects and machines", exact: true }),
+    );
+    const pickerSearch = page.getByRole("combobox", { name: "Search projects or machines" });
+    await userEvent.fill(pickerSearch, "Workstation");
+    const machines = page.getByRole("group", { name: "Machines" });
+    const localMachine = machines.getByRole("option", {
+      name: "Workstation (#local)",
+      exact: true,
+    });
+    const remoteMachine = machines.getByRole("option", {
+      name: "Workstation (dev1.example.test:8443)",
+      exact: true,
+    });
+    await expect.element(localMachine).toBeVisible();
+    await expect.element(remoteMachine).toBeVisible();
+    await userEvent.fill(pickerSearch, "dev1.example.test");
+    await expect.element(localMachine).not.toBeInTheDocument();
+    await expect.element(remoteMachine).toBeVisible();
+    await userEvent.keyboard("{Enter}");
+    expect(useUiStateStore.getState().sidebarEnvironmentScopeId).toBe(remote);
+    expect(shelf.mock.lastCall?.[0].scopes).toEqual([{ environmentId: remote, projectIds: null }]);
+    await expect.element(screen.getByText("Demo on remote", { exact: true })).toBeVisible();
+    await expect
+      .element(screen.getByText("Demo on local", { exact: true }))
+      .not.toBeInTheDocument();
+    await expect.element(screen.getByText("Draft on dev1", { exact: true })).toBeVisible();
+    await expect
+      .element(screen.getByText("Draft on local", { exact: true }))
+      .not.toBeInTheDocument();
+
+    const threadSearch = screen.getByRole("combobox", { name: "Search threads" });
+    await userEvent.fill(threadSearch, "Demo");
+    await expect.element(screen.getByRole("option", { name: /Demo on remote/ })).toBeVisible();
+    await expect
+      .element(screen.getByRole("option", { name: /Demo on local/ }))
+      .not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Machine: Workstation (dev1.example.test:8443)" }),
+    );
+    await userEvent.click(page.getByRole("option", { name: "unrelated", exact: true }));
+    await expect.element(screen.getByText("No threads match these filters")).toBeVisible();
+    expect(shelf.mock.lastCall?.[0].scopes).toEqual([]);
+
+    connections.mockReturnValue([primary]);
+    identity.mockReturnValue([identities[0]!]);
+    vi.mocked(useProjects).mockReturnValue([localCopy, unrelated]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([localThread]);
+    await screen.rerender(sidebar());
+    await expect
+      .element(screen.getByRole("combobox", { name: /Machine: Unavailable machine/ }))
+      .toBeVisible();
+    await expect.element(screen.getByText("The selected machine is unavailable")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Show all machines" }));
+    expect(useUiStateStore.getState().sidebarEnvironmentScopeId).toBeNull();
+    expect(useUiStateStore.getState().sidebarProjectScopeKeys).toHaveLength(1);
   });
 });
 

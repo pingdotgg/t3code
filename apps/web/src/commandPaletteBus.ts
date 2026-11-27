@@ -10,6 +10,8 @@ export interface CommandPaletteLinkedThreads {
 
 export interface CommandPaletteOpenDetail {
   readonly open?: "add-project" | "new-thread-in";
+  /** With new-thread-in: the machine chosen in the sidebar. */
+  readonly environmentId?: EnvironmentId;
   /** With add-project: the draft the new project is picked for. */
   readonly draftId?: DraftId | null;
   readonly query?: string;
@@ -21,7 +23,10 @@ export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void 
   // store, it would pop a stale palette once the app shell mounts.
   if (!isCommandPaletteMounted()) return;
   if (detail.open === "new-thread-in") {
-    dispatchCommandPalette({ _tag: "OpenNewThreadIn" });
+    dispatchCommandPalette({
+      _tag: "OpenNewThreadIn",
+      ...(detail.environmentId === undefined ? {} : { environmentId: detail.environmentId }),
+    });
   } else if (detail.open === "add-project") {
     dispatchCommandPalette({
       _tag: "OpenAddProject",

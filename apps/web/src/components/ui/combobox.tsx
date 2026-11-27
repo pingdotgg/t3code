@@ -276,6 +276,18 @@ function ComboboxStatus({ className, ...props }: ComboboxPrimitive.Status.Props)
   );
 }
 
+const ComboboxGroup = ComboboxPrimitive.Group;
+const ComboboxCollection = ComboboxPrimitive.Collection;
+
+function ComboboxGroupLabel(props: ComboboxPrimitive.GroupLabel.Props) {
+  return (
+    <ComboboxPrimitive.GroupLabel
+      {...props}
+      className={cn("px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground", props.className)}
+    />
+  );
+}
+
 const useComboboxFilter = ComboboxPrimitive.useFilter;
 
 export {
@@ -287,6 +299,9 @@ export {
   ComboboxItem,
   ComboboxEmpty,
   ComboboxList,
+  ComboboxCollection,
+  ComboboxGroup,
+  ComboboxGroupLabel,
   ComboboxListVirtualized,
   ComboboxClear,
   ComboboxStatus,

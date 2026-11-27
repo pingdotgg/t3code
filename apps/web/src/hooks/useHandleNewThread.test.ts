@@ -291,6 +291,9 @@ describe.each([
     } as never);
 
     expect(testState.router.navigate).toHaveBeenCalledOnce();
+    expect(
+      testState.draftStore.setLogicalProjectDraftThreadId.mock.calls[0]?.[3],
+    ).not.toHaveProperty("environmentSelection");
     expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
       "remote-project",
       expect.anything(),
@@ -367,6 +370,22 @@ describe.each([
     expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalled();
   });
 
+  it("pins an explicitly selected machine before navigating", async () => {
+    testState.reset(draft);
+    const projectRef = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
+    const opened = await useNewThreadHandler()(projectRef, { environmentSelection: "manual" });
+
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      projectRef,
+      opened?.draftId,
+      expect.objectContaining({ environmentSelection: "manual", loadBalancedEnvironmentId: null }),
+    );
+    expect(
+      testState.draftStore.setLogicalProjectDraftThreadId.mock.invocationCallOrder[0],
+    ).toBeLessThan(testState.router.navigate.mock.invocationCallOrder[0] ?? 0);
+  });
+
   it("sets the prompt before the draft shows", async () => {
     testState.reset(draft);
     const opened = await useNewThreadHandler()(
@@ -385,16 +404,47 @@ describe.each([
 });
 
 describe("useNewThreadHandler", () => {
+  it("restores automatic routing when a folder action reuses its open empty draft", async () => {
+    testState.reset({
+      draftId: "draft-existing",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-existing",
+    });
+    const projectRef = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
+    const startThread = useNewThreadHandler();
+    const scoped = await startThread(projectRef, { environmentSelection: "manual" });
+    expect(scoped).toEqual({ draftId: "draft-existing", threadId: "thread-existing" });
+    testState.openEmptyDraft(scoped!.draftId);
+
+    const automatic = await startThread(projectRef, { environmentSelection: "auto" });
+
+    expect(automatic).toEqual(scoped);
+    expect(testState.router.navigate).toHaveBeenCalledOnce();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenLastCalledWith(
+      "remote-project",
+      projectRef,
+      scoped!.draftId,
+      expect.objectContaining({ environmentSelection: "auto", loadBalancedEnvironmentId: null }),
+    );
+  });
+
   it("seeds the prompt into the empty draft that is already open", async () => {
     testState.reset(null);
     testState.openEmptyDraft("draft-open");
 
     const opened = await useNewThreadHandler()(
       { environmentId: "environment-ssh", projectId: "project-remote" } as never,
-      { prompt: "Read the playbook. " },
+      { prompt: "Read the playbook. ", environmentSelection: "manual" },
     );
 
     expect(opened?.draftId).toBe("draft-open");
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      expect.anything(),
+      opened?.draftId,
+      expect.objectContaining({ environmentSelection: "manual", loadBalancedEnvironmentId: null }),
+    );
     expect(testState.draftStore.setPrompt).toHaveBeenCalledWith(
       "draft-open",
       "Read the playbook. ",

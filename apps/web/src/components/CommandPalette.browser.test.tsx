@@ -1,19 +1,26 @@
+import { BearerConnectionTarget } from "@t3tools/client-runtime/connection";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
 import { dispatchCommandPalette, useCommandPaletteStore } from "../commandPaletteStore";
+import appCss from "../index.css?inline";
 import { LAST_USED_PROJECT_STORAGE_KEY } from "../hooks/useHandleNewThread";
 import { removeLocalStorageItem } from "../hooks/useLocalStorage";
+import type { EnvironmentPresentation } from "../state/environments";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
 
 const entities = vi.hoisted(() => ({
   projects: [] as ReadonlyArray<Project>,
+  environments: undefined as EnvironmentPresentation[] | undefined,
+  machineRemoved: false,
   threads: [] as ReadonlyArray<Thread>,
   activeThread: undefined as Thread | undefined,
   delegatedUnderParent: new Set<string>() as ReadonlySet<string>,
@@ -44,9 +51,27 @@ vi.mock("../hooks/useHandleNewThread", async (original) => {
     }),
   };
 });
+vi.mock("../state/environments", async (original) => {
+  const actual = await original<typeof import("../state/environments")>();
+  return {
+    ...actual,
+    useEnvironments: () => {
+      const result = actual.useEnvironments();
+      return { ...result, environments: entities.environments ?? result.environments };
+    },
+    readEnvironment: (id: EnvironmentId) =>
+      entities.machineRemoved
+        ? null
+        : (entities.environments?.find((environment) => environment.environmentId === id) ?? null),
+  };
+});
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
   useProjects: () => entities.projects,
+  readProject: (ref: { environmentId: EnvironmentId; projectId: ProjectId }) =>
+    entities.projects.find(
+      (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
+    ) ?? null,
   useVisibleThreadShells: () => entities.threads,
   useDelegatedUnderParent: () => entities.delegatedUnderParent,
 }));
@@ -57,6 +82,8 @@ function setup(state: Partial<typeof entities> = {}) {
   removeLocalStorageItem(LAST_USED_PROJECT_STORAGE_KEY);
   useCommandPaletteStore.setState(useCommandPaletteStore.getInitialState(), true);
   entities.projects = state.projects ?? [];
+  entities.environments = state.environments;
+  entities.machineRemoved = false;
   entities.threads = state.threads ?? [];
   entities.activeThread = state.activeThread;
   entities.delegatedUnderParent = state.delegatedUnderParent ?? new Set();
@@ -287,6 +314,131 @@ describe("CommandPalette open intents", () => {
         environmentId: open.environmentId,
         projectId: open.id,
       }),
+    );
+  });
+
+  it("keeps the sidebar picker on its selected machine even when the viewed checkout is local", async () => {
+    const local = {
+      ...makeProject("Shared"),
+      repositoryIdentity: {
+        canonicalKey: "github.com/example/shared",
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: "https://github.com/example/shared.git",
+        },
+      },
+    };
+    const remote = {
+      ...local,
+      id: ProjectId.make("shared-remote"),
+      environmentId: EnvironmentId.make("remote"),
+    };
+    const offlineMachine: EnvironmentPresentation = {
+      environmentId: remote.environmentId,
+      label: "Remote",
+      displayUrl: null,
+      relayManaged: false,
+      connection: { phase: "offline", error: null, traceId: null },
+      entry: {
+        target: new BearerConnectionTarget({
+          environmentId: remote.environmentId,
+          label: "Remote",
+          connectionId: "remote",
+        }),
+        profile: Option.none(),
+        enabled: true,
+      },
+      serverConfig: null,
+      refusedRouteIds: [],
+    };
+    const localMachine: EnvironmentPresentation = {
+      ...offlineMachine,
+      environmentId: local.environmentId,
+      label: "Local",
+      connection: { phase: "connected", error: null, traceId: null },
+      entry: {
+        ...offlineMachine.entry,
+        target: new BearerConnectionTarget({
+          environmentId: local.environmentId,
+          label: "Local",
+          connectionId: "local",
+        }),
+      },
+      serverConfig: {
+        environment: { platform: { os: "linux" }, capabilities: {} },
+        settings: {},
+        scratchWorkspaceRoot: "/scratch",
+      } as unknown as EnvironmentPresentation["serverConfig"],
+    };
+    setup({
+      projects: [local, remote, makeProject("Local only")],
+      environments: [localMachine, offlineMachine],
+      activeThread: makeThreadFixture({
+        environmentId: local.environmentId,
+        projectId: local.id,
+      }),
+    });
+    await using _screen = await render(
+      <>
+        <style>{appCss}</style>
+        <CommandPalette>{null}</CommandPalette>
+      </>,
+    );
+
+    const openScoped = () =>
+      openCommandPalette({ open: "new-thread-in", environmentId: remote.environmentId });
+    openScoped();
+    const search = page.getByPlaceholder("Search...");
+    const shared = page.getByRole("option", { name: /Shared/i });
+    const localOnly = page.getByRole("option", { name: /^Local only/i });
+    const noProject = page.getByRole("option", { name: /^No project/ });
+    const palette = page.getByTestId("command-palette");
+    await expect.element(shared).toBeVisible();
+    await expect.element(localOnly).not.toBeInTheDocument();
+    await expect.element(noProject).not.toBeInTheDocument();
+    await userEvent.fill(search, "Local only");
+    await expect.element(page.getByText("No matching projects.")).toBeVisible();
+    await userEvent.fill(search, "");
+
+    await page.getByLabelText("Back", { exact: true }).click();
+    await page.getByRole("option", { name: /^New thread in\.\.\./ }).click();
+    await expect.element(localOnly).toBeVisible();
+    await expect.element(noProject).toBeVisible();
+
+    openScoped();
+    await expect.element(search).toHaveFocus();
+    await userEvent.keyboard("{Backspace}");
+    const rootSearch = page.getByPlaceholder("Search commands, projects, and threads...");
+    await userEvent.fill(rootSearch, "Local only");
+    await expect.element(localOnly).toBeVisible();
+    await userEvent.fill(rootSearch, "/work/");
+    await expect
+      .element(page.getByPlaceholder("Enter project path (e.g. ~/projects/my-app)"))
+      .toBeVisible();
+
+    openScoped();
+    await shared.click();
+    expect(entities.handleNewThread).toHaveBeenCalledExactlyOnceWith(
+      scopeProjectRef(remote.environmentId, remote.id),
+      { environmentSelection: "manual" },
+    );
+    await expect.element(palette).not.toBeInTheDocument();
+    openScoped();
+    await expect.element(shared).toBeVisible();
+    entities.machineRemoved = true;
+    await shared.click();
+    expect(entities.handleNewThread).toHaveBeenCalledOnce();
+
+    entities.environments = [];
+    openScoped();
+    await expect.element(page.getByText("No matching projects.")).toBeVisible();
+
+    openCommandPalette({ open: "new-thread-in" });
+    await expect.element(page.getByRole("option", { name: /Local only/i })).toBeVisible();
+    await shared.click();
+    expect(entities.handleNewThread).toHaveBeenLastCalledWith(
+      scopeProjectRef(local.environmentId, local.id),
     );
   });
 

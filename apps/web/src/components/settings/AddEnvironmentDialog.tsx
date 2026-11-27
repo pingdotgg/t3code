@@ -12,6 +12,7 @@ import {
 import {
   RelayConnectionRegistration,
   RelayConnectionTarget,
+  formatDesktopSshTarget,
 } from "@t3tools/client-runtime/connection";
 import {
   isAtomCommandInterrupted,
@@ -20,7 +21,6 @@ import {
 import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
-import { formatDesktopSshTarget } from "./EnvironmentRow";
 import { Input } from "../ui/input";
 import { CommandShortcut } from "../ui/command";
 import {

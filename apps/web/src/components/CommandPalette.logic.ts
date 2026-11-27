@@ -81,7 +81,8 @@ export function browseInputEndPaddingClass(input: {
 export type SearchOverlayMode = "command" | "files" | "content";
 
 export type CommandPaletteOpenIntent =
-  | { readonly kind: "new-thread-in" | "change-theme" }
+  | { readonly kind: "new-thread-in"; readonly environmentId?: EnvironmentId }
+  | { readonly kind: "change-theme" }
   | {
       readonly kind: "add-project";
       /** The draft a project is being picked for; one with user content moves to it. */
@@ -113,7 +114,7 @@ export type CommandPaletteUiAction =
       readonly linkedThreads?: CommandPaletteLinkedThreads;
     }
   | { readonly _tag: "OpenAddProject"; readonly draftId?: DraftId }
-  | { readonly _tag: "OpenNewThreadIn" }
+  | { readonly _tag: "OpenNewThreadIn"; readonly environmentId?: EnvironmentId }
   | { readonly _tag: "OpenChangeTheme" }
   | {
       readonly _tag: "OpenChildSearch";
@@ -172,7 +173,10 @@ export function reduceCommandPaletteUiState(
         ...(action.draftId ? { draftId: action.draftId } : {}),
       });
     case "OpenNewThreadIn":
-      return openWithIntent({ kind: "new-thread-in" });
+      return openWithIntent({
+        kind: "new-thread-in",
+        ...(action.environmentId === undefined ? {} : { environmentId: action.environmentId }),
+      });
     case "OpenChangeTheme":
       return openWithIntent({ kind: "change-theme" });
   }
@@ -255,6 +259,7 @@ export interface CommandPaletteView {
   readonly addonIcon: ReactNode;
   readonly groups: ReadonlyArray<CommandPaletteGroup>;
   readonly initialQuery?: string;
+  readonly sidebarPickerEnvironmentId?: EnvironmentId;
 }
 
 // Child search unmounts the palette; retain search data without its view closures.

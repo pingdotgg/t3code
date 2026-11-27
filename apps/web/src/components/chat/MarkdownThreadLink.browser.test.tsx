@@ -45,9 +45,9 @@ vi.mock(import("../../state/environments"), () => ({
   useEnvironments: (() => []) as never,
   usePrimaryEnvironment: (() => null) as never,
   useEnvironmentIdentities: () => [
-    { environmentId: EnvironmentId.make("environment"), label: "Here" },
-    { environmentId: EnvironmentId.make("remote"), label: "Remote" },
-    { environmentId: EnvironmentId.make("saved-vm"), label: "Saved VM" },
+    { environmentId: EnvironmentId.make("environment"), label: "Here", displayUrl: null },
+    { environmentId: EnvironmentId.make("remote"), label: "Remote", displayUrl: null },
+    { environmentId: EnvironmentId.make("saved-vm"), label: "Saved VM", displayUrl: null },
   ],
   useConnectedEnvironmentIds: () => state.connected as never,
 }));

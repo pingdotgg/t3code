@@ -3,8 +3,9 @@ import {
   connectionRouteId,
   connectionRouteLabelText,
   connectionRoutes,
+  formatDesktopSshTarget,
 } from "@t3tools/client-runtime/connection";
-import type { DesktopSshEnvironmentTarget, EnvironmentMachineKind } from "@t3tools/contracts";
+import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { msg, useMessages } from "gt-react";
 import type { ReactNode } from "react";
@@ -17,11 +18,6 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { m, type MessageResolver } from "../../i18n/messages";
 
 const T3_CONNECT_NAME = "T3 Connect";
-
-export function formatDesktopSshTarget(target: DesktopSshEnvironmentTarget): string {
-  const authority = target.username ? `${target.username}@${target.hostname}` : target.hostname;
-  return target.port ? `${authority}:${target.port}` : authority;
-}
 
 export function environmentTransportLabel(
   environment: EnvironmentPresentation,

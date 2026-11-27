@@ -211,7 +211,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       return null;
     const originalDraft = getDraftSession(draftId);
     const scope = mountedRoutingScope.current;
-    if (!originalDraft || !scope) return null;
+    if (!originalDraft || originalDraft.environmentSelection === "manual" || !scope) return null;
     const composerDraft = useComposerDraftStore.getState().getComposerDraft(draftId);
     const readCurrentRouting = () => {
       const current = readRouting();
@@ -316,7 +316,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     );
     if (!target?.projectId) return;
     const draft = getDraftSession(draftId);
-    if (!draft) return;
+    if (!draft || draft.environmentSelection === "manual") return;
     const projectRef = scopeProjectRef(target.environmentId, target.projectId);
     carryFanoutSelections(draft, target.environmentId);
     setDraftThreadContext(draftId, {

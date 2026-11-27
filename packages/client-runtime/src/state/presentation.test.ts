@@ -69,7 +69,9 @@ describe("environment summary subscriptions", () => {
       h.registry.set(h.catalog, { isReady: true, entries: new Map([[FIRST, entry(FIRST)]]) });
       expect(h.registry.get(h.pullRequestsSupportedAtom)).toBe(false);
       expect(h.registry.get(h.environmentIdsAtom)).toEqual([FIRST]);
-      expect(h.registry.get(h.identitiesAtom)).toEqual([{ environmentId: FIRST, label: "first" }]);
+      expect(h.registry.get(h.identitiesAtom)).toEqual([
+        { environmentId: FIRST, label: "first", displayUrl: "https://example.test" },
+      ]);
       h.registry.set(h.catalog, {
         isReady: true,
         entries: new Map([

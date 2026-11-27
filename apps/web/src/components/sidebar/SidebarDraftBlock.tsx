@@ -18,7 +18,11 @@ import { useShallow } from "zustand/react/shallow";
 import { terminalContextDisplayLabels } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
 import { useTerminalLabelsByThreadKey } from "~/state/terminalSessions";
-import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
+import {
+  matchesSidebarScope,
+  resolveSidebarRowAccessibility,
+  type SidebarScope,
+} from "../Sidebar.logic";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import {
   composerDraftHasUserContent,
@@ -221,7 +225,7 @@ function listedDraftComposer(draftId: string | null): ComposerThreadDraftState |
  * row it had on arrival (frozen content), so its row and jump number stay put.
  */
 export function useSidebarDrafts(
-  scopedProjectKeys: ReadonlySet<string> | null,
+  scope: SidebarScope | null,
   routeDraftId: string | null,
   terminalLabels: ReadonlyMap<string, string>,
 ): { draftIds: readonly DraftId[]; routeDraftComposer: ComposerThreadDraftState | null } {
@@ -239,12 +243,7 @@ export function useSidebarDrafts(
       const listed: [string, DraftSessionState][] = [];
       for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
         if (session.promotedTo != null) continue;
-        if (
-          scopedProjectKeys !== null &&
-          !scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
-        ) {
-          continue;
-        }
+        if (!matchesSidebarScope(session, scope)) continue;
         // Composer edits stay frozen while open; terminals come and go live.
         const isListed =
           draftTerminalLabel(session, terminalLabels) !== null ||

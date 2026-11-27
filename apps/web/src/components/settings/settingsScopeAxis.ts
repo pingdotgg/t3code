@@ -1,3 +1,4 @@
+import { connectionDisplayAddress } from "@t3tools/client-runtime/connection";
 import { fileDisplayName } from "@t3tools/shared/path";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
@@ -7,12 +8,9 @@ type ScopeCheckout = SidebarProjectSnapshot["memberProjects"][number];
 type ScopeEnvironment = Pick<EnvironmentPresentation, "environmentId" | "label" | "displayUrl">;
 
 export function settingsScopeEnvironmentAddress(environment: ScopeEnvironment) {
-  if (!environment.displayUrl) return environment.environmentId;
-  try {
-    return new URL(environment.displayUrl).host || environment.displayUrl;
-  } catch {
-    return environment.displayUrl;
-  }
+  return environment.displayUrl
+    ? connectionDisplayAddress(environment.displayUrl)
+    : environment.environmentId;
 }
 
 export function settingsScopeEnvironmentLabels(

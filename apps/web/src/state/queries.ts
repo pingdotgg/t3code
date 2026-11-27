@@ -141,16 +141,20 @@ export function useThreadSearch(
   const failed = settledQuery !== null && !result.isLoading && result.failed;
   // What fast environments returned shows without waiting for a slow one;
   // callers keep shown rows in place with `nextShownOrder`.
+  const scopeKey = searchKeyOf("");
   const ready =
     settledQuery !== null &&
     (!result.isLoading || result.matches.length > 0 || result.rows.length > 0)
-      ? { query: settledQuery, matches: result.matches }
+      ? { query: settledQuery, matches: result.matches, scopeKey }
       : null;
   // Kept from earlier renders: React's pattern for information from previous renders.
-  const [previous, setPrevious] = useState<SettledThreadSearch | null>(null);
-  if (ready !== null && previous?.matches !== ready.matches) setPrevious(ready);
+  const [previous, setPrevious] = useState<(SettledThreadSearch & { scopeKey: string }) | null>(
+    null,
+  );
+  const previousInScope = previous?.scopeKey === scopeKey ? previous : null;
+  if (ready !== null && previousInScope?.matches !== ready.matches) setPrevious(ready);
   const visible = canSearch
-    ? visibleThreadSearch(normalizedQuery, ready, previous)
+    ? visibleThreadSearch(normalizedQuery, ready, previousInScope)
     : { query: "", matches: EMPTY_THREAD_SEARCH_MATCHES };
   // The shown results' rows stay mounted until newer results replace them.
   const shownKey = visible.query === "" ? null : searchKeyOf(visible.query);
