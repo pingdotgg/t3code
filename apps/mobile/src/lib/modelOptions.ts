@@ -268,6 +268,9 @@ export function resolveSelectableModelSelection(
   );
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
+  if (isDriverDisallowed(config, driver)) {
+    return null;
+  }
   if (driver === "antigravity") {
     return isProjectDisabledOverride(config, selection.instanceId, projectId) ? null : selection;
   }

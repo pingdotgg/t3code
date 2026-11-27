@@ -920,5 +920,40 @@ describe("synchronized mobile model visibility", () => {
         detail: "Example Corp's policy does not allow the Claude provider. Choose another model.",
       });
     });
+
+    it("does not carry a disallowed driver's selection into a new task", () => {
+      const antigravity = {
+        instanceId: ProviderInstanceId.make("antigravity"),
+        model: "gemini-3-pro",
+      };
+      // The server lists a disallowed instance as an unavailable snapshot.
+      const withAntigravity = {
+        ...config,
+        providers: [
+          ...config.providers,
+          {
+            instanceId: "antigravity",
+            driver: "antigravity",
+            enabled: false,
+            installed: false,
+            availability: "unavailable",
+            auth: { status: "unknown" },
+            models: [],
+          },
+        ],
+      } as unknown as ServerConfig;
+
+      for (const selection of [disallowed, antigravity]) {
+        expect(resolveSelectableModelSelection(withAntigravity, selection, null)).toBeNull();
+        expect(resolveDefaultableModelSelection(withAntigravity, selection, null)).toBeNull();
+      }
+      expect(
+        resolveSelectableModelSelection(
+          withAntigravity,
+          { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+          null,
+        ),
+      ).toEqual({ instanceId: "codex", model: "gpt-5.6-sol" });
+    });
   });
 });
