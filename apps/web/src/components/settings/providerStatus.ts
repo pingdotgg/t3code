@@ -153,6 +153,8 @@ export function getProviderVersionAdvisoryPresentation(
   readonly updateCommand: string | null;
   readonly emphasis: "normal" | "strong";
   readonly targetVersion: string | null;
+  /** A failed check, not an available update: no action, and a warning rather than an update icon. */
+  readonly warning?: boolean;
 } | null {
   const latestIsIncompatible =
     compatibility?.latestVersionStatus === "broken" ||
@@ -183,13 +185,22 @@ export function getProviderVersionAdvisoryPresentation(
       targetVersion,
     };
   }
-  if (
-    !advisory ||
-    advisory.status === "current" ||
-    advisory.status === "unknown" ||
-    latestIsIncompatible
-  ) {
+  if (!advisory || advisory.status === "current" || latestIsIncompatible) {
     return null;
+  }
+  if (advisory.status === "unknown") {
+    // A check that ran and found nothing is not the same as one that never ran: say so,
+    // instead of letting a provider look up to date because its feed was unreachable.
+    return advisory.latestVersionCheckFailed === true
+      ? {
+          title: resolve(msg("Could not check for updates")),
+          detail: resolve(msg("Refresh provider status")),
+          updateCommand: null,
+          emphasis: "normal",
+          targetVersion: null,
+          warning: true,
+        }
+      : null;
   }
 
   const version = advisory.latestVersion;
