@@ -6,6 +6,7 @@ import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext, HiddenThreadContext } from "./backgroundThread";
 import {
+  draftRuntimeModeLimitsInstance,
   draftSupportedRuntimeModes,
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
@@ -15,7 +16,11 @@ import {
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
+import {
+  importPastedComposerText,
+  type PastedComposerClipboard,
+  readPastedComposerClipboard,
+} from "../composerInlineTokenPaste";
 import {
   questionAttachmentDraftId,
   trackOpenQuestionAttachmentDraft,
@@ -293,6 +298,11 @@ import {
 } from "./ComposerCommandMenuLayer";
 import { useRestingComposerControlsLayout } from "./useRestingComposerControlsLayout";
 import { useProviderWorkspaceSnapshotRefresh } from "./useProviderWorkspaceSnapshotRefresh";
+import {
+  RuntimeModeLimitsTargetContext,
+  runtimeModeLimitsTarget,
+  useProviderRuntimeModeLimits,
+} from "../../state/runtimeModeLimits";
 import { resolveComposerSendForPick, useComposerProviderModel } from "./useComposerProviderModel";
 import { useComposerImageGroups } from "./useComposerImageGroups";
 import { useComposerStash } from "./useComposerStash";
@@ -326,9 +336,12 @@ export interface ChatComposerHandle {
   hasPendingAttachments: () => boolean;
   insertTextAtEnd: (
     text: string,
-    options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
+    options?: { ensureLeadingBoundary?: boolean; clipboardPaste?: PastedComposerClipboard },
   ) => boolean;
-  pasteTextAtEnd: (text: string, options?: { bypassAutoAttachment?: boolean }) => boolean;
+  pasteTextAtEnd: (
+    clipboardData: DataTransfer,
+    options: { bypassAutoAttachment: boolean },
+  ) => boolean;
   citeAssistantText: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
@@ -1011,6 +1024,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Called before the derivation below: a hook between it and its uses stops React Compiler
   // from caching the mode options, and the footer then re-renders on every keystroke.
   const managedPolicy = useManagedPolicy(environmentId);
+  const runtimeModeLimitsFor = runtimeModeLimitsTarget(
+    environmentId,
+    draftRuntimeModeLimitsInstance(selectedProviderEntry?.instanceId, multipleModelSelections),
+    gitCwd,
+  );
+  const runtimeModeLimits = useProviderRuntimeModeLimits(runtimeModeLimitsFor);
   const { modes: compatibleRuntimeModes, mode: compatibleRuntimeMode } =
     resolveCompatibleRuntimeMode(
       runtimeMode,
@@ -1020,11 +1039,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         providerStatuses,
       ),
     );
-  // Modes above an administrator's ceiling stay listed, disabled with the reason.
+  // Modes above an administrator's ceiling, or that the provider cannot run in this folder,
+  // stay listed, disabled with the reason.
   const compatibleRuntimeModeOptions = resolveRuntimeModeOptions(
     compatibleRuntimeModes,
     managedPolicy,
     m,
+    runtimeModeLimits,
   );
   // A thread or draft already above the ceiling would be refused; offer the broadest mode left.
   const runtimeModeCeilingDenial = runtimeModeDenial(managedPolicy, compatibleRuntimeMode, m);
@@ -2732,62 +2753,64 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? 0
       : expandedControlsIconOnlyBlockCount;
   const composerControls = (
-    <ComposerControlsBar
-      environmentId={environmentId}
-      workspaceCwd={gitCwd}
-      routeKind={typeof composerDraftTarget === "string" ? "draft" : routeKind}
-      routeThreadRef={routeThreadRef}
-      draftId={typeof composerDraftTarget === "string" ? composerDraftTarget : draftId}
-      selectedProvider={selectedProvider}
-      selectedInstanceId={selectedInstanceId}
-      selectedModel={selectedModel}
-      selectedProviderModels={selectedProviderModels}
-      composerModelOptions={composerModelOptions}
-      reportedModelSelection={reportedModelSelection}
-      promptUltrathink={promptUltrathink}
-      onPromptEdit={editPromptFromTraitsStable}
-      compatibleRuntimeMode={compatibleRuntimeMode}
-      defaultRuntimeMode={props.defaultRuntimeMode}
-      compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
-      handleRuntimeModeChange={handleRuntimeModeChange}
-      composerControlsCollapsed={composerControlsCollapsed}
-      effortDisplay={settings.effortDisplay}
-      permissionsShownInStrip={props.permissionsShownInStrip}
-      composerControlsHidden={composerMenusClosed}
-      restingHiddenBlockCount={restingHiddenBlockCount}
-      iconOnlyBlockCount={iconOnlyBlockCount}
-      showProviderUnavailable={showProviderUnavailable}
-      providerSetupInstanceId={providerSetupInstanceId}
-      onOpenProviderSetup={onOpenProviderSetup}
-      providerCatalogPending={providerCatalogPending}
-      isSendBusy={isSendBusy}
-      multipleModelsEnabled={routeKind === "draft" && supportsMultipleModels}
-      multipleModelSelections={multipleModelSelections}
-      onMultipleModelSelectionsChange={handleMultipleModelSelectionsChangeStable}
-      selectedModelSelection={selectedModelSelection}
-      onProviderModelSelect={onProviderModelSelect}
-      // No cache to keep: a fresh session or a compaction comes first, or a queued edit owns the pick.
-      modelResetTarget={
-        freshSessionArmed ||
-        isEditingQueuedMessage ||
-        (props.resumeCompactionTokens !== null && !props.keepFullHistory)
-          ? null
-          : modelResetTarget
-      }
-      onModelSelectionReset={onModelSelectionReset}
-      activeThreadModelSelection={activeThreadModelSelection}
-      selectedModelForPickerWithCustomFallback={selectedModelForPickerWithCustomFallback}
-      lockedProvider={lockedProvider}
-      lockedContinuationGroupKey={lockedContinuationGroupKey}
-      providerInstanceEntries={providerInstanceEntries}
-      keybindings={keybindings}
-      modelOptionsByInstance={modelOptionsByInstance}
-      terminalOpen={terminalOpen}
-      modelPickerOpen={isComposerModelPickerOpen}
-      onModelPickerOpenChange={setIsComposerModelPickerOpen}
-      modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
-      getModelDisabledReason={getModelDisabledReason}
-    />
+    <RuntimeModeLimitsTargetContext value={runtimeModeLimitsFor}>
+      <ComposerControlsBar
+        environmentId={environmentId}
+        workspaceCwd={gitCwd}
+        routeKind={typeof composerDraftTarget === "string" ? "draft" : routeKind}
+        routeThreadRef={routeThreadRef}
+        draftId={typeof composerDraftTarget === "string" ? composerDraftTarget : draftId}
+        selectedProvider={selectedProvider}
+        selectedInstanceId={selectedInstanceId}
+        selectedModel={selectedModel}
+        selectedProviderModels={selectedProviderModels}
+        composerModelOptions={composerModelOptions}
+        reportedModelSelection={reportedModelSelection}
+        promptUltrathink={promptUltrathink}
+        onPromptEdit={editPromptFromTraitsStable}
+        compatibleRuntimeMode={compatibleRuntimeMode}
+        defaultRuntimeMode={props.defaultRuntimeMode}
+        compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
+        handleRuntimeModeChange={handleRuntimeModeChange}
+        composerControlsCollapsed={composerControlsCollapsed}
+        effortDisplay={settings.effortDisplay}
+        permissionsShownInStrip={props.permissionsShownInStrip}
+        composerControlsHidden={composerMenusClosed}
+        restingHiddenBlockCount={restingHiddenBlockCount}
+        iconOnlyBlockCount={iconOnlyBlockCount}
+        showProviderUnavailable={showProviderUnavailable}
+        providerSetupInstanceId={providerSetupInstanceId}
+        onOpenProviderSetup={onOpenProviderSetup}
+        providerCatalogPending={providerCatalogPending}
+        isSendBusy={isSendBusy}
+        multipleModelsEnabled={routeKind === "draft" && supportsMultipleModels}
+        multipleModelSelections={multipleModelSelections}
+        onMultipleModelSelectionsChange={handleMultipleModelSelectionsChangeStable}
+        selectedModelSelection={selectedModelSelection}
+        onProviderModelSelect={onProviderModelSelect}
+        // No cache to keep: a fresh session or a compaction comes first, or a queued edit owns the pick.
+        modelResetTarget={
+          freshSessionArmed ||
+          isEditingQueuedMessage ||
+          (props.resumeCompactionTokens !== null && !props.keepFullHistory)
+            ? null
+            : modelResetTarget
+        }
+        onModelSelectionReset={onModelSelectionReset}
+        activeThreadModelSelection={activeThreadModelSelection}
+        selectedModelForPickerWithCustomFallback={selectedModelForPickerWithCustomFallback}
+        lockedProvider={lockedProvider}
+        lockedContinuationGroupKey={lockedContinuationGroupKey}
+        providerInstanceEntries={providerInstanceEntries}
+        keybindings={keybindings}
+        modelOptionsByInstance={modelOptionsByInstance}
+        terminalOpen={terminalOpen}
+        modelPickerOpen={isComposerModelPickerOpen}
+        onModelPickerOpenChange={setIsComposerModelPickerOpen}
+        modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
+        getModelDisabledReason={getModelDisabledReason}
+      />
+    </RuntimeModeLimitsTargetContext>
   );
   // An open question owns the space above the composer. Only a machine problem,
   // which is why an answer could not go through, stays beside it.
@@ -2876,27 +2899,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       )
     : bannerItems;
 
+  const canInsertComposerText =
+    !activePendingIsResponding &&
+    !isChoiceOnlyPendingQuestion &&
+    (pendingUserInputs.length === 0 || Boolean(activePendingProgress?.activeQuestion)) &&
+    !projectSelectionRequired &&
+    !speechInput.freezesEditor;
+
   const insertComposerText = (
     text: string,
     position: "cursor" | "end",
     options?: {
       ensureLeadingBoundary?: boolean;
       citationCommentAnchor?: AssistantCitationSourceAnchor;
-      clipboardData?: DataTransfer;
+      clipboardPaste?: PastedComposerClipboard;
     },
   ): boolean => {
     if (
       text.length === 0 ||
-      activePendingIsResponding ||
-      (pendingUserInputs.length > 0 && !activePendingProgress?.activeQuestion) ||
-      projectSelectionRequired ||
-      speechInput.freezesEditor ||
+      !canInsertComposerText ||
       (options?.citationCommentAnchor && !composerEditorRef.current)
     ) {
       return false;
     }
-    if (options?.clipboardData) {
-      text = importPastedComposerText(options.clipboardData, importContextFragment);
+    if (options?.clipboardPaste) {
+      text = importPastedComposerText(options.clipboardPaste, importContextFragment);
     }
     const prompt = promptRef.current;
     const cursor = position === "cursor" ? readComposerSnapshot().expandedCursor : prompt.length;
@@ -3066,13 +3093,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
 
-  const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
+  const onComposerPaste = (
+    event: React.ClipboardEvent<HTMLElement>,
+    readClipboard: (plainTextOnly: boolean) => PastedComposerClipboard,
+  ) => {
     const { files, folders } = splitTransferredFiles(event.clipboardData);
     const plainText = event.clipboardData.getData("text/plain");
     const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
-    const pastedContext =
-      !isLiteralPendingAnswer &&
-      (readPastedComposerContext(event.clipboardData)?.records.length ?? 0) > 0;
+    const paste = readClipboard(bypassAutoAttachment);
+    const pastedContext = Boolean(paste.context?.records.length);
     const canAttachFiles = !pastedContext && activeThreadId !== null && files.length > 0;
     const htmlImageContent =
       canAttachFiles && plainText.length > 0
@@ -3105,7 +3134,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       htmlHasImageAndText: htmlImageContent === "image-and-text",
     });
     if (imagesBesideText.length > 0) void addComposerAttachments(imagesBesideText);
-    if (!foldPastedText(plainText, bypassAutoAttachment)) {
+    if (!foldPastedText(paste.text, bypassAutoAttachment)) {
       return;
     }
 
@@ -3371,21 +3400,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         countPreparingComposerImages(attachmentTargetKey) > 0 ||
         pendingDraftWork.has(attachmentTargetKey),
       insertTextAtEnd: insertComposerTextAtEndStable,
-      pasteTextAtEnd: (text: string, options) => {
-        if (speechInput.freezesEditor) return false;
+      pasteTextAtEnd: (clipboardData, options) => {
+        if (!canInsertComposerText) return false;
         const shortcutArmed = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
-        const bypassAutoAttachment = options?.bypassAutoAttachment === true || shortcutArmed;
+        const bypassAutoAttachment = options.bypassAutoAttachment || shortcutArmed;
+        if (composerEditorRef.current?.pasteAtCodeBlockEnd(clipboardData)) return true;
+        const paste = readPastedComposerClipboard(
+          clipboardData,
+          bypassAutoAttachment || isLiteralPendingAnswer,
+        );
+        if (paste.context?.records.length) {
+          return insertComposerTextAtEndStable(paste.text, { clipboardPaste: paste });
+        }
         const promptLength = promptRef.current.length;
         if (
-          !foldPastedText(text, bypassAutoAttachment, {
+          foldPastedText(paste.text, bypassAutoAttachment, {
             start: promptLength,
             end: promptLength,
           })
         ) {
-          return false;
+          focusComposer();
+          return true;
         }
-        focusComposer();
-        return true;
+        return insertComposerTextAtEndStable(paste.text);
       },
       citeAssistantText: (citation, sourceAnchor) =>
         insertComposerTextStable(
@@ -3581,6 +3618,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activeThread,
       addComposerAttachments,
       addComposerFoldersStable,
+      canInsertComposerText,
       foldPastedText,
       composerDraftTarget,
       composerModelOptions,

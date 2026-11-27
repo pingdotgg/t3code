@@ -1067,18 +1067,16 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   const measureTimelineGutter = (viewportElement: HTMLElement) => {
-    const viewportWidth = viewportElement.getBoundingClientRect().width;
-    const contentWidth =
-      viewportElement.querySelector<HTMLElement>("[data-timeline-root]")?.getBoundingClientRect()
-        .width ?? viewportWidth;
-    const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(
-      viewportWidth,
-      contentWidth,
-    );
+    const lane = viewportElement.querySelector<HTMLElement>("[data-timeline-root]");
+    // ChatCanvas can shift the lane off center, so measure the gutter the minimap sits in.
+    const sideGutter = lane
+      ? lane.getBoundingClientRect().left - viewportElement.getBoundingClientRect().left
+      : 0;
+    const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(sideGutter);
     setMinimapHasPersistentGutter((current) =>
       current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
     );
-    const nextHitStrip = resolveTimelineMinimapHitStrip(viewportWidth, contentWidth);
+    const nextHitStrip = resolveTimelineMinimapHitStrip(sideGutter);
     setMinimapHitStrip((current) =>
       current.left === nextHitStrip.left && current.width === nextHitStrip.width
         ? current
@@ -1095,16 +1093,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
     handleScroll();
   });
-  // The content lane only changes width with the viewport or the chat width
-  // setting, never with streamed content; measuring per content frame would
-  // force a layout on every chunk.
-  const measuredLaneWidthRef = useRef<number | null>(null);
+  // The content lane only moves or changes width with the viewport, the chat
+  // width setting or the canvas insets (which resize its row frame), never with
+  // streamed content; measuring per content frame would force a layout on every chunk.
+  const measuredLaneWidthRef = useRef<string | null>(null);
   const observeLaneWidth = (lane: HTMLDivElement | null) => {
-    if (!lane) return;
-    return observeResize(lane, (entries) => {
-      const width = entries.at(-1)?.contentRect.width;
-      if (width === undefined || width === measuredLaneWidthRef.current) return;
-      measuredLaneWidthRef.current = width;
+    const frame = lane?.parentElement;
+    if (!lane || !frame) return;
+    return observeResize([frame, lane], () => {
+      const widths = `${frame.clientWidth}:${lane.clientWidth}`;
+      if (widths === measuredLaneWidthRef.current) return;
+      measuredLaneWidthRef.current = widths;
       const viewportElement = lane.closest<HTMLElement>("[data-assistant-citation-viewport]");
       if (viewportElement) measureTimelineGutter(viewportElement);
     });

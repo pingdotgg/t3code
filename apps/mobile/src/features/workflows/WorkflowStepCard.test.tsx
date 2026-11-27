@@ -30,6 +30,7 @@ const asked = (result: WorkflowBeat["result"]): WorkflowBeat => ({
   detail: null,
   result,
   said: null,
+  ahead: undefined,
   startMs: 0,
   endMs: 1000,
   thread: null,

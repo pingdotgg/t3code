@@ -199,3 +199,136 @@ it("closes the shared tooltip when its open trigger is removed", async () => {
   await screen.rerender(tree(false));
   await expect.element(page.getByText("Ada reacted")).not.toBeInTheDocument();
 });
+
+it("closes the shared tooltip when its control becomes disabled", async () => {
+  const tree = (disabled: boolean) => (
+    <SharedTooltipProvider>
+      <SharedTooltipTrigger
+        label="Refresh status"
+        render={<button type="button" disabled={disabled} />}
+      >
+        Refresh
+      </SharedTooltipTrigger>
+    </SharedTooltipProvider>
+  );
+  await using screen = await render(tree(false));
+  // Hover, not focus: disabling a focused button blurs it, which would close the tooltip anyway.
+  await userEvent.hover(screen.getByRole("button", { name: "Refresh" }));
+  await expect.element(page.getByText("Refresh status")).toBeVisible();
+
+  await screen.rerender(tree(true));
+  await expect.element(page.getByText("Refresh status")).not.toBeInTheDocument();
+});
+
+it("keeps another trigger's pending open when a trigger is disabled", async () => {
+  const tree = (firstDisabled: boolean) => (
+    <SharedTooltipProvider>
+      <SharedTooltipTrigger
+        label="First tip"
+        disabled={firstDisabled}
+        render={<button type="button" />}
+      >
+        First
+      </SharedTooltipTrigger>
+      <SharedTooltipTrigger label="Second tip" render={<button type="button" />}>
+        Second
+      </SharedTooltipTrigger>
+    </SharedTooltipProvider>
+  );
+  await using screen = await render(tree(false));
+  await userEvent.hover(screen.getByRole("button", { name: "First" }));
+  await userEvent.hover(screen.getByRole("button", { name: "Second" }));
+  // The second tooltip is now waiting out its open delay when the first trigger is disabled.
+  await screen.rerender(tree(true));
+  await expect.element(page.getByText("Second tip")).toBeVisible();
+});
+
+it("shows the shared tooltip when keyboard focus lands on a control inside a wrapper", async () => {
+  await using screen = await render(
+    <SharedTooltipProvider>
+      <SharedTooltipTrigger label="Maximize panel" render={<span />}>
+        <button type="button">Maximize</button>
+      </SharedTooltipTrigger>
+    </SharedTooltipProvider>,
+  );
+  await userEvent.keyboard("{Tab}");
+  await expect.element(screen.getByRole("button", { name: "Maximize" })).toHaveFocus();
+  await expect.element(page.getByText("Maximize panel")).toBeVisible();
+});
+
+it("restores an enclosing shared tooltip when moving off a nested trigger back onto it", async () => {
+  await using screen = await render(
+    <SharedTooltipProvider>
+      <SharedTooltipTrigger
+        label="Thread details"
+        side="right"
+        render={<div className="flex w-60 items-center justify-between p-2" />}
+      >
+        <span>Thread title</span>
+        <SharedTooltipTrigger label="Settle thread" render={<button type="button" />}>
+          Settle
+        </SharedTooltipTrigger>
+      </SharedTooltipTrigger>
+    </SharedTooltipProvider>,
+  );
+
+  await userEvent.hover(screen.getByText("Thread title"));
+  await expect.element(page.getByText("Thread details")).toBeVisible();
+
+  await userEvent.hover(screen.getByRole("button", { name: "Settle" }));
+  await expect.element(page.getByText("Settle thread")).toBeVisible();
+
+  await userEvent.hover(screen.getByText("Thread title"));
+  await expect.element(page.getByText("Thread details")).toBeVisible();
+});
+
+it("keeps a pending parent restore when leaving a disabled nested sibling", async () => {
+  await using screen = await render(
+    <SharedTooltipProvider>
+      <SharedTooltipTrigger
+        label="Thread details"
+        side="right"
+        render={<div className="flex w-60 items-center justify-between gap-2 p-2" />}
+      >
+        <span>Thread title</span>
+        <SharedTooltipTrigger label="Disabled action" disabled render={<span />}>
+          Inactive
+        </SharedTooltipTrigger>
+        <SharedTooltipTrigger label="Settle thread" render={<button type="button" />}>
+          Settle
+        </SharedTooltipTrigger>
+      </SharedTooltipTrigger>
+    </SharedTooltipProvider>,
+  );
+
+  await userEvent.hover(screen.getByRole("button", { name: "Settle" }));
+  await userEvent.hover(screen.getByText("Inactive"));
+  await userEvent.hover(screen.getByText("Thread title"));
+  await expect.element(page.getByText("Thread details")).toBeVisible();
+});
+
+it("closes a nested tooltip when exiting both nested and enclosing triggers directly", async () => {
+  await using screen = await render(
+    <SharedTooltipProvider>
+      <div className="flex flex-col gap-8 p-4">
+        <SharedTooltipTrigger
+          label="Thread details"
+          side="right"
+          render={<div className="flex w-60 items-center justify-between p-2" />}
+        >
+          <span>Thread title</span>
+          <SharedTooltipTrigger label="Settle thread" render={<button type="button" />}>
+            Settle
+          </SharedTooltipTrigger>
+        </SharedTooltipTrigger>
+        <button type="button">Outside</button>
+      </div>
+    </SharedTooltipProvider>,
+  );
+
+  await userEvent.hover(screen.getByRole("button", { name: "Settle" }));
+  await expect.element(page.getByText("Settle thread")).toBeVisible();
+
+  await userEvent.hover(screen.getByRole("button", { name: "Outside" }));
+  await expect.element(page.getByText("Settle thread")).not.toBeInTheDocument();
+});
