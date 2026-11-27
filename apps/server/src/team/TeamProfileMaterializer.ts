@@ -34,14 +34,26 @@ const decodeProfileMarker = Schema.decodeUnknownOption(
     }),
   ),
 );
+const decodeAntigravityPluginPreferences = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      plugins: Schema.optional(
+        Schema.Record(Schema.String, Schema.Struct({ enabled: Schema.optional(Schema.Boolean) })),
+      ),
+    }),
+  ),
+);
 
 import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
+import {
+  TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME,
+  TEAM_PROFILE_MARKER_FILENAME,
+  getTeamHarnessProfile,
+  type HarnessPersonalSkillLayout,
+} from "./harnessProfiles.ts";
 import { validateTeamSkillPayload } from "./TeamSkillValidation.ts";
 
-const TEAM_PROFILE_MARKER_FILENAME = ".t3-team-profile.json";
-const TEAM_ANTIGRAVITY_SKILLS_DIRNAME = "team-skills";
-export const TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME = "antigravity-oauth-token";
-const TEAM_ANTIGRAVITY_ACP_DIRNAME = "antigravity-acp";
+export { TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME };
 
 const profileMaterializeLocks = new Map<string, Semaphore.Semaphore>();
 function getProfileMaterializeLock(profileDir: string): Semaphore.Semaphore {
@@ -74,55 +86,31 @@ export const resolveTeamProfilePaths = Effect.fn("TeamProfileMaterializer.resolv
     readonly driver: ProviderDriverKind;
   }): Effect.fn.Return<TeamProfilePaths, never, Digest.Digest | Path.Path> {
     const path = yield* Path.Path;
-    if (input.driver === "antigravity") {
-      const dirs = yield* resolveAntigravityInstanceDirectories(
-        input.stateDir,
-        input.virtualInstanceId,
-      );
-      return {
-        profileDir: dirs.profile,
-        skillsDir: path.join(dirs.profile, TEAM_ANTIGRAVITY_SKILLS_DIRNAME),
-        instructionFile: path.join(dirs.profile, "GEMINI.md"),
-        ephemeralTokenFiles: [
-          path.join(
-            dirs.profile,
-            TEAM_ANTIGRAVITY_ACP_DIRNAME,
-            TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME,
-          ),
-          path.join(dirs.profile, TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME),
-          path.join(dirs.profile, TEAM_ANTIGRAVITY_ACP_DIRNAME, "acp_token.json"),
-        ],
-      };
-    }
+    const spec = getTeamHarnessProfile(input.driver);
+    const profileDir =
+      spec.profileStorage === "antigravity-native"
+        ? (yield* resolveAntigravityInstanceDirectories(input.stateDir, input.virtualInstanceId))
+            .profile
+        : path.join(
+            input.stateDir,
+            "team-profiles",
+            input.driver,
+            NodeCrypto.createHash("sha256")
+              .update(`${input.teamId}:${input.virtualInstanceId}`, "utf8")
+              .digest("hex")
+              .slice(0, 24),
+          );
 
-    const hash = NodeCrypto.createHash("sha256")
-      .update(`${input.teamId}:${input.virtualInstanceId}`, "utf8")
-      .digest("hex")
-      .slice(0, 24);
-    const profileDir = path.join(input.stateDir, "team-profiles", input.driver, hash);
-
-    if (input.driver === "codex") {
-      return {
-        profileDir,
-        skillsDir: path.join(profileDir, "skills"),
-        instructionFile: path.join(profileDir, "AGENTS.md"),
-        // Codex uses in-memory CodexManagedTokenBroker; zero token file on disk.
-        ephemeralTokenFiles: [],
-      };
-    }
-    if (input.driver === "claudeAgent") {
-      return {
-        profileDir,
-        skillsDir: path.join(profileDir, "skills"),
-        instructionFile: path.join(profileDir, "CLAUDE.md"),
-        ephemeralTokenFiles: [path.join(profileDir, ".credentials.json")],
-      };
-    }
     return {
       profileDir,
-      skillsDir: path.join(profileDir, TEAM_ANTIGRAVITY_SKILLS_DIRNAME),
-      instructionFile: null,
-      ephemeralTokenFiles: [],
+      skillsDir: path.join(profileDir, spec.skillsSubdir),
+      instructionFile:
+        spec.threadInstructionFilename === null
+          ? null
+          : path.join(profileDir, spec.threadInstructionFilename),
+      ephemeralTokenFiles: spec.ephemeralTokenRelativePaths.map((segments) =>
+        path.join(profileDir, ...segments),
+      ),
     };
   },
 );
@@ -221,6 +209,126 @@ async function syncDirectoryPersonalSkillLinks(input: {
   }
 }
 
+async function syncAntigravityPersonalConfigAndPlugins(input: {
+  readonly profileDir: string;
+  readonly skillsDir: string;
+  readonly userHome: string;
+  readonly layout: Extract<
+    HarnessPersonalSkillLayout,
+    { readonly kind: "antigravity-config-and-plugins" }
+  >;
+  readonly platform: NodeJS.Platform;
+}): Promise<void> {
+  // Register `<teamProfile>/team-skills` FIRST in `<teamProfile>/config/skills.json`,
+  // followed by the user's personal `~/.gemini` skill directories (read-only).
+  const configDir = NodePath.join(input.profileDir, "config");
+  await NodeFSP.mkdir(configDir, { recursive: true, mode: 0o700 });
+  const entries: Array<{ readonly path: string }> = [{ path: input.skillsDir }];
+  for (const segments of input.layout.personalSkillRelativeDirs) {
+    const candidate = NodePath.join(input.userHome, ...segments);
+    const stat = await NodeFSP.stat(candidate).catch(() => undefined);
+    if (stat?.isDirectory()) {
+      entries.push({ path: candidate });
+    }
+  }
+  const skillsConfigPath = NodePath.join(configDir, "skills.json");
+  const existingSkillsConfig = await NodeFSP.lstat(skillsConfigPath).catch(() => undefined);
+  if (existingSkillsConfig?.isSymbolicLink()) {
+    await NodeFSP.unlink(skillsConfigPath);
+  }
+  const nextSkillsConfig = `${encodeJsonUnknown({ entries })}\n`;
+  const currentSkillsConfig = await NodeFSP.readFile(skillsConfigPath, "utf8").catch(
+    () => undefined,
+  );
+  if (currentSkillsConfig !== nextSkillsConfig) {
+    await NodeFSP.writeFile(skillsConfigPath, nextSkillsConfig, "utf8");
+  }
+
+  // Mirror enabled personal plugins from `~/.gemini/config/plugins/*` into `<teamProfile>/config/plugins/*`
+  // via symlinks/junctions without ever modifying `~/.gemini`. Team skills still win via first-wins scan order.
+  const personalConfigPath = NodePath.join(
+    input.userHome,
+    ...input.layout.personalConfigRelativePath,
+  );
+  const personalConfigRaw = await NodeFSP.readFile(personalConfigPath, "utf8").catch(
+    () => undefined,
+  );
+  const parsedPrefs =
+    personalConfigRaw === undefined
+      ? undefined
+      : decodeAntigravityPluginPreferences(personalConfigRaw);
+  const disabledPlugins = new Set(
+    Object.entries(
+      (parsedPrefs?._tag === "Some" ? parsedPrefs.value.plugins : undefined) ?? {},
+    ).flatMap(([name, pref]) => (pref.enabled === false ? [name] : [])),
+  );
+
+  const personalPluginsDir = NodePath.join(
+    input.userHome,
+    ...input.layout.personalPluginsRelativeDir,
+  );
+  const desiredPlugins = new Map<string, string>();
+  const personalPluginsStat = await NodeFSP.stat(personalPluginsDir).catch(() => undefined);
+  if (personalPluginsStat?.isDirectory()) {
+    const pluginEntries = await NodeFSP.readdir(personalPluginsDir).catch(() => [] as string[]);
+    for (const entry of pluginEntries) {
+      if (entry.startsWith(".") || disabledPlugins.has(entry)) continue;
+      const sourcePath = NodePath.join(personalPluginsDir, entry);
+      const entryStat = await NodeFSP.stat(sourcePath).catch(() => undefined);
+      if (!entryStat?.isDirectory()) continue;
+      desiredPlugins.set(entry, sourcePath);
+    }
+  }
+
+  const targetPluginsDir = NodePath.join(configDir, "plugins");
+  const targetPluginsLstat = await NodeFSP.lstat(targetPluginsDir).catch(() => undefined);
+  if (targetPluginsLstat?.isSymbolicLink()) {
+    await NodeFSP.unlink(targetPluginsDir);
+  }
+  if (desiredPlugins.size === 0) {
+    if (targetPluginsLstat?.isDirectory()) {
+      const existingEntries = await NodeFSP.readdir(targetPluginsDir).catch(() => [] as string[]);
+      for (const existing of existingEntries) {
+        const entryPath = NodePath.join(targetPluginsDir, existing);
+        const stat = await NodeFSP.lstat(entryPath).catch(() => undefined);
+        if (stat?.isSymbolicLink()) {
+          await NodeFSP.unlink(entryPath).catch(() => undefined);
+        }
+      }
+    }
+    return;
+  }
+
+  await NodeFSP.mkdir(targetPluginsDir, { recursive: true, mode: 0o700 });
+  const existingEntries = await NodeFSP.readdir(targetPluginsDir).catch(() => [] as string[]);
+  const linkType = input.platform === "win32" ? "junction" : "dir";
+  for (const existing of existingEntries) {
+    const entryPath = NodePath.join(targetPluginsDir, existing);
+    const stat = await NodeFSP.lstat(entryPath).catch(() => undefined);
+    if (!stat?.isSymbolicLink()) continue;
+    const expectedTarget = desiredPlugins.get(existing);
+    if (expectedTarget === undefined) {
+      await NodeFSP.unlink(entryPath).catch(() => undefined);
+      continue;
+    }
+    const currentTarget = await NodeFSP.readlink(entryPath).catch(() => undefined);
+    if (
+      currentTarget === undefined ||
+      NodePath.resolve(targetPluginsDir, currentTarget) !== NodePath.resolve(expectedTarget)
+    ) {
+      await NodeFSP.unlink(entryPath).catch(() => undefined);
+    }
+  }
+
+  for (const [pluginName, sourcePath] of desiredPlugins) {
+    const linkPath = NodePath.join(targetPluginsDir, pluginName);
+    assertPathContainedWithin(targetPluginsDir, linkPath);
+    const existing = await NodeFSP.lstat(linkPath).catch(() => undefined);
+    if (existing !== undefined) continue;
+    await NodeFSP.symlink(sourcePath, linkPath, linkType).catch(() => undefined);
+  }
+}
+
 function assertPathContainedWithin(rootDir: string, candidatePath: string): void {
   const resolvedRoot = NodePath.resolve(rootDir);
   const resolvedCandidate = NodePath.resolve(candidatePath);
@@ -252,6 +360,7 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
     const path = yield* Path.Path;
     const platform = yield* HostProcess.Platform;
     const userHome = input.userHome ?? (yield* HostProcess.HomeDirectory);
+    const spec = getTeamHarnessProfile(input.driver);
     const paths = yield* resolveTeamProfilePaths({
       stateDir: input.stateDir,
       teamId: input.teamId,
@@ -339,6 +448,31 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
         }).pipe(Effect.orElseSucceed(() => false));
 
         if (alreadyUpToDate) {
+          // Keep personal plugin/skill links fresh even when team assetsHash has not changed.
+          if (spec.personalSkillLayout.kind === "antigravity-config-and-plugins") {
+            const layout = spec.personalSkillLayout;
+            yield* Effect.tryPromise({
+              try: () =>
+                syncAntigravityPersonalConfigAndPlugins({
+                  profileDir: paths.profileDir,
+                  skillsDir: paths.skillsDir,
+                  userHome,
+                  layout,
+                  platform,
+                }),
+              catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
+            }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning(
+                  "TeamProfileMaterializer.syncAntigravityPersonalConfigAndPlugins failed",
+                  {
+                    virtualInstanceId: input.virtualInstanceId,
+                    cause,
+                  },
+                ),
+              ),
+            );
+          }
           return paths;
         }
 
@@ -371,17 +505,13 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
                 }
               }
 
-              if (input.driver === "codex") {
+              if (spec.personalSkillLayout.kind === "directory-symlinks") {
                 await syncDirectoryPersonalSkillLinks({
                   targetSkillsDir: stagingSkillsDir,
-                  personalSkillsDir: NodePath.join(userHome, ".codex", "skills"),
-                  teamSlugsLower,
-                  platform,
-                });
-              } else if (input.driver === "claudeAgent") {
-                await syncDirectoryPersonalSkillLinks({
-                  targetSkillsDir: stagingSkillsDir,
-                  personalSkillsDir: NodePath.join(userHome, ".claude", "skills"),
+                  personalSkillsDir: NodePath.join(
+                    userHome,
+                    ...spec.personalSkillLayout.personalRelativeDir,
+                  ),
                   teamSlugsLower,
                   platform,
                 });
@@ -413,37 +543,14 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
               throw stageError;
             }
 
-            if (input.driver === "antigravity") {
-              // Register `<teamProfile>/team-skills` FIRST in `<teamProfile>/config/skills.json`,
-              // followed by the user's personal `~/.gemini` skill directories (read-only).
-              const configDir = NodePath.join(paths.profileDir, "config");
-              await NodeFSP.mkdir(configDir, { recursive: true, mode: 0o700 });
-              const personalConfigSkills = NodePath.join(userHome, ".gemini", "config", "skills");
-              const personalCliSkills = NodePath.join(
+            if (spec.personalSkillLayout.kind === "antigravity-config-and-plugins") {
+              await syncAntigravityPersonalConfigAndPlugins({
+                profileDir: paths.profileDir,
+                skillsDir: paths.skillsDir,
                 userHome,
-                ".gemini",
-                "antigravity-cli",
-                "skills",
-              );
-              const entries: Array<{ readonly path: string }> = [{ path: paths.skillsDir }];
-              for (const candidate of [personalConfigSkills, personalCliSkills]) {
-                const stat = await NodeFSP.stat(candidate).catch(() => undefined);
-                if (stat?.isDirectory()) {
-                  entries.push({ path: candidate });
-                }
-              }
-              const skillsConfigPath = NodePath.join(configDir, "skills.json");
-              const existingSkillsConfig = await NodeFSP.lstat(skillsConfigPath).catch(
-                () => undefined,
-              );
-              if (existingSkillsConfig?.isSymbolicLink()) {
-                await NodeFSP.unlink(skillsConfigPath);
-              }
-              await NodeFSP.writeFile(
-                skillsConfigPath,
-                `${encodeJsonUnknown({ entries })}\n`,
-                "utf8",
-              );
+                layout: spec.personalSkillLayout,
+                platform,
+              });
             }
           },
           catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
@@ -541,10 +648,12 @@ export const materializeEphemeralLeaseToken = Effect.fn(
   readonly driver: ProviderDriverKind;
   readonly lease: TeamProviderLeaseResponse;
 }): Effect.fn.Return<void, never, Digest.Digest | Path.Path> {
-  if (input.driver === "codex") {
-    // Codex receives its leased access token strictly in memory via CodexManagedTokenBroker.
+  const spec = getTeamHarnessProfile(input.driver);
+  if (spec.ephemeralTokenFormat === "in-memory" || spec.ephemeralTokenFormat === "none") {
     return;
   }
+  const primarySegments = spec.ephemeralTokenRelativePaths[0];
+  if (primarySegments === undefined) return;
   const platform = yield* HostProcess.Platform;
   const paths = yield* resolveTeamProfilePaths({
     stateDir: input.stateDir,
@@ -552,13 +661,9 @@ export const materializeEphemeralLeaseToken = Effect.fn(
     virtualInstanceId: input.virtualInstanceId,
     driver: input.driver,
   });
+  const tokenPath = NodePath.join(paths.profileDir, ...primarySegments);
 
-  if (input.driver === "antigravity") {
-    const tokenPath = NodePath.join(
-      paths.profileDir,
-      TEAM_ANTIGRAVITY_ACP_DIRNAME,
-      TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME,
-    );
+  if (spec.ephemeralTokenFormat === "antigravity-oauth-json") {
     // Explicitly omit `refresh_token` so refresh credentials never touch a teammate's disk.
     const payload = {
       token: {
@@ -584,8 +689,7 @@ export const materializeEphemeralLeaseToken = Effect.fn(
     return;
   }
 
-  if (input.driver === "claudeAgent") {
-    const credentialsPath = NodePath.join(paths.profileDir, ".credentials.json");
+  if (spec.ephemeralTokenFormat === "claude-credentials-json") {
     const expiresAtMs = Date.parse(input.lease.expiresAt);
     const nowMs = yield* Clock.currentTimeMillis;
     // Explicitly omit `refreshToken`.
@@ -596,7 +700,7 @@ export const materializeEphemeralLeaseToken = Effect.fn(
       },
     };
     yield* Effect.tryPromise({
-      try: () => writeSecureTokenFile(credentialsPath, `${encodeJsonUnknown(payload)}\n`, platform),
+      try: () => writeSecureTokenFile(tokenPath, `${encodeJsonUnknown(payload)}\n`, platform),
       catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
     }).pipe(
       Effect.catch((cause) =>

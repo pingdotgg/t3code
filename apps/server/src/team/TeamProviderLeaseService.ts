@@ -19,6 +19,7 @@ import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
 import type * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { getTeamHarnessProfile } from "./harnessProfiles.ts";
 
 /** Refresh server-side when remaining lifetime is below 10 minutes. */
 const TEAM_SERVER_OAUTH_REFRESH_THRESHOLD_MS = 10 * 60 * 1000;
@@ -172,34 +173,29 @@ export const issueEphemeralTeamProviderLease = Effect.fn("TeamProviderLease.issu
         if (stored === null && input.fallbackAntigravityProfileDir) {
           const imported = yield* Effect.promise(
             async (): Promise<StoredTeamProviderSecret | null> => {
-              const raw =
-                (await NodeFSP.readFile(
-                  NodePath.join(
-                    input.fallbackAntigravityProfileDir!,
-                    "antigravity-acp",
-                    "antigravity-oauth-token",
-                  ),
+              const tokenPaths = getTeamHarnessProfile("antigravity").ephemeralTokenRelativePaths;
+              for (const segments of tokenPaths) {
+                const raw = await NodeFSP.readFile(
+                  NodePath.join(input.fallbackAntigravityProfileDir!, ...segments),
                   "utf8",
-                ).catch(() => undefined)) ??
-                (await NodeFSP.readFile(
-                  NodePath.join(input.fallbackAntigravityProfileDir!, "antigravity-oauth-token"),
-                  "utf8",
-                ).catch(() => undefined));
-              if (!raw) return null;
-              const parsedOpt = decodeAntigravityOAuthTokenFile(raw);
-              if (Option.isNone(parsedOpt)) return null;
-              const parsed = parsedOpt.value;
-              if (!parsed.token?.access_token) return null;
-              return {
-                oauthAccessToken: parsed.token.access_token,
-                ...(parsed.token.refresh_token
-                  ? { oauthRefreshToken: parsed.token.refresh_token }
-                  : {}),
-                ...(parsed.token.token_type ? { oauthTokenType: parsed.token.token_type } : {}),
-                ...(parsed.token.expiry ? { oauthExpiresAt: parsed.token.expiry } : {}),
-                ...(parsed.auth_method ? { oauthAuthMethod: parsed.auth_method } : {}),
-                ...(parsed.id_token_email ? { oauthEmail: parsed.id_token_email } : {}),
-              };
+                ).catch(() => undefined);
+                if (!raw) continue;
+                const parsedOpt = decodeAntigravityOAuthTokenFile(raw);
+                if (Option.isNone(parsedOpt)) continue;
+                const parsed = parsedOpt.value;
+                if (!parsed.token?.access_token) continue;
+                return {
+                  oauthAccessToken: parsed.token.access_token,
+                  ...(parsed.token.refresh_token
+                    ? { oauthRefreshToken: parsed.token.refresh_token }
+                    : {}),
+                  ...(parsed.token.token_type ? { oauthTokenType: parsed.token.token_type } : {}),
+                  ...(parsed.token.expiry ? { oauthExpiresAt: parsed.token.expiry } : {}),
+                  ...(parsed.auth_method ? { oauthAuthMethod: parsed.auth_method } : {}),
+                  ...(parsed.id_token_email ? { oauthEmail: parsed.id_token_email } : {}),
+                };
+              }
+              return null;
             },
           );
           if (imported !== null) {

@@ -58,6 +58,7 @@ import {
   resolveTeamProfilePaths,
   selectTeamPrepromptsForDriver,
 } from "./TeamProfileMaterializer.ts";
+import { DEFAULT_TEAM_HARNESS_PROFILE, getTeamHarnessProfile } from "./harnessProfiles.ts";
 import { issueEphemeralTeamProviderLease } from "./TeamProviderLeaseService.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 
@@ -67,14 +68,6 @@ const TEAM_PRE_TURN_LEASE_RENEWAL_THRESHOLD_MS = 15 * 60 * 1000;
 const TEAM_BACKGROUND_LEASE_RENEWAL_LEAD_MS = 10 * 60 * 1000;
 /** Maximum remembered run IDs for one-shot active-turn auth auto-resume deduplication. */
 const MAX_AUTO_RESUMED_RUNS = 500;
-/** Drivers whose running process caches OAuth tokens in RAM and needs a session recycle on rotation. */
-const RAM_TOKEN_CACHING_DRIVERS: ReadonlySet<string> = new Set(["antigravity", "claudeAgent"]);
-/** Drivers that load `"thread"` pre-prompts natively from `<teamProfile>/{GEMINI,AGENTS,CLAUDE}.md`. */
-const NATIVE_PROFILE_INSTRUCTION_DRIVERS: ReadonlySet<string> = new Set([
-  "antigravity",
-  "codex",
-  "claudeAgent",
-]);
 
 function isValidHttpUrl(raw: string): boolean {
   try {
@@ -238,8 +231,8 @@ function buildStrippedAmbientEnv(
     { name: "GOOGLE_API_KEY", value: "", sensitive: false },
     { name: "GOOGLE_GEMINI_BASE_URL", value: "", sensitive: false },
   ];
-  if (driver === "claudeAgent") {
-    base.push({ name: "CLAUDE_CODE_OAUTH_TOKEN", value: "", sensitive: false });
+  for (const name of getTeamHarnessProfile(driver).extraStrippedAmbientEnv ?? []) {
+    base.push({ name, value: "", sensitive: false });
   }
   return base;
 }
@@ -475,7 +468,7 @@ const make = Effect.gen(function* () {
             if (refreshed._tag === "Success") {
               if (
                 refreshed.success.rotated &&
-                RAM_TOKEN_CACHING_DRIVERS.has(refreshed.success.lease.driver)
+                getTeamHarnessProfile(refreshed.success.lease.driver).cachesTokenInRam
               ) {
                 yield* Ref.update(pendingRecycleInstancesRef, (current) => {
                   const next = new Set(current);
@@ -807,27 +800,29 @@ const make = Effect.gen(function* () {
       readonly sensitive: boolean;
     }> = [...buildStrippedAmbientEnv(provider.driver)];
 
+    const harnessSpec = getTeamHarnessProfile(provider.driver);
     const baseConfig: Record<string, unknown> = { ...provider.config, enabled: true };
 
-    if (provider.driver === "codex") {
+    if (harnessSpec.setsHomePathConfig) {
       baseConfig.homePath = profilePaths.profileDir;
-      envVars.push({ name: "CODEX_HOME", value: profilePaths.profileDir, sensitive: false });
-      if (provider.deliveryStrategy === "token-lease") {
-        baseConfig.setupMode = "managed";
+    }
+    envVars.push({
+      name: harnessSpec.profileEnvVar,
+      value: profilePaths.profileDir,
+      sensitive: false,
+    });
+    if (harnessSpec.extraProfileEnv !== undefined) {
+      for (const [name, value] of Object.entries(harnessSpec.extraProfileEnv)) {
+        envVars.push({ name, value, sensitive: false });
       }
-    } else if (provider.driver === "claudeAgent") {
-      baseConfig.homePath = profilePaths.profileDir;
-      envVars.push({ name: "CLAUDE_CONFIG_DIR", value: profilePaths.profileDir, sensitive: false });
-    } else if (provider.driver === "antigravity") {
-      envVars.push({ name: "GEMINI_HOME", value: profilePaths.profileDir, sensitive: false });
-      envVars.push({ name: "AGY_ACP_FORCE_FILE_STORAGE", value: "1", sensitive: false });
-      envVars.push({ name: "SSH_CONNECTION", value: "127.0.0.1 0 127.0.0.1 0", sensitive: false });
-    } else {
-      envVars.push({
-        name: "T3_TEAM_PROFILE_DIR",
-        value: profilePaths.profileDir,
-        sensitive: false,
-      });
+    }
+    if (
+      provider.deliveryStrategy === "token-lease" &&
+      harnessSpec.tokenLeaseSetupMode !== undefined
+    ) {
+      baseConfig.setupMode = harnessSpec.tokenLeaseSetupMode;
+    }
+    if (harnessSpec.profileEnvVar === DEFAULT_TEAM_HARNESS_PROFILE.profileEnvVar) {
       envVars.push({
         name: "T3_TEAM_SKILLS_DIR",
         value: profilePaths.skillsDir,
@@ -861,7 +856,7 @@ const make = Effect.gen(function* () {
           { name: "GEMINI_API_KEY", value: proxyToken, sensitive: true },
           { name: "GOOGLE_API_KEY", value: proxyToken, sensitive: true },
         );
-        if (provider.driver === "antigravity") {
+        if (harnessSpec.proxyConfigMode === "gemini-api-key") {
           baseConfig.authMethod = "gemini-api-key";
           baseConfig.apiKey = proxyToken;
         }
@@ -1216,7 +1211,8 @@ const make = Effect.gen(function* () {
     const turnPrepromptText = renderTeamPrepromptsMarkdown(turnPreprompts);
 
     const genericThreadPrepromptText =
-      !input.nativeThreadHasTurns && !NATIVE_PROFILE_INSTRUCTION_DRIVERS.has(input.driver)
+      !input.nativeThreadHasTurns &&
+      getTeamHarnessProfile(input.driver).threadInstructionFilename === null
         ? renderTeamPrepromptsMarkdown(
             selectTeamPrepromptsForDriver(preprompts, input.driver, "thread"),
           )
@@ -1472,7 +1468,7 @@ const make = Effect.gen(function* () {
                 ? { actingMemberId: input.actingMemberId }
                 : undefined,
             );
-            if (rotated && RAM_TOKEN_CACHING_DRIVERS.has(serverProviderOpt.value.driver)) {
+            if (rotated && getTeamHarnessProfile(serverProviderOpt.value.driver).cachesTokenInRam) {
               recycleWarmSession = true;
             }
           }
@@ -1489,7 +1485,7 @@ const make = Effect.gen(function* () {
             if (provider?.deliveryStrategy === "token-lease") {
               tokenLeaseDriver = provider.driver;
               const { rotated } = yield* requestFreshLease(input.instanceId);
-              if (rotated && RAM_TOKEN_CACHING_DRIVERS.has(provider.driver)) {
+              if (rotated && getTeamHarnessProfile(provider.driver).cachesTokenInRam) {
                 recycleWarmSession = true;
               }
             }
@@ -1500,7 +1496,7 @@ const make = Effect.gen(function* () {
         // background rotations or rotations triggered by another session recycle EVERY stale warm session.
         if (
           tokenLeaseDriver !== null &&
-          RAM_TOKEN_CACHING_DRIVERS.has(tokenLeaseDriver) &&
+          getTeamHarnessProfile(tokenLeaseDriver).cachesTokenInRam &&
           input.providerSessionId !== undefined
         ) {
           const trackedSessionId = input.providerSessionId;
@@ -1780,7 +1776,7 @@ const make = Effect.gen(function* () {
 
         // Bump lease generation + mark pending recycle so every live RAM-caching warm session
         // recycles on its next turn even if the upstream returned the same token string.
-        if (RAM_TOKEN_CACHING_DRIVERS.has(input.driver)) {
+        if (getTeamHarnessProfile(input.driver).cachesTokenInRam) {
           yield* bumpLeaseGeneration(input.virtualInstanceId);
           yield* Ref.update(pendingRecycleInstancesRef, (current) => {
             const next = new Set(current);

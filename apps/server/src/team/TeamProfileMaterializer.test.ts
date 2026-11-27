@@ -350,4 +350,182 @@ describe("TeamProfileMaterializer", () => {
         }
       }).pipe(Effect.provide(platformLayer)),
   );
+
+  it.effect(
+    "preserves enabled personal Antigravity plugins (skills/ and plugin.json skills), hides disabled plugins, keeps team skill precedence, and refreshes links when assetsHash is unchanged",
+    () =>
+      Effect.gen(function* () {
+        const tmp = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-team-agy-plugins-")),
+        );
+        try {
+          const stateDir = NodePath.join(tmp, "state");
+          const fakeHome = NodePath.join(tmp, "home");
+          const workspaceDir = NodePath.join(tmp, "repo");
+          const personalConfigDir = NodePath.join(fakeHome, ".gemini", "config");
+          const personalPluginsDir = NodePath.join(personalConfigDir, "plugins");
+          const personalConfigJson = NodePath.join(personalConfigDir, "config.json");
+          const initialConfigJson = `${JSON.stringify(
+            {
+              plugins: {
+                "disabled-plugin": { enabled: false },
+                "enabled-plugin": { enabled: true },
+              },
+            },
+            null,
+            2,
+          )}\n`;
+
+          yield* Effect.promise(async () => {
+            await NodeFSP.mkdir(workspaceDir, { recursive: true });
+            await NodeFSP.mkdir(personalPluginsDir, { recursive: true });
+            await NodeFSP.writeFile(personalConfigJson, initialConfigJson, "utf8");
+
+            // Enabled plugin with both default `skills/` and manifest `skills` custom path, plus a colliding skill name.
+            const enabledPluginDir = NodePath.join(personalPluginsDir, "enabled-plugin");
+            await NodeFSP.mkdir(NodePath.join(enabledPluginDir, "skills", "plugin-default-skill"), {
+              recursive: true,
+            });
+            await NodeFSP.mkdir(NodePath.join(enabledPluginDir, "skills", "colliding-skill"), {
+              recursive: true,
+            });
+            await NodeFSP.mkdir(NodePath.join(enabledPluginDir, "extra-skills", "manifest-skill"), {
+              recursive: true,
+            });
+            await NodeFSP.writeFile(
+              NodePath.join(enabledPluginDir, "plugin.json"),
+              JSON.stringify({ name: "enabled-plugin", skills: ["extra-skills/manifest-skill"] }),
+              "utf8",
+            );
+            await NodeFSP.writeFile(
+              NodePath.join(enabledPluginDir, "skills", "plugin-default-skill", "SKILL.md"),
+              "---\nname: plugin-default-skill\ndescription: From plugin skills/\n---\nBody\n",
+              "utf8",
+            );
+            await NodeFSP.writeFile(
+              NodePath.join(enabledPluginDir, "skills", "colliding-skill", "SKILL.md"),
+              "---\nname: colliding-skill\ndescription: Personal plugin version\n---\nBody\n",
+              "utf8",
+            );
+            await NodeFSP.writeFile(
+              NodePath.join(enabledPluginDir, "extra-skills", "manifest-skill", "SKILL.md"),
+              "---\nname: manifest-skill\ndescription: From plugin.json skills\n---\nBody\n",
+              "utf8",
+            );
+
+            // Disabled plugin must remain hidden in the isolated team profile.
+            const disabledPluginDir = NodePath.join(personalPluginsDir, "disabled-plugin");
+            await NodeFSP.mkdir(NodePath.join(disabledPluginDir, "skills", "hidden-skill"), {
+              recursive: true,
+            });
+            await NodeFSP.writeFile(
+              NodePath.join(disabledPluginDir, "plugin.json"),
+              JSON.stringify({ name: "disabled-plugin" }),
+              "utf8",
+            );
+            await NodeFSP.writeFile(
+              NodePath.join(disabledPluginDir, "skills", "hidden-skill", "SKILL.md"),
+              "---\nname: hidden-skill\ndescription: Should stay hidden\n---\nBody\n",
+              "utf8",
+            );
+          });
+
+          const teamId = TeamId.make("team-alpha");
+          const virtualId = makeTeamProviderInstanceId(teamId, ProviderInstanceId.make("team-agy"));
+          const teamSkills = [makeSkill("colliding-skill", "Team authoritative skill")];
+
+          const paths = yield* materializeTeamProfileAssets({
+            stateDir,
+            teamId,
+            virtualInstanceId: virtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            skills: teamSkills,
+            preprompts: [],
+            revision: 1,
+            userHome: fakeHome,
+          });
+
+          const discovered1 = yield* discoverAntigravitySkills({
+            cwd: workspaceDir,
+            userHome: fakeHome,
+            profileDirectory: paths.profileDir,
+          });
+          const byName1 = new Map(discovered1.map((s) => [s.name, s]));
+          expect(byName1.get("plugin-default-skill")?.description).toBe("From plugin skills/");
+          expect(byName1.get("plugin-default-skill")?.displayName).toBe(
+            "enabled-plugin:plugin-default-skill",
+          );
+          expect(byName1.get("manifest-skill")?.description).toBe("From plugin.json skills");
+          expect(byName1.get("manifest-skill")?.displayName).toBe("enabled-plugin:manifest-skill");
+          expect(byName1.has("hidden-skill")).toBe(false);
+          // Team skill MUST win on slug/name collision over personal plugin skill!
+          expect(byName1.get("colliding-skill")?.description).toBe("Team authoritative skill");
+          expect(byName1.get("colliding-skill")?.scope).toBe("team");
+
+          // Personal ~/.gemini/config/config.json was never modified.
+          expect(yield* Effect.promise(() => NodeFSP.readFile(personalConfigJson, "utf8"))).toBe(
+            initialConfigJson,
+          );
+
+          // Now add a new personal plugin AND disable `enabled-plugin` WITHOUT bumping team assetsHash/revision!
+          yield* Effect.promise(async () => {
+            const addedPluginDir = NodePath.join(personalPluginsDir, "added-later");
+            await NodeFSP.mkdir(NodePath.join(addedPluginDir, "skills", "fresh-plugin-skill"), {
+              recursive: true,
+            });
+            await NodeFSP.writeFile(
+              NodePath.join(addedPluginDir, "plugin.json"),
+              JSON.stringify({ name: "added-later" }),
+              "utf8",
+            );
+            await NodeFSP.writeFile(
+              NodePath.join(addedPluginDir, "skills", "fresh-plugin-skill", "SKILL.md"),
+              "---\nname: fresh-plugin-skill\ndescription: Added while team hash unchanged\n---\nBody\n",
+              "utf8",
+            );
+            await NodeFSP.writeFile(
+              personalConfigJson,
+              `${JSON.stringify(
+                {
+                  plugins: {
+                    "disabled-plugin": { enabled: false },
+                    "enabled-plugin": { enabled: false },
+                  },
+                },
+                null,
+                2,
+              )}\n`,
+              "utf8",
+            );
+          });
+
+          // Re-materialize with identical team skills/preprompts/revision (same assetsHash):
+          yield* materializeTeamProfileAssets({
+            stateDir,
+            teamId,
+            virtualInstanceId: virtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            skills: teamSkills,
+            preprompts: [],
+            revision: 1,
+            userHome: fakeHome,
+          });
+
+          const discovered2 = yield* discoverAntigravitySkills({
+            cwd: workspaceDir,
+            userHome: fakeHome,
+            profileDirectory: paths.profileDir,
+          });
+          const byName2 = new Map(discovered2.map((s) => [s.name, s]));
+          expect(byName2.get("fresh-plugin-skill")?.description).toBe(
+            "Added while team hash unchanged",
+          );
+          expect(byName2.has("plugin-default-skill")).toBe(false);
+          expect(byName2.has("manifest-skill")).toBe(false);
+          expect(byName2.get("colliding-skill")?.scope).toBe("team");
+        } finally {
+          yield* Effect.promise(() => NodeFSP.rm(tmp, { recursive: true, force: true }));
+        }
+      }).pipe(Effect.provide(platformLayer)),
+  );
 });

@@ -24,6 +24,12 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  TeamId,
+  makeTeamProviderInstanceId,
+} from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import { resolveClaudeSandboxExtraRoBinds } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { makeCodexAppServerSpawnCommand } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -31,6 +37,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { materializeTeamProfileAssets } from "./TeamProfileMaterializer.ts";
 import {
   buildBwrapArgs,
   buildBwrapProbeArgs,
@@ -1840,6 +1847,105 @@ it.effect(
             () => new Promise<void>((resolve) => socketServer!.close(() => resolve())),
           );
         }
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    }),
+);
+
+it.effect(
+  "mounts mirrored Antigravity personal plugins read-only in bwrap without exposing ~/.gemini auth tokens or rogue symlink targets",
+  () =>
+    Effect.gen(function* () {
+      const root = NodeFS.realpathSync(
+        NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-bwrap-agy-plugins-")),
+      );
+      try {
+        const ownStateDir = NodePath.join(root, "state");
+        const fakeHome = NodePath.join(root, "home");
+        const wtDir = NodePath.join(root, "worktree");
+        const personalGeminiDir = NodePath.join(fakeHome, ".gemini");
+        const personalPluginsDir = NodePath.join(personalGeminiDir, "config", "plugins");
+        const personalAcpDir = NodePath.join(personalGeminiDir, "antigravity-acp");
+        const enabledPluginDir = NodePath.join(personalPluginsDir, "safe-plugin");
+        const disabledPluginDir = NodePath.join(personalPluginsDir, "disabled-plugin");
+
+        NodeFS.mkdirSync(wtDir, { recursive: true });
+        NodeFS.mkdirSync(NodePath.join(enabledPluginDir, "skills", "my-skill"), {
+          recursive: true,
+        });
+        NodeFS.mkdirSync(NodePath.join(disabledPluginDir, "skills", "hidden-skill"), {
+          recursive: true,
+        });
+        NodeFS.mkdirSync(personalAcpDir, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(personalGeminiDir, "config", "config.json"),
+          JSON.stringify({ plugins: { "disabled-plugin": { enabled: false } } }),
+          "utf8",
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(enabledPluginDir, "plugin.json"),
+          JSON.stringify({ name: "safe-plugin" }),
+          "utf8",
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(disabledPluginDir, "plugin.json"),
+          JSON.stringify({ name: "disabled-plugin" }),
+          "utf8",
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(personalAcpDir, "antigravity-oauth-token"),
+          JSON.stringify({ token: { access_token: "PERSONAL_SECRET_TOKEN" } }),
+          "utf8",
+        );
+
+        const teamId = TeamId.make("team-bwrap");
+        const virtualId = makeTeamProviderInstanceId(teamId, ProviderInstanceId.make("team-agy"));
+        const paths = yield* materializeTeamProfileAssets({
+          stateDir: ownStateDir,
+          teamId,
+          virtualInstanceId: virtualId,
+          driver: ProviderDriverKind.make("antigravity"),
+          skills: [],
+          preprompts: [],
+          revision: 1,
+          userHome: fakeHome,
+        }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+
+        // Plant a rogue symlink attempting to escape to personal ~/.gemini/antigravity-acp.
+        const profilePluginsDir = NodePath.join(paths.profileDir, "config", "plugins");
+        NodeFS.symlinkSync(personalAcpDir, NodePath.join(profilePluginsDir, "rogue-acp"), "dir");
+
+        const wrapped = yield* wrapCommandWithBwrap({
+          bwrapBinaryPath: "/usr/bin/bwrap",
+          command: "/bin/sh",
+          args: ["-c", "true"],
+          cwd: wtDir,
+          env: {
+            PATH: "/usr/bin:/bin",
+            HOME: fakeHome,
+            GEMINI_HOME: paths.profileDir,
+          },
+          ownStateDir,
+        });
+
+        const rwBinds = wrapped.args.filter((_, idx, arr) => arr[idx - 1] === "--bind");
+        const roBinds = wrapped.args.filter((_, idx, arr) => arr[idx - 1] === "--ro-bind");
+
+        expect(rwBinds).toContain(paths.profileDir);
+        expect(roBinds).toContain(profilePluginsDir);
+        expect(roBinds).toContain(enabledPluginDir);
+        // `<teamProfile>/config/plugins` RO overlay MUST come after `<teamProfile>` RW bind.
+        expect(wrapped.args.indexOf(profilePluginsDir)).toBeGreaterThan(
+          wrapped.args.indexOf(paths.profileDir),
+        );
+        // Personal ~/.gemini, personal auth tokens, disabled plugins, and rogue symlinks MUST NOT be bound!
+        expect(roBinds).not.toContain(personalGeminiDir);
+        expect(roBinds).not.toContain(personalAcpDir);
+        expect(roBinds).not.toContain(disabledPluginDir);
+        expect(roBinds).not.toContain(NodePath.join(personalGeminiDir, "config"));
+        expect(rwBinds).not.toContain(personalGeminiDir);
+        expect(rwBinds).not.toContain(enabledPluginDir);
+      } finally {
         NodeFS.rmSync(root, { recursive: true, force: true });
       }
     }),
