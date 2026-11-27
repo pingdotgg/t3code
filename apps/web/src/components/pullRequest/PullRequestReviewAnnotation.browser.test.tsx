@@ -56,7 +56,7 @@ it("leaves IME keys in a review reply to the composition", async () => {
     ),
   };
   const reply = () => screen.getByRole("textbox", { name: "Reply to this conversation" });
-  await screen.getByRole("button", { name: "Reply", exact: true }).click();
+  await reply().click();
   await reply().fill("Draft");
 
   for (const composing of [{ isComposing: true }, { keyCode: 229 }]) {
@@ -82,10 +82,11 @@ it("leaves IME keys in a review reply to the composition", async () => {
   expect(onReply).not.toHaveBeenCalled();
 
   await userEvent.keyboard("{Escape}");
-  await expect.element(reply()).not.toBeInTheDocument();
+  // The editor folds back to the read-only field that opens it.
+  await expect.element(reply()).toHaveAttribute("readonly");
   expect(heard).toEqual([]);
 
-  await screen.getByRole("button", { name: "Reply", exact: true }).click();
+  await reply().click();
   await reply().fill("Draft");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
   expect(onReply).toHaveBeenCalledExactlyOnceWith("Draft");
@@ -114,15 +115,12 @@ it("Escape cancels a review reply without closing the right panel sheet", async 
       />
     </RightPanelSheet>,
   );
-  await act(() =>
-    (page.getByRole("button", { name: "Reply", exact: true }).element() as HTMLElement).focus(),
-  );
-  await userEvent.keyboard("{Enter}");
   const reply = page.getByRole("textbox", { name: "Reply to this conversation" });
+  await act(() => (reply.element() as HTMLElement).focus());
   await reply.fill("Draft");
 
   await userEvent.keyboard("{Escape}");
-  await expect.element(reply).not.toBeInTheDocument();
+  await expect.element(reply).toHaveAttribute("readonly");
   expect(onCloseSheet).not.toHaveBeenCalled();
 
   await userEvent.keyboard("{Escape}");

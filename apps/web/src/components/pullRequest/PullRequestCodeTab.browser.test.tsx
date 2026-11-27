@@ -257,7 +257,10 @@ it("can show test files again from the narrow Code tab empty state", async () =>
   const container = document.createElement("div");
   container.className = "h-[700px] w-[429px]";
   await using screen = await render(tab(0), { container });
-  await screen.getByRole("button", { name: "Hide test files", exact: true }).click();
+  // A narrow tab folds the test file filter into the overflow menu.
+  await screen.getByRole("button", { name: "More diff actions" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Hide test files" }).click();
+  await userEvent.keyboard("{Escape}");
 
   await expect.element(screen.getByText("1 test file hidden", { exact: true })).toBeVisible();
   await screen.getByRole("button", { name: "Show test files", exact: true }).click();
@@ -463,9 +466,15 @@ it("keeps an unfinished inline comment when a background refresh changes another
   const container = document.createElement("div");
   container.className = "flex h-[700px] w-[900px]";
   await using screen = await render(reviewTab(0), { container });
-  const header = screen.getByText("early-0.ts", { exact: true }).first();
-  await expect.element(header).toBeVisible();
-  const root = header.element().getRootNode() as ShadowRoot;
+  const header = await vi.waitFor(() => {
+    const shown = screen
+      .getByText("early-0.ts", { exact: true })
+      .elements()
+      .find((element) => element.checkVisibility());
+    if (!shown) throw new Error("No visible file header for early-0.ts");
+    return shown;
+  });
+  const root = header.getRootNode() as ShadowRoot;
   await userEvent.click(root.querySelector<HTMLElement>('[data-column-number="1"]')!);
   const input = () => screen.getByRole("textbox", { name: "Comment on lines early-0.ts:1" });
   await input().fill("Unsent review note");
@@ -555,7 +564,7 @@ it("keeps a later test file folded by hand through a refresh and bulk toggles wh
   await loadNextPage();
   await filter.click();
 
-  await expect.element(screen.getByText("4 files", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("1 / 4", { exact: true })).toBeVisible();
   await expect.element(await diffToggle("late.test.ts")).toHaveAttribute("aria-expanded", "false");
 });
 
@@ -628,14 +637,13 @@ it("answers a commit's diff link only once that commit's diff is shown", async (
     />
   );
   await using screen = await render(scoped(null), { container });
-  await expect.element(screen.getByText("70 files", { exact: true })).toBeVisible();
+  // With viewed marks on, the strip shows the viewed count alone.
   await expect.element(screen.getByText("2 / 70", { exact: true })).toBeVisible();
 
   // The panel selects the link's commit after this tab has already seen the link.
   await screen.rerender(scoped(null, url));
   expect(settled).not.toHaveBeenCalled();
   await screen.rerender(scoped(oid, url));
-  await expect.element(screen.getByText("41 files", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("1+ / 41", { exact: true })).toBeVisible();
   await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
 });

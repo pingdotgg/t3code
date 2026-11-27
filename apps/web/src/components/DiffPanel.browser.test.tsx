@@ -307,12 +307,15 @@ it("explains a branch diff whose only changes are hidden test files", async () =
       </div>
     </RegistryContext.Provider>,
   );
-  await expect.element(screen.getByText(path, { exact: true })).toBeVisible();
-  await userEvent.click(screen.getByRole("button", { name: "Hide test files", exact: true }));
+  await expect.element(screen.getByText(path, { exact: true }).first()).toBeVisible();
+  // The panel folds the test file filter into the overflow menu below its widest layout.
+  await userEvent.click(screen.getByRole("button", { name: "More diff actions" }));
+  await userEvent.click(page.getByRole("menuitemcheckbox", { name: "Hide test files" }));
+  await userEvent.keyboard("{Escape}");
   await expect.element(screen.getByText(path, { exact: true })).not.toBeInTheDocument();
   await expect.element(screen.getByText("1 test file hidden", { exact: true })).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Show test files", exact: true }));
-  await expect.element(screen.getByText(path, { exact: true })).toBeVisible();
+  await expect.element(screen.getByText(path, { exact: true }).first()).toBeVisible();
 });
 
 it.each([false, true])(
