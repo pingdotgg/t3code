@@ -337,10 +337,6 @@ export interface ThreadDetailScreenProps {
 // iOS questions overlay the controls; Android questions stack with child approvals.
 const ComposerPanels = Platform.OS === "android" ? Animated.ScrollView : Animated.View;
 
-/**
- * Hands the feed the screen width measured for a native column; elsewhere keeps the inherited one.
- * Always the same element, so the feed below is not remounted when the width arrives.
- */
 // A child, so focus and app state changes do not re-render the thread body.
 // The native stack keeps covered screens mounted, so gate on focus too.
 function ThreadStreamHaptics(props: { readonly threadRef: ScopedThreadRef | null }) {
@@ -350,6 +346,10 @@ function ThreadStreamHaptics(props: { readonly threadRef: ScopedThreadRef | null
   return null;
 }
 
+/**
+ * Hands the feed the screen width measured for a native column; elsewhere keeps the inherited one.
+ * Always the same element, so the feed below is not remounted when the width arrives.
+ */
 function ColumnWidth(props: { readonly width: number | null; readonly children: React.ReactNode }) {
   const inherited = useWorkspaceSettledContentWidth();
   return (
