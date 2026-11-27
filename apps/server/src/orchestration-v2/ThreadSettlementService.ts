@@ -819,6 +819,8 @@ export const make = Effect.gen(function* () {
       // Recheck after waiting, closing and worktree I/O; only live, settled threads may run scripts.
       const thread = yield* projections.getThread(threadId);
       if (thread.deletedAt !== null || thread.settledOverride !== "settled") return;
+      // A thread moved to another worktree while queued; its newer settlement queued its own run.
+      if (thread.worktreePath !== worktreePath) return;
       const settledAtMs = toMillis(thread.settledAt);
       if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
       // The parent's worktree belongs to the parent; shared-worktree children
@@ -846,7 +848,16 @@ export const make = Effect.gen(function* () {
         // Interrupting the completion closes the script's terminal, so only the wait is bounded:
         // a script that never finishes keeps running but stops holding back later settlements.
         const completion = yield* run.completion.pipe(Effect.forkDetach);
-        yield* Fiber.await(completion).pipe(Effect.timeoutOption(SETTLE_SCRIPT_SLOT_TIMEOUT));
+        const finished = yield* Fiber.await(completion).pipe(
+          Effect.timeoutOption(SETTLE_SCRIPT_SLOT_TIMEOUT),
+        );
+        if (Option.isNone(finished)) {
+          yield* Effect.logWarning("settle script still running; starting the next one", {
+            threadId,
+            worktreePath,
+            terminalId: run.terminalId,
+          });
+        }
       }
     },
     (effect, threadId) =>
