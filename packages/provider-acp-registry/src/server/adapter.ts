@@ -274,7 +274,8 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       : AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     compactViaAdvertisedCommand: true,
-    ...(isAntigravityCli ? { wakeOnDetachedRequest: true, replyEndsWithUsageUpdate: true } : {}),
+    ...(isAntigravityCli ? { replyEndsWithUsageUpdate: true } : {}),
+    ...(isAntigravityCli || isDroid ? { wakeOnDetachedRequest: true } : {}),
     promptFailure: (cause) =>
       acpRegistryPromptFailure(isVibe ? "mistral-vibe" : registryAgentId, cause),
     ...(isDroid
@@ -309,14 +310,13 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           extractSubagentSessionEvent: extractClaudeSubagentSessionEvent,
         }
       : {}),
-    // Hermes replies on the root session when a background process it started exits; no
-    // prompt response follows, so the continuation ends on the deferred-finalize debounce.
-    // Hermes is not in the public registry and may run through a wrapper, so only its
-    // initialize reply identifies it. agy does the same and is known by its command.
+    // Hermes, agy and Droid reply on the root session when background work ends, with no
+    // prompt response, so the continuation ends on the deferred-finalize debounce. Hermes
+    // may run through a wrapper, so only its initialize reply identifies it.
     enablePostSettleContinuation: (initializeResult) =>
-      isAntigravityCli || isHermes(initializeResult),
+      isAntigravityCli || isDroid || isHermes(initializeResult),
     deferFinalizeForBackgroundWork: (initializeResult) =>
-      isAntigravityCli || isHermes(initializeResult),
+      isAntigravityCli || isDroid || isHermes(initializeResult),
     ...(isDevin
       ? {
           clientCapabilitiesMeta: {

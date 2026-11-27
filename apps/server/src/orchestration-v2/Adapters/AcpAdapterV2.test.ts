@@ -12469,6 +12469,15 @@ describe("AcpAdapterV2", () => {
             assert.equal(backgroundItem.turnItem.output ?? "", output);
           }
         });
+        // A foreground tool still open at end_turn must not hold the deferred finalize.
+        yield* update({
+          sessionUpdate: "tool_call",
+          toolCallId: "stale-foreground",
+          title: "Read file",
+          kind: "read",
+          status: "in_progress",
+          rawInput: { path: "a.ts" },
+        });
         yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
         while (true) {
           const event = yield* Queue.take(events);
