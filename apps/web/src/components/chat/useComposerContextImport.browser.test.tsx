@@ -71,7 +71,6 @@ it.each([
   using _copy = {
     [Symbol.dispose]: () => rememberCopiedComposerAttachments(sourceEnvironmentId, new Map()),
   };
-  const promptRef = { current: "" };
   const downloaded = deferred<Response>();
   const requested = deferred<void>();
   const settled = deferred<void>();
@@ -88,12 +87,10 @@ it.each([
     pendingUserInputs: [],
     composerContextRecords: new Map(),
     composerImages: [],
-    composerFilesRef: { current: [] },
     pendingThreadImportsRef: { current: new Map() },
-    promptRef,
     addComposerFilesToDraft: (files: Parameters<typeof store.addFiles>[1]) =>
       store.addFiles(target, files, { appendReference: edit !== "question" }),
-  } satisfies ImportInput & { promptRef: { current: string } };
+  } satisfies ImportInput;
   let importer!: Importer;
   await using _screen = await render(
     <Harness
@@ -163,7 +160,6 @@ it.each([
       label: annotated ? "Page annotation" : "notes.txt",
     });
     if (edit === "question") pastedPrompt = "Question answer";
-    promptRef.current = pastedPrompt;
     store.setPrompt(target, pastedPrompt);
     if (edit !== "cached") await requested.promise;
   });
@@ -176,11 +172,9 @@ it.each([
       edit !== "question" &&
       edit !== "switch"
     ) {
-      promptRef.current = "Keep this edit";
-      store.setPrompt(target, promptRef.current);
+      store.setPrompt(target, "Keep this edit");
     }
     if (edit === "undo") {
-      promptRef.current = pastedPrompt;
       store.setPrompt(target, pastedPrompt);
     }
     if (edit === "switch") input.attachmentTargetKeyRef.current = DraftId.make("other-draft");
@@ -191,7 +185,9 @@ it.each([
   });
   expect(pendingDraftWork.has(target)).toBe(false);
   const draft = store.getComposerDraft(target)!;
-  expect(draft.prompt).toBe(promptRef.current);
+  expect(draft.prompt).toBe(
+    edit === "delete" || edit === "delete-annotation" ? "Keep this edit" : pastedPrompt,
+  );
   const attachments = kind === "file" ? draft.files : draft.images;
   if (kind === "image" && edit === "retain")
     expect(draft.images[0]?.source).toEqual(
@@ -200,6 +196,7 @@ it.each([
   expect(attachments.map((file) => file.name)).toEqual(
     edit === "undo" ||
       edit === "retain" ||
+      edit === "switch" ||
       edit === "annotation" ||
       edit === "cached" ||
       edit === "question"
@@ -244,9 +241,7 @@ it.each(["same", "other-environment"] as const)(
           pendingUserInputs: [],
           composerContextRecords: new Map([[first.contextId, { kind: "thread", record: first }]]),
           composerImages: [],
-          composerFilesRef: { current: [] },
           pendingThreadImportsRef: { current: new Map() },
-          promptRef: { current: "" },
           addComposerFilesToDraft: () => [],
         }}
         ready={(value) => {

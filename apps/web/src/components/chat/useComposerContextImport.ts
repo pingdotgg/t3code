@@ -93,8 +93,6 @@ export function useComposerContextImport(input: {
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly composerContextRecords: ComposerDraftContextRecords;
   readonly composerImages: ReadonlyArray<ComposerImageAttachment>;
-  readonly composerFilesRef: ChatComposerProps["composerFilesRef"];
-  readonly promptRef: RefObject<string>;
   readonly pendingThreadImportsRef: RefObject<Map<string, number>>;
   readonly addComposerFilesToDraft: (files: ComposerFileAttachment[]) => string[];
   readonly removedQueuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding> | undefined;
@@ -113,8 +111,6 @@ export function useComposerContextImport(input: {
     pendingUserInputs,
     composerContextRecords,
     composerImages,
-    composerFilesRef,
-    promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
     removedQueuedAttachments,
@@ -206,27 +202,27 @@ export function useComposerContextImport(input: {
       }
       file = new File([blob], record.name, { type: record.mimeType || blob.type });
       if (record.kind === "image") await readComposerImageBytes(file);
-      // Question attachments have no inline reference; annotations can own their screenshots.
-      const references = new Set(collectInlineContextIds(promptRef.current));
-      if (
-        !questionAttachmentTarget &&
-        !references.has(toKindScopedComposerContextId(record.kind, localId)) &&
-        !(
-          record.kind === "image" &&
-          references.has(previewAnnotationContextId(localId)) &&
-          getComposerDraft(composerDraftTarget)?.previewAnnotations.some(
-            (annotation) => annotation.id === localId,
+      if (!questionAttachmentTarget) {
+        // The open composer can change during the download. Check the original draft's
+        // reference, which may belong to an annotation instead of the image itself.
+        const draft = getComposerDraft(composerDraftTarget);
+        const references = new Set(collectInlineContextIds(draft?.prompt ?? ""));
+        if (
+          !references.has(toKindScopedComposerContextId(record.kind, localId)) &&
+          !(
+            record.kind === "image" &&
+            references.has(previewAnnotationContextId(localId)) &&
+            draft?.previewAnnotations.some((annotation) => annotation.id === localId)
           )
         )
-      )
-        return;
+          return;
+      }
     }
-    // The draft these bytes belong to may have been sent or switched away from while they
-    // downloaded. Dropping them here keeps them out of whatever draft is open now.
-    if (attachmentTargetKeyRef.current !== importTargetKey) return;
+    // Question answers have no persistent prompt reference to check after switching away.
+    if (questionAttachmentTarget && attachmentTargetKeyRef.current !== importTargetKey) return;
     const replacesFileMarker =
       record.kind === "file" &&
-      composerFilesRef.current.some(
+      getComposerDraft(attachmentDraftTarget)?.files.some(
         (candidate) =>
           composerFileNeedsReattach(candidate) &&
           composerFileMatchesReattachMarker(candidate, {
