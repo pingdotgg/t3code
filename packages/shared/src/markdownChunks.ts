@@ -1,3 +1,4 @@
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
@@ -37,6 +38,10 @@ const HTML_STANDALONE_TAG =
   /^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ \t\r"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>|<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>)[ \t]*\r?$/;
 const BLANK_LINE = /^[ \t]*\r?$/;
 const closesAtBlankLine = (next: string) => BLANK_LINE.test(next);
+const flowParser = unified().use(remarkParse).use(remarkGfm).freeze();
+const HTML_FLOW_MAX_CHARS = 8 * 1024;
+// Parsing is far slower than the line scan, so a whole document shares one budget.
+const HTML_PARSE_BUDGET_CHARS = 16 * 1024;
 
 function indentationColumn(whitespace: string, column = 0): number {
   for (const character of whitespace) {
@@ -83,8 +88,8 @@ function opensNonParagraph(text: string): boolean {
   );
 }
 
-/** Returns how to recognize the end of a block that `line` opens, or null for none. */
-function blockCloser(line: string): ((line: string) => boolean) | null {
+/** Null means the block ends on this line. Undefined means no block opens. */
+function blockCloser(line: string): ((line: string) => boolean) | null | undefined {
   const fence = FENCE_OPEN.exec(line)?.[1];
   if (fence) {
     return (next) => {
@@ -104,8 +109,7 @@ function blockCloser(line: string): ((line: string) => boolean) | null {
     if (opener === undefined) continue;
     return close.test(line.slice(opener.length)) ? null : (next) => close.test(next);
   }
-  // Other HTML blocks (CommonMark types 6 and 7) run until a blank line.
-  return HTML_BLOCK_TAG.test(line) || HTML_STANDALONE_TAG.test(line) ? closesAtBlankLine : null;
+  return HTML_BLOCK_TAG.test(line) ? closesAtBlankLine : undefined;
 }
 
 export interface MarkdownChunk {
@@ -253,6 +257,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let first = true;
   let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
+  let ambiguousHtml = false;
   let afterBlankLine = false;
   let definitionEnd = -1;
   let pendingDefinitions: ReturnType<typeof readLinkDefinitions> | undefined;
@@ -273,6 +278,15 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     heldCut = 0;
   };
   const sourceLines = text.split("\n");
+  let flowStart = 0;
+  let parsedThrough = 0;
+  let htmlStarts: Set<number> | undefined;
+  let parseBudget = HTML_PARSE_BUDGET_CHARS;
+  const resetFlow = (start: number) => {
+    flowStart = start;
+    parsedThrough = start;
+    htmlStarts = undefined;
+  };
   for (const [lineIndex, line] of sourceLines.entries()) {
     const blank = BLANK_LINE.test(line);
     const whitespace = /^[ \t]*/.exec(line)![0];
@@ -281,7 +295,10 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     emptyListItem = false;
     const dedented = indent < listContentIndent;
     if (closes !== null) {
-      if (closes(line)) closes = null;
+      if (closes(line)) {
+        closes = null;
+        resetFlow(lineIndex + 1);
+      }
     } else if (first && FRONTMATTER_OPEN.test(line) && hasFrontmatterClose(sourceLines)) {
       closes = (next) => {
         openedFence = FRONTMATTER_CLOSE.test(next);
@@ -290,12 +307,53 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     } else if (lineIndex > definitionEnd) {
       if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
       const cutPoint =
+        !ambiguousHtml &&
         chars >= targetChars &&
         ((line.startsWith("#") && ATX_HEADING.test(line)) ||
           (afterBlankLine && BLOCK_START.test(line) && !LIST_ITEM.test(line)));
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
-      closes = blockCloser(line);
+      const closer = blockCloser(line);
+      closes = closer ?? null;
+      if (closer === null || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line)) {
+        resetFlow(lineIndex + 1);
+      } else if (closer === undefined && HTML_STANDALONE_TAG.test(line)) {
+        // Type-7 HTML cannot interrupt prose. Keep ambiguous tags beyond the parse
+        // budget with their following lines, as a cut could expose literal HTML as Markdown.
+        if (htmlStarts === undefined && lineIndex > flowStart) {
+          let end = flowStart;
+          let flowChars = 0;
+          const maxChars = Math.min(HTML_FLOW_MAX_CHARS, parseBudget);
+          for (; end < sourceLines.length; end++) {
+            const next = sourceLines[end]!;
+            flowChars += next.length + 1;
+            if (flowChars > maxChars || BLANK_LINE.test(next)) break;
+            // Include the boundary line, which can end a lazy container continuation.
+            if (
+              ATX_HEADING.test(next) ||
+              THEMATIC_BREAK.test(next) ||
+              blockCloser(next) !== undefined
+            ) {
+              end++;
+              break;
+            }
+          }
+          parsedThrough = end;
+          htmlStarts = new Set();
+          if (lineIndex < end) {
+            const flowText = sourceLines.slice(flowStart, end).join("\n");
+            parseBudget -= flowText.length;
+            const flow = flowParser.parse(flowText);
+            for (const node of flow.children) {
+              if (node.type === "html" && node.position) {
+                htmlStarts.add(flowStart + node.position.start.line - 1);
+              }
+            }
+          }
+        }
+        if (lineIndex === flowStart || htmlStarts?.has(lineIndex)) closes = closesAtBlankLine;
+        else if (lineIndex >= parsedThrough) ambiguousHtml = true;
+      }
       const afterFence = afterHeading && openedFence && dedented;
       const fence = FENCE_OPEN.test(line);
       // Fence tracking ignores lists, so it finds the real end of a fence indented two or more
@@ -340,7 +398,10 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
       let startsDefinition = false;
-      if (first || afterBlankLine || lineIndex === definitionEnd + 1 || afterHeading) {
+      if (
+        !ambiguousHtml &&
+        (first || afterBlankLine || lineIndex === definitionEnd + 1 || afterHeading)
+      ) {
         let definition = pendingDefinitions?.get(lineIndex);
         if (
           !definition &&
@@ -389,6 +450,10 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       openWrappers = 0;
     }
     afterBlankLine = blank;
+    if (afterBlankLine) {
+      ambiguousHtml = false;
+      resetFlow(lineIndex + 1);
+    }
     afterHeading =
       closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
