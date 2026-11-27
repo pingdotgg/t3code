@@ -471,3 +471,79 @@ it.effect("steers a running turn with its sender and the thread's MCP app model 
     ]);
   }),
 );
+
+it.live("restart waits for a provider that terminalizes a second after the interrupt", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:slow-terminal");
+    const sessionId = ProviderSessionId.make("provider-session:slow-terminal");
+    const providerTurnId = ProviderTurnId.make("provider-turn:slow-terminal");
+    const attemptId = RunAttemptId.make("run-attempt:slow-terminal");
+    const providerThread = {
+      id: ProviderThreadId.make("provider-thread:slow-terminal"),
+      driver,
+      providerInstanceId,
+      providerSessionId: sessionId,
+    } as OrchestrationV2ProviderThread;
+    const initial = makeProjection({ now, threadId, providerThread, providerTurnId, attemptId });
+    const running = {
+      providerThread,
+      providerTurn: initial.providerTurns[0],
+      attempt: { ...initial.attempts[0]!, status: "running" as const, completedAt: null },
+      message: undefined,
+      run: undefined,
+    };
+    let settled = false;
+    let reads = 0;
+    const runtime = {
+      instanceId: providerInstanceId,
+      driver,
+      providerSessionId: sessionId,
+      interruptTurn: () =>
+        Effect.sync(() => {
+          setTimeout(() => {
+            settled = true;
+          }, 1_000);
+        }),
+    } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+    const layerControl = ProviderTurnControlService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerProjectionStore(() =>
+            Effect.sync(() => {
+              reads += 1;
+              return settled
+                ? {
+                    ...running,
+                    providerTurn: { ...running.providerTurn!, status: "interrupted" as const },
+                    attempt: { ...running.attempt, status: "interrupted" as const },
+                  }
+                : running;
+            }),
+          ),
+          layerSessions(sessionId, runtime),
+          Layer.mock(EventSink.EventSinkV2)({
+            latestSequence: () => Effect.succeed(0),
+            stream: () => Stream.never,
+          }),
+          McpAppModelContext.layerEmpty,
+        ),
+      ),
+    );
+
+    const exit = yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+      return yield* Effect.exit(
+        control.interruptAndAwaitTerminal({
+          threadId,
+          providerSessionId: sessionId,
+          providerThreadId: providerThread.id,
+          providerTurnId,
+          interruptedAttemptId: attemptId,
+        }),
+      );
+    }).pipe(Effect.provide(layerControl));
+
+    assert.isTrue(Exit.isSuccess(exit), `restart gave up after ${reads} projection reads`);
+  }),
+);
