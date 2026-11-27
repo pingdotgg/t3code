@@ -118,7 +118,7 @@ export const latestMuseVersion = Effect.fn("latestMuseVersion")(function* (
       Effect.timeout(4_000),
       Effect.orElseSucceed(() => null),
     ),
-    options,
+    { ...options, fallbackToStale: options?.fresh !== true },
   );
 });
 
