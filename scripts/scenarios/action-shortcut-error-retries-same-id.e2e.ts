@@ -65,6 +65,12 @@ test(
     const actionId = firstActions[0]!.id;
     await save.tap();
     await editor.waitFor({ state: "hidden" });
+    await screen.getByRole("button", "Script actions", { exact: true }).tap();
+    await screen
+      .getByRole("menuitem", /^Run smoke checks/)
+      .first()
+      .waitFor();
+    await app.screenshot("actions-after-retrying-save");
 
     const config = await readConfig(origin);
     expect(matchingActions(config.settings).map((script) => script.id)).toEqual([actionId]);
