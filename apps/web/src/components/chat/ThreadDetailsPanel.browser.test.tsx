@@ -310,7 +310,8 @@ it("lists the t3.json actions on disk when the actions menu opens again after th
   t3File.cached = t3File.disk;
   await using _screen = await render(<Panel fixture={fixture} withScripts />);
 
-  const chooser = page.getByRole("button", { name: "Choose project action" });
+  // The panel names its actions menu Project actions.
+  const chooser = page.getByRole("button", { name: "Project actions" });
   await chooser.click();
   await expect.element(page.getByRole("menuitem", { name: /Dev 4100/ })).toBeVisible();
   await chooser.click();

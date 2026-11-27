@@ -323,7 +323,7 @@ describe("CommandPalette open intents", () => {
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
 
     openCommandPalette({});
-    const rootInput = page.getByPlaceholder("Search commands, projects, and threads...");
+    const rootInput = page.getByPlaceholder("Search threads, projects, and commands…");
     await expect.element(rootInput).toHaveFocus();
     await userEvent.keyboard("{ArrowDown}");
     await expect
@@ -374,7 +374,7 @@ describe("CommandPalette open intents", () => {
     await userEvent.keyboard("{Escape}");
     await expect.element(palette).toHaveAttribute("data-palette-mode", "command");
     await expect
-      .element(page.getByPlaceholder("Search commands, projects, and threads..."))
+      .element(page.getByPlaceholder("Search threads, projects, and commands…"))
       .toHaveFocus();
 
     await act(() => {

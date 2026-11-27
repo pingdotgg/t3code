@@ -73,8 +73,8 @@ describe("ThemeImportDialog", () => {
       count,
     );
   it.each([
-    ["en", 1, "acme · 1 download"],
-    ["ru", 475_001, `acme · Скачиваний: ${compact(475_001)}`],
+    ["en", 1, "1 download"],
+    ["ru", 475_001, compact(475_001)],
   ])("counts %s theme downloads (%d)", async (locale, downloadCount, line) => {
     searchOpenVsxThemes.mockReset();
     searchOpenVsxThemes.mockResolvedValue([{ ...extension, downloadCount }]);
@@ -96,9 +96,21 @@ describe("ThemeImportDialog", () => {
       </GTProvider>,
     );
 
+    // The entry button's name is translated, so it is found by its search icon.
+    const openSearch = [...document.querySelectorAll("button")].find((button) =>
+      button.querySelector(".lucide-search"),
+    )!;
+    await userEvent.click(openSearch);
     await userEvent.fill(page.getByRole("searchbox"), "night");
 
-    await expect.element(page.getByText(line, { exact: true })).toBeVisible();
+    // The download count is in the publisher's tooltip.
+    await userEvent.hover(page.getByRole("searchbox"));
+    await userEvent.hover(page.getByText("acme", { exact: true }));
+    await vi.waitFor(() =>
+      expect(document.querySelector("[data-slot=tooltip-popup]")?.textContent ?? "").toContain(
+        line,
+      ),
+    );
   });
 
   it("clears the search on Escape before closing the dialog", async () => {
@@ -113,6 +125,7 @@ describe("ThemeImportDialog", () => {
         onImportedMany={() => {}}
       />,
     );
+    await userEvent.click(page.getByRole("button", { name: "Search community themes" }));
     const search = page.getByRole("searchbox", { name: "Search Open VSX themes" });
     await expect.element(search).toHaveAttribute("type", "text");
     await userEvent.fill(search, "nord");
@@ -328,10 +341,12 @@ it("names an oversized file in a batch import in the UI language", async () => {
     new File(["x".repeat(1_048_100)], "huge.json", { type: "application/json" }),
   ]);
 
+  // The staged row names the file above its error.
+  await expect.element(page.getByText("huge.json", { exact: true })).toBeVisible();
   await expect
     .element(page.getByRole("alert"))
     .toHaveTextContent(
-      "huge.json: Diese Datei ist 1.00 MB groß. Design-Dateien haben nur wenige KB, daher wurde sie nicht gelesen (Limit 256 KB).",
+      "Diese Datei ist 1.00 MB groß. Design-Dateien haben nur wenige KB, daher wurde sie nicht gelesen (Limit 256 KB).",
     );
 });
 

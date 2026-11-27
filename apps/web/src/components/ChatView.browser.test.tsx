@@ -1284,7 +1284,8 @@ it("a new thread on a branch with changes opens them from thread details", async
     // AppRoot brings its own router.
     router: false,
   });
-  const changesRow = page.getByRole("button", { name: /^Changes\s*vs main\s*\+150/ });
+  // The redesign's layer 1 thread details label this row View changes.
+  const changesRow = page.getByRole("button", { name: /^View changes\s*vs main\s*\+150/ });
   // The row already shows the branch's totals, so it has to open them.
   await expect.element(changesRow).toBeEnabled();
 
