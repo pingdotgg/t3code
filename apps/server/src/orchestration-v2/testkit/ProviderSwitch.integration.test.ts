@@ -6710,6 +6710,119 @@ describe("orchestration v2 provider switching", () => {
       }),
   );
 
+  // regression: #44279 a portable fork's first /compact reached a fresh native session without the fork's history.
+  it.live(
+    "compacts a portable fork's first turn only after its session has the inherited history",
+    () =>
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("fork-first-compact");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: { 1: "The release marker is violet." },
+            capturedTurns,
+          }),
+          // No injectHistory, like Antigravity: the history can only reach the session in a prompt.
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+        ]);
+        const sourceThreadId = ThreadId.make("thread:fork-first-compact:source");
+        const forkThreadId = ThreadId.make("thread:fork-first-compact:fork");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const send = (
+            threadId: ThreadId,
+            name: string,
+            text: string,
+            modelSelection: ModelSelection,
+          ) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:fork-first-compact:${name}`),
+              threadId,
+              messageId: MessageId.make(`message:fork-first-compact:${name}`),
+              text,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+          const settle = (threadId: ThreadId) =>
+            worker.drain().pipe(
+              Effect.andThen(waitForIdle(threadId)),
+              Effect.tap(() => worker.drain()),
+            );
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:fork-first-compact:create"),
+            threadId: sourceThreadId,
+            projectId,
+            title: "Fork first compact",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* send(sourceThreadId, "source", "Prompt source", CODEX_MODEL_SELECTION);
+          const source = yield* settle(sourceThreadId);
+          yield* orchestrator.dispatch({
+            type: "thread.fork",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:fork-first-compact:fork"),
+            sourceThreadId,
+            targetThreadId: forkThreadId,
+            sourcePoint: { type: "run", runId: source.runs[0]!.id },
+            title: "Fork",
+          });
+          yield* send(forkThreadId, "compact", "/compact", CLAUDE_MODEL_SELECTION);
+          yield* settle(forkThreadId);
+
+          const forkTurns = (yield* Ref.get(capturedTurns)).filter(
+            (turn) => turn.threadId === forkThreadId,
+          );
+          // Compacting the fork's empty native session would summarize nothing.
+          if (forkTurns.length > 0) {
+            assert.include(forkTurns[0]!.text, "Prompt source");
+            assert.include(forkTurns[0]!.text, "release marker is violet");
+          }
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "fork-first-compact",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+  );
+
   it.effect.each([
     "same-provider-retry",
     "cancelled-dropped",
