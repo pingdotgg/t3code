@@ -43,7 +43,7 @@ export function agentDeviceQuickStart(
     host?.kind === "simlock"
       ? [
           device.physical
-            ? "This real device is leased from a Simlock pool (alpha in T3 Code). Call device_close with shutdown: true when you are done. Ending the lease never erases it: Simlock removes only apps that were not on the device when it was enrolled, by app ID, and on an iPhone never App Store or TestFlight apps; an enrolled app you delete and reinstall stays. Every other app's data, settings, files, accounts and keychain items, including credentials a removed app stored, stay for the next lease."
+            ? "This is a real device leased from a Simlock pool (alpha in T3 Code). It is not wiped when the lease ends: Simlock removes the apps installed since it was enrolled and leaves all other data, so call device_close with shutdown: true when you are done."
             : "This device is leased from a Simlock pool (alpha in T3 Code). The lease returns it to the pool, wiped, when it ends, so call device_close with shutdown: true when you are done. It starts with no apps installed.",
           host.installDirectory
             ? `agent-device accepts install for this lease only when run from ${host.installDirectory}.`

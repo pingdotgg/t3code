@@ -47,13 +47,15 @@ Connect to a [Simlock](https://incubator.callstack.com/simlock/) device pool (re
 
 1. Enable **Settings → Labs → Simlock device hosts (alpha)** and **Settings → Devices → Use devices**.
 2. Choose **Add source → Simlock pool** with an agent token (`simlock --gateway token create --role agent`) over HTTPS or Tailscale (give each T3 server its own token; treat it like worker shell access).
-3. Closing a device with **Return device to the pool** releases the lease. Simulators and emulators are wiped; phones and tablets are not. Toolbar tools/rotation/screenshots are unavailable in the UI (agents can still invoke them via `device_open`).
+3. Closing a device with **Return device to the pool** wipes and releases the lease. Toolbar tools/rotation/screenshots are unavailable in the UI (agents can still invoke them via `device_open`).
 
-The picker includes enrolled phones and tablets on connected, undrained workers, grouped by model and OS version and marked **Physical**.
+### Enrolled phones and tablets
 
-Simlock removes apps added since enrollment from physical devices, except App Store and TestFlight apps on iPhones. An enrolled app that is deleted and reinstalled stays. Other app data, settings, files, accounts, and keychain items, including credentials left by removed apps, remain for the next lease.
+With Simlock 0.9.0 or later, the phones and tablets enrolled in the pool appear in the list next to its simulators and emulators, marked **Physical**, one entry per model and OS version. Older Simlock versions list them but refuse to open them. Worker setup is covered in Simlock's [Use a real phone](https://incubator.callstack.com/simlock/docs/using-devices/agent-device#use-a-real-phone).
 
-A physical iPhone needs worker signing configured (see [Use a real phone](https://incubator.callstack.com/simlock/docs/using-devices/agent-device#use-a-real-phone)). Its panel screen requires iOS 27+, Xcode 27+, and `simlock-device-capture` on the worker. The panel cannot send it input; agents can still drive it through `device_open`.
+- A phone is not wiped when its lease ends. Simlock removes the apps installed since the phone was enrolled; settings, files, accounts, and the data of every other app stay for whoever leases it next.
+- A leased phone has no stop button in the device list. Open it and choose **Return device to the pool**.
+- An iPhone's screen needs iOS 27 or later and a worker on Xcode 27 or later, and it takes no clicks or typing from the panel. Agents can still drive it.
 
 ## Device tool updates
 

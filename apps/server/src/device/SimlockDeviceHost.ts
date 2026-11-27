@@ -59,7 +59,7 @@ const Catalog = Schema.Struct({
   ),
 });
 const decodeCatalog = Schema.decodeUnknownEffect(Catalog);
-// The enrolled phones and tablets; `/v1/catalog` lists only models a worker can create.
+// `/v1/catalog` lists only models a worker can create; enrolled phones are in `/v1/status`.
 const Status = Schema.Struct({
   devices: Schema.optional(
     Schema.Array(
@@ -83,7 +83,7 @@ const Status = Schema.Struct({
   ),
 });
 const decodeStatus = Schema.decodeUnknownEffect(Status);
-// A phone in any other state (absent, quarantined, deleted) cannot be leased until an operator acts.
+// Any other state (absent, quarantined, deleted) needs an operator before the phone can be leased.
 const LEASABLE_PHONE_STATES = new Set(["ready", "leased", "reclaiming"]);
 const decodeSessionRecord = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ leaseId: Schema.String })),
@@ -131,20 +131,18 @@ interface Lease {
   readonly token: string;
 }
 
-const catalogId = (platform: DevicePlatform, model: string) => `simlock:${platform}:${model}`;
-// A phone's entry names its OS: two enrolled phones of one model can run different versions.
-const phoneId = (platform: DevicePlatform, osVersion: string, model: string) =>
-  `simlock-phone:${platform}:${encodeURIComponent(osVersion)}:${model}`;
+// An enrolled phone's id carries its OS version: two phones of one model can run different ones.
+const catalogId = (platform: DevicePlatform, model: string, osVersion?: string) =>
+  `simlock:${platform}${osVersion === undefined ? "" : `@${encodeURIComponent(osVersion)}`}:${model}`;
 const parseCatalogId = (id: string) => {
-  const phone = /^simlock-phone:(ios|android):([^:]+):(.+)$/.exec(id);
-  if (phone)
-    return {
-      platform: phone[1] as DevicePlatform,
-      osVersion: decodeURIComponent(phone[2]!),
-      model: phone[3]!,
-    };
-  const match = /^simlock:(ios|android):(.+)$/.exec(id);
-  return match ? { platform: match[1] as DevicePlatform, model: match[2]! } : null;
+  const match = /^simlock:(ios|android)(?:@([^:]*))?:(.+)$/.exec(id);
+  return match
+    ? {
+        platform: match[1] as DevicePlatform,
+        model: match[3]!,
+        osVersion: match[2] === undefined ? undefined : decodeURIComponent(match[2]),
+      }
+    : null;
 };
 const platformVersion = (platform: DevicePlatform, runtime: string | undefined) =>
   `${platform === "ios" ? "iOS" : "Android"}${runtime ? ` ${runtime}` : ""}`;
@@ -361,41 +359,35 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     return result.stdout;
   });
 
-  /** One entry per enrolled phone or tablet model on a connected, undrained worker. */
+  /** One entry per model and OS version of the enrolled phones and tablets a worker can lease now. */
   const fetchPhones = Effect.fn("SimlockDeviceHost.fetchPhones")(function* (agentToken: string) {
-    return yield* request(agentToken, "GET", "/v1/status").pipe(
+    const status = yield* request(agentToken, "GET", "/v1/status").pipe(
       Effect.flatMap(decodeStatus),
-      Effect.map((status) => {
-        const usable = new Set(
-          (status.workers ?? [])
-            .filter((worker) => worker.connection === "connected" && !worker.drained)
-            .map((worker) => worker.id),
-        );
-        const phones = new Map<string, DeviceHost.HostDevice>();
-        for (const device of status.devices ?? []) {
-          const { platform, model, osVersion } = device.spec;
-          if (!device.physical || (platform !== "ios" && platform !== "android")) continue;
-          if (!LEASABLE_PHONE_STATES.has(device.state)) continue;
-          if (device.workerId !== undefined && !usable.has(device.workerId)) continue;
-          if (device.class !== undefined && device.class !== "phone" && device.class !== "tablet")
-            continue;
-          const id = phoneId(platform, osVersion, model);
-          if (phones.has(id)) continue;
-          phones.set(id, {
-            id,
-            platform,
-            name: model,
-            version: platformVersion(platform, osVersion),
-            booted: false,
-            physical: true,
-          });
-        }
-        return [...phones.values()];
-      }),
-      // Phones are extra: a gateway that cannot list them still offers its simulators.
-      Effect.tapError((cause) => Effect.logWarning("Could not list Simlock phones", { cause })),
-      Effect.orElseSucceed(() => null),
     );
+    const usableWorkers = new Set(
+      (status.workers ?? [])
+        .filter((worker) => worker.connection === "connected" && !worker.drained)
+        .map((worker) => worker.id),
+    );
+    const phones = new Map<string, DeviceHost.HostDevice>();
+    for (const device of status.devices ?? []) {
+      const { platform, model, osVersion } = device.spec;
+      if (!device.physical || (platform !== "ios" && platform !== "android")) continue;
+      if (device.class !== undefined && device.class !== "phone" && device.class !== "tablet")
+        continue;
+      if (!LEASABLE_PHONE_STATES.has(device.state)) continue;
+      if (device.workerId !== undefined && !usableWorkers.has(device.workerId)) continue;
+      const id = catalogId(platform, model, osVersion);
+      phones.set(id, {
+        id,
+        platform,
+        name: model,
+        version: platformVersion(platform, osVersion),
+        booted: false,
+        physical: true,
+      });
+    }
+    return [...phones.values()];
   });
 
   const fetchCatalog = Effect.gen(function* () {
@@ -429,12 +421,16 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       });
     });
     const virtual = byPlatform.flatMap((entry) => entry ?? []);
-    const phones = yield* fetchPhones(agentToken);
-    const devices = [...virtual, ...(phones ?? [])];
+    const phones = yield* fetchPhones(agentToken).pipe(
+      Effect.tapError((cause) => Effect.logWarning("Could not list Simlock phones", { cause })),
+      Effect.option,
+    );
+    const devices = [...virtual, ...Option.getOrElse(phones, () => [])];
     // A platform with nothing to offer is usually its workers reconnecting; caching that would
-    // hide it for the TTL, so only a catalog with devices on every platform is kept.
+    // hide it for the TTL, so only a catalog with devices on every platform is kept. Phones are
+    // extra: a listing without them is returned but not kept either.
     catalog =
-      phones !== null &&
+      Option.isSome(phones) &&
       virtual.length > 0 &&
       byPlatform.every((entry) => entry === null || entry.length > 0)
         ? { at: now, devices }
