@@ -189,6 +189,7 @@ function TimelineListFooter({
   const holdRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const placeRef = useRef<(() => void) | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports growth of the footer's content, which the list does not follow
   useLayoutEffect(() => {
     const content = contentRef.current;
@@ -217,32 +218,41 @@ function TimelineListFooter({
     let held = 0;
     // Only while holding: rows can grow without a scroll or a resize of the end.
     const rowsChanged = new MutationObserver(() => place());
+    // Never below the current height, so the next shrink waits here for this check.
+    const setHeight = () => {
+      const minHeight = `${natural + held}px`;
+      if (hold.style.minHeight !== minHeight) hold.style.minHeight = minHeight;
+    };
     const place = () => {
       const nextNatural = end.offsetHeight;
       const nextRows = rowsHeight();
       held = Math.max(0, held + natural - nextNatural - Math.max(0, nextRows - rows));
       natural = nextNatural;
       rows = nextRows;
-      const clear = viewport.scrollTop + viewport.clientHeight <= viewport.scrollHeight - held;
-      if (clear) held = 0;
+      // Measured after the rows' growth is taken out of the hold, not against the old hold.
+      setHeight();
+      if (viewport.scrollTop + viewport.clientHeight <= viewport.scrollHeight - held) {
+        held = 0;
+        setHeight();
+      }
       if (held > 0) {
         rowsChanged.observe(viewport, { subtree: true, childList: true, attributes: true });
       } else {
         rowsChanged.disconnect();
       }
-      // Never below the current height, so the next shrink waits here for this check.
-      const minHeight = `${natural + held}px`;
-      if (hold.style.minHeight !== minHeight) hold.style.minHeight = minHeight;
     };
-    place();
+    placeRef.current = place;
     viewport.addEventListener("scroll", place, { passive: true });
     const stopObserving = observeResize(end, place);
     return () => {
+      placeRef.current = null;
       viewport.removeEventListener("scroll", place);
       rowsChanged.disconnect();
       stopObserving();
     };
   }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a status line can come and go before a resize is observed, and the list reads layout in the same commit
+  useLayoutEffect(() => placeRef.current?.());
   return (
     <div ref={rootRef}>
       <div ref={holdRef}>
