@@ -763,11 +763,38 @@ describe("workflowOneLine", () => {
   it("skips fenced code blocks to read the prose sentence after them", () => {
     expect(workflowOneLine('```json\n{"ok": true}\n```\nAll good. Next.')).toBe("All good.");
     expect(workflowOneLine("~~~\nconst x = 1;\n~~~\nDone.")).toBe("Done.");
+    expect(workflowOneLine("> ```sh\n> printf sample\n> ```\n\nBuild passed.")).toBe(
+      "Build passed.",
+    );
+    expect(
+      workflowOneLine("> > ~~~sh\n> > > ~~~\n> > printf sample\n> > ~~~\n\nBuild passed."),
+    ).toBe("Build passed.");
+    expect(workflowOneLine("> ```sh\n> printf sample\n\nBuild passed.")).toBe("Build passed.");
+    expect(workflowOneLine("> ```sh\n> printf sample\n> ```\n>\n>     code\n> Build passed.")).toBe(
+      "Build passed.",
+    );
+    expect(workflowOneLine("> ```sh\n> printf sample\n> ```\n>Build passed.")).toBe(
+      "Build passed.",
+    );
+    expect(workflowOneLine("> #123 is fixed.\nTests pass.")).toBe("#123 is fixed.");
+    expect(workflowOneLine("> |x| is the absolute value of x.\nFallback.")).toBe(
+      "|x| is the absolute value of x.",
+    );
     expect(workflowOneLine("````md\n```ts\nconst x = 1;\n```\n````\nDone.")).toBe("Done.");
     expect(workflowOneLine("```ts\nconst a = 1;\nStill inside an unclosed fence.")).toBe("");
     expect(workflowOneLine("```foo``` is an inline code span. Next.")).toBe(
       "foo is an inline code span.",
     );
+    expect(workflowOneLine("## Report\n\n    ```\n\nDeployment succeeded.")).toBe(
+      "Deployment succeeded.",
+    );
+    expect(workflowOneLine("````\ncode\n    ````\nmore\n````\nDeployment succeeded.")).toBe(
+      "Deployment succeeded.",
+    );
+    expect(workflowOneLine("   ```ts\r\ncode\r\n   ``` \t\r\n   Deployment succeeded.")).toBe(
+      "Deployment succeeded.",
+    );
+    expect(workflowOneLine("## Summary\n\n    - Nested bullet item.")).toBe("Nested bullet item.");
   });
 });
 

@@ -114,7 +114,7 @@ export class WorkspaceEntries extends Context.Service<
     readonly searchContents: (
       input: ProjectSearchContentsInput,
     ) => Effect.Effect<ProjectSearchContentsResult, WorkspaceEntriesError>;
-    readonly refresh: (cwd: string) => Effect.Effect<void>;
+    readonly refresh: (cwd: string, mode?: "passive") => Effect.Effect<void>;
   }
 >()("t3/workspace/WorkspaceEntries") {}
 
@@ -202,7 +202,7 @@ export const make = Effect.gen(function* () {
   };
 
   const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
-    function* (cwd) {
+    function* (cwd, mode) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
         Effect.orElseSucceed(() => cwd),
       );
@@ -233,7 +233,7 @@ export const make = Effect.gen(function* () {
         );
         yield* Effect.gen(function* () {
           const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-          yield* searchIndex.refresh();
+          yield* searchIndex.refresh(mode);
         }).pipe(
           Effect.provide(workspaceSearchIndexes.get(indexKey)),
           Effect.catchTags({

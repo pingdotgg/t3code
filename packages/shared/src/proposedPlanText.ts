@@ -7,10 +7,17 @@ function headingText(line: string): string | null {
 
 export function proposedPlanTitle(planMarkdown: string): string | null {
   let fence = "";
-  for (const line of planMarkdown.split(/\r?\n/)) {
-    const [, marker = "", info = ""] = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/) ?? [];
+  let comment = false;
+  for (const line of planMarkdown.replace(/^\uFEFF/, "").split(/\r?\n/)) {
+    const [, marker = "", info = ""] = line.match(/^ {0,3}(`{3,}|~{3,})([^\r\n]*)$/) ?? [];
     if (fence) {
-      if (marker[0] === fence[0] && marker.length >= fence.length && !info.trim()) fence = "";
+      if (marker[0] === fence[0] && marker.length >= fence.length && /^[ \t]*$/.test(info)) {
+        fence = "";
+      }
+      continue;
+    }
+    if (comment || /^ {0,3}<!--/.test(line)) {
+      comment = !line.includes("-->");
       continue;
     }
     // CommonMark: a backtick fence's info string cannot contain a backtick.
@@ -25,7 +32,10 @@ export function proposedPlanTitle(planMarkdown: string): string | null {
 }
 
 export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
-  const lines = planMarkdown.trimEnd().split(/\r?\n/);
+  const lines = planMarkdown
+    .replace(/^\uFEFF/, "")
+    .trimEnd()
+    .split(/\r?\n/);
   let start = 0;
   while (lines[start]?.trim().length === 0 || headingText(lines[start] ?? "") === "") {
     start += 1;
