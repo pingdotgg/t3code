@@ -4000,9 +4000,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
                 ${
-                  filter?.turnItemTypes === undefined && filter?.turnItemStatuses === undefined
+                  filter?.turnItemTypes === undefined &&
+                  filter?.turnItemStatuses === undefined &&
+                  filter?.turnItemRunId === undefined &&
+                  filter?.turnItemRunIds === undefined
                     ? sql`WHERE ${turnItemMatch(threadId, filter)}`
-                    : // Matches on the type/status index and fetches only those payloads. Sorted, SQLite would walk the thread by ordinal instead.
+                    : // Matches on the type/status or run index and fetches only those payloads. Sorted, SQLite would walk the thread by ordinal instead.
                       sql`WHERE rowid IN (
                     SELECT rowid FROM orchestration_v2_projection_turn_items
                     WHERE ${turnItemMatch(threadId, filter)}

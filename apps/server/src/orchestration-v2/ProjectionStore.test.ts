@@ -867,6 +867,31 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
         .join("\n"),
       "USING COVERING INDEX orchestration_v2_projection_turn_items_thread_type_idx",
     );
+    // Turn starts and checkpoints read one run's items; sorted, SQLite would walk the thread too.
+    const rolledBackRun = RunId.make("run:idle-compaction:rolled-back");
+    for (const runFilter of [
+      { turnItemRunIds: [rolledBackRun] },
+      { turnItemRunId: rolledBackRun },
+    ]) {
+      const byRun = traceSqlStatements();
+      const runItems = yield* store
+        .getThreadRecords(threadId, ["turnItems"], runFilter)
+        .pipe(Effect.withTracer(byRun.tracer));
+      assert.deepEqual(
+        runItems.turnItems.map((item) => item.id),
+        ["item:idle-compaction:rolled-back"],
+      );
+      const runQuery = byRun.statements.find((statement) =>
+        statement.includes("FROM orchestration_v2_projection_turn_items"),
+      );
+      assert.isDefined(runQuery);
+      assert.include(
+        (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${runQuery}`))
+          .map((row) => row.detail)
+          .join("\n"),
+        "USING COVERING INDEX orchestration_v2_projection_turn_items_thread_run_idx",
+      );
+    }
     assert.deepEqual(
       records.providerTurns.map((turn) => turn.id),
       ["turn:idle-newest"],
