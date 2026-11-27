@@ -637,7 +637,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "speech-dictionary",
     title: msg("Dictionary"),
     to: "/settings/voice",
-    searchTerms: [msg("speech voice transcription vocabulary names glossary alias")],
+    searchTerms: [
+      msg("Your dictionary"),
+      msg("speech voice transcription vocabulary names glossary alias"),
+    ],
   },
   {
     id: "speech-project-dictionary",
