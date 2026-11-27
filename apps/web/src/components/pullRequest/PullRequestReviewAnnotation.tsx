@@ -334,7 +334,11 @@ export function ReviewThreadCard({
             count: commentCount,
           })}
         </button>
-        {thread.isOutdated ? <span>outdated</span> : null}
+        {thread.isOutdated ? (
+          <span>
+            <T context="review thread state">Outdated</T>
+          </span>
+        ) : null}
         {onFix ? (
           <Button
             size="compact"

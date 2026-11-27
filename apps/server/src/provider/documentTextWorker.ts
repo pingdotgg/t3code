@@ -15,12 +15,14 @@ const CELL_END = Symbol("cell-end");
 const LINE_START = Symbol("line-start");
 const THEMATIC_BREAK = Symbol("thematic-break");
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 type TextPart =
   | string
   | typeof CELL_START
   | typeof CELL_END
   | typeof LINE_START
   | typeof THEMATIC_BREAK
+  | { columnGap: number }
   | { imageDescription: string }
   | { fallback: string }
   | { notebookOutput: Iterable<string> };
@@ -74,6 +76,8 @@ interface XmlNode {
   markupCompatibility?: boolean;
   hasSelectedChoice?: boolean;
   epubTable?: boolean;
+  mathmlFirstChildSeen?: boolean;
+  epubBlock?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -128,14 +132,12 @@ function namespaceOf(tagName: string, scope: readonly XmlNode[]) {
   return scope.findLast((node) => Object.hasOwn(node.attrs, binding))?.attrs[binding];
 }
 
-function isXhtmlTemplate(
+function isXhtmlElement(
   tagName: string,
-  node: XmlNode,
-  ancestors: readonly XmlNode[],
+  scope: readonly XmlNode[],
   rootTagName: string | undefined,
 ) {
-  if (node.name !== "template") return false;
-  const namespace = namespaceOf(tagName, [...ancestors, node]);
+  const namespace = namespaceOf(tagName, scope);
   return (
     namespace === "http://www.w3.org/1999/xhtml" ||
     (namespace === undefined && !tagName.includes(":") && rootTagName === "html")
@@ -175,6 +177,18 @@ function xml(source: string, extension: string): XmlNode {
     stack.at(-1)!.children.push(node);
     stack.push(node);
     if (
+      extension === ".epub" &&
+      node.name === "semantics" &&
+      namespaceOf(tag.name, stack) === MATHML_NS
+    )
+      node.mathmlFirstChildSeen = false;
+    if (
+      extension === ".epub" &&
+      ["nav", "main", "details", "summary"].includes(node.name) &&
+      isXhtmlElement(tag.name, stack, rootTagName)
+    )
+      node.epubBlock = true;
+    if (
       (node.name === "AlternateContent" || node.name === "Choice") &&
       namespaceOf(tag.name, stack) === MARKUP_COMPATIBILITY_NS
     )
@@ -183,6 +197,9 @@ function xml(source: string, extension: string): XmlNode {
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    // MathML Core displays only the first element child of semantics by default.
+    const isMathmlAlternative = parent.mathmlFirstChildSeen === true;
+    if (parent.mathmlFirstChildSeen === false) parent.mathmlFirstChildSeen = true;
     const isCompatibilityChoice =
       node.name === "Choice" &&
       node.markupCompatibility &&
@@ -190,7 +207,10 @@ function xml(source: string, extension: string): XmlNode {
       parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
-      (extension === ".epub" && isXhtmlTemplate(tag.name, node, stack, rootTagName)) ||
+      isMathmlAlternative ||
+      (extension === ".epub" &&
+        node.name === "template" &&
+        isXhtmlElement(tag.name, [...stack, node], rootTagName)) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
         Object.hasOwn(tag.attributes, "hidden") &&
@@ -343,6 +363,12 @@ function* xstringText(node: XmlNode): Generator<string, void> {
         literal ? `_${literal}` : String.fromCharCode(Number.parseInt(hex!, 16)),
     );
 }
+
+function hasXstringText(node: XmlNode): boolean {
+  for (const value of xstringText(node)) if (value.trim()) return true;
+  return false;
+}
+
 function* paragraphs(node: XmlNode): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
   if (node.imageDescription !== undefined) {
@@ -372,17 +398,18 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield "\n";
     } else if (
-      [
-        "blockquote",
-        "figure",
-        "figcaption",
-        "aside",
-        "address",
-        "header",
-        "footer",
-        "article",
-      ].includes(child.name) &&
-      child.hasText
+      child.hasText &&
+      (child.epubBlock ||
+        [
+          "blockquote",
+          "figure",
+          "figcaption",
+          "aside",
+          "address",
+          "header",
+          "footer",
+          "article",
+        ].includes(child.name))
     ) {
       yield LINE_START;
       yield* paragraphs(child);
@@ -551,7 +578,7 @@ function* table(node: XmlNode): Generator<TextPart, void> {
         for (let i = 0; i < count; i++) {
           column += span;
           if (column > 512) throw new Truncation("Column limit");
-          if (gap) yield "\t".repeat(gap);
+          if (gap) yield { columnGap: gap };
           gap = span;
           // LibreOffice hides the contents a merge covers; the cell still holds its column.
           if (covered(cell)) continue;
@@ -680,13 +707,12 @@ function* notebook(source: string): Generator<TextPart, void> {
           ? outputText(output.data["text/markdown"])
           : plain;
       } else if ("output_type" in output && output.output_type === "error") {
-        const name = [...lines("ename" in output ? output.ename : undefined)].join("");
-        const value = [...lines("evalue" in output ? output.evalue : undefined)].join("");
-        const plain = NodeUtil.stripVTControlCharacters(name + value);
-        if (NOTEBOOK_OUTPUT_TEXT.test(plain)) {
+        const name = outputText("ename" in output ? output.ename : undefined);
+        const value = outputText("evalue" in output ? output.evalue : undefined);
+        if (NOTEBOOK_OUTPUT_TEXT.test(name + value)) {
           yield name;
           if ("evalue" in output) yield ": " + value;
-        } else yield plain;
+        } else yield name + value;
         yield "\n";
         if ("traceback" in output)
           for (const line of lines(output.traceback)) {
@@ -1025,7 +1051,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       const formats = cellFormats ? children(cellFormats) : [];
       const sharedPath = workbookPartPath("sharedStrings");
       const strings = has(sharedPath) ? [...all(read(sharedPath), "si")] : [];
-      const populatedStrings = strings.map(hasCellText);
+      const populatedStrings = strings.map(hasXstringText);
       for (const sheet of all(workbook, "sheet")) {
         yield `\n## Sheet: ${sheet.attrs.name}\n`;
         const target = rels.get(sheet.attrs["r:id"] ?? sheet.attrs.id)?.Target;
@@ -1040,7 +1066,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             const raw = value?.children.find((child) => typeof child === "string")?.trim();
             return !!raw && !!populatedStrings[Number(raw)];
           }
-          if (cell.attrs.t === "inlineStr") return hasCellText(cell);
+          if (cell.attrs.t === "inlineStr") return hasXstringText(cell);
           if (value && hasCellText(value)) return true;
           for (const formula of all(cell, "f")) if (hasCellText(formula)) return true;
           return false;
@@ -1226,8 +1252,12 @@ export async function extractDocumentText(path: string, extension: string): Prom
       }
       let raw: string;
       let isImageDescription = false;
+      let isColumnGap = false;
       if (typeof part === "string") raw = part;
-      else if ("imageDescription" in part) {
+      else if ("columnGap" in part) {
+        raw = "\t".repeat(part.columnGap);
+        isColumnGap = true;
+      } else if ("imageDescription" in part) {
         raw = part.imageDescription;
         isImageDescription = true;
       } else if ("notebookOutput" in part) {
@@ -1295,6 +1325,8 @@ export async function extractDocumentText(path: string, extension: string): Prom
           value = "";
         }
       } else {
+        // Trim leading text whitespace here so leading table column gaps survive trimEnd().
+        if (!result && !isColumnGap) value = value.trimStart();
         midLine = endsMidLine(value) ?? midLine;
       }
       result += value;
@@ -1313,7 +1345,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
     if (!(error instanceof Truncation)) throw error;
     truncated = true;
   }
-  result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trim();
+  result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trimEnd();
   if (!result && !truncated) throw new Error("No text extracted");
   return truncated ? result.replace(TRAILING_HIGH_SURROGATE, "").trimEnd() + TRUNCATED : result;
 }

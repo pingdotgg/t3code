@@ -578,8 +578,8 @@ describe("question answer paths", () => {
               },
               {
                 output_type: "error",
-                ename: "ZeroDivisionError",
-                evalue: "division by zero",
+                ename: "\u001b[31mZeroDivisionError\u001b[0m",
+                evalue: "\u001b[31mdivision by zero\u001b[0m",
                 traceback: [
                   "\u001b[32mCell In[1], line 1\u001b[0m",
                   "\u001b[31m----> 1 1 / 0\u001b[0m",
@@ -706,13 +706,15 @@ describe("question answer paths", () => {
             "book.opf":
               '<package><manifest><item id="a" href="a.xhtml"/></manifest><spine><itemref idref="a"/></spine></package>',
             "a.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Intro<p>Body paragraph</p></div><ul><li>Summary<p>Details</p></li></ul><div>Intro<h2>Section Title</h2></div><table><tr><td>First<p>Second</p></td><td>Neighbor</td></tr></table></body></html>',
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Intro<p>Body paragraph</p></div><ul><li>Summary<p>Details</p></li></ul><div>Intro<h2>Section Title</h2></div><table><tr><td>First<p>Second</p></td><td>Neighbor</td></tr></table>' +
+              '<div>Intro<details open="open"><summary><strong>Supported</strong> files</summary>JPEG <em>files</em> only.</details>Next section</div></body></html>',
           },
           expected: [
             "## Chapter 1\nIntro\nBody paragraph",
             "Summary\nDetails",
             "Intro\n## Section Title",
             "First Second\tNeighbor",
+            "Intro\nSupported files\nJPEG files only.\nNext section",
           ],
         },
         {
@@ -815,6 +817,11 @@ describe("question answer paths", () => {
               "<div>Contact the duty editor.<address><strong>Harbor Office</strong><br/>Pier 7</address>Include your reference.</div>",
               "<section>Updated timetable.<header><strong>Harbor departures</strong></header>Confirm your berth.<footer>Source: Harbor Office</footer>Keep this guide.</section>",
               "<section>Keep <header></header><footer></footer>reading.</section>",
+              '<p>The expression <m:math xmlns:m="http://www.w3.org/1998/Math/MathML"><m:semantics>',
+              "<m:mrow><m:mi>x</m:mi><m:mo>+</m:mo><m:mi>y</m:mi></m:mrow>",
+              '<m:annotation encoding="application/x-tex">x+y</m:annotation>',
+              '<m:annotation-xml encoding="application/mathml-content+xml"><m:apply><m:plus/><m:ci>x</m:ci><m:ci>y</m:ci></m:apply></m:annotation-xml>',
+              "</m:semantics></m:math> is symmetric.</p>",
               "</body></html>",
             ].join(""),
           },
@@ -822,6 +829,7 @@ describe("question answer paths", () => {
             "Departure information.\nCheck local time.\nBoard promptly.\nKeep walking.",
             "Contact the duty editor.\nHarbor Office\nPier 7\nInclude your reference.",
             "Updated timetable.\nHarbor departures\nConfirm your berth.\nSource: Harbor Office\nKeep this guide.\nKeep reading.",
+            "The expression x+y is symmetric.",
           ],
         },
         {
@@ -840,6 +848,11 @@ describe("question answer paths", () => {
               "<div>Note<div>  <em>indented</em></div></div>",
               "<section>Summary of decisions.<article><strong>Motion 12 carried.</strong></article><article><em>Motion 13 deferred.</em></article>Meeting adjourned.</section>",
               "<div>Keep <article></article>reading.</div>",
+              '<section>Choose a route.<nav><a href="#east">East pier</a> | <a href="#west">West pier</a></nav>All departures are in local time.</section>',
+              "<div>Keep <nav></nav>walking.</div>",
+              '<div>Keep<x:nav xmlns:x="urn:example"> this </x:nav>inline.</div>',
+              "<div>Harbor directions.<main><strong>Use the north pier.</strong></main>Boats depart at noon.</div>",
+              '<div>Keep<x:main xmlns:x="urn:example"> this </x:main>inline too.</div>',
               "</body></html>",
             ].join(""),
           },
@@ -851,6 +864,8 @@ describe("question answer paths", () => {
             "Name\nValue",
             "Note\n  indented",
             "Summary of decisions.\nMotion 12 carried.\nMotion 13 deferred.\nMeeting adjourned.\nKeep reading.",
+            "Choose a route.\nEast pier | West pier\nAll departures are in local time.\nKeep walking.\nKeep this inline.",
+            "Harbor directions.\nUse the north pier.\nBoats depart at noon.\nKeep this inline too.",
           ],
         },
         // A prefixed span attribute is foreign markup, not an XHTML span.
@@ -1272,6 +1287,19 @@ describe("question answer paths", () => {
           ext: "docx",
           bounded: true,
           parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w"><w:body>\n\t<w:tbl>' +
+              "<w:tr><w:tc><w:p><w:r><w:t/></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>USD</w:t></w:r></w:p></w:tc></w:tr>" +
+              "<w:tr><w:tc><w:p><w:r><w:t>Revenue</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>900</w:t></w:r></w:p></w:tc></w:tr>" +
+              "</w:tbl>\n</w:body></w:document>",
+          },
+          expected: [],
+          exact: "\tUSD\nRevenue\t900",
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
             "word/document.xml": [
               '<w:document xmlns:w="urn:w" xmlns:mc="urn:mc"><w:body>',
               '<w:p><w:r><w:t>First</w:t><w:cr/><w:t>Second</w:t><w:br/><w:t>Third</w:t><w:noBreakHyphen/><w:t>party</w:t><mc:AlternateContent><mc:Choice Requires="w"><w:noBreakHyphen/></mc:Choice><mc:Fallback><w:t>‑</w:t></mc:Fallback></mc:AlternateContent><w:t>End</w:t></w:r></w:p>',
@@ -1441,13 +1469,13 @@ describe("question answer paths", () => {
             "xl/_rels/workbook.xml.rels":
               '<Relationships><Relationship Id="a" Target="worksheets/a.xml"/></Relationships>',
             "xl/sharedStrings.xml":
-              "<sst><si><t>first_x000D_\nsecond</t></si><si><t>_x005F_x0041_</t></si><si><t>_x005F_x005F_x0041_</t></si><si><r><t>Bold_x000D_</t></r><r><t>_x005F_x000D_</t></r></si><si><t>&amp;_xnothex_ cap_X0041_ _x000d_ tail</t></si></sst>",
-            "xl/worksheets/a.xml":
-              '<worksheet><row><c t="s"><v>0</v></c><c t="s"><v>1</v></c><c t="s"><v>2</v></c><c t="s"><v>3</v></c><c t="s"><v>4</v></c></row><row><c t="inlineStr"><is><t>_x005F_x005F_</t></is></c><c t="inlineStr"><is><t>first_x000D_second</t></is></c><c t="str"><f>A1</f><v>Total_x000D_due</v></c></row></worksheet>',
+              "<sst><si><t>first_x000D_\nsecond</t></si><si><t>_x005F_x0041_</t></si><si><t>_x005F_x005F_x0041_</t></si><si><r><t>Bold_x000D_</t></r><r><t>_x005F_x000D_</t></r></si><si><t>&amp;_xnothex_ cap_X0041_ _x000d_ tail</t></si><si><t>_x000D_</t></si><si><t>_x005F_x000D_</t></si></sst>",
+            "xl/worksheets/a.xml": `<worksheet><sheetData>${'<row><c t="s"><v>5</v></c><c t="inlineStr"><is><t>_x000D_</t></is></c></row>'.repeat(10_001)}<row><c t="s"><v>0</v></c><c t="s"><v>1</v></c><c t="s"><v>2</v></c><c t="s"><v>3</v></c><c t="s"><v>4</v></c></row><row><c t="inlineStr"><is><t>_x005F_x005F_</t></is></c><c t="inlineStr"><is><t>first_x000D_second</t></is></c><c t="str"><f>A1</f><v>Total_x000D_due</v></c></row><row><c t="s"><v>6</v></c><c t="inlineStr"><is><t>_x005F_x000D_</t></is></c></row></sheetData></worksheet>`,
           },
           expected: [
-            "## Sheet: Escapes\nfirst second\t_x0041_\t_x005F_x0041_\tBold _x000D_\t&_xnothex_ cap_X0041_ tail\n_x005F_\tfirst second\tTotal due",
+            "## Sheet: Escapes\nfirst second\t_x0041_\t_x005F_x0041_\tBold _x000D_\t&_xnothex_ cap_X0041_ tail\n_x005F_\tfirst second\tTotal due\n_x000D_\t_x000D_",
           ],
+          absent: ["[Extracted text truncated"],
         },
         {
           ext: "xlsx",
@@ -1909,6 +1937,7 @@ describe("question answer paths", () => {
           expect(extracted.split(item.occurrences.text).length - 1).toBe(item.occurrences.count);
         if ("absent" in item)
           for (const absent of item.absent) expect(extracted).not.toContain(absent);
+        if ("exact" in item) expect(extracted).toBe(item.exact);
         if (("bounded" in item && item.bounded) || item.ext === "epub") {
           expect(extracted.length).toBeLessThan(1_000_100);
           expect(extracted.match(/\[Extracted text truncated/g)?.length ?? 0).toBeLessThanOrEqual(
