@@ -850,6 +850,67 @@ Third}`;
     );
   });
 
+  it("loads local EPUB captions and the narration cues for the current chapter", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        `<package><manifest>
+          <item id="chapter" href="book/chapter.xhtml" media-type="application/xhtml+xml" media-overlay="read"/>
+          <item id="read" href="overlays/chapter.smil" media-type="application/smil+xml"/>
+          <item id="captions" href="captions.xml" media-type="application/ttml+xml"/>
+          <item id="clip" href="clip.mp4" media-type="video/mp4"/>
+        </manifest><spine><itemref idref="chapter"/></spine></package>`,
+      )
+      .file(
+        "book/chapter.xhtml",
+        `<html><body><p id="line-1">First line</p>
+          <video autoplay=""><track kind="captions" srclang="en" label="English" src="../captions.xml" default=""/>
+          <track kind="captions" src="https://example.test/remote.vtt"/>
+          <source src="../clip.mp4#t=00:01:00,00:02:00"/><source src="../clip.mp4#t=,120"/>
+          <source src="../clip.mp4#t=npt:2.5,4.25"/></video>
+        </body></html>`,
+      )
+      .file(
+        "captions.xml",
+        `<tt xmlns="http://www.w3.org/ns/ttml"><body><div begin="1s" timeContainer="seq">
+          <div><p begin="500ms" dur="2s">Tea &amp; coffee<br/>served.</p></div>
+          <p begin="500ms" end="2s">Thanks.</p>
+        </div></body></tt>`,
+      )
+      .file(
+        "overlays/chapter.smil",
+        `<smil xmlns="http://www.w3.org/ns/SMIL"><body><seq>
+          <par><text src="../book/chapter.xhtml#line%2D1"/><audio src="../read.mp3" clipBegin="npt=2s" clipEnd="00:03.250"/></par>
+          <par><text src="../book/other.xhtml#skip"/><audio src="../read.mp3"/></par>
+          <par><text src="../book/chapter.xhtml#line-1"/><audio src="https://example.test/remote.mp3"/></par>
+        </seq></body></smil>`,
+      )
+      .file("read.mp3", new Uint8Array([255, 251, 16, 0]))
+      .file("clip.mp4", new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]));
+    const page = await (await openEpub(archive)).page(0);
+    try {
+      const tracks = page.html.match(/<track [^>]*>/g);
+      expect(tracks).toHaveLength(1);
+      expect(tracks?.[0]).toContain('kind="captions" srclang="en" label="English" default');
+      expect(page.html).toContain("<video controls playsinline>");
+      const caption = await fetch(tracks?.[0]?.match(/src="([^"]+)"/)?.[1] ?? "");
+      expect(caption.headers.get("Content-Type")).toBe("text/vtt");
+      expect(await caption.text()).toBe(
+        "WEBVTT\n\n00:00:01.500 --> 00:00:03.500\nTea &amp; coffee\nserved.\n\n00:00:04.000 --> 00:00:05.500\nThanks.\n",
+      );
+      expect(page.html.match(/#t=[\d.,]+(?=")/g)).toEqual(["#t=60,120", "#t=0,120", "#t=2.5,4.25"]);
+      expect(page.narration).toEqual([
+        { src: page.assets.at(-1), begin: 2, end: 3.25, anchor: "line-1" },
+      ]);
+    } finally {
+      for (const url of page.assets) URL.revokeObjectURL(url);
+    }
+  });
+
   it("preserves the SVG filters used by EPUB artwork", async () => {
     const archive = new JSZip()
       .file(
