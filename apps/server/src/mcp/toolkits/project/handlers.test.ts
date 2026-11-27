@@ -214,7 +214,7 @@ it.effect(
           readonly title: string;
           readonly generateTitle?: boolean;
           readonly message?: string;
-          readonly outputSchema?: Record<string, unknown>;
+          readonly outputSchema?: { readonly type: "object" };
           readonly runtimeMode?: RuntimeMode;
           readonly targeted?: false;
           readonly overrideModel?: ModelSelection;
