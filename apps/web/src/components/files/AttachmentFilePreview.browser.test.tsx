@@ -2273,6 +2273,7 @@ it("renders EPUB publisher styles and follows an anchored link to a fixed-layout
       <math xmlns="http://www.w3.org/1998/Math/MathML"><mfrac><mi>x</mi><mn>2</mn></mfrac></math>
       <math xmlns="http://www.w3.org/1998/Math/MathML"><mfenced id="interval" open="[" close="]" separators=" ; "><mi>a</mi>
         <mi>b</mi><mi>c</mi></mfenced></math>
+      <math xmlns="http://www.w3.org/1998/Math/MathML"><mfenced id="tuple" open="⟨" close="⟩"><mi>x</mi></mfenced></math>
       <video autoplay=""></video><video preload="metadata"></video>
       <object id="illustrated-object" type="image/svg+xml" data="illustration.svg" width="200" height="100">Illustration</object>
       <object type="application/x-example" data="illustration.svg"><p id="object-fallback">Fallback text</p></object>
@@ -2352,6 +2353,9 @@ it("renders EPUB publisher styles and follows an anchored link to a fixed-layout
     expect(
       Array.from(doc?.querySelectorAll("#interval mo") ?? [], (operator) => operator.textContent),
     ).toEqual(["[", ";", ";", "]"]);
+    const tupleFences = Array.from(doc?.querySelectorAll("#tuple > mo") ?? []);
+    expect(tupleFences.map((operator) => operator.textContent)).toEqual(["⟨", "⟩"]);
+    for (const fence of tupleFences) expect(fence.getBoundingClientRect().width).toBeGreaterThan(0);
     const videos = doc?.querySelectorAll("video");
     expect(videos?.[0]?.getAttribute("preload")).toBeNull();
     expect(videos?.[0]?.autoplay).toBe(false);

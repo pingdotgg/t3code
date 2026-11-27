@@ -1,7 +1,6 @@
 import type { EpubPage } from "./officePreviewProtocol";
 
 const mathNamespace = "http://www.w3.org/1998/Math/MathML";
-let nativeFences: boolean | undefined;
 
 export function epubSource(page: EpubPage, dark: boolean) {
   const styles =
@@ -35,26 +34,11 @@ export function prepareEpubDocument(doc: Document) {
     while (body.firstChild) rows.append(body.firstChild);
     body.replaceWith(rows);
   }
-  const fenced = doc.getElementsByTagNameNS(mathNamespace, "mfenced");
-  if (fenced.length === 0) return;
-  nativeFences ??= supportsMathFences(doc.defaultView?.frameElement?.ownerDocument ?? doc);
-  if (nativeFences) return;
-  for (const expression of Array.from(fenced)) expandMathFences(doc, expression);
-}
-
-function supportsMathFences(doc: Document) {
-  // Chromium gives mfenced the width of its contents because it omits the delimiters.
-  const math = doc.createElementNS(mathNamespace, "math");
-  const fenced = doc.createElementNS(mathNamespace, "mfenced");
-  const argument = doc.createElementNS(mathNamespace, "mi");
-  argument.textContent = "x";
-  math.style.cssText = "position:fixed;visibility:hidden;font-size:16px";
-  fenced.append(argument);
-  math.append(fenced);
-  doc.body.append(math);
-  const supported = fenced.getBoundingClientRect().width > argument.getBoundingClientRect().width;
-  math.remove();
-  return supported;
+  const expressions = doc.getElementsByTagNameNS(mathNamespace, "mfenced");
+  const fences = Array.from(expressions).flatMap((expression) => expandMathFences(doc, expression));
+  // WebKit can drop a stretchy fence if the available math font lacks a glyph for it.
+  const missing = fences.filter((fence) => fence.getBoundingClientRect().width === 0);
+  for (const fence of missing) fence.setAttribute("stretchy", "false");
 }
 
 function expandMathFences(doc: Document, expression: Element) {
@@ -72,11 +56,12 @@ function expandMathFences(doc: Document, expression: Element) {
     operator.setAttribute("form", form);
     operator.textContent = text;
     target.append(operator);
+    return operator;
   };
   const open = (expression.getAttribute("open") ?? "(").replace(/[\t\n\r ]+/g, " ").trim();
   const close = (expression.getAttribute("close") ?? ")").replace(/[\t\n\r ]+/g, " ").trim();
   const separators = [...(expression.getAttribute("separators") ?? ",").replace(/[\t\n\r ]/g, "")];
-  appendOperator(row, open, "fence", "prefix");
+  const opening = appendOperator(row, open, "fence", "prefix");
   const args = Array.from(expression.children);
   const contents = args.length > 1 ? doc.createElementNS(mathNamespace, "mrow") : row;
   for (const [index, child] of args.entries()) {
@@ -85,6 +70,7 @@ function expandMathFences(doc: Document, expression: Element) {
     contents.append(child);
   }
   if (contents !== row) row.append(contents);
-  appendOperator(row, close, "fence", "postfix");
+  const closing = appendOperator(row, close, "fence", "postfix");
   expression.replaceWith(row);
+  return [opening, closing].filter((operator) => operator !== undefined);
 }
