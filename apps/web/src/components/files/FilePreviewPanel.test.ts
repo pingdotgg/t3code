@@ -1072,6 +1072,42 @@ Third}`;
     ]);
   });
 
+  it("keeps the lighting and arithmetic composite of EPUB SVG bevels", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="badge" href="badge.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="badge"/></spine></package>',
+      )
+      .file(
+        "badge.svg",
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <filter id="bevel">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="2" result="blur"/>
+            <feSpecularLighting in="blur" surfaceScale="5" specularConstant="0.75" specularExponent="20" result="shine">
+              <fePointLight x="-5000" y="-10000" z="20000"/>
+            </feSpecularLighting>
+            <feDiffuseLighting in="blur" diffuseConstant="1" result="light">
+              <feSpotLight x="10" y="10" z="50" pointsAtX="50" pointsAtY="50" pointsAtZ="0" limitingConeAngle="30"/>
+            </feDiffuseLighting>
+            <feComposite in="SourceGraphic" in2="shine" operator="arithmetic" k1="0" k2="1" k3="1" k4="0"/>
+          </filter>
+          <rect width="80" height="80" fill="orange" filter="url(#bevel)"/>
+        </svg>`,
+      );
+    const book = await openEpub(archive);
+    const { html } = await book.page(0);
+    expect(html).toContain('<fePointLight x="-5000" y="-10000" z="20000">');
+    expect(html).toContain("<feDiffuseLighting ");
+    expect(html).toContain('diffuseConstant="1"');
+    expect(html).toContain("<feSpotLight ");
+    expect(html).toContain('pointsAtX="50" pointsAtY="50" pointsAtZ="0" limitingConeAngle="30"');
+    expect(html).toContain('operator="arithmetic" k1="0" k2="1" k3="1" k4="0"');
+  });
+
   it("keeps embedded raster images in EPUB SVG artwork", async () => {
     const png =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==";
