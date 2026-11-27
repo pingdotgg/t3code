@@ -35,6 +35,7 @@ import { getRouter } from "~/router";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentThreadDetails } from "~/state/threads";
 import {
+  CODEX_PROVIDER,
   ENVIRONMENT_ID,
   PROJECT_ID,
   answerAssetUrls,
@@ -1249,3 +1250,52 @@ it("a new thread on a branch with changes opens them from thread details", async
   // The panel reads the draft's checkout; without one it asks for a thread instead.
   await expect.element(page.getByText("Loading changes...")).toBeVisible();
 });
+
+it.each([true, false])(
+  "pasted terminal output ending in a shell prompt `$` sends as text on Enter (rich text %s)",
+  async (composerRichTextEnabled) => {
+    const thread = threadWithHistory(`paste-dollar-${composerRichTextEnabled}`, 1);
+    using _environment = installFakeEnvironment([thread], {
+      acceptCommands: true,
+      providers: [
+        {
+          ...CODEX_PROVIDER,
+          skills: [{ name: "babysit", path: "/skills/babysit/SKILL.md", enabled: true }],
+        },
+      ],
+    });
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      composerRichTextEnabled,
+      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const router = getRouter(
+      createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+    );
+    await router.load();
+    await using _app = await render(<AppRoot router={router} />, {
+      // AppRoot brings its own router.
+      router: false,
+    });
+    await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+    const editor = page.getByRole("textbox", { name: `Message ${thread.title}`, exact: true });
+
+    await userEvent.click(editor);
+    const pasted = "NAME   READY\nfoo    2/2\nuser@host ~ $";
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", pasted);
+    editor
+      .element()
+      .dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+      );
+    await vi.waitFor(() => expect(editor.element().textContent).toContain("user@host ~"));
+
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(dispatchedCommands()).toContainEqual(
+        expect.objectContaining({ type: "message.dispatch", threadId: thread.id, text: pasted }),
+      ),
+    );
+  },
+);
