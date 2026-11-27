@@ -1,5 +1,7 @@
 import JSZip from "jszip";
-import { openRtf, openNotebook, openDocument, openEpub } from "./extendedDocumentPreview";
+import { openRtf, openNotebook, openDocument } from "./extendedDocumentPreview";
+import { openEpub } from "./epubPreview";
+import { parseXml } from "./documentPreviewXml";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ProjectReadFileError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -189,7 +191,7 @@ describe("document preview contents", () => {
     },
   );
 
-  it("bounds EPUB markup made entirely of empty allowed elements", async () => {
+  it("reads EPUB chapters independently of the total rendered size", async () => {
     const archive = new JSZip()
       .file(
         "META-INF/container.xml",
@@ -202,7 +204,9 @@ describe("document preview contents", () => {
           "</spine></package>",
       )
       .file("chapter.xhtml", "<html><body>" + "<figcaption/>".repeat(30_000) + "</body></html>");
-    await expect(openEpub(archive)).rejects.toMatchObject({ code: "rendered-too-large" });
+    const book = await openEpub(archive);
+    expect(book.chapters).toHaveLength(30);
+    expect((await book.page(29)).html).toBe("<figcaption></figcaption>".repeat(30_000));
   });
 
   it("decodes rich text formatting and Unicode without showing hidden destinations", () => {
@@ -715,7 +719,15 @@ Third}`;
   });
 
   it("reads EPUB chapters in spine order and removes active and remote content", async () => {
+    const metadata = Buffer.alloc(65_537);
+    metadata.set([0xff, 0xe2, 0xff, 0xff]);
+    const jpeg = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      ...Array.from({ length: 5 }, () => metadata),
+      Buffer.from([0xff, 0xc0, 0, 11, 8, 0, 35, 0, 33]),
+    ]);
     const archive = new JSZip()
+      .file("Book/logo.jpg", jpeg)
       .file(
         "META-INF/container.xml",
         '<container><rootfiles><rootfile full-path="Book/book.opf"/></rootfiles></container>',
@@ -726,7 +738,7 @@ Third}`;
       )
       .file(
         "Book/one.xhtml",
-        `<html><head><title>${"a".repeat(119)}🚀</title></head><body><h1>First chapter</h1><img src="cover.png" alt="Cover"/><img src="https://example.com/tracker.png"/><script>alert(1)</script><style>@import "https://example.com/style.css";</style></body></html>`,
+        `<html><head><title>${"a".repeat(119)}🚀</title></head><body><h1>First chapter</h1><img src="cover.png" alt="Cover"/><img src="logo.jpg" alt="Logo"/><img src="https://example.com/tracker.png"/><script>alert(1)</script><style>@import "https://example.com/style.css";</style></body></html>`,
       )
       .file(
         "Book/two&&&.xhtml",
@@ -739,18 +751,176 @@ Third}`;
           "base64",
         ),
       );
-    const result = await openEpub(archive);
-    expect(result.type).toBe("document");
-    if (result.type !== "document") throw new Error("Expected document");
-    expect(result.pages.map((page) => page.title)).toEqual(["Second", "a".repeat(119)]);
-    expect(result.pages[0]!.html).toContain("A\u00a0B © — ≂̸ &amp;lt;");
-    expect(result.pages[0]!.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
-    expect(result.pages[0]!.html).toContain(
+    const book = await openEpub(archive);
+    const first = await book.page(0);
+    const second = await book.page(1);
+    expect([first.title, second.title]).toEqual(["Second", "a".repeat(119)]);
+    expect(first.html).toContain("A\u00a0B © — ≂̸ &amp;lt;");
+    expect(first.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
+    expect(first.html).toContain(
       "<pre>&lt;!DOCTYPE html&gt;&lt;!ENTITY author &quot;Ada&quot;&gt;</pre>",
     );
-    expect(result.pages[0]!.html).toContain('alt="&lt; © ≂̸"');
-    expect(result.pages[1]!.html).toContain('src="data:image/png;base64,');
-    expect(result.pages[1]!.html).not.toMatch(/https:|script|alert/);
+    expect(first.html).toContain('alt="&lt; © ≂̸"');
+    expect(second.html).toContain(`src="${second.assets[0]}"`);
+    expect(second.html).toContain(`alt="Logo" src="${second.assets[1]}"`);
+    const image = await fetch(second.assets[0]!);
+    expect(image.headers.get("Content-Type")).toBe("image/png");
+    for (const url of [...first.assets, ...second.assets]) URL.revokeObjectURL(url);
+    expect(second.html).not.toMatch(/https:|script|alert/);
+  });
+
+  it("resolves shared EPUB spine fallbacks and skips unreadable optional navigation", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        `<package><manifest>
+          <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+          <item id="cover" fallback="shared"/>
+          <item id="chapter" fallback="shared"/>
+          <item id="shared" fallback="text"/>
+          <item id="text" href="text.xhtml" media-type="application/xhtml+xml"/>
+          <item id="cycle-a" fallback="cycle-b"/>
+          <item id="cycle-b" fallback="cycle-a"/>
+        </manifest><spine toc="ncx">
+          <itemref idref="cover" linear="no"/>
+          <itemref idref="cycle-a"/>
+          <itemref idref="cycle-b"/>
+          <itemref idref="chapter"/>
+        </spine></package>`,
+      )
+      .file("toc.ncx", '<?xml version="1.0" encoding="unknown-encoding"?><ncx/>')
+      .file("text.xhtml", "<html><body><h1>Readable chapter</h1></body></html>");
+    const book = await openEpub(archive);
+    expect(book.contents).toEqual([]);
+    expect(book.first).toBe(1);
+    expect(book.chapters.map(({ linear }) => linear)).toEqual([false, true]);
+    expect((await book.page(1)).title).toBe("Readable chapter");
+  });
+
+  it("reports excessive document nesting through the preview error code", () => {
+    expect(() => parseXml("<section>".repeat(104) + "text" + "</section>".repeat(104))).toThrow(
+      expect.objectContaining({ code: "xml-too-deep" }),
+    );
+  });
+
+  it("preserves the SVG filters used by EPUB artwork", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="a" href="poster.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+      )
+      .file(
+        "poster.svg",
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <filter id="tint"><feColorMatrix type="saturate" values="0.5" color-interpolation-filters="sRGB"/></filter>
+          <filter id="shadow">
+            <feOffset dx="4" dy="4"/>
+            <feComponentTransfer><feFuncA type="linear" slope="0.5"/></feComponentTransfer>
+          </filter>
+          <rect width="80" height="80" fill="orange" filter="url(#tint)"/>
+        </svg>`,
+      );
+    const { html } = await (await openEpub(archive)).page(0);
+    expect(html).toContain("<feColorMatrix ");
+    expect(html).toContain('color-interpolation-filters="sRGB"');
+    expect(html).toContain('values="0.5"');
+    expect(html).toContain('<feOffset dx="4" dy="4">');
+    expect(html).toContain("<feComponentTransfer><feFuncA ");
+    expect(html).toContain('slope="0.5"');
+    expect(html).toContain('filter="url(#tint)"');
+  });
+
+  it("keeps embedded raster images in EPUB SVG artwork", async () => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==";
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="a" href="poster.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+      )
+      .file(
+        "poster.svg",
+        `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 100 100">
+          <image width="100" height="100" xlink:href="data:;base64,${png}"/>
+          <image width="100" height="100" href="data:image/gif;base64,${png}"/>
+          <image width="100" height="100" href="data:image/svg+xml;base64,PHN2Zy8+"/>
+        </svg>`,
+      );
+    const { html, assets } = await (await openEpub(archive)).page(0);
+    expect(assets).toHaveLength(1);
+    const url = assets[0]!;
+    try {
+      expect(html).toContain(`href="${url}"`);
+      expect((await fetch(url)).headers.get("Content-Type")).toBe("image/png");
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  });
+
+  it("keeps line-continued fonts in EPUB SVG stylesheets", async () => {
+    const font = Buffer.concat([Buffer.from("OTTO"), Buffer.alloc(8)]).toString("base64");
+    const continued = `${font.slice(0, 8)}\\\n${font.slice(8)}`;
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="a" href="poster.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+      )
+      .file(
+        "poster.svg",
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><style>
+          @font-face { font-family: A; src: url("data:;base64,${continued}"); }
+          @font-face { font-family: B; src: url("data:font/woff;base64,${font}"); }
+        </style></svg>`,
+      );
+    const { styles } = await (await openEpub(archive)).page(0);
+    expect(styles?.[0]?.css).toContain(`font-family: A; src: url("data:font/otf;base64,${font}")`);
+    expect(styles?.[0]?.css).toContain("font-family: B; src: url(about:blank)");
+  });
+
+  it("preserves MathML table frames and elementary arithmetic in EPUB chapters", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="a" href="one.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+      )
+      .file(
+        "one.xhtml",
+        `<html><body><math xmlns="http://www.w3.org/1998/Math/MathML">
+          <mtable frame="dashed"><mtr><mtd><mn>1</mn></mtd></mtr></mtable>
+          <mlongdiv longdivstyle="lefttop"><mn>3</mn><mn>4</mn><mn>12</mn>
+            <msgroup position="2" shift="-1"><mn>12</mn><msline length="2"/></msgroup>
+          </mlongdiv>
+          <mstack><mscarries crossout="verticalstrike"><mscarry><mn>2</mn></mscarry></mscarries>
+            <msrow><mo>-</mo><mn>1</mn></msrow>
+          </mstack>
+        </math></body></html>`,
+      );
+    const { html } = await (await openEpub(archive)).page(0);
+    expect(html).toContain('<mtable frame="dashed">');
+    expect(html).toContain('<mlongdiv longdivstyle="lefttop">');
+    expect(html).toContain('<msgroup position="2" shift="-1"><mn>12</mn><msline length="2">');
+    expect(html).toContain('<mstack><mscarries crossout="verticalstrike"><mscarry>');
+    expect(html).toContain("<msrow><mo>-</mo><mn>1</mn></msrow>");
   });
 
   it.each([
@@ -773,15 +943,15 @@ Third}`;
           chapterPath,
           "<html><head><title>First</title></head><body><p>Hello</p></body></html>",
         );
-      const result = await openEpub(archive);
-      if (result.type !== "document") throw new Error("Expected document");
-      expect(result.pages).toEqual([{ title: "First", html: "<p>Hello</p>" }]);
+      const book = await openEpub(archive);
+      expect(await book.page(0)).toMatchObject({ title: "First", html: "<p>Hello</p>" });
     },
   );
 
   it.each([
     ["a blank title", "<title> \n </title>", "<h1>Prologue</h1>", "Prologue"],
     ["an empty first heading", "", "<h1></h1><h1>Prologue</h1>", "Prologue"],
+    ["malformed XHTML", "", "<p><em>Legacy</p><h1>Prologue</h1>", "Prologue"],
     ["only blank headings", "<title> </title>", "<h1></h1><p>Body</p>", undefined],
   ])("titles EPUB chapters with %s", async (_label, head, body, title) => {
     const archive = new JSZip()
@@ -794,8 +964,7 @@ Third}`;
         '<package><manifest><item id="a" href="one.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
       )
       .file("one.xhtml", `<html><head>${head}</head><body>${body}</body></html>`);
-    const result = await openEpub(archive);
-    if (result.type !== "document") throw new Error("Expected document");
-    expect(result.pages[0]!.title).toBe(title);
+    const book = await openEpub(archive);
+    expect((await book.page(0)).title).toBe(title);
   });
 });
