@@ -725,28 +725,48 @@ export function UsageLimitsPooled({
         }
       </Popover>
       {quotaSources.map((source) => (
-        <section key={source.key} className="space-y-3 rounded-xl border p-4">
-          <h2 className="text-sm font-medium">{source.label}</h2>
-          {source.quotaAccounts?.map((account) => (
-            <div key={account.id} className="space-y-1">
-              <h3 className="text-sm font-medium">{account.label}</h3>
-              {account.windows.map((window) => {
-                const reset = formatResetsIn(window, now, m);
-                return (
-                  <div
-                    key={window.id}
-                    className="flex justify-between gap-3 text-sm text-muted-foreground"
-                  >
-                    <span>{window.label}</span>
-                    <span>
-                      {gt("{remaining}% left", { remaining: remainingPercent(window) })}
-                      {reset ? ` · ${reset}` : ""}
+        <section key={source.key} className="flex flex-col gap-3">
+          <h2 className="text-sm font-medium text-foreground">{source.label}</h2>
+          {source.quotaAccounts?.flatMap((account) =>
+            account.windows.map((window) => {
+              const remaining = remainingPercent(window);
+              const reset = formatResetsIn(window, now, m, "refill");
+              return (
+                <div
+                  key={`${account.id}:${window.id}`}
+                  className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]"
+                >
+                  <div className="flex flex-col gap-1">
+                    <span className="text-sm font-medium text-foreground">{account.label}</span>
+                    <span className="flex items-baseline gap-2">
+                      <span className="text-3xl font-semibold text-foreground tabular-nums">
+                        {remaining}%
+                      </span>
+                      <span className="text-sm text-muted-foreground">
+                        <T context="remaining usage percentage">left</T>
+                      </span>
                     </span>
                   </div>
-                );
-              })}
-            </div>
-          ))}
+                  <div
+                    role="progressbar"
+                    aria-label={account.label}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={remaining}
+                    className="relative h-8 overflow-hidden rounded-md bg-muted"
+                  >
+                    <div className="h-full rounded-md bg-foreground/40" style={{ width: `${remaining}%` }} />
+                    {reset ? (
+                      <span className="absolute inset-y-0 right-2 flex items-center text-xs text-foreground tabular-nums">
+                        {reset}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="text-xs text-muted-foreground md:col-span-2">{window.label}</p>
+                </div>
+              );
+            }),
+          )}
         </section>
       ))}
       {externalLinks.map((link) => (
