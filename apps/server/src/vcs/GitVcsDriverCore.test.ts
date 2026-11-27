@@ -9008,6 +9008,30 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect.skipIf(!symlinksSupported)("removes a worktree given through a symlink to it", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const root = yield* makeTmpDir("git-worktrees-");
+        const worktreePath = pathService.join(root, "actual");
+        const alias = pathService.join(root, "alias");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/aliased",
+        });
+        NodeFS.symlinkSync(worktreePath, alias, "junction");
+
+        yield* driver.removeWorktree({ cwd, path: alias, force: true });
+
+        assert.isFalse(NodeFS.existsSync(worktreePath));
+        assert.notInclude(yield* git(cwd, ["worktree", "list", "--porcelain"]), "actual");
+      }),
+    );
+
     it.effect("prunes stale registrations when removing an already-gone worktree", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

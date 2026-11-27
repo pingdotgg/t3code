@@ -1,4 +1,5 @@
 import { GitCommandError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -64,7 +65,10 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const worktreePath = input.worktreePath;
+  // Deleting through a symlink would only unlink the alias and leave the checkout.
+  const worktreePath = yield* fileSystem
+    .realPath(input.worktreePath)
+    .pipe(Effect.orElseSucceed(() => input.worktreePath));
   const gitFile = path.join(worktreePath, ".git");
   // Git refuses to remove a worktree with untracked files unless forced, but
   // its check honors `status.showUntrackedFiles=no` and would delete them.
@@ -127,11 +131,24 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
         ...(env === undefined ? {} : { env }),
       })
       .pipe(Effect.map((result) => result.stdout));
-  const samePath = (left: string, right: string) =>
-    Effect.all([fileSystem.realPath(left), fileSystem.realPath(right)]).pipe(
-      Effect.map(([a, b]) => a.toLowerCase() === b.toLowerCase()),
-      Effect.orElseSucceed(() => false),
-    );
+  // Windows paths ignore case. Elsewhere two repositories' paths can differ only in case,
+  // so the files themselves are compared.
+  const samePath = (yield* HostProcess.isWindows)
+    ? (left: string, right: string) =>
+        Effect.all([fileSystem.realPath(left), fileSystem.realPath(right)]).pipe(
+          Effect.map(([a, b]) => a.toLowerCase() === b.toLowerCase()),
+          Effect.orElseSucceed(() => false),
+        )
+    : (left: string, right: string) =>
+        Effect.all([fileSystem.stat(left), fileSystem.stat(right)]).pipe(
+          Effect.map(
+            ([a, b]) =>
+              a.dev === b.dev &&
+              Option.isSome(a.ino) &&
+              a.ino.value === Option.getOrUndefined(b.ino),
+          ),
+          Effect.orElseSucceed(() => false),
+        );
 
   // A registered worktree of this repository: its `.git` file names an admin
   // directory under the common `worktrees/`, whose `gitdir` points back.
@@ -210,5 +227,11 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     Effect.mapError((cause) => refuse(`failed to delete '${worktreePath}'`, cause)),
   );
   // The folder is gone, so Git only drops the worktree's metadata.
-  return yield* input.run(["worktree", "remove", "--force", "--force", "--", worktreePath]);
+  return yield* input.run([
+    "worktree",
+    "remove",
+    ...(input.force ? ["--force"] : []),
+    "--",
+    worktreePath,
+  ]);
 }, Effect.scoped);
