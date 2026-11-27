@@ -210,7 +210,7 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
         assignees: false,
         reactions: false,
         templates: false,
-        linkedPullRequests: false,
+        linkedPullRequests: !isCompleted,
         events: false,
         search: false,
       },
@@ -223,11 +223,25 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
       },
       states: [],
       viewer: null,
-      body: "",
+      body: isCompleted
+        ? ""
+        : Array.from({ length: 40 }, (_, index) => `Reproduction step ${index + 1}`).join("\n\n"),
       comments: [],
       commentsCursor: null,
       events: [],
-      linkedPullRequests: [],
+      linkedPullRequests: isCompleted
+        ? []
+        : [
+            {
+              repository: "pingdotgg/t3code",
+              number: 124,
+              url: "https://github.com/pingdotgg/t3code/pull/124",
+              title: "Fix keyboard shortcuts",
+              state: "open",
+              isDraft: false,
+              closesIssue: false,
+            },
+          ],
     } satisfies IssueDetail);
   });
   __setClientSettingsForTests({
@@ -282,6 +296,18 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   await userEvent.click(issueRow);
   expect(router.history.location.pathname).toBe(`/${ENVIRONMENT_ID}/${linked.id}`);
   await expect.element(page.getByRole("heading", { name: liveTitle })).toBeVisible();
+  const linkedPr = page.getByRole("button", { name: /Fix keyboard shortcuts/ });
+  const issueScroller = () =>
+    linkedPr.element().closest<HTMLElement>("[data-pull-request-summary-scroll]")!;
+  const prRow = await linkedPr.findElement();
+  await expect.element(page.getByText("Reproduction step 40", { exact: true })).toBeVisible();
+  prRow.scrollIntoView({ block: "center" });
+  const issueScrollTop = issueScroller().scrollTop;
+  expect(issueScrollTop).toBeGreaterThan(0);
+  await userEvent.click(linkedPr);
+  await expect.element(linkedPr).not.toBeInTheDocument();
+  await userEvent.click(page.getByRole("button", { name: issue.key, exact: true }));
+  await vi.waitFor(() => expect(issueScroller().scrollTop).toBe(issueScrollTop));
   await act(() => useRightPanelStore.getState().close(scopeThreadRef(ENVIRONMENT_ID, linked.id)));
   await expect
     .element(
