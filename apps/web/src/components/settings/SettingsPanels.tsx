@@ -24,6 +24,7 @@ import {
   type ResponseStreamingMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
+  SidebarWorkingShelfPosition,
   ScreenReaderAnnouncements,
   ToolCallVisibility,
 } from "@t3tools/contracts/settings";
@@ -150,6 +151,12 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: msg("Manual"),
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+
+const SIDEBAR_WORKING_SHELF_POSITION_LABELS: Record<SidebarWorkingShelfPosition, string> = {
+  bottom: msg("Below Active", { $context: "sidebar section position" }),
+  top: msg("Above Active", { $context: "sidebar section position" }),
+};
+const isSidebarWorkingShelfPosition = Schema.is(SidebarWorkingShelfPosition);
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: msg("System default"),
@@ -547,6 +554,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? [gt("Working section")]
       : []),
+    ...(settings.sidebarWorkingShelfPosition !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfPosition
+      ? [gt("Working section position")]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? [gt("Auto-settle inactive threads")]
       : []),
@@ -739,6 +750,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarWorkingShelfPosition: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfPosition,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -984,7 +996,62 @@ export function GeneralSettingsPanel() {
               aria-label={gt("Working section")}
             />
           }
-        />
+        >
+          {settings.sidebarWorkingShelfEnabled ? (
+            <div className="mt-2 mb-2 border-l-2 border-border/60 ps-3">
+              <SettingsRow
+                {...setting("working-shelf-position")}
+                className="px-0 py-2 sm:px-0"
+                description={<T>Show the Working section above or below Active threads.</T>}
+                resetAction={
+                  settings.sidebarWorkingShelfPosition !==
+                  DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfPosition ? (
+                    <SettingResetButton
+                      ariaLabel={gt("Reset working section position to default")}
+                      onClick={() =>
+                        updateSettings({
+                          sidebarWorkingShelfPosition:
+                            DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfPosition,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <Select
+                    value={settings.sidebarWorkingShelfPosition}
+                    onValueChange={(value) => {
+                      if (isSidebarWorkingShelfPosition(value)) {
+                        updateSettings({ sidebarWorkingShelfPosition: value });
+                      }
+                    }}
+                  >
+                    <SelectTrigger
+                      size="sm"
+                      className="w-full sm:w-44"
+                      aria-label={gt("Working section position")}
+                    >
+                      <SelectValue>
+                        {m(
+                          SIDEBAR_WORKING_SHELF_POSITION_LABELS[
+                            settings.sidebarWorkingShelfPosition
+                          ],
+                        )}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end" alignItemWithTrigger={false}>
+                      {SidebarWorkingShelfPosition.literals.map((position) => (
+                        <SelectItem hideIndicator key={position} value={position}>
+                          {m(SIDEBAR_WORKING_SHELF_POSITION_LABELS[position])}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                }
+              />
+            </div>
+          ) : null}
+        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection id="confirmations" title={gt("Confirmations")}>

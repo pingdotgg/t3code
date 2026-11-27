@@ -507,6 +507,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
   },
   {
+    id: "working-shelf-position",
+    title: msg("Working section position"),
+    to: "/settings/general",
+    // Shown inside the working section row only while it is on, so search lands on the parent.
+    targetId: "working-shelf",
+    searchTerms: [msg("working section shelf top bottom above below active order sidebar")],
+  },
+  {
     id: "boring-sidebar",
     title: msg("Boring sidebar (group by project)"),
     to: "/settings/labs",

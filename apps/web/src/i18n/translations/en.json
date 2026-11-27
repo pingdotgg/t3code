@@ -13044,5 +13044,11 @@
   "717c1c47a852a1a5": "Pause narration",
   "0eceb5780908eb6c": "Read aloud",
   "3ee98da81538c6de": "Could not play narration.",
-  "95435f0b59cb2193": "Audio preview"
+  "95435f0b59cb2193": "Audio preview",
+  "7ee43363a970faab": "Below Active",
+  "6726bdf98ba298ce": "Above Active",
+  "0a973722bb73e9b8": "Working section position",
+  "2b7462827a9f25eb": "Reset working section position to default",
+  "892bc98db9abf8f2": "Show the Working section above or below Active threads.",
+  "f314ec74a9be97e8": "working section shelf top bottom above below active order sidebar"
 }

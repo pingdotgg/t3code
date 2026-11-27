@@ -574,3 +574,114 @@ describe("sidebar settled pagination", () => {
     expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
   });
 });
+
+describe("sidebar working section position", () => {
+  it.each(["bottom", "top"] as const)(
+    "places the Working shelf at the %s relative to Active threads",
+    async (position) => {
+      using stack = new DisposableStack();
+      const previousSettings = getClientSettings();
+      stack.defer(() => __setClientSettingsForTests(previousSettings));
+      __setClientSettingsForTests({
+        ...DEFAULT_CLIENT_SETTINGS,
+        sidebarWorkingShelfEnabled: true,
+        sidebarWorkingShelfPosition: position,
+      });
+      const activeProject = project("active");
+      const pinnedThread = makeThreadFixture({
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+        id: ThreadId.make("pinned-thread"),
+        title: "Pinned task",
+        pinnedAt: "2026-01-01T00:00:00.000Z",
+      });
+      const activeThread = makeThreadFixture({
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+        id: ThreadId.make("active-thread"),
+        title: "Active task",
+      });
+      const workingThread = makeThreadFixture({
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+        id: ThreadId.make("working-thread"),
+        title: "Working task",
+        runtime: {
+          status: "running",
+          activeRunId: null,
+          providerInstanceId: activeThread.providerInstanceId,
+          providerName: null,
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      });
+      vi.mocked(useProjects).mockReturnValue([activeProject]);
+      vi.mocked(useQuietThreadShells).mockReturnValue([pinnedThread, activeThread, workingThread]);
+      vi.mocked(useThreadRouteTarget).mockReturnValue({
+        kind: "server",
+        threadRef: { environmentId: activeProject.environmentId, threadId: activeThread.id },
+      });
+      vi.mocked(useHandleNewThread).mockReturnValue({
+        activeDraftThread: null,
+        activeThread: null,
+        defaultProjectRef: {
+          environmentId: activeProject.environmentId,
+          projectId: activeProject.id,
+        },
+        defaultProjectFallbackReady: true,
+        handleNewThread: vi.fn().mockResolvedValue(null),
+        routeDraftId: null,
+        routeThreadRef: { environmentId: activeProject.environmentId, threadId: activeThread.id },
+      });
+      vi.mocked(useServerConfigs).mockReturnValue(
+        new Map([
+          [
+            activeProject.environmentId,
+            {
+              scratchWorkspaceRoot: null,
+              shellThreadFamilies: false,
+            } as unknown as EnvironmentServerConfig,
+          ],
+        ]),
+      );
+
+      await using screen = await render(
+        <SidebarProvider>
+          <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+        </SidebarProvider>,
+      );
+
+      const pinnedEl = screen.getByText("Pinned task").element();
+      const activeEl = screen.getByText("Active task").element();
+      const workingHeader = screen.container.querySelector<HTMLElement>(
+        '[data-testid="sidebar-working-header"]',
+      )!;
+      const settledHeader = screen.container.querySelector<HTMLElement>(
+        '[data-testid="sidebar-settled-header"]',
+      )!;
+      expect(workingHeader).not.toBeNull();
+      expect(settledHeader).not.toBeNull();
+
+      expect(
+        Boolean(pinnedEl.compareDocumentPosition(workingHeader) & Node.DOCUMENT_POSITION_FOLLOWING),
+      ).toBe(true);
+      if (position === "top") {
+        expect(
+          Boolean(
+            workingHeader.compareDocumentPosition(activeEl) & Node.DOCUMENT_POSITION_FOLLOWING,
+          ),
+        ).toBe(true);
+        expect(workingHeader.className).not.toContain("mt-auto");
+        expect(settledHeader.className).toContain("mt-auto");
+      } else {
+        expect(
+          Boolean(
+            activeEl.compareDocumentPosition(workingHeader) & Node.DOCUMENT_POSITION_FOLLOWING,
+          ),
+        ).toBe(true);
+        expect(workingHeader.className).toContain("mt-auto");
+        expect(settledHeader.className).not.toContain("mt-auto");
+      }
+    },
+  );
+});

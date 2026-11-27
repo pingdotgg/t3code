@@ -13031,5 +13031,11 @@
   "717c1c47a852a1a5": "Pausar narración",
   "0eceb5780908eb6c": "Leer en voz alta",
   "3ee98da81538c6de": "No se pudo reproducir la narración.",
-  "95435f0b59cb2193": "Vista previa de audio"
+  "95435f0b59cb2193": "Vista previa de audio",
+  "7ee43363a970faab": "Debajo de Activos",
+  "6726bdf98ba298ce": "Encima de Activos",
+  "0a973722bb73e9b8": "Posición de la sección En curso",
+  "2b7462827a9f25eb": "Restablecer la posición de la sección En curso al valor predeterminado",
+  "892bc98db9abf8f2": "Muestra la sección En curso encima o debajo de los hilos activos.",
+  "f314ec74a9be97e8": "sección en curso posición arriba abajo encima debajo activos orden barra lateral"
 }

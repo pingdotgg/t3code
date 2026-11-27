@@ -205,6 +205,84 @@ describe("sidebar collision detection", () => {
     },
   );
 
+  it("does not pin an Active thread when dragged upward over a top Working shelf", () => {
+    const workingHeader = marker("working-header");
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      workingHeader,
+      thread("w", "working"),
+      divider,
+      thread("a", "active"),
+      thread("source", "active"),
+      settledHeader,
+    ];
+    const { rects, activeIndex } = layout(items, "source", "a");
+    const sourceRect = rects[activeIndex]!;
+    const workingTop = rects[2]!.top;
+    const boundaryTop = rects[4]!.top;
+    const boundaryNode = {
+      querySelector: () => ({
+        getBoundingClientRect: () => ({
+          top: boundaryTop,
+          bottom: boundaryTop + 16,
+          left: 0,
+          right: 260,
+        }),
+      }),
+    } as unknown as HTMLElement;
+    const detector = createSidebarCollisionDetection(
+      (id) => resolveSidebarDropTarget(items, "source", id) !== null,
+      { items, activationY: 420 },
+    );
+    const overAt = (center: number) => {
+      const collisionRect = {
+        ...sourceRect,
+        top: center - sourceRect.height / 2,
+        bottom: center + sourceRect.height / 2,
+      };
+      const args = {
+        ...collisionArgs(),
+        active: {
+          id: "source",
+          data: { current: {} },
+          rect: { current: { initial: sourceRect, translated: collisionRect } },
+        },
+        collisionRect,
+        pointerCoordinates: { x: 130, y: center },
+        droppableRects: new Map(
+          items.map((item, index) => [sidebarListItemId(item), rects[index]!]),
+        ),
+        droppableContainers: items.map((item, index) => ({
+          id: sidebarListItemId(item),
+          key: sidebarListItemId(item),
+          disabled: false,
+          data: { current: {} },
+          node: {
+            current:
+              item === divider
+                ? boundaryNode
+                : item === workingHeader
+                  ? ({
+                      getBoundingClientRect: () => ({ top: workingTop }),
+                    } as unknown as HTMLElement)
+                  : item === settledHeader
+                    ? ({ getBoundingClientRect: () => ({ top: 600 }) } as unknown as HTMLElement)
+                    : null,
+          },
+          rect: { current: rects[index]! },
+        })),
+      };
+      return detector(args)[0]?.id;
+    };
+
+    expect(overAt(296)).toBe("a");
+    expect(overAt(235)).toBe("source");
+    expect(overAt(200)).toBe("source");
+    const pinnedTarget = overAt(142);
+    expect(resolveSidebarDropTarget(items, "source", String(pinnedTarget))?.section).toBe("pinned");
+  });
+
   it("returns no collision if an unsupported target has no source fallback", () => {
     const args = collisionArgs();
     const detector = createSidebarCollisionDetection(() => false);
@@ -528,6 +606,27 @@ describe("sidebar drag projection", () => {
     expect(byTime.get("a2")?.y).toBe(-83);
     expect(byTime.get(sidebarMarkerId("working-header"))).toEqual(stationary);
     expect(byTime.get("w")).toEqual(stationary);
+  });
+
+  it("keeps Working above Active during drag previews when placed at the top", () => {
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      marker("working-header"),
+      thread("w", "working"),
+      divider,
+      thread("a1", "active"),
+      thread("a2", "active"),
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    const input = { items, settledOrder: [], settledExpanded: false };
+    const byTime = preview({ ...input, activeOrder: ["a1", "a2", "p"] }, "p", "a1");
+    expect(byTime.get(sidebarMarkerId("working-header"))?.y).toBe(-83);
+    expect(byTime.get("w")?.y).toBe(-83);
+    expect(byTime.get("a1")?.y).toBe(-83);
+    expect(byTime.get("a2")?.y).toBe(-83);
+    expect(byTime.get(sidebarMarkerId("settled-header"))).toEqual(stationary);
   });
 
   it("updates the projection when the target or measured geometry changes", () => {

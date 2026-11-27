@@ -13043,5 +13043,11 @@
   "717c1c47a852a1a5": "Pausa uppläsningen",
   "0eceb5780908eb6c": "Läs upp",
   "3ee98da81538c6de": "Det gick inte att spela upp uppläsningen.",
-  "95435f0b59cb2193": "Ljudförhandsvisning"
+  "95435f0b59cb2193": "Ljudförhandsvisning",
+  "7ee43363a970faab": "Under Aktiva",
+  "6726bdf98ba298ce": "Över Aktiva",
+  "0a973722bb73e9b8": "Placering av avsnittet Arbetar",
+  "2b7462827a9f25eb": "Återställ placering av avsnittet Arbetar till standard",
+  "892bc98db9abf8f2": "Visa avsnittet Arbetar ovanför eller under aktiva trådar.",
+  "f314ec74a9be97e8": "arbetar avsnitt placering överst nederst ovanför under aktiva ordning sidofält"
 }

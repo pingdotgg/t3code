@@ -19,6 +19,17 @@ const isShelfHeader = (item: SidebarListItem | undefined) =>
     item.marker === "snoozed-header" ||
     item.marker === "settled-header");
 
+function isWorkingShelfAboveActive(items: readonly SidebarListItem[]): boolean {
+  const workingIndex = items.findIndex(
+    (item) => item.kind === "marker" && item.marker === "working-header",
+  );
+  if (workingIndex === -1) return false;
+  const dividerIndex = items.findIndex(
+    (item) => item.kind === "marker" && item.marker === "pinned-divider",
+  );
+  return dividerIndex !== -1 && workingIndex < dividerIndex;
+}
+
 export function restrictBelowSidebarLabel(
   { transform, containerNodeRect, draggingNodeRect }: Parameters<Modifier>[0],
   offset: number,
@@ -54,9 +65,22 @@ export function createSidebarCollisionDetection(
       const previousY = previousPointerY ?? pointer.y;
       previousPointerY = pointer.y;
       if (pointer.x >= boundary.left && pointer.x <= boundary.right) {
-        if (pointer.y < previousY && pointer.y <= boundary.bottom) boundarySection = "pinned";
+        const workingAtTop = isWorkingShelfAboveActive(items);
+        const workingTop = workingAtTop
+          ? args.droppableContainers
+              .find((container) => container.id === sidebarMarkerId("working-header"))
+              ?.node.current?.getBoundingClientRect().top
+          : undefined;
+        if (workingTop != null && pointer.y >= workingTop && pointer.y < boundary.top) {
+          return collisions.filter((collision) => collision.id === args.active.id);
+        }
+        const pinnedThreshold = workingTop ?? boundary.bottom;
+        if (pointer.y < previousY && pointer.y <= pinnedThreshold) boundarySection = "pinned";
         else if (pointer.y > previousY && pointer.y >= boundary.top) boundarySection = "active";
-        const nextHeader = (["working-header", "snoozed-header", "settled-header"] as const)
+        const activeBottomMarkers = workingAtTop
+          ? (["snoozed-header", "settled-header"] as const)
+          : (["working-header", "snoozed-header", "settled-header"] as const);
+        const nextHeader = activeBottomMarkers
           .map((marker) =>
             args.droppableContainers.find((container) => container.id === sidebarMarkerId(marker)),
           )
@@ -166,6 +190,15 @@ export function createSidebarSortingStrategy(input: {
       visible.push(routeKey);
     }
     groups.settled = visible.map((key) => ({ kind: "thread", key, section: "settled" }));
+    const workingAtTop = isWorkingShelfAboveActive(items);
+    const hasWorkingHeader = items.some(
+      (item) => item.kind === "marker" && item.marker === "working-header",
+    );
+    const isBottomShelfHeader = (item: SidebarListItem | undefined) =>
+      item?.kind === "marker" &&
+      ((!workingAtTop && item.marker === "working-header") ||
+        item.marker === "snoozed-header" ||
+        item.marker === "settled-header");
     const projected: SidebarListItem[] = [];
     const marker = (name: SidebarListMarker) => projected.push({ kind: "marker", marker: name });
     const section = (name: "active" | "settled") => {
@@ -174,9 +207,13 @@ export function createSidebarSortingStrategy(input: {
     };
     marker("pinned-header");
     projected.push(...groups.pinned);
+    if (workingAtTop && hasWorkingHeader) {
+      marker("working-header");
+      projected.push(...groups.working);
+    }
     marker("pinned-divider");
     section("active");
-    if (items.some((item) => item.kind === "marker" && item.marker === "working-header")) {
+    if (!workingAtTop && hasWorkingHeader) {
       marker("working-header");
       projected.push(...groups.working);
     }
@@ -208,7 +245,7 @@ export function createSidebarSortingStrategy(input: {
             ? fallback
             : (rect?.height ?? fallback);
     });
-    const firstShelf = items.findIndex(isShelfHeader);
+    const firstShelf = items.findIndex(isBottomShelfHeader);
     const shelfRect = rects[firstShelf];
     const beforeShelf = rects[firstShelf - 1];
     const lastRect = rects.at(-1);
@@ -222,7 +259,7 @@ export function createSidebarSortingStrategy(input: {
     const result = items.map(() => hidden);
     let top = rects[0].top;
     for (const [projectedIndex, item] of projected.entries()) {
-      if (isShelfHeader(item)) {
+      if (isBottomShelfHeader(item)) {
         top += shelfSpace;
         shelfSpace = 0;
       }

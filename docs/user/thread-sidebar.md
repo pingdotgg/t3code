@@ -31,7 +31,7 @@ Threads don't require a project. Pick **No project** (or press `mod+alt+n` on we
 
 ### Working section (beta)
 
-Enabled by default (**Settings → General → Working section**, per device). Unpinned threads that are actively running—or waiting on subagents, watched PRs, or monitors—collapse into a **Working** section below Active, and return to the top of Active when they finish, fail, or need input.
+Enabled by default (**Settings → General → Working section**, per device). Unpinned threads that are actively running—or waiting on subagents, watched PRs, or monitors—collapse into a **Working** section below Active, and return to the top of Active when they finish, fail, or need input. On web and desktop, **Working section position** can move it above Active.
 
 While enabled, Active is sorted by most recent return (manual reordering is paused until you turn it off).
 
