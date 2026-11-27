@@ -1,3 +1,6 @@
+import { getReactI18nCache } from "gt-react-native";
+import { appendCodexArtifactTemplateUsePrompt } from "@t3tools/shared/codexArtifactTemplatesCopy";
+import { m, setActiveLocale } from "../../i18n/messages";
 import { describe, expect, it } from "vite-plus/test";
 import {
   appendPullRequestAgentPrompt,
@@ -75,6 +78,32 @@ describe("PR agent tasks", () => {
       ),
     ).toBe(edited);
   });
+  it("uses the active locale for PR and template drafts", () => {
+    getReactI18nCache().updateTranslations({
+      de: {
+        c603fbed6eeabd55: "Erkläre diesen {term}.",
+        "2a06a5ace2bb7a61": "Erstelle mit {skill} ein Dokument über…",
+      },
+    });
+    setActiveLocale("de");
+    try {
+      expect(appendPullRequestAgentPrompt("Meine Frage", "explain", GITHUB)).toBe(
+        "Meine Frage\n\nErkläre diesen pull request.",
+      );
+      const template = {
+        artifactKind: "document",
+        displayName: "Test",
+        skillName: "artifact-template-test",
+        skillDirectory: "/home/user/.codex/skills/artifact-template-test",
+      } as const;
+      const draft = "Erstelle mit $artifact-template-test ein Dokument über…";
+      expect(appendCodexArtifactTemplateUsePrompt("", template, m)).toBe(draft);
+      expect(appendCodexArtifactTemplateUsePrompt(draft, template, m)).toBe(draft);
+    } finally {
+      setActiveLocale("en");
+    }
+  });
+
   it("names the change request with its host's term", () => {
     expect(pullRequestAgentPrompt("conflicts", GITHUB)).toContain(
       "Resolve this pull request's conflicts with its base branch. First confirm this thread is on the PR's branch; if it isn't, prepare the PR in its own worktree.",

@@ -93,45 +93,8 @@ export function resolveCodexArtifactTemplate(
   };
 }
 
-const USE_PROMPT_BY_KIND: Record<CodexArtifactTemplateKind, (skill: string) => string> = {
-  document: (skill) => `Create a document using this ${skill} about…`,
-  presentation: (skill) => `Create a presentation using the ${skill} template about…`,
-  spreadsheet: (skill) => `Create a spreadsheet using this ${skill} about…`,
-  site: (skill) => `Create a Site using this ${skill} about…`,
-  "google-docs": (skill) => `Create a Google Doc using this ${skill} about…`,
-  "google-slides": (skill) => `Create a Google Slides presentation using this ${skill} about…`,
-  "google-sheets": (skill) => `Create a Google Sheet using this ${skill} about…`,
-  image: (skill) => `Create an image using this ${skill} of…`,
-  email: (skill) => `Draft an email using this ${skill} about…`,
-  slack: (skill) => `Draft a Slack message using this ${skill} about…`,
-};
-
-export function codexArtifactTemplateUsePrompt(template: CodexArtifactTemplate): string {
-  return USE_PROMPT_BY_KIND[template.artifactKind](`$${template.skillName}`);
-}
-
 export function codexArtifactTemplatePresentationLabel(kind: CodexArtifactTemplateKind): string {
   return CODEX_ARTIFACT_TEMPLATE_LABEL_BY_KIND[kind];
-}
-
-export function appendCodexArtifactTemplateUsePrompt(
-  draft: string,
-  template: CodexArtifactTemplate,
-): string {
-  const prompt = codexArtifactTemplateUsePrompt(template);
-  const trimmedDraft = draft.trimEnd();
-  const promptStart = trimmedDraft.length - prompt.length;
-  const alreadyEndsWithPrompt =
-    promptStart >= 0 &&
-    trimmedDraft.slice(promptStart) === prompt &&
-    (promptStart === 0 || /\s/.test(trimmedDraft[promptStart - 1] ?? ""));
-
-  if (alreadyEndsWithPrompt) {
-    return draft;
-  }
-
-  const needsLeadingSpace = draft.length > 0 && !/\s$/.test(draft);
-  return `${draft}${needsLeadingSpace ? " " : ""}${prompt}`;
 }
 
 export const CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES = [

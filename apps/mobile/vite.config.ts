@@ -88,7 +88,8 @@ const testPlatform = process.env.T3_MOBILE_TEST_PLATFORM === "android" ? "androi
 // gt-react-native loads react-native and its hooks need <GTProvider>; tests get GT's core set up the way gt-react's initializeGTSPA does, which renders English without a provider.
 const gtTestModule = "\0gt-react-native";
 const gtReactNativeEntry = require.resolve("gt-react-native");
-const gtTestConfig = JSON.stringify({ defaultLocale: require("./gt.config.json").defaultLocale });
+const { defaultLocale, locales } = require("./gt.config.json");
+const gtTestConfig = JSON.stringify({ defaultLocale, locales });
 const gtTestModuleCode = `
 import { I18nStore, ReactI18nCache, initializeI18nConfig, setI18nStore, setReactI18nCache } from "@generaltranslation/react-core/pure";
 import { ReadonlyConditionStore, createConditionStoreSingleton } from "gt-i18n/internal";
