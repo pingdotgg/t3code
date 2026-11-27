@@ -1191,6 +1191,93 @@ describe("large text scroll position", () => {
     await screen.rerender(opened("app.log", log(5000)));
     await vi.waitFor(() => expect(firstVisibleRow()).toBe(saved));
   });
+
+  const wrappedLog = (count: number, { finalPageLoaded = true, indexing = false } = {}) => (
+    <VirtualTablePreview
+      name="wrapped.log"
+      count={count}
+      indexing={indexing}
+      columns={1}
+      source
+      wrap
+      getRows={(page) =>
+        !finalPageLoaded && page === Math.floor((count - 1) / PREVIEW_PAGE_ROWS)
+          ? undefined
+          : Array.from({ length: PREVIEW_PAGE_ROWS }, (_, local) => {
+              const index = page * PREVIEW_PAGE_ROWS + local;
+              return [`entry ${index}: ${index >= 80 ? "wrapped content ".repeat(60) : ""}`];
+            })
+      }
+    />
+  );
+  const row = (index: number) =>
+    scroller().querySelector<HTMLElement>(`[data-preview-row="${index}"]`);
+  const atEnd = (index: number) =>
+    Math.abs(
+      (row(index)?.getBoundingClientRect().bottom ?? 0) - scroller().getBoundingClientRect().bottom,
+    ) < 2;
+  const scrollToEnd = async () => {
+    await vi.waitFor(() => expect(firstVisibleRow()).toBe(0));
+    await act(() =>
+      scroller().dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })),
+    );
+    await vi.waitFor(() => expect(atEnd(99)).toBe(true));
+    await act(() => scroller().dispatchEvent(new Event("scroll")));
+  };
+  const scrollToRow94 = async () => {
+    const viewport = scroller();
+    await act(() => {
+      viewport.scrollTop +=
+        row(94)!.getBoundingClientRect().top - viewport.getBoundingClientRect().top + 2;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    await vi.waitFor(() => expect(firstVisibleRow()).toBe(94));
+  };
+
+  it.each([
+    { name: "an interior row in the wrapped tail", interior: true, count: 100 },
+    { name: "the new bottom after truncation", interior: false, count: 98 },
+  ])("restores $name when reopening a preview", async ({ name, interior, count }) => {
+    using _style = withPreviewAppCss();
+    {
+      await using _screen = await render(opened(name, wrappedLog(100)));
+      await scrollToEnd();
+      if (interior) await scrollToRow94();
+    }
+    await using screen = await render(
+      opened(name, wrappedLog(interior ? count : 85, { indexing: !interior })),
+    );
+    if (!interior) {
+      await vi.waitFor(() => expect(firstVisibleRow()).toBe(0));
+      await screen.rerender(opened(name, wrappedLog(count)));
+    }
+    await vi.waitFor(() => {
+      if (interior) expect(firstVisibleRow()).toBe(94);
+      else expect(atEnd(count - 1)).toBe(true);
+    });
+  });
+
+  it("keeps a manual scroll when the final page loads during end restoration", async () => {
+    using _style = withPreviewAppCss();
+    const key = "wrapped log with delayed final page";
+    {
+      await using _screen = await render(opened(key, wrappedLog(100)));
+      await scrollToEnd();
+    }
+    await using screen = await render(opened(key, wrappedLog(100, { finalPageLoaded: false })));
+    await vi.waitFor(() => expect(row(94)?.textContent).toContain("entry 94"));
+    await scrollToRow94();
+    await screen.rerender(opened(key, wrappedLog(100)));
+    await vi.waitFor(() => expect(row(99)?.textContent).toContain("entry 99"));
+    await new Promise<void>((resolve) => {
+      const observer = new ResizeObserver(() => {
+        observer.disconnect();
+        resolve();
+      });
+      observer.observe(row(99)!);
+    });
+    expect(firstVisibleRow()).toBe(94);
+  });
 });
 
 describe("notebook scroll position", () => {
