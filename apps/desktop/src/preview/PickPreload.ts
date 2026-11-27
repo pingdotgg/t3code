@@ -1,5 +1,5 @@
 // @effect-diagnostics globalDate:off globalTimers:off - This isolated Electron preload does not run inside an Effect runtime.
-import { ipcRenderer } from "electron";
+import { ipcRenderer, webFrame } from "electron";
 import { matchesKeybindingShortcut } from "@t3tools/shared/keybindingMatching";
 import type {
   DesktopPreviewAnnotationTheme,
@@ -29,6 +29,7 @@ import {
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import { pageWorld } from "./PageWorldBridge.ts";
 import { pickElementAtPoint } from "./PickTarget.ts";
+import { installPinchZoom, MAX_PAGE_ZOOM } from "./PinchZoom.ts";
 import { installRecordingCursor } from "./RecordingCursor.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
@@ -42,6 +43,8 @@ import {
   HUMAN_INPUT_CHANNEL,
   POINTER_DOWN_HOST_CHANNEL,
   PAGE_UNHANDLED_SHORTCUT_CHANNEL,
+  PAGE_ZOOM_CHANNEL,
+  PAGE_ZOOM_RESET_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_POINTER_CHANNEL,
   RECORDING_KEY_CHANNEL,
@@ -219,6 +222,13 @@ const reportHumanKeyInput = (event: KeyboardEvent): void => {
 
 window.addEventListener("pointerdown", reportHumanPointerInput, true);
 window.addEventListener("keydown", reportHumanKeyInput, true);
+
+const pinchZoom = installPinchZoom(window, (zoom) => {
+  // Set from the guest, the limits stay off the app window; each new document resets them.
+  webFrame.setVisualZoomLevelLimits(1, MAX_PAGE_ZOOM);
+  ipcRenderer.send(PAGE_ZOOM_CHANNEL, zoom);
+});
+ipcRenderer.on(PAGE_ZOOM_RESET_CHANNEL, () => pinchZoom.reset());
 
 // Capture runs before a page can stop the event; the task delay lets every page
 // listener call preventDefault before the host is told the key went unhandled.

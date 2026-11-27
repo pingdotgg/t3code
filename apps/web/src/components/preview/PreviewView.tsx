@@ -97,6 +97,7 @@ import {
   useDesktopLoadsLoopback,
   useRendersServerTabNatively,
 } from "~/browser/previewRuntime";
+import { resetBrowserPageZoom } from "~/browser/browserPageZoom";
 import { ServerBrowserSurface, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
 import { cn } from "~/lib/utils";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
@@ -424,6 +425,7 @@ export function PreviewView({
   };
 
   const handleResetZoom = () => {
+    if (runtimeTabId) resetBrowserPageZoom(runtimeTabId);
     if (serverOwnsRendering) stepServerZoom(0);
     else if (previewBridge && runtimeTabId) void previewBridge.resetZoom(runtimeTabId);
   };

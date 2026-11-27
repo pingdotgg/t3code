@@ -84,6 +84,7 @@ import {
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   PAGE_UNHANDLED_SHORTCUT_CHANNEL,
+  PAGE_ZOOM_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_INPUT_CHANNEL,
   RECORDING_CONTROLLER_CHANNEL,
@@ -452,6 +453,20 @@ const PAGE_FIRST_FORWARDED_COMMANDS: ReadonlySet<PreviewForwardedShortcut["comma
   "preview.zoomOut",
   "preview.resetZoom",
 ]);
+
+const decodePageZoom = Schema.decodeUnknownOption(
+  Schema.Struct({ scale: Schema.Finite, x: Schema.Finite, y: Schema.Finite }),
+);
+
+// No CDP command sets the visual viewport's offset, but scrolling an element into view moves the
+// visual viewport before the layout viewport, so a probe at the target corner places it exactly.
+const scrollVisualViewportExpression = (x: number, y: number) => `(() => {
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:absolute;width:1px;height:1px;visibility:hidden;pointer-events:none;left:" + (scrollX + ${x}) + "px;top:" + (scrollY + ${y}) + "px";
+  document.documentElement.append(probe);
+  probe.scrollIntoView({ block: "start", inline: "start", behavior: "instant" });
+  probe.remove();
+})()`;
 
 const decodePageShortcutKeys = Schema.decodeUnknownOption(
   Schema.Struct({
@@ -2094,11 +2109,36 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   );
 
   // URL tabs can paint before registerWebview; set the background at attach time.
+  /** The guest preload requests a zoom; scale and position are sent together so no frame shows one without the other. */
+  const applyPageZoom = Effect.fn("PreviewManager.applyPageZoom")(function* (
+    wc: Electron.WebContents,
+    zoom: { readonly scale: number; readonly x: number; readonly y: number },
+  ) {
+    const control = yield* ensureControlSession(wc);
+    yield* attemptPromise({ operation: "applyPageZoom", webContentsId: wc.id }, () => {
+      const scaled = control.debugger.sendCommand("Emulation.setPageScaleFactor", {
+        pageScaleFactor: zoom.scale,
+      });
+      if (zoom.scale <= 1) return scaled;
+      return Promise.all([
+        scaled,
+        control.debugger.sendCommand("Runtime.evaluate", {
+          expression: scrollVisualViewportExpression(zoom.x, zoom.y),
+          silent: true,
+        }),
+      ]);
+    }).pipe(Effect.ignore);
+  });
+
   const prepareWebview = Effect.fn("PreviewManager.prepareWebview")(function* (
     wc: Electron.WebContents,
   ) {
     yield* rendererHistory.register(wc, { surface: "preview" });
     const webContentsId = wc.id;
+    wc.ipc.on(PAGE_ZOOM_CHANNEL, (_event, rawZoom: unknown) => {
+      const zoom = decodePageZoom(rawZoom);
+      if (Option.isSome(zoom)) runFork(applyPageZoom(wc, zoom.value));
+    });
     wc.on("did-start-navigation", (event) => {
       if (event.isMainFrame && !event.isSameDocument) guestLoadFailures.delete(webContentsId);
     });

@@ -1728,6 +1728,39 @@ describe("PreviewManager", () => {
     };
   };
 
+  effectIt.effect("applies a guest's pinch zoom with its position in the same batch", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAttachingGuest(50);
+        yield* manager.prepareWebview(guest.wc);
+        const onPageZoom = vi
+          .mocked(guest.wc.ipc.on)
+          .mock.calls.find(([channel]) => channel === "preview:page-zoom")?.[1] as
+          | ((event: unknown, zoom: unknown) => void)
+          | undefined;
+        expect(onPageZoom).toBeDefined();
+        guest.sendCommand.mockClear();
+
+        onPageZoom?.({}, { scale: 2, x: 10, y: 20 });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        const methods = guest.sendCommand.mock.calls.map(([method]) => method);
+        expect(methods).toEqual(["Emulation.setPageScaleFactor", "Runtime.evaluate"]);
+        expect(guest.sendCommand.mock.calls[0]?.[1]).toEqual({ pageScaleFactor: 2 });
+        expect(JSON.stringify(guest.sendCommand.mock.calls[1]?.[1])).toContain("scrollX + 10");
+
+        guest.sendCommand.mockClear();
+        onPageZoom?.({}, { scale: 1, x: 0, y: 0 });
+        onPageZoom?.({}, { scale: "big" });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        expect(guest.sendCommand.mock.calls).toEqual([
+          ["Emulation.setPageScaleFactor", { pageScaleFactor: 1 }],
+        ]);
+      }),
+    ),
+  );
+
   effectIt.effect("reattaches a debugger that Chromium dropped on its own", () =>
     withManager((manager) =>
       Effect.gen(function* () {
