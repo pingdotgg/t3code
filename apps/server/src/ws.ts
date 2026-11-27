@@ -224,6 +224,7 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import * as SkillLibrary from "./skills/SkillLibrary.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
 import * as LayoutCommandApprovalWrites from "./workspace/LayoutCommandApprovalWrites.ts";
@@ -3206,6 +3207,9 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.skillsListLibrary]: (input) => SkillLibrary.listSkillLibrary(input),
+        [WS_METHODS.skillsReadBundle]: (input) => SkillLibrary.readSkillLibraryBundle(input),
+        [WS_METHODS.skillsInject]: (input) => SkillLibrary.injectSkills(input),
         [WS_METHODS.workspaceListFolders]: (input) => workspaceFolders.list(input),
         [WS_METHODS.workspaceScanFolders]: (input) => workspaceFolders.scan(input),
         [WS_METHODS.workspaceTaskFolder]: (input) =>

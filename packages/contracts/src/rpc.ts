@@ -1,4 +1,13 @@
 import {
+  SkillInjectInput,
+  SkillInjectResult,
+  SkillLibraryError,
+  SkillLibraryListInput,
+  SkillLibraryListResult,
+  SkillLibraryReadBundleInput,
+  SkillLibraryReadBundleResult,
+} from "./skills.ts";
+import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -505,6 +514,9 @@ export const WS_METHODS = {
   shellOpenInEditor: "shell.openInEditor",
 
   filesystemBrowse: "filesystem.browse",
+  skillsListLibrary: "skills.listLibrary",
+  skillsReadBundle: "skills.readBundle",
+  skillsInject: "skills.inject",
   workspaceListFolders: "workspace.listFolders",
   workspaceScanFolders: "workspace.scanFolders",
   workspaceTaskFolder: "workspace.taskFolder",
@@ -1720,6 +1732,24 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
 });
 
+const WsSkillsListLibraryRpc = Rpc.make(WS_METHODS.skillsListLibrary, {
+  payload: SkillLibraryListInput,
+  success: SkillLibraryListResult,
+  error: Schema.Union([SkillLibraryError, EnvironmentAuthorizationError]),
+});
+
+const WsSkillsReadBundleRpc = Rpc.make(WS_METHODS.skillsReadBundle, {
+  payload: SkillLibraryReadBundleInput,
+  success: SkillLibraryReadBundleResult,
+  error: Schema.Union([SkillLibraryError, EnvironmentAuthorizationError]),
+});
+
+const WsSkillsInjectRpc = Rpc.make(WS_METHODS.skillsInject, {
+  payload: SkillInjectInput,
+  success: SkillInjectResult,
+  error: Schema.Union([SkillLibraryError, EnvironmentAuthorizationError]),
+});
+
 const WsWorkspaceListFoldersRpc = Rpc.make(WS_METHODS.workspaceListFolders, {
   payload: WorkspaceListFoldersInput,
   success: WorkspaceListFoldersResult,
@@ -2662,6 +2692,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsSkillsListLibraryRpc,
+  WsSkillsReadBundleRpc,
+  WsSkillsInjectRpc,
   WsWorkspaceListFoldersRpc,
   WsWorkspaceScanFoldersRpc,
   WsWorkspaceTaskFolderRpc,

@@ -96,6 +96,7 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { SkillLibrarySettingsSection } from "./SkillLibrarySettingsSection";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { ExpandableText } from "./ExpandableText";
 import { IntervalSecondsField } from "./IntervalSecondsField";
@@ -1239,6 +1240,15 @@ export function EnvironmentProviderSettings({
         />
         <CompactIdleThreadsRow />
       </SettingsSection>
+
+      <SkillLibrarySettingsSection
+        environmentId={environmentId}
+        environmentLabel={environmentLabel}
+        readOnly={readOnly}
+        onInjected={() => {
+          void refreshProviders();
+        }}
+      />
 
       {isAddInstanceDialogOpen && !readOnly ? (
         <AddProviderInstanceDialog
