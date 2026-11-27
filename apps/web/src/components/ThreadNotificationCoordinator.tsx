@@ -625,7 +625,10 @@ export function startThreadNotifications(
         );
       };
       const isRevokedTeamThread = (threadId: ThreadId) =>
-        teamState.team !== null && !teamState.attributionByThreadId.has(threadId);
+        teamState.team !== null &&
+        (teamState.currentMember === null ||
+          teamState.currentMember.status !== "active" ||
+          !teamState.attributionByThreadId.has(threadId));
       closeToasts((key, toastEntry) => {
         const parsed = parseThreadKey(key);
         if (parsed.environmentId !== environmentId) return false;

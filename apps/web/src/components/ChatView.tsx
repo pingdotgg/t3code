@@ -1651,7 +1651,8 @@ export default function ChatView(props: ChatViewProps) {
     activeUserMessageId: activeRunningTurn?.userMessageId ?? null,
   });
   const canRespondToRuntimeRequest =
-    routeKind !== "server" || teamThreadTurnControls.canRespondToRuntimeRequest;
+    canExecuteActiveTeamThreadEnv &&
+    (routeKind !== "server" || teamThreadTurnControls.canRespondToRuntimeRequest);
   const composerActivePendingApproval = canRespondToRuntimeRequest ? activePendingApproval : null;
   const composerPendingApprovals = canRespondToRuntimeRequest
     ? pendingApprovals
@@ -3926,7 +3927,7 @@ export default function ChatView(props: ChatViewProps) {
                   pendingApprovals={pendingApprovals}
                   heldApprovalRequestIds={heldApprovalRequestIds}
                   respondingRequestIds={respondingRequestIds}
-                  {...(routeKind === "server" && !teamThreadTurnControls.canRespondToRuntimeRequest
+                  {...(!canRespondToRuntimeRequest
                     ? {}
                     : { onRespondToApproval: onRespondToApprovalStable })}
                   canOperateThread={effectiveCanOperateThread}
@@ -4170,14 +4171,8 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                                 phase={phase}
                                 canSteer={canSteer}
-                                canInterrupt={
-                                  canInterruptRunningThread &&
-                                  (routeKind !== "server" || teamThreadContext.envAccess.canExecute)
-                                }
-                                isExplicitAdminInterrupt={
-                                  isExplicitAdminInterrupt &&
-                                  (routeKind !== "server" || teamThreadContext.envAccess.canExecute)
-                                }
+                                canInterrupt={canInterruptRunningThread}
+                                isExplicitAdminInterrupt={isExplicitAdminInterrupt}
                                 isSendBusy={
                                   (isSendBusy && !sendQueuesBehindSetup) ||
                                   (setupQueueSendThreadKey !== null &&

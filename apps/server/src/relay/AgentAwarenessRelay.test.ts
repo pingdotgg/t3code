@@ -1452,22 +1452,19 @@ describe("AgentAwarenessRelay team notification gating", () => {
         yield* Effect.yieldNow;
         yield* relay.drain;
 
-        assert.equal(publications.length, 3);
-        assert.deepEqual(
-          publications.map((entry) => entry.state?.phase),
-          ["running", "waiting_for_input", "running"],
-        );
-        assert.include(publications[1]?.state, {
-          threadId: THREAD_ID,
+        assert.equal(publications.length, 1);
+        const notifThread1 = ThreadId.make(`${THREAD_ID}:queued:run-queued-1`);
+        assert.include(publications[0]?.state, {
+          threadId: notifThread1,
           threadTitle: "bob queued a message · alice: Release prep",
           phase: "waiting_for_input",
           headline: "bob queued a message",
           detail: "Wait for green CI",
+          deepLink: `/threads/${encodeURIComponent("relay-environment")}/${encodeURIComponent(THREAD_ID)}`,
         });
-        assert.equal(publications[2]?.state?.threadTitle, "alice: Release prep");
 
-        // A second distinct queued message re-transitions running -> waiting_for_input -> running
-        // so upstream APNs/FCM transition-based alerts fire for every new queued message.
+        // A second distinct queued message publishes its own synthetic notification row so
+        // delayed APNs/FCM consumers can deliver both alerts without staleness suppression.
         yield* PubSub.publish(triggers, {
           type: "queuedMessage",
           threadId: THREAD_ID,
@@ -1481,25 +1478,60 @@ describe("AgentAwarenessRelay team notification gating", () => {
         yield* Effect.yieldNow;
         yield* relay.drain;
 
-        assert.equal(publications.length, 5);
-        assert.deepEqual(
-          publications.slice(3).map((entry) => entry.state?.phase),
-          ["waiting_for_input", "running"],
-        );
-        assert.include(publications[3]?.state, {
+        assert.equal(publications.length, 2);
+        const notifThread2 = ThreadId.make(`${THREAD_ID}:queued:run-queued-2`);
+        assert.include(publications[1]?.state, {
+          threadId: notifThread2,
           threadTitle: "charlie queued a message · alice: Release prep",
+          phase: "waiting_for_input",
           headline: "charlie queued a message",
           detail: "Also check migrations",
+          deepLink: `/threads/${encodeURIComponent("relay-environment")}/${encodeURIComponent(THREAD_ID)}`,
         });
 
-        // A subsequent thread publish while still running is a no-op because the running state was restored.
+        // Concurrent normal thread publish updates only the real thread row and leaves
+        // queued-message notification rows intact for delayed APNs/FCM consumers.
         yield* relay.publishThread(THREAD_ID);
-        assert.equal(publications.length, 5);
+        assert.equal(publications.length, 3);
+        assert.equal(publications[2]?.state?.threadId, THREAD_ID);
+        assert.equal(publications[2]?.state?.phase, "running");
+        assert.equal(publications[2]?.state?.threadTitle, "alice: Release prep");
+
+        // Delayed consumer verification: reconstruct current relay row store after all publishes
+        // and confirm both queued-message jobs still match the live relay DB (never stale).
+        const extractPublishedThreadId = (url: string) =>
+          decodeURIComponent(url.split("/threads/")[1]?.split("/")[0] ?? "");
+        const relayRows = new Map<string, (typeof publications)[number]["state"]>();
+        for (const pub of publications) {
+          const urlThreadId = extractPublishedThreadId(pub.url);
+          if (pub.state === null) relayRows.delete(urlThreadId);
+          else relayRows.set(urlThreadId, pub.state);
+        }
+        for (const jobState of [publications[0]!.state!, publications[1]!.state!]) {
+          const liveRow = relayRows.get(jobState.threadId);
+          assert.isDefined(liveRow);
+          assert.equal(liveRow?.phase, jobState.phase);
+          assert.equal(liveRow?.updatedAt, jobState.updatedAt);
+        }
+
+        // After the 60s TTL window, both synthetic notification rows are tombstoned cleanly
+        // without disturbing the real running thread row.
+        yield* TestClock.adjust("60 seconds");
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        const tombstones = publications.slice(3);
+        assert.equal(tombstones.length, 2);
+        assert.isNull(tombstones[0]?.state);
+        assert.isNull(tombstones[1]?.state);
+        assert.deepEqual(
+          tombstones.map((entry) => extractPublishedThreadId(entry.url)).toSorted(),
+          [notifThread1, notifThread2].toSorted(),
+        );
       }),
   );
 
   it.effect(
-    "does not clobber waiting_for_approval or trigger duplicate approval alerts when a message is queued",
+    "preserves waiting_for_approval while delivering queued-message push and skips completed/idle threads",
     () =>
       Effect.gen(function* () {
         const triggers = yield* PubSub.unbounded<TeamService.TeamNotificationTriggerEvent>();
@@ -1511,7 +1543,7 @@ describe("AgentAwarenessRelay team notification gating", () => {
           subscribeNotificationEvents: () => Stream.fromPubSub(triggers),
         } as unknown as TeamService.TeamService["Service"];
 
-        const waitingShell = shell({
+        let currentShell = shell({
           status: "waiting",
           title: "Deploy prod",
           pendingRuntimeRequest: {
@@ -1521,7 +1553,7 @@ describe("AgentAwarenessRelay team notification gating", () => {
           },
         });
         const { relay, publications } = yield* makeTestRelay({
-          readShell: () => Effect.succeed(waitingShell),
+          readShell: () => Effect.sync(() => currentShell),
           teamService,
         });
 
@@ -1529,9 +1561,11 @@ describe("AgentAwarenessRelay team notification gating", () => {
         yield* Effect.yieldNow;
         yield* relay.publishThread(THREAD_ID);
         assert.equal(publications.length, 1);
+        assert.equal(publications[0]?.state?.threadId, THREAD_ID);
         assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
 
-        // Interleave a queued-message trigger with a normal thread publish (such as run.created).
+        // Queuing a message during waiting_for_approval publishes on a distinct synthetic row so
+        // the approval row stays untouched AND delayed consumers still deliver the queued alert.
         yield* PubSub.publish(triggers, {
           type: "queuedMessage",
           threadId: THREAD_ID,
@@ -1546,9 +1580,31 @@ describe("AgentAwarenessRelay team notification gating", () => {
         yield* Effect.yieldNow;
         yield* relay.drain;
 
-        // Neither waiting_for_input overwrite nor duplicate waiting_for_approval alert is published.
-        assert.equal(publications.length, 1);
+        assert.equal(publications.length, 2);
         assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+        assert.include(publications[1]?.state, {
+          threadId: ThreadId.make(`${THREAD_ID}:queued:run-queued-during-approval`),
+          threadTitle: "bob queued a message · alice: Deploy prod",
+          phase: "waiting_for_input",
+          deepLink: `/threads/${encodeURIComponent("relay-environment")}/${encodeURIComponent(THREAD_ID)}`,
+        });
+
+        // Once the thread completes, late queued-message triggers are skipped so idle/completed
+        // cards are never resurrected.
+        currentShell = shell({ status: "completed", title: "Deploy prod" });
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: THREAD_ID,
+          queuedRunId: "run-queued-after-complete",
+          senderMemberId: null,
+          senderPseudo: "charlie",
+          recipientMemberIds: [],
+          messagePreview: "Too late",
+          createdAt: "2026-04-06T12:02:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        assert.equal(publications.length, 2);
       }),
   );
 });

@@ -6,7 +6,7 @@ import {
   type OrchestrationV2TurnItem,
   type Project,
   type RuntimeRequestId,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import {
   RelayApi,
@@ -487,6 +487,13 @@ export const make = Effect.gen(function* () {
   const heldCompletions = new Set<ThreadId>();
   const publishLock = yield* Semaphore.make(1);
   const withPublishLock = publishLock.withPermits(1);
+  const QUEUED_MESSAGE_RELAY_ROW_TTL_MS = 60_000;
+  const queuedMessageCleanupTimers = new Map<ThreadId, Fiber.Fiber<void>>();
+  const cancelQueuedMessageCleanups = Effect.suspend(() => {
+    const timers = [...queuedMessageCleanupTimers.values()];
+    queuedMessageCleanupTimers.clear();
+    return Effect.forEach(timers, (timer) => Fiber.interrupt(timer), { discard: true });
+  });
   const MAX_PUBLISHED_QUEUED_RUN_IDS = 1_000;
   const publishedQueuedRunIds = new Set<string>();
   const rememberPublishedQueuedRunId = (queuedRunId: string) => {
@@ -514,6 +521,7 @@ export const make = Effect.gen(function* () {
   let schedulePublishRetry: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   let enqueueTopLevelPublish: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const resetPublishedConnection = Effect.gen(function* () {
+    yield* cancelQueuedMessageCleanups;
     publishedRelayConfig = undefined;
     cachedRelayClient = undefined;
     publishConfirmDeadlines.clear();
@@ -798,6 +806,96 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const clearQueuedMessageRelayRow = Effect.fn("clearQueuedMessageRelayRow")(function* (
+    notificationThreadId: ThreadId,
+    expectedRelayConfig: NonNullable<Effect.Success<typeof readRelayConfig>>,
+  ) {
+    yield* withPublishLock(
+      Effect.gen(function* () {
+        if (!(yield* readPublishAgentActivityEnabled)) return;
+        const relayConfig = yield* readRelayConfig;
+        if (
+          !relayConfig ||
+          relayConfig.url !== expectedRelayConfig.url ||
+          relayConfig.issuer !== expectedRelayConfig.issuer ||
+          relayConfig.environmentCredential !== expectedRelayConfig.environmentCredential
+        ) {
+          return;
+        }
+        const environmentId = yield* serverEnvironment.getEnvironmentId;
+        if (cachedRelayClient === undefined) {
+          cachedRelayClient = yield* makeRelayClient(relayConfig);
+        }
+        const relayClient = cachedRelayClient;
+        const proof = yield* makePublishProof({
+          relayIssuer: relayConfig.issuer,
+          environmentId,
+          threadId: notificationThreadId,
+          state: null,
+          jti: yield* random.uuidV4(),
+        }).pipe(Effect.provideService(EnvironmentSigningKey, signingKey));
+        yield* relayClient.server
+          .publishAgentActivity({
+            params: {
+              environmentId,
+              threadId: notificationThreadId,
+            },
+            payload: { state: null, proof },
+          })
+          .pipe(Effect.timeout("10 seconds"), withRelayClientTracing);
+      }),
+    );
+  });
+
+  const queuedMessageCleanupWorker = yield* makeDrainableWorker(
+    (input: {
+      readonly notificationThreadId: ThreadId;
+      readonly expectedRelayConfig: NonNullable<Effect.Success<typeof readRelayConfig>>;
+    }) =>
+      Effect.gen(function* () {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const exit = yield* Effect.exit(
+            clearQueuedMessageRelayRow(input.notificationThreadId, input.expectedRelayConfig),
+          );
+          if (exit._tag === "Success") return;
+          if (Cause.hasInterruptsOnly(exit.cause)) return;
+          if (attempt < 2) {
+            yield* Effect.sleep("5 seconds");
+          } else {
+            yield* Effect.logWarning("agent activity queued message tombstone failed", {
+              notificationThreadId: input.notificationThreadId,
+              cause: Cause.pretty(exit.cause),
+            });
+          }
+        }
+      }),
+  );
+
+  const scheduleQueuedMessageCleanup = Effect.fnUntraced(function* (
+    notificationThreadId: ThreadId,
+    expectedRelayConfig: NonNullable<Effect.Success<typeof readRelayConfig>>,
+  ) {
+    const existing = queuedMessageCleanupTimers.get(notificationThreadId);
+    if (existing !== undefined) {
+      queuedMessageCleanupTimers.delete(notificationThreadId);
+      yield* Fiber.interrupt(existing);
+    }
+    const timer = yield* Effect.sleep(QUEUED_MESSAGE_RELAY_ROW_TTL_MS).pipe(
+      Effect.andThen(
+        queuedMessageCleanupWorker.enqueue({ notificationThreadId, expectedRelayConfig }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (queuedMessageCleanupTimers.get(notificationThreadId) === timer) {
+            queuedMessageCleanupTimers.delete(notificationThreadId);
+          }
+        }),
+      ),
+      Effect.forkIn(scope),
+    );
+    queuedMessageCleanupTimers.set(notificationThreadId, timer);
+  });
+
   const publishQueuedMessageNotification = Effect.fn("publishQueuedMessageNotification")(function* (
     trigger: Extract<TeamService.TeamNotificationTriggerEvent, { readonly type: "queuedMessage" }>,
   ) {
@@ -839,20 +937,22 @@ export const make = Effect.gen(function* () {
           project,
           pendingSubagentRequest: yield* currentSubagentRequestFor(trigger.threadId),
         });
-        // Never overwrite an active approval/input wait on the relay: doing so would clobber
-        // the pending prompt and could cause duplicate approval alerts on the next thread publish.
+        const currentPhase = currentSnapshot.state?.phase ?? null;
+        // Skip only if the turn already finished or became idle so we never resurrect completed cards.
         if (
-          currentSnapshot.state?.phase === "waiting_for_approval" ||
-          currentSnapshot.state?.phase === "waiting_for_input"
+          currentPhase !== "running" &&
+          currentPhase !== "starting" &&
+          currentPhase !== "waiting_for_approval" &&
+          currentPhase !== "waiting_for_input"
         ) {
           rememberPublishedQueuedRunId(trigger.queuedRunId);
           yield* Effect.logDebug(
-            "agent activity queued message notification skipped; thread already awaiting attention",
+            "agent activity queued message notification skipped; thread is no longer active",
             {
               environmentId,
               threadId: trigger.threadId,
               queuedRunId: trigger.queuedRunId,
-              currentPhase: currentSnapshot.state.phase,
+              currentPhase,
             },
           );
           return;
@@ -868,12 +968,17 @@ export const make = Effect.gen(function* () {
           trigger.messagePreview.trim().length > 0
             ? trigger.messagePreview.trim()
             : `${trigger.senderPseudo} queued a message in "${prefixedThreadTitle}"`;
-        // Upstream relay alerts display `threadTitle` as the push notification title and
-        // `${status}: ${projectTitle}` as the body, so embed sender context in `threadTitle`.
+        // Publish on a dedicated synthetic row key with deepLink aimed at the real thread so:
+        // (1) the thread's own running/waiting_for_approval row is never clobbered,
+        // (2) async APNs/FCM consumers never drop the alert as stale, and
+        // (3) successive queued messages or messages during approval waits still fire alerts.
+        const notificationThreadId = ThreadId.make(
+          `${trigger.threadId}:queued:${trigger.queuedRunId}`,
+        );
         const queuedThreadTitle = `${trigger.senderPseudo} queued a message · ${prefixedThreadTitle}`;
         const queuedState = sanitizeRelayAgentActivityState({
           environmentId,
-          threadId: trigger.threadId,
+          threadId: notificationThreadId,
           projectTitle: project.value.title,
           threadTitle: queuedThreadTitle,
           phase: "waiting_for_input",
@@ -888,63 +993,29 @@ export const make = Effect.gen(function* () {
           cachedRelayClient = yield* makeRelayClient(relayConfig);
         }
         const relayClient = cachedRelayClient;
-        const publishOne = Effect.fnUntraced(function* (state: RelayAgentActivityState) {
-          const proof = yield* makePublishProof({
-            relayIssuer: relayConfig.issuer,
-            environmentId,
-            threadId: trigger.threadId,
-            state,
-            jti: yield* random.uuidV4(),
-          }).pipe(Effect.provideService(EnvironmentSigningKey, signingKey));
-          return yield* relayClient.server
-            .publishAgentActivity({
-              params: {
-                environmentId,
-                threadId: trigger.threadId,
-              },
-              payload: { state, proof },
-            })
-            .pipe(Effect.timeout("10 seconds"), withRelayClientTracing);
-        });
-        const liveRunningState =
-          currentSnapshot.state !== null &&
-          (currentSnapshot.state.phase === "running" || currentSnapshot.state.phase === "starting")
-            ? { ...currentSnapshot.state, threadTitle: prefixedThreadTitle }
-            : null;
-        const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
-        // Upstream relay alerts only fire on a non-attention -> attention transition; establish
-        // the running baseline first if this thread hasn't published yet.
-        if (
-          liveRunningState !== null &&
-          !hasLivePublishedState(publishedStateByThread, trigger.threadId)
-        ) {
-          yield* publishOne(liveRunningState);
-        }
-        const response = yield* publishOne(queuedState);
+        const proof = yield* makePublishProof({
+          relayIssuer: relayConfig.issuer,
+          environmentId,
+          threadId: notificationThreadId,
+          state: queuedState,
+          jti: yield* random.uuidV4(),
+        }).pipe(Effect.provideService(EnvironmentSigningKey, signingKey));
+        const response = yield* relayClient.server
+          .publishAgentActivity({
+            params: {
+              environmentId,
+              threadId: notificationThreadId,
+            },
+            payload: { state: queuedState, proof },
+          })
+          .pipe(Effect.timeout("10 seconds"), withRelayClientTracing);
         rememberPublishedQueuedRunId(trigger.queuedRunId);
-        // Immediately restore the real running state so the Live Activity stays accurate, the
-        // concurrent `run.created` event is a no-op, and subsequent queued messages re-trigger alerts.
-        if (liveRunningState !== null) {
-          yield* publishOne(liveRunningState);
-          const restoredIdentity = agentAwarenessPublishIdentity(
-            liveRunningState,
-            currentSnapshot.subagentWait,
-          );
-          yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-            new Map(publishedStates).set(trigger.threadId, restoredIdentity),
-          );
-        } else {
-          yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-            new Map(publishedStates).set(
-              trigger.threadId,
-              agentAwarenessPublishIdentity(queuedState),
-            ),
-          );
-        }
+        yield* scheduleQueuedMessageCleanup(notificationThreadId, relayConfig);
         yield* Effect.logInfo("agent activity queued message notification published", {
           environmentId,
           projectId: threadShell.projectId,
           threadId: trigger.threadId,
+          notificationThreadId,
           queuedRunId: trigger.queuedRunId,
           ok: response.ok,
           deliveries: deliveryStats(response.deliveries),
@@ -1264,7 +1335,10 @@ export const make = Effect.gen(function* () {
 
   return AgentAwarenessRelay.of({
     publishThread,
-    drain: worker.drain.pipe(Effect.andThen(queuedMessageWorker.drain)),
+    drain: worker.drain.pipe(
+      Effect.andThen(queuedMessageWorker.drain),
+      Effect.andThen(queuedMessageCleanupWorker.drain),
+    ),
     requestCatchUp: Effect.fn("AgentAwarenessRelay.requestCatchUp")(function () {
       return Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid);
     }),
