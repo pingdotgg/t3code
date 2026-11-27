@@ -352,6 +352,25 @@ describe("AntigravityAdapterV2 compaction", () => {
           .filter((request) => request.method === "session/prompt")
           .map((request) => request.params?.prompt);
         assert.deepEqual(prompts, compact ? [[{ type: "text", text: "/compact" }]] : []);
+
+        const goalEvents = yield* session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* session.startTurn({
+          ...turnInput,
+          message: { ...turnInput.message, text: "/goal Count to 3" },
+        });
+        const goals = Array.from(yield* Fiber.join(goalEvents)).flatMap((event) =>
+          event.type === "provider_thread.updated" && event.providerThread.goal !== undefined
+            ? [event.providerThread.goal]
+            : [],
+        );
+        assert.deepEqual(
+          goals,
+          nativeGoals ? [{ objective: "Count to 3", status: "active" }, null] : [],
+        );
       }).pipe(Effect.provide(layerSession)),
   );
 });
