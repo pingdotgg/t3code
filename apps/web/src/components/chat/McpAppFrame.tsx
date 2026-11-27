@@ -453,7 +453,7 @@ export function McpAppFrame(props: {
   // Only a server that binds the app to its document gets a bridge; without one the app cannot run.
   if (bridgeMissing) {
     return (
-      <p className="rounded-lg border border-border px-3 py-2 text-muted-foreground text-xs">
+      <p className="rounded-card surface-panel px-3 py-2 text-meta text-muted-foreground">
         <T>
           The <Var>{app.server}</Var> app needs a newer <Var>{APP_BASE_NAME}</Var> server on this
           environment. Update the server to use it.
