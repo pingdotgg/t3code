@@ -152,6 +152,22 @@ function namespaceOf(tagName: string, scope: readonly XmlNode[]) {
   return scope.findLast((node) => Object.hasOwn(node.attrs, binding))?.attrs[binding];
 }
 
+function isHiddenOdfSection(
+  tagName: string,
+  attributes: Record<string, string>,
+  scope: readonly XmlNode[],
+) {
+  return (
+    namespaceOf(tagName, scope) === ODF_TEXT_NS &&
+    Object.entries(attributes).some(
+      ([name, value]) =>
+        name.endsWith(":display") &&
+        /^[\t\n\r ]*none[\t\n\r ]*$/u.test(value) &&
+        namespaceOf(name, scope) === ODF_TEXT_NS,
+    )
+  );
+}
+
 function isXhtmlElement(
   tagName: string,
   scope: readonly XmlNode[],
@@ -211,8 +227,9 @@ function xml(source: string, extension: string): XmlNode {
         Object.entries(tag.attributes).flatMap(([key, value]) => {
           const local = key.split(":").at(-1)!;
           // A foreign attribute must not shadow an XHTML table span or a namespace declaration.
-          return extension === ".epub" &&
-            (local === "colspan" || local === "rowspan" || local === "xmlns")
+          return (extension === ".epub" &&
+            (local === "colspan" || local === "rowspan" || local === "xmlns")) ||
+            (extension === ".odt" && local === "xmlns")
             ? [[key, String(value)]]
             : [
                 [key, String(value)],
@@ -298,6 +315,9 @@ function xml(source: string, extension: string): XmlNode {
             (prop) => prop.name === "vanish" && ["true", "1", "on"].includes(prop.attrs.val ?? "1"),
           )) ||
       (odf && node.name === "annotation" && parent.name !== "semantics") ||
+      (extension === ".odt" &&
+        node.name === "section" &&
+        isHiddenOdfSection(tag.name, tag.attributes, [...stack, node])) ||
       (extension === ".pptx" &&
         node.name === "timing" &&
         stack.every((ancestor) =>
@@ -333,6 +353,11 @@ function xml(source: string, extension: string): XmlNode {
         body.odfInlineParagraphs = true;
         node.children = ["[", citation, ": ", body, "]"];
       }
+    }
+    if (odf && node.name === "ruby" && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) {
+      const base = children(node).find((child) => child.name === "ruby-base");
+      const reading = children(node).find((child) => child.name === "ruby-text");
+      if (base?.hasText && reading?.hasText) node.children = [base, "(", reading, ")"];
     }
     if (extension === ".epub" && node.name === "ruby" && stack[1]?.name === "html")
       separateRubyReadings(node);

@@ -4237,6 +4237,7 @@
   "ac242b57dbfa5259": "Manage scheduled tasks",
   "d93c0db04f4c8e46": "Edit automation",
   "3fe420ed9b5bdb75": "Run now",
+  "fdf273ca647a967f": "Delete",
   "0c433351a8606e50": [
     "Could not load automations: ",
     {
@@ -5370,7 +5371,9 @@
   "4cb21672153c1f18": "No simulators or emulators were found on this environment.",
   "c82410197256eb53": "iOS Simulators",
   "31a71fec6b5f2bf3": "Android Devices",
+  "1bd21d5284dc2d8e": "iOS Devices",
   "ac18a5e35195a258": "Android Emulators",
+  "f28d1d2b5f30a8cd": "Physical",
   "94215375ea2558b8": "Running",
   "f8a65d4d662389b0": "Stopped",
   "b1687c7b2b91e569": "Open {name}",
