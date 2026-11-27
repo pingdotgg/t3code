@@ -120,3 +120,32 @@ index b6e0a3892eb5416b1badf447d4f8c4e4baef828c..4660fb4b7b49ec44e78fb413a543dd5f
            builder.setWeight(weight);
            builder.setItalic(isItalic);
            typeface = builder.build();
+diff --git a/apple/Text/RNSVGGlyphContext.mm b/apple/Text/RNSVGGlyphContext.mm
+--- a/apple/Text/RNSVGGlyphContext.mm
++++ b/apple/Text/RNSVGGlyphContext.mm
+@@ -117,13 +117,24 @@
+   NSString *fontFamily = topFont_->fontFamily;
+   NSString *fontStyle = RNSVGFontStyleStrings[topFont_->fontStyle];
+   NSString *fontWeight = RNSVGFontWeightStrings[topFont_->fontWeight];
++  // Fabric text maps the CSS generic ui-monospace to SF Mono; the legacy RCTFont does not know it.
++  BOOL systemMonospaced = [fontFamily isEqualToString:@"ui-monospace"];
+   UIFont *font = [RCTFont updateFont:nil
+-                          withFamily:[fontFamily isEqualToString:@""] ? nil : fontFamily
++                          withFamily:systemMonospaced ? @"System" : ([fontFamily isEqualToString:@""] ? nil : fontFamily)
+                                 size:@(isnan(size) ? 0 : size)
+                               weight:fontWeight
+                                style:fontStyle
+                              variant:nil
+                      scaleMultiplier:1.0];
++#if !TARGET_OS_OSX
++  if (systemMonospaced) {
++    UIFontDescriptor *descriptor =
++        [font.fontDescriptor fontDescriptorWithDesign:UIFontDescriptorSystemDesignMonospaced];
++    if (descriptor) {
++      font = [UIFont fontWithDescriptor:descriptor size:font.pointSize];
++    }
++  }
++#endif
+   CTFontRef ref = (__bridge CTFontRef)font;
+ 
+   double weight = topFont_->absoluteFontWeight;
