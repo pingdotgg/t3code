@@ -6,6 +6,8 @@ describe("commandProgramName", () => {
   it.each([
     ["/bin/bash --rcfile /tmp/config -c 'git status'", "git"],
     ['bash -lc -- "printf ok"', "printf"],
+    ['bash -euo pipefail -c "ls -la"', "ls"],
+    ['bash +x +o history -c "ls -la"', "ls"],
     // fish runs `--` itself as the script; "printf ok" is a positional argument
     ['fish -c -- "printf ok"', "--"],
     ["zsh -lc 'CI=1 env -u DEBUG sudo -u root vp test run'", "vp"],
@@ -155,6 +157,7 @@ describe("commandProgramName", () => {
 describe("commandDisplayText with shell option terminators", () => {
   it.each([
     ['bash -lc -- "printf ok"', "printf ok"],
+    ['bash -eo pipefail -c "printf ok"', "printf ok"],
     ['fish -c -- "printf ok"', 'fish -c -- "printf ok"'],
     ['bash -c -- "printf ok" arg0', 'bash -c -- "printf ok" arg0'],
   ])("shows %j as %j", (input, expected) => {
