@@ -35,6 +35,6 @@ test(
     const page = browser.frameLocator('iframe[title^="procedure.odt"]');
     await page.getByText("Prepare the site").waitFor({ timeout: 120_000 });
     await app.screenshot("procedure-list");
-    await expect(page.locator('ol[type="I"], ol[style*="upper-roman"]')).toHaveCount(1);
+    await expect(page.locator('ol[type="I"]')).toHaveCount(1);
   },
 );

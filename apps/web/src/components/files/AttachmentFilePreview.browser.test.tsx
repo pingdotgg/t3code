@@ -2,7 +2,7 @@ import DocumentPages, { sanitizeDocumentHtml } from "./DocumentPages";
 import { act, fakeTimers, render, stubGlobal, type Screen } from "../../../test/render";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { cdp, page, userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 // Prepare the real worker before tests; Vite's worker transform adds a large inline source map.
@@ -1471,51 +1471,6 @@ describe("attachment HTML preview recovery", () => {
   });
 });
 
-it("renders uppercase Roman markers in the ODT preview", async () => {
-  const bytes = await new JSZip()
-    .file(
-      "content.xml",
-      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0">
-        <office:automatic-styles><text:list-style style:name="Roman">
-          <text:list-level-style-number text:level="1" style:num-format="I"/>
-        </text:list-style></office:automatic-styles>
-        <office:body><office:text><text:list text:style-name="Roman">
-          <text:list-item><text:p>Prepare the site</text:p></text:list-item>
-        </text:list></office:text></office:body>
-      </office:document-content>`,
-    )
-    .generateAsync({ type: "arraybuffer" });
-  const file = new File([bytes], "procedure.odt", {
-    type: "application/vnd.oasis.opendocument.text",
-  });
-  await using screen = await render(
-    <AttachmentFilePreview
-      name={file.name}
-      mimeType={file.type}
-      sizeBytes={file.size}
-      file={file}
-    />,
-  );
-  await expect.element(screen.getByTitle(/^procedure\.odt/)).toBeVisible();
-  const session = cdp();
-  await vi.waitFor(async () => {
-    const { frameTree } = await session.send("Page.getFrameTree");
-    const runner = frameTree.childFrames?.find(({ frame }) => frame.url === location.href);
-    const preview = runner?.childFrames?.find(({ frame }) => frame.url === "about:srcdoc");
-    expect(preview).toBeDefined();
-    // The preview has an opaque origin, so its CSS must be read in its own frame.
-    const { executionContextId } = await session.send("Page.createIsolatedWorld", {
-      frameId: preview!.frame.id,
-    });
-    const { result } = await session.send("Runtime.evaluate", {
-      contextId: executionContextId,
-      expression: 'getComputedStyle(document.querySelector("li")).listStyleType',
-      returnByValue: true,
-    });
-    expect(result.value).toBe("upper-roman");
-  });
-});
-
 describe("document output sanitization", () => {
   it("fits saved HTML outputs to their content and resizes when the content changes", async () => {
     await using screen = await render(
@@ -1541,11 +1496,13 @@ describe("document output sanitization", () => {
   it("preserves table content and raster data while removing scripts and network resources", () => {
     const wrapped = "data:image/png;base64,iVBORw0K\nGgo=\n";
     const html = sanitizeDocumentHtml(
-      `<script>alert(1)</script><style>@import "https://example.com/style.css";</style><iframe src="https://example.com"></iframe><img src="https://example.com/tracker.png" onerror="alert(1)"><img src="data:image/svg+xml;base64,PHN2Zz4=\n"><img src="data:image/png;base64,iVBORw0KGgo\u00a0="><img src="data:image/png;base64,iVBORw0KGgo="><img src="${wrapped}"><table><tr><td>Research</td></tr></table><ol start="5"><li value="4">Step</li></ol><a href="https://example.com">Results</a>`,
+      `<script>alert(1)</script><style>@import "https://example.com/style.css";</style><iframe src="https://example.com"></iframe><img src="https://example.com/tracker.png" onerror="alert(1)"><img src="data:image/svg+xml;base64,PHN2Zz4=\n"><img src="data:image/png;base64,iVBORw0KGgo\u00a0="><img src="data:image/png;base64,iVBORw0KGgo="><img src="${wrapped}"><table><tr><td>Research</td></tr></table><ol start="5" type="i"><li value="4">Step</li></ol><a href="https://example.com">Results</a>`,
     );
     const doc = new DOMParser().parseFromString(html, "text/html");
     expect(doc.querySelector("td")?.textContent).toBe("Research");
-    expect(doc.querySelector("ol")?.outerHTML).toBe('<ol start="5"><li value="4">Step</li></ol>');
+    expect(doc.querySelector("ol")?.outerHTML).toBe(
+      '<ol start="5" type="i"><li value="4">Step</li></ol>',
+    );
     expect([...doc.images].map((image) => image.getAttribute("src"))).toEqual([
       "data:image/png;base64,iVBORw0KGgo=",
       wrapped.trim(),
