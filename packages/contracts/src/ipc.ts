@@ -1114,6 +1114,8 @@ export interface DesktopBridge {
   getDatabaseMigrationProgress?: () => Promise<DatabaseMigrationProgress | null>;
   /** `null` until the desktop host has read the login shell's environment; ask again later. */
   getRelayTelemetryEnabled: () => boolean | null;
+  /** False when the managed policy turns T3 Connect off. */
+  getConnectEnabled?: () => boolean;
   getPathForFile: (file: File) => string;
   getClientPlatform: () => string;
   restartAudioService?: () => Promise<boolean>;

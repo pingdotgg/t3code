@@ -38,6 +38,7 @@ import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
+  installConnectEnabled,
   installRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
@@ -339,6 +340,43 @@ describe("installRelayTelemetryEnabled", () => {
       // A policy that cannot be read fails closed.
       assert.isFalse(
         yield* after({}, new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
+      );
+    }),
+  );
+});
+
+describe("installConnectEnabled", () => {
+  const connectEnabled = (policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0]) =>
+    Effect.gen(function* () {
+      const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
+      const ipcMain: DesktopIpc.DesktopIpcMain = {
+        removeHandler: () => undefined,
+        handle: () => undefined,
+        removeAllListeners: (channel) => void listeners.delete(channel),
+        on: (channel, listener) => void listeners.set(channel, listener),
+      };
+      yield* installConnectEnabled().pipe(
+        Effect.provide(
+          Layer.mergeAll(DesktopIpc.layerTest(ipcMain), DesktopManagedPolicy.layerTest(policy)),
+        ),
+      );
+      const event = { returnValue: undefined as unknown };
+      listeners.get(IpcChannels.GET_CONNECT_ENABLED_CHANNEL)?.(event as never);
+      return event.returnValue;
+    }).pipe(Effect.scoped);
+
+  it.effect("reflects the managed policy connect limit and fails closed on read errors", () =>
+    Effect.gen(function* () {
+      const policy = (limits: ManagedPolicyLimits) => ({
+        schemaVersion: 1 as const,
+        organization: "Example Corp",
+        limits,
+      });
+      assert.isTrue(yield* connectEnabled());
+      assert.isFalse(yield* connectEnabled(policy({ connect: false })));
+      assert.isTrue(yield* connectEnabled(policy({ telemetry: false })));
+      assert.isFalse(
+        yield* connectEnabled(new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
       );
     }),
   );

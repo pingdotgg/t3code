@@ -31,7 +31,14 @@ function isSnapShotEvent(value: unknown): value is DesktopSnapShotEvent {
   );
 }
 
-exposeClerkBridge({ passkeys: true });
+let connectEnabled = true;
+try {
+  connectEnabled = ipcRenderer.sendSync(IpcChannels.GET_CONNECT_ENABLED_CHANNEL) !== false;
+} catch {}
+
+if (connectEnabled) {
+  exposeClerkBridge({ passkeys: true });
+}
 
 // Runs before any app script reads localStorage. See DesktopLegacyLocalStorage.
 try {
@@ -117,6 +124,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     const enabled = ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL);
     return enabled === null ? null : enabled === true;
   },
+  getConnectEnabled: () => connectEnabled,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   getClientPlatform: () => clientPlatform,
   restartAudioService: () => ipcRenderer.invoke(IpcChannels.RESTART_AUDIO_SERVICE_CHANNEL),

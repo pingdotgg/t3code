@@ -74,5 +74,35 @@ describe("hasCloudPublicConfig", () => {
 
       expect(hasCloudPublicConfig()).toBe(true);
     });
+
+    it("disables cloud auth in Electron when Managed Policy disables Connect", () => {
+      vi.stubGlobal("window", {
+        location: new URL("file:///app/index.html"),
+        desktopBridge: { getConnectEnabled: () => false },
+      });
+
+      expect(hasCloudPublicConfig()).toBe(false);
+    });
+
+    it("keeps cloud auth enabled in Electron when Managed Policy allows Connect", () => {
+      vi.stubGlobal("window", {
+        location: new URL("file:///app/index.html"),
+        desktopBridge: { getConnectEnabled: () => true },
+      });
+
+      expect(hasCloudPublicConfig()).toBe(true);
+    });
+  });
+
+  it("disables development keys in Electron when Managed Policy disables Connect", () => {
+    vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", "pk_test_example");
+    vi.stubEnv("VITE_CLERK_JWT_TEMPLATE", "t3-relay");
+    vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.test");
+    vi.stubGlobal("window", {
+      location: new URL("t3code-dev://app/"),
+      desktopBridge: { getConnectEnabled: () => false },
+    });
+
+    expect(hasCloudPublicConfig()).toBe(false);
   });
 });

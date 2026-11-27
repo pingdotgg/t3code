@@ -44,6 +44,7 @@ import {
   getDatabaseMigrationProgress,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
+  installConnectEnabled,
   installRelayTelemetryEnabled,
   getSystemLocale,
   getPreferredSystemLanguages,
@@ -108,6 +109,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(getAppBranding);
   yield* ipc.handle(getDatabaseMigrationProgress);
   yield* installRelayTelemetryEnabled();
+  yield* installConnectEnabled();
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getPreferredSystemLanguages);
   yield* ipc.handleSync(getPrimaryPasteEnabled);

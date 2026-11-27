@@ -49,6 +49,14 @@ export const layer = Layer.effect(
   }),
 ).pipe(Layer.provide(layerWindowsRegistry(() => import("ffi-rs"))));
 
+/** Whether the managed policy allows T3 Connect; fails closed if the policy cannot be used. */
+export const isConnectAllowed = Effect.fn("desktop.managedPolicy.isConnectAllowed")(function* () {
+  return yield* (yield* DesktopManagedPolicy).read.pipe(
+    Effect.map((found) => found?.document.limits?.connect !== false),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
 /** A machine with `policy` deployed, one whose policy cannot be used, or none. */
 export const layerTest = (policy?: ManagedPolicyDocument | ManagedPolicyFileError) =>
   Layer.succeed(
