@@ -5823,7 +5823,7 @@
   "49fcdf7d785a7898": "This document has no pages or too many pages to preview.",
   "ee14f5cbb1b6c147": "This EPUB has no readable package.",
   "2c479479cc06e82a": "This EPUB has no chapters or too many chapters to preview.",
-  "e1ac859f1e48d3ba": "This EPUB has no readable XHTML chapters.",
+  "0db9c445225f7238": "This EPUB has no readable chapters or image pages.",
   "5ce28a21b6d79300": "A notebook cell is too large to preview.",
   "fe23def0d6158eb5": "Notebook preview limited to files under 8 MB.",
   "6ffd50a91efb2fee": "Preview supports version 4 notebooks with up to 500 cells.",
