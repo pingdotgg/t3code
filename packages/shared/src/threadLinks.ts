@@ -31,8 +31,6 @@ const threadLinkSource = (markdown: string) =>
 // Space after the markers is matched only after a `>`: two adjacent `[ \t]*` backtrack quadratically.
 const AFTER_QUOTE = String.raw`(?:(?<=>)[ \t]*)?`;
 const OPENER_LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]{1,4}(?![ \t]))*`;
-// Fence-looking lines declined by `fencedCode` may still open an indented code block.
-const INDENTED_FENCE = String.raw`(?<![^\r\n])(?<indentedFence>[ \t>*+\-\d.)]*?(?:\`{3,}[^\`\r\n]*|~{3,}[^\r\n]*))(?=[\r\n]|(?![\s\S]))`;
 const fencedCode = (char: "`" | "~", name: string) => {
   const bq = `${name}Bq`;
   const info = char === "`" ? "[^`\\r\\n]*" : "[^\\r\\n]*";
@@ -53,7 +51,6 @@ const THREAD_LINK_OUTSIDE_CODE = new RegExp(
     String.raw`\\[!-/:-@[-\`{-~]`,
     fencedCode("`", "bt"),
     fencedCode("~", "tl"),
-    INDENTED_FENCE,
     String.raw`(?<spanTicks>\`+)`,
     // A labeled link's destination may be angle-bracketed, as CommonMark allows: [label](<href>).
     String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>|(?<href>${THREAD_HREF}[^\s>)]+|${HOSTED_LINK}))\)`,
@@ -348,10 +345,6 @@ export function replaceThreadLinks(
     const range = indentedRanges[rangeIndex];
     if (range && range.start <= match.index) {
       pattern.lastIndex = range.end;
-      continue;
-    }
-    if (match.groups?.indentedFence !== undefined) {
-      pattern.lastIndex = match.index + 1;
       continue;
     }
     const spanTicks = match.groups?.spanTicks;
