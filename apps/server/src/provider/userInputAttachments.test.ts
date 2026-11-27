@@ -1530,6 +1530,42 @@ describe("question answer paths", () => {
           exact: "Default style combination",
         },
         {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml": [
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p>',
+              "<w:r><w:t>The north region</w:t></w:r>",
+              '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="1"/></w:r>',
+              '<w:r><w:t xml:space="preserve"> is ready. The south region</w:t></w:r>',
+              '<w:r><w:rPr><w:rStyle w:val="EndnoteReference"/></w:rPr><w:endnoteReference w:id="1"/></w:r>',
+              '<w:r><w:t xml:space="preserve"> is ready.</w:t></w:r>',
+              "</w:p></w:body></w:document>",
+            ].join(""),
+            "word/_rels/document.xml.rels": [
+              "<Relationships>",
+              '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>',
+              '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/>',
+              "</Relationships>",
+            ].join(""),
+            "word/footnotes.xml": [
+              '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+              '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>',
+              '<w:footnote w:id="1"><w:p><w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> Inspect the seals.</w:t></w:r></w:p>',
+              "<w:p><w:r><w:t>Do not reopen.</w:t></w:r></w:p></w:footnote>",
+              "</w:footnotes>",
+            ].join(""),
+            "word/endnotes.xml": [
+              '<w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+              '<w:endnote w:id="1"><w:p><w:r><w:endnoteRef/></w:r><w:r><w:t xml:space="preserve"> Check power.</w:t></w:r></w:p></w:endnote>',
+              "</w:endnotes>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "The north region[Note: Inspect the seals.\nDo not reopen.] is ready. The south region[Note: Check power.] is ready.",
+        },
+        {
           ext: "odt",
           parts: {
             "content.xml":
