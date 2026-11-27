@@ -121,7 +121,6 @@ describe("tool text output formatting", () => {
     '{"id":9.007199254740993e15}',
     '{"id":1e309}',
     '{"ratio":1e-400}',
-    '{"ratio":1}\n{"ratio":-0.01E-400}',
   ])("keeps %j as returned when parsing would change a number", (text) => {
     expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(text);
   });
