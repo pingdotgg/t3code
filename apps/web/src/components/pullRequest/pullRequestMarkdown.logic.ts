@@ -1,5 +1,7 @@
-import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-references";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  changeRequestReferenceAutolinker,
+  referenceRepositoryUrl,
+} from "@t3tools/client-runtime/pull-request-references";
 import type { Nodes } from "hast";
 
 import {
@@ -29,8 +31,7 @@ export function pullRequestMarkdownExtensions(
   changeRequest: { readonly provider: string; readonly url: string } | null,
 ): MarkdownExtensions {
   if (changeRequest === null) return NO_EXTENSIONS;
-  const repositoryUrl = sourceControlClients.parseChangeRequestUrl(changeRequest.url)?.link
-    .repositoryUrl;
+  const repositoryUrl = referenceRepositoryUrl(changeRequest);
   if (repositoryUrl === undefined) return NO_EXTENSIONS;
   const key = `${changeRequest.provider}\u0000${repositoryUrl}`;
   let extensions = markdownExtensions.get(key);

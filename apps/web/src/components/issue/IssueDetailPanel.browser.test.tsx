@@ -96,8 +96,9 @@ const reference = {
   key: "7",
 };
 
-function setComments(comments: IssueDetail["comments"]) {
+function setComments(comments: IssueDetail["comments"], body = "") {
   state.openLink.mockClear();
+  (detail as { body: string; comments: unknown }).body = body;
   (detail as { comments: unknown }).comments = comments;
 }
 
@@ -150,6 +151,44 @@ describe("IssueDetailPanel", () => {
     expect(click.defaultPrevented).toBe(true);
     expect(state.openLink).toHaveBeenCalledOnce();
     expect(state.openLink).toHaveBeenCalledWith(commentUrl, { event: expect.anything() });
+  });
+
+  it("autolinks GitHub shorthand references in issue descriptions and comments", async () => {
+    setComments(
+      [
+        {
+          id: "1",
+          author: null,
+          body: "Also see #41322 and abcdef1.",
+          createdAt: "2026-01-02T00:00:00.000Z",
+          url: `${url}#issuecomment-1`,
+        },
+      ],
+      "Fix opened in #38661.",
+    );
+    await using screen = await render(
+      <IssueDetailPanel environmentId={"env-1" as never} reference={reference} />,
+    );
+
+    const descriptionLink = screen.getByRole("link", { name: "#38661" });
+    await expect
+      .element(descriptionLink)
+      .toHaveAttribute("href", "https://github.com/owner/repo/issues/38661");
+    await expect
+      .element(descriptionLink)
+      .toHaveAttribute("data-pull-request-autolink", "reference");
+
+    const commentLink = screen.getByRole("link", { name: "#41322" });
+    await expect
+      .element(commentLink)
+      .toHaveAttribute("href", "https://github.com/owner/repo/issues/41322");
+    await expect.element(commentLink).toHaveAttribute("data-pull-request-autolink", "reference");
+
+    const commitLink = screen.getByRole("link", { name: "abcdef1" });
+    await expect
+      .element(commitLink)
+      .toHaveAttribute("href", "https://github.com/owner/repo/commit/abcdef1");
+    await expect.element(commitLink).toHaveAttribute("data-pull-request-autolink", "commit");
   });
 
   it("Escape cancels the title edit without closing the right panel sheet", async () => {
