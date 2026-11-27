@@ -5786,5 +5786,13 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "201490988858b511": "återkallad av {by}",
-  "46d614fa7b4bf1e5": "Arbetsflödeskörningar"
+  "46d614fa7b4bf1e5": "Arbetsflödeskörningar",
+  "a60a03c2d5907920": "Läs upp härifrån",
+  "81923647f1ef9740": "Avbryt talgenereringen",
+  "65a238ad6bebf802": "Läsa upp svar med {name}?",
+  "55803224ee096dc0": "Ta bort nyckeln för {company}?",
+  "dad11cd1d17db4b8": "{environment} har ingen API-nyckel för {company}. Lägg till en under API-nyckel för tal.",
+  "e1e9d27bd7ee79ba": "{environment} har ingen API-nyckel för {company}. Be en administratör där att lägga till en.",
+  "b9e06e668bd9bff0": "Svar som du spelar upp skickas till {company} via {environment}, som debiterar dess API-nyckel. Nyckeln delas med diktering.",
+  "bfbaa4965c146e7c": "Alla som använder {company} för diktering eller uppläsning på {environment} förlorar åtkomsten."
 }

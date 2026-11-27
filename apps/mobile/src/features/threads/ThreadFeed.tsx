@@ -1328,6 +1328,8 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
   /** The read-aloud button's id for this reply; its text is `markdown`. */
   readonly readAloudId?: string | undefined;
+  /** The reply is finished, so a selection in it can be read from. */
+  readonly readAloudReadable?: boolean;
 }) {
   const gt = useGT();
   const liveMarkdown = useLiveThreadLinkLabels(
@@ -1405,7 +1407,13 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
         skills={props.skills}
         models={models}
         readAloud={
-          props.readAloudId ? { id: props.readAloudId, markdown: props.markdown } : undefined
+          props.readAloudId
+            ? {
+                id: props.readAloudId,
+                markdown: props.markdown,
+                readable: props.readAloudReadable ?? false,
+              }
+            : undefined
         }
       />
       {quoteChoices.length > 0 && props.onCiteAssistantText ? (
@@ -1449,7 +1457,9 @@ function AssistantMarkdownBlocks(props: {
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
   readonly models: ReturnType<typeof useModelMentions>;
-  readonly readAloud?: { readonly id: string; readonly markdown: string } | undefined;
+  readonly readAloud?:
+    | { readonly id: string; readonly markdown: string; readonly readable: boolean }
+    | undefined;
 }) {
   const m = useMessages();
   const { blocks, definitions } = useMemo(() => {
@@ -2711,6 +2721,7 @@ function renderFeedEntry(
               renderImage={props.renderMarkdownImage}
               skills={props.skills}
               readAloudId={readAloudId}
+              readAloudReadable={showAssistantMeta}
             />
           </MarkdownImageAvailableWidthContext>
         ) : null}
@@ -3134,18 +3145,26 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const gt = useGT();
   const m = useMessages();
   const formatMessageTime = useMessageTimeFormatter();
+  // Reading stops on leaving the thread: when another thread shows, or this one closes. Screens
+  // opened over it, such as a file preview, keep it reading.
+  const readsHere = useCallback(
+    () =>
+      readAloudController
+        .getSnapshot()
+        .id?.startsWith(`${props.environmentId}:${props.threadId}:`) === true,
+    [props.environmentId, props.threadId],
+  );
   useFocusEffect(
-    useCallback(
-      () => () => {
-        if (
-          readAloudController
-            .getSnapshot()
-            .id?.startsWith(`${props.environmentId}:${props.threadId}:`)
-        )
-          readAloudController.stop();
-      },
-      [props.environmentId, props.threadId],
-    ),
+    useCallback(() => {
+      if (readAloudController.getSnapshot().id && !readsHere()) readAloudController.stop();
+    }, [readsHere]),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Closing the thread stops its reading, which outlives the screen otherwise.
+  useEffect(
+    () => () => {
+      if (readsHere()) readAloudController.stop();
+    },
+    [readsHere],
   );
   const { listRef, onIsAtEndChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);

@@ -5780,5 +5780,13 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "201490988858b511": "retirée par {by}",
-  "46d614fa7b4bf1e5": "Exécutions de workflow"
+  "46d614fa7b4bf1e5": "Exécutions de workflow",
+  "a60a03c2d5907920": "Lire à partir d'ici",
+  "81923647f1ef9740": "Annuler la génération vocale",
+  "65a238ad6bebf802": "Lire les réponses à voix haute avec {name} ?",
+  "55803224ee096dc0": "Supprimer la clé {company} ?",
+  "dad11cd1d17db4b8": "{environment} n’a pas de clé d’API {company}. Ajoutez-en une sous Clé d’API vocale.",
+  "e1e9d27bd7ee79ba": "{environment} n’a pas de clé d’API {company}. Demandez à un administrateur de cet environnement d’en ajouter une.",
+  "b9e06e668bd9bff0": "Les réponses que vous lisez sont envoyées à {company} via {environment}, qui facture sa clé d’API. La clé est partagée avec la dictée.",
+  "bfbaa4965c146e7c": "Toutes les personnes qui utilisent {company} pour la dictée ou la lecture à voix haute sur {environment} perdront l’accès."
 }

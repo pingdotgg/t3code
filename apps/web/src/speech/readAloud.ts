@@ -1,19 +1,11 @@
 import { m } from "~/i18n/messages";
 import { prepareReadAloudMath } from "./readAloudMath";
-import { speechSpeedAppliedByProvider, type SpeechSynthesisCatalog } from "@t3tools/contracts";
 import {
+  createEnvironmentReadAloud,
   createReadAloudController,
-  createReadAloudWarmup,
-  createTimedWords,
   type SpeechPlayback,
   type SpokenWord,
 } from "@t3tools/client-runtime/read-aloud";
-import {
-  getSpeechSynthesisModels,
-  getSpeechSynthesisTimings,
-  prepareSpeechSynthesis,
-  startSpeechSynthesis,
-} from "@t3tools/client-runtime/voice-input";
 import { spokenWordAt } from "@t3tools/shared/read-aloud";
 import { readPreparedConnection } from "../state/session";
 import { canCapturePlayback, playbackLevels } from "./playbackLevels";
@@ -75,77 +67,45 @@ function systemPlayback(
 // Each one moves the media clock or starts or stops it.
 const CLOCK_EVENTS = ["play", "playing", "pause", "seeked", "ratechange", "waiting"] as const;
 
-const catalogs = new WeakMap<AbortSignal, Promise<SpeechSynthesisCatalog>>();
-
-export const warmReadAloud = createReadAloudWarmup(async (environmentId, model) => {
-  const prepared = readPreparedConnection(environmentId);
-  if (!prepared) throw new Error("The read-aloud environment is not connected.");
-  await runEnvironmentSpeech(prepareSpeechSynthesis(prepared, model));
+const environmentReadAloud = createEnvironmentReadAloud({
+  connection: readPreparedConnection,
+  run: (effect, signal) => runEnvironmentSpeech(effect, signal && { signal }),
 });
+
+export const warmReadAloud = environmentReadAloud.warm;
 
 export const readAloudController = createReadAloudController(
   async (text, settings, signal, from) => {
     if (settings.provider === "system")
       return systemPlayback(text, settings.voice, settings.speed, settings.language);
-    if (settings.provider === "off") throw new Error("Enable read aloud in Settings → Voice.");
-    const prepared = settings.environmentId ? readPreparedConnection(settings.environmentId) : null;
-    if (!prepared)
-      throw new Error("Connect to the read-aloud environment selected in Settings → Voice.");
-    let pendingCatalog = catalogs.get(signal);
-    if (!pendingCatalog) {
-      pendingCatalog = runEnvironmentSpeech(getSpeechSynthesisModels(prepared, settings.provider), {
-        signal,
-      });
-      catalogs.set(signal, pendingCatalog);
-    }
-    const catalog = await pendingCatalog;
-    signal.throwIfAborted();
-    if (catalog.error) throw new Error(catalog.error);
-    const model = settings.model || catalog.defaultModel;
-    const { url, token } = await runEnvironmentSpeech(
-      startSpeechSynthesis(prepared, settings.provider, {
-        text,
-        model,
-        voice: settings.voice,
-        speed: settings.speed,
-        language: settings.language,
-        ...(from === undefined ? {} : { from }),
-      }),
-      { signal },
-    );
-    signal.throwIfAborted();
+    const speech = await environmentReadAloud.start(text, settings, signal, from);
     const audio = new Audio();
     // CORS mode, like the environment's API requests, so the waveform can read what plays.
     audio.crossOrigin = "anonymous";
-    audio.src = url;
-    // Audio a provider already sped up plays at 1×; later speed changes are relative to it.
-    const synthesizedSpeed = speechSpeedAppliedByProvider(catalog, model) ? settings.speed : 1;
-    audio.playbackRate = settings.speed / synthesizedSpeed;
+    audio.src = speech.url;
+    audio.playbackRate = speech.rate(settings.speed);
+    // Where in the speech the element's audio starts, once a seek opened it again.
+    let opensAt = 0;
     let done: () => void = () => {};
     const finished = new Promise<void>((resolve, reject) => {
       done = resolve;
       audio.onended = () => resolve();
       audio.onerror = () => reject(new Error("Could not play the generated speech."));
     });
-    let timed: ReturnType<typeof createTimedWords> | null = null;
+    let timed: ReturnType<typeof speech.timedWords> | null = null;
     // Safari cannot capture the audio element's output, so the meter follows the loudness the
     // environment measured instead.
     const measured = !canCapturePlayback(audio);
     const timedWords = () => {
       if (timed) return timed;
-      const created = createTimedWords({
-        text,
-        load: (after, levelsAfter, signal) =>
-          runEnvironmentSpeech(getSpeechSynthesisTimings(prepared, token, after, levelsAfter), {
-            signal,
-          }),
-        clock: () => ({
-          seconds: audio.currentTime,
+      const created = speech.timedWords(
+        () => ({
+          seconds: opensAt + audio.currentTime,
           rate: audio.playbackRate,
           playing: !audio.paused,
         }),
-        levels: measured,
-      });
+        measured,
+      );
       for (const type of CLOCK_EVENTS) audio.addEventListener(type, created.refresh);
       return (timed = created);
     };
@@ -164,14 +124,21 @@ export const readAloudController = createReadAloudController(
       words: (listener) => timedWords().subscribe(listener),
       seek: (at) => {
         const seconds = timed?.secondsAt(at);
-        // A live stream ignores seeks beyond what the browser can seek, so those read again instead.
-        if (seconds === undefined || !seekable(audio, seconds)) return false;
-        audio.currentTime = seconds;
+        if (seconds === undefined) return false;
+        if (seekable(audio, seconds - opensAt)) audio.currentTime = seconds - opensAt;
+        else {
+          // A live stream ignores seeks beyond what the browser can seek; the environment opens
+          // the audio there instead.
+          const playing = !audio.paused;
+          opensAt = seconds;
+          audio.src = speech.urlAt(seconds);
+          if (playing) void audio.play().catch(() => {});
+        }
         timed?.refresh();
         return true;
       },
       setSpeed: (speed) => {
-        audio.playbackRate = speed / synthesizedSpeed;
+        audio.playbackRate = speech.rate(speed);
         timed?.refresh();
       },
       levels: (listener) =>

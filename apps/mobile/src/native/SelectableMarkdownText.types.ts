@@ -79,6 +79,11 @@ export interface SelectableMarkdownTextProps {
   readonly preserveSoftBreaks?: boolean;
   readonly onLinkPress?: (href: string) => void;
   readonly onCiteText?: (text: string) => void;
+  /** Adds Read from here to the selection menu; `start` is where it starts in its block. */
+  readonly onReadFromSelection?: (selection: {
+    readonly text: string;
+    readonly start: number;
+  }) => void;
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction?: (href: string, actionId: string) => void;
   readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;

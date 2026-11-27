@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import * as Speech from "expo-speech";
 import { T, useGT } from "gt-react-native";
 import { ScrollView, TextInput, View } from "react-native";
 import {
   AuthSettingsWriteScope,
+  CLOUD_SPEECH_PROVIDER_NAMES,
   CloudSpeechSynthesisProvider,
-  DEFAULT_READ_ALOUD_SETTINGS,
   READ_ALOUD_LABELS,
+  READ_ALOUD_SPEEDS,
   EMPTY_SPEECH_SYNTHESIS_CATALOG,
+  type CloudSpeechKeys,
+  type EnvironmentId,
   type ReadAloudSettings,
   type SpeechSynthesisCatalog,
   WORD_TIMING_MODEL_ID,
@@ -18,11 +19,12 @@ import {
 import {
   cancelSpeechSynthesisModelDownload,
   downloadSpeechSynthesisModel,
+  getCloudSpeechKeys,
   getSpeechSynthesisModels,
   removeSpeechSynthesisModel,
   setCloudSpeechKey,
 } from "@t3tools/client-runtime/voice-input";
-import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { saveMobilePreferences } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
@@ -33,23 +35,22 @@ import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ListToggleRow } from "../../components/ui/ListToggleRow";
 import { Sheet } from "../../components/ui/Sheet";
 import { Button } from "../../components/ui/Button";
+import * as Dialog from "../../components/ui/Dialog";
 import { OpenRouterSignIn } from "./OpenRouterSignIn";
 import { CatalogPicker } from "./CatalogPicker";
 import { runSpeech } from "../voice-input/voiceDestination";
 import { readAloudController } from "../read-aloud/playback";
+import { useReadAloudSettings } from "../read-aloud/useReadAloudSettings";
 
 export function ReadAloudSection() {
   const gt = useGT();
-  const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomCommand(saveMobilePreferences);
-  const settings = AsyncResult.isSuccess(preferences)
-    ? (preferences.value.readAloud ?? DEFAULT_READ_ALOUD_SETTINGS)
-    : DEFAULT_READ_ALOUD_SETTINGS;
+  const settings = useReadAloudSettings();
   const prepared = Option.getOrNull(usePreparedConnection(settings.environmentId));
   const canManage = useEnvironmentScope(settings.environmentId, AuthSettingsWriteScope);
   const { environments } = useEnvironments();
 
-  const [sheet, setSheet] = useState<"source" | "model" | "voice" | null>(null);
+  const [sheet, setSheet] = useState<"source" | "model" | "voice" | "speed" | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The preview belongs to this screen, so leaving it stops the sample.
   useEffect(
     () => () => {
@@ -64,7 +65,15 @@ export function ReadAloudSection() {
     version: number;
     catalog: SpeechSynthesisCatalog;
     failed: boolean;
-  }>({ key: "", version: -1, catalog: EMPTY_SPEECH_SYNTHESIS_CATALOG, failed: false });
+    /** Which hosted providers have a key on the environment, for a hosted provider. */
+    keys: CloudSpeechKeys | null;
+  }>({
+    key: "",
+    version: -1,
+    catalog: EMPTY_SPEECH_SYNTHESIS_CATALOG,
+    failed: false,
+    keys: null,
+  });
   const catalog =
     catalogState.key === catalogKey ? catalogState.catalog : EMPTY_SPEECH_SYNTHESIS_CATALOG;
   const catalogError =
@@ -111,14 +120,22 @@ export function ReadAloudSection() {
   useEffect(() => {
     if (!prepared || settings.provider === "system" || settings.provider === "off") return;
     const abort = new AbortController();
-    void runSpeech(getSpeechSynthesisModels(prepared, settings.provider), abort.signal).then(
-      (value) => {
+    const keys =
+      settings.provider === "local"
+        ? null
+        : runSpeech(getCloudSpeechKeys(prepared), abort.signal).catch(() => null);
+    void Promise.all([
+      runSpeech(getSpeechSynthesisModels(prepared, settings.provider), abort.signal),
+      keys,
+    ]).then(
+      ([value, keys]) => {
         if (!abort.signal.aborted)
           setCatalogState({
             key: catalogKey,
             version: catalogVersion,
             catalog: value,
             failed: false,
+            keys,
           });
       },
       () => {
@@ -128,6 +145,7 @@ export function ReadAloudSection() {
             version: catalogVersion,
             catalog: EMPTY_SPEECH_SYNTHESIS_CATALOG,
             failed: true,
+            keys: null,
           });
       },
     );
@@ -199,6 +217,56 @@ export function ReadAloudSection() {
   const providerEnvironment = environments.find(
     (environment) => environment.environmentId === settings.environmentId,
   );
+  const keyProvider = catalogState.key === catalogKey ? catalog.apiKeyProvider : null;
+  const keySaved = keyProvider ? catalogState.keys?.[keyProvider] : undefined;
+  const keyWarning =
+    keyProvider && keySaved === false
+      ? canManage
+        ? gt("{environment} has no {company} API key. Add one under Speech API key.", {
+            environment: providerEnvironment?.label ?? gt("This environment"),
+            company: CLOUD_SPEECH_PROVIDER_NAMES[keyProvider],
+          })
+        : gt("{environment} has no {company} API key. Ask an administrator there to add one.", {
+            environment: providerEnvironment?.label ?? gt("This environment"),
+            company: CLOUD_SPEECH_PROVIDER_NAMES[keyProvider],
+          })
+      : "";
+  // Only the preview's failure belongs here; a reply's shows where it was read.
+  const previewError = state.id === "preview" ? state.error : undefined;
+  const chooseCloud = (provider: CloudSpeechSynthesisProvider, environmentId: EnvironmentId) => {
+    const label = environments.find((entry) => entry.environmentId === environmentId)?.label;
+    setSheet(null);
+    if (settings.provider === provider && settings.environmentId === environmentId) return;
+    Dialog.confirm({
+      title: gt("Read replies aloud with {name}?", { name: READ_ALOUD_LABELS[provider] }),
+      message: gt(
+        "Replies you play are sent to {company} through {environment}, which bills its API key. The key is shared with dictation.",
+        {
+          company: CLOUD_SPEECH_PROVIDER_NAMES[provider],
+          environment: label ?? gt("this environment"),
+        },
+      ),
+      confirmText: gt("Use {provider}", { provider: READ_ALOUD_LABELS[provider] }),
+      onConfirm: () => change({ provider, environmentId, model: "", voice: "" }),
+    });
+  };
+  const removeKey = () => {
+    if (!prepared || !keyProvider) return;
+    const requestVersion = ++keyRequestVersion.current;
+    setError("");
+    void runSpeech(setCloudSpeechKey(prepared, keyProvider, null)).then(
+      () => {
+        if (requestVersion !== keyRequestVersion.current) return;
+        setError("");
+        setKey("");
+        setCatalogVersion((value) => value + 1);
+      },
+      () => {
+        if (requestVersion === keyRequestVersion.current)
+          setError(gt("Could not remove the API key."));
+      },
+    );
+  };
   return (
     <>
       <ListSection
@@ -251,9 +319,7 @@ export function ReadAloudSection() {
             <ListActionRow
               label={gt("Speed")}
               detail={gt("{speed}×", { speed: settings.speed })}
-              onPress={() =>
-                change({ speed: settings.speed >= 1.5 ? 0.75 : settings.speed + 0.25 })
-              }
+              onPress={() => setSheet("speed")}
             />
             <ListToggleRow
               label={gt("Background playback")}
@@ -368,7 +434,11 @@ export function ReadAloudSection() {
       {cloud && prepared && canManage && (
         <ListSection
           title={gt("Speech API key")}
-          footer={gt("Leave this empty to keep using the key already saved for dictation.")}
+          footer={
+            keySaved
+              ? gt("Leave this empty to keep using the key already saved for dictation.")
+              : undefined
+          }
         >
           <View className="gap-3 p-4">
             {catalog.apiKeyProvider === "openrouter" && (
@@ -413,33 +483,35 @@ export function ReadAloudSection() {
                 );
               }}
             />
-            <Button
-              label={gt("Remove shared API key")}
-              size="compact"
-              onPress={() => {
-                if (!catalog.apiKeyProvider) return;
-                const requestVersion = ++keyRequestVersion.current;
-                setError("");
-                void runSpeech(setCloudSpeechKey(prepared, catalog.apiKeyProvider, null)).then(
-                  () => {
-                    if (requestVersion !== keyRequestVersion.current) return;
-                    setError("");
-                    setKey("");
-                    setCatalogVersion((value) => value + 1);
-                  },
-                  () => {
-                    if (requestVersion === keyRequestVersion.current)
-                      setError(gt("Could not remove the API key."));
-                  },
-                );
-              }}
-            />
+            {keySaved && keyProvider && (
+              <Button
+                label={gt("Remove shared API key")}
+                size="compact"
+                onPress={() =>
+                  Dialog.confirm({
+                    title: gt("Remove the {company} key?", {
+                      company: CLOUD_SPEECH_PROVIDER_NAMES[keyProvider],
+                    }),
+                    message: gt(
+                      "Everyone using {company} for dictation or read aloud on {environment} will lose access.",
+                      {
+                        company: CLOUD_SPEECH_PROVIDER_NAMES[keyProvider],
+                        environment: providerEnvironment?.label ?? gt("this environment"),
+                      },
+                    ),
+                    confirmText: gt("Remove key"),
+                    destructive: true,
+                    onConfirm: removeKey,
+                  })
+                }
+              />
+            )}
           </View>
         </ListSection>
       )}
-      {(error || catalogError || state.error) && (
+      {(error || keyWarning || catalogError || previewError) && (
         <Text accessibilityRole="alert" className="text-sm text-danger">
-          {error || catalogError || state.error}
+          {error || keyWarning || catalogError || previewError}
         </Text>
       )}
       {sheet && (
@@ -449,7 +521,9 @@ export function ReadAloudSection() {
               ? gt("Speech provider")
               : sheet === "model"
                 ? gt("Model", { $context: "text-to-speech model setting" })
-                : gt("Voice", { $context: "the speaker voice used to read text aloud" })
+                : sheet === "speed"
+                  ? gt("Speed")
+                  : gt("Voice", { $context: "the speaker voice used to read text aloud" })
           }
           onClose={() => setSheet(null)}
         >
@@ -513,20 +587,26 @@ export function ReadAloudSection() {
                           settings.provider === provider &&
                           settings.environmentId === environment.environmentId
                         }
-                        onPress={() => {
-                          change({
-                            provider,
-                            environmentId: environment.environmentId,
-                            model: "",
-                            voice: "",
-                          });
-                          setSheet(null);
-                        }}
+                        onPress={() => chooseCloud(provider, environment.environmentId)}
                       />
                     ))}
                   </ListSection>
                 ))}
               </>
+            ) : sheet === "speed" ? (
+              <ListSection>
+                {READ_ALOUD_SPEEDS.map((speed) => (
+                  <ListChoiceRow
+                    key={speed}
+                    label={gt("{speed}×", { speed })}
+                    selected={settings.speed === speed}
+                    onPress={() => {
+                      change({ speed });
+                      setSheet(null);
+                    }}
+                  />
+                ))}
+              </ListSection>
             ) : sheet === "model" ? (
               <CatalogPicker
                 items={catalog.models}

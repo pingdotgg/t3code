@@ -4,6 +4,7 @@ import {
   createReadAloudController,
   createReadAloudWarmup,
   createTimedWords,
+  readAloudButtonAction,
   type SpeechPlayback,
   type SpokenWord,
 } from "./readAloud.ts";
@@ -500,4 +501,46 @@ it("follows the loudness the environment measured when asked, and only then", as
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("toggles a reply's reading: read, cancel while speech is made, stop, and resume", async () => {
+  let made = deferred<void>();
+  const play = vi.fn(async () => {});
+  const controller = createReadAloudController(async () => {
+    await made.promise;
+    const finished = deferred<void>();
+    return { play, pause: () => {}, stop: () => finished.resolve(), finished: finished.promise };
+  });
+  const until = (status: string) =>
+    new Promise<void>((resolve) => {
+      if (controller.getSnapshot().status === status) return resolve();
+      const unsubscribe = controller.subscribe(() => {
+        if (controller.getSnapshot().status !== status) return;
+        unsubscribe();
+        resolve();
+      });
+    });
+  const settings = { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "system" as const };
+  expect(readAloudButtonAction(controller.getSnapshot(), "1")).toBe("read");
+  const reading = controller.toggle("1", "reply", settings);
+  await until("loading");
+  expect(readAloudButtonAction(controller.getSnapshot(), "1")).toBe("cancel");
+  expect(readAloudButtonAction(controller.getSnapshot(), "2")).toBe("read");
+  await controller.toggle("1", "reply", settings);
+  expect(controller.getSnapshot().status).toBe("idle");
+  made.resolve();
+  await reading;
+  expect(play).not.toHaveBeenCalled();
+
+  made = deferred<void>();
+  made.resolve();
+  void controller.toggle("1", "reply", settings);
+  await until("playing");
+  expect(readAloudButtonAction(controller.getSnapshot(), "1")).toBe("stop");
+  controller.pause();
+  expect(readAloudButtonAction(controller.getSnapshot(), "1")).toBe("resume");
+  await controller.toggle("1", "reply", settings);
+  expect(controller.getSnapshot().status).toBe("playing");
+  await controller.toggle("1", "reply", settings);
+  expect(controller.getSnapshot().status).toBe("idle");
 });

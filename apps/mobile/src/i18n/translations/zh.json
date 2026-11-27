@@ -5767,5 +5767,13 @@
   "99451a5d2d40440f": "已由 {by} 撤回。",
   "3ee30a50b70fffab": "已由 {by} 撤回：{reason}",
   "201490988858b511": "已由 {by} 撤回",
-  "46d614fa7b4bf1e5": "工作流运行"
+  "46d614fa7b4bf1e5": "工作流运行",
+  "a60a03c2d5907920": "从这里朗读",
+  "81923647f1ef9740": "取消语音生成",
+  "65a238ad6bebf802": "使用 {name} 朗读回复？",
+  "55803224ee096dc0": "移除 {company} 密钥？",
+  "dad11cd1d17db4b8": "{environment} 没有 {company} API 密钥。请在“语音 API 密钥”中添加。",
+  "e1e9d27bd7ee79ba": "{environment} 没有 {company} API 密钥。请让该环境的管理员添加一个。",
+  "b9e06e668bd9bff0": "你播放的回复会通过 {environment} 发送到 {company}，费用计入其 API 密钥。该密钥与听写共用。",
+  "bfbaa4965c146e7c": "在 {environment} 上使用 {company} 听写或朗读的所有人都将无法继续使用。"
 }

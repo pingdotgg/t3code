@@ -83,8 +83,14 @@ export class SpeechSynthesisStreams extends Context.Service<
       provider: SpeechSynthesisProvider,
       request: SpeechSynthesisRequest,
     ) => Effect.Effect<string, SpeechSynthesisError | ServerSettingsError>;
-    /** The audio from its start, then live as it is produced; `undefined` once expired. */
-    readonly read: (token: string) => Effect.Effect<Stream.Stream<Uint8Array> | undefined>;
+    /**
+     * The audio from its start, or from the frame playing at `at` seconds, then live as it is
+     * produced; `undefined` once expired or before that audio exists.
+     */
+    readonly read: (
+      token: string,
+      at?: number,
+    ) => Effect.Effect<Stream.Stream<Uint8Array> | undefined>;
     /**
      * Words after the first `after`, once there are any or synthesis ends; with `levelsAfter`,
      * levels after that many too, and new levels answer as well.
@@ -326,10 +332,19 @@ const make = Effect.gen(function* () {
     return token;
   });
 
-  const read = (token: string) =>
+  const read = (token: string, at?: number) =>
     Effect.sync(() => {
       const job = jobs.get(token);
       if (!job) return undefined;
+      // Players that cannot seek a stream of unknown length open it again where they want to be.
+      const served = at === undefined ? 0 : job.chunks.length;
+      let head: Stream.Stream<Uint8Array> = Stream.empty;
+      if (at !== undefined) {
+        const bytes = joined(job.chunks);
+        const frame = mp3FrameAt(bytes, at);
+        if (!frame) return undefined;
+        head = Stream.make(bytes.subarray(frame.offset));
+      }
       const tracked = Effect.acquireRelease(
         Effect.sync(() => {
           job.readers++;
@@ -349,7 +364,7 @@ const make = Effect.gen(function* () {
             SubscriptionRef.changes(job.progress).pipe(
               Stream.takeUntil((progress) => progress.done),
               Stream.mapAccum(
-                () => 0,
+                () => served,
                 (sent, progress) => [progress.count, job.chunks.slice(sent, progress.count)],
               ),
               // A cut-off stream must fail the player rather than end as if complete.
@@ -358,6 +373,7 @@ const make = Effect.gen(function* () {
                   job.failed ? Stream.die(new Error("Speech synthesis failed.")) : Stream.empty,
                 ),
               ),
+              (live) => Stream.concat(head, live),
             ),
           ),
         ),
@@ -403,10 +419,15 @@ export const speechSynthesisAudioRouteLayer = Layer.unwrap(
       SPEECH_SYNTHESIS_AUDIO_PATH,
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const token = Option.flatMapNullishOr(HttpServerRequest.toURL(request), (url) =>
-          url.searchParams.get("token"),
+        const url = HttpServerRequest.toURL(request);
+        const token = Option.flatMapNullishOr(url, (value) => value.searchParams.get("token"));
+        // `at`, in seconds, starts the audio there for players that cannot seek it.
+        const at = Option.flatMapNullishOr(url, (value) => value.searchParams.get("at")).pipe(
+          Option.map(Number),
+          Option.filter((seconds) => Number.isFinite(seconds) && seconds >= 0),
+          Option.getOrUndefined,
         );
-        const audio = Option.isSome(token) ? yield* streams.read(token.value) : undefined;
+        const audio = Option.isSome(token) ? yield* streams.read(token.value, at) : undefined;
         if (!audio) return HttpServerResponse.empty({ status: 404 });
         return HttpServerResponse.stream(audio, {
           contentType: "audio/mpeg",

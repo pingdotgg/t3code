@@ -1,14 +1,11 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/reactivity";
-import { DEFAULT_READ_ALOUD_SETTINGS } from "@t3tools/contracts";
 import { useGT } from "gt-react-native";
 import { Pressable } from "react-native";
-import { mobilePreferencesAtom } from "../../state/preferences";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
-import type { ReadAloudHighlight } from "@t3tools/client-runtime/read-aloud";
+import { readAloudButtonAction, type ReadAloudHighlight } from "@t3tools/client-runtime/read-aloud";
 import { readAloudController, warmReadAloud } from "./playback";
+import { useReadAloudSettings } from "./useReadAloudSettings";
 
 /**
  * The block and word being read in message `id` (the button's id), as markdown ranges of the
@@ -38,10 +35,7 @@ export function ReadAloudButton({
   buttonSize: number;
   iconSize: number;
 }) {
-  const preferences = useAtomValue(mobilePreferencesAtom);
-  const settings = AsyncResult.isSuccess(preferences)
-    ? (preferences.value.readAloud ?? DEFAULT_READ_ALOUD_SETTINGS)
-    : DEFAULT_READ_ALOUD_SETTINGS;
+  const settings = useReadAloudSettings();
   const state = useSyncExternalStore(
     readAloudController.subscribe,
     readAloudController.getSnapshot,
@@ -50,14 +44,16 @@ export function ReadAloudButton({
   useEffect(() => warmReadAloud(settings), [settings]);
   const gt = useGT();
   if (settings.provider === "off") return null;
-  const active = state.id === id;
-  const stoppable = active && (state.status === "playing" || state.status === "loading");
-  const reading = stoppable || (active && state.status === "paused");
-  const label = stoppable
-    ? gt("Stop reading")
-    : active && state.status === "paused"
-      ? gt("Resume reading")
-      : gt("Read aloud");
+  const action = readAloudButtonAction(state, id);
+  const reading = action !== "read";
+  const label =
+    action === "cancel"
+      ? gt("Cancel speech generation")
+      : action === "stop"
+        ? gt("Stop reading")
+        : action === "resume"
+          ? gt("Resume reading")
+          : gt("Read aloud");
   return (
     <Pressable
       accessibilityRole="button"
@@ -66,9 +62,7 @@ export function ReadAloudButton({
       className="items-center justify-center"
       style={{ width: buttonSize, height: buttonSize }}
       onPress={async () => {
-        if (stoppable) return readAloudController.stop();
-        if (active && state.status === "paused") await readAloudController.resume();
-        else await readAloudController.start(id, text, settings);
+        await readAloudController.toggle(id, text, settings);
         alertReadAloudError(id, gt("Could not read aloud"));
       }}
     >

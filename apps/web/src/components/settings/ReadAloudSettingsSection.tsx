@@ -17,6 +17,7 @@ import {
   AuthSettingsWriteScope,
   CLOUD_SPEECH_PROVIDER_NAMES,
   READ_ALOUD_LABELS,
+  READ_ALOUD_SPEEDS,
   type EnvironmentId,
   EMPTY_SPEECH_SYNTHESIS_CATALOG,
   type ReadAloudSettings,
@@ -932,7 +933,7 @@ export function ReadAloudSettingsSection() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectPopup>
-                  {[0.75, 1, 1.25, 1.5].map((speed) => (
+                  {READ_ALOUD_SPEEDS.map((speed) => (
                     <SelectItem key={speed} value={String(speed)}>
                       {speed}×
                     </SelectItem>

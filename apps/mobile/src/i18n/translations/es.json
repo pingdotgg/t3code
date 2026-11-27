@@ -5780,5 +5780,13 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo"
+  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo",
+  "a60a03c2d5907920": "Leer desde aquí",
+  "81923647f1ef9740": "Cancelar la generación de voz",
+  "65a238ad6bebf802": "¿Leer las respuestas en voz alta con {name}?",
+  "55803224ee096dc0": "¿Quitar la clave de {company}?",
+  "dad11cd1d17db4b8": "{environment} no tiene una clave de API de {company}. Añade una en Clave de API de voz.",
+  "e1e9d27bd7ee79ba": "{environment} no tiene una clave de API de {company}. Pide a un administrador de allí que añada una.",
+  "b9e06e668bd9bff0": "Las respuestas que reproduces se envían a {company} a través de {environment}, que factura a su clave de API. La clave se comparte con el dictado.",
+  "bfbaa4965c146e7c": "Todos los que usan {company} para el dictado o la lectura en voz alta en {environment} perderán el acceso."
 }

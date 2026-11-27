@@ -49,6 +49,8 @@ export const ReadAloudSettings = Schema.Struct({
   backgroundPlayback: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type ReadAloudSettings = typeof ReadAloudSettings.Type;
+/** The speeds clients offer, within the settings' range. */
+export const READ_ALOUD_SPEEDS = [0.75, 1, 1.25, 1.5] as const;
 export const DEFAULT_READ_ALOUD_SETTINGS: ReadAloudSettings = {
   provider: "off",
   environmentId: null,

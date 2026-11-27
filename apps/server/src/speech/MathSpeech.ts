@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Speech Rule Engine is required from disk, beside its rule files.
 import * as NodeModule from "node:module";
 import type { SpeechMathRequest } from "@t3tools/contracts";
+import { speakTex } from "@t3tools/shared/read-aloud";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -56,22 +57,9 @@ const make = Effect.gen(function* () {
             await sre.engineReady();
             locale = wanted;
           }
-          return formulas.map(({ tex, display }) => {
-            try {
-              const markup = katex.default.renderToString(tex, {
-                output: "mathml",
-                displayMode: display,
-                throwOnError: true,
-              });
-              const math = /<math[\s\S]*<\/math>/.exec(markup)?.[0];
-              // The annotation repeats the TeX source, which would be read too.
-              return math
-                ? sre.toSpeech(math.replace(/<annotation[\s\S]*?<\/annotation>/, ""))
-                : null;
-            } catch {
-              return null;
-            }
-          });
+          return formulas.map(
+            ({ tex, display }) => speakTex(katex.default, sre.toSpeech, tex, display) ?? null,
+          );
         }),
       )
       .pipe(

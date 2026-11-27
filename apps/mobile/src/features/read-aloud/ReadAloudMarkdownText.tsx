@@ -11,8 +11,9 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import type { SelectableMarkdownTextProps } from "../../native/SelectableMarkdownText.types";
 import { alertReadAloudError, useReadAloudHighlight } from "./ReadAloudButton";
+import { useReadAloudSettings } from "./useReadAloudSettings";
 import { followReadAloud } from "./readAloudFollow";
-import { readAloudTapSource } from "./readAloudTap";
+import { readAloudSelectionSource, readAloudTapSource } from "./readAloudTap";
 import { readAloudController } from "./playback";
 
 /** The web's `--read-aloud-block` and `--read-aloud-word`: its info blue at these strengths. */
@@ -25,37 +26,45 @@ const NO_HIGHLIGHTS: ReadonlyArray<TextHighlight> = [];
 // Built on the first word read in a view, not for every reply on screen, and kept per render.
 const locators = new WeakMap<
   RenderedTextChangeEvent,
-  { readonly markdown: string; readonly locate: ReturnType<typeof readAloudShownText> }
+  {
+    readonly markdown: string;
+    readonly math: boolean;
+    readonly locate: ReturnType<typeof readAloudShownText>;
+  }
 >();
-function locator(markdown: string, shown: RenderedTextChangeEvent) {
+function locator(markdown: string, shown: RenderedTextChangeEvent, math: boolean) {
   const cached = locators.get(shown);
-  if (cached?.markdown === markdown) return cached.locate;
-  const locate = readAloudShownText(markdown, shown.text);
-  locators.set(shown, { markdown, locate });
+  if (cached?.markdown === markdown && cached.math === math) return cached.locate;
+  const locate = readAloudShownText(markdown, shown.text, { math });
+  locators.set(shown, { markdown, math, locate });
   return locate;
 }
 
 /**
- * Markdown of a reply that read aloud can read: tints the paragraph and word being read, keeps
- * the word in view, and while the reply is read, a tap on a word reads from it.
- * `readAloud.markdown` is the text read aloud reads, which can differ from the part of it this
- * view shows.
+ * A reply read aloud can read: tints what is read and keeps it in view; a tap reads from a word,
+ * and a finished (`readable`) reply reads from a selection. `readAloud.markdown` is all the text
+ * read, which can be more than this view shows.
  */
 export function ReadAloudMarkdownText(
   props: SelectableMarkdownTextProps & {
-    readonly readAloud: { readonly id: string; readonly markdown: string };
+    readonly readAloud: {
+      readonly id: string;
+      readonly markdown: string;
+      readonly readable: boolean;
+    };
   },
 ) {
   const { readAloud, ...markdownProps } = props;
+  const settings = useReadAloudSettings();
   const highlight = useReadAloudHighlight(readAloud.id);
   const reading = useSyncExternalStore(readAloudController.subscribe, () =>
     readAloudController.isReading(readAloud.id),
   );
   const gt = useGT();
-  const { themeAppearance } = useAppearancePreferences();
+  const { themeAppearance, mathRenderingEnabled: math } = useAppearancePreferences();
   const [shown, setShown] = useState<RenderedTextChangeEvent | null>(null);
   const container = useRef<ViewInstance>(null);
-  const ranges = highlight && shown ? locator(readAloud.markdown, shown)(highlight) : null;
+  const ranges = highlight && shown ? locator(readAloud.markdown, shown, math)(highlight) : null;
   // Code blocks and tables are tinted whole, so only the paragraph tint marks them.
   const opaque = shown?.blocks.find(
     (block) =>
@@ -89,11 +98,29 @@ export function ReadAloudMarkdownText(
         onTextPress={
           reading && shown
             ? (tap) => {
-                const from = readAloudTapSource(readAloud.markdown, shown, tap);
-                const moved = from === null ? null : readAloudController.seek(readAloud.id, from);
+                const place = readAloudTapSource(readAloud.markdown, shown, tap, { math });
+                const moved = !place
+                  ? null
+                  : place.word
+                    ? readAloudController.seek(readAloud.id, place.from)
+                    : readAloudController.jump(readAloud.id, place.from);
                 void moved?.then(() =>
                   alertReadAloudError(readAloud.id, gt("Could not read aloud")),
                 );
+              }
+            : undefined
+        }
+        onReadFromSelection={
+          readAloud.readable && settings.provider !== "off" && shown
+            ? (selection) => {
+                const from = readAloudSelectionSource(readAloud.markdown, shown, selection, {
+                  math,
+                });
+                void (
+                  from === null
+                    ? readAloudController.start(readAloud.id, readAloud.markdown, settings)
+                    : readAloudController.start(readAloud.id, readAloud.markdown, settings, from)
+                ).then(() => alertReadAloudError(readAloud.id, gt("Could not read aloud")));
               }
             : undefined
         }

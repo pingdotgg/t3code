@@ -114,7 +114,8 @@ On web and desktop, press `Cmd+S` (macOS) or `Ctrl+S` (Windows/Linux) to stash t
 
 Choose a speech provider in **Settings → Voice → Read aloud**, then use **Read aloud**
 beside a completed assistant reply. Select it again to stop playback. Leaving the
-thread stops it. Code blocks are skipped by default.
+thread stops it; on mobile, screens opened over the thread, such as a file preview, keep it
+reading. Code blocks are skipped by default.
 
 The paragraph and the word being read are highlighted, and the thread scrolls along until
 you scroll away. ElevenLabs reports when each word is spoken. For Grok TTS, OpenRouter and local
@@ -125,8 +126,8 @@ written in the Latin alphabet are still estimated.
 
 While a reply is read, a small player above the composer pauses, stops, and changes the speed,
 and brings you back to the word being read after you scroll away. Click or tap any word in the
-reply to continue reading from it. On web and desktop, you can also select text in a reply and
-choose **Read from here**.
+reply to continue reading from it. You can also select text in a reply and choose **Read from
+here**.
 
 System voices run on your device. Grok TTS, OpenRouter, and ElevenLabs send the reply text
 through your selected environment and use API billing. They share the API keys saved for dictation. Choose a model and

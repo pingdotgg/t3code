@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { useGT } from "gt-react";
 import { Volume2Icon } from "lucide-react";
 import { useClientSettings } from "../../hooks/useSettings";
+import { readAloudButtonAction } from "@t3tools/client-runtime/read-aloud";
 import { readAloudController, warmReadAloud } from "../../speech/readAloud";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -24,14 +25,14 @@ export function ReadAloudButton({ id, text }: { id: string; text: string }) {
   useEffect(() => warmReadAloud(settings), [settings]);
   const gt = useGT();
   if (settings.provider === "off") return null;
-  const active = state.id === id;
-  const stoppable = active && (state.status === "playing" || state.status === "loading");
-  const reading = stoppable || (active && state.status === "paused");
-  const label = stoppable
-    ? gt("Stop reading")
-    : active && state.status === "paused"
-      ? gt("Resume reading")
-      : gt("Read aloud");
+  const action = readAloudButtonAction(state, id);
+  const reading = action !== "read";
+  const label =
+    action === "stop" || action === "cancel"
+      ? gt("Stop reading")
+      : action === "resume"
+        ? gt("Resume reading")
+        : gt("Read aloud");
   return (
     <Tooltip>
       <TooltipTrigger
@@ -44,9 +45,7 @@ export function ReadAloudButton({ id, text }: { id: string; text: string }) {
             aria-label={label}
             aria-pressed={reading}
             onClick={async () => {
-              if (stoppable) return readAloudController.stop();
-              if (active && state.status === "paused") await readAloudController.resume();
-              else await readAloudController.start(id, text, settings);
+              await readAloudController.toggle(id, text, settings);
               toastReadAloudError(id, gt("Could not read aloud"));
             }}
           >
@@ -55,9 +54,9 @@ export function ReadAloudButton({ id, text }: { id: string; text: string }) {
         }
       />
       <TooltipPopup>
-        {active && state.status === "loading"
+        {action === "cancel"
           ? gt("Cancel speech generation")
-          : active && state.error
+          : state.id === id && state.error
             ? state.error
             : label}
       </TooltipPopup>

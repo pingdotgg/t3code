@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   failures: 0,
   pendingKey: null as Promise<void> | null,
   catalogError: "",
+  xaiKey: true,
   connection: { environmentId: "voice-host" },
   playback: { id: null, status: "idle" },
 }));
@@ -107,7 +108,12 @@ vi.mock("../read-aloud/playback", () => ({
 }));
 vi.mock("@t3tools/client-runtime/voice-input", () => ({
   getSpeechSynthesisModels: () => "catalog",
+  getCloudSpeechKeys: () => "keys",
   setCloudSpeechKey: () => "key",
+}));
+// Confirms at once, as if the user accepted every dialog.
+vi.mock("../../components/ui/Dialog", () => ({
+  confirm: (request: { onConfirm(): void }) => request.onConfirm(),
 }));
 vi.mock("../voice-input/voiceDestination", () => ({
   runSpeech: async (operation: string) => {
@@ -117,6 +123,7 @@ vi.mock("../voice-input/voiceDestination", () => ({
         apiKeyProvider: "xai",
         error: mocks.catalogError,
       };
+    if (operation === "keys") return { openai: false, xai: mocks.xaiKey, elevenlabs: true };
     if (mocks.pendingKey) return mocks.pendingKey;
     if (mocks.failures-- > 0) throw new Error("key operation failed");
   },
@@ -216,3 +223,26 @@ it.each(["save", "remove"])(
     expect(screen.host.querySelector('[role="alert"]')).toBeNull();
   },
 );
+
+it("warns when the hosted provider has no key, with nothing to remove", async () => {
+  mocks.settings = {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "xai",
+    environmentId: EnvironmentId.make("voice-host"),
+  };
+  mocks.failures = 0;
+  mocks.pendingKey = null;
+  mocks.catalogError = "Add an xAI key";
+  mocks.xaiKey = false;
+  try {
+    await using screen = await mount();
+    expect(screen.host.querySelector('[role="alert"]')?.textContent).toBe(
+      "Voice host has no xAI API key. Add one under Speech API key.",
+    );
+    const labels = [...screen.host.querySelectorAll("button")].map((entry) => entry.textContent);
+    expect(labels).toContain("Save key");
+    expect(labels).not.toContain("Remove shared API key");
+  } finally {
+    mocks.xaiKey = true;
+  }
+});

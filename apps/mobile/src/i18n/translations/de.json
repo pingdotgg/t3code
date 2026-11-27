@@ -5786,5 +5786,13 @@
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "201490988858b511": "zurückgezogen von {by}",
-  "46d614fa7b4bf1e5": "Workflow-Ausführungen"
+  "46d614fa7b4bf1e5": "Workflow-Ausführungen",
+  "a60a03c2d5907920": "Ab hier vorlesen",
+  "81923647f1ef9740": "Sprachausgabe abbrechen",
+  "65a238ad6bebf802": "Antworten mit {name} vorlesen?",
+  "55803224ee096dc0": "{company}-Schlüssel entfernen?",
+  "dad11cd1d17db4b8": "{environment} hat keinen {company}-API-Schlüssel. Fügen Sie unter „Sprach-API-Schlüssel“ einen hinzu.",
+  "e1e9d27bd7ee79ba": "{environment} hat keinen {company}-API-Schlüssel. Bitten Sie dort eine Administratorin oder einen Administrator, einen hinzuzufügen.",
+  "b9e06e668bd9bff0": "Antworten, die Sie abspielen, werden über {environment} an {company} gesendet, abgerechnet über dessen API-Schlüssel. Der Schlüssel wird mit dem Diktat geteilt.",
+  "bfbaa4965c146e7c": "Alle, die {company} auf {environment} für Diktat oder Vorlesen nutzen, verlieren den Zugriff."
 }

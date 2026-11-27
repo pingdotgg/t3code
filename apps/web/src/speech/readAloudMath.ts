@@ -1,5 +1,5 @@
 import { markdownMathRanges } from "@t3tools/shared/markdownMath";
-import type { SpeakMath } from "@t3tools/shared/read-aloud";
+import { speakTex, type SpeakMath } from "@t3tools/shared/read-aloud";
 import baseRules from "speech-rule-engine/lib/mathmaps/base.json?url";
 import deRules from "speech-rule-engine/lib/mathmaps/de.json?url";
 import enRules from "speech-rule-engine/lib/mathmaps/en.json?url";
@@ -69,22 +69,9 @@ async function speakFormulas(
     loadEngine(language in RULES ? language : "en"),
     import("katex"),
   ]);
-  const spoken = new Map<string, string>();
-  for (const { tex, display } of formulas) {
-    if (spoken.has(tex)) continue;
-    try {
-      const markup = katex.default.renderToString(tex, {
-        output: "mathml",
-        displayMode: display,
-        throwOnError: true,
-      });
-      const math = /<math[\s\S]*<\/math>/.exec(markup)?.[0];
-      // The annotation repeats the TeX source, which would be read too.
-      if (math)
-        spoken.set(tex, sre.toSpeech(math.replace(/<annotation[\s\S]*?<\/annotation>/, "")));
-    } catch {
-      // A formula KaTeX cannot parse is read as its source.
-    }
-  }
+  const spoken = new Map<string, string | undefined>();
+  for (const { tex, display } of formulas)
+    if (!spoken.has(tex)) spoken.set(tex, speakTex(katex.default, sre.toSpeech, tex, display));
+  // A formula KaTeX cannot parse is read as its source.
   return (tex) => spoken.get(tex);
 }

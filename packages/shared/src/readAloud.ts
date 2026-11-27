@@ -2,7 +2,7 @@ import type { Node, RootContent, Root } from "mdast";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
-import { mayContainMath, parseMarkdownWithMath } from "./markdownMath.ts";
+import { markdownMathRanges, mayContainMath, parseMarkdownWithMath } from "./markdownMath.ts";
 import {
   inlineCodeFilePathCandidate,
   isMarkdownFileLinkLabel,
@@ -93,6 +93,38 @@ function located(markdown: string, value: string, node: Positioned): Run {
 
 /** Words for a TeX formula, or undefined to read its source. */
 export type SpeakMath = (tex: string) => string | undefined;
+
+/** The KaTeX renderer, passed in so only clients that speak formulas load it. */
+export interface KatexRenderer {
+  readonly renderToString: (
+    tex: string,
+    options: { output: "mathml"; displayMode: boolean; throwOnError: boolean },
+  ) => string;
+}
+
+/**
+ * Words for a TeX formula, as Speech Rule Engine's `toSpeech` says the MathML KaTeX renders for
+ * it, or undefined when KaTeX cannot parse it.
+ */
+export function speakTex(
+  katex: KatexRenderer,
+  toSpeech: (mathml: string) => string,
+  tex: string,
+  display: boolean,
+) {
+  try {
+    const markup = katex.renderToString(tex, {
+      output: "mathml",
+      displayMode: display,
+      throwOnError: true,
+    });
+    const math = /<math[\s\S]*<\/math>/.exec(markup)?.[0];
+    // The annotation repeats the TeX source, which would be read too.
+    return math ? toSpeech(math.replace(/<annotation[\s\S]*?<\/annotation>/, "")) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Words for an emoji, or undefined to leave it to the voice. */
 export type SpeakEmoji = (emoji: string) => string | undefined;
@@ -519,56 +551,141 @@ function alignWords(spoken: ReadonlyArray<ComparedWord>, shown: ReadonlyArray<Co
   return anchors;
 }
 
-/** The reply's spoken words, the words `shown` holds, and the shown word each spoken one matched. */
-function alignShown(markdown: string, shown: string) {
+/** How a renderer shows the reply: `math` when it draws formulas rather than their TeX. */
+export interface ReadAloudShownOptions {
+  readonly math?: boolean;
+}
+
+/**
+ * The reply's spoken words, the words `shown` holds, and the shown word each spoken one matched.
+ * Formulas drawn as math show no words, so their TeX is left out of the match.
+ */
+function alignShown(markdown: string, shown: string, options: ReadAloudShownOptions) {
   const speech = readAloudSpeech(markdown, false);
+  const formulas = options.math ? markdownMathRanges(markdown) : [];
   const spoken = comparedWords(speech.text).map((word) => {
     const sources = speech.sources.slice(word.start, word.end).filter((at) => at !== ADDED);
-    return { ...word, sourceStart: Math.min(...sources), sourceEnd: Math.max(...sources) + 1 };
+    const sourceStart = Math.min(...sources);
+    const sourceEnd = Math.max(...sources) + 1;
+    const drawn = formulas.some((range) => sourceStart < range.end && sourceEnd > range.start);
+    return { ...word, sourceStart, sourceEnd, drawn };
   });
   const shownWords = comparedWords(shown);
-  return { spoken, shownWords, anchors: alignWords(spoken, shownWords) };
+  const matchable = spoken.flatMap((word, index) => (word.drawn ? [] : [index]));
+  const matched = alignWords(
+    matchable.map((index) => spoken[index]!),
+    shownWords,
+  );
+  const anchors = Array.from(spoken, () => -1);
+  matchable.forEach((index, at) => {
+    anchors[index] = matched[at] ?? -1;
+  });
+  return { spoken, shownWords, anchors };
+}
+
+/** The line of `text` around `range`: where renderers put each paragraph, item, and row. */
+function shownLine(text: string, range: ReadAloudTextRange): ReadAloudTextRange {
+  const end = text.indexOf("\n", range.end);
+  return {
+    start: text.lastIndexOf("\n", range.start - 1) + 1,
+    end: end === -1 ? text.length : end,
+  };
 }
 
 /**
  * Finds what read aloud is reading in a renderer's own text, such as a native view that reports
  * the text it shows but not where it came from in the markdown. The reply's words are matched to
- * the shown words in order; a word without a safe match is left unhighlighted.
+ * the shown words in order. Words shown some other way, such as a formula, a file chip, or an
+ * emoji, are found between the matched words around them; the block is its whole lines.
  */
-export function readAloudShownText(markdown: string, shown: string) {
-  const { spoken, shownWords, anchors } = alignShown(markdown, shown);
+export function readAloudShownText(
+  markdown: string,
+  shown: string,
+  options: ReadAloudShownOptions = {},
+) {
+  const { spoken, shownWords, anchors } = alignShown(markdown, shown, options);
+  const matched = (index: number) => shownWords[anchors[index] ?? -1];
   const span = (inside: (word: (typeof spoken)[number]) => boolean): ReadAloudTextRange | null => {
     let start = Infinity;
     let end = -Infinity;
+    let first = -1;
+    let last = -1;
     spoken.forEach((word, index) => {
-      const match = shownWords[anchors[index] ?? -1];
-      if (!match || !inside(word)) return;
+      if (!inside(word)) return;
+      if (first === -1) first = index;
+      last = index;
+      const match = matched(index);
+      if (!match) return;
       start = Math.min(start, match.start);
       end = Math.max(end, match.end);
     });
-    return start < end ? { start, end } : null;
+    if (start < end) return { start, end };
+    if (first === -1) return null;
+    // None of them matched: what shows between the matched words around them, on one line.
+    let before = 0;
+    for (let index = first - 1; index >= 0 && !before; index--) before = matched(index)?.end ?? 0;
+    let after = shown.length;
+    for (let index = last + 1; index < spoken.length && after === shown.length; index++)
+      after = matched(index)?.start ?? shown.length;
+    const between = shown.slice(before, after);
+    const lead = between.length - between.trimStart().length;
+    const text = between.trim();
+    return text && !text.includes("\n")
+      ? { start: before + lead, end: before + lead + text.length }
+      : null;
   };
-  return (position: ReadAloudPosition) => ({
-    block: span(
-      (word) => word.sourceStart >= position.block.start && word.sourceEnd <= position.block.end,
-    ),
-    word: span(
-      (word) => word.sourceStart < position.word.end && word.sourceEnd > position.word.start,
-    ),
-  });
+  return (position: ReadAloudPosition) => {
+    const word = span(
+      (entry) => entry.sourceStart < position.word.end && entry.sourceEnd > position.word.start,
+    );
+    const block =
+      span(
+        (entry) =>
+          entry.sourceStart >= position.block.start && entry.sourceEnd <= position.block.end,
+      ) ?? word;
+    return { block: block && shownLine(shown, block), word };
+  };
 }
 
 /**
  * The markdown offset of the first word a renderer shows at or after `offset` of its text `shown`,
  * such as the place a user taps, or null when no later word matches the reply.
  */
-export function readAloudSourceAtShown(markdown: string, shown: string, offset: number) {
-  const { spoken, shownWords, anchors } = alignShown(markdown, shown);
+export function readAloudSourceAtShown(
+  markdown: string,
+  shown: string,
+  offset: number,
+  options: ReadAloudShownOptions = {},
+) {
+  const { spoken, shownWords, anchors } = alignShown(markdown, shown, options);
   for (const [index, word] of spoken.entries()) {
     const match = shownWords[anchors[index] ?? -1];
     if (match && match.end > offset) return word.sourceStart;
   }
   return null;
+}
+
+/**
+ * Where a tap at `offset` of a renderer's text `shown` reads from: the word there or next on its
+ * line (`word`), else the line's block, as the markdown offset of a word in it. Null when nothing
+ * on the line matches the reply.
+ */
+export function readAloudTapAtShown(
+  markdown: string,
+  shown: string,
+  offset: number,
+  options: ReadAloudShownOptions = {},
+) {
+  const { spoken, shownWords, anchors } = alignShown(markdown, shown, options);
+  const line = shownLine(shown, { start: offset, end: offset });
+  let block: number | null = null;
+  for (const [index, word] of spoken.entries()) {
+    const match = shownWords[anchors[index] ?? -1];
+    if (!match || match.start < line.start || match.end > line.end) continue;
+    if (match.end > offset) return { from: word.sourceStart, word: true };
+    block ??= word.sourceStart;
+  }
+  return block === null ? null : { from: block, word: false };
 }
 
 /** The first spoken block that ends after markdown offset `from`: where reading from it starts. */

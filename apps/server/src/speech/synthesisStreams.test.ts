@@ -57,6 +57,31 @@ it.effect("hands every reader the audio from its start while synthesis continues
   }),
 );
 
+it.effect("opens the audio at a time for players that cannot seek it", () =>
+  Effect.gen(function* () {
+    const source = yield* Queue.unbounded<Uint8Array, SpeechSynthesisError | Cause.Done>();
+    // MPEG-1 Layer III frames at 64 kbps and 44.1 kHz, each marked with its index.
+    const frameSeconds = 1152 / 44100;
+    const frame = (marker: number) =>
+      Uint8Array.from({ length: 208 }, (_, index) =>
+        index === 0 ? 0xff : index === 1 ? 0xfb : index === 2 ? 0x50 : index === 3 ? marker : 0,
+      );
+    yield* Effect.gen(function* () {
+      const streams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
+      yield* Queue.offerAll(source, [frame(0), frame(1), frame(2)]);
+      yield* Queue.end(source);
+      const token = yield* streams.start("xai", request);
+      yield* audio(yield* streams.read(token));
+      // Within the second frame, which is where the audio opens, each frame sent once.
+      expect(yield* audio(yield* streams.read(token, frameSeconds * 1.5))).toEqual(
+        [1, 2].flatMap((marker) => [...frame(marker)]),
+      );
+      // Audio not made yet has no place to open at.
+      expect(yield* streams.read(token, frameSeconds * 10)).toBeUndefined();
+    }).pipe(Effect.provide(withSource(Stream.fromQueue(source))));
+  }),
+);
+
 it.effect("answers word timings as they arrive and the audio length once synthesis ends", () =>
   Effect.gen(function* () {
     const source = yield* Queue.unbounded<

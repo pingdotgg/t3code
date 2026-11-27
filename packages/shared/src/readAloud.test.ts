@@ -3,6 +3,7 @@ import {
   readAloudPosition,
   readAloudShownText,
   readAloudSourceAtShown,
+  readAloudTapAtShown,
   readAloudBlockFrom,
   readAloudSpeech,
   readAloudText,
@@ -209,7 +210,8 @@ it("finds the block and word being read in text a renderer shows", () => {
   };
   expect(at("readAloud")).toEqual({ block: "Use readAloud and see the docs.", word: "readAloud" });
   expect(at("docs.")).toEqual({ block: "Use readAloud and see the docs.", word: "docs." });
-  expect(at("Second")).toEqual({ block: "Second item", word: "Second" });
+  // The block is its whole line, marker included.
+  expect(at("Second")).toEqual({ block: "• Second item", word: "Second" });
   expect(at("Adds")).toEqual({ block: "a.ts\tAdds x", word: "Adds" });
   expect(at("cat.")).toEqual({ block: "The cat saw the cat.", word: "cat." });
 
@@ -224,6 +226,73 @@ it("finds the block and word being read in text a renderer shows", () => {
   const first = speech.text.indexOf("First");
   const elsewhere = readAloudPosition(speech, first, first + 5);
   expect(elsewhere && tail(elsewhere)).toEqual({ block: null, word: null });
+});
+
+it("finds words a renderer shows some other way between the words around them", () => {
+  const markdown = [
+    "Einstein wrote $E = mc^2$ in 1905.",
+    "$x^2$",
+    "See the `apps/web/src/ThreadList.tsx` file for the list.",
+  ].join("\n\n");
+  // Formulas show as attachments, and the file as a chip with its name.
+  const shown = "Einstein wrote \uFFFC in 1905.\n\uFFFC\nSee the ThreadList file for the list.";
+  const words: Record<string, string> = { "E = mc^2": "E equals m c squared", "x^2": "x squared" };
+  const speech = readAloudSpeech(markdown, true, { math: (tex) => words[tex] });
+  const locate = readAloudShownText(markdown, shown);
+  const at = (spoken: string) => {
+    const start = speech.text.indexOf(spoken);
+    const position = readAloudPosition(speech, start, start + spoken.length);
+    if (!position) throw new Error(`no position for ${spoken}`);
+    const found = locate(position);
+    const slice = (range: { start: number; end: number } | null) =>
+      range && shown.slice(range.start, range.end);
+    return { block: slice(found.block), word: slice(found.word) };
+  };
+  expect(at("squared")).toEqual({ block: "Einstein wrote \uFFFC in 1905.", word: "\uFFFC" });
+  // A block of nothing but a formula still has a place.
+  expect(at("x")).toEqual({ block: "\uFFFC", word: "\uFFFC" });
+  expect(at("ThreadList.tsx")).toEqual({
+    block: "See the ThreadList file for the list.",
+    word: "ThreadList",
+  });
+});
+
+it("matches the words beside a formula drawn as math", () => {
+  const markdown = "It minimizes $L$ over $n$ samples.";
+  const shown = "It minimizes \uFFFC over \uFFFC samples.";
+  const speech = readAloudSpeech(markdown, true, { math: (tex) => tex.toLowerCase() });
+  const locate = readAloudShownText(markdown, shown, { math: true });
+  const at = (spoken: string) => {
+    const start = speech.text.indexOf(spoken);
+    const position = readAloudPosition(speech, start, start + spoken.length)!;
+    const found = locate(position).word;
+    return found && shown.slice(found.start, found.end);
+  };
+  expect(at("over")).toBe("over");
+  expect(at("l")).toBe("\uFFFC");
+  // Without drawn math, the TeX words take the matches next to them.
+  const word = readAloudShownText(
+    markdown,
+    shown,
+  )(readAloudPosition(speech, speech.text.indexOf("over"), speech.text.indexOf("over") + 4)!).word;
+  expect(word && shown.slice(word.start, word.end)).not.toBe("over");
+});
+
+it("reads from a tapped word, else from the block of the line tapped", () => {
+  const markdown = "Einstein wrote $E = mc^2$.\n\nNext paragraph.";
+  const shown = "Einstein wrote \uFFFC.\nNext paragraph.";
+  const speech = readAloudSpeech(markdown, true, { math: () => "E equals m c squared" });
+  expect(speech.text).toContain("squared");
+  expect(readAloudTapAtShown(markdown, shown, shown.indexOf("wrote"))).toEqual({
+    from: markdown.indexOf("wrote"),
+    word: true,
+  });
+  // Past the line's last matched word, the tap reads its block rather than the next one.
+  expect(readAloudTapAtShown(markdown, shown, shown.indexOf("\uFFFC"))).toEqual({
+    from: markdown.indexOf("Einstein"),
+    word: false,
+  });
+  expect(readAloudTapAtShown(markdown, "\uFFFC", 0)).toBeNull();
 });
 
 it("maps a place in the text a renderer shows to the block reading starts from", () => {

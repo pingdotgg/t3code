@@ -1,6 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
-import { DEFAULT_READ_ALOUD_SETTINGS, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
+import { READ_ALOUD_SPEEDS, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { useGT } from "gt-react-native";
 import { memo, useEffect, useSyncExternalStore } from "react";
 import { Pressable, View } from "react-native";
@@ -20,14 +18,13 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
-import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { saveMobilePreferences } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { alertReadAloudError } from "./ReadAloudButton";
+import { useReadAloudSettings } from "./useReadAloudSettings";
 import { readAloudController } from "./playback";
 import { getReadAloudAway, scrollToReadAloud, subscribeReadAloudAway } from "./readAloudFollow";
 
-/** The settings schema caps read-aloud speed at 1.5. */
-const SPEEDS = [0.75, 1, 1.25, 1.5] as const;
 // The same meter as web's player: newest level on the right, bars resting at a fifth.
 const WAVEFORM_BAR_COUNT = 24;
 const WAVEFORM_HEIGHT = 16;
@@ -72,11 +69,8 @@ function ReadAloudBarControls(props: {
 }) {
   const { id, status } = props;
   const gt = useGT();
-  const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomCommand(saveMobilePreferences);
-  const settings = AsyncResult.isSuccess(preferences)
-    ? (preferences.value.readAloud ?? DEFAULT_READ_ALOUD_SETTINGS)
-    : DEFAULT_READ_ALOUD_SETTINGS;
+  const settings = useReadAloudSettings();
   const away = useSyncExternalStore(subscribeReadAloudAway, getReadAloudAway);
   const levels = useSharedValue(SILENT_LEVELS);
   const silent = useSharedValue(SILENT_LEVELS);
@@ -164,7 +158,7 @@ function ReadAloudBarControls(props: {
           accessibilityRole="button"
           accessibilityLabel={gt("Playback speed: {speed}×", { speed: settings.speed })}
           title={gt("Playback speed")}
-          actions={SPEEDS.map((speed) => ({
+          actions={READ_ALOUD_SPEEDS.map((speed) => ({
             id: String(speed),
             title: gt("{speed}×", { speed }),
             state: speed === settings.speed ? ("on" as const) : ("off" as const),

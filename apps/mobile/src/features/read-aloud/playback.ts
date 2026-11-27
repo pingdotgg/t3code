@@ -1,18 +1,11 @@
 import { getActiveLocale, m } from "../../i18n/messages";
 import {
+  createEnvironmentReadAloud,
   createReadAloudController,
-  createReadAloudWarmup,
-  createTimedWords,
   type SpeechPlayback,
   type SpokenWord,
 } from "@t3tools/client-runtime/read-aloud";
-import {
-  getSpeechSynthesisModels,
-  getSpeechSynthesisTimings,
-  prepareSpeechSynthesis,
-  speakSpeechMath,
-  startSpeechSynthesis,
-} from "@t3tools/client-runtime/voice-input";
+import { speakSpeechMath } from "@t3tools/client-runtime/voice-input";
 import { markdownMathRanges } from "@t3tools/shared/markdownMath";
 import { spokenWordAt, type SpeakMath } from "@t3tools/shared/read-aloud";
 import { AsyncResult } from "effect/reactivity";
@@ -20,11 +13,7 @@ import { createAudioPlayer } from "expo-audio";
 import * as Speech from "expo-speech";
 import * as Option from "effect/Option";
 import { AppState, Platform } from "react-native";
-import {
-  speechSpeedAppliedByProvider,
-  type ReadAloudSettings,
-  type SpeechSynthesisCatalog,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ReadAloudSettings } from "@t3tools/contracts";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { environmentSession } from "../../state/session";
@@ -124,15 +113,13 @@ function systemPlayback(text: string, settings: ReadAloudSettings): SpeechPlayba
   };
 }
 
-const catalogs = new WeakMap<AbortSignal, Promise<SpeechSynthesisCatalog>>();
-
-export const warmReadAloud = createReadAloudWarmup(async (environmentId, model) => {
-  const prepared = Option.getOrNull(
+const connection = (environmentId: EnvironmentId) =>
+  Option.getOrNull(
     appAtomRegistry.get(environmentSession.preparedConnectionValueAtom(environmentId)),
   );
-  if (!prepared) throw new Error("The read-aloud environment is not connected.");
-  await runSpeech(prepareSpeechSynthesis(prepared, model));
-});
+const environmentReadAloud = createEnvironmentReadAloud({ connection, run: runSpeech });
+
+export const warmReadAloud = environmentReadAloud.warm;
 
 /**
  * Words for the reply's formulas when replies render math, as screen readers say them. React Native
@@ -144,11 +131,7 @@ function prepareReadAloudMath(markdown: string): Promise<SpeakMath> | undefined 
   if (!AsyncResult.isSuccess(preferences) || !preferences.value.mathRenderingEnabled)
     return undefined;
   const environmentId = preferences.value.readAloud?.environmentId;
-  const prepared = environmentId
-    ? Option.getOrNull(
-        appAtomRegistry.get(environmentSession.preparedConnectionValueAtom(environmentId)),
-      )
-    : null;
+  const prepared = environmentId ? connection(environmentId) : null;
   const formulas = markdownMathRanges(markdown);
   if (!prepared || formulas.length === 0) return undefined;
   return runSpeech(speakSpeechMath(prepared, formulas, getActiveLocale())).then(
@@ -172,40 +155,11 @@ export const readAloudController = createReadAloudController(
         voice: voices.some((voice) => voice.identifier === settings.voice) ? settings.voice : "",
       });
     }
-    if (settings.provider === "off") throw new Error("Enable read aloud in Settings → Voice.");
-    const prepared = settings.environmentId
-      ? Option.getOrNull(
-          appAtomRegistry.get(
-            environmentSession.preparedConnectionValueAtom(settings.environmentId),
-          ),
-        )
-      : null;
-    if (!prepared)
-      throw new Error("Connect to the read-aloud environment selected in Settings → Voice.");
-    let pendingCatalog = catalogs.get(signal);
-    if (!pendingCatalog) {
-      pendingCatalog = runSpeech(getSpeechSynthesisModels(prepared, settings.provider), signal);
-      catalogs.set(signal, pendingCatalog);
-    }
-    const catalog = await pendingCatalog;
-    signal.throwIfAborted();
-    if (catalog.error) throw new Error(catalog.error);
-    const model = settings.model || catalog.defaultModel;
-    const { url, token } = await runSpeech(
-      startSpeechSynthesis(prepared, settings.provider, {
-        text,
-        model,
-        voice: settings.voice,
-        speed: settings.speed,
-        language: settings.language,
-        ...(from === undefined ? {} : { from }),
-      }),
-      signal,
-    );
-    signal.throwIfAborted();
-    const player = createAudioPlayer(url, { updateInterval: 500 });
-    const speedApplied = speechSpeedAppliedByProvider(catalog, model);
-    if (!speedApplied) player.setPlaybackRate(settings.speed);
+    const speech = await environmentReadAloud.start(text, settings, signal, from);
+    const player = createAudioPlayer(speech.url, { updateInterval: 500 });
+    if (speech.rate(settings.speed) !== 1) player.setPlaybackRate(speech.rate(settings.speed));
+    // Where in the speech the player's audio starts: Android opens it again to seek.
+    let opensAt = 0;
     const stopWatching = watchForeground(settings);
     const session = createAudioPlaybackSession(
       {
@@ -225,21 +179,18 @@ export const readAloudController = createReadAloudController(
       // Native lock-screen Play bypasses JS, so a paused player must keep revocable ownership.
       settings.backgroundPlayback,
     );
-    let timed: ReturnType<typeof createTimedWords> | null = null;
+    let timed: ReturnType<typeof speech.timedWords> | null = null;
     // The environment measures the loudness: iOS cannot tap a stream of unknown length, and
     // Android samples only with the microphone permission.
     const timedWords = () =>
-      (timed ??= createTimedWords({
-        text,
-        load: (after, levelsAfter, signal) =>
-          runSpeech(getSpeechSynthesisTimings(prepared, token, after, levelsAfter), signal),
-        clock: () => ({
-          seconds: player.currentTime,
+      (timed ??= speech.timedWords(
+        () => ({
+          seconds: opensAt + player.currentTime,
           rate: player.playbackRate,
           playing: player.playing,
         }),
-        levels: true,
-      }));
+        true,
+      ));
     let done: () => void = () => {};
     const finished = new Promise<void>((resolve, reject) => {
       done = resolve;
@@ -285,17 +236,23 @@ export const readAloudController = createReadAloudController(
       words: (listener) => timedWords().subscribe(listener),
       seek: (at) => {
         const seconds = timed?.secondsAt(at);
-        // The synthesis stream has no byte ranges, so its length stays unknown (0) and a seek can
-        // land anywhere; seek only once the player knows the length, and otherwise read again.
-        if (seconds === undefined || !player.isLoaded || seconds >= player.duration) return false;
-        void player.seekTo(seconds).then(
-          () => timed?.refresh(),
-          () => {},
-        );
+        if (seconds === undefined) return false;
+        if (Platform.OS === "android") {
+          // ExoPlayer cannot seek a stream of unknown length; the environment opens it there.
+          opensAt = seconds;
+          player.replace(speech.urlAt(seconds));
+          timed?.refresh();
+        } else
+          void player.seekTo(seconds).then(
+            () => timed?.refresh(),
+            () => {},
+          );
         return true;
       },
-      // Audio a provider made at `settings.speed` plays at 1 for that speed.
-      setSpeed: (speed) => player.setPlaybackRate(speedApplied ? speed / settings.speed : speed),
+      setSpeed: (speed) => {
+        player.setPlaybackRate(speech.rate(speed));
+        timed?.refresh();
+      },
       levels: (listener) => timedWords().followLevels(listener),
     };
   },

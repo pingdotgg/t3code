@@ -1,11 +1,22 @@
 import {
   SPEECH_SYNTHESIS_MAX_TEXT,
+  speechSpeedAppliedByProvider,
   type EnvironmentId,
   type ReadAloudSettings,
+  type SpeechSynthesisCatalog,
   type SpeechSynthesisLevel,
   type SpeechSynthesisTimings,
   type SpeechSynthesisWord,
 } from "@t3tools/contracts";
+import type * as Effect from "effect/Effect";
+import type { HttpClient } from "effect/http";
+import type { PreparedConnection } from "./connection/model.ts";
+import {
+  getSpeechSynthesisModels,
+  getSpeechSynthesisTimings,
+  prepareSpeechSynthesis,
+  startSpeechSynthesis,
+} from "./voice-input/index.ts";
 import {
   READ_ALOUD_LEVEL_INTERVAL_MS,
   readAloudBlockFrom,
@@ -241,10 +252,113 @@ export function createTimedWords(input: {
   };
 }
 
+/** Runs an environment speech request in the client's connection runtime. */
+export type RunEnvironmentSpeech = <A, E>(
+  effect: Effect.Effect<A, E, HttpClient.HttpClient>,
+  signal?: AbortSignal,
+) => Promise<A>;
+
+/**
+ * Speech made on the read-aloud environment, for clients to play with their own player.
+ * `connection` finds a connected environment, or null.
+ */
+export function createEnvironmentReadAloud(options: {
+  readonly connection: (environmentId: EnvironmentId) => PreparedConnection | null;
+  readonly run: RunEnvironmentSpeech;
+}) {
+  // A reply read in chunks asks for the catalog once, keyed by the reading's signal.
+  const catalogs = new WeakMap<AbortSignal, Promise<SpeechSynthesisCatalog>>();
+  const connected = (environmentId: EnvironmentId | null) => {
+    const prepared = environmentId ? options.connection(environmentId) : null;
+    if (!prepared)
+      throw new Error("Connect to the read-aloud environment selected in Settings → Voice.");
+    return prepared;
+  };
+  return {
+    warm: createReadAloudWarmup(async (environmentId, model) => {
+      const prepared = options.connection(environmentId);
+      if (!prepared) throw new Error("The read-aloud environment is not connected.");
+      await options.run(prepareSpeechSynthesis(prepared, model));
+    }),
+    /** Starts speech for `text` from offset `from`; the player plays `url` at `rate(speed)`. */
+    start: async (
+      text: string,
+      settings: ReadAloudSettings,
+      signal: AbortSignal,
+      from: number | undefined,
+    ) => {
+      const { provider } = settings;
+      if (provider === "off") throw new Error("Enable read aloud in Settings → Voice.");
+      if (provider === "system") throw new Error("System voices are read on this device.");
+      const prepared = connected(settings.environmentId);
+      let pending = catalogs.get(signal);
+      if (!pending) {
+        pending = options.run(getSpeechSynthesisModels(prepared, provider), signal);
+        catalogs.set(signal, pending);
+      }
+      const catalog = await pending;
+      signal.throwIfAborted();
+      if (catalog.error) throw new Error(catalog.error);
+      const model = settings.model || catalog.defaultModel;
+      const { url, token } = await options.run(
+        startSpeechSynthesis(prepared, provider, {
+          text,
+          model,
+          voice: settings.voice,
+          speed: settings.speed,
+          language: settings.language,
+          ...(from === undefined ? {} : { from }),
+        }),
+        signal,
+      );
+      signal.throwIfAborted();
+      // Audio a provider already sped up plays at 1×; later speed changes are relative to it.
+      const synthesizedSpeed = speechSpeedAppliedByProvider(catalog, model) ? settings.speed : 1;
+      return {
+        url,
+        rate: (speed: number) => speed / synthesizedSpeed,
+        /** The audio from `seconds` on, for players that cannot seek a stream of unknown length. */
+        urlAt: (seconds: number) => {
+          const at = new URL(url);
+          at.searchParams.set("at", String(seconds));
+          return at.toString();
+        },
+        /** Follows the speech's word timings, and with `levels` its loudness, on `clock`. */
+        timedWords: (clock: () => PlaybackClock, levels: boolean) =>
+          createTimedWords({
+            text,
+            load: (after, levelsAfter, loading) =>
+              options.run(getSpeechSynthesisTimings(prepared, token, after, levelsAfter), loading),
+            clock,
+            levels,
+          }),
+      };
+    },
+  };
+}
+
 /** Where in the speech the word at or after markdown offset `from` starts. */
 function spokenWordStart(speech: ReadAloudSpeech, from: number) {
   const at = speech.sources.findIndex((source) => source >= from);
   return at === -1 ? undefined : spokenWordAt(speech.text, at).start;
+}
+
+/** Whether a reading is idle, making speech, playing, paused, or failed, and for which message. */
+export type ReadAloudState = {
+  readonly id: string | null;
+  readonly status: "idle" | "loading" | "playing" | "paused" | "error";
+  readonly error?: string;
+};
+
+/**
+ * What message `id`'s read-aloud button does now: read it, resume it, stop it, or cancel the
+ * speech still being made for it.
+ */
+export function readAloudButtonAction(state: ReadAloudState, id: string) {
+  if (state.id !== id) return "read" as const;
+  if (state.status === "loading") return "cancel" as const;
+  if (state.status === "playing") return "stop" as const;
+  return state.status === "paused" ? ("resume" as const) : ("read" as const);
 }
 
 export function createReadAloudController(
@@ -260,12 +374,7 @@ export function createReadAloudController(
   prepareMath: (markdown: string) => SpeakMath | undefined | Promise<SpeakMath | undefined> = () =>
     undefined,
 ) {
-  type State = {
-    id: string | null;
-    status: "idle" | "loading" | "playing" | "paused" | "error";
-    error?: string;
-  };
-  let state: State = { id: null, status: "idle" };
+  let state: ReadAloudState = { id: null, status: "idle" };
   let active: AbortController | null = null;
   let playback: SpeechPlayback | null = null;
   let disposing = false;
@@ -295,7 +404,7 @@ export function createReadAloudController(
       });
   };
   const listeners = new Set<() => void>();
-  const publish = (next: State) => {
+  const publish = (next: ReadAloudState) => {
     state = next;
     for (const listener of listeners) listener();
   };
@@ -450,7 +559,7 @@ export function createReadAloudController(
   };
   const isReading = (id: string) =>
     reading?.id === id && state.status !== "idle" && state.status !== "error";
-  return {
+  const controller = {
     getSnapshot: () => state,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
@@ -506,6 +615,13 @@ export function createReadAloudController(
       }
     },
     start,
+    /** What message `id`'s read-aloud button does; see `readAloudButtonAction`. */
+    async toggle(id: string, markdown: string, settings: ReadAloudSettings) {
+      const action = readAloudButtonAction(state, id);
+      if (action === "stop" || action === "cancel") stop();
+      else if (action === "resume") await controller.resume();
+      else await start(id, markdown, settings);
+    },
     /** Whether message `id` is being read, paused, or made into speech. */
     isReading,
     /**
@@ -564,4 +680,5 @@ export function createReadAloudController(
       };
     },
   };
+  return controller;
 }

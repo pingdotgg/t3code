@@ -69,6 +69,9 @@ vi.mock("../features/read-aloud/ReadAloudButton", () => ({
   ReadAloudButton: () => null,
   useReadAloudHighlight: () => null,
 }));
+vi.mock("../features/read-aloud/useReadAloudSettings", () => ({
+  useReadAloudSettings: () => ({ provider: "off" }),
+}));
 vi.mock("../features/read-aloud/playback", () => ({
   readAloudController: {
     getSnapshot: () => ({ id: null }),

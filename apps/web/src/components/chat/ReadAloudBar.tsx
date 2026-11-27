@@ -1,3 +1,4 @@
+import { READ_ALOUD_SPEEDS } from "@t3tools/contracts";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useGT } from "gt-react";
 import { ArrowDownIcon, ArrowUpIcon, PauseIcon, PlayIcon, SquareIcon } from "lucide-react";
@@ -14,8 +15,6 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerBanner } from "./ComposerBanner";
 import { VoiceWaveform } from "./VoiceInputPill";
-
-const SPEEDS = [0.75, 1, 1.25, 1.5];
 
 /** Tucked above the composer while a reply is read: what it is doing, how loud, how fast. */
 export function ReadAloudBar() {
@@ -89,7 +88,7 @@ export function ReadAloudBar() {
                   <SelectValue>{settings.speed}×</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
-                  {SPEEDS.map((speed) => (
+                  {READ_ALOUD_SPEEDS.map((speed) => (
                     <SelectItem key={speed} value={String(speed)}>
                       {speed}×
                     </SelectItem>
