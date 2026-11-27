@@ -4,9 +4,10 @@ import {
   AuthTerminalOperateScope,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
 import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.logic";
+import { useClosedViewStore } from "../closedViewStore";
 import { closePreviewSession } from "../components/preview/closePreviewSession";
 import { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
 import { m } from "../i18n/messages";
@@ -69,14 +70,31 @@ export function useRightPanelSurfaceClose(input: {
         terminalActions.closeTerminalSession(terminalId, ref);
       }
     }
+    const sideChat =
+      surface.kind === "thread"
+        ? readThreadShell(scopeThreadRef(ref.environmentId, surface.threadId))
+        : null;
     if (
       surface.kind === "thread" &&
       // Only a side chat the shell still lists is thrown away with its tab; a subagent belongs to
       // its parent's work, and an unlisted side chat is already deleted.
-      readThreadShell(scopeThreadRef(ref.environmentId, surface.threadId))?.lineage.sideChat ===
-        true &&
+      sideChat?.lineage.sideChat === true &&
       readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)
     ) {
+      // Reopening would bring back a deleted thread: the shell leaves idle subagents out, so the
+      // reopen shortcut can no longer tell a deleted side chat from one of them.
+      if (sideChat.latestUserMessageAt === null) {
+        const closedViews = useClosedViewStore.getState();
+        for (const entry of closedViews.entries) {
+          if (
+            entry.kind === "panel-tab" &&
+            entry.surface.id === surface.id &&
+            scopedThreadKey(entry.threadRef) === scopedThreadKey(ref)
+          ) {
+            closedViews.remove(entry.id);
+          }
+        }
+      }
       // The server keeps a side chat with a run or message. Reopen skips one it deleted.
       void deleteThread({
         environmentId: ref.environmentId,
