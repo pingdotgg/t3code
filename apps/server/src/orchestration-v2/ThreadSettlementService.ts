@@ -56,6 +56,7 @@ export interface SettlementPullRequest {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
+const SETTLE_SCRIPT_SLOT_TIMEOUT = "5 minutes";
 
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
@@ -803,13 +804,13 @@ export const make = Effect.gen(function* () {
   const runSettleScript = Effect.fn("ThreadSettlementServiceV2.runSettleScript")(
     function* (threadId: ThreadId) {
       // Read the thread once the slot is held: it may have re-engaged, moved or gone while queued.
-      const thread = yield* projections.getThread(threadId);
-      if (thread.deletedAt !== null || thread.settledOverride !== "settled") return;
-      const worktreePath = thread.worktreePath;
+      const queued = yield* projections.getThread(threadId);
+      if (queued.deletedAt !== null || queued.settledOverride !== "settled") return;
+      const worktreePath = queued.worktreePath;
       if (worktreePath === null) return;
       if (!(yield* fileSystem.exists(worktreePath))) {
         // A settle script that tears something down would otherwise be skipped with no trace.
-        const project = Option.getOrUndefined(yield* projectStore.getShell(thread.projectId));
+        const project = Option.getOrUndefined(yield* projectStore.getShell(queued.projectId));
         if (
           project !== undefined &&
           settleProjectScript(resolveProjectScripts(yield* settingsService.getSettings, project))
@@ -821,6 +822,10 @@ export const make = Effect.gen(function* () {
         }
         return;
       }
+      // Recheck after worktree I/O; only live, settled threads may run scripts.
+      const thread = yield* projections.getThread(threadId);
+      if (thread.deletedAt !== null || thread.settledOverride !== "settled") return;
+      if (thread.worktreePath !== worktreePath) return;
       const settledAtMs = toMillis(thread.settledAt);
       if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
       // The parent's worktree belongs to the parent; shared-worktree children
@@ -844,9 +849,20 @@ export const make = Effect.gen(function* () {
         observeCompletion: {},
       });
       settleActionRunAt.set(threadId, settledAtMs);
-      // Detached so interrupting this run (shutdown) does not close the script's terminal.
       if (run.status === "started" && run.completion) {
-        yield* Fiber.await(yield* run.completion.pipe(Effect.forkDetach));
+        // Interrupting the completion closes the script's terminal, so only the wait is bounded:
+        // a script that never finishes keeps running but stops holding back later settlements.
+        const completion = yield* run.completion.pipe(Effect.forkDetach);
+        const finished = yield* Fiber.await(completion).pipe(
+          Effect.timeoutOption(SETTLE_SCRIPT_SLOT_TIMEOUT),
+        );
+        if (Option.isNone(finished)) {
+          yield* Effect.logWarning("settle script still running; starting the next one", {
+            threadId,
+            worktreePath,
+            terminalId: run.terminalId,
+          });
+        }
       }
     },
     (effect, threadId) =>
