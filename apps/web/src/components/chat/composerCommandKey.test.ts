@@ -9,6 +9,14 @@ function setup(prompt: string, composerRichTextEnabled: boolean) {
   const submitComposer = vi.fn();
   const input: Parameters<typeof composerCommandKeyHandler>[0] = {
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+    getShortcutContext: () => ({
+      terminalFocus: false,
+      terminalOpen: false,
+      previewFocus: false,
+      previewOpen: false,
+      isWeb: true,
+      isDesktop: false,
+    }),
     sendShortcut: "enter",
     composerRichTextEnabled,
     routeKind: "draft",
@@ -32,7 +40,9 @@ function setup(prompt: string, composerRichTextEnabled: boolean) {
         focus: vi.fn(),
         focusAt: vi.fn(),
         focusAtEnd: vi.fn(),
+        pasteAtCodeBlockEnd: () => false,
         readSelectionRange: () => ({ start: prompt.length, end: prompt.length }),
+        captureAttachmentInsertion: () => undefined,
         requestCitationComment: vi.fn(),
         readSnapshot: () => ({
           value: prompt,
@@ -43,10 +53,11 @@ function setup(prompt: string, composerRichTextEnabled: boolean) {
         isCaretOnVisualEdge: () => false,
       },
     },
-    composerMenuOpenRef: { current: false },
     composerMenuItemsRef: { current: [] },
     activeComposerMenuItemRef: { current: null },
     setComposerDraftPrompt: vi.fn(),
+    setComposerDraftThreadContexts: vi.fn(),
+    setComposerDraftEnvironmentContexts: vi.fn(),
     setComposerCursor: vi.fn(),
     setComposerTrigger: vi.fn(),
     setComposerHighlightedItemId: vi.fn(),
