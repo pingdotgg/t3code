@@ -277,6 +277,11 @@ function currentAggregateForJob(input: {
     // Nothing the job showed expired, so any extra row is newer work, whatever its timestamp.
     return current.activities.length === job.activities.length ? job : null;
   }
+  const liveKeys = new Set(liveStates.map(rowKey));
+  // A shown row that is still live but lost its slot was displaced by newer work, not expiry.
+  if (job.activities.some((row) => !currentKeys.has(rowKey(row)) && liveKeys.has(rowKey(row)))) {
+    return null;
+  }
   return current;
 }
 
@@ -646,15 +651,16 @@ const make = Effect.gen(function* () {
     readonly userId: string;
     readonly aggregate: RelayAgentActivityAggregateState;
     readonly createdAt: string;
-    readonly nowMs: number;
   }) {
+    // Sample the clock after the read so rows that expired while it ran count as expired.
     return yield* activityRows.listForUser({ userId: input.userId }).pipe(
-      Effect.map((currentStates) =>
+      Effect.zip(DateTime.now),
+      Effect.map(([currentStates, now]) =>
         currentAggregateForJob({
           job: input.aggregate,
           createdAt: input.createdAt,
           currentStates,
-          nowMs: input.nowMs,
+          nowMs: now.epochMilliseconds,
         }),
       ),
       Effect.catchCause((cause) =>
@@ -763,7 +769,6 @@ const make = Effect.gen(function* () {
         userId: input.target.user_id,
         aggregate,
         createdAt: input.createdAt,
-        nowMs: now.epochMilliseconds,
       });
       if (aggregate === null) {
         yield* attempts.completeSourceJob({

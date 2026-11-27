@@ -156,6 +156,7 @@ function layerFor(input: {
   readonly currentTargets?: ReadonlyArray<LiveActivities.TargetRow>;
   readonly config?: RelayConfiguration.RelayConfiguration["Service"];
   readonly activityStates?: ReadonlyArray<RelayAgentActivityState>;
+  readonly listForUserTakesMs?: number;
   readonly currentActivityStates?: ReadonlyArray<RelayAgentActivityState>;
   readonly activityRecheckFails?: boolean;
   readonly execute?: (
@@ -174,9 +175,10 @@ function layerFor(input: {
           remove: () => Effect.void,
           pruneTerminal: () => Effect.void,
           listForUser: () =>
-            input.activityStates !== undefined
-              ? Effect.succeed([...input.activityStates])
-              : Effect.succeed([state]),
+            (input.listForUserTakesMs === undefined
+              ? Effect.void
+              : TestClock.adjust(input.listForUserTakesMs)
+            ).pipe(Effect.as([...(input.activityStates ?? [state])])),
           getForUserThread: ({ userId, environmentId, threadId }) =>
             input.activityRecheckFails
               ? Effect.fail(
@@ -1134,6 +1136,36 @@ describe("ApnsDeliveries", () => {
       shows: null,
     },
     {
+      name: "a shown thread lost its slot to a hidden thread updated before the job",
+      job: {
+        ...aggregate,
+        activeCount: 6,
+        updatedAt: "1970-01-01T00:00:10.000Z",
+        activities: [10, 9, 8, 7, 6].map((second, index) =>
+          rowFor(
+            running(`thread-${index}`, `1970-01-01T00:00:${String(second).padStart(2, "0")}.000Z`),
+          ),
+        ),
+      },
+      states: [
+        running("thread-0", "1970-01-01T00:00:10.000Z"),
+        running("thread-5", "1970-01-01T00:00:09.500Z"),
+        running("thread-1", "1970-01-01T00:00:09.000Z"),
+        running("thread-2", "1970-01-01T00:00:08.000Z"),
+        running("thread-3", "1970-01-01T00:00:07.000Z"),
+        running("thread-4", "1970-01-01T00:00:06.000Z"),
+      ],
+      shows: null,
+    },
+    {
+      name: "a Done whose only active neighbor expires while rows load",
+      at: "1970-01-01T01:59:59.000Z",
+      listForUserTakesMs: 2_000,
+      job: doneJob(finished("thread", "1970-01-01T01:59:58.000Z")),
+      states: [finished("thread", "1970-01-01T01:59:58.000Z"), running("thread-expiring")],
+      shows: ["thread"],
+    },
+    {
       name: "an expired row does not hide a waiting approval",
       at: "1970-01-01T03:00:00.000Z",
       job: { ...aggregate, activities: [rowFor(approvalAtStart)] },
@@ -1182,6 +1214,9 @@ describe("ApnsDeliveries", () => {
         layerFor({
           attempts,
           activityStates: testCase.states as ReadonlyArray<RelayAgentActivityState>,
+          ...("listForUserTakesMs" in testCase
+            ? { listForUserTakesMs: testCase.listForUserTakesMs }
+            : {}),
           config: signingConfig,
           execute,
         }),
