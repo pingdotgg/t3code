@@ -348,7 +348,7 @@ function ScaledRows(
     pendingReveal.current = { row, attempts: 0 };
     handledReveal.current = key;
   }, [props.revealLine, props.revealRequestId, props.count, headerRows, scale]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the scroll position once indexing has reached the saved row.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Return a reopened file to its saved row once that row has streamed in.
   useLayoutEffect(() => {
     const saved = pendingRestore.current;
     const node = ref.current;
