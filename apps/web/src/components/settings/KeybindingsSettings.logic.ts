@@ -591,7 +591,7 @@ function recordedLayoutShortcutKey(
   const physicalKey = shortcutKeyFromEvent(event, platform);
   const layoutKey = event.key.toLowerCase();
   if (event.altKey || layoutKey.length !== 1) return physicalKey;
-  // A Cyrillic or Greek letter would stop matching once the user switches back to a Latin layout.
+  // A non-Latin letter (Cyrillic, Greek, ...) stops matching once the user switches to a Latin layout.
   if (/^\p{L}$/u.test(layoutKey) && !/\p{Script=Latin}/u.test(layoutKey)) {
     return /^Key[A-Z]$/.test(event.code) ? event.code.slice(3).toLowerCase() : physicalKey;
   }
