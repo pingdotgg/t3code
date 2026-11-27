@@ -6,6 +6,7 @@ import {
   normalizeTerminalOutput,
   TERMINAL_OUTPUT_TAIL_CHARS,
   TERMINAL_PALETTES,
+  terminalOutputCollapseRedraws,
   terminalOutputPlainText,
   terminalOutputResumeText,
   terminalOutputSpans,
@@ -19,6 +20,16 @@ function feed(chunks: ReadonlyArray<string>, maxChars?: number): TerminalOutputS
     EMPTY_TERMINAL_OUTPUT,
   );
 }
+
+describe("terminalOutputCollapseRedraws", () => {
+  it.each([
+    ["12345\r进度", "进度5"],
+    ["a界b\rXY", "XY b"],
+    ["e\u0301a\rZ", "Za"],
+  ])("uses terminal columns for a saved redraw: %j", (input, expected) => {
+    expect(terminalOutputCollapseRedraws(input)).toBe(expected);
+  });
+});
 
 describe("appendTerminalOutput", () => {
   it("keeps only the latest frame of a carriage-return progress bar", () => {

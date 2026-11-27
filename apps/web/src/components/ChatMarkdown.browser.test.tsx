@@ -1265,3 +1265,31 @@ describe("ChatMarkdown host media", () => {
     expect(screen.container.textContent).not.toContain("Retry video");
   });
 });
+
+describe("ChatMarkdown copy of line breaks", () => {
+  it.each([
+    { text: "first line\nsecond line", user: true },
+    { text: "first line  \nsecond line", user: false },
+    { text: "first line\\\nsecond line", user: false },
+  ])("copies each line break once: $text", async ({ text, user }) => {
+    setup();
+    await using screen = await renderText(
+      text,
+      user
+        ? {
+            className: "user-message-markdown",
+            lineBreaks: true,
+            parseRawHtml: false,
+            extensions: { userMessage: true, leadingWhitespace: true },
+          }
+        : undefined,
+    );
+    const range = document.createRange();
+    range.selectNodeContents(screen.container);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(chatMarkdownClipboardPayload(selection)?.text).toBe("first line\nsecond line");
+  });
+});
