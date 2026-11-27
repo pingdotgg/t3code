@@ -52,6 +52,29 @@ describe("Codex replay fixtures", () => {
     }),
   );
 
+  // regression: #40756 a stdio MCP server removed while the thread is loaded reloads it before the next turn
+  it.effect("reloads a loaded thread whose stdio MCP server was removed", () =>
+    Effect.gen(function* () {
+      const fixture = findReplayFixture("multi_turn")!;
+      const driver = fixture.providers.find((provider) => provider.driver === "codex")!;
+      yield* runReplayFixture({
+        fixtureName: fixture.name,
+        buildInput: fixture.buildInput,
+        driver: {
+          ...driver,
+          transcriptFile: new URL(
+            "./fixtures/stdio_mcp_server_removed/codex_transcript.ndjson",
+            import.meta.url,
+          ),
+        },
+        harness: CodexOrchestratorReplayHarness,
+        materializeWorkspace: (transcript, workspace) =>
+          Effect.succeed(materializeReplayTranscriptWorkspace(transcript, workspace)),
+        transformTranscript: renameRecordedThread("stdio_mcp_server_removed", fixture.name),
+      });
+    }),
+  );
+
   it.effect.each([true, false])("records prompt delivery after Stop (received: %s)", (received) =>
     Effect.gen(function* () {
       const fixture = findReplayFixture("turn_interrupt")!;

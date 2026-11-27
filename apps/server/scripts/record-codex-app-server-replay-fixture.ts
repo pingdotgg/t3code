@@ -98,6 +98,7 @@ const SCENARIO_NAMES = [
   "thread_rollback_after_restart",
   "thread_rollback_to_stopped_turn",
   "thread_merge_back_siblings",
+  "stdio_mcp_server_removed",
 ] as const;
 
 type ScenarioName = (typeof SCENARIO_NAMES)[number];
@@ -591,6 +592,23 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
           steps: [
             { type: "turn", label: "first", prompt: MULTI_TURN_FIRST_PROMPT },
             { type: "turn", label: "queued", prompt: MULTI_TURN_SECOND_PROMPT },
+          ],
+        },
+      ],
+    },
+    {
+      name: "stdio_mcp_server_removed",
+      fileName: "stdio_mcp_server_removed.ndjson",
+      description:
+        "A thread loaded with a stdio MCP server's T3CODE_THREAD_ID override loses that server from config.toml before its second turn.",
+      runs: [
+        {
+          name: "reload-after-stdio-mcp-removal",
+          description:
+            "Run from a trusted project with .codex/config.toml and set T3_CODEX_REPLAY_STDIO_MCP_COMMAND. The second turn unsubscribes, waits for thread/closed and resumes without the removed override, as CodexAdapterV2 does.",
+          steps: [
+            { type: "turn", label: "first", prompt: MULTI_TURN_FIRST_PROMPT },
+            { type: "turn", label: "second", prompt: MULTI_TURN_SECOND_PROMPT },
           ],
         },
       ],
@@ -1376,6 +1394,58 @@ const runReplaySession = Effect.fn("record-codex-app-server-replay-fixture.runRe
             recorder,
           }),
         ),
+      );
+      return;
+    }
+
+    if (scenario.name === "stdio_mcp_server_removed") {
+      const [first, second] = run.steps;
+      if (first?.type !== "turn" || second?.type !== "turn") {
+        throw new Error("stdio_mcp_server_removed replay recording requires two turn steps.");
+      }
+      const mcpCommand = yield* Config.String("T3_CODEX_REPLAY_STDIO_MCP_COMMAND");
+      const fs = yield* FileSystem.FileSystem;
+      const configPath = `${process.cwd()}/.codex/config.toml`;
+      const baseConfig = yield* fs.readFileString(configPath);
+      const configRead = { cwd: process.cwd(), includeLayers: false };
+      yield* fs.writeFileString(
+        configPath,
+        `${baseConfig}\n[mcp_servers.alpha]\ncommand = "${mcpCommand}"\n`,
+      );
+      yield* Effect.gen(function* () {
+        const client = yield* initializeClient;
+        const closed = yield* Deferred.make<void>();
+        yield* client.handleServerNotification("thread/closed", () =>
+          Deferred.succeed(closed, undefined),
+        );
+        yield* client.request("config/read", configRead);
+        const thread = yield* client.request("thread/start", {
+          ...threadRuntimeParams,
+          config: {
+            ...threadRuntimeParams.config,
+            "mcp_servers.alpha.env.T3CODE_THREAD_ID": "replay-thread",
+          },
+        });
+        const threadId = thread.thread.id;
+        yield* client.request("thread/name/set", {
+          threadId,
+          name: `Replay fixture: ${scenario.name}`,
+        });
+        yield* client.request("config/read", configRead);
+        yield* runTurnStep(client, threadId, first);
+        yield* fs.writeFileString(configPath, baseConfig);
+        yield* client.request("config/read", configRead);
+        yield* client.request("thread/unsubscribe", { threadId });
+        yield* Deferred.await(closed);
+        yield* client.request("thread/resume", {
+          threadId,
+          excludeTurns: true,
+          ...threadRuntimeParams,
+        });
+        yield* runTurnStep(client, threadId, second);
+      }).pipe(
+        Effect.ensuring(fs.writeFileString(configPath, baseConfig).pipe(Effect.ignore)),
+        Effect.provide(layerCodex({ recorder })),
       );
       return;
     }
