@@ -67,6 +67,37 @@ describe("ThemeImportDialog", () => {
     );
   });
 
+  it.each([
+    ["en", 1, "acme · 1 download"],
+    ["en", 1500, "acme · 1.5K downloads"],
+    ["de", 1, "acme · 1 Download"],
+    ["de", 10, "acme · 10 Downloads"],
+  ])("counts %s theme downloads (%d)", async (locale, downloadCount, line) => {
+    searchOpenVsxThemes.mockReset();
+    searchOpenVsxThemes.mockResolvedValue([{ ...extension, downloadCount }]);
+    const translations = await getTranslationsSnapshot(locale);
+    using _locale = {
+      [Symbol.dispose]() {
+        // GTProvider leaves its locale in a cookie; this sets it back to English.
+        initializeI18n(() => {});
+      },
+    };
+    await using _screen = await render(
+      <GTProvider locale={locale} translations={translations}>
+        <ThemeImportDialog
+          open
+          onOpenChange={() => {}}
+          onImported={() => true}
+          onImportedMany={() => {}}
+        />
+      </GTProvider>,
+    );
+
+    await userEvent.fill(page.getByRole("searchbox"), "night");
+
+    await expect.element(page.getByText(/^acme · /)).toHaveTextContent(line);
+  });
+
   it("clears the search on Escape before closing the dialog", async () => {
     searchOpenVsxThemes.mockReset();
     searchOpenVsxThemes.mockResolvedValue([]);

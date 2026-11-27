@@ -11421,6 +11421,7 @@
   "a3d6cb2d2df7ba2c": "Ordenar temas",
   "10410b403844f02a": "Buscando temas...",
   "5b96cf033ef08594": "{count, plural, one {Se encontró {count} tema compatible.} other {Se encontraron {count} temas compatibles.}}",
+  "90d1efbdea5f026b": "{count, plural, one {{formatted} descarga} other {{formatted} descargas}}",
   "9fa117e7d44abcb0": "Un tema de colores de la comunidad para tu editor.",
   "0b3502b77bb8e870": "Ver el código fuente de {name}",
   "5b9eab168f1435c0": "Actualizando {name}",

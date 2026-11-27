@@ -11447,6 +11447,7 @@
   "a3d6cb2d2df7ba2c": "主题排序",
   "10410b403844f02a": "正在搜索主题…",
   "5b96cf033ef08594": "{count, plural, other {找到 {count} 个受支持的主题。}}",
+  "90d1efbdea5f026b": "{count, plural, other {{formatted} 次下载}}",
   "9fa117e7d44abcb0": "适用于编辑器的社区配色主题。",
   "0b3502b77bb8e870": "查看 {name} 的源码",
   "5b9eab168f1435c0": "正在更新 {name}",

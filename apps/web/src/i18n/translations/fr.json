@@ -11426,6 +11426,7 @@
   "a3d6cb2d2df7ba2c": "Trier les thèmes",
   "10410b403844f02a": "Recherche de thèmes...",
   "5b96cf033ef08594": "{count, plural, one {{count} thème pris en charge trouvé.} other {{count} thèmes pris en charge trouvés.}}",
+  "90d1efbdea5f026b": "{count, plural, one {{formatted} téléchargement} other {{formatted} téléchargements}}",
   "9fa117e7d44abcb0": "Un thème de couleurs communautaire pour votre éditeur.",
   "0b3502b77bb8e870": "Voir la source de {name}",
   "5b9eab168f1435c0": "Mise à jour de {name}",

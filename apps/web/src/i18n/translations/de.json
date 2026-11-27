@@ -11426,6 +11426,7 @@
   "a3d6cb2d2df7ba2c": "Designs sortieren",
   "10410b403844f02a": "Designs werden gesucht...",
   "5b96cf033ef08594": "{count, plural, one {{count} unterstütztes Design gefunden.} other {{count} unterstützte Designs gefunden.}}",
+  "90d1efbdea5f026b": "{count, plural, one {{formatted} Download} other {{formatted} Downloads}}",
   "9fa117e7d44abcb0": "Ein Community-Farbdesign für deinen Editor.",
   "0b3502b77bb8e870": "Quelle von {name} anzeigen",
   "5b9eab168f1435c0": "{name} wird aktualisiert",

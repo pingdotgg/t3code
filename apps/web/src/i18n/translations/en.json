@@ -11435,6 +11435,7 @@
   "a3d6cb2d2df7ba2c": "Sort themes",
   "10410b403844f02a": "Searching themes...",
   "5b96cf033ef08594": "{count, plural, one {{count} supported theme found.} other {{count} supported themes found.}}",
+  "90d1efbdea5f026b": "{count, plural, one {{formatted} download} other {{formatted} downloads}}",
   "9fa117e7d44abcb0": "A community color theme for your editor.",
   "0b3502b77bb8e870": "View source for {name}",
   "5b9eab168f1435c0": "Updating {name}",
