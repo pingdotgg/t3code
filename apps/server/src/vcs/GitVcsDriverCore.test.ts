@@ -7105,6 +7105,24 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect(
+      "marks main as the default ref in a repository without a remote, as status does",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* commitInitialRepo(cwd, ["--initial-branch=main"]);
+          yield* git(cwd, ["checkout", "-b", "feature"]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* git(cwd, ["checkout", "main"]);
+          assert.isTrue((yield* driver.statusDetailsLocal(cwd)).isDefaultBranch);
+          yield* git(cwd, ["checkout", "feature"]);
+
+          const refs = (yield* driver.listRefs({ cwd })).refs;
+          assert.isTrue(refs.find((ref) => ref.name === "main")?.isDefault);
+          assert.isFalse(refs.find((ref) => ref.name === "feature")?.isDefault);
+        }),
+    );
+
     it.effect("preserves exact custom names and refuses collisions without a suffix", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
