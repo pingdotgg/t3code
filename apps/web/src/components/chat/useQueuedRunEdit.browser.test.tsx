@@ -28,7 +28,6 @@ import {
   threadContextReference,
 } from "../../lib/composerContextRecords";
 import { deriveComposerSendState } from "../ChatView.logic";
-import type { ChatComposerHandle } from "./ChatComposer";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { useQueuedRunEdit } from "./useQueuedRunEdit";
@@ -132,7 +131,7 @@ function setRuns(ref: ScopedThreadRef, status: string) {
 
 interface ComposerRefs {
   readonly promptRef: RefObject<string>;
-  readonly composerRef: RefObject<ChatComposerHandle | null>;
+  readonly composerRef: Parameters<typeof useQueuedRunEdit>[0]["composerRef"];
 }
 
 function Harness(props: {
@@ -144,7 +143,6 @@ function Harness(props: {
 }) {
   const threadKey = scopedThreadKey(props.threadRef);
   const currentRouteThreadKeyRef = useRef<string | null>(threadKey);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the committed route that pending saves read in ChatView
   useLayoutEffect(() => {
     currentRouteThreadKeyRef.current = threadKey;
     return () => {
@@ -276,15 +274,17 @@ describe("useQueuedRunEdit", () => {
       composerRef: { current: null },
     };
     await using screen = await render(view(THREAD_A, "queued", hook, [], composer));
-    await beginChangedEdit(hook);
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    composer.composerRef.current = { focusAtEnd, resetCursorState } as ChatComposerHandle;
-
     const frames: FrameRequestCallback[] = [];
     using _frame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
       frames.push(callback);
       return 0;
     });
+    await beginChangedEdit(hook);
+    await act(() => {
+      for (const frame of frames.splice(0)) frame(0);
+    });
+    composer.composerRef.current = { focusAtEnd, resetCursorState };
+
     const setThreadError = vi.fn();
     const saved = requireHook(hook).saveEdit(savedContent("changed"), setThreadError);
     await requested.promise;
@@ -300,7 +300,7 @@ describe("useQueuedRunEdit", () => {
 
     if (scenario.navigation === "switches before the frame") await openOtherThread();
     await act(() => {
-      for (const frame of frames.splice(0)) frame(performance.now());
+      for (const frame of frames.splice(0)) frame(0);
     });
     expect(focusAtEnd).toHaveBeenCalledTimes(Number(scenario.focuses));
     expect(composer.promptRef.current).toBe(
