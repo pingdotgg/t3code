@@ -70,6 +70,14 @@ describe("formatCpuTime", () => {
       "1h",
     ]);
   });
+
+  it("drops trailing zeros after the decimal point", () => {
+    expect([1.5, 90, 5_400].map((seconds) => formatCpuTime(seconds))).toEqual([
+      "1.5s",
+      "1.5m",
+      "1.5h",
+    ]);
+  });
 });
 
 describe("formatSamplingStatus", () => {

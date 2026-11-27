@@ -79,8 +79,8 @@ function formatRate(value: number): string {
 
 function formatDurationMicros(value: number): string {
   if (value < 1_000) return `${Math.round(value)} µs`;
-  if (value < 1_000_000) return `${(value / 1_000).toFixed(2).replace(/\.0+$/, "")} ms`;
-  return `${(value / 1_000_000).toFixed(2).replace(/\.0+$/, "")} s`;
+  if (value < 1_000_000) return `${Number((value / 1_000).toFixed(2))} ms`;
+  return `${Number((value / 1_000_000).toFixed(2))} s`;
 }
 
 function formatProcessName(process: Pick<ResourceTelemetryProcess, "command" | "name">): string {
@@ -867,7 +867,7 @@ function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttribut
               </td>
               <td className="px-3 py-2 text-right font-mono tabular-nums">{entry.count}</td>
               <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground sm:pr-5">
-                {(entry.durationMs / 1_000).toFixed(2).replace(/\.0+$/, "")}s
+                {Number((entry.durationMs / 1_000).toFixed(2))}s
               </td>
             </tr>
           ))}

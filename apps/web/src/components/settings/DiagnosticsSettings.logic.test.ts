@@ -6,6 +6,14 @@ describe("formatDiagnosticsDuration", () => {
   it("prints durations that round up to a second in seconds", () => {
     expect([999.4, 999.6, 1_000].map(formatDiagnosticsDuration)).toEqual(["999 ms", "1 s", "1 s"]);
   });
+
+  it("drops trailing zeros after the decimal point", () => {
+    expect([1_500, 2_340, 12_000].map(formatDiagnosticsDuration)).toEqual([
+      "1.5 s",
+      "2.34 s",
+      "12 s",
+    ]);
+  });
 });
 
 describe("formatShortProcessName", () => {

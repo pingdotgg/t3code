@@ -65,7 +65,7 @@ export function resourceHistoryCpuScaleMax(
 }
 
 export function formatCpuTime(seconds: number, resolve: MessageResolver = m): string {
-  const format = (value: number) => value.toFixed(value >= 10 ? 1 : 2).replace(/\.0+$/, "");
+  const format = (value: number) => String(Number(value.toFixed(value >= 10 ? 1 : 2)));
   // Pick the unit after rounding so 59.97 seconds never renders as "60s".
   const shortSeconds = format(seconds);
   if (Number(shortSeconds) < 60) {
@@ -77,7 +77,7 @@ export function formatCpuTime(seconds: number, resolve: MessageResolver = m): st
   }
   return resolve(
     msg("{value}h", {
-      value: (seconds / 3_600).toFixed(2).replace(/\.0+$/, ""),
+      value: String(Number((seconds / 3_600).toFixed(2))),
       $context: "CPU time in hours",
     }),
   );
