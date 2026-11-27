@@ -77,7 +77,7 @@ interface XmlNode {
   hasSelectedChoice?: boolean;
   epubTable?: boolean;
   mathmlFirstChildSeen?: boolean;
-  epubNavigation?: boolean;
+  epubBlock?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -184,10 +184,10 @@ function xml(source: string, extension: string): XmlNode {
       node.mathmlFirstChildSeen = false;
     if (
       extension === ".epub" &&
-      node.name === "nav" &&
+      ["nav", "details", "summary"].includes(node.name) &&
       isXhtmlElement(tag.name, stack, rootTagName)
     )
-      node.epubNavigation = true;
+      node.epubBlock = true;
     if (
       (node.name === "AlternateContent" || node.name === "Choice") &&
       namespaceOf(tag.name, stack) === MARKUP_COMPATIBILITY_NS
@@ -393,7 +393,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield "\n";
     } else if (
       child.hasText &&
-      (child.epubNavigation ||
+      (child.epubBlock ||
         [
           "blockquote",
           "figure",
