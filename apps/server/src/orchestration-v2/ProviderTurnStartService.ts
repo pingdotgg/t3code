@@ -2091,6 +2091,36 @@ export const layer: Layer.Layer<
                   : "resume_failed",
           errorTag: resumed._tag === "Failure" ? resumed.failure._tag : "ContextHandoffBudgetError",
         });
+        // Until a replacement starts, a retry must not resume or prompt the abandoned native
+        // session, even when opening the replacement fails (an initialize timeout).
+        if (providerThread.status !== "error") {
+          const abandonedAt = yield* DateTime.now;
+          const abandoned = yield* eventSink.writeIfRunCurrent({
+            threadId: projection.thread.id,
+            runId: run.id,
+            activeAttemptId: attempt.id,
+            expectedStatus: "starting",
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                type: "provider-thread.updated",
+                threadId: projection.thread.id,
+                driver: session.driver,
+                providerInstanceId: providerThread.providerInstanceId,
+                occurredAt: abandonedAt,
+                payload: { ...providerThread, status: "error", updatedAt: abandonedAt },
+              },
+            ],
+          });
+          if (!abandoned.committed) return undefined;
+        }
+        yield* providerSessions.forgetLoadedProviderThread({
+          providerSessionId: session.providerSessionId,
+          threadId: projection.thread.id,
+          providerThread,
+          modelSelection: run.modelSelection,
+          runtimePolicy: resolvedRuntimePolicy,
+        });
         const replacement = yield* loadFromProvider(
           session.ensureThread({
             threadId: projection.thread.id,

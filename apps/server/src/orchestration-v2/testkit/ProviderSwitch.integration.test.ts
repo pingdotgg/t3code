@@ -113,6 +113,8 @@ function makeTestAdapter(input: {
   readonly nativeThreadGeneration?: Ref.Ref<number>;
   readonly failResume?: boolean;
   readonly failResumeOnce?: Ref.Ref<boolean>;
+  /** Like a replacement runtime whose initialize timed out. */
+  readonly failForcedNativeThreadOnce?: Ref.Ref<boolean>;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
   readonly getModelContextWindow?: (selection: ModelSelection) => number | undefined;
   readonly canReuseContextUsage?: ProviderAdapter.ProviderAdapterV2SessionRuntime["canReuseContextUsage"];
@@ -228,6 +230,12 @@ function makeTestAdapter(input: {
               }
               if (threadInput.forceNewNativeThread && input.beforeForcedNativeThread !== undefined)
                 yield* input.beforeForcedNativeThread;
+              if (
+                threadInput.forceNewNativeThread &&
+                input.failForcedNativeThreadOnce !== undefined &&
+                (yield* Ref.getAndSet(input.failForcedNativeThreadOnce, false))
+              )
+                return yield* unimplemented(input.driver, "initialize timed out");
               const createdAt = yield* DateTime.now;
               const generation =
                 input.nativeThreadGeneration === undefined
@@ -2297,6 +2305,63 @@ describe("orchestration v2 provider switching", () => {
             }),
         );
       }),
+  );
+
+  // regression: #44152 a retry after the replacement failed to open prompted the lost session.
+  it.live("keeps recovering after the replacement session fails to open", () =>
+    Effect.gen(function* () {
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const failResumeOnce = yield* Ref.make(false);
+      const failForcedNativeThreadOnce = yield* Ref.make(false);
+      yield* unverifiedReplacementHarness(
+        "replacement-open-fails",
+        [
+          makeTestAdapter({
+            instanceId: GROK_MODEL_SELECTION.instanceId,
+            driver: GROK_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            modelSelection: GROK_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            failResumeOnce,
+            failForcedNativeThreadOnce,
+            // Like ACP: a thread marked broken is never resumed.
+            brokenRunOrdinals: new Set(),
+            nativeThreadGeneration: yield* Ref.make(0),
+          }),
+        ],
+        ({ orchestrator, worker, dispatchRequest, awaitSettled }) =>
+          Effect.gen(function* () {
+            yield* dispatchRequest(1, GROK_MODEL_SELECTION);
+            yield* awaitSettled(1);
+            const providerSessionId = (yield* orchestrator.getThreadProjection(threadId))
+              .providerThreads[0]?.providerSessionId;
+            if (providerSessionId == null) return yield* Effect.die("Expected a provider session.");
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("replacement-open-fails:detach"),
+              threadId,
+              providerSessionId,
+            });
+            yield* worker.drain();
+            yield* Ref.set(failResumeOnce, true);
+            yield* Ref.set(failForcedNativeThreadOnce, true);
+            yield* dispatchRequest(2, GROK_MODEL_SELECTION);
+            yield* awaitSettled(2);
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            if (projection.runs.at(-1)!.status !== "completed") {
+              yield* dispatchRequest(3, GROK_MODEL_SELECTION);
+              yield* awaitSettled(3);
+            }
+
+            const turns = yield* Ref.get(capturedTurns);
+            assert.isAbove(turns.length, 1);
+            for (const turn of turns.slice(1)) {
+              assert.notEqual(turn.nativeThreadId, turns[0]!.nativeThreadId);
+            }
+          }),
+      );
+    }),
   );
 
   it.live("keeps failing honestly on the next turn after rejecting a reused session", () =>
