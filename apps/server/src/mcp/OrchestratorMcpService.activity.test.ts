@@ -468,6 +468,201 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
+it("readThread includes completed user input answers in activity text", async () => {
+  const requestId = "request-mcp-user-input";
+  const questions = [
+    {
+      id: "choice",
+      header: "Choice",
+      question: "Choose a color",
+      options: [
+        { label: "Blue", description: "Use blue", value: "blue" },
+        { label: "Red", description: "Use red", value: "red" },
+      ],
+    },
+    {
+      id: "tags",
+      header: "Tags",
+      question: "Choose tags",
+      options: [{ label: "One", description: "First tag", value: "one" }],
+      multiSelect: true,
+    },
+    {
+      id: "notes",
+      header: "Notes",
+      question: "Add notes",
+      options: [],
+      allowCustomAnswer: true,
+    },
+  ];
+  const attachment = {
+    type: "file",
+    id: "attachment-mcp-user-input",
+    name: "notes.txt",
+    mimeType: "text/plain",
+    sizeBytes: 12,
+    source: { _tag: "pasted-text" },
+  };
+  const projection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
+    visibleTurnItems: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const pendingItemId = TurnItemId.make("turn-item-mcp-user-input-pending");
+  const completedItemId = TurnItemId.make("turn-item-mcp-user-input-completed");
+  const emptyAttachmentsItemId = TurnItemId.make("turn-item-mcp-user-input-empty-attachments");
+  const item = (itemId: TurnItemId, questionAnswer?: unknown) => ({
+    position: itemId === pendingItemId ? 0 : itemId === completedItemId ? 1 : 2,
+    visibility: "visible",
+    sourceThreadId: parentThreadId,
+    sourceItemId: itemId,
+    item: {
+      type: "user_input_request",
+      runId: activeRunId,
+      status: questionAnswer === undefined ? "waiting" : "completed",
+      title: "User input",
+      requestId,
+      questions,
+      ...(questionAnswer === undefined ? {} : { questionAnswer }),
+      updatedAt: now,
+    },
+  });
+  const rows = [
+    item(pendingItemId),
+    item(completedItemId, {
+      requestId,
+      answers: { choice: "blue", tags: ["one", "two"], notes: "custom text" },
+      attachmentsByQuestionId: { notes: [attachment] },
+      questionTextById: Object.fromEntries(
+        questions.map((question) => [question.id, question.question]),
+      ),
+    }),
+    item(emptyAttachmentsItemId, {
+      requestId,
+      answers: { choice: "red" },
+      attachmentsByQuestionId: {},
+    }),
+  ];
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getTimelinePage: (_threadId, options) => {
+            const filtered = rows.filter(
+              (row) =>
+                (options.itemId === undefined || row.sourceItemId === options.itemId) &&
+                row.position > (options.afterPosition ?? -1) &&
+                row.position < (options.beforePosition ?? Number.POSITIVE_INFINITY),
+            );
+            return Effect.succeed({
+              items: filtered.slice(
+                0,
+                options.limit,
+              ) as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: rows.length,
+              hasMore: false,
+              hasEarlier: false,
+            });
+          },
+          getThreadRecords: () => Effect.succeed(projection),
+          getProjectThreadRecords: () => Effect.succeed(projection),
+          getRunCount: () => Effect.succeed(projection.runs.length),
+          getThreadShell: () =>
+            Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const pending = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      itemId: pendingItemId,
+      maxCharsPerItem: 5_000,
+    });
+    expect(pending.items[0]?.text).toBe(JSON.stringify(questions, null, 2));
+
+    const completed = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      itemId: completedItemId,
+      maxCharsPerItem: 80,
+    });
+    expect(completed.items[0]?.text).toContain('"answers"');
+    expect(completed.items[0]?.text).not.toContain('"questions"');
+    expect(completed.items[0]?.textTruncated).toBe(true);
+    const pages = [completed.items[0]?.text ?? ""];
+    let textOffset = completed.items[0]?.nextTextOffset ?? null;
+    while (textOffset !== null) {
+      const page = yield* service.readThread(makeScope(), {
+        threadId: parentThreadId,
+        view: "activity",
+        itemId: completedItemId,
+        textOffset,
+        maxCharsPerItem: 80,
+      });
+      pages.push(page.items[0]?.text ?? "");
+      textOffset = page.items[0]?.nextTextOffset ?? null;
+    }
+    const answerText = pages.join("");
+    const answer = JSON.parse(answerText);
+    expect(answer).toMatchObject({
+      answers: { choice: "blue", tags: ["one", "two"], notes: "custom text" },
+      attachmentsByQuestionId: {
+        notes: [
+          {
+            type: "file",
+            id: attachment.id,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: 12,
+          },
+        ],
+      },
+      questions,
+    });
+    expect(answer).not.toHaveProperty("questionTextById");
+    expect(answer.attachmentsByQuestionId.notes[0]).not.toHaveProperty("source");
+
+    const emptyAttachments = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      itemId: emptyAttachmentsItemId,
+      maxCharsPerItem: 5_000,
+    });
+    expect(emptyAttachments.items[0]?.text).not.toContain("attachmentsByQuestionId");
+    expect(JSON.parse(emptyAttachments.items[0]?.text ?? "{}")).toMatchObject({
+      answers: { choice: "red" },
+      questions,
+    });
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
 it("readThread does not attribute the /compact T3 Code sends before a stale send to the user", async () => {
   const compactRunId = RunId.make("run-mcp-compact-on-return");
   const sendRunId = RunId.make("run-mcp-held-send");
