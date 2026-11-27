@@ -1243,6 +1243,14 @@ it.effect("creating a project through MCP refuses a model default instead of dro
       id: harness.projectId,
       defaultModelSelection: null,
     });
+
+    // Empty lists set nothing, so creation drops nothing.
+    for (const empty of [{ scripts: [] }, { trackedFolders: [] }]) {
+      const created = yield* toolkit
+        .handle("t3_project_create", { title: "client-target", ...empty })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      expect(created.at(-1)?.result).toMatchObject({ id: harness.projectId });
+    }
   }),
 );
 
