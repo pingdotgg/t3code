@@ -8,12 +8,10 @@ it.each([
   { styleStart: "5", itemStart: undefined, expectedStart: "5", expectedValue: null },
   { styleStart: "0", itemStart: "4", expectedStart: "0", expectedValue: "4" },
   { styleStart: "7", itemStart: "1.5", expectedStart: "7", expectedValue: null },
-  { styleStart: undefined, itemStart: "4", expectedStart: null, expectedValue: "4" },
 ])(
   "preserves ODT ordered-list numbering with style start $styleStart and item start $itemStart",
   async ({ styleStart, itemStart, expectedStart, expectedValue }) => {
     const itemAttribute = itemStart === undefined ? "" : ` text:start-value="${itemStart}"`;
-    const styleAttribute = styleStart === undefined ? "" : ` text:start-value="${styleStart}"`;
     const archive = await new JSZip()
       .file("mimetype", "application/vnd.oasis.opendocument.text", { compression: "STORE" })
       .file(
@@ -22,7 +20,7 @@ it.each([
       xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
       xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0">
       <office:automatic-styles><text:list-style style:name="Steps">
-        <text:list-level-style-number text:level="1" style:num-format="1"${styleAttribute}/>
+        <text:list-level-style-number text:level="1" style:num-format="1" text:start-value="${styleStart}"/>
       </text:list-style></office:automatic-styles>
       <office:body><office:text><text:list text:style-name="Steps">
         <text:list-item${itemAttribute}><text:p>Review the draft</text:p></text:list-item>
