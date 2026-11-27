@@ -53,6 +53,7 @@ import { TeamEnvironmentsSettingsSection } from "./TeamEnvironmentsSettingsSecti
 import { TeamGitHubSettingsSection } from "./TeamGitHubSettingsSection";
 import { TeamMembersSettingsSection } from "./TeamMembersSettingsSection";
 import { TeamMobileCompatSection } from "./TeamMobileCompatSection";
+import { TeamNotificationSoundRow } from "./TeamNotificationSoundSettings";
 import { TeamProvidersSettingsSection } from "./TeamProvidersSettingsSection";
 import { TeamSkillsAndPrepromptsSettingsSection } from "./TeamSkillsAndPrepromptsSettingsSection";
 import { TeamViewsSettingsSection } from "./TeamViewsSettingsSection";
@@ -693,6 +694,8 @@ export function TeamsSettings() {
                 />
               }
             />
+
+            <TeamNotificationSoundRow team={teamState.team} />
           </SettingsSection>
 
           {selectedEnvironmentId !== null ? (

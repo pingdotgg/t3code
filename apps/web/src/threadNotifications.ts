@@ -7,12 +7,19 @@ import {
   type TeamThreadNotificationDecision,
 } from "@t3tools/client-runtime/team";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { ClientSettings } from "@t3tools/contracts/settings";
+import type { ClientSettings, TeamNotificationSoundPreset } from "@t3tools/contracts/settings";
 import { msg } from "gt-react";
 
 import completionUrl from "./assets/notification-completion.mp3";
 import inputUrl from "./assets/notification-input.mp3";
 import { m, type MessageResolver } from "./i18n/messages";
+import {
+  getSynthesizedTeamNotificationBuffer,
+  isSynthesizedTeamNotificationSoundPreset,
+  playPreviewAudioBuffer,
+  playSynthesizedTeamNotificationSound,
+  type NotificationSoundKind,
+} from "./lib/teamNotificationSound";
 
 type NotificationMode = ClientSettings["notificationMode"];
 export const NOTIFICATION_MODE_LABELS = {
@@ -177,24 +184,75 @@ function loadNotificationBuffer(context: AudioContext, url: string): Promise<Aud
   return buffer;
 }
 
-/** Called from a gesture so browsers allow later background playback. */
-export function unlockNotificationAudio() {
+function ensureUnlockedNotificationAudio(): Promise<void> | null {
   const firstUnlock = audioContext === undefined;
   audioContext ??= new AudioContext();
-  void audioContext.resume().catch(() => undefined);
-  if (!firstUnlock) return;
+  const resumePromise = audioContext.state === "running" ? null : audioContext.resume();
+  if (resumePromise) {
+    void resumePromise.catch(() => undefined);
+  }
+  if (!firstUnlock) return resumePromise;
   // Fetch and decode during interaction so the first alert is ready when the thread finishes.
   for (const url of [completionUrl, inputUrl]) {
     void loadNotificationBuffer(audioContext, url).catch(() => undefined);
   }
+  return resumePromise;
+}
+
+/** Called from a gesture so browsers allow later background playback. */
+export function unlockNotificationAudio() {
+  void ensureUnlockedNotificationAudio();
+}
+
+let previewGeneration = 0;
+
+export async function previewTeamNotificationSound(
+  preset: TeamNotificationSoundPreset,
+  kind: NotificationSoundKind = "completion",
+) {
+  if (preset === "off" || typeof AudioContext === "undefined") return;
+  const generation = ++previewGeneration;
+  try {
+    const resumePromise = ensureUnlockedNotificationAudio();
+    const context = audioContext;
+    if (!context) return;
+    if (resumePromise) {
+      await resumePromise;
+    }
+    if (generation !== previewGeneration || context.state !== "running") return;
+    const buffer =
+      preset === "classic"
+        ? await loadNotificationBuffer(context, kind === "completion" ? completionUrl : inputUrl)
+        : getSynthesizedTeamNotificationBuffer(context, preset, kind);
+    if (generation !== previewGeneration || context.state !== "running") return;
+    playPreviewAudioBuffer(context, buffer);
+  } catch {
+    // Ignore preview audio failures in restricted audio environments.
+  }
 }
 
 export async function playNotificationSound(
-  kind: "completion" | "input",
+  kind: NotificationSoundKind,
   shouldPlay: () => boolean,
+  preset: TeamNotificationSoundPreset = "classic",
 ) {
+  if (preset === "off") return;
   if (!audioContext || audioContext.state !== "running") return;
   const context = audioContext;
+  if (isSynthesizedTeamNotificationSoundPreset(preset)) {
+    try {
+      playSynthesizedTeamNotificationSound({
+        context,
+        preset,
+        kind,
+        shouldPlay,
+        playingUntil,
+      });
+    } catch {
+      // Ignore synthesis/playback errors on restricted audio contexts.
+    }
+    return;
+  }
   const url = kind === "completion" ? completionUrl : inputUrl;
   try {
     const decoded = await loadNotificationBuffer(context, url);

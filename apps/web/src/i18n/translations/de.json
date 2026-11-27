@@ -13490,5 +13490,34 @@
   "7d63b70705da219f": "Verwendet standardmäßig den Teamnamen, wenn leer. Wird als Präfix für Team-Threads aus geplanten Aufgaben angezeigt.",
   "d8a2bbf28fcd8545": "{sender} hat eine Nachricht in „{threadTitle}“ eingereiht",
   "d5e1f1c902f3beec": "{sender} hat eine Nachricht eingereiht",
-  "ffa3612b1d59dc0e": "Thread öffnen, um sie zu prüfen oder auf „Jetzt senden“ zu klicken."
+  "ffa3612b1d59dc0e": "Thread öffnen, um sie zu prüfen oder auf „Jetzt senden“ zu klicken.",
+  "eaaf25718abe08f3": "Team-Benachrichtigungstöne",
+  "6edadea6ed9f764c": "team ton benachrichtigungston signal glockenspiel glocke marimba puls klassisch stumm vorschau",
+  "aa9c24c9f6e35618": "Team-Benachrichtigungston",
+  "8ebb9c471b7746b0": "Glockenspiel",
+  "b480b015b2527f7f": "Glocke",
+  "6177878ddbfe6c6f": "Marimba",
+  "a69e7ab94fe68b23": "Puls",
+  "4f33bb8b212f74c0": "Klassisch (Persönlich)",
+  "cf69c5ae3e908891": "Aus",
+  "951d35e964e49024": "Glockenspiel (Standard)",
+  "0a19f45b7699cbec": "Benachrichtigungston für {team}: {sound}",
+  "ad1aa16672b9e394": "{sound} anhören",
+  "16bdc6823e68c016": "Benachrichtigungston für {team} anhören",
+  "77b9b206a6fa0f6a": "Benachrichtigungston",
+  "f6d5283d42007b0c": "Eigener Signalton für Threads in {team} (sowohl Remote- als auch lokale Teamprojekte). Persönliche Threads verwenden weiterhin den klassischen Ton.",
+  "66ebeca535ea72f3": "Thread-Benachrichtigungstöne sind derzeit in den allgemeinen Einstellungen deaktiviert.",
+  "ecdb99973d136dfc": "Benachrichtigungston für {team} auf Standard zurücksetzen",
+  "cc86e648609e3b30": "Aktiviere oben den Thread-Benachrichtigungston, um Team-Signale automatisch zu hören.",
+  "4d403f03880ef1b4": "Ton für {team}-Threads (unterscheidet sich von persönlichen Thread-Benachrichtigungen). Gilt für dieses Gerät.",
+  "8218e45742ab1da7": "Wähle für jedes verbundene Team einen eigenen Signalton (persönliche Threads behalten den klassischen Ton). Gilt für dieses Gerät.",
+  "e2b2bda149094334": [
+    "Glockenspiel ",
+    {
+      "t": "span",
+      "i": 1,
+      "c": "(Standard)"
+    }
+  ],
+  "fa7abddc6635a0c7": "Vorschau"
 }

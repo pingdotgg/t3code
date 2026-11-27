@@ -13,6 +13,7 @@ import {
   canMemberRespondToTeamRuntimeRequest,
   canMemberSteerActiveTeamTurn,
   canToggleTeamThreadLock,
+  DEFAULT_TEAM_NOTIFICATION_SOUND,
   isTeamAdminRole,
   isTeamOwnedThreadAttribution,
   isTeamProviderInstanceId,
@@ -26,7 +27,9 @@ import {
   type RepositoryIdentity,
   type ScheduledTaskId,
   type TeamEnvironment,
+  type TeamId,
   type TeamMemberId,
+  type TeamNotificationSoundPreset,
   type TeamProjectAssignment,
   type TeamProvider,
   type TeamScheduledTaskMeta,
@@ -940,4 +943,95 @@ export function canCurrentMemberMutateTeamScheduledTask(input: {
     }
   }
   return true;
+}
+
+export interface ConnectedTeamSummary {
+  readonly environmentId: EnvironmentId;
+  readonly team: TeamWorkspace;
+}
+
+/** Deduplicates connected team environments by `team.id`, preserving connection order. */
+export function listConnectedTeams(
+  teamStates: ReadonlyMap<EnvironmentId, TeamEnvironmentState>,
+): ReadonlyArray<ConnectedTeamSummary> {
+  const seenTeamIds = new Set<TeamId>();
+  const connected: Array<ConnectedTeamSummary> = [];
+  for (const [environmentId, state] of teamStates) {
+    if (state.team === null || seenTeamIds.has(state.team.id)) continue;
+    seenTeamIds.add(state.team.id);
+    connected.push({ environmentId, team: state.team });
+  }
+  return connected;
+}
+
+/**
+ * Resolves the effective notification sound preset for a thread:
+ * - Personal threads (`teamId === null`) always keep upstream's `"classic"` preset.
+ * - Team threads use the per-team configured preset, defaulting to `"chime"` so
+ *   team alerts are immediately distinct from personal alerts.
+ */
+export function resolveTeamNotificationSoundPreset(input: {
+  readonly teamId: TeamId | string | null | undefined;
+  readonly teamNotificationSounds?:
+    | Readonly<Record<string, TeamNotificationSoundPreset>>
+    | null
+    | undefined;
+}): TeamNotificationSoundPreset {
+  if (input.teamId == null || input.teamId === "") {
+    return "classic";
+  }
+  const sounds = input.teamNotificationSounds;
+  if (sounds && Object.hasOwn(sounds, input.teamId)) {
+    const configured = sounds[input.teamId];
+    if (configured !== undefined) {
+      return configured;
+    }
+  }
+  return DEFAULT_TEAM_NOTIFICATION_SOUND;
+}
+
+/**
+ * Resolves the owning `TeamId` for a thread across both:
+ * 1. Remote Team Server threads (`teamStates.get(environmentId)?.team?.id`), and
+ * 2. Local-environment threads belonging to a team-assigned project (via repo identity
+ *    correlation or local-synced thread attribution).
+ */
+export function resolveThreadTeamId(input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly project?:
+    | {
+        readonly id: ProjectId;
+        readonly environmentId: EnvironmentId;
+        readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+      }
+    | null
+    | undefined;
+  readonly teamStates: ReadonlyMap<EnvironmentId, TeamEnvironmentState>;
+}): TeamId | null {
+  const direct = input.teamStates.get(input.environmentId);
+  if (direct?.team != null) {
+    return direct.attributionByThreadId.get(input.threadId)?.teamId ?? direct.team.id;
+  }
+  if (input.project != null) {
+    const assignment = resolveProjectTeamAssignment({
+      project: input.project,
+      teamStates: input.teamStates,
+    });
+    if (assignment !== null) {
+      return assignment.assignment.teamId;
+    }
+  }
+  for (const state of input.teamStates.values()) {
+    if (state.team === null) continue;
+    const attribution = state.attributionByThreadId.get(input.threadId);
+    if (
+      attribution?.isLocalSynced === true &&
+      (attribution.executionEnvironmentId == null ||
+        attribution.executionEnvironmentId === input.environmentId)
+    ) {
+      return attribution.teamId;
+    }
+  }
+  return null;
 }

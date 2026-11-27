@@ -1,5 +1,6 @@
 import { useMessages } from "gt-react";
 import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
+import { hasActiveTeamEnvironment } from "@t3tools/client-runtime/team";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 
 import { usePrimaryCloudLinkState } from "~/cloud/cloudLinkState";
@@ -11,6 +12,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { usePeerLinkHosts } from "~/state/peerLinks";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
+import { useTeamStatesByEnvironment } from "~/state/team";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
 import {
@@ -77,6 +79,7 @@ export function useAvailableSettingsSearchItems() {
   const cloudPublicConfig = hasCloudPublicConfig() === true;
   const wslSettingsRowVisible =
     isWslSettingsRowVisible({ state: desktopWsl.data, error: desktopWsl.error }) === true;
+  const hasConnectedTeam = hasActiveTeamEnvironment(useTeamStatesByEnvironment());
 
   return filterAvailableSettingsSearchItems({
     localEnvironmentDisabled,
@@ -93,5 +96,6 @@ export function useAvailableSettingsSearchItems() {
     hasTextGeneratorsEnvironment,
     hasPrimaryEnvironment: primaryEnvironmentId !== null,
     hasSecretProvidersEnvironment,
+    hasConnectedTeam,
   });
 }

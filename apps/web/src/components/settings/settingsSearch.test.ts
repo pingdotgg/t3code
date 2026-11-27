@@ -254,6 +254,39 @@ describe("searchSettings", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it("finds team notification sound settings and gates the General entry on connected teams", () => {
+    const baseAvailability = {
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: true,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+
+    const personalItems = filterAvailableSettingsSearchItems({
+      ...baseAvailability,
+      hasConnectedTeam: false,
+    });
+    expect(searchSettings("team sound", personalItems).map((item) => item.id)).toContain(
+      "teams-notification-sound",
+    );
+    expect(searchSettings("team sound", personalItems).map((item) => item.id)).not.toContain(
+      "team-notification-sounds",
+    );
+
+    const teamItems = filterAvailableSettingsSearchItems({
+      ...baseAvailability,
+      hasConnectedTeam: true,
+    });
+    expect(searchSettings("team sound", teamItems).map((item) => item.id)).toEqual(
+      expect.arrayContaining(["team-notification-sounds", "teams-notification-sound"]),
+    );
+    expect(searchSettings("notification sound", teamItems).map((item) => item.id)).toEqual(
+      expect.arrayContaining(["team-notification-sounds", "teams-notification-sound"]),
+    );
+  });
 });
 
 describe("settings search targets", () => {

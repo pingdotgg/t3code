@@ -55,6 +55,11 @@ import {
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 import {
+  DEFAULT_TEAM_NOTIFICATION_SOUND,
+  TEAM_NOTIFICATION_SOUND_PRESETS,
+  TeamNotificationSoundPreset,
+} from "./team/schemas.ts";
+import {
   CloudSpeechModelId,
   SpeechAcceleration,
   SpeechCorrectionCue,
@@ -276,6 +281,11 @@ export const NotificationMode = Schema.Literals([
   "notifications-and-sound",
 ]);
 export type NotificationMode = typeof NotificationMode.Type;
+export {
+  DEFAULT_TEAM_NOTIFICATION_SOUND,
+  TEAM_NOTIFICATION_SOUND_PRESETS,
+  TeamNotificationSoundPreset,
+};
 
 export const QuitConfirmationMode = Schema.Literals(["direct", "hold", "double-click"]);
 export type QuitConfirmationMode = typeof QuitConfirmationMode.Type;
@@ -418,6 +428,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
   inAppNotificationsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  teamNotificationSounds: Schema.Record(TrimmedNonEmptyString, TeamNotificationSoundPreset).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   diffColorScheme: DiffColorScheme.pipe(
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
@@ -2111,6 +2124,9 @@ export function requiredScopesForProjectMutation(
 export const ClientSettingsPatch = Schema.Struct({
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
+  teamNotificationSounds: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, TeamNotificationSoundPreset),
+  ),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),
   htmlPreviewWidth: Schema.optionalKey(HtmlPreviewWidth),

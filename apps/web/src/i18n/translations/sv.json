@@ -13497,5 +13497,34 @@
   "7d63b70705da219f": "Använder teamnamnet om det lämnas tomt. Visas som prefix på teamägda trådar för schemalagda uppgifter.",
   "d8a2bbf28fcd8545": "{sender} lade ett meddelande i kö i \"{threadTitle}\"",
   "d5e1f1c902f3beec": "{sender} lade ett meddelande i kö",
-  "ffa3612b1d59dc0e": "Öppna tråden för att granska eller klicka på Skicka nu."
+  "ffa3612b1d59dc0e": "Öppna tråden för att granska eller klicka på Skicka nu.",
+  "eaaf25718abe08f3": "Aviseringsljud för team",
+  "6edadea6ed9f764c": "team ljud aviseringsljud signal klang klocka marimba puls klassisk tyst förhandslyssna",
+  "aa9c24c9f6e35618": "Aviseringsljud för team",
+  "8ebb9c471b7746b0": "Klang",
+  "b480b015b2527f7f": "Klocka",
+  "6177878ddbfe6c6f": "Marimba",
+  "a69e7ab94fe68b23": "Puls",
+  "4f33bb8b212f74c0": "Klassisk (Personlig)",
+  "cf69c5ae3e908891": "Av",
+  "951d35e964e49024": "Klang (Standard)",
+  "0a19f45b7699cbec": "Aviseringsljud för {team}: {sound}",
+  "ad1aa16672b9e394": "Förhandslyssna på {sound}",
+  "16bdc6823e68c016": "Förhandslyssna på aviseringsljud för {team}",
+  "77b9b206a6fa0f6a": "Aviseringsljud",
+  "f6d5283d42007b0c": "Separat aviseringsljud för trådar i {team} (både fjärr- och lokala teamprojekt). Personliga trådar fortsätter använda det klassiska ljudet.",
+  "66ebeca535ea72f3": "Aviseringsljud för trådar är för närvarande avstängt i Allmänna inställningar.",
+  "ecdb99973d136dfc": "Återställ aviseringsljud för {team} till standard",
+  "cc86e648609e3b30": "Slå på aviseringsljud för trådar ovan för att höra teamaviseringar automatiskt.",
+  "4d403f03880ef1b4": "Ljud som spelas för {team}-trådar (skiljt från personliga trådaviseringar). Gäller denna enhet.",
+  "8218e45742ab1da7": "Välj ett eget aviseringsljud för varje anslutet team (personliga trådar behåller det klassiska ljudet). Gäller denna enhet.",
+  "e2b2bda149094334": [
+    "Klang ",
+    {
+      "t": "span",
+      "i": 1,
+      "c": "(Standard)"
+    }
+  ],
+  "fa7abddc6635a0c7": "Lyssna"
 }

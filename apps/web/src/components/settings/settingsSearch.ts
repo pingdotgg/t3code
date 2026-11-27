@@ -75,6 +75,7 @@ export interface SettingsSearchItem {
   readonly fastWorktreeCheckoutOnly?: boolean;
   readonly agentFeedbackOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
+  readonly teamsOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -95,6 +96,7 @@ export interface SettingsSearchAvailability {
   readonly hasTextGeneratorsEnvironment?: boolean;
   readonly hasPrimaryEnvironment?: boolean;
   readonly hasSecretProvidersEnvironment?: boolean;
+  readonly hasConnectedTeam?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -763,6 +765,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Thread notifications"),
     to: "/settings/general",
     searchTerms: [msg("notification sound alert completion input approval desktop")],
+  },
+  {
+    id: "team-notification-sounds",
+    title: msg("Team notification sounds"),
+    to: "/settings/general",
+    teamsOnly: true,
+    searchTerms: [
+      msg("team sound notification sound alert chime bell marimba pulse classic mute preview"),
+    ],
   },
   {
     id: "in-app-notifications",
@@ -1528,6 +1539,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("team workspace pseudo invite members colleagues shared server")],
   },
   {
+    id: "teams-notification-sound",
+    title: msg("Team notification sound"),
+    to: "/settings/teams",
+    targetId: "teams-notification-sound",
+    searchTerms: [
+      msg("team sound notification sound alert chime bell marimba pulse classic mute preview"),
+    ],
+  },
+  {
     id: "teams-github",
     title: msg("Team GitHub identity"),
     to: "/settings/teams",
@@ -1723,7 +1743,8 @@ export function filterAvailableSettingsSearchItems(
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
       (!item.agentFeedbackOnly || availability.hasAgentFeedbackEnvironment === true) &&
       (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true) &&
-      (!item.secretProvidersOnly || availability.hasSecretProvidersEnvironment === true),
+      (!item.secretProvidersOnly || availability.hasSecretProvidersEnvironment === true) &&
+      (!item.teamsOnly || availability.hasConnectedTeam === true),
   );
 }
 
