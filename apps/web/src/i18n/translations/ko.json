@@ -11373,6 +11373,7 @@
   "a3d6cb2d2df7ba2c": "테마 정렬",
   "10410b403844f02a": "테마 검색 중...",
   "5b96cf033ef08594": "{count, plural, other {지원되는 테마 {count}개를 찾았습니다.}}",
+  "90d1efbdea5f026b": "{count, plural, other {다운로드 {formatted}회}}",
   "9fa117e7d44abcb0": "에디터용 커뮤니티 색 테마입니다.",
   "0b3502b77bb8e870": "{name}의 소스 보기",
   "5b9eab168f1435c0": "{name} 업데이트 중",

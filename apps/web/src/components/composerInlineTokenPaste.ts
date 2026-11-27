@@ -21,9 +21,13 @@ import { readThreadShell } from "~/state/entities";
 
 const threadTitle = (ref: ScopedThreadRef) => readThreadShell(ref)?.title;
 
-// Matches ProseMirror's default clipboard parser, which a custom handlePaste bypasses.
+// Matches ProseMirror's default clipboard parser, which a custom handlePaste bypasses. A leading
+// BOM is not content, and kept it would stop a first-line fence from opening a code block.
 export function readPastedPlainText(clipboardData: Pick<DataTransfer, "getData">): string {
-  return clipboardData.getData("text/plain").replace(/\r\n?/g, "\n");
+  return clipboardData
+    .getData("text/plain")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?/g, "\n");
 }
 
 export function readPastedComposerClipboard(

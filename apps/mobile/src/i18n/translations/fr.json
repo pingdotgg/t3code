@@ -2328,7 +2328,7 @@
     }
   ],
   "17d363d5ff1f038f": "{seconds, plural, one {Environ {seconds} seconde restante} other {Environ {seconds} secondes restantes}}",
-  "bc86d0e75a37411b": "{minutes, plural, one {Environ {minutes} minute restante} other {Environ {minutes} minutes restantes}}",
+  "5286056f1e375e8c": "{minutes, plural, one {Environ {minutes} minute restante} other {Environ {minutes} minutes restantes}}",
   "89555f39918ea6cc": "Rechercher des fils",
   "889266d70ae46113": "Recherche dans les messages des fils…",
   "35727ced1d37da7f": "Recherche de « {query} » dans les messages.",

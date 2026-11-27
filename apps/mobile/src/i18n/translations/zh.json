@@ -2331,7 +2331,7 @@
     }
   ],
   "17d363d5ff1f038f": "{seconds, plural, other {大约还剩 {seconds} 秒}}",
-  "bc86d0e75a37411b": "{minutes, plural, other {大约还剩 {minutes} 分钟}}",
+  "5286056f1e375e8c": "{minutes, plural, other {大约还剩 {minutes} 分钟}}",
   "89555f39918ea6cc": "搜索会话",
   "889266d70ae46113": "正在搜索会话消息…",
   "35727ced1d37da7f": "正在消息中查找“{query}”。",
