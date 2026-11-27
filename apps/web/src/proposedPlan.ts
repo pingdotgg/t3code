@@ -31,14 +31,17 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
       visibleLineCount += 1;
     }
     const fence = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-    if (fence !== undefined) {
-      if (openFence === null) openFence = fence;
-      else if (
-        fence[0] === openFence[0] &&
-        fence.length >= openFence.length &&
-        line.trim() === fence
-      )
-        openFence = null;
+    if (fence === undefined) {
+      continue;
+    }
+    if (openFence === null) {
+      openFence = fence;
+    } else if (
+      fence[0] === openFence[0] &&
+      fence.length >= openFence.length &&
+      line.trim() === fence
+    ) {
+      openFence = null;
     }
   }
 
