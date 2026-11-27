@@ -36,6 +36,7 @@ export function persistPullRequestStats(): QueryPersistence<PullRequestListStats
           const ref = input.refs.find(
             (ref) =>
               ref.projectId === stat.projectId &&
+              (stat.host === undefined || ref.host?.toLowerCase() === stat.host) &&
               ref.repository === stat.repository &&
               ref.number === stat.number,
           );

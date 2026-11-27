@@ -459,6 +459,64 @@ it.effect(
     }),
 );
 
+it.effect("keeps a repository's line counts apart from its mirror on another host", () =>
+  Effect.gen(function* () {
+    const identities: Record<string, OrchestrationProjectShell["repositoryIdentity"]> = {
+      "/m/github": project({ id: "x", title: "x", workspaceRoot: "/x", repository: "acme/api" })
+        .repositoryIdentity,
+      "/m/gitlab": project({
+        id: "x",
+        title: "x",
+        workspaceRoot: "/x",
+        repository: "acme/api",
+        provider: "gitlab",
+      }).repositoryIdentity,
+    };
+    const statsFrom = (additions: number) => ({
+      listChangeRequestStats: ({
+        changeRequests,
+      }: {
+        readonly changeRequests: ReadonlyArray<{ repository: string; number: number }>;
+      }) =>
+        Effect.succeed(
+          changeRequests.map(({ repository, number }) => ({
+            repository,
+            number,
+            additions,
+            deletions: 0,
+          })),
+        ),
+    });
+    const service = yield* makeService({
+      projects: [
+        {
+          ...project({ id: "p1", title: "mirrors", workspaceRoot: "/m" }),
+          trackedFolders: [
+            { name: "github", path: "/m/github", discovered: true },
+            { name: "gitlab", path: "/m/gitlab", discovered: true },
+          ],
+        },
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), statsFrom(10)),
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), statsFrom(20)),
+      ],
+      resolveRepositoryIdentity: (cwd) => Effect.succeed(identities[cwd] ?? null),
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/api", number: 7 };
+    const { stats } = yield* service.listStats({
+      refs: [
+        { ...ref, host: "github.com" },
+        { ...ref, host: "gitlab.com" },
+      ],
+    });
+    assert.deepStrictEqual(stats.map(({ host, additions }) => `${host} +${additions}`).toSorted(), [
+      "github.com +10",
+      "gitlab.com +20",
+    ]);
+  }),
+);
+
 it.effect("lists GitHub Enterprise PRs for a stored unknown repository after host discovery", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
@@ -3509,6 +3567,7 @@ it.effect("fills in the line counts for the rows it is given", () =>
     assert.deepStrictEqual(result.stats, [
       {
         projectId: "p1" as ProjectId,
+        host: "github.com",
         repository: "acme/web",
         number: 1,
         additions: 12,

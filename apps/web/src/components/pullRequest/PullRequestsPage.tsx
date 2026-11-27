@@ -810,6 +810,7 @@ export function PullRequestsPage() {
   ) {
     const stat = {
       ...panelSummary,
+      host: renderedPullRequestSurface?.host,
       environmentId: panelEnvironmentId,
       additions: panelSummary.additions,
       deletions: panelSummary.deletions,
