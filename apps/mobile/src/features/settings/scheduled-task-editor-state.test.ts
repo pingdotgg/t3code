@@ -8,6 +8,7 @@ import {
   markScheduledTaskEditorSaved,
   readScheduledTaskEditor,
   scheduledTaskEditorSessionAtom,
+  setScheduledTaskEditorSaving,
   startScheduledTaskEditor,
   takeScheduledTaskNewLink,
   updateScheduledTaskEditor,
@@ -93,6 +94,14 @@ describe("new scheduled task link", () => {
 
     discardScheduledTaskEditor();
     expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)).toBeNull();
+  });
+
+  it("keeps an unchanged task while its save is still pending", () => {
+    startScheduledTaskEditor(editing);
+    setScheduledTaskEditorSaving(true, null);
+
+    takeScheduledTaskNewLink(newTaskLink);
+    expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toBe(editing);
   });
 
   it("starts the new-task screen fresh after the edited task was saved", () => {

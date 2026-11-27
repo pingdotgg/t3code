@@ -1,0 +1,101 @@
+diff --git a/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt b/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt
+index c732ab419395526d42a51df664e63afe88a79302..2e3f40e1f966167584ceb853faad8f84889a9b74 100644
+--- a/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt
++++ b/android/src/main/java/expo/modules/kotlin/views/ExpoView.kt
+@@ -3,6 +3,7 @@ package expo.modules.kotlin.views
+ import android.content.Context
+ import android.graphics.Canvas
+ import android.widget.LinearLayout
++import androidx.core.view.OneShotPreDrawListener
+ import androidx.annotation.UiThread
+ import com.facebook.react.uimanager.BackgroundStyleApplicator
+ import com.facebook.react.uimanager.StateWrapper
+@@ -47,12 +48,27 @@ abstract class ExpoView(
+     layout(left, top, right, bottom)
+   }
+ 
++  private var isLayoutScheduled = false
++
+   override fun requestLayout() {
+     super.requestLayout()
+-    if (shouldUseAndroidLayout) {
++    if (shouldUseAndroidLayout && !isLayoutScheduled) {
+       // We need to force measure and layout, because React Native doesn't do it for us.
+-      post { measureAndLayout() }
++      // A posted layout runs after the frame being prepared is drawn, so a view that changes in a
++      // mount would show unlaid-out content for a frame. The pre-draw listener lays it out before
++      // that frame instead; the post covers a request that no frame follows.
++      isLayoutScheduled = true
++      OneShotPreDrawListener.add(this) { runScheduledLayout() }
++      post { runScheduledLayout() }
++    }
++  }
++
++  private fun runScheduledLayout() {
++    if (!isLayoutScheduled) {
++      return
+     }
++    isLayoutScheduled = false
++    measureAndLayout()
+   }
+ 
+   override fun forceLayout() {
+diff --git a/android/src/main/java/expo/modules/kotlin/activityresult/AppContextActivityResultRegistry.kt b/android/src/main/java/expo/modules/kotlin/activityresult/AppContextActivityResultRegistry.kt
+index 4955e93..fbb8a52 100644
+--- a/android/src/main/java/expo/modules/kotlin/activityresult/AppContextActivityResultRegistry.kt
++++ b/android/src/main/java/expo/modules/kotlin/activityresult/AppContextActivityResultRegistry.kt
+@@ -231,7 +231,9 @@ class AppContextActivityResultRegistry(
+         launchedKeys.add(key)
+ 
+         try {
+-          onLaunch(requestCode, contract, input)
++          // Starting an Activity walks the window's views, which races the UI thread when run from
++          // the module's IO dispatcher (a view removed mid-walk throws a NullPointerException).
++          runOnMainThread { onLaunch(requestCode, contract, input) }
+         } catch (e: Exception) {
+           launchedKeys.remove(key)
+           throw e
+@@ -255,24 +257,28 @@ class AppContextActivityResultRegistry(
+     fallbackCallback: AppContextActivityResultFallbackCallback<I, O>
+   ): Int? {
+     val liveActivity = activity
++    runOnMainThread { register(key, liveActivity, contract, fallbackCallback) }
++    return keyToRequestCode[key]
++  }
++
++  private fun runOnMainThread(block: () -> Unit) {
+     if (Looper.myLooper() == Looper.getMainLooper()) {
+-      register(key, liveActivity, contract, fallbackCallback)
+-    } else {
+-      val registered = CountDownLatch(1)
+-      var failure: Throwable? = null
+-      Handler(Looper.getMainLooper()).post {
+-        try {
+-          register(key, liveActivity, contract, fallbackCallback)
+-        } catch (e: Throwable) {
+-          failure = e
+-        } finally {
+-          registered.countDown()
+-        }
++      block()
++      return
++    }
++    val done = CountDownLatch(1)
++    var failure: Throwable? = null
++    Handler(Looper.getMainLooper()).post {
++      try {
++        block()
++      } catch (e: Throwable) {
++        failure = e
++      } finally {
++        done.countDown()
+       }
+-      registered.await()
+-      failure?.let { throw it }
+     }
+-    return keyToRequestCode[key]
++    done.await()
++    failure?.let { throw it }
+   }
+ 
+   /**

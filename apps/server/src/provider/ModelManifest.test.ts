@@ -377,6 +377,8 @@ describe("ModelManifest service", () => {
       for (const stale of [
         undatedManifest,
         { ...REMOTE_MANIFEST, updatedAt: "2000-01-01T00:00:00Z" },
+        // The last bundle before Antigravity below 1.5 became broken.
+        { ...REMOTE_MANIFEST, updatedAt: "2026-11-14T15:58:47Z" },
       ]) {
         yield* fs.writeFileString(
           cachePath,

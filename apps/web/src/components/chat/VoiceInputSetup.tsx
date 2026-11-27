@@ -13,7 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { CircleAlertIcon, MicIcon, RefreshCwIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import {
@@ -24,6 +24,7 @@ import {
 } from "../../speech/microphoneOrder";
 import { useEnvironment } from "../../state/environments";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { speechModelDownloadPercent } from "@t3tools/shared/speech";
 import { useEnvironmentScope } from "../../state/session";
 import { languageLabel } from "../settings/SpeechLanguageSelect";
 import { Button } from "../ui/button";
@@ -58,14 +59,19 @@ export function VoiceInputSetup(props: {
   const selectedMicrophone = preferredMicrophoneId(order, microphones);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
+  const microphoneRefreshId = useRef(0);
   const refreshMicrophones = useStableCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
+    const requestId = ++microphoneRefreshId.current;
     setLoadingMicrophones(true);
-    try {
-      setMicrophones(await listBrowserMicrophones());
-      setMicrophoneError(null);
-    } catch {
+    const devices = await listBrowserMicrophones().catch(() => null);
+    if (requestId !== microphoneRefreshId.current) return;
+
+    if (devices === null) {
       setMicrophoneError(m(msg("Couldn’t list microphones. The system default still works.")));
+    } else {
+      setMicrophones(devices);
+      setMicrophoneError(null);
     }
     setLoadingMicrophones(false);
   });
@@ -87,7 +93,9 @@ export function VoiceInputSetup(props: {
   const status = props.status?.supported ? props.status : null;
   const model = props.model;
   const progress =
-    model?.downloaded === undefined ? null : Math.round((model.downloaded / model.size) * 100);
+    model?.downloaded === undefined
+      ? null
+      : speechModelDownloadPercent(model.downloaded, model.size);
   const openSettings = (hash: string) => {
     props.onOpenChange(false);
     void navigate({ to: "/settings/voice", hash });

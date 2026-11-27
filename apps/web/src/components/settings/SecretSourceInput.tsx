@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { builtInSecretProviderDefinitions } from "@t3tools/secret-provider-definitions/registry";
 import { invalidSecretReferenceText } from "@t3tools/client-runtime/secret-request";
+import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -14,7 +15,6 @@ import { useGT, useMessages } from "gt-react";
 import { AlertTriangleIcon, CheckIcon, KeyRoundIcon, RefreshCwIcon, TypeIcon } from "lucide-react";
 import { useState, type ComponentProps, type ComponentType, type ReactNode } from "react";
 
-import { isSecretsFeatureEnabled } from "../../env";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { OnePasswordIcon } from "../Icons";
 import { serverEnvironment } from "../../state/server";
@@ -23,9 +23,9 @@ import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SecretInput } from "./SecretInput";
 import { classifySecretProvider } from "./SecretProviderDialog.logic";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export interface SecretSource {
   readonly id: SecretProviderId;
@@ -42,9 +42,9 @@ export function useSecretSources(environmentId: EnvironmentId): ReadonlyArray<Se
   const providers = useEnvironmentSettings(environmentId, (settings) => settings.secretProviders);
   const supported = useAtomValue(
     serverEnvironment.configValueAtom(environmentId),
-    (config) => config?.secretReferences === true,
+    (config) => hasFeatureFlag(config, "secretProviders") && config?.secretReferences === true,
   );
-  if (!isSecretsFeatureEnabled || !supported) return NO_SECRET_SOURCES;
+  if (!supported) return NO_SECRET_SOURCES;
   return (Object.entries(providers) as Array<[SecretProviderId, SecretProviderConfig]>)
     .filter(([, config]) => classifySecretProvider(config).kind !== "unsupported")
     .map(([id, config]) => ({ id, kind: config.kind, label: config.label }));
@@ -151,7 +151,8 @@ function SecretCheckButton(props: {
   const state = check?.secretKey === secretKey ? check.state : undefined;
 
   const run = async () => {
-    setCheck({ secretKey, state: { status: "checking" } });
+    const pending = { secretKey, state: { status: "checking" } } as const;
+    setCheck(pending);
     const response = await checkSecretSource({ environmentId, input: { source: secret } });
     const next: SecretCheck =
       response._tag !== "Success"
@@ -159,9 +160,7 @@ function SecretCheckButton(props: {
         : response.value._tag === "Resolved"
           ? { status: "resolved" }
           : { status: "failed", detail: response.value.detail };
-    setCheck((previous) =>
-      previous?.secretKey === secretKey ? { secretKey, state: next } : previous,
-    );
+    setCheck((previous) => (previous === pending ? { secretKey, state: next } : previous));
   };
 
   if (!supported) return null;
@@ -175,39 +174,37 @@ function SecretCheckButton(props: {
           ? gt("Secret resolved")
           : state.detail;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span className="inline-flex">
-            <Button
-              type="button"
-              size="icon-micro"
-              variant="ghost-muted"
-              disabled={props.disabled === true || !canCheck || state?.status === "checking"}
-              onClick={() => void run()}
-              aria-label={
-                state?.status === "failed"
-                  ? gt("{label} failed: {detail}", { label: props.label, detail: state.detail })
-                  : state?.status === "resolved"
-                    ? gt("{label} resolved", { label: props.label })
-                    : props.label
-              }
-            >
-              {state?.status === "checking" ? (
-                <Spinner />
-              ) : state?.status === "resolved" ? (
-                <CheckIcon className="text-success-foreground" />
-              ) : state?.status === "failed" ? (
-                <AlertTriangleIcon className="text-destructive" />
-              ) : (
-                <RefreshCwIcon />
-              )}
-            </Button>
-          </span>
-        }
-      />
-      <TooltipPopup side="top">{description}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <span className="inline-flex">
+          <Button
+            type="button"
+            size="icon-micro"
+            variant="ghost-muted"
+            disabled={props.disabled === true || !canCheck || state?.status === "checking"}
+            onClick={() => void run()}
+            aria-label={
+              state?.status === "failed"
+                ? gt("{label} failed: {detail}", { label: props.label, detail: state.detail })
+                : state?.status === "resolved"
+                  ? gt("{label} resolved", { label: props.label })
+                  : props.label
+            }
+          >
+            {state?.status === "checking" ? (
+              <Spinner />
+            ) : state?.status === "resolved" ? (
+              <CheckIcon className="text-success-foreground" />
+            ) : state?.status === "failed" ? (
+              <AlertTriangleIcon className="text-destructive" />
+            ) : (
+              <RefreshCwIcon />
+            )}
+          </Button>
+        </span>
+      }
+      label={description}
+    />
   );
 }
 

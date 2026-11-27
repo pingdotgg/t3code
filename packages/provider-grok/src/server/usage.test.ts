@@ -87,6 +87,7 @@ describe("parseGrokLine", () => {
             cachedReadTokens: 400,
             reasoningTokens: 20,
             costUsdTicks: 50_000_000,
+            modelCalls: 8,
           },
           "grok-composer-2.5-fast": {
             inputTokens: 200,
@@ -108,6 +109,10 @@ describe("parseGrokLine", () => {
       0.005,
       12,
     );
+    expect(records.find((record) => record.model === "grok-4.5")?.modelCalls).toBe(8);
+    expect(
+      records.find((record) => record.model === "grok-composer-2.5-fast")?.modelCalls,
+    ).toBeUndefined();
   });
 
   it("inherits top-level cost ticks for a single model without its own ticks", () => {
@@ -121,12 +126,13 @@ describe("parseGrokLine", () => {
             reasoningTokens: 0,
           },
         },
-        usage: { costUsdTicks: GROK_COST_USD_TICKS_PER_DOLLAR },
+        usage: { costUsdTicks: GROK_COST_USD_TICKS_PER_DOLLAR, modelCalls: 10 },
       }),
     );
 
     expect(records).toHaveLength(1);
     expect(records[0]?.reportedCostUsd).toBe(1);
+    expect(records[0]?.modelCalls).toBe(10);
   });
 
   it("falls back to a generic grok model when modelUsage is absent", () => {

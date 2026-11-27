@@ -54,10 +54,10 @@ export function environmentMismatchError(input: {
   return new ConnectionBlockedError({
     reason: "configuration",
     ...translatableDetail(
-      msg("Connected environment {actual} does not match {expected}.", {
-        actual: input.actual,
-        expected: input.expected,
-      }),
+      msg(
+        "This address now runs a different T3 Code install ({actual}, not {expected}). Remove this connection and add it again.",
+        { actual: input.actual, expected: input.expected },
+      ),
     ),
   });
 }
@@ -321,6 +321,7 @@ export function mapRemoteEnvironmentError(
  */
 export function mapRemoteDpopEnvironmentError(
   error: RemoteEnvironmentAuthError,
+  connectionMethod: "relay" | "direct" = "relay",
 ): ConnectionAttemptError {
   if (error._tag === "EnvironmentAuthInvalidError" && error.reason === "invalid_credential") {
     return new ConnectionBlockedError({
@@ -330,9 +331,9 @@ export function mapRemoteDpopEnvironmentError(
       ),
       traceId: error.traceId,
       hop: "server",
-      via: "relay",
+      via: connectionMethod,
       ...(error.dpopFailureReason === "time_window" ? { failureCause: "clock_skew" } : {}),
     });
   }
-  return mapRemoteEnvironmentError(error, "relay");
+  return mapRemoteEnvironmentError(error, connectionMethod);
 }

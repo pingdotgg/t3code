@@ -489,9 +489,7 @@ export class OtelSpan implements Tracer.Span {
       startTime: this.status.startTime
     }
 
-    if (exit._tag === "Success") {
-      this.span.setStatus({ code: Otel.SpanStatusCode.OK })
-    } else {
+    if (exit._tag === "Failure") {
       if (Cause.hasInterruptsOnly(exit.cause)) {
         this.span.setAttribute("effect.fiber.interrupted", true)
       } else {
@@ -506,8 +504,6 @@ export class OtelSpan implements Tracer.Span {
             code: Otel.SpanStatusCode.ERROR,
             message: errors[0].message
           })
-        } else {
-          this.span.setStatus({ code: Otel.SpanStatusCode.OK })
         }
       }
     }

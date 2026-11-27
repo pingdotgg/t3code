@@ -72,6 +72,7 @@ import {
   type ProviderGroup,
   withStoredThreadModelOptions,
 } from "../../lib/modelOptions";
+import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import {
@@ -112,16 +113,16 @@ import {
   compatibleRuntimeModeForChoices,
   runtimeModeChoicesForSupportedModes,
   withManagedRuntimeModeLimits,
+  withProviderRuntimeModeLimits,
   type RuntimeModeChoice,
   selectableChoices,
 } from "./thread-settings-options";
 import {
   canCommitPendingModel,
-  favoritesFirst,
   modelFavoriteKey,
-  modelMatchesCatalogQuery,
   pendingModelAfterPress,
   providerSectionIsCollapsed,
+  visibleCatalogModels,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import type { MessageResolver } from "../../i18n/messages";
@@ -146,13 +147,16 @@ const EMPTY_MODEL_FAVORITES: ReadonlyArray<{
   readonly provider: ProviderInstanceId;
   readonly model: string;
 }> = [];
-const FAVORITES_PROVIDER_FILTER = "@favorites";
 // Servers that predate `migrateModelPreferences` drop it and keep reporting null favorites.
 const attemptedMigrationGenerations = new Map<EnvironmentId, number>();
 function ProviderHeader(props: {
   readonly driver: string | undefined;
   readonly iconUrl: string | undefined;
   readonly label: string;
+  /** A backend inside a provider's section, such as one of fx's: no icon. */
+  readonly nested?: boolean;
+  /** Why the section has no usable models, such as a signed-out backend. */
+  readonly detail?: string | undefined;
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
@@ -161,8 +165,17 @@ function ProviderHeader(props: {
   const gt = useGT();
   const content = (
     <>
-      <ProviderIcon iconUrl={props.iconUrl} provider={props.driver} size={15} />
-      <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
+      {props.nested ? null : (
+        <ProviderIcon iconUrl={props.iconUrl} provider={props.driver} size={15} />
+      )}
+      {props.detail ? (
+        <View className="min-w-0 flex-1 py-1">
+          <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
+          <Text className="text-xs text-foreground-muted">{props.detail}</Text>
+        </View>
+      ) : (
+        <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
+      )}
       {props.collapsible ? (
         <>
           <View className="flex-1" />
@@ -204,7 +217,10 @@ function ProviderHeader(props: {
   }
 
   return (
-    <View accessibilityRole="header" className="mx-4 min-h-9 flex-row items-center gap-2 px-1 pt-1">
+    <View
+      accessibilityRole="header"
+      className={cn("mx-4 min-h-9 flex-row items-center gap-2 px-1 pt-1", props.nested && "mt-1")}
+    >
       {content}
     </View>
   );
@@ -317,6 +333,7 @@ type ThreadSettingsSessionValue = {
   readonly providerExpansionOverrides: ReadonlySet<string>;
   readonly hasLegacyModels: boolean;
   readonly pendingModel: ModelOption | null;
+  readonly favoritesOnly: boolean;
   readonly providerFilter: string | null;
   readonly searchQuery: string;
   readonly showLegacy: boolean;
@@ -325,6 +342,7 @@ type ThreadSettingsSessionValue = {
   readonly isApplied: (option: ModelOption) => boolean;
   readonly isDisplayed: (option: ModelOption) => boolean;
   readonly pressModel: (option: ModelOption) => void;
+  readonly setFavoritesOnly: (favoritesOnly: boolean) => void;
   readonly setProviderFilter: (providerKey: string | null) => void;
   readonly setSearchQuery: (query: string) => void;
   readonly setShowLegacy: (showLegacy: boolean) => void;
@@ -491,6 +509,7 @@ function ThreadSettingsSessionProvider(
     });
   };
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [providerExpansionOverrides, setProviderExpansionOverrides] = useState<ReadonlySet<string>>(
@@ -517,9 +536,22 @@ function ThreadSettingsSessionProvider(
     pendingModel ??
     props.providerGroups.flatMap((group) => group.models).find((option) => isApplied(option)) ??
     null;
-  const runtimeModeChoices = withManagedRuntimeModeLimits(
-    runtimeModeChoicesForSupportedModes(displayedModel?.supportedRuntimeModes),
-    [config?.managedPolicy],
+  // The sheet mounts when it opens, which asks again once the last answer is a few seconds old.
+  const runtimeModeLimits = useEnvironmentQuery(
+    props.environmentId && props.cwd && displayedModel
+      ? serverEnvironment.providerRuntimeModeLimits({
+          environmentId: props.environmentId,
+          input: { instanceId: displayedModel.selection.instanceId, cwd: props.cwd },
+        })
+      : null,
+  ).data?.limits;
+  const runtimeModeChoices = withProviderRuntimeModeLimits(
+    withManagedRuntimeModeLimits(
+      runtimeModeChoicesForSupportedModes(displayedModel?.supportedRuntimeModes),
+      [config?.managedPolicy],
+      messages,
+    ),
+    runtimeModeLimits,
     messages,
   );
   const compatibleRuntimeMode = compatibleRuntimeModeForChoices(
@@ -614,9 +646,7 @@ function ThreadSettingsSessionProvider(
   const environmentId = props.environmentId;
   // Like the web picker's open tab: scanning every provider would spawn a probe per provider.
   const scannedInstanceId =
-    providerFilter !== null && providerFilter !== FAVORITES_PROVIDER_FILTER
-      ? ProviderInstanceId.make(providerFilter)
-      : props.providerInstanceId;
+    providerFilter !== null ? ProviderInstanceId.make(providerFilter) : props.providerInstanceId;
   const workspaceScan =
     props.cwd && scannedInstanceId ? { instanceId: scannedInstanceId, cwd: props.cwd } : null;
 
@@ -640,6 +670,7 @@ function ThreadSettingsSessionProvider(
     providerExpansionOverrides,
     hasLegacyModels,
     pendingModel,
+    favoritesOnly,
     providerFilter,
     searchQuery,
     showLegacy: showLegacyToggle,
@@ -648,6 +679,7 @@ function ThreadSettingsSessionProvider(
     isApplied,
     isDisplayed,
     pressModel,
+    setFavoritesOnly,
     setProviderFilter,
     setSearchQuery,
     setShowLegacy: setShowLegacyToggle,
@@ -705,6 +737,15 @@ type ThreadSettingsCatalogItem =
       readonly kind: "provider";
       readonly key: string;
       readonly provider: ThreadSettingsProviderCatalog;
+    }
+  | {
+      readonly kind: "subProvider";
+      readonly key: string;
+      readonly expansionKey: string;
+      readonly label: string;
+      readonly detail: string | undefined;
+      readonly collapsed: boolean;
+      readonly modelCount: number;
     }
   | {
       readonly kind: "model";
@@ -774,44 +815,109 @@ function ThreadSettingsProviderListHeader(props: {
   );
 }
 
+function ThreadSettingsSubProviderListHeader(props: {
+  readonly item: Extract<ThreadSettingsCatalogItem, { kind: "subProvider" }>;
+}) {
+  const session = useThreadSettingsSession();
+  const onToggle = () => session.toggleProvider(props.item.expansionKey);
+
+  return (
+    <ProviderHeader
+      nested
+      collapsible={props.item.detail === undefined}
+      collapsed={props.item.collapsed}
+      detail={props.item.detail}
+      driver={undefined}
+      iconUrl={undefined}
+      label={props.item.label}
+      modelCount={props.item.modelCount}
+      onToggle={onToggle}
+    />
+  );
+}
+
+const modelItems = (models: ReadonlyArray<ModelOption>) =>
+  models.map((option, index) => ({
+    kind: "model" as const,
+    key: `model:${option.key}`,
+    option,
+    isFirst: index === 0,
+    isLast: index === models.length - 1,
+  }));
+
+/**
+ * A provider whose models run on several backends, such as fx, lists each
+ * backend under its own collapsible heading; the thread's backend opens.
+ * Search and Favorites stay flat.
+ */
+function subProviderCatalogItems(
+  session: ThreadSettingsSessionValue,
+  group: ProviderGroup,
+  models: ReadonlyArray<ModelOption>,
+): ReadonlyArray<ThreadSettingsCatalogItem> | null {
+  if (
+    !group.subProviders?.length ||
+    session.searchQuery.trim().length > 0 ||
+    session.favoritesOnly
+  ) {
+    return null;
+  }
+  const { ungrouped, groups } = groupModelsBySubProvider(
+    models,
+    group.subProviders,
+    (option) => option.subtitle,
+  );
+  return [
+    ...modelItems(ungrouped),
+    ...groups.flatMap(({ subProvider, models: backendModels }) => {
+      const expansionKey = `${group.providerKey}:sub-provider:${subProvider.name}`;
+      const collapsed =
+        subProvider.unavailableReason !== undefined ||
+        providerSectionIsCollapsed({
+          defaultExpanded: backendModels.some(session.isApplied),
+          hasExpansionOverride: session.providerExpansionOverrides.has(expansionKey),
+          isNarrowed: false,
+        });
+      return [
+        {
+          kind: "subProvider" as const,
+          key: `sub-provider:${expansionKey}`,
+          expansionKey,
+          label: subProvider.name,
+          detail: subProvider.unavailableReason,
+          collapsed,
+          modelCount: backendModels.length,
+        },
+        // The heading names the backend, so rows drop it.
+        ...(collapsed
+          ? []
+          : modelItems(backendModels.map((option) => ({ ...option, subtitle: "" })))),
+      ];
+    }),
+  ];
+}
+
 function buildThreadSettingsCatalogItems(
   session: ThreadSettingsSessionValue,
   resolve: MessageResolver,
   locale: string,
 ): ReadonlyArray<ThreadSettingsCatalogItem> {
   return session.providerGroups.flatMap((group) => {
-    if (
-      session.providerFilter !== null &&
-      session.providerFilter !== FAVORITES_PROVIDER_FILTER &&
-      group.providerKey !== session.providerFilter
-    ) {
+    if (session.providerFilter !== null && group.providerKey !== session.providerFilter) {
       return [];
     }
     const driver = group.models[0]?.providerDriver ?? group.providerKey;
-    const catalogModels =
-      session.manageHidden ||
-      session.showLegacy ||
-      session.providerFilter === FAVORITES_PROVIDER_FILTER
-        ? group.models
-        : group.models.filter(
-            (model) =>
-              !model.isLegacy || session.isDisplayed(model) || session.favoriteKeys.has(model.key),
-          );
-    const visibleModels = favoritesFirst(
-      catalogModels.filter(
-        (model) =>
-          (session.providerFilter !== FAVORITES_PROVIDER_FILTER ||
-            session.favoriteKeys.has(model.key)) &&
-          modelMatchesCatalogQuery({
-            model,
-            providerLabel: group.providerLabel,
-            query: session.searchQuery,
-          }),
-      ),
-      session.favoriteKeys,
-    );
+    const visibleModels = visibleCatalogModels({
+      models: group.models,
+      providerLabel: group.providerLabel,
+      query: session.searchQuery,
+      favoriteKeys: session.favoriteKeys,
+      favoritesOnly: session.favoritesOnly,
+      showLegacy: session.manageHidden || session.showLegacy,
+      isDisplayed: session.isDisplayed,
+    });
     const updateRequiredNotice =
-      group.updateRequired && session.providerFilter !== FAVORITES_PROVIDER_FILTER
+      group.updateRequired && !session.favoritesOnly
         ? formatProviderUpdateRequiredNotice(
             group.updateRequired,
             session.searchQuery,
@@ -824,7 +930,10 @@ function buildThreadSettingsCatalogItems(
     }
     const isPrimary = driver !== undefined && PRIMARY_PROVIDER_DRIVERS.has(driver);
     const containsAppliedSelection = group.models.some(session.isApplied);
-    const isNarrowed = session.providerFilter !== null || session.searchQuery.trim().length > 0;
+    const isNarrowed =
+      session.favoritesOnly ||
+      session.providerFilter !== null ||
+      session.searchQuery.trim().length > 0;
     const collapsible = !isNarrowed;
     const collapsed = providerSectionIsCollapsed({
       defaultExpanded: isPrimary || containsAppliedSelection,
@@ -847,13 +956,8 @@ function buildThreadSettingsCatalogItems(
         key: `provider:${group.providerKey}`,
         provider,
       },
-      ...provider.models.map((option, index) => ({
-        kind: "model" as const,
-        key: `model:${option.key}`,
-        option,
-        isFirst: index === 0,
-        isLast: index === provider.models.length - 1,
-      })),
+      ...((collapsed ? null : subProviderCatalogItems(session, group, provider.models)) ??
+        modelItems(provider.models)),
       ...(!collapsed && updateRequiredNotice
         ? [
             {
@@ -1022,7 +1126,9 @@ function ThreadSettingsMainContent(props: {
   const animationsReady = listLoaded && !reducedMotion && !reduceMotionEnabled;
   const catalogItems = buildThreadSettingsCatalogItems(session, m, locale);
   const hasActiveCatalogFilter =
-    session.providerFilter !== null || session.searchQuery.trim().length > 0;
+    session.favoritesOnly ||
+    session.providerFilter !== null ||
+    session.searchQuery.trim().length > 0;
   const listItems = [
     ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
     { kind: "options", key: "options" },
@@ -1033,6 +1139,8 @@ function ThreadSettingsMainContent(props: {
 
     if (item.kind === "provider") {
       content = <ThreadSettingsProviderListHeader provider={item.provider} />;
+    } else if (item.kind === "subProvider") {
+      content = <ThreadSettingsSubProviderListHeader item={item} />;
     } else if (item.kind === "model") {
       content = (
         <ThreadSettingsModelListRow
@@ -1047,7 +1155,8 @@ function ThreadSettingsMainContent(props: {
       content = (
         <View className="items-center px-8 py-14">
           <Text className="text-center text-sm text-foreground-muted">
-            {session.providerFilter === FAVORITES_PROVIDER_FILTER &&
+            {session.favoritesOnly &&
+            session.providerFilter === null &&
             session.searchQuery.trim().length === 0
               ? gt("No favorite models")
               : hasActiveCatalogFilter
@@ -1240,7 +1349,8 @@ function ThreadSettingsModelsScreen() {
   const session = useThreadSettingsSession();
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
-  const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
+  const hasCustomCatalogFilter =
+    session.favoritesOnly || session.providerFilter !== null || session.showLegacy;
   const commitAndClose = useEffectEvent(() => {
     if (!session.commitPendingModel()) return;
     presentation.onClose();
@@ -1256,7 +1366,6 @@ function ThreadSettingsModelsScreen() {
   const searchToolbarInset = useSearchToolbarInset(search);
   const providerFilters = [
     { id: "all-providers", title: gt("All providers"), value: null },
-    { id: "favorites", title: gt("Favorites"), value: FAVORITES_PROVIDER_FILTER },
     ...session.providerGroups.map((group) => ({
       id: `provider:${group.providerKey}`,
       title: group.providerLabel,
@@ -1278,6 +1387,12 @@ function ThreadSettingsModelsScreen() {
               ? "line.3.horizontal.decrease.circle.fill"
               : "line.3.horizontal.decrease",
             items: [
+              {
+                id: "favorites-only",
+                title: gt("Favorites only"),
+                selected: session.favoritesOnly,
+                onPress: () => session.setFavoritesOnly(!session.favoritesOnly),
+              },
               {
                 id: "provider",
                 title: gt("Provider"),
@@ -1302,6 +1417,7 @@ function ThreadSettingsModelsScreen() {
           },
         ]}
         optionsVersion={[
+          session.favoritesOnly,
           session.providerFilter,
           session.providerGroups.map((group) => group.providerKey),
           session.showLegacy,
@@ -1400,10 +1516,11 @@ export function ExistingThreadSettingsRouteScreen({
   const structure = useQuietThreadStructure(selectedThreadDetailRef);
   const reportedModelSelection = useThreadReportedModelSelection(selectedThreadDetailRef);
   const threadKey = scopedThreadKey(route.params.environmentId, route.params.threadId);
-  const draftSettings = useComposerDraftSettings(threadKey);
   const queuedRunEdit = useQueuedRunEdit(threadKey);
   // A queued edit can end while the sheet is open; the prompt then belongs to the thread's draft.
   const draftKey = activeComposerDraftKey(threadKey, route.params.draftKey, queuedRunEdit);
+  const draftSettings = useComposerDraftSettings(draftKey);
+  const threadDraftSettings = useComposerDraftSettings(threadKey);
   const prompt = useComposerDraft(draftKey).text;
 
   if (!selectedThread) {
@@ -1465,7 +1582,7 @@ export function ExistingThreadSettingsRouteScreen({
         rememberModelOptions(modelSelection.instanceId, modelSelection.model, options ?? []);
         updateModelSelection({ ...modelSelection, options });
       }}
-      runtimeMode={draftSettings.runtimeMode ?? selectedThread.runtimeMode}
+      runtimeMode={threadDraftSettings.runtimeMode ?? selectedThread.runtimeMode}
       onUpdateRuntimeMode={(runtimeMode) => updateComposerDraftSettings(threadKey, { runtimeMode })}
       onClose={() => navigation.goBack()}
     />

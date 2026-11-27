@@ -11,6 +11,12 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { useClosedViewStore } from "./closedViewStore";
 import { m } from "./i18n/messages";
 import { resolveStorage } from "./lib/storage";
+import type { LinkedThreadTarget } from "@t3tools/client-runtime/linked-thread";
+import {
+  decodeLinkedThreadSurface,
+  linkedThreadSurface,
+  type LinkedThreadSurface,
+} from "./linkedThreadSurface";
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
 import type { ChatFileAttachment } from "./types";
 
@@ -24,7 +30,8 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "issue",
-  "side-chat",
+  "thread",
+  "linked-thread",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -96,10 +103,34 @@ export type RightPanelSurface =
       key: string;
       url?: string;
     }
-  | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
+  /**
+   * A thread of the panel's environment shown beside it: a side chat or a subagent. Which one is
+   * the thread's own lineage, so the surface only names it.
+   */
+  | ThreadSurface
+  /** A linked environment's thread, read through `viaEnvironmentId`; it has no thread here. */
+  | LinkedThreadSurface;
+
+export type ThreadSurface = { id: `thread:${string}`; kind: "thread"; threadId: ThreadId };
+
+const threadSurface = (threadId: ThreadId): ThreadSurface => ({
+  id: `thread:${threadId}`,
+  kind: "thread",
+  threadId,
+});
+
+/**
+ * A saved thread surface with its id rebuilt, or null when it names no thread. Builds before
+ * subagents opened here saved it as `side-chat`.
+ */
+export function decodeThreadSurface(surface: object): ThreadSurface | null {
+  const { kind, threadId } = surface as Record<string, unknown>;
+  if ((kind !== "thread" && kind !== "side-chat") || typeof threadId !== "string") return null;
+  return threadId === "" ? null : threadSurface(ThreadId.make(threadId));
+}
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 15;
+const RIGHT_PANEL_STORAGE_VERSION = 16;
 
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -154,9 +185,16 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue" | "side-chat">,
+    kind: Exclude<
+      RightPanelKind,
+      "file" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread"
+    >,
   ) => void;
-  openSideChat: (ref: ScopedThreadRef, threadId: ThreadId) => void;
+  /** Opens a side chat or subagent of `ref`'s environment as a tab; `ref` itself has no tab. */
+  openThread: (ref: ScopedThreadRef, threadId: ThreadId) => void;
+  openLinkedThread: (ref: ScopedThreadRef, target: LinkedThreadTarget) => void;
+  /** Records the title the linked environment gave, so the tab and a reopened one show it. */
+  setLinkedThreadTitle: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
@@ -205,10 +243,12 @@ interface RightPanelStoreState {
   /** Agent-driven activation. Not a user action, so it does not move keyboard focus. */
   revealSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
+  closeSurfaces: (ref: ScopedThreadRef, surfaceIds: readonly string[]) => void;
   closeOtherSurfaces: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeSurfacesToRight: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeAllSurfaces: (ref: ScopedThreadRef) => void;
   moveSurface: (ref: ScopedThreadRef, surfaceId: string, toIndex: number) => void;
+  moveSurfaces: (ref: ScopedThreadRef, surfaceIds: readonly string[], targetId: string) => void;
   reconcileBrowserSurfaces: (
     ref: ScopedThreadRef,
     tabIds: readonly string[],
@@ -221,7 +261,10 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue" | "side-chat">,
+    kind: Exclude<
+      RightPanelKind,
+      "file" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread"
+    >,
   ) => void;
   setThreadPanelOpen: (
     ref: ScopedThreadRef,
@@ -246,7 +289,7 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 const singletonSurface = (
   kind: Exclude<
     RightPanelKind,
-    "file" | "preview" | "terminal" | "pull-request" | "issue" | "side-chat"
+    "file" | "preview" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread"
   >,
 ): RightPanelSurface => {
   switch (kind) {
@@ -567,8 +610,18 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 threadState && typeof threadState === "object" ? threadState : null;
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
+                    if (!surface || typeof surface !== "object") return [];
                     const kind = (surface as { kind?: string }).kind;
-                    if (kind === "plan" || kind === "agents") return [];
+                    if (kind === "thread" || kind === "side-chat") {
+                      const decoded = decodeThreadSurface(surface);
+                      return decoded === null ? [] : [decoded];
+                    }
+                    // Also drops kinds this build does not know, such as one a newer build saved.
+                    if (!(RIGHT_PANEL_KINDS as ReadonlyArray<unknown>).includes(kind)) return [];
+                    if (surface.kind === "linked-thread") {
+                      const decoded = decodeLinkedThreadSurface(surface);
+                      return decoded === null ? [] : [decoded];
+                    }
                     if (
                       (surface.kind === "file" || surface.kind === "files") &&
                       "folderTrail" in surface &&
@@ -660,7 +713,12 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     ];
                   })
                 : [];
-              const rawActiveSurfaceId = validThreadState?.activeSurfaceId;
+              const savedActiveSurfaceId = validThreadState?.activeSurfaceId;
+              const rawActiveSurfaceId =
+                typeof savedActiveSurfaceId === "string" &&
+                savedActiveSurfaceId.startsWith("side-chat:")
+                  ? `thread:${savedActiveSurfaceId.slice("side-chat:".length)}`
+                  : savedActiveSurfaceId;
               const persistedActiveSurfaceId = surfaces.some(
                 (surface) => surface.id === rawActiveSurfaceId,
               )
@@ -816,12 +874,46 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             );
           }),
         ),
-      openSideChat: (ref, threadId) =>
+      openThread: (ref, threadId) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) =>
-            upsertSurface(current, { id: `side-chat:${threadId}`, kind: "side-chat", threadId }),
-          ),
+          rightPanelHostRef(ref).threadId === threadId
+            ? state
+            : userAction(state, scopedThreadKey(ref), (current) =>
+                upsertSurface(current, threadSurface(threadId)),
+              ),
         ),
+      openLinkedThread: (ref, target) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface = linkedThreadSurface(target);
+            const next = upsertSurface(current, surface);
+            return {
+              ...next,
+              // A later click may know the title or label an earlier one did not.
+              surfaces: next.surfaces.map((entry) =>
+                entry.id === surface.id && entry.kind === "linked-thread"
+                  ? { ...surface, title: surface.title ?? entry.title }
+                  : entry,
+              ),
+            };
+          }),
+        ),
+      setLinkedThreadTitle: (ref, surfaceId, title) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(rightPanelHostRef(ref));
+          const existing = state.byThreadKey[threadKey]?.surfaces.find(
+            (surface) => surface.id === surfaceId,
+          );
+          if (existing?.kind !== "linked-thread" || existing.title === title) return state;
+          return automaticUpdate(state, threadKey, (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) =>
+              surface.id === surfaceId && surface.kind === "linked-thread"
+                ? { ...surface, title }
+                : surface,
+            ),
+          }));
+        }),
       renameDevice: (ref, surfaceId, title) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => ({
@@ -1073,27 +1165,32 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         set((state) =>
           automaticUpdate(state, scopedThreadKey(ref), (current) => activated(current, surfaceId)),
         ),
-      closeSurface: (ref, surfaceId) =>
+      closeSurface: (ref, surfaceId) => get().closeSurfaces(ref, [surfaceId]),
+      closeSurfaces: (ref, surfaceIds) => {
+        const closing = new Set(surfaceIds);
         set((state) =>
           closeAction(state, scopedThreadKey(ref), (current) => {
-            const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
-            if (index < 0) return current;
-            const surfaces = current.surfaces.filter((surface) => surface.id !== surfaceId);
-            const next = {
+            const surfaces = current.surfaces.filter((surface) => !closing.has(surface.id));
+            if (surfaces.length === current.surfaces.length) return current;
+            let activeSurfaceId = current.activeSurfaceId;
+            if (activeSurfaceId !== null && closing.has(activeSurfaceId)) {
+              const activeIndex = current.surfaces.findIndex(
+                (surface) => surface.id === activeSurfaceId,
+              );
+              const fallbackIndex = current.surfaces
+                .slice(0, activeIndex)
+                .filter((surface) => !closing.has(surface.id)).length;
+              activeSurfaceId = surfaces[Math.min(fallbackIndex, surfaces.length - 1)]?.id ?? null;
+            }
+            return {
               ...current,
               isOpen: surfaces.length > 0 && current.isOpen,
               surfaces,
-            };
-            if (current.activeSurfaceId !== surfaceId) {
-              return next;
-            }
-            const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
-            return {
-              ...next,
-              activeSurfaceId: fallback?.id ?? null,
+              activeSurfaceId,
             };
           }),
-        ),
+        );
+      },
       closeOtherSurfaces: (ref, surfaceId) =>
         set((state) =>
           closeAction(state, scopedThreadKey(ref), (current) => {
@@ -1138,6 +1235,23 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             if (fromIndex < 0 || fromIndex === toIndex) return current;
             const surfaces = [...current.surfaces];
             surfaces.splice(toIndex, 0, ...surfaces.splice(fromIndex, 1));
+            return { ...current, surfaces };
+          }),
+        ),
+      moveSurfaces: (ref, surfaceIds, targetId) =>
+        set((state) =>
+          updateThread(state, scopedThreadKey(ref), (current) => {
+            const movingIds = new Set(surfaceIds);
+            if (movingIds.has(targetId)) return current;
+            const firstIndex = current.surfaces.findIndex((surface) => movingIds.has(surface.id));
+            const targetIndex = current.surfaces.findIndex((surface) => surface.id === targetId);
+            if (firstIndex < 0 || targetIndex < 0) return current;
+            const moving = current.surfaces.filter((surface) => movingIds.has(surface.id));
+            const surfaces = current.surfaces.filter((surface) => !movingIds.has(surface.id));
+            const insertIndex =
+              surfaces.findIndex((surface) => surface.id === targetId) +
+              Number(firstIndex < targetIndex);
+            surfaces.splice(insertIndex, 0, ...moving);
             return { ...current, surfaces };
           }),
         ),

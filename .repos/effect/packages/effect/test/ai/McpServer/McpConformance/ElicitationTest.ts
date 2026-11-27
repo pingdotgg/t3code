@@ -245,7 +245,7 @@ export const suite = (
               yield* peer.reverseClient.elicit(Schema.decodeUnknownSync(McpSchema.Elicit.payloadSchema)(request))
 
               assert.deepStrictEqual((yield* peer.takeRequest).payload, request)
-            }).pipe(Effect.scoped)
+            })
         )
 
         it.effect("MUST send elicitation requests when the client advertises elicitation", () =>
@@ -341,7 +341,7 @@ export const suite = (
 
               const requests = yield* peer.requests
               assert.deepStrictEqual(requests.map((_) => _.payload), [request, { ...request, mode: "form" }])
-            }).pipe(Effect.scoped)
+            })
         )
 
         it.effect("MUST decode accepted content against the requested schema", () =>
@@ -386,7 +386,7 @@ export const suite = (
               assert.isTrue(Cause.hasDies(exit.cause))
             }
             assert.deepStrictEqual(yield* peer.requests, [])
-          }).pipe(Effect.scoped))
+          }))
 
         it.effect("SCENARIO returns a typed failure when the user declines", () =>
           Effect.gen(function*() {
@@ -479,7 +479,7 @@ export const suite = (
 
               assert.deepStrictEqual((yield* peer.takeRequest).payload, request)
               assert.strictEqual(result.action, "accept")
-            }).pipe(Effect.scoped)
+            })
         )
       })
     })

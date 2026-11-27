@@ -2,18 +2,36 @@
 // app. `t3-mobile.ts` is the same for the iOS app.
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { test as base } from "@e2e-dev/web";
-import { expect } from "e2e";
-import { CommandId, EnvironmentHttpApi, type ProjectMutation, ProjectId } from "@t3tools/contracts";
+import * as NodeWS from "@effect/platform-node/NodeWS";
+import { test as base, type Cookie } from "@e2e-dev/web";
+import {
+  CommandId,
+  EnvironmentHttpApi,
+  ORCHESTRATION_PROTOCOL_VERSION,
+  type ProjectMutation,
+  ProjectId,
+  WsRpcGroup,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+import {
+  Cookies,
+  FetchHttpClient,
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http";
+import { RpcClient, RpcSerialization } from "effect/rpc";
+import { Socket } from "effect/socket";
 
 import { APP_DIR, T3_HOME } from "../e2e.config.ts";
 import { run, ScenarioError } from "./shell.ts";
@@ -217,14 +235,58 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
   };
 }
 
-const readPairingPath = Effect.gen(function* () {
+const sameSite = { lax: "Lax", strict: "Strict", none: "None" } as const;
+
+/**
+ * Signs in the way the pairing page does and returns the session cookies. Opening the page
+ * instead races its reload after sign-in against the test's next `app.open`.
+ */
+const signIn = Effect.fn("scenario.signIn")(function* (baseUrl: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  return yield* fs.readFileString(path.join(T3_HOME, "pairing-path"));
-});
+  const credential = yield* fs.readFileString(path.join(T3_HOME, "browser-dev-token"));
+  const client = yield* HttpApiClient.make(EnvironmentHttpApi, { baseUrl });
+  // Only the cookies are read: a proof runs this against a base server whose body may differ.
+  const response = yield* client.auth
+    .browserSession({ payload: { credential }, responseMode: "response-only" })
+    .pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.retry({
+        schedule: Schedule.spaced("500 millis"),
+        while: (error) => {
+          if (!HttpClientError.isHttpClientError(error)) return false;
+          const status = error.response?.status;
+          return (
+            error.reason._tag === "TransportError" ||
+            status === 502 ||
+            status === 503 ||
+            status === 504
+          );
+        },
+      }),
+      Effect.timeout("15 seconds"),
+    );
+  // Drops the expired cookies that only clear an older session.
+  const cookies = Cookies.mergeIntoArray(
+    [],
+    baseUrl,
+    response.cookies,
+    yield* Clock.currentTimeMillis,
+  );
+  return cookies.map(({ name, value, options = {} }): Cookie => ({
+    name,
+    value,
+    // The server sets no Domain and `Path=/`, which is what a cookie for the origin gets.
+    url: baseUrl,
+    ...(options.expires && { expires: Math.floor(options.expires.getTime() / 1000) }),
+    ...(options.httpOnly !== undefined && { httpOnly: options.httpOnly }),
+    ...(options.secure !== undefined && { secure: options.secure }),
+    ...(options.sameSite && { sameSite: sameSite[options.sameSite] }),
+  }));
+}, Effect.provide(FetchHttpClient.layer));
 
 /** The id every thread link starts with, asked of the server the app talks to. */
-const environmentId = (baseUrl: string) =>
+export const environmentId = (baseUrl: string) =>
   HttpClient.get(`${baseUrl}/.well-known/t3/environment`).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap(
@@ -234,20 +296,46 @@ const environmentId = (baseUrl: string) =>
     Effect.provide(FetchHttpClient.layer),
   );
 
+/** The typed RPC client of the server on `home` at `origin`, signed in through its own CLI. */
+export const rpcClient = Effect.fn("scenario.rpcClient")(function* (home: string, origin: string) {
+  const issued = yield* makeState(home).cli(["auth", "session", "issue", "--token-only"]);
+  const { ticket } = yield* HttpClient.execute(
+    HttpClientRequest.post(`${origin}/api/auth/websocket-ticket`).pipe(
+      HttpClientRequest.bearerToken(issued.stdout.trim()),
+    ),
+  ).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(Schema.Struct({ ticket: Schema.String }))),
+    Effect.provide(FetchHttpClient.layer),
+  );
+  // Built into the caller's scope: `Effect.provide` would close the socket once `make` returns.
+  const protocol = yield* Layer.build(
+    RpcClient.layerProtocolSocket().pipe(
+      Layer.provide(
+        Socket.layerWebSocket(
+          `${origin.replace(/^http/, "ws")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}&wsTicket=${encodeURIComponent(ticket)}`,
+        ),
+      ),
+      Layer.provide(RpcSerialization.layerJson),
+      Layer.provide(NodeWS.layerWebSocketConstructor),
+    ),
+  );
+  return yield* RpcClient.make(WsRpcGroup).pipe(Effect.provideContext(protocol));
+});
+
 export const test = base.extend<{ t3: T3 }>({
   t3: async ({ app, browser }, use) => {
     const { state, cleanup } = makeState(T3_HOME);
     await use({
       ...state,
       open: async (target = "/") => {
-        await app.open(await runPromise(readPairingPath));
-        // The pairing page signs in and then leaves itself. Going anywhere before it has done
-        // so cancels the sign-in, and the next page is the pairing page again.
-        await expect(browser).not.toHaveURL(/\/pair(?:[?#]|$)/, { timeout: 60_000 });
-        if (typeof target !== "string") {
-          const environment = await runPromise(environmentId(app.baseUrl ?? ""));
-          await app.open(`/${environment}/${target.threadId}`);
-        } else if (target !== "/") await app.open(target);
+        const baseUrl = app.baseUrl ?? "";
+        await browser.setCookies(await runPromise(signIn(baseUrl)));
+        await app.open(
+          typeof target === "string"
+            ? target
+            : `/${await runPromise(environmentId(baseUrl))}/${target.threadId}`,
+        );
       },
     });
     await runPromise(cleanup);

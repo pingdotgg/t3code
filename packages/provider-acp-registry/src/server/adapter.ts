@@ -34,12 +34,14 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
+  acpRegistryLiveCatalogKey,
   normalizeAcpRegistryCommands,
   normalizeAcpRegistryLiveConfiguration,
   normalizeAcpRegistryWebUrl,
@@ -181,6 +183,10 @@ function makeAcpRegistryRuntime(
     });
 }
 
+const isHermes = (
+  initializeResult: AcpSessionRuntime.AcpSessionRuntimeStartResult["initializeResult"],
+) => initializeResult.agentInfo?.name === "hermes-agent";
+
 export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(function* (
   options: AcpRegistryAdapterV2Options,
 ) {
@@ -192,6 +198,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
   const isDevin = registryAgentId === "devin";
+  const isAntigravityCli =
+    options.settings.source === "local" &&
+    /^agy(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
   const isOmp =
     options.settings.source === "local" &&
     /^omp(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
@@ -215,6 +224,24 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     registryAgentId === "claude-acp" ||
     (options.settings.source === "local" &&
       /^claude-agent-acp(\.exe|\.cmd)?$/i.test(
+        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
+      ));
+  const isDroid =
+    registryAgentId === "factory-droid" ||
+    (options.settings.source === "local" &&
+      /^(?:factory-)?droid(\.exe|\.cmd)?$/i.test(
+        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
+      ));
+  const isGlm =
+    registryAgentId === "glm-acp-agent" ||
+    (options.settings.source === "local" &&
+      /^glm(?:-acp-agent)?(\.exe|\.cmd)?$/i.test(
+        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
+      ));
+  const isVibe =
+    registryAgentId === "mistral-vibe" ||
+    (options.settings.source === "local" &&
+      /^(?:mistral-)?vibe(?:-acp)?(\.exe|\.cmd)?$/i.test(
         options.settings.commandPath.split(/[\\/]/).pop() ?? "",
       ));
   const runtimeOptions = isClaude
@@ -247,8 +274,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       : AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     compactViaAdvertisedCommand: true,
-    promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
-    ...(registryAgentId === "factory-droid"
+    ...(isAntigravityCli ? { wakeOnDetachedRequest: true, replyEndsWithUsageUpdate: true } : {}),
+    promptFailure: (cause) =>
+      acpRegistryPromptFailure(isVibe ? "mistral-vibe" : registryAgentId, cause),
+    ...(isDroid
       ? { extractElicitationForm: extractDroidElicitationForm }
       : isOmp
         ? { extractElicitationForm: extractOmpElicitationForm }
@@ -256,11 +285,22 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           ? { extractElicitationForm: extractOpenCodeElicitationForm }
           : {}),
     // glm-acp-agent is the one agent whose per-turn usage a live probe has verified.
-    ...(registryAgentId === "glm-acp-agent" ? { reportsPerTurnPromptUsage: true } : {}),
-    ...(watchKimiPromptOutcome === undefined ? {} : { watchPromptOutcome: watchKimiPromptOutcome }),
-    ...(registryAgentId === "mistral-vibe"
-      ? { registerExtensions: registerMistralVibeAcpExtensions }
-      : {}),
+    ...(isGlm ? { reportsPerTurnPromptUsage: true } : {}),
+    ...(watchKimiPromptOutcome === undefined
+      ? {}
+      : {
+          watchPromptOutcome: (sessionId: string) =>
+            Effect.map(
+              watchKimiPromptOutcome(sessionId),
+              (check) => (result: EffectAcpSchema.PromptResponse) =>
+                Effect.map(check(result), (failure) =>
+                  failure === undefined
+                    ? undefined
+                    : { failure, threadDisposition: "reusable" as const },
+                ),
+            ),
+        }),
+    ...(isVibe ? { registerExtensions: registerMistralVibeAcpExtensions } : {}),
     ...(isClaude
       ? {
           followAgentWorkState: true,
@@ -269,6 +309,14 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           extractSubagentSessionEvent: extractClaudeSubagentSessionEvent,
         }
       : {}),
+    // Hermes replies on the root session when a background process it started exits; no
+    // prompt response follows, so the continuation ends on the deferred-finalize debounce.
+    // Hermes is not in the public registry and may run through a wrapper, so only its
+    // initialize reply identifies it. agy does the same and is known by its command.
+    enablePostSettleContinuation: (initializeResult) =>
+      isAntigravityCli || isHermes(initializeResult),
+    deferFinalizeForBackgroundWork: (initializeResult) =>
+      isAntigravityCli || isHermes(initializeResult),
     ...(isDevin
       ? {
           clientCapabilitiesMeta: {
@@ -327,11 +375,24 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
                   ),
               }
             : {}),
-          onSessionConfigurationUpdate: (configOptions, modeState, modelState) =>
-            runtimeCoordinator.publishLiveConfiguration(
-              options.instanceId,
-              normalizeAcpRegistryLiveConfiguration(configOptions, modeState, modelState),
-            ),
+          onSessionConfigurationUpdate: (configOptions, modeState, modelState, updateOptions) => {
+            const normalized = normalizeAcpRegistryLiveConfiguration(
+              configOptions,
+              modeState,
+              modelState,
+            );
+            const catalogKey = acpRegistryLiveCatalogKey(normalized);
+            const includeCatalog =
+              catalogKey.length > 0 && catalogKey !== updateOptions?.lastCatalogKey;
+            const published = includeCatalog
+              ? normalized
+              : normalizeAcpRegistryLiveConfiguration(configOptions, modeState, modelState, {
+                  includeCatalog: false,
+                });
+            return runtimeCoordinator
+              .publishLiveConfiguration(options.instanceId, published)
+              .pipe(Effect.as(catalogKey.length > 0 ? catalogKey : null));
+          },
           onUrlElicitation: ({ elicitationId, url, message }) => {
             const normalizedUrl = normalizeAcpRegistryWebUrl(url);
             if (normalizedUrl === undefined || elicitationId.trim().length === 0) {

@@ -16,8 +16,11 @@ import { msg, useGT, useMessages } from "gt-react-native";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { Menu } from "../../components/ui/Menu";
 import { m } from "../../i18n/messages";
+import { useEnvironmentPreviewTunnelOff } from "../../state/entities";
 import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { browserTabUrl, loopbackUrlForDevice } from "./browserTabs";
+import { useOpenLocalPreview } from "./useOpenLocalPreview";
 
 const APPEARANCES = [
   {
@@ -54,12 +57,16 @@ export function BrowserTabMenu({
   tab,
   streaming,
   onPaste,
+  onReleaseControl,
 }: {
   readonly environmentId: EnvironmentId;
   readonly tab: PreviewSessionSnapshot;
   readonly streaming: boolean;
   readonly onPaste?: () => void;
+  readonly onReleaseControl?: () => void;
 }) {
+  const openLocalPreview = useOpenLocalPreview();
+  const tunnelOff = useEnvironmentPreviewTunnelOff(environmentId);
   const adjust = useAtomCommand(previewEnvironment.adjust, "browser tab change");
   const resize = useAtomCommand(previewEnvironment.resize, "browser viewport change");
   const close = useAtomCommand(previewEnvironment.close, "browser tab close");
@@ -87,9 +94,18 @@ export function BrowserTabMenu({
     image: "xmark",
     attributes: { destructive: true, disabled: !canClose },
   };
+  const deviceUrl = tunnelOff ? null : loopbackUrlForDevice(browserTabUrl(tab));
+  // The device preview has its own webview and tunnel, so it doesn't wait for the stream.
+  const openOnDevice: MenuAction[] = deviceUrl
+    ? [{ id: "open-on-device", title: gt("Open on this device"), image: "iphone" }]
+    : [];
   const actions: MenuAction[] = [
+    ...openOnDevice,
     ...(onPaste
       ? [{ id: "paste", title: gt("Paste", { $context: "verb" }), image: "doc.on.clipboard" }]
+      : []),
+    ...(onReleaseControl
+      ? [{ id: "release-control", title: gt("Release control"), image: "hand.raised" }]
       : []),
     { id: "hard-reload", title: gt("Hard reload"), image: "arrow.clockwise.circle" },
     {
@@ -146,7 +162,11 @@ export function BrowserTabMenu({
       });
       return;
     }
+    if (id === "open-on-device" && deviceUrl) {
+      return openLocalPreview({ environmentId, threadId: tab.threadId }, deviceUrl);
+    }
     if (id === "paste") return onPaste?.();
+    if (id === "release-control") return onReleaseControl?.();
     if (id === "hard-reload") return void run({ hardReload: true });
     if (id === "zoom:in") return void run({ zoomFactor: zoomTo(1) });
     if (id === "zoom:out") return void run({ zoomFactor: zoomTo(-1) });
@@ -177,7 +197,7 @@ export function BrowserTabMenu({
       accessible
       accessibilityLabel={gt("Browser tab options")}
       accessibilityRole="button"
-      actions={streaming ? actions : [closeAction]}
+      actions={streaming ? actions : [...openOnDevice, closeAction]}
       onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
     >
       <ControlPill icon="ellipsis" accessibilityLabel={gt("Browser tab options")} />

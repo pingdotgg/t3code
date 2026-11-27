@@ -325,19 +325,14 @@ const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).
       flags,
       Effect.gen(function* () {
         const service = yield* BootService.BootService;
-        const path = yield* Path.Path;
-        const { baseDir } = yield* ServerConfig.ServerConfig;
         // An unreadable unit stays removable; only a unit known to serve another home is kept.
-        const installedBaseDir = yield* service.status.pipe(
-          Effect.map((status) => status.installedBaseDir),
+        const otherBaseDir = yield* service.status.pipe(
+          Effect.map((status) => status.otherBaseDir),
           Effect.orElseSucceed(() => undefined),
         );
-        if (
-          installedBaseDir !== undefined &&
-          path.resolve(installedBaseDir) !== path.resolve(baseDir)
-        ) {
+        if (otherBaseDir !== undefined) {
           yield* Console.log(
-            `The T3 Code service serves ${installedBaseDir}, so it was not removed. Pass \`${BootService.formatBootServiceBaseDirOption(installedBaseDir)}\` to remove it.`,
+            `The T3 Code service serves ${otherBaseDir}, so it was not removed. Pass \`${BootService.formatBootServiceBaseDirOption(otherBaseDir)}\` to remove it.`,
           );
           return;
         }
