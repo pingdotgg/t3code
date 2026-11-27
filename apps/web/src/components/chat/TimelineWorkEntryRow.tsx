@@ -494,7 +494,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const groupViewedImages = groupView?.viewedImages;
   // Images in this entry's expanded body page through the group's viewed images, like its strip.
   const expandImage =
-    viewedImage && groupViewedImages
+    shownImage && viewedImage && groupViewedImages
       ? (preview: ExpandedImagePreview) =>
           onImageExpand(workGroupImageGallery(groupViewedImages, shownImage.path, preview))
       : onImageExpand;
