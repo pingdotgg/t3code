@@ -756,16 +756,38 @@ function markdownLinkDestinationScanner(markdown: string) {
   };
 }
 
+// A line-start fence runs to a line opening with its marker, or to the end.
+const FENCED_CODE_BLOCK_PATTERN =
+  /^ {0,3}(`{3,}(?!`)(?=[^`\n]*$)|~{3,})[^\n]*(?:\n(?! {0,3}\1)[^\n]*)*(?:\n[^\n]*)?/gm;
+
 // Labels may nest balanced brackets (`[the [docs] guide](...)`), and the composer escapes them
 // (`[\[id\].tsx](...)`), so `\[` and `\]` never count. A blank line ends the paragraph and its labels.
-export function extractMarkdownLinkHrefs(markdown: string): string[] {
+export function extractMarkdownLinkHrefs(text: string): string[] {
+  // Code is literal: blank out fenced blocks, keeping every offset.
+  const markdown = text.replace(FENCED_CODE_BLOCK_PATTERN, (code) => code.replace(/[^\r\n]/g, " "));
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
-  const bracket = /!\[|[[\]\\]|\n[ \t\r]*\n/g;
+  const paragraphEnd = markdownRunEndFinder(markdown, /\n[ \t\r]*\n/g);
+  // A code span closes at the next run of as many backticks in its paragraph.
+  const closersByLength = new Map<number, { ends: number[]; next: number }>();
+  for (const run of markdown.matchAll(/`+/g)) {
+    const closers = closersByLength.get(run[0].length) ?? { ends: [], next: 0 };
+    closers.ends.push(run.index + run[0].length);
+    closersByLength.set(run[0].length, closers);
+  }
+  const bracket = /!\[|[[\]\\]|`+|\n[ \t\r]*\n/g;
   const openers: boolean[] = [];
   for (let match = bracket.exec(markdown); match; match = bracket.exec(markdown)) {
     if (match[0] === "\\") {
       bracket.lastIndex = match.index + 2;
+    } else if (match[0].startsWith("`")) {
+      const length = match[0].length;
+      const closers = closersByLength.get(length) ?? { ends: [], next: 0 };
+      while ((closers.ends[closers.next] ?? Infinity) - length < bracket.lastIndex) closers.next++;
+      const end = closers.ends[closers.next];
+      if (end !== undefined && end - length <= paragraphEnd(bracket.lastIndex)) {
+        bracket.lastIndex = end;
+      }
     } else if (match[0].startsWith("\n")) {
       openers.length = 0;
     } else if (match[0].endsWith("[")) {
