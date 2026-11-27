@@ -1277,10 +1277,11 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     filter.toggle();
   };
   const title = commit ? gt("Commit changes") : gt("Changes");
-  const commitFileCount =
-    commit && !filter.hideTestFiles
+  const reportedFileCount = filter.hideTestFiles
+    ? undefined
+    : commit
       ? activity.data?.commits.find((entry) => entry.oid === commit)?.changedFiles
-      : undefined;
+      : detail.data?.changedFiles;
   const seekingFile = !targetFile && result.nextCursor !== null;
   const loadingDiff = (result.isPending && !data.rows.length) || (seekingFile && !result.error);
   const verticalControls = usePullRequestVerticalControls();
@@ -1359,7 +1360,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
         title={title}
         subtitle={`${commit ? commit.slice(0, 7) : `#${route.params.number}`} · ${gt(
           "{count, plural, one {{count} file} other {{count} files}}",
-          { count: Math.max(commitFileCount ?? 0, data.files.length) },
+          { count: Math.max(reportedFileCount ?? 0, data.files.length) },
         )}${
           filter.hideTestFiles && filter.hiddenCount
             ? ` · ${gt("{count, plural, one {{count} test hidden} other {{count} tests hidden}}", {
