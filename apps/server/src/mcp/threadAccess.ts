@@ -227,13 +227,19 @@ export const assertFullAccess = (context: Caller, message: string) =>
  */
 export const assertBroadestAccess = (context: Caller, what: string) => {
   const broadest = context.scope.runtimeModeCeiling ?? "full-access";
+  const limit = `${context.limits.runtimeMode}/${context.limits.interactionMode}`;
+  const client = context.caller === undefined ? context.scope.client : undefined;
+  const callerLimit =
+    client === undefined
+      ? `This caller is limited to ${limit}.`
+      : `This caller is the MCP connection "${client.label}", limited to ${limit} by the access granted to that connection. Changing a T3 thread's access mode does not change it.`;
   return !isRuntimeModeAbove(broadest, context.limits.runtimeMode) &&
     context.limits.interactionMode === "default"
     ? Effect.void
     : Effect.fail(
         new OrchestratorMcpFailure({
           code: "capability_denied",
-          message: `Only a caller with ${broadest}/default access can ${what}, because that work picks its own modes. This caller is limited to ${context.limits.runtimeMode}/${context.limits.interactionMode}.`,
+          message: `Only a caller with ${broadest}/default access can ${what}, because that work picks its own modes. ${callerLimit}`,
         }),
       );
 };
