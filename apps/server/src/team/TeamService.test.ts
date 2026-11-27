@@ -4620,20 +4620,49 @@ describe("TeamService", () => {
             postRule: { roles: ["owner"], memberIds: [eveJoined.member.id] },
           },
         });
-        // Subscribe Alice's live stream before admin removal to verify one coalesced snapshot
-        // delivers both scrubbed view and scrubbed environment ACLs.
-        const eveRemovalEventsFiber = yield* team
-          .streamState(aliceSession.sessionId)
-          .pipe(Stream.take(3), Stream.runCollect, Effect.forkChild);
-        yield* Effect.yieldNow;
+        // Subscribe Alice's live stream, await initial snapshot, remove Eve, await the single
+        // coalesced snapshot, then detach eveEnvId as a sentinel to prove ZERO duplicate snapshots.
+        const initialSnapshotSeen = yield* Deferred.make<void>();
+        const removalSnapshotSeen = yield* Deferred.make<void>();
+        let seenEventCount = 0;
+        const eveRemovalEventsFiber = yield* team.streamState(aliceSession.sessionId).pipe(
+          Stream.tap(() =>
+            Effect.gen(function* () {
+              seenEventCount += 1;
+              if (seenEventCount === 1) {
+                yield* Deferred.succeed(initialSnapshotSeen, undefined);
+              } else if (seenEventCount === 3) {
+                yield* Deferred.succeed(removalSnapshotSeen, undefined);
+              }
+            }),
+          ),
+          Stream.take(4),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Deferred.await(initialSnapshotSeen);
         yield* team.updateMemberStatus({
           sessionId: aliceSession.sessionId,
           payload: { memberId: eveJoined.member.id, status: "removed" },
+        });
+        yield* Deferred.await(removalSnapshotSeen);
+        const stateAfterEveRemoved = yield* team.getState(aliceSession.sessionId);
+        const viewAfterEveRemoved = stateAfterEveRemoved.views.find((v) => v.id === customView.id);
+        const envAfterEveRemoved = stateAfterEveRemoved.environments?.find(
+          (e) => e.environmentId === eveEnvId,
+        );
+        expect(viewAfterEveRemoved?.readRule.memberIds).not.toContain(eveJoined.member.id);
+        expect(viewAfterEveRemoved?.postRule.memberIds).not.toContain(eveJoined.member.id);
+        expect(envAfterEveRemoved?.accessRule.memberIds).not.toContain(eveJoined.member.id);
+        yield* team.detachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: { environmentId: eveEnvId, unlinkPeer: false },
         });
         const eveRemovalEvents = yield* Fiber.join(eveRemovalEventsFiber);
         expect(eveRemovalEvents.map((e) => e.type)).toEqual([
           "snapshot",
           "memberUpserted",
+          "snapshot",
           "snapshot",
         ]);
         const streamedAfterEveRemoved = eveRemovalEvents[2];
@@ -4645,23 +4674,18 @@ describe("TeamService", () => {
           const streamedEnv = streamedAfterEveRemoved.payload.environments?.find(
             (e) => e.environmentId === eveEnvId,
           );
+          expect(streamedEnv).toBeDefined();
           expect(streamedView?.readRule.memberIds).not.toContain(eveJoined.member.id);
           expect(streamedView?.postRule.memberIds).not.toContain(eveJoined.member.id);
           expect(streamedEnv?.accessRule.memberIds).not.toContain(eveJoined.member.id);
         }
-        const stateAfterEveRemoved = yield* team.getState(aliceSession.sessionId);
-        const viewAfterEveRemoved = stateAfterEveRemoved.views.find((v) => v.id === customView.id);
-        const envAfterEveRemoved = stateAfterEveRemoved.environments?.find(
-          (e) => e.environmentId === eveEnvId,
-        );
-        expect(viewAfterEveRemoved?.readRule.memberIds).not.toContain(eveJoined.member.id);
-        expect(viewAfterEveRemoved?.postRule.memberIds).not.toContain(eveJoined.member.id);
-        expect(envAfterEveRemoved?.accessRule.memberIds).not.toContain(eveJoined.member.id);
-        // Clean up the attached test environment before the offline-peer deleteTeam check below.
-        yield* team.detachEnvironment({
-          sessionId: aliceSession.sessionId,
-          payload: { environmentId: eveEnvId, unlinkPeer: false },
-        });
+        const streamedAfterDetach = eveRemovalEvents[3];
+        expect(streamedAfterDetach?.type).toBe("snapshot");
+        if (streamedAfterDetach?.type === "snapshot") {
+          expect(
+            streamedAfterDetach.payload.environments?.some((e) => e.environmentId === eveEnvId),
+          ).toBe(false);
+        }
 
         // Simulate an offline peer link during deleteTeam so we verify pending remote revocations
         // survive workspace deletion and still drain once the peer comes back online.

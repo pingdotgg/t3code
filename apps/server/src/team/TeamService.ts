@@ -1827,6 +1827,13 @@ const make = Effect.gen(function* () {
                 event.type === "environmentUpserted" ||
                 event.type === "environmentRemoved"
               ) {
+                if (
+                  event.type !== "teamUpdated" &&
+                  currentMember !== null &&
+                  currentMember.status !== "active"
+                ) {
+                  return Option.none<TeamStateStreamEvent>();
+                }
                 const fresh = yield* getState(sessionId);
                 currentMember = fresh.currentMember;
                 knownReadableThreadIds = new Set<ThreadId>(
