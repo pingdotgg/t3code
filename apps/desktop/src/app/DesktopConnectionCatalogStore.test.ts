@@ -28,9 +28,12 @@ const encodeLegacySavedEnvironments = Schema.encodeEffect(
     Schema.Struct({ version: Schema.Literal(1), records: Schema.Array(Schema.Unknown) }),
   ),
 );
-function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
+function layerSafeStorageFor(
+  available: boolean | Effect.Effect<boolean>,
+  failDecrypt: Ref.Ref<boolean> | null = null,
+) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
-    isEncryptionAvailable: Effect.succeed(available),
+    isEncryptionAvailable: typeof available === "boolean" ? Effect.succeed(available) : available,
     encryptString: (value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`)),
     decryptString: (value) => {
       return Effect.gen(function* () {
@@ -52,7 +55,7 @@ function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> |
 
 function layerFor(
   baseDir: string,
-  encryptionAvailable = true,
+  encryptionAvailable: boolean | Effect.Effect<boolean> = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
 ) {
@@ -91,7 +94,7 @@ function layerFor(
 
 const withStore = <A, E, R>(
   effect: Effect.Effect<A, E, R | DesktopConnectionCatalogStore.DesktopConnectionCatalogStore>,
-  encryptionAvailable = true,
+  encryptionAvailable: boolean | Effect.Effect<boolean> = true,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -122,6 +125,16 @@ describe("DesktopConnectionCatalogStore", () => {
         assert.deepStrictEqual(yield* store.get, Option.none());
       }),
       false,
+    ),
+  );
+
+  it.effect("reads an empty profile without checking secure storage", () =>
+    withStore(
+      Effect.gen(function* () {
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        assert.deepStrictEqual(yield* store.get, Option.none());
+      }),
+      Effect.die("secure storage must not be checked when there is nothing to decrypt"),
     ),
   );
 
