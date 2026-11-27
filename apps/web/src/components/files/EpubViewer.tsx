@@ -83,13 +83,13 @@ function ReadingFrame(props: {
         <EpubNarration cues={props.page.narration} frame={frame} />
       ) : null}
       {media.length > 0 ? (
-        <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-border/60 px-3 py-1">
+        <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-divider px-3 py-1">
           {media.map((item, index) => (
             <Button
               // oxlint-disable-next-line react/no-array-index-key -- The authored media order is fixed within a chapter.
               key={`${item.localName}:${index}`}
-              variant="outline"
-              size="sm-touch"
+              variant="secondary"
+              size="sm"
               onClick={() => {
                 for (const element of media) element.pause();
                 setOpenMedia(item);
@@ -204,7 +204,7 @@ export default function EpubViewer(props: {
     <div className="flex min-h-0 flex-1 flex-col">
       {props.book.chapters.length > 1 || props.book.contents.length > 1 ? (
         <div
-          className="flex min-h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3 text-xs max-sm:py-1 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
+          className="flex min-h-10 shrink-0 items-center gap-2 border-b border-divider px-3 text-meta max-sm:py-1 max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11"
           dir={props.book.rtl ? "rtl" : "ltr"}
         >
           <FileSurfaceAction
@@ -253,13 +253,15 @@ export default function EpubViewer(props: {
           </FileSurfaceAction>
         </div>
       ) : null}
-      <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-3 py-1 text-xs text-muted-foreground max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11">
+      <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-divider px-3 py-1 text-meta text-muted-foreground max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11">
         <span className="min-w-0 flex-1 tabular-nums" role="status">
           {gt("Chapter {page} of {count}", {
             page: String(index + 1),
             count: String(props.book.chapters.length),
           })}
-          {props.sizeBytes ? ` · ${formatAttachmentSize(props.sizeBytes, messages)}` : ""}
+          {props.sizeBytes ? (
+            <span className="ms-2">{formatAttachmentSize(props.sizeBytes, messages)}</span>
+          ) : null}
         </span>
         <FileSurfaceAction
           label={gt("Decrease reading size")}
@@ -298,10 +300,10 @@ export default function EpubViewer(props: {
           role="alert"
           className="flex flex-1 flex-col items-center justify-center gap-1 px-6 text-center"
         >
-          <p className="text-sm font-medium">
+          <p className="text-label">
             <T>No preview for this file</T>
           </p>
-          <p className="max-w-sm text-xs text-muted-foreground">
+          <p className="max-w-sm text-meta text-muted-foreground">
             {previewFailureText(result, messages)}
           </p>
         </div>
