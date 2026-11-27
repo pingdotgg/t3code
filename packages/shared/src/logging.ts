@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
+import * as PlatformError from "effect/PlatformError";
 
 export interface RotatingFileSinkOptions {
   readonly filePath: string;
@@ -235,7 +236,13 @@ export const makeAsyncRotatingFileSink = Effect.fnUntraced(function* (
     const activeExists = yield* fs.exists(options.filePath);
     if (activeExists) {
       if (yield* fs.exists(stagedPath)) {
-        return yield* Effect.fail(new Error(`Unfinished log rotation at ${stagedPath}`));
+        return yield* PlatformError.systemError({
+          _tag: "AlreadyExists",
+          module: "FileSystem",
+          method: "rename",
+          description: "Unfinished log rotation",
+          pathOrDescriptor: stagedPath,
+        });
       }
       yield* fs.rename(options.filePath, stagedPath);
     }
