@@ -1,7 +1,7 @@
 import { useGT } from "gt-react";
 import { InfoIcon, RotateCwIcon } from "lucide-react";
 import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export function DiffFileStatus({
   error,
@@ -15,27 +15,25 @@ export function DiffFileStatus({
   const gt = useGT();
   if (!error && !truncated) return null;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-micro"
-            variant="ghost-muted"
-            aria-label={error ? gt("Retry loading diff") : gt("Partial diff preview")}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (error) retry();
-            }}
-          />
-        }
-      >
-        {error ? <RotateCwIcon className="size-3" /> : <InfoIcon className="size-3" />}
-      </TooltipTrigger>
-      <TooltipPopup>
-        {error
+    <SharedTooltipTrigger
+      render={
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
+          aria-label={error ? gt("Retry loading diff") : gt("Partial diff preview")}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (error) retry();
+          }}
+        />
+      }
+      label={
+        error
           ? gt("Retry loading diff")
-          : gt("This file is too large to show in full. Counts include all changes.")}
-      </TooltipPopup>
-    </Tooltip>
+          : gt("This file is too large to show in full. Counts include all changes.")
+      }
+    >
+      {error ? <RotateCwIcon className="size-3" /> : <InfoIcon className="size-3" />}
+    </SharedTooltipTrigger>
   );
 }

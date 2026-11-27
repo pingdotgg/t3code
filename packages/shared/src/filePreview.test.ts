@@ -103,6 +103,11 @@ describe("workspace file previews", () => {
     expect(filePreviewKind({ name: "download", mimeType })).toBe(kind);
     expect(filePreviewKind({ name, mimeType: "application/zip" })).toBe("archive");
   });
+  it.each(["docx", "xlsx", "pptx"])("recognizes an encrypted %s with an OLE MIME type", (kind) => {
+    expect(filePreviewKind({ name: `file.${kind}`, mimeType: "application/x-ole-storage" })).toBe(
+      kind,
+    );
+  });
   // regression: #10311 previews classify by the literal filename, not URL-like suffixes
   it.each([
     "image.png.ts",
@@ -194,6 +199,30 @@ describe("attachment preview classification", () => {
   it("rejects binary and invalid UTF-8 data", () => {
     expect(() => decodeFilePreviewText(new Uint8Array([65, 0, 66]))).toThrow("binary");
     expect(() => decodeFilePreviewText(new Uint8Array([255]))).toThrow("UTF-8");
+  });
+  it("decodes a GBK source file instead of rejecting it", () => {
+    const gbk = new Uint8Array([
+      0x2f, 0x2f, 0x20, 0xd6, 0xd0, 0xce, 0xc4, 0xd7, 0xa2, 0xca, 0xcd, 0x0a, 0x69, 0x6e, 0x74,
+      0x20, 0x61, 0x20, 0x3d, 0x20, 0x31, 0x3b, 0x0a,
+    ]);
+    expect(decodeFilePreviewText(gbk)).toEqual({
+      text: "// 中文注释\nint a = 1;\n",
+      truncated: false,
+    });
+  });
+  it("still prefers UTF-8 when the bytes are valid UTF-8", () => {
+    expect(decodeFilePreviewText(new TextEncoder().encode("// 中文注释\n")).text).toBe(
+      "// 中文注释\n",
+    );
+  });
+  it("drops a GBK character split by the preview boundary", () => {
+    const bytes = new Uint8Array(FILE_TEXT_PREVIEW_MAX_BYTES + 1).fill(0x61);
+    bytes.set([0xd6, 0xd0], 0);
+    bytes.set([0xce, 0xc4], FILE_TEXT_PREVIEW_MAX_BYTES - 1);
+    expect(decodeFilePreviewText(bytes)).toEqual({
+      text: `中${"a".repeat(FILE_TEXT_PREVIEW_MAX_BYTES - 3)}`,
+      truncated: true,
+    });
   });
   it.each(["doc", "xls", "ppt", "7z", "rar"])(
     "retains the binary fallback for %s, which opencode does not render",

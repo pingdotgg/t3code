@@ -7,7 +7,7 @@ import type {
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { act, render } from "../../test/render";
+import { act, fakeTimers, render } from "../../test/render";
 
 const mocks = vi.hoisted(() => ({
   createClient: vi.fn<(target: unknown, handlers: PreviewStreamEvents) => unknown>(),
@@ -218,5 +218,40 @@ describe("ServerBrowserSurface history", () => {
 
     press("pointerdown", 0);
     expect(mouseInputs()).not.toEqual([]);
+  });
+});
+
+describe("ServerBrowserSurface frames", () => {
+  it("reports a connected stream that never delivers a frame until one arrives", async () => {
+    setup();
+    const onNoFrames = vi.fn();
+    const container = document.createElement("div");
+    container.style.cssText = "width: 400px; height: 300px; display: flex;";
+    await using _screen = await render(
+      <ServerBrowserSurface
+        environmentId={EnvironmentId.make("environment-frames")}
+        threadId="thread-frames"
+        tabId="tab-frames"
+        visible
+        followSize={false}
+        onNoFrames={onNoFrames}
+        className="flex-1"
+      />,
+      { container },
+    );
+    await vi.waitFor(() => expect(mocks.createClient).toHaveBeenCalled());
+    using _timers = fakeTimers();
+    const handlers = mocks.createClient.mock.calls.at(-1)![1];
+    await act(() => handlers.onConnectedChange(true));
+    await act(() => vi.advanceTimersByTime(9_999));
+    expect(onNoFrames).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+
+    await act(() => vi.advanceTimersByTime(1));
+    expect(onNoFrames).toHaveBeenCalledOnce();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("not drawing it");
+
+    await act(() => mocks.painted?.());
+    expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 });

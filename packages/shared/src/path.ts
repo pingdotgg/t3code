@@ -15,6 +15,11 @@ export function isNetworkPath(value: string): boolean {
   return /^[\\/]{2}/.test(value);
 }
 
+/** A `\\wsl.localhost\<distro>` or `\\wsl$\<distro>` share: a WSL distro's files seen from Windows over 9P. */
+export function isWslSharePath(value: string): boolean {
+  return /^[\\/]{2}(?:[?.][\\/]UNC[\\/])?wsl(?:\.localhost|\$)[\\/]/i.test(value.trim());
+}
+
 export function isWindowsAbsolutePath(value: string): boolean {
   return isUncPath(value) || isWindowsDrivePath(value);
 }
@@ -67,7 +72,7 @@ const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 const LATIN_FOLDS: Record<string, string> = {
   Ŀ: "L",
   ŀ: "l",
-  ŉ: "'n",
+  ŉ: "n",
   Đ: "D",
   đ: "d",
   Ð: "D",
@@ -126,6 +131,11 @@ export function fileBasename(path: string): string {
   if (trimmed.length === 0) return path;
   const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   return separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
+}
+
+/** A path's last segment composed to NFC for display: macOS stores many names in NFD. */
+export function fileDisplayName(path: string): string {
+  return fileBasename(path).normalize("NFC");
 }
 
 export function workspaceRelativeFilePath(
@@ -204,8 +214,7 @@ export function resolvePastedPath(previous: string, next: string): string {
 
 export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): string {
   if (isAbsolutePath(path) || path.startsWith("~/") || path.startsWith("~\\")) return path;
-  const base = workspaceRoot.replace(/[/\\]+$/, "");
-  return isWindowsAbsolutePath(workspaceRoot)
-    ? `${base}\\${path.replaceAll("/", "\\")}`
-    : `${base}/${path}`;
+  const isWindows = isWindowsAbsolutePath(workspaceRoot);
+  const base = workspaceRoot.replace(isWindows ? /[/\\]+$/ : /\/+$/, "");
+  return isWindows ? `${base}\\${path.replaceAll("/", "\\")}` : `${base}/${path}`;
 }

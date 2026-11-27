@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as EffectScheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
@@ -32,6 +33,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import { renderWebhookPrompt } from "./webhookTemplate.ts";
+import { RelayClientTracer, withRelayClientTracing } from "@t3tools/shared/relayTracing";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
 
@@ -315,6 +317,34 @@ it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
   ),
 );
 
+it.effect("a relay-delivered webhook keeps the run it starts off the relay tracer", () =>
+  withService(({ service, launches }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(yield* webhookTaskInput());
+      const relaySpans: Array<string> = [];
+      const relayTracer = Tracer.make({
+        span: (options) => {
+          relaySpans.push(options.name);
+          return new Tracer.NativeSpan(options);
+        },
+      });
+
+      const result = yield* service
+        .triggerWebhook(requestFor(task))
+        .pipe(
+          withRelayClientTracing,
+          Effect.provideService(RelayClientTracer, Option.some(relayTracer)),
+        );
+      assert.equal(result._tag, "accepted");
+      yield* Queue.take(launches);
+
+      assert.include(relaySpans, "ScheduledTaskService.triggerWebhook");
+      assert.notInclude(relaySpans, "ScheduledTaskService.runWebhookDelivery");
+      assert.notInclude(relaySpans, "ScheduledTaskService.runTask");
+    }),
+  ),
+);
+
 it("builds the relay hook URL from the managed tunnel's key, never the environment id", () => {
   const relayUrl = "https://relay.example.com/";
   assert.equal(
@@ -567,6 +597,28 @@ it.effect("drops a character split by the delivery log's body limit", () =>
       assert.equal(delivery.bodyBytes, body.byteLength);
       assert.equal(delivery.body.slice(-3), "aaa");
       assert.equal(delivery.body.length, limit - 1);
+    }),
+  ),
+);
+
+it.effect("drops an emoji split by the delivery log's prompt limit", () =>
+  withService(({ service }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(yield* webhookTaskInput({ prompt: "{{body.text}}" }));
+      const limit = 64 * 1024;
+      const frameOpen = "<webhook-data-000000000000>".length;
+      // The emoji's high surrogate is the last code unit the log keeps.
+      const bodyText = JSON.stringify({ text: `${"a".repeat(limit - 1 - frameOpen)}😀 tail` });
+      yield* service.triggerWebhook(
+        requestFor(task, { bodyText, body: new TextEncoder().encode(bodyText) }),
+      );
+      const [summary] = (yield* service.listWebhookDeliveries({ id: task.id })).deliveries;
+      const { delivery } = yield* service.getWebhookDelivery({
+        id: task.id,
+        deliveryId: summary!.id,
+      });
+      assert.equal(delivery.renderedPrompt!.slice(-3), "aaa");
+      assert.equal(delivery.renderedPrompt!.length, limit - 1);
     }),
   ),
 );

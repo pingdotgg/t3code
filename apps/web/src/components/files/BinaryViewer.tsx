@@ -1,9 +1,6 @@
+import { FilePasswordPrompt } from "./FilePasswordPrompt";
 /* oxlint-disable react/no-array-index-key -- Read-only cells retain their database row and column positions. */
-import {
-  decodeFilePreviewText,
-  filePreviewKind,
-  hostPreviewMimeTypeFromExtension,
-} from "@t3tools/shared/filePreview";
+import { decodeFilePreviewText, filePreviewKind } from "@t3tools/shared/filePreview";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { ChevronLeftIcon, ChevronRightIcon, FileIcon, FolderIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -25,10 +22,13 @@ import {
   FileSurfaceNotice,
 } from "./fileSurfaceChrome";
 import {
+  compareArchiveRows,
+  formatArchiveModifiedDate,
   SQLITE_PAGE_SIZE,
   type BinaryWorkerRequest,
   type BinaryWorkerResult,
 } from "./binaryPreviewProtocol";
+import { archiveImageUrl } from "./archiveImageUrl";
 import { PreviewImage } from "./PreviewImage";
 import { readBinaryPreview } from "./readBinaryPreview";
 import { previewErrorText, previewFailureText } from "./previewFailureMessages";
@@ -69,15 +69,10 @@ function ArchiveFile(props: { readonly path: string; readonly bytes: Uint8Array<
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Create an object URL for the extracted image and revoke it when the entry changes or unmounts.
   useEffect(() => {
     if (kind !== "image") return;
-    const extension = props.path.slice(props.path.lastIndexOf("."));
-    const objectUrl = URL.createObjectURL(
-      new Blob([props.bytes], {
-        type: hostPreviewMimeTypeFromExtension(extension) ?? "application/octet-stream",
-      }),
-    );
+    const image = archiveImageUrl(props.path, props.bytes);
     // oxlint-disable-next-line react/set-state-in-effect -- Publish a Blob URL only after registering its cleanup.
-    setUrl(objectUrl);
-    return () => URL.revokeObjectURL(objectUrl);
+    setUrl(image.url);
+    return image.revoke;
   }, [props.bytes, props.path, kind]);
   if (kind === "image")
     return url ? <PreviewImage key={url} src={url} name={props.path} /> : <FileSurfaceLoading />;
@@ -119,6 +114,7 @@ export default function BinaryViewer(props: {
   const [selectedTable, setSelectedTable] = useState("");
   const [page, setPage] = useState(0);
   const [busy, setBusy] = useState(true);
+  const [incorrectPassword, setIncorrectPassword] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -162,7 +158,8 @@ export default function BinaryViewer(props: {
       if (timerRef.current) clearTimeout(timerRef.current);
       const result = event.data;
       setBusy(false);
-      if (result.type === "error") setError(previewFailureText(result));
+      if (result.type === "password") setIncorrectPassword(result.incorrect);
+      else if (result.type === "error") setError(previewFailureText(result));
       else if (result.type === "archive") setArchive(result);
       else if (result.type === "entry") setEntry(result);
       else if (result.type === "rows") setRows(result);
@@ -202,19 +199,29 @@ export default function BinaryViewer(props: {
   };
   const children = new Map<
     string,
-    { path: string; directory: boolean; size: number; modified: string | null }
+    { path: string; entryPath: string; directory: boolean; size: number; modified: string | null }
   >();
   for (const item of archive?.entries ?? []) {
-    if (!item.path.startsWith(folder)) continue;
-    const rest = item.path.slice(folder.length).replace(/\/$/, "");
+    // `tar cf x.tar .` names members "./src/a.txt"; list them from the archive root.
+    const name = item.path.replace(/^(?:\.?\/)+|\/+$/g, "").replace(/\/{2,}/g, "/");
+    if (!name.startsWith(folder)) continue;
+    const rest = name.slice(folder.length);
     if (!rest) continue;
     const slash = rest.indexOf("/");
-    const path = slash < 0 ? item.path.replace(/\/$/, "") : `${folder}${rest.slice(0, slash)}`;
+    const path = slash < 0 ? name : `${folder}${rest.slice(0, slash)}`;
     const directory = slash >= 0 || item.directory;
-    const key = `${path}${directory ? "/" : ""}`;
+    // Files stay keyed by their raw name so `/a.txt` and `a.txt` remain two openable rows.
+    const key = directory ? `d:${path}` : `f:${item.path}`;
     const previous = children.get(key);
-    if (previous) previous.size += item.size;
-    else children.set(key, { path, directory, size: item.size, modified: item.modified });
+    if (previous && directory) previous.size += item.size;
+    else
+      children.set(key, {
+        path,
+        entryPath: item.path,
+        directory,
+        size: item.size,
+        modified: item.modified,
+      });
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -309,7 +316,15 @@ export default function BinaryViewer(props: {
           </FileSurfaceNotice>
         </>
       ) : null}
-      {error ? (
+      {incorrectPassword !== null ? (
+        <FilePasswordPrompt
+          incorrect={incorrectPassword}
+          onSubmit={(password) => {
+            setIncorrectPassword(null);
+            send({ type: "unlock", password });
+          }}
+        />
+      ) : error ? (
         <FileSurfaceFailure
           message={error}
           {...(props.onRetry ? { onRetry: props.onRetry } : {})}
@@ -340,45 +355,40 @@ export default function BinaryViewer(props: {
               </tr>
             </thead>
             <tbody>
-              {[...children.values()]
-                .sort(
-                  (a, b) =>
-                    Number(b.directory) - Number(a.directory) || a.path.localeCompare(b.path),
-                )
-                .map((item) => (
-                  <tr
-                    key={`${item.path}${item.directory ? "/" : ""}`}
-                    className="hover:bg-muted/40"
-                  >
-                    <td className="max-w-0 border-b border-border/60">
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:text-primary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                        onClick={() => {
-                          if (item.directory) setFolder(`${item.path}/`);
-                          else {
-                            setSelectedPath(item.path);
-                            setEntry(null);
-                            send({ type: "entry", path: item.path });
-                          }
-                        }}
-                      >
-                        {item.directory ? (
-                          <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
-                        ) : (
-                          <FileIcon className="size-4 shrink-0 text-muted-foreground" />
-                        )}
-                        <span className="truncate">{item.path.slice(folder.length)}</span>
-                      </button>
-                    </td>
-                    <td className="w-20 border-b border-border/60 px-3 py-2 text-right whitespace-nowrap text-muted-foreground tabular-nums">
-                      {formatAttachmentSize(item.size, messages)}
-                    </td>
-                    <td className="w-28 border-b border-border/60 px-3 py-2 text-right whitespace-nowrap text-muted-foreground">
-                      {item.modified ? new Date(item.modified).toLocaleDateString() : "-"}
-                    </td>
-                  </tr>
-                ))}
+              {[...children.values()].sort(compareArchiveRows).map((item) => (
+                <tr
+                  key={item.directory ? `d:${item.path}` : `f:${item.entryPath}`}
+                  className="hover:bg-muted/40"
+                >
+                  <td className="max-w-0 border-b border-border/60">
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left hover:text-primary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                      onClick={() => {
+                        if (item.directory) setFolder(`${item.path}/`);
+                        else {
+                          setSelectedPath(item.path);
+                          setEntry(null);
+                          send({ type: "entry", path: item.entryPath });
+                        }
+                      }}
+                    >
+                      {item.directory ? (
+                        <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <FileIcon className="size-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="truncate">{item.path.slice(folder.length)}</span>
+                    </button>
+                  </td>
+                  <td className="w-20 border-b border-border/60 px-3 py-2 text-right whitespace-nowrap text-muted-foreground tabular-nums">
+                    {formatAttachmentSize(item.size, messages)}
+                  </td>
+                  <td className="w-28 border-b border-border/60 px-3 py-2 text-right whitespace-nowrap text-muted-foreground">
+                    {formatArchiveModifiedDate(item.modified)}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
           {children.size === 0 ? (

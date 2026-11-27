@@ -94,6 +94,9 @@ describe("semver helpers", () => {
     expect(recreated("0.5.0", "^0")).toBe(true);
     expect(recreated("0.0.4", "^0.0")).toBe(true);
     expect(recreated("24.10.0", ">=24.10")).toBe(true);
+    expect(recreated("24.10.0+vendor.1", ">=24.10")).toBe(true);
+    expect(recreated("24.10.0+vendor..1", ">=24.10")).toBe(false);
+    expect(recreated("24.9.9+vendor.1", ">=24.10")).toBe(false);
     expect(recreated("24.9.9", ">=24.10")).toBe(false);
   });
 });

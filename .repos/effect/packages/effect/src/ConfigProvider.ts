@@ -906,7 +906,8 @@ export function fromEnvRecord(
  * `Record`.
  *
  * The default environment merges `process.env` and `import.meta.env` (when
- * available). Override by passing `{ env: { ... } }`.
+ * available). Override by passing `{ env: { ... } }`, which behaves like
+ * {@link fromEnvRecord}.
  *
  * Literal empty strings are treated as missing values when loaded as values by
  * default. Pass `{ preserveEmptyStrings: true }` to keep empty strings as
@@ -914,6 +915,15 @@ export function fromEnvRecord(
  * names present in the source.
  *
  * Never fails with `SourceError` — all lookups are synchronous.
+ *
+ * **Gotchas**
+ *
+ * Without `env`, the environment is read once, when the first lookup effect
+ * runs, not when the provider is created. Later lookups, including those
+ * through providers derived with {@link mapInput}, {@link nested}, or
+ * {@link constantCase}, reuse that snapshot and do not observe later
+ * environment changes. Use `fromEnvRecord({ ...process.env })` to take the
+ * snapshot at a chosen moment.
  *
  * **Example** (Reading from a custom env record)
  *
@@ -946,13 +956,20 @@ export function fromEnv(options?: {
   readonly env?: Record<string, string> | undefined
   readonly preserveEmptyStrings?: boolean | undefined
 }): ConfigProvider {
-  const env: Record<string, string | undefined> = options?.env ?? {
-    ...(globalThis as {
-      readonly process?: { readonly env?: Record<string, string | undefined> }
-    }).process?.env,
-    ...(import.meta as any)?.env
+  if (options?.env !== undefined) {
+    return fromEnvRecord(options.env, options)
   }
-  return fromEnvRecord(env, { preserveEmptyStrings: options?.preserveEmptyStrings })
+  let provider: ConfigProvider | undefined
+  return make((path) =>
+    Effect.suspend(() =>
+      (provider ??= fromEnvRecord({
+        ...(globalThis as {
+          readonly process?: { readonly env?: Record<string, string | undefined> }
+        }).process?.env,
+        ...(import.meta as any)?.env
+      }, options)).load(path)
+    )
+  )
 }
 
 type EnvTrieNode = {

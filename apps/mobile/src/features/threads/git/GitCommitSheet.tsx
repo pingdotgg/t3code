@@ -1,3 +1,5 @@
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import { FitSheet } from "../../../components/ui/FitSheet";
 import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { Button } from "../../../components/ui/Button";
@@ -11,25 +13,46 @@ import { SymbolView } from "../../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/ui/AppText";
 import { cn } from "../../../lib/cn";
 import { useEnvironmentQuery } from "../../../state/query";
+import {
+  gitRepositoryTargetFromRoute,
+  type GitRepositoryRouteParams,
+} from "../../../state/thread-git-target";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
 
-type GitCommitSheetProps = StaticScreenProps<{
-  readonly environmentId: string;
-  readonly threadId: string;
-}>;
+type GitCommitSheetProps = StaticScreenProps<
+  {
+    readonly environmentId: string;
+    readonly threadId: string;
+  } & GitRepositoryRouteParams
+>;
 
-export function GitCommitSheet(_props: GitCommitSheetProps) {
+// The sheet unmounts on submit, but a reopened sheet needs to observe the action settling.
+const retainedCommitDraftAtom = Atom.make<
+  ReadonlyMap<
+    string,
+    {
+      readonly refName: string | null;
+      readonly excluded: ReadonlySet<string>;
+      readonly commitMessage: string;
+      readonly createdBranch: string | null | undefined;
+    }
+  >
+>(new Map()).pipe(Atom.keepAlive);
+
+export function GitCommitSheet(props: GitCommitSheetProps) {
+  const repository = gitRepositoryTargetFromRoute(props.route.params);
   const gt = useGT();
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
-  const gitState = useSelectedThreadGitState();
-  const gitActions = useSelectedThreadGitActions();
-  const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
+  const threadWorktree = useSelectedThreadWorktree();
+  const selectedThreadCwd = repository?.cwd ?? threadWorktree.selectedThreadCwd;
+  const gitState = useSelectedThreadGitState(repository);
+  const gitActions = useSelectedThreadGitActions(repository);
+  const { canWriteSourceControl, canCreateFeatureBranch } = gitActions;
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -40,12 +63,49 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       : null,
   );
 
-  const busy = gitState.gitOperationLabel !== null;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
   const allFiles = gitStatus.data?.workingTree?.files ?? [];
 
-  const [dialogCommitMessage, setDialogCommitMessage] = useState("");
-  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
+  const selectionKey =
+    selectedThread !== null && selectedThreadCwd !== null
+      ? `${selectedThread.environmentId}\u0000${selectedThreadCwd}`
+      : null;
+  const retained = useAtomValue(retainedCommitDraftAtom, (entries) =>
+    selectionKey === null ? undefined : entries.get(selectionKey),
+  );
+  const setRetainedCommitDraft = useAtomSet(retainedCommitDraftAtom);
+  const [dialogCommitMessage, setDialogCommitMessage] = useState(retained?.commitMessage ?? "");
+  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(
+    retained?.excluded ?? new Set(),
+  );
+  const [previousRetained, setPreviousRetained] = useState(retained);
+  if (previousRetained !== retained) {
+    setPreviousRetained(retained);
+    if (retained === undefined) {
+      if (previousRetained?.excluded === excludedFiles) {
+        setExcludedFiles(new Set());
+      }
+      if (previousRetained?.commitMessage === dialogCommitMessage) {
+        setDialogCommitMessage("");
+      }
+    }
+  }
+  const [selectionBranch, setSelectionBranch] = useState(
+    retained !== undefined ? retained.refName : (gitStatus.data?.refName ?? null),
+  );
+  const [consumedTransfer, setConsumedTransfer] = useState<typeof retained>();
+  const createdBranch =
+    retained !== consumedTransfer && retained?.refName === selectionBranch
+      ? retained.createdBranch
+      : undefined;
+  const busy = gitState.gitOperationLabel !== null || createdBranch === null;
+  if (gitStatus.data && selectionBranch !== gitStatus.data.refName && createdBranch !== null) {
+    setSelectionBranch(gitStatus.data.refName);
+    setConsumedTransfer(retained);
+    if (createdBranch !== gitStatus.data.refName) {
+      setExcludedFiles(new Set());
+    }
+  }
 
   const selectedFiles = allFiles.filter((file) => !excludedFiles.has(file.path));
   const allSelected = excludedFiles.size === 0;
@@ -54,15 +114,43 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const selectedDeletions = selectedFiles.reduce((sum, file) => sum + file.deletions, 0);
 
   const runCommitAction = async (featureBranch: boolean) => {
-    if (!canWriteSourceControl || (featureBranch && !canChangeThreadBranch)) return;
+    if (!canWriteSourceControl || (featureBranch && !canCreateFeatureBranch)) return;
     const commitMessage = dialogCommitMessage.trim();
+    const submitted = {
+      refName: selectionBranch,
+      excluded: excludedFiles,
+      commitMessage: dialogCommitMessage,
+      createdBranch: featureBranch ? null : createdBranch,
+    };
+    if (selectionKey !== null) {
+      setRetainedCommitDraft((entries) => new Map(entries).set(selectionKey, submitted));
+    }
     navigation.goBack();
-    await gitActions.onRunSelectedThreadGitAction({
+    let checkedOutBranch: string | undefined;
+    const result = await gitActions.onRunSelectedThreadGitAction({
       action: "commit",
       featureBranch,
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
+      onProgress: (event) => {
+        if (event.kind === "action_failed") checkedOutBranch = event.createdBranch;
+      },
     });
+    if (selectionKey !== null) {
+      setRetainedCommitDraft((entries) => {
+        if (entries.get(selectionKey) !== submitted) return entries;
+        const next = new Map(entries);
+        if (result?.commit.status === "created") {
+          next.delete(selectionKey);
+        } else {
+          next.set(selectionKey, {
+            ...submitted,
+            createdBranch: checkedOutBranch ?? createdBranch,
+          });
+        }
+        return next;
+      });
+    }
   };
 
   return (
@@ -70,7 +158,9 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       header={
         <SheetHeader
           title={gt("Commit changes")}
-          subtitle={gitStatus.data?.refName ?? gt("(detached HEAD)")}
+          subtitle={[repository?.name, gitStatus.data?.refName ?? gt("(detached HEAD)")]
+            .filter(Boolean)
+            .join(" · ")}
           onCancel={() => navigation.goBack()}
           accessibilityLabel={gt("Cancel commit")}
         />
@@ -217,7 +307,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           icon="arrow.branch"
           tone="text"
           fullWidth
-          disabled={!canWriteSourceControl || !canChangeThreadBranch || noneSelected || busy}
+          disabled={!canWriteSourceControl || !canCreateFeatureBranch || noneSelected || busy}
           onPress={() => void runCommitAction(true)}
         />
       </View>

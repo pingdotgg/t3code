@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This adapter test binds a real local socket or Windows named pipe and verifies its cleanup.
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeEvents from "node:events";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
@@ -14,9 +16,15 @@ import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppContr
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { afterEach, describe, expect } from "vite-plus/test";
 
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import { DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL } from "../ipc/channels.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
+import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import { startDesktopAppControlServer } from "./DesktopAppActivation.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const openServers: Array<{ close: () => Promise<void> }> = [];
 
@@ -162,5 +170,66 @@ describe("desktop app control server", () => {
         await NodeFSP.rm(root, { recursive: true, force: true });
       });
     }),
+  );
+
+  it.effect("fails an in-flight request when the renderer process is gone", () =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcess.Platform;
+      const userId = yield* HostProcess.UserId;
+      const root = yield* Effect.acquireRelease(
+        Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-app-crash-test-"))),
+        (dir) => Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
+      );
+      const stateDir = NodePath.join(root, "userdata");
+      const target = makeTarget(stateDir, platform, userId);
+
+      let resolveDispatched: () => void = () => undefined;
+      const dispatched = new Promise<void>((resolve) => {
+        resolveDispatched = resolve;
+      });
+      const webContents = Object.assign(new NodeEvents.EventEmitter(), {
+        isDestroyed: () => false,
+        send: (channel: string) => {
+          if (channel === DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL) resolveDispatched();
+        },
+      });
+
+      const layer = DesktopAppActivation.layer.pipe(
+        Layer.provide(
+          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+            stateDir,
+            platform,
+          } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]),
+        ),
+        Layer.provide(
+          Layer.succeed(DesktopWindow.DesktopWindow, {
+            activate: Effect.void,
+          } as unknown as DesktopWindow.DesktopWindow["Service"]),
+        ),
+        Layer.provide(
+          Layer.succeed(ElectronWindow.ElectronWindow, {
+            main: Effect.succeedSome({ webContents } as unknown as Electron.BrowserWindow),
+          } as unknown as ElectronWindow.ElectronWindow["Service"]),
+        ),
+        Layer.provide(NodeServices.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const activation = yield* DesktopAppActivation.DesktopAppActivation;
+        yield* activation.start;
+        yield* activation.setRendererReady(true);
+
+        const response = exchange(target.address, request("before-crash", platform));
+        yield* Effect.promise(() => dispatched);
+        webContents.emit("render-process-gone", {}, { reason: "crashed", exitCode: 1 });
+
+        expect(yield* Effect.promise(() => response)).toMatchObject({
+          ok: false,
+          requestId: "before-crash",
+          code: "renderer-unavailable",
+        });
+        expect(webContents.listenerCount("render-process-gone")).toBe(0);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped),
   );
 });
