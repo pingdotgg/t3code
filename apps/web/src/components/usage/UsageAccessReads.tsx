@@ -14,7 +14,10 @@ export function UsageAccessReads({
     switch (driver) {
       case "claudeAgent":
         return (
-          <T>Reads its session history, and its sign-in to ask Anthropic for your reset credits.</T>
+          <T>
+            Reads its session history, and its sign-in to match limits to your account and ask
+            Anthropic for your reset credits.
+          </T>
         );
       case "grok":
         return <T>Reads its session history, and its sign-in to ask xAI for your credits.</T>;
@@ -38,8 +41,8 @@ export function UsageAccessReads({
     case "claudeAgent":
       return (
         <T>
-          Reads its session history at <Var>{location}</Var>, and its sign-in to ask Anthropic for
-          your reset credits.
+          Reads its session history at <Var>{location}</Var>, and its sign-in to match limits to
+          your account and ask Anthropic for your reset credits.
         </T>
       );
     case "grok":

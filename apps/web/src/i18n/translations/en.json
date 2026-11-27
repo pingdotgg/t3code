@@ -13044,21 +13044,11 @@
   "c23c1f8ee3808edb": "Allow",
   "53d6f3510e1d2505": "Bring in your projects",
   "f38cfff76578bff1": "Find my projects",
-  "4794e53fc07e3d86": "Reads its session history, and its sign-in to ask Anthropic for your reset credits.",
   "845c5d64893a2cd1": "Reads its session history, and its sign-in to ask xAI for your credits.",
   "693a46777fff9c2c": "Reads its usage database, and its Go key to ask OpenCode for your Go limits.",
   "53e3445f40979e50": "Reads its conversation history.",
   "a7990527035b13c7": "Asks Cursor for your account's usage, using the API key you gave T3 Code.",
   "dd05e52097323d6a": "Reads its session history.",
-  "dd79a04014ffc88d": [
-    "Reads its session history at ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", and its sign-in to ask Anthropic for your reset credits."
-  ],
   "7494e2ce9d51834d": [
     "Reads its session history at ",
     {
@@ -13105,5 +13095,15 @@
       "v": "v"
     },
     " session history to find the folders you worked in, and their git remotes."
+  ],
+  "bdce0ad68690fdc1": "Reads its session history, and its sign-in to match limits to your account and ask Anthropic for your reset credits.",
+  "4337474d91936326": [
+    "Reads its session history at ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", and its sign-in to match limits to your account and ask Anthropic for your reset credits."
   ]
 }

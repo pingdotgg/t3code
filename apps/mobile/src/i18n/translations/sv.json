@@ -5721,16 +5721,16 @@
   "b1407315384f1c1b": "Kunde inte spara användningsåtkomst",
   "175fd48b1f788f46": "Tillåt användningsåtkomst för att visa agentens gränser.",
   "e374560884a7e12b": "{environment} · {detail}",
-  "8b05cdec3c53c501": "Läser sessionshistoriken och inloggningen för att fråga Anthropic om dina återställningskrediter.",
   "a4235830034f488e": "Läser sessionshistoriken och inloggningen för att fråga xAI om dina krediter.",
   "911d1b52becc61df": "Läser användningsdatabasen och Go-nyckeln för att fråga OpenCode om dina Go-gränser.",
   "6228281a3736c42f": "Läser konversationshistoriken.",
   "b28f03229c6b9ecf": "Frågar Cursor om kontots användning med API-nyckeln du gav T3 Code.",
   "7994d781649681a6": "Läser sessionshistoriken.",
-  "6b7d57c764ba683e": "Läser sessionshistoriken i {location} och inloggningen för att fråga Anthropic om dina återställningskrediter.",
   "3909d0c84478bec2": "Läser sessionshistoriken i {location} och inloggningen för att fråga xAI om dina krediter.",
   "6fbd4f6c919be476": "Läser användningsdatabasen i {location} och Go-nyckeln för att fråga OpenCode om dina Go-gränser.",
   "0d273061b2faa0e1": "Läser konversationshistoriken i {location}.",
   "8a607a4b7888e013": "Läser sessionshistoriken i {location}.",
-  "75543f378b9076b9": "T3 Code kan visa tokens, kostnad och gränser utifrån det dina agenter sparar på datorn där de körs. Välj vilka agenter som ska ingå."
+  "75543f378b9076b9": "T3 Code kan visa tokens, kostnad och gränser utifrån det dina agenter sparar på datorn där de körs. Välj vilka agenter som ska ingå.",
+  "3a088f692bc5b043": "Läser sessionshistoriken och inloggningen för att koppla gränserna till ditt konto och fråga Anthropic om dina återställningskrediter.",
+  "4b6ebf2f95d8c0d4": "Läser sessionshistoriken i {location} och inloggningen för att koppla gränserna till ditt konto och fråga Anthropic om dina återställningskrediter."
 }

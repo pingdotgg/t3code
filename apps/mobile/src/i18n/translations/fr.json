@@ -5715,16 +5715,16 @@
   "b1407315384f1c1b": "Impossible d'enregistrer l'accès à l'utilisation",
   "175fd48b1f788f46": "Autorisez l'accès à l'utilisation pour afficher les limites de cet agent.",
   "e374560884a7e12b": "{environment} · {detail}",
-  "8b05cdec3c53c501": "Lit son historique de sessions, ainsi que sa connexion pour demander à Anthropic vos crédits de réinitialisation.",
   "a4235830034f488e": "Lit son historique de sessions, ainsi que sa connexion pour demander à xAI vos crédits.",
   "911d1b52becc61df": "Lit sa base de données d’utilisation, ainsi que sa clé Go pour demander à OpenCode vos limites Go.",
   "6228281a3736c42f": "Lit son historique de conversations.",
   "b28f03229c6b9ecf": "Demande à Cursor l’utilisation de votre compte, avec la clé d’API fournie à T3 Code.",
   "7994d781649681a6": "Lit son historique de sessions.",
-  "6b7d57c764ba683e": "Lit son historique de sessions dans {location}, ainsi que sa connexion pour demander à Anthropic vos crédits de réinitialisation.",
   "3909d0c84478bec2": "Lit son historique de sessions dans {location}, ainsi que sa connexion pour demander à xAI vos crédits.",
   "6fbd4f6c919be476": "Lit sa base de données d’utilisation dans {location}, ainsi que sa clé Go pour demander à OpenCode vos limites Go.",
   "0d273061b2faa0e1": "Lit son historique de conversations dans {location}.",
   "8a607a4b7888e013": "Lit son historique de sessions dans {location}.",
-  "75543f378b9076b9": "T3 Code peut afficher les tokens, le coût et les limites à partir de ce que vos agents conservent sur l’ordinateur où ils s’exécutent. Choisissez les agents à inclure."
+  "75543f378b9076b9": "T3 Code peut afficher les tokens, le coût et les limites à partir de ce que vos agents conservent sur l’ordinateur où ils s’exécutent. Choisissez les agents à inclure.",
+  "3a088f692bc5b043": "Lit son historique de sessions, ainsi que sa connexion pour rattacher les limites à votre compte et demander à Anthropic vos crédits de réinitialisation.",
+  "4b6ebf2f95d8c0d4": "Lit son historique de sessions dans {location}, ainsi que sa connexion pour rattacher les limites à votre compte et demander à Anthropic vos crédits de réinitialisation."
 }

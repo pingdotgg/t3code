@@ -679,6 +679,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           [claudeId]: {
             driver: ProviderDriverKind.make("claudeAgent"),
             enabled: true,
+            usageAccess: "allowed",
             config: makeClaudeConfig({
               enabled: true,
               binaryPath: fixtures.claudeBinaryPath,
@@ -840,7 +841,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     );
 
   it.live.skipIf(windowsHost)(
-    "reads Claude's sign-in for reset credits only once usage access is allowed",
+    "reads Claude's sign-in for its organization and reset credits only once usage access is allowed",
     () =>
       Effect.gen(function* () {
         const { registry, mutator, instanceId, entry, usageReads } = yield* makeClaudeResetRegistry(
@@ -851,6 +852,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         const before = yield* instance!.snapshot.refresh;
         expect(before.usageLimits?.windows[0]?.usedPercent).toBe(100);
         expect(before.usageLimits?.resetCredits).toBeUndefined();
+        expect(before.auth.workspaceId).toBeUndefined();
         expect(usageReads()).toBe(0);
 
         yield* mutator.reconcile({ [instanceId]: { ...entry, usageAccess: "allowed" } });
@@ -858,6 +860,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(yield* registry.getInstance(instanceId)).toBe(instance);
         const after = yield* instance!.snapshot.refresh;
         expect(after.usageLimits?.resetCredits?.nextCreditId).toBe("grant_a");
+        expect(after.auth.workspaceId).toBe("fake-org");
       }).pipe(Effect.provideService(HostProcess.Platform, "linux"), Effect.provide(layerTest)),
   );
 

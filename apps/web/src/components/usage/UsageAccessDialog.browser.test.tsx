@@ -55,7 +55,7 @@ it("says what each agent's access reads and saves only the agents left checked",
   await expect
     .element(
       screen.getByText(
-        "Reads its session history at /home/me/.claude/projects, and its sign-in to ask Anthropic for your reset credits.",
+        "Reads its session history at /home/me/.claude/projects, and its sign-in to match limits to your account and ask Anthropic for your reset credits.",
       ),
     )
     .toBeVisible();

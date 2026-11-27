@@ -42,7 +42,7 @@ function usageAccessReads(
     switch (driver) {
       case "claudeAgent":
         return gt(
-          "Reads its session history, and its sign-in to ask Anthropic for your reset credits.",
+          "Reads its session history, and its sign-in to match limits to your account and ask Anthropic for your reset credits.",
         );
       case "grok":
         return gt("Reads its session history, and its sign-in to ask xAI for your credits.");
@@ -60,7 +60,7 @@ function usageAccessReads(
   switch (driver) {
     case "claudeAgent":
       return gt(
-        "Reads its session history at {location}, and its sign-in to ask Anthropic for your reset credits.",
+        "Reads its session history at {location}, and its sign-in to match limits to your account and ask Anthropic for your reset credits.",
         { location },
       );
     case "grok":

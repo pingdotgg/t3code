@@ -5723,16 +5723,16 @@
   "b1407315384f1c1b": "Could not save usage access",
   "175fd48b1f788f46": "Allow usage access to show this agent's limits.",
   "e374560884a7e12b": "{environment} · {detail}",
-  "8b05cdec3c53c501": "Reads its session history, and its sign-in to ask Anthropic for your reset credits.",
   "a4235830034f488e": "Reads its session history, and its sign-in to ask xAI for your credits.",
   "911d1b52becc61df": "Reads its usage database, and its Go key to ask OpenCode for your Go limits.",
   "6228281a3736c42f": "Reads its conversation history.",
   "b28f03229c6b9ecf": "Asks Cursor for your account's usage, using the API key you gave T3 Code.",
   "7994d781649681a6": "Reads its session history.",
-  "6b7d57c764ba683e": "Reads its session history at {location}, and its sign-in to ask Anthropic for your reset credits.",
   "3909d0c84478bec2": "Reads its session history at {location}, and its sign-in to ask xAI for your credits.",
   "6fbd4f6c919be476": "Reads its usage database at {location}, and its Go key to ask OpenCode for your Go limits.",
   "0d273061b2faa0e1": "Reads its conversation history at {location}.",
   "8a607a4b7888e013": "Reads its session history at {location}.",
-  "75543f378b9076b9": "T3 Code can chart tokens, cost, and limits from what your agents keep on the computer they run on. Choose which agents to include."
+  "75543f378b9076b9": "T3 Code can chart tokens, cost, and limits from what your agents keep on the computer they run on. Choose which agents to include.",
+  "3a088f692bc5b043": "Reads its session history, and its sign-in to match limits to your account and ask Anthropic for your reset credits.",
+  "4b6ebf2f95d8c0d4": "Reads its session history at {location}, and its sign-in to match limits to your account and ask Anthropic for your reset credits."
 }

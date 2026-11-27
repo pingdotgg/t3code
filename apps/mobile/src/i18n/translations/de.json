@@ -5721,16 +5721,16 @@
   "b1407315384f1c1b": "Nutzungszugriff konnte nicht gespeichert werden",
   "175fd48b1f788f46": "Erlaube den Nutzungszugriff, um die Limits dieses Agenten anzuzeigen.",
   "e374560884a7e12b": "{environment} · {detail}",
-  "8b05cdec3c53c501": "Liest den Sitzungsverlauf und die Anmeldung, um bei Anthropic deine Reset-Guthaben abzufragen.",
   "a4235830034f488e": "Liest den Sitzungsverlauf und die Anmeldung, um bei xAI dein Guthaben abzufragen.",
   "911d1b52becc61df": "Liest die Nutzungsdatenbank und den Go-Schlüssel, um bei OpenCode deine Go-Limits abzufragen.",
   "6228281a3736c42f": "Liest den Gesprächsverlauf.",
   "b28f03229c6b9ecf": "Fragt bei Cursor die Nutzung deines Kontos ab, mit dem API-Schlüssel, den du T3 Code gegeben hast.",
   "7994d781649681a6": "Liest den Sitzungsverlauf.",
-  "6b7d57c764ba683e": "Liest den Sitzungsverlauf unter {location} und die Anmeldung, um bei Anthropic deine Reset-Guthaben abzufragen.",
   "3909d0c84478bec2": "Liest den Sitzungsverlauf unter {location} und die Anmeldung, um bei xAI dein Guthaben abzufragen.",
   "6fbd4f6c919be476": "Liest die Nutzungsdatenbank unter {location} und den Go-Schlüssel, um bei OpenCode deine Go-Limits abzufragen.",
   "0d273061b2faa0e1": "Liest den Gesprächsverlauf unter {location}.",
   "8a607a4b7888e013": "Liest den Sitzungsverlauf unter {location}.",
-  "75543f378b9076b9": "T3 Code kann Tokens, Kosten und Limits aus dem darstellen, was deine Agents auf dem Computer speichern, auf dem sie laufen. Wähle, welche Agents einbezogen werden."
+  "75543f378b9076b9": "T3 Code kann Tokens, Kosten und Limits aus dem darstellen, was deine Agents auf dem Computer speichern, auf dem sie laufen. Wähle, welche Agents einbezogen werden.",
+  "3a088f692bc5b043": "Liest den Sitzungsverlauf und die Anmeldung, um Limits deinem Konto zuzuordnen und bei Anthropic deine Reset-Guthaben abzufragen.",
+  "4b6ebf2f95d8c0d4": "Liest den Sitzungsverlauf unter {location} und die Anmeldung, um Limits deinem Konto zuzuordnen und bei Anthropic deine Reset-Guthaben abzufragen."
 }
