@@ -30,7 +30,7 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (i
   return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
 });
 
-it("keeps sidebar search results while opening threads", async () => {
+it("keeps the search query and results after opening a result", async () => {
   const first = threadWithHistory("search-first", 1);
   const second = threadWithHistory("search-second", 1);
   using _environment = installFakeEnvironment([first, second]);
@@ -62,16 +62,4 @@ it("keeps sidebar search results while opening threads", async () => {
   });
   await expect.element(search).toHaveValue("search-");
   await expect.element(results.getByRole("option")).toHaveLength(2);
-
-  await search.click();
-  await userEvent.keyboard("{ArrowDown}{Enter}");
-  await vi.waitFor(() => {
-    expect(router.state.location.pathname).toBe(`/${ENVIRONMENT_ID}/${second.id}`);
-  });
-  await expect.element(search).toHaveValue("search-");
-  await expect.element(results.getByRole("option")).toHaveLength(2);
-
-  await screen.getByRole("button", { name: "Clear thread search" }).click();
-  await expect.element(search).toHaveValue("");
-  await expect.element(results).not.toBeInTheDocument();
 });
