@@ -1405,9 +1405,6 @@ export function PullRequestsPage() {
       authorOptions={facets.authors}
       labelOptions={facets.labels}
       optionScope={filterOptionScope}
-      host={search.host}
-      hostOptions={hostMenuOptions}
-      onHost={(host) => updateListScope({ host })}
       server={scopedEnvironmentId ?? undefined}
       serverOptions={serverMenuOptions}
       onServer={(server) => updateListScope({ environmentId: server, projectId: undefined })}

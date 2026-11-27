@@ -151,7 +151,6 @@ export function PullRequestSearchInput({
 }
 
 const ALL_PROJECTS_VALUE = "all";
-const ALL_HOSTS_VALUE = "";
 const ALL_SERVERS_VALUE = "";
 const UNFILTERED_VALUE = "all";
 /** Project ids are unique only within an environment. */
@@ -527,9 +526,6 @@ export function PullRequestFiltersMenu({
   authorOptions = [],
   labelOptions = [],
   optionScope,
-  host,
-  hostOptions,
-  onHost,
   server,
   serverOptions,
   onServer,
@@ -551,9 +547,6 @@ export function PullRequestFiltersMenu({
   authorOptions?: ReadonlyArray<PullRequestAuthorFacet>;
   labelOptions?: ReadonlyArray<PullRequestLabelFacet>;
   optionScope: ReadonlyArray<PullRequestFilterOptionScope>;
-  host: string | undefined;
-  hostOptions: ReadonlyArray<PullRequestFilterOption<string>>;
-  onHost: (host: string | undefined) => void;
   server: EnvironmentId | undefined;
   serverOptions: ReadonlyArray<PullRequestFilterOption<string>>;
   onServer: (server: EnvironmentId | undefined) => void;
@@ -569,7 +562,6 @@ export function PullRequestFiltersMenu({
   const filterCount = [
     state !== "open",
     involvement !== "all",
-    host,
     server,
     projectId,
     filters.draft,
@@ -671,17 +663,6 @@ export function PullRequestFiltersMenu({
           options={resolveFilterOptions(CHECKS_OPTIONS, resolve)}
           onChange={(checks) => updateFilter("checks", checks)}
         />
-        {hostOptions.length > 2 ? (
-          <>
-            <MenuSeparator />
-            <PullRequestFilterRadioSubmenu
-              label={gt("Host", { $context: "pull request filter" })}
-              value={host ?? ALL_HOSTS_VALUE}
-              options={hostOptions}
-              onChange={(next) => onHost(next === ALL_HOSTS_VALUE ? undefined : next)}
-            />
-          </>
-        ) : null}
         {serverOptions.length > 2 ? (
           <>
             <MenuSeparator />
