@@ -28,6 +28,20 @@ export function isFileViewed(
   return pressed ?? isViewedState(states?.get(path));
 }
 
+export function countViewedFiles(
+  states: FileViewedStates | null,
+  overlay: FileViewedOverlay,
+): number {
+  let count = 0;
+  for (const [path, state] of states ?? []) {
+    if (overlay.get(path) ?? isViewedState(state)) count++;
+  }
+  for (const [path, viewed] of overlay) {
+    if (viewed && !states?.has(path)) count++;
+  }
+  return count;
+}
+
 /** Retain presses until a read could have observed the write. */
 export function settleFileViewedOverlay(
   overlay: FileViewedOverlay,
@@ -58,8 +72,15 @@ export function revertFileViewedOverlay(
   return next.size === overlay.size ? overlay : next;
 }
 
+export interface FileViewedPress {
+  readonly viewed: boolean;
+  readonly revision: string | undefined;
+}
+
 export function toFileViewedBatch(
-  overlay: FileViewedOverlay,
-): ReadonlyArray<{ readonly path: string; readonly viewed: boolean }> {
-  return [...overlay].map(([path, viewed]) => ({ path, viewed }));
+  presses: ReadonlyMap<string, FileViewedPress>,
+): ReadonlyArray<{ readonly path: string; readonly viewed: boolean; readonly revision?: string }> {
+  return [...presses].map(([path, { viewed, revision }]) =>
+    revision === undefined ? { path, viewed } : { path, viewed, revision },
+  );
 }

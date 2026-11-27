@@ -90,12 +90,17 @@ export const renderCliShim = (input: {
     ...header,
     // Extract-and-run would make the runtime start the app instead of mounting it.
     "unset APPIMAGE_EXTRACT_AND_RUN",
-    // The runtime stays mounted until killed; traps unmount it because background jobs ignore Ctrl-C.
+    // Its own session keeps a group signal (Ctrl-C, SSH hangup) from unmounting it under the
+    // running server, and ignoring TERM survives a stop sent to every process (systemd's default).
+    // Without setsid the extract fallback runs.
     "work=$(mktemp -d) || exit 1",
-    '"$app" --appimage-mount >"$work/mount" 2>/dev/null &',
+    "trap '' TERM",
+    'setsid "$app" --appimage-mount >"$work/mount" 2>/dev/null &',
     "mounter=$!",
-    `trap 'kill "$mounter" 2>/dev/null; rm -rf "$work"' EXIT`,
-    "trap 'exit 130' INT TERM",
+    // It unmounts itself on TERM, which it now ignores, so the trap unmounts it. Lazily, like the
+    // runtime: the server's own children may still be exiting.
+    `trap '[ -z "$mount" ] || fusermount3 -uz "$mount" 2>/dev/null || fusermount -uz "$mount" 2>/dev/null; kill -HUP "$mounter" 2>/dev/null; rm -rf "$work"' EXIT`,
+    "trap 'exit 130' INT TERM HUP",
     "mount=",
     'while kill -0 "$mounter" 2>/dev/null; do',
     '  mount=$(head -n 1 "$work/mount")',
@@ -108,7 +113,29 @@ export const renderCliShim = (input: {
     '  (cd "$work" && "$app" --appimage-extract >/dev/null) || { echo "Could not open $app." >&2; exit 1; }',
     '  mount="$work/squashfs-root"',
     "fi",
-    run("$mount"),
+    // The runtime sets this when it launches the app; the CLI skips its path-keyed compile cache on it.
+    'export APPIMAGE="$app"',
+    // The shell must outlive the CLI to unmount, so it forwards TERM and HUP; the terminal sends
+    // Ctrl-C to the CLI directly. A background child would read /dev/null, so pass stdin on fd 9.
+    // With stdin closed, `exec 9<&0` would end the shell; `command` makes it a normal error.
+    // Forwarding starts before the CLI does: a signal in between must not unmount under it.
+    "{ command exec 9<&0; } 2>/dev/null || exec 9</dev/null",
+    "cli= pending=",
+    `trap 'if [ -n "$cli" ]; then kill -TERM "$cli" 2>/dev/null; else pending=TERM; fi' TERM`,
+    `trap 'if [ -n "$cli" ]; then kill -HUP "$cli" 2>/dev/null; else pending=HUP; fi' HUP`,
+    "trap '' INT",
+    `${run("$mount")} <&9 9<&- &`,
+    "cli=$!",
+    '[ -z "$pending" ] || kill -"$pending" "$cli" 2>/dev/null',
+    "exec 9<&-",
+    "status=0",
+    'wait "$cli" || status=$?',
+    // A trapped signal interrupts wait; wait again for the CLI's own exit status.
+    'while kill -0 "$cli" 2>/dev/null; do',
+    "  status=0",
+    '  wait "$cli" || status=$?',
+    "done",
+    'exit "$status"',
     "",
   ].join("\n");
 };

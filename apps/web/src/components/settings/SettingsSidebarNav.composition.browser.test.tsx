@@ -2,14 +2,18 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
+import { AppRouteModal } from "../AppRouteModal";
 import { SidebarProvider } from "../ui/sidebar";
 import { SettingsSidebarNav } from "./SettingsSidebarNav";
+import { settingsNavGroups, SETTINGS_SECTION_LABELS } from "./settingsSearch";
 
 vi.mock("./useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [
     { id: "theme", title: "Theme", to: "/settings/appearance" },
   ],
+  useHasSecretProvidersEnvironment: () => false,
 }));
+vi.mock("../chat/GlobalVoiceInputIndicator", () => ({ GlobalVoiceInputIndicator: () => null }));
 
 it("ignores composing keys in the search", async () => {
   await using screen = await render(
@@ -43,13 +47,52 @@ it("ignores composing keys in the search", async () => {
   );
 });
 
-it("opens search from the physical Slash and F keys on non-US layouts", async () => {
+it("Esc clears a search of spaces and a held Esc keeps Settings open", async () => {
   await using _screen = await render(
+    <AppRouteModal label="Settings">
+      <SidebarProvider defaultOpen>
+        <SettingsSidebarNav pathname="/settings/general" />
+      </SidebarProvider>
+    </AppRouteModal>,
+    { router: "/settings/general" },
+  );
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  const search = page.getByRole("combobox", { name: "Search settings" });
+  await expect.element(settings).toHaveFocus();
+
+  for (const text of ["theme", "   "]) {
+    await search.fill(text);
+    await userEvent.keyboard("{Escape}");
+    await expect.element(search).toHaveValue("");
+    await expect.element(search).toHaveFocus();
+    await act(() =>
+      search.element().dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          repeat: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    await expect.element(settings).toHaveAttribute("data-open");
+  }
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(settings).not.toBeInTheDocument();
+});
+
+function renderNav() {
+  return render(
     <SidebarProvider defaultOpen>
       <SettingsSidebarNav pathname="/settings/general" />
     </SidebarProvider>,
     { router: "/settings/general" },
   );
+}
+
+it("opens search from the physical Slash and F keys on non-US layouts", async () => {
+  await using _screen = await renderNav();
   const search = page.getByRole("combobox", { name: "Search settings" });
 
   for (const { init, opens } of [
@@ -64,4 +107,45 @@ it("opens search from the physical Slash and F keys on non-US layouts", async ()
     expect(event.defaultPrevented, JSON.stringify(init)).toBe(opens);
     if (opens) await expect.element(search).toHaveFocus();
   }
+});
+
+it("moves Tab through every settings section", async () => {
+  await page.viewport(1280, 800);
+  await using _screen = await renderNav();
+  await userEvent.click(page.getByRole("combobox", { name: "Search settings" }));
+
+  const sections = settingsNavGroups(false)
+    .flatMap((group) => group.paths)
+    .map((to) => SETTINGS_SECTION_LABELS[to]);
+  const tabbed: string[] = [];
+  for (let step = 0; step < sections.length; step += 1) {
+    await userEvent.tab();
+    const section = document.activeElement?.closest("[data-settings-section]");
+    if (!section) break;
+    tabbed.push(section.textContent ?? "");
+  }
+  expect(tabbed).toEqual(sections);
+});
+
+it.each([1280, 390])("names each group by a heading outside it at %ipx wide", async (width) => {
+  await page.viewport(width, 800);
+  await using _screen = await renderNav();
+
+  for (const name of ["Agents", "Code", "Connections"]) {
+    const heading = page.getByRole("heading", { name, level: 3 });
+    await expect.element(heading).toBeInTheDocument();
+    const group = page.getByRole("group", { name }).element();
+    expect(group.getAttribute("aria-labelledby")).toBe(heading.element().id);
+    expect(group.contains(heading.element()), `the ${name} heading is inside its group`).toBe(
+      false,
+    );
+  }
+  const groups = page.getByRole("group").elements();
+  expect(groups).toHaveLength(settingsNavGroups(false).length);
+  for (const group of groups) {
+    const first = group.querySelector("[data-settings-section]")?.textContent;
+    const heading = document.getElementById(group.getAttribute("aria-labelledby") ?? "");
+    expect(heading?.tagName, `the group starting at ${first} has no heading`).toBe("H3");
+  }
+  expect(page.getByRole("tree").query()).toBeNull();
 });

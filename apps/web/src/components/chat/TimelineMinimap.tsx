@@ -1,21 +1,20 @@
 import { resolveTimelineMinimapPreview, type TimelineMinimapItem } from "./timelineMinimapItems";
 import { useRef, useState, type MouseEvent } from "react";
+import { T, useGT } from "gt-react";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import {
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapIndexFromPointer,
-  resolveTimelineMinimapInteractiveWidth,
+  resolveTimelineMinimapMarkCount,
+  resolveTimelineMinimapMarkIndex,
   resolveTimelineMinimapNavigationInteractive,
   resolveTimelineMinimapTopPercent,
   TIMELINE_MINIMAP_MIN_ITEMS,
 } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
-
-function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
-  return target instanceof Element && target.closest("[data-minimap-preview]") !== null;
-}
+import { observeResize } from "~/lib/observeResize";
 
 // A release outside the window can skip `mouseup`, so the next button-free
 // `mousemove` also counts.
@@ -36,7 +35,7 @@ function onMouseButtonsReleased(onRelease: () => void): () => void {
 
 export function TimelineMinimap({
   hasPersistentGutter,
-  hitStripWidth,
+  hitStrip: { left: hitStripLeft, width: hitStripWidth },
   currentIndex,
   atEnd,
   items,
@@ -45,7 +44,7 @@ export function TimelineMinimap({
   onSelect,
 }: {
   hasPersistentGutter: boolean;
-  hitStripWidth: number;
+  hitStrip: { left: number; width: number };
   currentIndex: number | null;
   atEnd: boolean;
   items: ReadonlyArray<TimelineMinimapItem>;
@@ -53,11 +52,21 @@ export function TimelineMinimap({
   onWheel: (event: WheelEvent) => void;
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
+  const gt = useGT();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const wheelTargetRef = (node: HTMLDivElement | null) => {
     if (!node) return;
     node.addEventListener("wheel", onWheel, { passive: false });
     return () => node.removeEventListener("wheel", onWheel);
+  };
+
+  const [railHeight, setRailHeight] = useState(0);
+  const railRef = (node: HTMLDivElement | null) => {
+    if (!node) return;
+    setRailHeight(node.getBoundingClientRect().height);
+    return observeResize(node, ([entry]) => {
+      if (entry) setRailHeight(entry.contentRect.height);
+    });
   };
 
   const pressedOnStripRef = useRef(false);
@@ -74,20 +83,24 @@ export function TimelineMinimap({
     resolvedActiveIndex === null
       ? 0
       : resolveTimelineMinimapTopPercent(resolvedActiveIndex, items.length);
-  const activeTooltipTranslate =
-    resolvedActiveIndex === null
-      ? "-50%"
-      : resolvedActiveIndex === 0
-        ? "0%"
-        : resolvedActiveIndex === items.length - 1
-          ? "-100%"
-          : "-50%";
   const resolvedCurrentIndex =
     currentIndex !== null && currentIndex >= 0 && currentIndex < items.length ? currentIndex : null;
   const previousItem =
     resolvedCurrentIndex === null ? null : (items[resolvedCurrentIndex - 1] ?? null);
   const nextItem =
     resolvedCurrentIndex === null || atEnd ? null : (items[resolvedCurrentIndex + 1] ?? null);
+
+  // A rail too short for every item groups neighbours onto one strip; the pointer and
+  // keyboard still resolve single items.
+  const markCount = resolveTimelineMinimapMarkCount(items.length, railHeight);
+  const marks: TimelineMinimapItem[][] = Array.from({ length: markCount }, () => []);
+  for (const [index, item] of items.entries()) {
+    marks[resolveTimelineMinimapMarkIndex(index, items.length, markCount)]?.push(item);
+  }
+  const activeMarkIndex =
+    resolvedActiveIndex === null
+      ? null
+      : resolveTimelineMinimapMarkIndex(resolvedActiveIndex, items.length, markCount);
 
   const resolveActiveIndexFromPointer = (event: MouseEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -118,7 +131,7 @@ export function TimelineMinimap({
   return (
     <div
       className={cn(
-        "group/minimap pointer-events-none absolute inset-y-0 left-0 z-40 w-18",
+        "group/minimap pointer-events-none absolute bottom-0 left-0 top-[calc(-1*var(--chat-header-height,0px))] z-40 w-18",
         hasPersistentGutter
           ? "opacity-100"
           : "hidden opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100 [@media(pointer:fine)]:block",
@@ -130,9 +143,10 @@ export function TimelineMinimap({
       <div className="relative h-full w-full select-none">
         <div
           className={cn(
-            "absolute top-1/2 left-3 -translate-y-1/2",
+            "absolute top-1/2 -translate-y-1/2",
             hitStripWidth > 0 && !passThrough ? "pointer-events-auto" : "pointer-events-none",
           )}
+          ref={railRef}
           onMouseDown={() => {
             if (pressedOnStripRef.current) return;
             pressedOnStripRef.current = true;
@@ -147,7 +161,8 @@ export function TimelineMinimap({
           }}
           style={{
             height: resolveTimelineMinimapHeightStyle(items.length),
-            width: resolveTimelineMinimapInteractiveWidth(hitStripWidth, activeItem !== null),
+            left: hitStripLeft,
+            width: hitStripWidth,
           }}
         >
           <TimelineMinimapNavigationButton
@@ -159,13 +174,12 @@ export function TimelineMinimap({
             }}
           />
           <button
-            aria-label={`Jump to message: ${activeItem?.userText ?? "User message"}`}
-            className="absolute inset-y-0 left-0 w-full cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+            aria-label={gt("Jump to message: {text}", {
+              text: activeItem?.userText ?? gt("User message"),
+            })}
+            className="absolute inset-y-0 left-0 w-full cursor-pointer bg-transparent before:absolute before:inset-x-0 before:-inset-y-1 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
             onBlur={() => setActiveIndex(null)}
             onClick={(event) => {
-              if (timelineMinimapEventTargetsPreview(event.target)) {
-                return;
-              }
               const nextIndex = resolveActiveIndexFromPointer(event);
               const selectedItem = nextIndex === null ? null : (items[nextIndex] ?? null);
               if (selectedItem) {
@@ -199,19 +213,13 @@ export function TimelineMinimap({
               if (event.buttons !== 0 && !pressedOnStripRef.current) return;
               updateActiveIndexFromPointer(event);
             }}
-            onMouseDown={(event) => {
-              if (timelineMinimapEventTargetsPreview(event.target)) {
-                return;
-              }
-              event.preventDefault();
-            }}
+            onMouseDown={(event) => event.preventDefault()}
             type="button"
           >
-            <div className="absolute top-0 left-3 h-full w-px bg-border/15" />
-            {items.map((item, index) => {
-              const top = `${resolveTimelineMinimapTopPercent(index, items.length)}%`;
+            {marks.map((markItems, index) => {
+              const top = `${resolveTimelineMinimapTopPercent(index, markCount)}%`;
               const activeDistance =
-                resolvedActiveIndex === null ? null : Math.abs(index - resolvedActiveIndex);
+                activeMarkIndex === null ? null : Math.abs(index - activeMarkIndex);
               return (
                 // Compositor-friendly on purpose: in-view state and the hover
                 // fisheye animate constantly (every scroll tick and streaming
@@ -232,31 +240,29 @@ export function TimelineMinimap({
                   )}
                   data-in-view="false"
                   data-minimap-strip
-                  key={item.id}
+                  key={markItems[0]?.id ?? index}
                   ref={(node) => {
-                    if (node) {
-                      stripMap.set(item.id, node);
-                    } else {
-                      stripMap.delete(item.id);
-                    }
+                    if (!node) return;
+                    for (const item of markItems) stripMap.set(item.id, node);
+                    return () => {
+                      for (const item of markItems) {
+                        if (stripMap.get(item.id) === node) stripMap.delete(item.id);
+                      }
+                    };
                   }}
                   style={{ top }}
                 />
               );
             })}
             {activeItem ? (
+              // Display-only: it overlaps the message column, and the strip keeps tracking beneath it.
               <span
-                className="pointer-events-auto absolute left-8 w-80 cursor-text select-text"
-                data-minimap-preview
-                onMouseMove={(event) => event.stopPropagation()}
-                style={{
-                  top: `${activeTopPercent}%`,
-                  transform: `translateY(${activeTooltipTranslate})`,
-                }}
+                className="pointer-events-none absolute left-8 w-80 -translate-y-1/2"
+                style={{ top: `${activeTopPercent}%` }}
               >
                 <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
                   <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
-                    {activeItem.userText ?? "User message"}
+                    {activeItem.userText ?? <T>User message</T>}
                   </span>
                   {activeItem.assistantText ? (
                     <span
@@ -299,8 +305,9 @@ function TimelineMinimapNavigationButton({
   interactive: boolean;
   onClick: () => void;
 }) {
+  const gt = useGT();
   const previous = direction === "previous";
-  const label = previous ? "Previous turn" : "Next turn";
+  const label = previous ? gt("Previous turn") : gt("Next turn");
   const Icon = previous ? ChevronUpIcon : ChevronDownIcon;
 
   return (
@@ -311,7 +318,7 @@ function TimelineMinimapNavigationButton({
             className={cn(
               "absolute left-1 z-10 inline-flex -translate-x-1/2 opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
               interactive ? "pointer-events-auto" : "pointer-events-none",
-              previous ? "bottom-[calc(100%+2px)]" : "top-[calc(100%+2px)]",
+              previous ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]",
             )}
           />
         }

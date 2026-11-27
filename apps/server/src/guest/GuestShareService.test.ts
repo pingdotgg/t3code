@@ -37,6 +37,7 @@ import {
   resolveAttachmentPathById,
   sweepStalePendingAttachments,
 } from "../attachmentStore.ts";
+import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { CloudManagedEndpointRuntime } from "../cloud/ManagedEndpointRuntime.ts";
 import * as ServerConfig from "../config.ts";
@@ -51,6 +52,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
@@ -83,6 +85,7 @@ const layerConnect = Layer.mock(CloudManagedEndpointRuntime)({
     pid: 1,
     readyConnections: 1,
     hostname: value,
+    origin: null,
     protocol: "http2",
   })),
 });
@@ -90,7 +93,7 @@ const layerProviders = Layer.mock(ProviderRegistry.ProviderRegistry)({
   getProviders: Effect.succeed([]),
 });
 const layerConfig = ServerConfig.layerTest(process.cwd(), { prefix: "t3-guest-share-" });
-// The real cleanup also closes terminals and previews; these tests only need the files gone.
+// The real cleanup also closes terminals, previews and devices; these tests only need the files gone.
 const layerCleanup = Layer.effect(
   ResourceCleanupService.ResourceCleanupService,
   Effect.gen(function* () {
@@ -100,6 +103,7 @@ const layerCleanup = Layer.effect(
       cleanupScheduledTasks: () => Effect.void,
       cleanupTerminals: () => Effect.void,
       cleanupPreviews: () => Effect.void,
+      cleanupDevices: () => Effect.void,
       cleanupAttachments: (attachmentIds) =>
         Effect.forEach(
           attachmentIds,
@@ -127,7 +131,9 @@ const layerAnalytics = Layer.effectContext(
         AnalyticsService.AnalyticsService,
         AnalyticsService.AnalyticsService.of({
           record: (event, properties) =>
-            Ref.update(recorded, (events) => [...events, { event, ...properties }]),
+            Ref.update(recorded, (events) => [...events, { event, ...properties }]).pipe(
+              Effect.as(true),
+            ),
           flush: Effect.void,
           recordOwners: () => Effect.void,
         }),
@@ -146,6 +152,7 @@ const layerTest = GuestShareService.layer.pipe(
   Layer.provide(layerConnect),
   Layer.provideMerge(layerAnalytics),
   Layer.provide(ServerSecretStore.layer),
+  Layer.provide(DocumentText.layer),
   Layer.provideMerge(layerConfig),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
@@ -445,6 +452,10 @@ const writeItem = (
     | Pick<
         Extract<OrchestrationV2TurnItem, { type: "file_change" }>,
         "type" | "status" | "fileName" | "diffStr" | "oldStr" | "newStr"
+      >
+    | Pick<
+        Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>,
+        "type" | "status" | "toolName" | "input" | "output"
       >,
 ) =>
   Effect.gen(function* () {
@@ -535,6 +546,126 @@ it.effect("gives the guest a command's detail and output, but no file diffs", ()
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("gives the guest a failed edit without the text it tried to write", () =>
+  Effect.gen(function* () {
+    const { orchestrator, guestShares, credential } = yield* shareThread;
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    const failedEdit = (id: string) =>
+      writeItem(id, {
+        type: "file_change",
+        status: "failed",
+        fileName: "src/auth.ts",
+        diffStr: "-const token = 1;\n+const token = 2;\n",
+      });
+    const before = yield* failedEdit("item:failed-before");
+
+    const events = yield* guestShares.stream(session);
+    const during = yield* failedEdit("item:failed-during");
+    const detail = (yield* guestShares.item(session, before)).item;
+    yield* orchestrator.dispatch({
+      type: "thread.guest-share.close",
+      commandId: CommandId.make("close-after-failed-edit"),
+      threadId,
+    });
+    const received = Array.from(yield* Stream.runCollect(events));
+    const changes = received.flatMap((event) => {
+      if (event.type !== "thread") return [];
+      if (event.item.kind === "snapshot") {
+        return [
+          ...event.item.projection.turnItems,
+          ...event.item.projection.visibleTurnItems.map((row) => row.item),
+        ];
+      }
+      return event.item.kind === "event" && event.item.event.type === "turn-item.updated"
+        ? [event.item.event.payload]
+        : [];
+    });
+    const failed = changes.filter((item) => item.type === "file_change");
+    assert.includeMembers(
+      failed.map((item) => item.id),
+      [before, during],
+    );
+    for (const change of [...failed, detail]) {
+      assert.deepInclude(change, { status: "failed", fileName: "src/auth.ts" });
+      assert.doesNotHaveAnyKeys(change, ["diffStr", "oldStr", "newStr"]);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("gives a fork's guest the commands the fork shows from its source thread", () =>
+  Effect.gen(function* () {
+    const { orchestrator, guestShares } = yield* shareThread;
+    const command = yield* writeItem("item:command", {
+      type: "command_execution",
+      status: "completed",
+      input: "ls /work/src",
+      output: "/work/src/auth.ts\n",
+    });
+    const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+    const page = createAttachmentId(threadId, "html")!;
+    yield* (yield* FileSystem.FileSystem).writeFileString(
+      resolveAttachmentRelativePath({ attachmentsDir, relativePath: `${page}.html` })!,
+      "<p>Plan</p>",
+    );
+    const render = yield* writeItem("item:render", {
+      type: "dynamic_tool",
+      status: "completed",
+      toolName: "mcp__t3-code__html_render",
+      input: {},
+      output: [
+        {
+          type: "text",
+          text: JSON.stringify({ htmlRender: { attachmentId: page, title: "Plan", height: 300 } }),
+        },
+      ],
+    });
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const run = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs[0]!;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("event:run-done"),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          providerInstanceId: instanceId,
+          occurredAt: now,
+          payload: { ...run, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    const forkId = ThreadId.make("thread:guest-share-fork");
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fork"),
+      sourceThreadId: threadId,
+      targetThreadId: forkId,
+      sourcePoint: { type: "run", runId: run.id },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const { url } = yield* guestShares.create({ threadId: forkId });
+    const { token: session } = yield* guestShares.redeem({
+      credential: url.slice(url.indexOf("#") + 1),
+      name: "Sam",
+    });
+
+    const detail = (yield* guestShares.item(session, command)).item;
+    assert.deepInclude(detail, { input: "ls /work/src", output: "/work/src/auth.ts\n" });
+    const frames = Array.from(
+      yield* Stream.runCollect(yield* guestShares.commandOutput(session, command)),
+    );
+    assert.deepEqual(frames, [
+      { kind: "replace", text: "/work/src/auth.ts\n", truncated: false, running: false },
+    ]);
+    assert.deepEqual(yield* guestShares.render(session, render), {
+      path: resolveAttachmentPathById({ attachmentsDir, attachmentId: page })!,
+      title: "Plan",
+    });
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("pages the guest back through turns older than the stream's snapshot", () =>
   Effect.gen(function* () {
     const { guestShares, credential } = yield* shareThread;
@@ -571,13 +702,19 @@ it.effect("pages the guest back through turns older than the stream's snapshot",
     });
     yield* eventSink.write({
       events: [
-        turnItem("item:old-image", 1, {
+        turnItem("item:old-edit", 1, {
+          type: "file_change",
+          status: "failed",
+          fileName: "src/auth.ts",
+          diffStr: "-const token = 1;\n+const token = 2;\n",
+        }),
+        turnItem("item:old-image", 2, {
           type: "assistant_message",
           text: `![Old](${shot})`,
           streaming: false,
         }),
         ...Array.from({ length: 30 }, (_, index) =>
-          turnItem(`item:ask-${index}`, index + 2, {
+          turnItem(`item:ask-${index}`, index + 3, {
             type: "user_message",
             text: `Ask ${index}`,
             createdBy: "user",
@@ -609,9 +746,10 @@ it.effect("pages the guest back through turns older than the stream's snapshot",
     while (cursor !== null) {
       const page: OrchestrationV2ThreadHistoryPage = yield* guestShares.history(session, cursor);
       older.push(...ids(page.items));
+      for (const { item } of page.items) assert.notProperty(item, "diffStr");
       cursor = page.hasMoreHistory ? page.nextCursor : null;
     }
-    assert.include(older, "item:old-image");
+    assert.includeMembers(older, ["item:old-image", "item:old-edit"]);
     assert.deepStrictEqual(yield* guestShares.media(session, shot), {
       path: shot,
       mimeType: "image/png",
@@ -729,6 +867,11 @@ it.effect("refuses too many files, too many bytes, and images that are not what 
           contentType: "text/html",
           bytes: new TextEncoder().encode("<b>"),
         },
+        {
+          name: "notes.rtf",
+          contentType: "application/rtf",
+          bytes: new TextEncoder().encode(String.raw`{\rtf1 Available}`),
+        },
       ]),
     );
     const [message] = yield* waitingMessages;
@@ -742,7 +885,18 @@ it.effect("refuses too many files, too many bytes, and images that are not what 
       [
         { type: "image", name: "screen.png", mimeType: "image/png", sizeBytes: PNG.length },
         { type: "file", name: "notes_fdp.html", mimeType: "text/html", sizeBytes: 3 },
+        { type: "file", name: "notes.rtf", mimeType: "application/rtf", sizeBytes: 17 },
       ],
+    );
+    // Agents read a guest's documents through the same extracted text as the owner's uploads.
+    const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+    const document = resolveAttachmentPath({
+      attachmentsDir,
+      attachment: message!.attachments![2]!,
+    });
+    assert.equal(
+      yield* (yield* FileSystem.FileSystem).readFileString(`${document}.txt`),
+      "Available",
     );
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
@@ -750,18 +904,27 @@ it.effect("refuses too many files, too many bytes, and images that are not what 
 it.effect("caps the bytes of files waiting in one share", () =>
   Effect.gen(function* () {
     const { guestShares, session, shareId } = yield* joinedGuest;
-    const submit = (sizeBytes: number) =>
+    const submit = (sizeBytes: number, ...more: Parameters<typeof uploadsOf>[0]) =>
       Effect.gen(function* () {
         return guestShares.submit(
           session,
           { shareId, text: "Look" },
-          yield* uploadsOf([png("big.png", sizeBytes)]),
+          yield* uploadsOf([png("big.png", sizeBytes), ...more]),
         );
       }).pipe(Effect.flatten);
     yield* submit(9 * MIB);
     yield* submit(9 * MIB);
-    const error = yield* Effect.flip(submit(9 * MIB));
+    const before = yield* storedFiles;
+    const error = yield* Effect.flip(
+      submit(9 * MIB, {
+        name: "notes.rtf",
+        contentType: "application/rtf",
+        bytes: new TextEncoder().encode(String.raw`{\rtf1 Available}`),
+      }),
+    );
     assert.equal(error.reason, "files_busy");
+    // The refused message keeps neither its files nor their extracted text.
+    assert.deepEqual(yield* storedFiles, before);
     // Text alone still goes through.
     yield* guestShares.submit(session, { shareId, text: "One more thing" }, []);
     assert.equal((yield* waitingMessages).length, 3);

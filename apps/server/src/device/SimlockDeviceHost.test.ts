@@ -4,6 +4,7 @@ import { SecretProviderId, type SimlockDeviceHostConfig } from "@t3tools/contrac
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
@@ -50,11 +51,16 @@ const CATALOG = {
 /** The gateway's HTTP API and T3's agent-device CLI, recording what was asked of them. */
 const fakePool = (
   options: {
-    readonly failOpen?: boolean;
+    /** What the agent-device CLI prints before exiting 1 from `open`. */
+    readonly failOpen?: unknown;
     readonly holdOpen?: {
       readonly entered: Deferred.Deferred<void>;
       readonly proceed: Deferred.Deferred<void>;
     };
+    /** The gateway's `lease.maxTtlMs`: leases expire one TTL after their last renewal. */
+    readonly maxTtlMs?: number;
+    /** What `GET /v1/status` answers; no enrolled phones by default. */
+    readonly status?: unknown;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -64,9 +70,12 @@ const fakePool = (
     const commands: Array<{ readonly args: ReadonlyArray<string>; readonly cwd?: string }> = [];
     let leases = 0;
     let renewStatus = 200;
+    let statusCode = 200;
     let catalog: unknown = CATALOG;
+    let leaseDeadline = Infinity;
     const http = HttpClient.make((request) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
         const url = new URL(request.url);
         requests.push(`${request.method} ${url.pathname}`);
         const json = (body: unknown, status = 200) =>
@@ -74,6 +83,18 @@ const fakePool = (
         if (request.headers.authorization !== "Bearer agent-token")
           return json({ error: { code: "UNAUTHENTICATED", message: "Unknown bearer token" } }, 401);
         if (url.pathname === "/v1/catalog") return json(catalog);
+        if (url.pathname === "/v1/status") return json(options.status ?? {}, statusCode);
+        if (url.pathname.endsWith("/renew") && options.maxTtlMs !== undefined) {
+          if (now >= leaseDeadline) return json({}, 404);
+          const body =
+            request.body._tag === "Uint8Array"
+              ? (JSON.parse(new TextDecoder().decode(request.body.body)) as { ttlMs?: number })
+              : {};
+          if ((body.ttlMs ?? 0) > options.maxTtlMs)
+            return json({ error: { code: "BAD_REQUEST", message: "ttlMs exceeds maxTtlMs" } }, 400);
+          leaseDeadline = now + (body.ttlMs ?? options.maxTtlMs);
+          return json({});
+        }
         if (url.pathname.endsWith("/renew")) return json({}, renewStatus);
         if (request.method === "DELETE") return json({}, 202);
         return json({}, 404);
@@ -93,9 +114,7 @@ const fakePool = (
           if (command === "open") {
             if (options.failOpen) {
               return {
-                stdout: JSON.stringify({
-                  error: { message: "No device matches.", hint: "Retry." },
-                }),
+                stdout: JSON.stringify(options.failOpen),
                 stderr: "",
                 code: ChildProcessSpawner.ExitCode(1),
                 timedOut: false,
@@ -115,6 +134,8 @@ const fakePool = (
               path.join(dir, `${session}.json`),
               JSON.stringify({ leaseId: `lease-${++leases}` }),
             );
+            if (options.maxTtlMs !== undefined)
+              leaseDeadline = (yield* Clock.currentTimeMillis) + options.maxTtlMs;
           }
           if (command === "screenshot") yield* fs.writeFile(args[1]!, new Uint8Array([1, 2, 3]));
           return {
@@ -140,6 +161,9 @@ const fakePool = (
       },
       setCatalog: (next: unknown) => {
         catalog = next;
+      },
+      setStatusCode: (next: number) => {
+        statusCode = next;
       },
     };
   });
@@ -258,6 +282,71 @@ describe("Simlock device host", () => {
       expect((yield* ready.devices.list).devices.some((device) => device.booted)).toBe(false);
       yield* Scope.close(scope, Exit.void);
       expect(pool.ran("close")).toHaveLength(1);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("offers enrolled phones on usable workers and leases one as a physical device", () =>
+    Effect.gen(function* () {
+      const phone = (model: string, overrides: Record<string, unknown> = {}) => ({
+        spec: { platform: "ios", model, osVersion: "26.1" },
+        state: "ready",
+        physical: true,
+        class: "phone",
+        workerId: "worker-a",
+        ...overrides,
+      });
+      const pool = yield* fakePool({
+        status: {
+          workers: [
+            { id: "worker-a", connection: "connected", drained: false },
+            { id: "worker-b", connection: "connected", drained: true },
+          ],
+          devices: [
+            phone("iPhone 15", {
+              spec: { platform: "ios", model: "iPhone 15", osVersion: "18.6:beta" },
+            }),
+            phone("iPhone 13", { state: "absent" }),
+            phone("iPhone 14", { workerId: "worker-b" }),
+            phone("Apple Watch", { class: "watch" }),
+          ],
+        },
+      });
+      pool.setStatusCode(503);
+      const scope = yield* Scope.make();
+      const host = yield* makeHost(pool, config(), scope);
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const names = (devices: ReadonlyArray<{ readonly name: string; readonly version: string }>) =>
+        devices.map((device) => `${device.name} ${device.version}`);
+
+      // A gateway that cannot list phones still offers its simulators, and the next listing retries.
+      expect(names((yield* ready.devices.list).devices)).toEqual([
+        "iPhone 17 Pro iOS 27.0",
+        "Pixel 9 Android 36",
+      ]);
+      pool.setStatusCode(200);
+      const devices = (yield* ready.devices.list).devices;
+      expect(names(devices)).toEqual([
+        "iPhone 17 Pro iOS 27.0",
+        "Pixel 9 Android 36",
+        "iPhone 15 iOS 18.6:beta",
+      ]);
+
+      yield* ready.devices.boot(devices.find((device) => device.physical)!);
+      expect(pool.ran("open")[0]?.args.slice(0, 8)).toEqual([
+        "open",
+        "--platform",
+        "ios",
+        "--device",
+        "iPhone 15",
+        "--physical",
+        "--os",
+        "18.6:beta",
+      ]);
+      expect((yield* ready.devices.list).devices.find((device) => device.booted)).toMatchObject({
+        name: "iPhone 15",
+        physical: true,
+      });
+      yield* Scope.close(scope, Exit.void);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
@@ -394,7 +483,9 @@ describe("Simlock device host", () => {
 
   it.effect("closes the session of a failed open so no lease is left behind", () =>
     Effect.gen(function* () {
-      const pool = yield* fakePool({ failOpen: true });
+      const pool = yield* fakePool({
+        failOpen: { error: { message: "No device matches.", hint: "Retry." } },
+      });
       const scope = yield* Scope.make();
       const host = yield* makeHost(pool, config(), scope);
       const ready = yield* host.ensureReady(() => Effect.void);
@@ -405,6 +496,47 @@ describe("Simlock device host", () => {
       // The failed open freed its slot.
       expect(yield* ready.devices.boot(iphone!).pipe(Effect.flip)).toBeDefined();
       yield* Scope.close(scope, Exit.void);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("tells the user what agent-device reported when a device fails to open", () =>
+    Effect.gen(function* () {
+      const pool = yield* fakePool({
+        failOpen: {
+          success: false,
+          error: {
+            code: "COMMAND_FAILED",
+            message: "Invalid daemon response",
+            cause: {
+              message: "Unexpected non-whitespace character after JSON at position 4",
+            },
+            hint: "Retry with --debug and inspect diagnostics log for details.",
+            details: { requestId: "22a6bf10a567b2a1", line: "404 Not Found" },
+          },
+        },
+      });
+      const scope = yield* Scope.make();
+      const host = yield* makeHost(pool, config(), scope);
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const pixel = (yield* ready.devices.list).devices.find(({ name }) => name === "Pixel 9");
+      const failure = yield* ready.devices.boot(pixel!).pipe(Effect.flip);
+      expect(failure.message).not.toContain("The device host sent no details.");
+      expect(failure.message).toContain("Invalid daemon response");
+      expect(failure.message).toContain("404 Not Found");
+      yield* Scope.close(scope, Exit.void);
+
+      // A details bag without a usable response line still keeps agent-device's message.
+      const oddPool = yield* fakePool({
+        failOpen: { error: { message: "Invalid daemon response", details: { line: 17 } } },
+      });
+      const oddScope = yield* Scope.make();
+      const oddReady = yield* (yield* makeHost(oddPool, config(), oddScope)).ensureReady(
+        () => Effect.void,
+      );
+      const [oddDevice] = (yield* oddReady.devices.list).devices;
+      const oddFailure = yield* oddReady.devices.boot(oddDevice!).pipe(Effect.flip);
+      expect(oddFailure.message).toContain("Invalid daemon response");
+      yield* Scope.close(oddScope, Exit.void);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
@@ -430,6 +562,21 @@ describe("Simlock device host", () => {
       );
       yield* Scope.close(scope, Exit.void);
       expect(pool.ran("close")).toHaveLength(0);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("keeps a watched lease renewed when the gateway caps lease TTLs", () =>
+    Effect.gen(function* () {
+      const pool = yield* fakePool({ maxTtlMs: 5 * 60_000 });
+      const host = yield* makeHost(pool, config(), yield* Scope.make());
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [iphone] = (yield* ready.devices.list).devices;
+      const leaseId = yield* ready.devices.boot(iphone!);
+
+      yield* TestClock.adjust("6 minutes");
+      expect((yield* ready.devices.list).devices.some((device) => device.id === leaseId)).toBe(
+        true,
+      );
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

@@ -5,6 +5,7 @@ import * as SharedObservability from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as LogLevel from "effect/LogLevel";
 import * as References from "effect/References";
 import * as Tracer from "effect/Tracer";
 import * as OtlpExporter from "effect/observability/OtlpExporter";
@@ -17,6 +18,7 @@ import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.t
 import * as ServerLogger from "../serverLogger.ts";
 import * as BrowserTraceCollector from "./BrowserTraceCollector.ts";
 import * as HeapAttribution from "./HeapAttribution.ts";
+import * as OtlpExportFailures from "./OtlpExportFailures.ts";
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
@@ -61,7 +63,7 @@ export const layer = Layer.unwrap(
                 exportInterval: `${traces.exportIntervalMs} millis`,
                 headers: traces.headers,
                 resource,
-              });
+              }).pipe(Effect.provide(OtlpExportFailures.layer("traces")));
 
         const tracer = yield* makeLocalFileTracer({
           filePath: config.serverTracePath,
@@ -69,6 +71,9 @@ export const layer = Layer.unwrap(
           maxFiles: config.traceMaxFiles,
           batchWindowMs: config.traceBatchWindowMs,
           sink,
+          sampleRoutineSpans:
+            config.traceTimingEnabled &&
+            LogLevel.isGreaterThanOrEqualTo(config.traceMinLevel, "Info"),
           ...(delegate ? { delegate } : {}),
         });
 
@@ -90,7 +95,10 @@ export const layer = Layer.unwrap(
             exportInterval: `${metrics.exportIntervalMs} millis`,
             headers: metrics.headers,
             resource,
-          }).pipe(Layer.provide(SharedObservability.layerOtlpSerialization(metrics.protocol)));
+          }).pipe(
+            Layer.provide(OtlpExportFailures.layer("metrics")),
+            Layer.provide(SharedObservability.layerOtlpSerialization(metrics.protocol)),
+          );
 
     const layerOtelWarnings = Layer.effectDiscard(
       Effect.forEach(config.otelEnvironment.warnings, (warning) => Effect.logWarning(warning)),
