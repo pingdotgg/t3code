@@ -1,3 +1,4 @@
+import { RegistryContext } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
@@ -7,16 +8,24 @@ import {
   type PullRequestDetailView,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { page, userEvent } from "vite-plus/test/browser";
 import appCss from "~/index.css?inline";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { act, fakeTimers, render } from "../../../test/render";
 
-const { command, permissions, reads, shown } = vi.hoisted(() => ({
+const { command, createCheckoutBranch, permissions, reads, shown } = vi.hoisted(() => ({
   command: vi.fn(),
+  createCheckoutBranch: vi.fn(),
   permissions: { checkout: true, operate: true },
   reads: { diff: [] as unknown[] },
   shown: { detail: null as PullRequestDetailView | null },
+}));
+
+vi.mock(import("~/state/vcs"), async (original) => ({
+  ...(await original()),
+  createCheckoutBranchSubscription: createCheckoutBranch,
 }));
 
 vi.mock(import("~/state/session"), async (original) => ({
@@ -155,8 +164,72 @@ function setup() {
   reads.diff = [];
   shown.detail = detail;
   command.mockReset();
+  createCheckoutBranch.mockReset();
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
 }
+
+it("reads the checkout branch again when the menu reopens", async () => {
+  setup();
+  shown.detail = { ...detail, headRepositoryNameWithOwner: detail.repository };
+  const before = Atom.make(AsyncResult.success({ refName: "feature" }));
+  const after = Atom.make(AsyncResult.success({ refName: "main" }));
+  createCheckoutBranch.mockReturnValueOnce(() => before).mockReturnValueOnce(() => after);
+  await using screen = await render(panel());
+  const checkout = screen.getByRole("button", { name: "Check out", exact: true });
+  await userEvent.click(checkout);
+  const worktree = page.getByRole("menuitem", { name: /In a separate worktree/ });
+  await expect.element(worktree.getByText("Checked out here", { exact: true })).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(checkout);
+  await expect.element(worktree).toBeEnabled();
+});
+
+it.each([
+  { branch: "feature", headRepository: "owner/repo", blocked: true },
+  { branch: "main", headRepository: "owner/repo", blocked: false },
+  { branch: "feature", headRepository: "fork/repo", blocked: false },
+])(
+  "checks worktree checkout for $headRepository with $branch checked out",
+  async ({ branch, headRepository, blocked }) => {
+    setup();
+    const status = Atom.make(AsyncResult.success({ refName: branch }));
+    createCheckoutBranch.mockReturnValue(() => status);
+    shown.detail = { ...detail, headRepositoryNameWithOwner: headRepository };
+    await using screen = await render(panel());
+    await userEvent.click(screen.getByRole("button", { name: "Check out", exact: true }));
+    const worktree = page.getByRole("menuitem", { name: /In a separate worktree/ });
+    if (blocked) {
+      await expect.element(worktree).toBeDisabled();
+      await expect.element(worktree.getByText("Checked out here", { exact: true })).toBeVisible();
+    } else {
+      await expect.element(worktree).toBeEnabled();
+    }
+    await expect.element(page.getByRole("menuitem", { name: /In this repository/ })).toBeEnabled();
+  },
+);
+
+it("waits for the local branch only after the checkout menu opens", async () => {
+  setup();
+  shown.detail = { ...detail, headRepositoryNameWithOwner: detail.repository };
+  const branch = Atom.make<AsyncResult.AsyncResult<{ refName: string }, never>>(
+    AsyncResult.initial(true),
+  );
+  createCheckoutBranch.mockReturnValue(() => branch);
+  await using screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>{panel()}</RegistryContext.Provider>,
+  );
+  expect(createCheckoutBranch).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Check out", exact: true }));
+  await expect
+    .element(page.getByRole("menuitem", { name: /In a separate worktree/ }))
+    .toBeDisabled();
+  expect(createCheckoutBranch).toHaveBeenCalledOnce();
+  await expect.element(page.getByRole("menuitem", { name: /In this repository/ })).toBeEnabled();
+  await act(() => appAtomRegistry.set(branch, AsyncResult.success({ refName: "main" })));
+  await expect
+    .element(page.getByRole("menuitem", { name: /In a separate worktree/ }))
+    .toBeEnabled();
+});
 
 it.each([AuthSourceControlWriteScope, AuthOrchestrationOperateScope])(
   "disables conflict checkout when the connection loses %s",

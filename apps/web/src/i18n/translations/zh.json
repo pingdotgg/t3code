@@ -6855,6 +6855,7 @@
   "f5fd3733da6e3556": "无法为工作副本打开会话",
   "09f38e303898401f": "无法准备 {term, select, mr {MR} cr {change request} other {PR}} 工作副本",
   "88db70a96177d202": "已在此检出",
+  "c9a052ee6afb40d4": "已在此检出",
   "baa66fde3613022b": "已检出",
   "10feb68552356a08": "此仓库位于该 {term, select, mr {merge request} cr {change request} other {pull request}} 的分支上，并已在其上打开一个会话。",
   "c0298c6b34aa5de1": "该 {term, select, mr {merge request} cr {change request} other {pull request}} 位于其专属工作树中，并已在其上打开一个会话。",

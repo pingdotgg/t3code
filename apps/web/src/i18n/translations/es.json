@@ -6843,6 +6843,7 @@
   "f5fd3733da6e3556": "No se pudo abrir un hilo para el checkout",
   "09f38e303898401f": "No se pudo preparar el checkout de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}",
   "88db70a96177d202": "Checkout hecho aquí",
+  "c9a052ee6afb40d4": "Checkout hecho aquí",
   "baa66fde3613022b": "Checkout hecho",
   "10feb68552356a08": "Este repositorio está en la rama de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}, con un hilo abierto en ella.",
   "c0298c6b34aa5de1": "La {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}} está en su propio worktree, con un hilo abierto en ella.",

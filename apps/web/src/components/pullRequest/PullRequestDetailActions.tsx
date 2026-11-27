@@ -6,10 +6,12 @@ import type {
 } from "@t3tools/contracts";
 import { CheckIcon, ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
 import { Branch, T, useGT } from "gt-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { AnimatedWidth } from "~/components/AnimatedWidth";
 import { cn } from "~/lib/utils";
+import { useEnvironmentQuery } from "~/state/query";
+import { createCheckoutBranchSubscription } from "~/state/vcs";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -79,6 +81,7 @@ export function PullRequestCheckoutMenu({
   handoff,
   checkoutRoot,
   canPrepareWorktree,
+  sameRepositoryHead,
   canCheckoutHere,
   onCheckout,
   pickableEnvironments,
@@ -89,6 +92,7 @@ export function PullRequestCheckoutMenu({
   handoff: string | null;
   checkoutRoot: string | null;
   canPrepareWorktree: boolean;
+  sameRepositoryHead: string | null;
   canCheckoutHere: boolean;
   onCheckout: (mode: "worktree" | "local") => void;
   pickableEnvironments: ReadonlyArray<PickableEnvironment>;
@@ -97,8 +101,24 @@ export function PullRequestCheckoutMenu({
   term: ChangeRequestTermKind;
 }) {
   const gt = useGT();
+  const [subscribeBranch, setSubscribeBranch] = useState<ReturnType<
+    typeof createCheckoutBranchSubscription
+  > | null>(null);
+  const branchAtom =
+    checkoutRoot !== null && sameRepositoryHead !== null && canPrepareWorktree
+      ? (subscribeBranch?.({ environmentId: actingEnvironmentId, input: { cwd: checkoutRoot } }) ??
+        null)
+      : null;
+  const branch = useEnvironmentQuery(branchAtom);
+  const checkingBranch = branchAtom !== null && branch.data === null && branch.error === null;
+  const worktreeBranchAlreadyCheckedOut =
+    sameRepositoryHead !== null && branch.data?.refName === sameRepositoryHead;
   return (
-    <Menu>
+    <Menu
+      onOpenChange={(open) =>
+        setSubscribeBranch(() => (open ? createCheckoutBranchSubscription() : null))
+      }
+    >
       <SharedTooltipTrigger
         render={
           <MenuTrigger
@@ -132,14 +152,23 @@ export function PullRequestCheckoutMenu({
         }
       />
       <MenuPopup align="end" side="bottom">
-        <MenuItem disabled={!canPrepareWorktree} onClick={() => onCheckout("worktree")}>
+        <MenuItem
+          disabled={!canPrepareWorktree || checkingBranch || worktreeBranchAlreadyCheckedOut}
+          onClick={() => onCheckout("worktree")}
+        >
           <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
           <span className="flex min-w-0 flex-col">
             <span>
               <T>In a separate worktree</T>
             </span>
             <span className="text-xs text-muted-foreground">
-              <T>Its own folder and thread. Nothing you have open moves.</T>
+              {worktreeBranchAlreadyCheckedOut ? (
+                <T>Checked out here</T>
+              ) : checkingBranch ? (
+                <T>Checking…</T>
+              ) : (
+                <T>Its own folder and thread. Nothing you have open moves.</T>
+              )}
             </span>
           </span>
         </MenuItem>

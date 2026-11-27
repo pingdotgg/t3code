@@ -6844,6 +6844,7 @@
   "f5fd3733da6e3556": "Impossible d’ouvrir un fil pour le checkout",
   "09f38e303898401f": "Impossible de préparer l’extraction de la {term, select, mr {merge request} cr {demande de modification} other {pull request}}",
   "88db70a96177d202": "Récupérée ici",
+  "c9a052ee6afb40d4": "Récupérée ici",
   "baa66fde3613022b": "Récupérée",
   "10feb68552356a08": "Ce dépôt est sur la branche de la {term, select, mr {merge request} cr {demande de modification} other {pull request}}, avec un fil ouvert dessus.",
   "c0298c6b34aa5de1": "La {term, select, mr {merge request} cr {demande de modification} other {pull request}} est dans son propre worktree, avec un fil ouvert dessus.",

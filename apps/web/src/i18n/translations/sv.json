@@ -6849,6 +6849,7 @@
   "f5fd3733da6e3556": "Kunde inte öppna en tråd för utcheckningen",
   "09f38e303898401f": "Kunde inte förbereda utcheckning av {term, select, mr {merge requesten} cr {ändringsbegäran} other {pull requesten}}",
   "88db70a96177d202": "Utcheckad här",
+  "c9a052ee6afb40d4": "Utcheckad här",
   "baa66fde3613022b": "Utcheckad",
   "10feb68552356a08": "Det här repot är på grenen för {term, select, mr {merge requesten} cr {ändringsbegäran} other {pull requesten}}, med en tråd öppen på den.",
   "c0298c6b34aa5de1": "{term, select, mr {Merge requesten} cr {Ändringsbegäran} other {Pull requesten}} finns i en egen worktree, med en tråd öppen på den.",

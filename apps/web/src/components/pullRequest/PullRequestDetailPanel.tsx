@@ -1526,6 +1526,11 @@ export function PullRequestDetailPanel({
         handoff={handoff}
         checkoutRoot={checkoutRoot}
         canPrepareWorktree={canPrepareWorktree}
+        sameRepositoryHead={
+          detail !== null && detail.headRepositoryNameWithOwner === detail.repository
+            ? detail.headBranch
+            : null
+        }
         canCheckoutHere={prepareThread.isAllowed}
         onCheckout={startCheckout}
         pickableEnvironments={pickableEnvironments}

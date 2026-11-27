@@ -6850,6 +6850,7 @@
   "f5fd3733da6e3556": "Could not open a thread for the checkout",
   "09f38e303898401f": "Could not prepare the {term, select, mr {merge request} cr {change request} other {pull request}} checkout",
   "88db70a96177d202": "Checked out here",
+  "c9a052ee6afb40d4": "Checked out here",
   "baa66fde3613022b": "Checked out",
   "10feb68552356a08": "This repository is on the {term, select, mr {merge request} cr {change request} other {pull request}}'s branch, with a thread open on it.",
   "c0298c6b34aa5de1": "The {term, select, mr {merge request} cr {change request} other {pull request}} is in its own worktree, with a thread open on it.",

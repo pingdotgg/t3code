@@ -6843,6 +6843,7 @@
   "f5fd3733da6e3556": "Não foi possível abrir uma thread para o checkout",
   "09f38e303898401f": "Não foi possível preparar o checkout {term, select, mr {do merge request} cr {da solicitação de alteração} other {do pull request}}",
   "88db70a96177d202": "Checkout feito aqui",
+  "c9a052ee6afb40d4": "Checkout feito aqui",
   "baa66fde3613022b": "Checkout feito",
   "10feb68552356a08": "Este repositório está no branch {term, select, mr {do merge request} cr {da solicitação de alteração} other {do pull request}}, com uma thread aberta nele.",
   "c0298c6b34aa5de1": "{term, select, mr {O merge request está} cr {A solicitação de alteração está} other {O pull request está}} em um worktree próprio, com uma thread aberta nele.",
