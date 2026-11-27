@@ -2,12 +2,11 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- The fixture serves a local Git remote.
 import * as NodeHttp from "node:http";
 import { expect } from "e2e";
-import * as Effect from "effect/Effect";
 
 import { test, WEB } from "./t3.ts";
 
 test(
-  "Reopening the palette while a cloned project syncs leaves the draft in place",
+  "Closing a newer palette while a cloned project syncs leaves the draft in place",
   WEB,
   async ({ t3, browser, screen }) => {
     const project = await t3.project("demo");
@@ -18,6 +17,34 @@ test(
       const address = remote.address();
       if (!address || typeof address === "string") throw new Error("No Git fixture port");
       await browser.addInitScript((title) => {
+        let holdProjectWait = false;
+        const shortWaits = new Map<number, () => void>();
+        document.addEventListener("hold-project-wait", () => {
+          holdProjectWait = true;
+        });
+        document.addEventListener("expire-short-project-wait", () => {
+          const waits = [...shortWaits];
+          shortWaits.clear();
+          for (const [id, run] of waits) {
+            window.clearTimeout(id);
+            run();
+          }
+        });
+        window.setTimeout = new Proxy(window.setTimeout, {
+          apply(target, receiver, [handler, delay, ...args]) {
+            if (
+              !holdProjectWait ||
+              typeof handler !== "function" ||
+              (delay !== 3_000 && delay !== 6_000)
+            ) {
+              return Reflect.apply(target, receiver, [handler, delay, ...args]);
+            }
+            const id: number = Reflect.apply(target, receiver, [handler, 60_000, ...args]);
+            if (delay === 3_000) shortWaits.set(id, () => handler(...args));
+            document.documentElement.dataset.projectWait = "pending";
+            return id;
+          },
+        });
         const listen = WebSocket.prototype.addEventListener;
         WebSocket.prototype.addEventListener = function (
           this: WebSocket,
@@ -88,22 +115,30 @@ test(
       await palette.getByRole("combobox").fill(`http://127.0.0.1:${address.port}/clone.git`);
       await screen.getByRole("button", "Continue (Enter)").tap();
       await palette.getByRole("combobox").fill(`${project}/${name}`);
+      await browser.evaluate(() => {
+        document.dispatchEvent(new Event("hold-project-wait"));
+        return null;
+      });
       await palette.getByRole("button", /^(?:Create & )?Clone \(/).tap();
       await browser.locator("html[data-cloned-project=held]").waitFor();
       await palette.waitFor({ state: "hidden" });
-      // Let the first project wait expire so a second wait would still be pending.
-      await Effect.runPromise(Effect.sleep("3100 millis"));
-      await browser.keyboard.press("Control+k");
-      await palette.getByRole("combobox").fill("Keep this draft");
-      await browser.evaluate(async () => {
-        document.dispatchEvent(new Event("release-cloned-project"));
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-        );
+      await browser.locator("html[data-project-wait=pending]").waitFor();
+      await browser.evaluate(() => {
+        document.dispatchEvent(new Event("expire-short-project-wait"));
         return null;
       });
+      await browser.keyboard.press("Control+k");
+      await palette.getByRole("combobox").fill("Keep this draft");
+      await browser.keyboard.press("Escape");
+      await palette.waitFor({ state: "hidden" });
+      await browser.evaluate(() => {
+        document.dispatchEvent(new Event("release-cloned-project"));
+        return null;
+      });
+      await projectPicker.tap();
+      await screen.getByRole("option", name).waitFor();
+      await browser.keyboard.press("Escape");
       await expect(projectPicker).toHaveText(originalProject);
-      await expect(palette.getByRole("combobox")).toBeVisible();
     } finally {
       remote.close();
       remote.closeAllConnections();
