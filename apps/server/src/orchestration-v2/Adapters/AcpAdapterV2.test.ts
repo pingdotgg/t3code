@@ -6618,6 +6618,117 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("releases a superseded steer's dispatch wait instead of blocking it", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const instanceId = ProviderInstanceId.make("acp-steer-superseded-wait");
+      const threadId = ThreadId.make("thread-acp-steer-superseded-wait");
+      const steerOneAttempted = yield* Deferred.make<void>();
+      const holdInitialPrompt = yield* Deferred.make<
+        EffectAcpSchema.PromptResponse,
+        EffectAcpErrors.AcpError
+      >();
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          steersWithPrompt: () => true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: (payload, promptOptions) =>
+                Effect.gen(function* () {
+                  const text = payload.prompt
+                    .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                    .join("\n");
+                  if (text.includes("steer one")) {
+                    // Park the first steer in the busy retry so the second
+                    // steer can supersede it. A refusal is not a registration,
+                    // so nothing settles the dispatched wait for this attempt.
+                    yield* Deferred.succeed(steerOneAttempted, undefined);
+                    return yield* EffectAcpErrors.AcpRequestError.internalError(
+                      "Agent is already processing. Use steer() or followUp() to queue messages.",
+                    );
+                  }
+                  if (promptOptions?.dispatched) {
+                    yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                  }
+                  if (text.includes("steer two")) {
+                    return { stopReason: "end_turn" as const };
+                  }
+                  return yield* Deferred.await(holdInitialPrompt);
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-steer-superseded-wait"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          messageText: "Start turn 1",
+        }),
+      );
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+      });
+      const steer = (ordinal: number, text: string) =>
+        runtime.steerTurn({
+          threadId,
+          runId: RunId.make(`run:${threadId}:${ordinal}`),
+          providerThread,
+          providerTurnId,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make(`steer-${ordinal}`),
+            text,
+            attachments: [],
+          },
+          appContext: [],
+        });
+      const firstSteer = yield* steer(1, "steer one").pipe(Effect.forkScoped);
+      yield* Deferred.await(steerOneAttempted);
+      // Let the steer's busy retry register its clock sleep before it is advanced.
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* steer(2, "steer two");
+      yield* TestClock.adjust("2 seconds");
+      // Before the fix this join never returned: nothing completed the first
+      // steer's dispatched wait once the second steer superseded it.
+      yield* Fiber.join(firstSteer);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("sends no more prompts once a follow-up waiting on a busy agent is stopped", () =>
     Effect.gen(function* () {
       let promptCalls = 0;

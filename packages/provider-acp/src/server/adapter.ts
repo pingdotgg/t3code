@@ -216,11 +216,16 @@ function sendPromptWhenIdle<A>(
   prompt: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
   superseded: () => boolean = () => false,
   stoppedValue?: A,
+  onStopped?: () => Effect.Effect<void>,
 ): Effect.Effect<A, EffectAcpErrors.AcpError> {
   // A Stop or a prompt-steer can land during the wait, so both are rechecked before each resend.
   const stopped = () => turn.interrupted || turn.finalized || superseded();
+  // A stopped exit never calls `runtime.prompt`, so the steer's `dispatched`
+  // wait must be released here or `steerWithPrompt` blocks on it forever.
+  const exitStopped = (value: A): Effect.Effect<A, EffectAcpErrors.AcpError> =>
+    (onStopped?.() ?? Effect.void).pipe(Effect.andThen(Effect.succeed(value)));
   return Effect.suspend(() =>
-    stopped() && stoppedValue !== undefined ? Effect.succeed(stoppedValue) : prompt(),
+    stopped() && stoppedValue !== undefined ? exitStopped(stoppedValue) : prompt(),
   ).pipe(
     Effect.catchIf(
       (error) => isAgentBusyPromptError(error) && !stopped(),
@@ -229,10 +234,10 @@ function sendPromptWhenIdle<A>(
           Effect.andThen(
             Effect.suspend(() =>
               stopped()
-                ? stoppedValue !== undefined
-                  ? Effect.succeed(stoppedValue)
-                  : Effect.fail(error)
-                : sendPromptWhenIdle(turn, prompt, superseded, stoppedValue),
+                ? stoppedValue === undefined
+                  ? Effect.fail(error)
+                  : exitStopped(stoppedValue)
+                : sendPromptWhenIdle(turn, prompt, superseded, stoppedValue, onStopped),
             ),
           ),
         ),
@@ -10487,6 +10492,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ) {
             yield* runtime.cancel.pipe(Effect.ignore);
           }
+          // Match the interrupt path: an admitted approval or elicitation must
+          // not outlive the turn it belongs to.
+          yield* cancelPendingRuntimeRequests();
           yield* finalizeTurn(context, "interrupted");
         });
 
@@ -11052,6 +11060,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           ),
                         superseded,
                         { stopReason: "cancelled" } satisfies EffectAcpSchema.PromptResponse,
+                        () => Deferred.succeed(dispatched, undefined),
                       ),
                     {
                       generation,
