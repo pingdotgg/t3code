@@ -82,7 +82,7 @@ import JSZip from "jszip";
 import { boundedZip } from "@t3tools/client-runtime/zip/bounded-zip";
 import BinaryViewer from "./BinaryViewer";
 import { decodeImagePreview } from "./decodeImagePreview";
-import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
+import { formatArchiveModifiedDate, type BinaryWorkerResult } from "./binaryPreviewProtocol";
 import type { TextPreviewResult } from "./largeTextProtocol";
 import type { ReactElement } from "react";
 import type { OfficeWorkerRequest, OfficeWorkerResult } from "./officePreviewProtocol";
@@ -320,6 +320,58 @@ describe("bounded binary previews", () => {
       URL.revokeObjectURL(src);
     }
   });
+
+  it.each(["child-first", "directory-first"] as const)(
+    "uses the explicit ZIP directory modified date when entries are %s",
+    async (order) => {
+      const zip = new JSZip();
+      const childDate = new Date("2022-01-02T00:00:00Z");
+      const dirDate = new Date("2024-10-19T00:00:00Z");
+      const laterChildDate = new Date("2025-05-06T00:00:00Z");
+      const subChildDate = new Date("2020-03-04T00:00:00Z");
+      const subDirDate = new Date("2023-07-08T00:00:00Z");
+      if (order === "directory-first") {
+        zip.file("docs/", null, { dir: true, date: dirDate });
+        zip.file("docs/sub/", null, { dir: true, date: subDirDate });
+      }
+      zip.file("docs/readme.txt", "a".repeat(1024), { createFolders: false, date: childDate });
+      zip.file("docs/sub/nested.txt", "b".repeat(1024), {
+        createFolders: false,
+        date: subChildDate,
+      });
+      if (order === "child-first") {
+        zip.file("docs/", null, { dir: true, date: dirDate });
+        zip.file("docs/sub/", null, { dir: true, date: subDirDate });
+      }
+      zip.file("docs/later.txt", "c".repeat(1024), { createFolders: false, date: laterChildDate });
+      const bytes = await zip.generateAsync({ type: "arraybuffer" });
+      const src = URL.createObjectURL(new Blob([bytes]));
+      try {
+        await using screen = await render(
+          <BinaryViewer src={src} name="dates.zip" kind="archive" />,
+        );
+        const rows = () =>
+          [...screen.container.querySelectorAll("tbody tr")].map((row) =>
+            [...row.querySelectorAll("td")].map((cell) => cell.textContent?.trim()),
+          );
+        await vi.waitFor(() => {
+          expect(rows()).toEqual([
+            ["docs", "3 KB", formatArchiveModifiedDate("2024-10-19T00:00:00.000")],
+          ]);
+        }, 10_000);
+        await act(() => screen.container.querySelector<HTMLButtonElement>("tbody button")!.click());
+        await vi.waitFor(() => {
+          expect(rows()).toEqual([
+            ["sub", "1 KB", formatArchiveModifiedDate("2023-07-08T00:00:00.000")],
+            ["later.txt", "1 KB", formatArchiveModifiedDate("2025-05-06T00:00:00.000")],
+            ["readme.txt", "1 KB", formatArchiveModifiedDate("2022-01-02T00:00:00.000")],
+          ]);
+        });
+      } finally {
+        URL.revokeObjectURL(src);
+      }
+    },
+  );
 
   it("uses a PAX size override for the following TAR payload and bounds it", async () => {
     const archive = (size: string) => {
