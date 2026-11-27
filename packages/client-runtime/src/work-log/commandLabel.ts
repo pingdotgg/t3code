@@ -225,11 +225,29 @@ const COMMAND_WRAPPER_FLAGS: Record<CommandWrapper, ReadonlySet<string>> = {
   sudo: new Set(["-A", "--askpass", "-b", "--background", "-E", "-H", "-i", "-n", "-S"]),
 };
 
+const ANSI_C_ESCAPES: Record<string, string> = {
+  a: "\u0007",
+  b: "\b",
+  e: "\u001b",
+  E: "\u001b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  v: "\v",
+  "\\": "\\",
+  "'": "'",
+  '"': '"',
+  "?": "?",
+};
+
+type ShellQuote = '"' | "'" | "$'";
+
 function tokenizeShellCommand(command: string): string[] | null {
   const input = command.trim();
   const tokens: string[] = [];
   let current = "";
-  let quote: '"' | "'" | null = null;
+  let quote: ShellQuote | null = null;
   let escaping = false;
   let inBackticks = false;
   let substitutionDepth = 0;
@@ -242,6 +260,21 @@ function tokenizeShellCommand(command: string): string[] | null {
       current += character;
       escaping = false;
       tokenStarted = true;
+      continue;
+    }
+    if (character === "\\" && quote === "$'") {
+      const byte = /^(?:x([\dA-Fa-f]{1,2})|([0-7]{1,3}))/u.exec(input.slice(index + 1, index + 4));
+      if (byte) {
+        current += String.fromCharCode(
+          Number.parseInt(byte[1] ?? byte[2]!, byte[1] ? 16 : 8) & 0xff,
+        );
+        index += byte[0].length;
+        continue;
+      }
+      const nextCharacter = input[index + 1];
+      if (nextCharacter === undefined) return null;
+      current += ANSI_C_ESCAPES[nextCharacter] ?? `\\${nextCharacter}`;
+      index += 1;
       continue;
     }
     if (character === "\\" && quote !== "'") {
@@ -271,7 +304,7 @@ function tokenizeShellCommand(command: string): string[] | null {
       continue;
     }
     if (quote !== null) {
-      if (character === quote) {
+      if (character === (quote === "$'" ? "'" : quote)) {
         quote = null;
       } else {
         current += character;
@@ -321,6 +354,18 @@ function tokenizeShellCommand(command: string): string[] | null {
       current += character;
       substitutionDepth -= 1;
       tokenStarted = true;
+      continue;
+    }
+    if (character === "$" && input[index + 1] === "$") {
+      current += "$$";
+      tokenStarted = true;
+      index += 1;
+      continue;
+    }
+    if (character === "$" && (input[index + 1] === "'" || input[index + 1] === '"')) {
+      quote = input[index + 1] === "'" ? "$'" : '"';
+      tokenStarted = true;
+      index += 1;
       continue;
     }
     if (character === '"' || character === "'") {
@@ -460,7 +505,7 @@ function commandAfterHeredocs(
 }
 
 function splitFirstShellCommand(command: string): ShellCommandSplit {
-  let quote: '"' | "'" | null = null;
+  let quote: ShellQuote | null = null;
   let powerShellHereStringQuote: '"' | "'" | null = null;
   let escaping = false;
   let inBackticks = false;
@@ -503,7 +548,12 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
       continue;
     }
     if (quote !== null) {
-      if (character === quote) quote = null;
+      if (character === (quote === "$'" ? "'" : quote)) quote = null;
+      continue;
+    }
+    if (character === "$" && (command[index + 1] === "$" || command[index + 1] === "'")) {
+      if (command[index + 1] === "'") quote = "$'";
+      index += 1;
       continue;
     }
     if (
@@ -635,7 +685,7 @@ function commandWithoutLeadingShellComments(command: string): string | null {
 
 function withoutShellLineContinuations(command: string): string {
   let normalizedCommand = "";
-  let quote: '"' | "'" | null = null;
+  let quote: ShellQuote | null = null;
   let escaping = false;
 
   for (let index = 0; index < command.length; index += 1) {
@@ -646,11 +696,11 @@ function withoutShellLineContinuations(command: string): string {
       continue;
     }
     if (character === "\\" && quote !== "'") {
-      if (command[index + 1] === "\n") {
+      if (quote !== "$'" && command[index + 1] === "\n") {
         index += 1;
         continue;
       }
-      if (command[index + 1] === "\r" && command[index + 2] === "\n") {
+      if (quote !== "$'" && command[index + 1] === "\r" && command[index + 2] === "\n") {
         index += 2;
         continue;
       }
@@ -659,7 +709,12 @@ function withoutShellLineContinuations(command: string): string {
       continue;
     }
     if (quote !== null) {
-      if (character === quote) quote = null;
+      if (character === (quote === "$'" ? "'" : quote)) quote = null;
+    } else if (character === "$" && (command[index + 1] === "$" || command[index + 1] === "'")) {
+      if (command[index + 1] === "'") quote = "$'";
+      normalizedCommand += command.slice(index, index + 2);
+      index += 1;
+      continue;
     } else if (character === '"' || character === "'") {
       quote = character;
     }
@@ -1112,10 +1167,9 @@ function parseCommandProgramName(
   if (windowsPath) return staticProgramName(windowsPath);
   const tokens = tokenizeShellCommand(withoutShellLineContinuations(commandSplit.firstCommand));
   if (tokens === null) return null;
-  const firstCharacter = commandSplit.firstCommand.trimStart()[0];
   if (
     tokens.length === 1 &&
-    (firstCharacter === '"' || firstCharacter === "'") &&
+    /^\$?["']/u.test(commandSplit.firstCommand.trimStart()) &&
     /[\s()=]/u.test(tokens[0] ?? "") &&
     !/[\\/]/u.test(tokens[0] ?? "")
   ) {
