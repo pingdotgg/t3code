@@ -128,6 +128,9 @@ interface PaneStrip {
   /** Clips the joined tab shape outside the strip's alpha mask (index.css, [data-pane-join-layer]). */
   readonly joinLayer: HTMLDivElement;
   readonly join: HTMLSpanElement;
+  readonly joinLeftCap: HTMLElement;
+  readonly joinMiddle: HTMLElement;
+  readonly joinRightCap: HTMLElement;
   /** The landed tab's foot, painted beside the strip with the bar (index.css, [data-pane-join-foot]). */
   readonly foot: HTMLElement;
   /** The strip's left in its notch, where the join layer and foot are placed. */
@@ -142,6 +145,8 @@ interface PaneStrip {
   joinedId: string | null;
   /** The slide in flight, if any. */
   slide: Animation | null;
+  /** Every piece animation started by moveJoin, canceled directly without getAnimations(). */
+  readonly slideAnimations: Animation[];
   /** The holding header's panel animation duration, for a slide begun on a press. */
   motionMs: number;
   readonly litProperties: readonly [start: string, end: string];
@@ -365,7 +370,10 @@ function createPaneStrip(role?: "panel"): PaneStrip {
   join.setAttribute("aria-hidden", "true");
   join.hidden = true;
   const body = joinPiece("data-jb");
-  body.append(joinCap("l"), joinPiece("data-jm"), joinCap("r"));
+  const joinLeftCap = joinCap("l");
+  const joinMiddle = joinPiece("data-jm");
+  const joinRightCap = joinCap("r");
+  body.append(joinLeftCap, joinMiddle, joinRightCap);
   join.append(body);
   joinLayer.append(join);
   const foot = document.createElement("i");
@@ -375,6 +383,9 @@ function createPaneStrip(role?: "panel"): PaneStrip {
     strip,
     joinLayer,
     join,
+    joinLeftCap,
+    joinMiddle,
+    joinRightCap,
     foot,
     footOffset: null,
     atPaneEdge: false,
@@ -382,6 +393,7 @@ function createPaneStrip(role?: "panel"): PaneStrip {
     shown: null,
     joinedId: null,
     slide: null,
+    slideAnimations: [],
     motionMs: 0,
     litProperties:
       role === "panel"
@@ -888,15 +900,18 @@ function moveJoin(
   // Under black chrome and on phones the notch draws the tab and no shape shows.
   const canSlide = was !== null && motionMs > 0 && !join.hidden && join.getClientRects().length > 0;
   // From where the shape is drawn now, mid-slide included.
-  const capBox =
-    canSlide && entry.slide
-      ? join.querySelector('[data-jc="l"]')?.getBoundingClientRect()
-      : undefined;
+  const capBox = canSlide && entry.slide ? entry.joinLeftCap.getBoundingClientRect() : undefined;
   const stripBox = capBox ? entry.strip.getBoundingClientRect() : undefined;
   const fromX =
     capBox && stripBox
       ? Math.round(capBox.left - stripBox.left + scrollLeft + PANE_JOIN_EAR_PX)
       : (was?.x ?? to.x);
+
+  const cancelSlide = () => {
+    for (const animation of entry.slideAnimations) animation.cancel();
+    entry.slideAnimations.length = 0;
+    entry.slide = null;
+  };
 
   entry.shown = to;
   join.hidden = false;
@@ -908,6 +923,7 @@ function moveJoin(
   markJoinAtStart(entry, scrollLeft);
   const land = () => {
     const landedScroll = stripScrollLeft(entry);
+    entry.slideAnimations.length = 0;
     entry.slide = null;
     entry.joinedId = to.tabId;
     markJoinedLabel(entry);
@@ -915,28 +931,24 @@ function moveJoin(
     markPaneLit(entry, landedScroll);
   };
   if (!canSlide) {
-    entry.slide?.cancel();
+    cancelSlide();
     land();
     return;
   }
   const from = { x: fromX, w: was.w };
-  entry.slide?.cancel();
+  cancelSlide();
   const timing = { duration: motionMs, easing: PANE_JOIN_EASING };
   const r = PANE_JOIN_RADIUS_PX;
   const e = PANE_JOIN_EAR_PX;
-  const piece = (selector: string) => join.querySelector<HTMLElement>(selector);
-  for (const animation of join.firstElementChild?.getAnimations({ subtree: true }) ?? []) {
-    animation.cancel();
-  }
-  piece('[data-jc="l"]')?.animate(
+  const leftSlide = entry.joinLeftCap.animate?.(
     [{ translate: `${from.x - e}px 0` }, { translate: `${to.x - e}px 0` }],
     timing,
   );
-  piece('[data-jc="r"]')?.animate(
+  const rightSlide = entry.joinRightCap.animate?.(
     [{ translate: `${from.x + from.w - r - 1}px 0` }, { translate: `${to.x + to.w - r - 1}px 0` }],
     timing,
   );
-  const slide = piece("[data-jm]")?.animate(
+  const slide = entry.joinMiddle.animate?.(
     [
       { translate: `${from.x + r}px 0`, scale: `${middle(from.w)} 1` },
       { translate: `${to.x + r}px 0`, scale: `${middle(to.w)} 1` },
@@ -944,9 +956,14 @@ function moveJoin(
     timing,
   );
   if (!slide) {
+    leftSlide?.cancel();
+    rightSlide?.cancel();
     land();
     return;
   }
+  if (leftSlide) entry.slideAnimations.push(leftSlide);
+  if (rightSlide) entry.slideAnimations.push(rightSlide);
+  entry.slideAnimations.push(slide);
   entry.slide = slide;
   markPaneLit(entry, scrollLeft);
   void slide.finished.then(
