@@ -3759,23 +3759,37 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("cuts long commit subjects without splitting an emoji", () =>
+    it.effect("keeps selected commit subjects equal to the branch list", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* git(cwd, ["checkout", "-b", "feature/emoji-subject"]);
-        yield* git(cwd, ["commit", "--allow-empty", "-m", `${"a".repeat(299)}😀 tail`]);
-        const sha = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const shas: Array<string> = [];
+        for (const args of [
+          ["commit", "--allow-empty", "-m", `${"a".repeat(299)}😀 tail`],
+          ["commit", "--allow-empty", "--cleanup=verbatim", "-m", "\n\nAdd widget\n\nBody"],
+          ["commit", "--allow-empty", "-m", "Line one\nline two\n\nBody"],
+        ]) {
+          yield* git(cwd, args);
+          shas.unshift(yield* git(cwd, ["rev-parse", "HEAD"]));
+        }
 
         const branch = yield* driver.getReviewBranchCommits({ cwd, baseRef: initialBranch });
-        const preview = yield* driver.getReviewDiffPreview({ cwd, commitSha: sha });
-        const commitSubject = preview.sources.find(
-          (candidate) => candidate.kind === "commit",
-        )?.commitSubject;
+        const previewSubjects = yield* Effect.forEach(shas, (commitSha) =>
+          driver
+            .getReviewDiffPreview({ cwd, commitSha })
+            .pipe(
+              Effect.map(
+                (preview) =>
+                  preview.sources.find((candidate) => candidate.kind === "commit")?.commitSubject,
+              ),
+            ),
+        );
+        const expected = ["Line one line two", "Add widget", "a".repeat(299)];
         assert.deepStrictEqual(
-          [branch.commits[0]?.subject, commitSubject],
-          ["a".repeat(299), "a".repeat(299)],
+          [branch.commits.map((commit) => commit.subject), previewSubjects],
+          [expected, expected],
         );
       }),
     );
@@ -8882,7 +8896,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("force-removes a worktree without deleting what its junctions point to", () =>
+    it.effect.each([
+      ["native", ""],
+      ["Windows with trailing NBSP in metadata paths", "\u00a0"],
+    ] as const)("force-removes a worktree without deleting junction targets: %s", ([, suffix]) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
@@ -8891,9 +8908,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["commit", "-m", "ignore node_modules"]);
         const fileSystem = yield* FileSystem.FileSystem;
         const pathService = yield* Path.Path;
+        const commonDir = pathService.join(cwd, suffix ? "metadata" + suffix : ".git");
+        if (suffix) yield* git(cwd, ["init", "--separate-git-dir", commonDir]);
         const outside = yield* makeTmpDir("git-worktree-link-target-");
         yield* writeTextFile(outside, "keep.txt", "keep\n");
-        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "linked");
+        const worktreeName = "linked" + suffix;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), worktreeName);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* driver.createWorktree({
           cwd,
@@ -8910,9 +8930,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
         NodeFS.symlinkSync(outside, pathService.join(worktreePath, "shared"), "junction");
 
-        yield* driver.removeWorktree({ cwd, path: worktreePath, force: true });
+        const platform = yield* HostProcess.Platform;
+        yield* driver
+          .removeWorktree({ cwd, path: worktreePath, force: true })
+          .pipe(Effect.provideService(HostProcess.Platform, suffix ? "win32" : platform));
 
         assert.deepEqual(NodeFS.readdirSync(pathService.dirname(worktreePath)), []);
+        assert.isFalse(
+          yield* fileSystem.exists(pathService.join(commonDir, "worktrees", worktreeName)),
+        );
         assert.equal(
           yield* fileSystem.readFileString(pathService.join(outside, "keep.txt")),
           "keep\n",

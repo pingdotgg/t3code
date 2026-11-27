@@ -345,6 +345,7 @@ query PullRequestCommitStats($ids: [ID!]!) {
       oid
       additions
       deletions
+      changedFilesIfAvailable
     }
   }
 }
