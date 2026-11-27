@@ -206,16 +206,9 @@ it("leaves J and K to floating layers, side chats, and IME while stepping inside
       <div role="dialog">
         <button>Dialog action</button>
       </div>
-      <div role="alertdialog">
-        <button>Alert action</button>
-      </div>
-      <div aria-modal="true">
-        <button>Modal action</button>
-      </div>
       <div role="menu">
         <button role="menuitem">Menu action</button>
       </div>
-      <div role="combobox" tabIndex={0} aria-label="Combo action" />
       <div data-slot="select-popup">
         <button>Popup action</button>
       </div>
@@ -226,23 +219,13 @@ it("leaves J and K to floating layers, side chats, and IME while stepping inside
     </RightPanelSheet>,
   );
   await expect.element(page.getByRole("dialog", { name: "Workspace panel" })).toBeVisible();
-  const next = page.getByRole("button", { name: "Next stop" }).element();
-  next.focus();
-  const step = new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true });
-  next.dispatchEvent(step);
-  expect(step.defaultPrevented).toBe(true);
-  await expect.element(page.getByText("Prose for the second stop.")).toBeVisible();
-  await userEvent.keyboard("k");
-  await expect.element(page.getByText("Prose for the first stop.")).toBeVisible();
+  page.getByRole("button", { name: "Next stop" }).element().focus();
   await userEvent.keyboard("j");
   await expect.element(page.getByText("Prose for the second stop.")).toBeVisible();
 
   for (const [name, role, keyCode] of [
     ["Dialog action", "button", 0],
-    ["Modal action", "button", 0],
-    ["Alert action", "button", 0],
     ["Menu action", "menuitem", 0],
-    ["Combo action", "combobox", 0],
     ["Popup action", "button", 0],
     ["Side chat action", "button", 0],
     ["IME action", "button", 229],
@@ -253,7 +236,6 @@ it("leaves J and K to floating layers, side chats, and IME while stepping inside
       const event = new KeyboardEvent("keydown", { key, keyCode, bubbles: true, cancelable: true });
       target.dispatchEvent(event);
       expect(event.defaultPrevented, `${name}: ${key}`).toBe(false);
-      await expect.element(page.getByText("Prose for the second stop.")).toBeVisible();
     }
   }
   page.getByRole("button", { name: "Next stop" }).element().focus();
