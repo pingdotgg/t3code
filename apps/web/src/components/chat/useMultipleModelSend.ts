@@ -165,6 +165,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
               routeThreadKey,
               target.selection.instanceId,
               target.selection.model,
+              sendSnapshot.messageText,
             ]),
             model: target.selection.model,
             uncertainSubmissions: uncertainSubmissionsRef.current,
