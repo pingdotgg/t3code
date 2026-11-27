@@ -1,6 +1,9 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeURL from "node:url";
+import { gtFallback } from "gt-react-native";
 import { expect, it } from "vite-plus/test";
+
+import ruCatalog from "./translations/ru.json";
 
 it("uses the new Android locale before native storage finishes writing it", () => {
   // Load the real GT store in a subprocess because mobile's Vite config replaces GT.
@@ -52,4 +55,19 @@ it("uses the new Android locale before native storage finishes writing it", () =
     { cwd: NodeURL.fileURLToPath(new URL("../../", import.meta.url)), encoding: "utf8" },
   );
   expect(output.trim()).toBe("zh");
+});
+
+it("formats Russian force-stop shared-process alert with plural instruction for 21 threads", () => {
+  const format = (count: number) =>
+    gtFallback(ruCatalog["72e41eb83e88cefa"], { count, $locale: "ru" });
+  expect(format(0)).toBe(
+    "Он используется другими работающими тредами. Остановите их, чтобы освободить его.",
+  );
+  expect(format(1)).toBe("Он используется 1 работающим тредом. Остановите его, чтобы освободить.");
+  expect(format(2)).toBe(
+    "Он используется 2 работающими тредами. Остановите их, чтобы освободить его.",
+  );
+  expect(format(21)).toBe(
+    "Он используется 21 работающим тредом. Остановите их, чтобы освободить его.",
+  );
 });
