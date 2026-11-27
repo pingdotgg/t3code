@@ -19,6 +19,7 @@ import {
   htmlRenderFromToolItem,
   previewRecordingIdFromToolItem,
   sentMessageFromToolItem,
+  toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -1313,6 +1314,16 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     );
                     yield* updateTool("recording-stop", "completed");
 
+                    // The agent offloads a screenshot and completes the call with no result.
+                    yield* startTool("snapshot", "preview_snapshot", { includeImage: true });
+                    yield* mcpSessions.recordToolResult(
+                      threadId,
+                      "preview_snapshot",
+                      { includeImage: true },
+                      { content: [{ type: "image", mimeType: "image/png", data: "AAAA" }] },
+                    );
+                    yield* updateTool("snapshot", "completed");
+
                     // Unfinished call projected at turn end must not claim or leak to Turn 2.
                     yield* startTool("send-unfinished", "send_to_user", {
                       message: unfinishedText,
@@ -1426,6 +1437,10 @@ describe("AntigravityAdapterV2 html_render pages", () => {
           previewRecordingIdFromToolItem(tool("recording-stop")!),
           `${threadId}-rec-1`,
         );
+        assert.deepEqual(toolOutputImages(tool("snapshot")?.output), [
+          { mimeType: "image/png", data: "AAAA" },
+        ]);
+        assert.isTrue(yield* mcpSessions.areToolResultImagesRecovered(instanceId));
       }).pipe(Effect.provide(layerSession)),
   );
 });
