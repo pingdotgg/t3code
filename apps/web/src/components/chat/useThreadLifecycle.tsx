@@ -60,6 +60,7 @@ import { useEnvironmentScope, useEnvironmentScopeDenied } from "~/state/session"
 import { threadEnvironment } from "../../state/threads";
 import { vcsEnvironment } from "../../state/vcs";
 import { useChildThreadInputs, readThreadShell, waitForThreadShell } from "../../state/entities";
+import { useEnvironmentIdentities } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { ThreadStatusLine } from "./ThreadStatusLine";
@@ -530,9 +531,15 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     });
   };
   const onOpenRelatedThreadStable = useStableCallback(onOpenRelatedThread);
+  const environmentIdentities = useEnvironmentIdentities();
+  const environmentLabelById = new Map(
+    environmentIdentities.map((entry) => [entry.environmentId, entry.label] as const),
+  );
   const childThreadInputs = useChildThreadInputs(activeThreadRef);
   const childInputNow = childInputNowItem(
     {
+      parentEnvironmentId: environmentId,
+      environmentLabelById,
       childThreadInputs,
       parentAwaitingUser: Boolean(
         activePendingApproval || activePendingUserInput || activeThreadShell?.hasPendingUserInput,
@@ -637,6 +644,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     ? backgroundWorkNowItem(
         {
           environmentId,
+          environmentLabelById,
           threadId: activeThread.id,
           tasks: activeBackgroundTasks,
           turnItems,

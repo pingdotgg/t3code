@@ -51,6 +51,8 @@ export function extensionStatusBannerItem(
 /** Subagents and side chats waiting on the user, unless the parent is itself waiting on them. */
 export function childInputNowItem(
   input: {
+    readonly parentEnvironmentId?: EnvironmentId;
+    readonly environmentLabelById?: ReadonlyMap<EnvironmentId, string>;
     readonly childThreadInputs: ReadonlyArray<EnvironmentThreadShell>;
     readonly parentAwaitingUser: boolean;
     // A task delegated to a linked environment lives there, not where the parent runs.
@@ -73,17 +75,30 @@ export function childInputNowItem(
     waitingLabel: childThreadInputs.every((child) => child.lineage.sideChat === true)
       ? resolve(msg("Side chat waiting"))
       : resolve(msg("Subagent waiting")),
-    description: childThreadInputs.map((child, index) => (
-      <Fragment key={child.id}>
-        {index > 0 ? " " : null}
-        <span className="whitespace-nowrap">
-          <InlineButton tone="muted" onClick={() => onOpenThread(child.id, child.environmentId)}>
-            {child.title}
-          </InlineButton>
-          {index < childThreadInputs.length - 1 ? "," : null}
-        </span>
-      </Fragment>
-    )),
+    description: childThreadInputs.map((child, index) => {
+      const remoteEnvironment =
+        input.parentEnvironmentId !== undefined && child.environmentId !== input.parentEnvironmentId
+          ? input.environmentLabelById?.get(child.environmentId)
+          : undefined;
+      return (
+        <Fragment key={child.id}>
+          {index > 0 ? " " : null}
+          <span className="whitespace-nowrap">
+            <InlineButton tone="muted" onClick={() => onOpenThread(child.id, child.environmentId)}>
+              {remoteEnvironment
+                ? resolve(
+                    msg("{title} on {environment}", {
+                      title: child.title,
+                      environment: remoteEnvironment,
+                    }),
+                  )
+                : child.title}
+            </InlineButton>
+            {index < childThreadInputs.length - 1 ? "," : null}
+          </span>
+        </Fragment>
+      );
+    }),
     actions: (
       <InlineButton onClick={() => onOpenThread(first.id, first.environmentId)}>
         {first.hasPendingApprovals ? <T>Open approval</T> : <T>Open question</T>}
@@ -198,6 +213,7 @@ export function runStopNowItem(input: {
 export function backgroundWorkNowItem(
   input: {
     readonly environmentId: EnvironmentId;
+    readonly environmentLabelById?: ReadonlyMap<EnvironmentId, string>;
     readonly threadId: ThreadId;
     readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
     readonly turnItems: ThreadStructure["turnItems"];
@@ -212,24 +228,34 @@ export function backgroundWorkNowItem(
   const presentation = presentPendingBackgroundWork(input.tasks, resolve);
   if (presentation === null) return null;
   const rows = presentation.items.map((task) => {
-    const itemKey =
-      input.tasks.find((pending) => pending.taskId === task.taskId)?.nativeItemId ?? task.taskId;
+    const pending = input.tasks.find((candidate) => candidate.taskId === task.taskId);
+    const itemKey = pending?.nativeItemId ?? task.taskId;
     // Same key derivePendingBackgroundWork gives turn-item tasks; subagent items carry progress.
-    const item = input.turnItems.findLast(
-      (candidate) => (candidate.nativeItemRef?.nativeId || candidate.id) === itemKey,
+    const item = input.turnItems.findLast((candidate) =>
+      pending?.itemId === undefined
+        ? (candidate.nativeItemRef?.nativeId || candidate.id) === itemKey
+        : candidate.id === pending.itemId,
     );
     const subagent = item?.type === "subagent" ? item : undefined;
+    const remoteChild = subagent?.remoteChild;
+    const remoteLabel = remoteChild
+      ? (input.environmentLabelById?.get(remoteChild.environmentId) ?? remoteChild.label)
+      : null;
+    const formattedLabel = remoteLabel
+      ? resolve(msg("{title} on {environment}", { title: task.label, environment: remoteLabel }))
+      : task.label;
     return {
       task,
+      remoteLabel,
       label:
         item?.type === "command_execution" && commandDisplayText(item.input) === task.label ? (
           <span className="font-mono in-data-[slot=popover-popup]:whitespace-pre-wrap">
             {task.label}
           </span>
-        ) : task.label.includes("\n") ? (
-          <span className="in-data-[slot=popover-popup]:whitespace-pre-wrap">{task.label}</span>
+        ) : formattedLabel.includes("\n") ? (
+          <span className="in-data-[slot=popover-popup]:whitespace-pre-wrap">{formattedLabel}</span>
         ) : (
-          task.label
+          formattedLabel
         ),
       activity: subagent?.progress?.replace(/\s+/gu, " ").trim() || null,
       startedAtMs: item?.startedAt ? DateTime.toEpochMillis(item.startedAt) : null,
@@ -246,7 +272,9 @@ export function backgroundWorkNowItem(
     id: `background-work:${input.threadId}`,
     icon: rows.every(isCommand) ? <TerminalIcon /> : <CircleDashedIcon />,
     title:
-      only && typeof only.label !== "string" && only.task.label !== only.task.kind ? (
+      only &&
+      (only.remoteLabel !== null ||
+        (typeof only.label !== "string" && only.task.label !== only.task.kind)) ? (
         <>
           {presentation.waiting ? (
             <T>

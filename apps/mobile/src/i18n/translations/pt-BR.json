@@ -5716,5 +5716,6 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Execuções de workflow"
+  "46d614fa7b4bf1e5": "Execuções de workflow",
+  "ffdeb3b482be2aed": "Subagente em {environment}"
 }

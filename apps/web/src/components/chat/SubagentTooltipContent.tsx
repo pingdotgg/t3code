@@ -1,4 +1,5 @@
 import type {
+  EnvironmentMachineKind,
   OrchestrationV2ThreadShell,
   OrchestrationV2TurnItemStatus,
   OrchestrationProjectShell,
@@ -7,6 +8,7 @@ import type {
   ProviderInstanceId,
   OrchestrationV2Subagent,
 } from "@t3tools/contracts";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
   resolveSubagentMetadata,
   subagentDetailPreview,
@@ -47,6 +49,9 @@ export function SubagentTooltipContent(props: {
     | undefined;
   parentProject?: Pick<OrchestrationProjectShell, "workspaceRoot"> | undefined;
   childProject?: Pick<OrchestrationProjectShell, "id" | "title" | "workspaceRoot"> | undefined;
+  remoteEnvironment?:
+    | { readonly label: string; readonly machine: EnvironmentMachineKind }
+    | undefined;
   status: OrchestrationV2TurnItemStatus;
   result?: string | null | undefined;
   progress?: string | null | undefined;
@@ -197,6 +202,18 @@ export function SubagentTooltipContent(props: {
         </span>
         {props.elapsed}
       </div>
+      {props.remoteEnvironment ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <EnvironmentMachineIcon
+            aria-hidden
+            kind={props.remoteEnvironment.machine}
+            className="size-3 shrink-0"
+          />
+          <span className="min-w-0 truncate">
+            {gt("Running on {environment}", { environment: props.remoteEnvironment.label })}
+          </span>
+        </div>
+      ) : null}
       {metadata.map(({ label, value }, index) => {
         const Icon =
           props.childThread?.branch && !(hasProjectRow && index === 0) ? GitBranchIcon : FolderIcon;

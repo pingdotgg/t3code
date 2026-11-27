@@ -16,6 +16,7 @@ import { deriveTimelineMinimapItems } from "./timelineMinimapItems";
 import {
   type AssistantCitation,
   type EnvironmentId,
+  type EnvironmentMachineKind,
   type MessageId,
   type OrchestrationV2TurnItem,
   type RunAttemptId,
@@ -23,6 +24,7 @@ import {
   type RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -297,8 +299,13 @@ interface MessagesTimelineProps {
     readonly title: string;
     /** A side chat's inherited rows collapse into this link. */
     readonly sideChat?: boolean;
-    /** Where it runs, when that is another environment. */
+    /** Where the parent runs, when that is another environment. */
     readonly environmentLabel?: string;
+    /** Where this thread runs, shown when distinguishing environments matters. */
+    readonly currentEnvironment?: {
+      readonly label: string;
+      readonly machine: EnvironmentMachineKind;
+    } | null;
     /** What this thread is to it, when not its subagent or side chat: `Step of`, say. */
     readonly relation?: { readonly label: string; readonly actionLabel: string };
     readonly open?: () => void;
@@ -1234,6 +1241,34 @@ const ConversationTimeline = memo(function ConversationTimeline({
       workspaceRoot={workspaceRoot}
     />
   );
+  const parentThreadLinkDetail = (() => {
+    if (parentThreadLink === null) return null;
+    const parentText =
+      parentThreadLink.environmentLabel === undefined || parentThreadLink.environmentLabel === ""
+        ? parentThreadLink.title
+        : gt("{title} on {environment}", {
+            title: parentThreadLink.title,
+            environment: parentThreadLink.environmentLabel,
+          });
+    const currentEnvironment = parentThreadLink.currentEnvironment;
+    if (!currentEnvironment) return parentText;
+    return (
+      <span className="inline-flex min-w-0 items-center gap-1.5">
+        <span className="max-w-64 truncate">{parentText}</span>
+        <span aria-hidden="true">·</span>
+        <span className="inline-flex shrink-0 items-center gap-1">
+          <EnvironmentMachineIcon
+            aria-hidden
+            kind={currentEnvironment.machine}
+            className="size-3 shrink-0"
+          />
+          <T>
+            Running on <Var>{currentEnvironment.label}</Var>
+          </T>
+        </span>
+      </span>
+    );
+  })();
   const listHeaderLeadingContent =
     parentThreadLink === null ? (
       topFadeEnabled ? (
@@ -1255,14 +1290,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                     $context: "divider label; the parent thread title follows as a link",
                   }))
             }
-            detail={
-              parentThreadLink.environmentLabel === undefined
-                ? parentThreadLink.title
-                : gt("{title} on {environment}", {
-                    title: parentThreadLink.title,
-                    environment: parentThreadLink.environmentLabel,
-                  })
-            }
+            detail={parentThreadLinkDetail}
             icon={parentThreadLink.sideChat ? MessagesSquareIcon : BotIcon}
             {...(parentThreadLink.open === undefined
               ? {}

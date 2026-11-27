@@ -1,13 +1,21 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2PendingBackgroundTask,
-  ThreadId,
+import {
+  resolveEnvironmentMachineKind,
+  type EnvironmentId,
+  type OrchestrationV2PendingBackgroundTask,
+  type OrchestrationV2RemoteTaskChild,
+  type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { T, useGT } from "gt-react";
+import { T, useGT, Var } from "gt-react";
 import { useState } from "react";
 
+import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
+import { useEnvironment } from "../../state/environments";
+import { useLinkedThreadOpener } from "../../state/linkedThreadView";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Button, InlineButton } from "../ui/button";
 import {
   Dialog,
@@ -19,6 +27,48 @@ import {
 } from "../ui/dialog";
 import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPanel";
 import { ShellCommandBlock } from "./ShellCommandBlock";
+
+function RemoteSubagentEnvironmentBadge(props: {
+  readonly remoteChild: OrchestrationV2RemoteTaskChild;
+}) {
+  const environment = useEnvironment(props.remoteChild.environmentId);
+  const label = environment?.label ?? props.remoteChild.label;
+  const machine = resolveEnvironmentMachineKind(environment?.serverConfig ?? null);
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+      <EnvironmentMachineIcon aria-hidden kind={machine} className="size-3 shrink-0" />
+      <T>
+        on <Var>{label}</Var>
+      </T>
+    </span>
+  );
+}
+
+function RemoteSubagentOpenButton(props: {
+  readonly parentRef: ScopedThreadRef;
+  readonly remoteChild: OrchestrationV2RemoteTaskChild;
+  readonly title: string;
+  readonly onOpened: () => void;
+}) {
+  const opener = useLinkedThreadOpener(props.parentRef, props.remoteChild, props.title);
+  const trigger = useSideThreadTrigger();
+  if (!opener) return null;
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      {...trigger(
+        (intent) => {
+          props.onOpened();
+          opener.open(intent);
+        },
+        { panel: opener.mode === "linked" },
+      )}
+    >
+      <T>Open subagent</T>
+    </Button>
+  );
+}
 
 export function BackgroundWorkDetails(props: {
   readonly environmentId: EnvironmentId;
@@ -44,6 +94,7 @@ export function BackgroundWorkDetails(props: {
   };
   const [open, setOpen] = useState(false);
   const streamsOutput = useCommandOutputStreaming(props.environmentId);
+  const parentRef = scopeThreadRef(props.environmentId, props.threadId);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<InlineButton />}>
@@ -60,7 +111,8 @@ export function BackgroundWorkDetails(props: {
             {props.tasks.map((task) => {
               const item = props.turnItems.findLast((candidate) =>
                 task.itemId === undefined
-                  ? (candidate.nativeItemRef?.nativeId || candidate.id) === task.taskId
+                  ? (candidate.nativeItemRef?.nativeId || candidate.id) ===
+                    (task.nativeItemId ?? task.taskId)
                   : candidate.id === task.itemId,
               );
               const command =
@@ -75,10 +127,19 @@ export function BackgroundWorkDetails(props: {
               const itemId =
                 task.itemId ?? (item?.type === "command_execution" ? item.id : undefined);
               const childThreadId = task.kind === "subagent" ? task.childThreadId : undefined;
+              const remoteChild =
+                task.kind === "subagent" && item?.type === "subagent"
+                  ? item.remoteChild
+                  : undefined;
               return (
                 <section key={task.taskId} className="space-y-2 text-sm">
                   <div className="flex items-baseline justify-between gap-3">
-                    <h3 className="font-medium">{title}</h3>
+                    <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <h3 className="font-medium">{title}</h3>
+                      {remoteChild ? (
+                        <RemoteSubagentEnvironmentBadge remoteChild={remoteChild} />
+                      ) : null}
+                    </div>
                     <span className="shrink-0 text-xs text-muted-foreground">
                       {backgroundWorkHoldsCompletion([task])
                         ? gt("Waiting", { $context: "status of background work" })
@@ -110,6 +171,13 @@ export function BackgroundWorkDetails(props: {
                     >
                       <T>Open subagent</T>
                     </Button>
+                  ) : remoteChild ? (
+                    <RemoteSubagentOpenButton
+                      parentRef={parentRef}
+                      remoteChild={remoteChild}
+                      title={title}
+                      onOpened={() => setOpen(false)}
+                    />
                   ) : null}
                 </section>
               );

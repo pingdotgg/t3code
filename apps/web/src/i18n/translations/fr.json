@@ -13043,5 +13043,14 @@
   "95435f0b59cb2193": "Aperçu audio",
   "4a12506938295127": "Saisissez d’abord {field}.",
   "5807c08e225c6b3d": "Télécharger",
-  "0d50b5bfe7151ece": "Impossible de télécharger le fichier"
+  "0d50b5bfe7151ece": "Impossible de télécharger le fichier",
+  "7cc8db58a24d4c09": "En cours sur {environment}",
+  "909078cd6cd05217": [
+    "En cours sur ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ]
 }

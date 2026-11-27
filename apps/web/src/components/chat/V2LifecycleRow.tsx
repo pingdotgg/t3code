@@ -4,6 +4,7 @@ import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import { use, type ReactNode } from "react";
 import { useThreadShell, useProject } from "../../state/entities";
+import { useEnvironment } from "../../state/environments";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import { SideThreadsOpenContext, useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import { useLinkedThreadOpener } from "../../state/linkedThreadView";
@@ -27,6 +28,7 @@ import {
 } from "@t3tools/client-runtime/state/subagent-display";
 import {
   ProviderDriverKind,
+  resolveEnvironmentMachineKind,
   type ModelSelection,
   type OrchestrationV2ModelSwitch,
   type OrchestrationV2Notification,
@@ -599,6 +601,7 @@ function SubagentTimelineTooltip(
   // Read providers only in the open popup to avoid per-row subscriptions.
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
+  const remoteEnvironment = useEnvironment(props.remote?.environmentId ?? null);
   const parent = useThreadShell(props.parentRef)?.source;
   const child = useThreadShell(
     props.threadId ? scopeThreadRef(environmentId, props.threadId) : null,
@@ -625,6 +628,14 @@ function SubagentTimelineTooltip(
       childThread={child}
       parentProject={parentProject ?? undefined}
       childProject={childProject ?? undefined}
+      remoteEnvironment={
+        props.remote
+          ? {
+              label: remoteEnvironment?.label ?? props.remote.label,
+              machine: resolveEnvironmentMachineKind(remoteEnvironment?.serverConfig ?? null),
+            }
+          : undefined
+      }
     />
   );
 }
