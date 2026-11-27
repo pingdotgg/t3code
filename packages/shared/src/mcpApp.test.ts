@@ -33,7 +33,7 @@ describe("mcpAppContentSecurityPolicy", () => {
       resourceDomains: ["https://*.cdn.test"],
     });
     expect(policy).toContain("connect-src https://api.weather.test");
-    expect(policy).toContain("script-src 'unsafe-inline' https://*.cdn.test");
+    expect(policy).toContain("script-src 'unsafe-inline' 'wasm-unsafe-eval' https://*.cdn.test");
     expect(policy).toContain("img-src data: blob: https://*.cdn.test");
   });
 

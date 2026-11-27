@@ -171,7 +171,8 @@ export function mcpAppContentSecurityPolicy(csp: McpAppCsp | undefined): string 
     domains === undefined || domains.length === 0 ? fallback : domains.join(" ");
   return [
     "default-src 'none'",
-    `script-src 'unsafe-inline' ${resources}`.trim(),
+    // Allows WebAssembly compilation, not JS eval.
+    `script-src 'unsafe-inline' 'wasm-unsafe-eval' ${resources}`.trim(),
     `style-src 'unsafe-inline' ${resources}`.trim(),
     `img-src data: blob: ${resources}`.trim(),
     `font-src data: ${resources}`.trim(),
