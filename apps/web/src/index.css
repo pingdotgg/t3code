@@ -7342,16 +7342,17 @@ body {
     }
 
     /* A hovered tab shows the joined tab's outline, without its ears, in a
-       faint pane fill, under the joined shape so it never dents it. */
-    & [data-pane-notch=""]:not([data-pane-notch-unfocused]) [data-layout-tab-strip] {
-      & [data-layout-pane-tab]:not([data-joined]):is(:hover, .group\/tab:hover > *),
-      & [data-tab-key]:not([data-joined]):is(:hover, .group\/tab:hover > *) {
+       faint pane fill, under the joined shape so it never dents it. Keep the
+       pseudo-element mounted and toggle visibility so hovering or landing a
+       tab never triggers layout. */
+    & [data-pane-notch=""] [data-layout-tab-strip] {
+      & [data-layout-pane-tab],
+      & [data-tab-key] {
         position: relative;
-        background: none;
       }
 
-      & [data-layout-pane-tab]:not([data-joined]):is(:hover, .group\/tab:hover > *)::before,
-      & [data-tab-key]:not([data-joined]):is(:hover, .group\/tab:hover > *)::before {
+      & [data-layout-pane-tab]::before,
+      & [data-tab-key]::before {
         content: "";
         position: absolute;
         z-index: -2;
@@ -7360,6 +7361,19 @@ body {
         border-start-end-radius: var(--pane-join-radius);
         background: color-mix(in srgb, var(--pane-join-fill) 45%, transparent);
         pointer-events: none;
+        visibility: hidden;
+      }
+    }
+
+    & [data-pane-notch=""]:not([data-pane-notch-unfocused]) [data-layout-tab-strip] {
+      & [data-layout-pane-tab]:not([data-joined]):is(:hover, .group\/tab:hover > *),
+      & [data-tab-key]:not([data-joined]):is(:hover, .group\/tab:hover > *) {
+        background: none;
+      }
+
+      & [data-layout-pane-tab]:not([data-joined]):is(:hover, .group\/tab:hover > *)::before,
+      & [data-tab-key]:not([data-joined]):is(:hover, .group\/tab:hover > *)::before {
+        visibility: visible;
       }
     }
 
@@ -7604,62 +7618,70 @@ body {
     /* A resting tab's foot is pane fill in the bar's own box over a notch cut
        from the bar, so it ends on the bar's edge: the tab's layers raster
        apart from the bar, and at a fractional zoom showed its last row or
-       covered a row of content (PaneTabs.tsx, markJoinFoot). */
-    & [data-pane-notch=""][data-pane-join-footed] {
-      /* Only the foot and the bar's cut read where the foot is: set on the
-         notch, it restyled every tab in the bar on each tab press. */
-      &::before {
-        --e: var(--pane-join-ear);
-        --pane-join-foot-x: inherit;
-        --pane-join-foot-w: inherit;
-        --pane-join-foot-l: calc(100vw + var(--pane-join-foot-x) + var(--e));
-        --pane-join-foot-r: calc(
-          100vw + var(--pane-join-foot-x) + var(--pane-join-foot-w) - var(--e)
-        );
-        clip-path: polygon(
-          0 -10px,
-          100% -10px,
-          100% calc(100% + 10px),
-          calc(var(--pane-join-foot-r) + 5.5px) calc(100% + 10px),
-          calc(var(--pane-join-foot-r) + 5.5px) 100%,
-          calc(var(--pane-join-foot-r) + 3.5px) calc(100% - 1px),
-          calc(var(--pane-join-foot-r) + 2.5px) calc(100% - 2px),
-          var(--pane-join-foot-r) calc(100% - 3px),
-          var(--pane-join-foot-l) calc(100% - 3px),
-          calc(var(--pane-join-foot-l) - 2.5px) calc(100% - 2px),
-          calc(var(--pane-join-foot-l) - 3.5px) calc(100% - 1px),
-          calc(var(--pane-join-foot-l) - 5.5px) 100%,
-          calc(var(--pane-join-foot-l) - 5.5px) calc(100% + 10px),
-          0 calc(100% + 10px)
-        );
-      }
+       covered a row of content (PaneTabs.tsx, markJoinFoot). Keep the foot box
+       mounted and paint its position via background so toggling footedness or
+       moving the foot never triggers layout; mark each leaf so toggling it on
+       the notch only restyles its ::before, not every tab in the bar. */
+    & [data-pane-notch=""] > [data-layout-tab-strip-slot] > [data-pane-join-foot] {
+      --e: var(--pane-join-ear);
+      --foot-pad: 16px;
+      /* Inside the ear fill's edge, which still draws it. */
+      --ear-in: transparent calc(var(--e) + 0.5px), var(--pane-join-fill) calc(var(--e) + 1.5px);
+      display: block;
+      position: absolute;
+      z-index: -1;
+      inset-block-start: 0;
+      inset-inline: calc(var(--foot-pad) * -1);
+      height: var(--pane-notch-height);
+      pointer-events: none;
+      visibility: hidden;
+    }
 
-      & > [data-layout-tab-strip-slot] > [data-pane-join-foot] {
-        --e: var(--pane-join-ear);
-        /* Inside the ear fill's edge, which still draws it. */
-        --ear-in: transparent calc(var(--e) + 0.5px), var(--pane-join-fill) calc(var(--e) + 1.5px);
-        display: block;
-        position: absolute;
-        z-index: -1;
-        inset-block-start: 0;
-        inset-inline-start: var(--pane-join-foot-x);
-        width: var(--pane-join-foot-w);
-        height: var(--pane-notch-height);
-        background:
-          radial-gradient(circle var(--e) at 0 0, var(--ear-in)) 0 100% / var(--e) var(--e)
-            no-repeat,
-          radial-gradient(circle var(--e) at 100% 0, var(--ear-in)) 100% 100% / var(--e) var(--e)
-            no-repeat,
-          linear-gradient(var(--pane-join-fill), var(--pane-join-fill)) var(--e) 100% /
-            calc(100% - 2 * var(--e)) 4px no-repeat;
-        pointer-events: none;
-      }
+    & [data-pane-notch=""] > [data-layout-tab-strip-slot] > [data-pane-join-foot][data-pane-join-footed] {
+      --foot-l: calc(var(--foot-pad) + var(--pane-join-foot-x, 0px));
+      visibility: visible;
+      background:
+        radial-gradient(circle var(--e) at 0 0, var(--ear-in)) var(--foot-l) 100% / var(--e)
+          var(--e) no-repeat,
+        radial-gradient(circle var(--e) at 100% 0, var(--ear-in))
+          calc(var(--foot-l) + var(--pane-join-foot-w, 0px) - var(--e)) 100% / var(--e) var(--e)
+          no-repeat,
+        linear-gradient(var(--pane-join-fill), var(--pane-join-fill))
+          calc(var(--foot-l) + var(--e)) 100% /
+          max(0px, calc(var(--pane-join-foot-w, 0px) - 2 * var(--e))) 4px no-repeat;
+    }
 
-      /* The body's own fill ends inside the foot. */
-      & [data-pane-join] [data-jf],
-      & [data-pane-join] [data-jm] {
-        height: calc(100% - 2px);
-      }
+    /* The body's own fill ends inside the foot (clip-path avoids layout on toggle). */
+    & [data-pane-notch=""] [data-pane-join] [data-jf][data-pane-join-footed],
+    & [data-pane-notch=""] [data-pane-join] [data-jm][data-pane-join-footed] {
+      clip-path: inset(0 0 2px 0);
+    }
+
+    /* Only the bar's ::before cut reads [data-pane-join-footed] on the notch. */
+    & [data-pane-notch=""][data-pane-join-footed]::before {
+      --e: var(--pane-join-ear);
+      --pane-join-foot-x: inherit;
+      --pane-join-foot-w: inherit;
+      --pane-join-foot-l: calc(100vw + var(--pane-join-foot-x) + var(--e));
+      --pane-join-foot-r: calc(
+        100vw + var(--pane-join-foot-x) + var(--pane-join-foot-w) - var(--e)
+      );
+      clip-path: polygon(
+        0 -10px,
+        100% -10px,
+        100% calc(100% + 10px),
+        calc(var(--pane-join-foot-r) + 5.5px) calc(100% + 10px),
+        calc(var(--pane-join-foot-r) + 5.5px) 100%,
+        calc(var(--pane-join-foot-r) + 3.5px) calc(100% - 1px),
+        calc(var(--pane-join-foot-r) + 2.5px) calc(100% - 2px),
+        var(--pane-join-foot-r) calc(100% - 3px),
+        var(--pane-join-foot-l) calc(100% - 3px),
+        calc(var(--pane-join-foot-l) - 2.5px) calc(100% - 2px),
+        calc(var(--pane-join-foot-l) - 3.5px) calc(100% - 1px),
+        calc(var(--pane-join-foot-l) - 5.5px) 100%,
+        calc(var(--pane-join-foot-l) - 5.5px) calc(100% + 10px),
+        0 calc(100% + 10px)
+      );
     }
 
     & [data-pane-notch-unfocused] [data-pane-join] {

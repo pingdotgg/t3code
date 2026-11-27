@@ -131,6 +131,8 @@ interface PaneStrip {
   readonly joinLeftCap: HTMLElement;
   readonly joinMiddle: HTMLElement;
   readonly joinRightCap: HTMLElement;
+  /** Leaf elements whose footed state toggles with the bar's foot (index.css). */
+  readonly joinFootedLeaves: readonly HTMLElement[];
   /** The landed tab's foot, painted beside the strip with the bar (index.css, [data-pane-join-foot]). */
   readonly foot: HTMLElement;
   /** The strip's left in its notch, where the join layer and foot are placed. */
@@ -342,16 +344,17 @@ function joinPiece(name: string, value = ""): HTMLElement {
   return piece;
 }
 
-function joinCap(side: "l" | "r"): HTMLElement {
+function joinCap(side: "l" | "r"): { cap: HTMLElement; fill: HTMLElement } {
   const cap = joinPiece("data-jc", side);
+  const fill = joinPiece("data-jf");
   cap.append(
-    joinPiece("data-jf"),
+    fill,
     joinPiece("data-jr"),
     joinPiece("data-je"),
     joinPiece("data-jer"),
     joinPiece("data-jt"),
   );
-  return cap;
+  return { cap, fill };
 }
 
 function createPaneStrip(role?: "panel"): PaneStrip {
@@ -370,15 +373,16 @@ function createPaneStrip(role?: "panel"): PaneStrip {
   join.setAttribute("aria-hidden", "true");
   join.hidden = true;
   const body = joinPiece("data-jb");
-  const joinLeftCap = joinCap("l");
+  const { cap: joinLeftCap, fill: joinLeftFill } = joinCap("l");
   const joinMiddle = joinPiece("data-jm");
-  const joinRightCap = joinCap("r");
+  const { cap: joinRightCap, fill: joinRightFill } = joinCap("r");
   body.append(joinLeftCap, joinMiddle, joinRightCap);
   join.append(body);
   joinLayer.append(join);
   const foot = document.createElement("i");
   foot.dataset.paneJoinFoot = "";
   foot.setAttribute("aria-hidden", "true");
+  const joinFootedLeaves = [foot, joinMiddle, joinLeftFill, joinRightFill];
   const entry: PaneStrip = {
     strip,
     joinLayer,
@@ -386,6 +390,7 @@ function createPaneStrip(role?: "panel"): PaneStrip {
     joinLeftCap,
     joinMiddle,
     joinRightCap,
+    joinFootedLeaves,
     foot,
     footOffset: null,
     atPaneEdge: false,
@@ -698,7 +703,13 @@ function markJoinFoot(
   if (entry.footNotch && entry.footNotch !== (footed ? notch : null)) {
     entry.footNotch.removeAttribute("data-pane-join-footed");
   }
+  const wasFooted = entry.footNotch !== null;
   entry.footNotch = footed ? notch : null;
+  if (wasFooted !== footed) {
+    for (const leaf of entry.joinFootedLeaves) {
+      leaf.toggleAttribute("data-pane-join-footed", footed);
+    }
+  }
   if (!footed) return;
   // Not inherited (index.css): the notch's cut and the foot each take their own.
   for (const element of [notch, entry.foot]) {
