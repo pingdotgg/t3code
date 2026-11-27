@@ -264,7 +264,7 @@ const COMMAND_TEXT_FIELDS = new Set([
 ]);
 
 /** Keeps the tail of long tool text, as every bounded tool payload does. */
-export { boundText as boundAntigravityToolText };
+export { boundCommandLine as boundAntigravityCommandLine, boundText as boundAntigravityToolText };
 
 /** True when bounding cut some of this text. */
 export const isCutAntigravityToolText = (text: string) => text.includes(TOOL_TEXT_TRUNCATED);

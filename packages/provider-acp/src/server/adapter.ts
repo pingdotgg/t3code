@@ -721,6 +721,14 @@ export interface AcpAdapterV2Flavor {
    */
   readonly toolOutlivesPrompt?: (toolCall: AcpToolCallState) => boolean;
   /**
+   * Asked when the prompt or a post-settle reply ends to reconcile running `toolOutlivesPrompt`
+   * tools; ids absent from a defined result are marked failed, `undefined` keeps them open.
+   */
+  readonly toolsOutlivingPrompt?: (input: {
+    readonly sessionId: string;
+    readonly tools: ReadonlyArray<AcpToolCallState>;
+  }) => Effect.Effect<ReadonlyArray<string> | undefined>;
+  /**
    * Finalize a settled turn held only by running commands once the session has been silent for
    * `timeout`, so a command that never reports back cannot leave the thread in Working forever.
    * Other holds (questions, schedules, subagents) keep the turn open as before.
@@ -5307,6 +5315,29 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
+        const reconcileOutlivingTools = Effect.fn("AcpAdapterV2.reconcileOutlivingTools")(
+          function* (context: ActiveAcpTurn) {
+            const outlives = flavor.toolOutlivesPrompt;
+            if (outlives === undefined || flavor.toolsOutlivingPrompt === undefined) return;
+            const running = [...context.tools.values()].filter(
+              (tool) => toolStatus(tool.status) === "running" && outlives(tool),
+            );
+            if (running.length === 0) return;
+            const stillRunning = yield* flavor.toolsOutlivingPrompt({
+              sessionId: context.nativeThreadId,
+              tools: running,
+            });
+            if (context.finalized || stillRunning === undefined) return;
+            const stillRunningIds = new Set(stillRunning);
+            for (const tool of running) {
+              if (stillRunningIds.has(tool.toolCallId)) continue;
+              const current = context.tools.get(tool.toolCallId);
+              if (current === undefined || toolStatus(current.status) !== "running") continue;
+              yield* emitTool(context, { ...current, status: "failed" });
+            }
+          },
+        );
+
         const hasSurvivingBackgroundWork = (context: ActiveAcpTurn): boolean =>
           [...context.toolCallIdsByBackgroundTaskId.values()].some((toolCallId) => {
             const tool = context.tools.get(toolCallId);
@@ -6702,7 +6733,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             } else if (context.nativeThreadId === notification.sessionId) {
               if (update.sessionUpdate === "usage_update") {
                 context.replyOpen = false;
-                if (context.promptSettled) yield* idleReportedSubagents(context);
+                if (context.promptSettled) {
+                  yield* idleReportedSubagents(context);
+                  yield* reconcileOutlivingTools(context);
+                }
                 yield* rearmDeferredFinalize(context);
               } else if (acpRootSessionUpdateIngestsOutput(notification)) {
                 context.replyOpen = true;
@@ -10322,6 +10356,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     return;
                   }
                   yield* idleReportedSubagents(context);
+                  yield* reconcileOutlivingTools(context);
                   if (context.finalized) return;
                   const deferredBackgroundWork =
                     defersFinalizeForBackgroundWork &&
@@ -10738,6 +10773,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               context.promptSettledStatus = "completed";
               // The replayed reply ended before the prompt counted as settled.
               yield* idleReportedSubagents(context);
+              yield* reconcileOutlivingTools(context);
               if (drainedWakeCount === 0) {
                 if (continuationWasRequested && defersFinalizeForBackgroundWork) {
                   if (hasDeferredBackgroundWork(context)) {
