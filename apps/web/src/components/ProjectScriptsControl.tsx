@@ -72,7 +72,10 @@ interface ProjectScriptsControlProps {
   onActionsMenuOpen?: () => void;
   preferredScriptId?: string | null;
   onRunScript?: ((script: ProjectScript) => void) | undefined;
-  onAddScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
+  onAddScript: (
+    input: NewProjectScriptInput,
+    onActionCreated?: (scriptId: string) => void,
+  ) => Promise<ProjectScriptActionResult>;
   onUpdateScript: (
     scriptId: string,
     input: NewProjectScriptInput,
@@ -141,8 +144,11 @@ export default function ProjectScriptsControl({
     setEditorRequest(editorRequestForScript(script, keybindings));
   };
 
-  const submitScript = (scriptId: string | null, input: NewProjectScriptInput) =>
-    scriptId === null ? onAddScript(input) : onUpdateScript(scriptId, input);
+  const submitScript = (
+    scriptId: string | null,
+    input: NewProjectScriptInput,
+    onActionCreated: (scriptId: string) => void,
+  ) => (scriptId === null ? onAddScript(input, onActionCreated) : onUpdateScript(scriptId, input));
 
   const importFileScript = async (fileScript: T3ProjectFileScript) => {
     const requestId = ++editorRequestIdRef.current;

@@ -152,6 +152,7 @@ export function ProjectScriptEditorDialog({
   onSubmit: (
     scriptId: string | null,
     input: NewProjectScriptInput,
+    onActionCreated: (scriptId: string) => void,
   ) => Promise<ProjectScriptActionResult>;
   onDelete: (scriptId: string) => void;
   onClose: () => void;
@@ -275,6 +276,7 @@ function ProjectScriptEditorForm({
   onSubmit: (
     scriptId: string | null,
     input: NewProjectScriptInput,
+    onActionCreated: (scriptId: string) => void,
   ) => Promise<ProjectScriptActionResult>;
   onRequestDelete: (name: string) => void;
   onClose: () => void;
@@ -298,6 +300,7 @@ function ProjectScriptEditorForm({
   const [previewUrl, setPreviewUrl] = useState(request.initial.previewUrl ?? "");
   const [autoOpenPreview, setAutoOpenPreview] = useState(request.initial.autoOpenPreview);
   const [isSaving, setIsSaving] = useState(false);
+  const createdScriptIdRef = useRef<string | null>(null);
   const pendingSubmissionRef = useRef<object | null>(null);
   // A save that settles after this form is replaced must not close or error
   // the request that replaced it.
@@ -370,10 +373,11 @@ function ProjectScriptEditorForm({
     }
 
     setValidationError(null);
+    const scriptId = request.scriptId ?? createdScriptIdRef.current;
     let payload: NewProjectScriptInput;
     try {
       const scriptIdForValidation =
-        request.scriptId ??
+        scriptId ??
         nextProjectScriptId(
           trimmedName,
           scripts.map((script) => script.id),
@@ -407,7 +411,11 @@ function ProjectScriptEditorForm({
     setIsSaving(true);
     setIconPickerOpen(false);
     try {
-      const result = await onSubmit(request.scriptId, payload);
+      const result = await onSubmit(scriptId, payload, (createdId) => {
+        if (pendingSubmissionRef.current === submission) {
+          createdScriptIdRef.current = createdId;
+        }
+      });
       if (pendingSubmissionRef.current === submission) {
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {

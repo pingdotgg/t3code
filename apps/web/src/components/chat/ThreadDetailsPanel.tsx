@@ -88,7 +88,7 @@ interface ThreadDetailsPanelProps extends Pick<
   onComposerFocusRequest: () => void;
   onOpenChanges?: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
-  onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
+  onAddProjectScript: ComponentProps<typeof ProjectScriptsControl>["onAddScript"];
   onUpdateProjectScript: (
     scriptId: string,
     input: NewProjectScriptInput,

@@ -65,6 +65,7 @@ export function useProjectScriptEditing(input: {
     nextScripts: ReadonlyArray<ProjectScript>;
     keybinding: NewProjectScriptInput["keybinding"];
     keybindingCommand: KeybindingCommand | null;
+    onSettingsSaved?: () => void;
   }): Promise<AtomCommandResult<void, unknown>> => {
     const serverConfig = appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId));
     const previousKeybinding = keybindingValueForCommand(
@@ -121,6 +122,7 @@ export function useProjectScriptEditing(input: {
       return updateResult;
     }
 
+    input.onSettingsSaved?.();
     if (!changesKeybinding) return updateResult;
     if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
       return AsyncResult.failure(
@@ -193,6 +195,7 @@ export function useProjectScriptEditing(input: {
   };
   const saveProjectScript = async (
     input: NewProjectScriptInput,
+    onActionCreated?: (scriptId: string) => void,
   ): Promise<AtomCommandResult<void, unknown>> => {
     if (!project) {
       return AsyncResult.success(undefined);
@@ -217,6 +220,8 @@ export function useProjectScriptEditing(input: {
       nextScripts,
       keybinding: input.keybinding,
       keybindingCommand: commandForProjectScript(nextId),
+      // The editor needs the ID even if writing the shortcut fails.
+      onSettingsSaved: () => onActionCreated?.(nextId),
     });
   };
   const updateProjectScript = async (
