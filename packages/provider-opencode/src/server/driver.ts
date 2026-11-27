@@ -756,7 +756,8 @@ export const OpenCodeDriver: ProviderDriver<
         makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
       checkUsageLimits,
-      enrichSnapshot: ({ settings, snapshot, publishSnapshot }) => {
+      awaitEnrichmentOnRefresh: true,
+      enrichSnapshot: ({ settings, snapshot, publishSnapshot, signalEnriched }) => {
         let enriched = snapshot;
         let catalog: ReadonlyArray<OpenCode2Model> | undefined;
         // Each publication replaces the whole snapshot, so both sources publish their combination.
@@ -784,6 +785,7 @@ export const OpenCodeDriver: ProviderDriver<
                 enriched = enrichedSnapshot;
                 return publish;
               }),
+              Effect.onExit((exit) => (Exit.hasInterrupts(exit) ? Effect.void : signalEnriched)),
             ),
             Stream.runForEach(catalogWatch.changes, (listed) => {
               catalog = listed;

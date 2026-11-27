@@ -167,6 +167,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
       initialSnapshot: (settings) =>
         buildInitialPiProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
+      awaitEnrichmentOnRefresh: true,
       enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
