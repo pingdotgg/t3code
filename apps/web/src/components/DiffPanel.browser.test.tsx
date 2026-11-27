@@ -1,5 +1,9 @@
 import { RegistryContext } from "@effect/atom-react";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
@@ -37,7 +41,7 @@ const state = vi.hoisted(() => ({
   diffFilesCollapsed: false,
   project: {
     workspaceRoot: "/project",
-    repositoryIdentity: null as { rootPath: string } | null,
+    repositoryIdentity: null as Record<string, unknown> | null,
   },
   toolCallItem: null as unknown,
   config: null as unknown as Atom.Atom<null>,
@@ -47,6 +51,7 @@ const state = vi.hoisted(() => ({
   commits: null as unknown as ResultAtom<ReviewBranchCommitsResult>,
   checkpoints: [] as unknown[],
   checkpointDiff: null as Partial<OrchestrationGetTurnDiffResult> | null,
+  openedLinks: [] as { threadRef: ScopedThreadRef | null | undefined; url: string }[],
 }));
 
 vi.mock("~/state/server", () => ({
@@ -102,7 +107,11 @@ vi.mock("~/state/queries", () => ({
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => {} }));
 vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => async () => {} }));
 vi.mock("~/fileContextMenu", () => ({ useFileContextMenuHandler: () => () => {} }));
-vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => async () => {} }));
+vi.mock("~/browser/useOpenLink", () => ({
+  useOpenLink: (threadRef: ScopedThreadRef | null | undefined) => async (url: string) => {
+    state.openedLinks.push({ threadRef, url });
+  },
+}));
 vi.mock("./diffs/DiffCommentAnnotation", () => ({ DiffCommentAnnotation: () => null }));
 vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
@@ -110,6 +119,7 @@ vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null 
 import DiffPanel from "./DiffPanel";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
+import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 
 const cwd = "/project-worktree";
 const errorMessage = "Could not find a common commit between 'origin/orphan' and HEAD.";
@@ -526,4 +536,52 @@ it("opens a file from a tool call's diff by the path its agent recorded", async 
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
     ).toMatchObject({ activeSurfaceId: "file:src/a.ts" }),
   );
+});
+
+it("opens a new thread's commit link in that thread's browser", async () => {
+  using context = setup("origin/orphan");
+  // A new thread has no route thread or server thread yet, only its draft.
+  state.threadRef = null;
+  state.thread = null;
+  state.openedLinks = [];
+  state.project = {
+    workspaceRoot: "/project",
+    repositoryIdentity: {
+      canonicalKey: "github.com/acme/demo-repo",
+      locator: {
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "https://github.com/acme/demo-repo.git",
+      },
+      provider: "github",
+    },
+  };
+  const draftId = DraftId.make("draft-commit-link");
+  const environmentId = context.threadRef.environmentId;
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(environmentId, ProjectId.make("project")), draftId, {
+      threadId: ThreadId.make("thread-draft"),
+      worktreePath: cwd,
+    });
+  using _draft = {
+    [Symbol.dispose]() {
+      useComposerDraftStore.getState().clearDraftThread(draftId);
+    },
+  };
+  const draftRef = scopeThreadRef(environmentId, ThreadId.make("thread-draft"));
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+  useDiffPanelStore.getState().selectBranchBaseRef(draftRef, "main");
+  useDiffPanelStore.getState().selectCommit(draftRef, sha);
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <DiffPanel composerDraftTarget={draftId} workspaceMutationId={null} visible />
+    </RegistryContext.Provider>,
+  );
+  await userEvent.click(screen.getByText(sha.slice(0, 7), { exact: true }));
+  await vi.waitFor(() => expect(state.openedLinks).toHaveLength(1));
+  expect(state.openedLinks[0]).toEqual({
+    threadRef: draftRef,
+    url: `https://github.com/acme/demo-repo/commit/${sha}`,
+  });
 });
