@@ -15,6 +15,7 @@ const CELL_END = Symbol("cell-end");
 const LINE_START = Symbol("line-start");
 const THEMATIC_BREAK = Symbol("thematic-break");
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 type TextPart =
   | string
   | typeof CELL_START
@@ -75,6 +76,8 @@ interface XmlNode {
   markupCompatibility?: boolean;
   hasSelectedChoice?: boolean;
   epubTable?: boolean;
+  mathmlFirstChildSeen?: boolean;
+  epubNavigation?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -129,14 +132,12 @@ function namespaceOf(tagName: string, scope: readonly XmlNode[]) {
   return scope.findLast((node) => Object.hasOwn(node.attrs, binding))?.attrs[binding];
 }
 
-function isXhtmlTemplate(
+function isXhtmlElement(
   tagName: string,
-  node: XmlNode,
-  ancestors: readonly XmlNode[],
+  scope: readonly XmlNode[],
   rootTagName: string | undefined,
 ) {
-  if (node.name !== "template") return false;
-  const namespace = namespaceOf(tagName, [...ancestors, node]);
+  const namespace = namespaceOf(tagName, scope);
   return (
     namespace === "http://www.w3.org/1999/xhtml" ||
     (namespace === undefined && !tagName.includes(":") && rootTagName === "html")
@@ -176,6 +177,18 @@ function xml(source: string, extension: string): XmlNode {
     stack.at(-1)!.children.push(node);
     stack.push(node);
     if (
+      extension === ".epub" &&
+      node.name === "semantics" &&
+      namespaceOf(tag.name, stack) === MATHML_NS
+    )
+      node.mathmlFirstChildSeen = false;
+    if (
+      extension === ".epub" &&
+      node.name === "nav" &&
+      isXhtmlElement(tag.name, stack, rootTagName)
+    )
+      node.epubNavigation = true;
+    if (
       (node.name === "AlternateContent" || node.name === "Choice") &&
       namespaceOf(tag.name, stack) === MARKUP_COMPATIBILITY_NS
     )
@@ -184,6 +197,9 @@ function xml(source: string, extension: string): XmlNode {
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    // MathML Core displays only the first element child of semantics by default.
+    const isMathmlAlternative = parent.mathmlFirstChildSeen === true;
+    if (parent.mathmlFirstChildSeen === false) parent.mathmlFirstChildSeen = true;
     const isCompatibilityChoice =
       node.name === "Choice" &&
       node.markupCompatibility &&
@@ -191,7 +207,10 @@ function xml(source: string, extension: string): XmlNode {
       parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
-      (extension === ".epub" && isXhtmlTemplate(tag.name, node, stack, rootTagName)) ||
+      isMathmlAlternative ||
+      (extension === ".epub" &&
+        node.name === "template" &&
+        isXhtmlElement(tag.name, [...stack, node], rootTagName)) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
         Object.hasOwn(tag.attributes, "hidden") &&
@@ -373,17 +392,18 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield "\n";
     } else if (
-      [
-        "blockquote",
-        "figure",
-        "figcaption",
-        "aside",
-        "address",
-        "header",
-        "footer",
-        "article",
-      ].includes(child.name) &&
-      child.hasText
+      child.hasText &&
+      (child.epubNavigation ||
+        [
+          "blockquote",
+          "figure",
+          "figcaption",
+          "aside",
+          "address",
+          "header",
+          "footer",
+          "article",
+        ].includes(child.name))
     ) {
       yield LINE_START;
       yield* paragraphs(child);

@@ -2819,7 +2819,7 @@
   "91e832d25ff2aba9": "{term, select, mr {マージリクエスト {number}} cr {変更リクエスト {number}} other {プルリクエスト {number}}}",
   "bbb7d40a7ad7ab71": "プライベート",
   "37f84b2c7830febb": "スタック {size} 件中 {position} 件目",
-  "0469747f4bb9caac": "{additions} 行追加、{deletions} 行削除",
+  "3920accacc91683e": "{additions} 行追加、{deletions} 行削除",
   "4e3cdb7e814e8962": "ダブルタップで開きます。長押しでクイック操作を表示します。",
   "d50c8bcf494b1158": "添付ファイルを表示: {caption}",
   "868d7f357f06cdd2": "マージするには再接続してください。",

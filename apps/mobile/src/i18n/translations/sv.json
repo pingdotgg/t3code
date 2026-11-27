@@ -2826,7 +2826,7 @@
   "91e832d25ff2aba9": "{term, select, mr {Merge request} cr {Ändringsbegäran} other {Pull request}} {number}",
   "bbb7d40a7ad7ab71": "Privat",
   "37f84b2c7830febb": "stack {position} av {size}",
-  "0469747f4bb9caac": "{additions} tillägg, {deletions} borttagningar",
+  "3920accacc91683e": "{additions} tillägg, {deletions, plural, one {{deletions} borttagning} other {{deletions} borttagningar}}",
   "4e3cdb7e814e8962": "Dubbeltryck för att öppna. Tryck och håll för snabbåtgärder.",
   "d50c8bcf494b1158": "Visa bilaga: {caption}",
   "868d7f357f06cdd2": "Återanslut för att merga.",

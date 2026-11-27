@@ -416,17 +416,38 @@ export function makeAntigravityReadRepair() {
   };
 }
 
+const omitToolSummary = (record: Record<string, unknown>): Record<string, unknown> => {
+  if (!("toolSummary" in record)) return record;
+  const { toolSummary: _toolSummary, ...rest } = record;
+  return rest;
+};
+
+const stripProxyArgumentsToolSummary = (
+  record: Record<string, unknown>,
+): Record<string, unknown> => {
+  let next = omitToolSummary(record);
+  if (
+    typeof next.name === "string" &&
+    Predicate.isObject(next.arguments) &&
+    !Array.isArray(next.arguments) &&
+    "toolSummary" in next.arguments
+  ) {
+    next = {
+      ...next,
+      arguments: omitToolSummary(next.arguments as Record<string, unknown>),
+    };
+  }
+  return next;
+};
+
 function stripAntigravityToolSummary(value: unknown): unknown {
   if (!Predicate.isObject(value) || Array.isArray(value)) return value;
-  const record = value as Record<string, unknown>;
-  let next: Record<string, unknown> = record;
-  if ("toolSummary" in next) {
-    const { toolSummary: _toolSummary, ...rest } = next;
-    next = rest;
-  }
-  if (Predicate.isObject(next.Arguments) && "toolSummary" in next.Arguments) {
-    const { toolSummary: _toolSummary, ...args } = next.Arguments;
-    next = { ...next, Arguments: args };
+  let next = stripProxyArgumentsToolSummary(value as Record<string, unknown>);
+  if (Predicate.isObject(next.Arguments) && !Array.isArray(next.Arguments)) {
+    const strippedArgs = stripProxyArgumentsToolSummary(next.Arguments as Record<string, unknown>);
+    if (strippedArgs !== next.Arguments) {
+      next = { ...next, Arguments: strippedArgs };
+    }
   }
   return next;
 }
