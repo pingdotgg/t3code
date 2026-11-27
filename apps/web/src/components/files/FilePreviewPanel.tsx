@@ -205,7 +205,8 @@ function WorkspaceImagePreview(props: {
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  // A linked image outside the root gets a grant pinned to its inode, so a replacement needs a new one.
+  const assetUrl = useAssetUrlState(props.environmentId, resource, props.workspaceMutationId);
   const revisionSuffix =
     props.workspaceMutationId === null
       ? ""
