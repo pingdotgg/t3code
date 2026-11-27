@@ -25,6 +25,8 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
 import {
+  acquireThemePublishLock,
+  EnvironmentThemeRefusedError,
   MAX_THEME_FILE_BYTES,
   readPublishedThemes,
   readThemeFileGuarded,
@@ -321,9 +323,7 @@ const publishThemeFile = Effect.fn(function* (input: {
 
   const destinationPath = path.join(input.themesDir, `${themeId}.json`);
   const stagingPath = `${destinationPath}.staging-${process.pid}`;
-  yield* fs
-    .makeDirectory(input.themesDir, { recursive: true })
-    .pipe(Effect.mapError((cause) => new ThemePublishError({ themesDir: input.themesDir, cause })));
+  const whileLocked = yield* acquireThemePublishLock(input.themesDir, themeId);
 
   const publishFailure = (cause: unknown) =>
     new ThemePublishError({ themesDir: input.themesDir, cause });
@@ -335,6 +335,8 @@ const publishThemeFile = Effect.fn(function* (input: {
   if (destinationIsDirectory) {
     return yield* new ThemeDestinationDirectoryError({ themeId, destinationPath });
   }
+
+  const publishedBefore = yield* readPublishedThemes(input.themesDir);
 
   // O_EXCL prevents following a symlink at the predictable staging path.
   // Preserve bytes exactly: even an added newline could exceed the watcher's size limit.
@@ -395,30 +397,32 @@ const publishThemeFile = Effect.fn(function* (input: {
     ),
   );
 
-  const revert = Effect.sync(() => {
-    try {
-      NodeFS.unlinkSync(stagingPath);
-    } catch {}
-    try {
-      // Only replace this process's inode or an empty destination; concurrent publishers win.
-      const destinationIno = (() => {
-        try {
-          return NodeFS.lstatSync(destinationPath).ino;
-        } catch {
-          return null;
+  const revert = whileLocked(
+    Effect.sync(() => {
+      try {
+        NodeFS.unlinkSync(stagingPath);
+      } catch {}
+      try {
+        // Only replace this process's inode or an empty destination; concurrent publishers win.
+        const destinationIno = (() => {
+          try {
+            return NodeFS.lstatSync(destinationPath).ino;
+          } catch {
+            return null;
+          }
+        })();
+        if (backupPath !== null) {
+          if (destinationIno === null || destinationIno === stagedIno) {
+            NodeFS.renameSync(backupPath, destinationPath);
+          } else {
+            NodeFS.unlinkSync(backupPath);
+          }
+        } else if (destinationIno === stagedIno) {
+          NodeFS.unlinkSync(destinationPath);
         }
-      })();
-      if (backupPath !== null) {
-        if (destinationIno === null || destinationIno === stagedIno) {
-          NodeFS.renameSync(backupPath, destinationPath);
-        } else {
-          NodeFS.unlinkSync(backupPath);
-        }
-      } else if (destinationIno === stagedIno) {
-        NodeFS.unlinkSync(destinationPath);
-      }
-    } catch {}
-  });
+      } catch {}
+    }),
+  );
   const cleanup = Effect.sync(() => {
     try {
       if (backupPath !== null) NodeFS.unlinkSync(backupPath);
@@ -428,7 +432,21 @@ const publishThemeFile = Effect.fn(function* (input: {
   yield* Effect.try({
     try: () => NodeFS.renameSync(stagingPath, destinationPath),
     catch: publishFailure,
-  }).pipe(Effect.onError(() => revert));
+  }).pipe(
+    Effect.andThen(
+      Effect.gen(function* () {
+        const published = yield* readPublishedThemes(input.themesDir);
+        const ids = new Set(published.map(({ id }) => id));
+        if (!ids.has(themeId) || publishedBefore.some(({ id }) => !ids.has(id))) {
+          return yield* new EnvironmentThemeRefusedError({
+            themeId,
+            problem: `could not be published. Check the theme count and total size in ${input.themesDir}.`,
+          });
+        }
+      }),
+    ),
+    Effect.onError(() => revert),
+  );
 
   return { themeId, revert, cleanup };
 });
@@ -516,7 +534,7 @@ const themeSetCommand = Command.make("set", {
           ? `Published ${target} as "${themeId}" and set it as the environment theme.\n`
           : `Environment theme set to "${themeId}" in ${paths.settingsPath}.\n`,
       );
-    }),
+    }).pipe(Effect.scoped),
   ),
 );
 

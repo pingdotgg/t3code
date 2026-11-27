@@ -73,7 +73,7 @@ export function parseGrepOutput(
       !/\s/.test(line.trimEnd()) ||
       (/^\S/.test(line) && RIPGREP_NUMBERED_LINE.test(lines[index + 1] ?? ""))
     ) {
-      file = line.trimEnd();
+      file = line;
       continue;
     }
     return undefined;
