@@ -607,7 +607,7 @@ function OpenCommandPaletteDialog(props: {
     await handleNewThread(projectRef);
   };
   const createNewProject = useNewProject(openAddedProject);
-  const cloneFlowGeneration = useRef(0);
+  const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
   const { environmentLabelById, projectEnvironmentLocationById } = useEnvironmentLookups();
@@ -857,11 +857,12 @@ function OpenCommandPaletteDialog(props: {
     });
   };
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates the browse navigation coordinator and in-flight clone flow when the palette session unmounts
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates the browse navigation coordinator and in-flight clone lookups when the palette session unmounts
   useEffect(
     () => () => {
       browseNavigation.invalidate();
-      cloneFlowGeneration.current += 1;
+      // A replaced or closed session must not report its in-flight lookup or clone start.
+      cloneLookupGeneration.current += 1;
     },
     [browseNavigation],
   );
@@ -1022,7 +1023,7 @@ function OpenCommandPaletteDialog(props: {
 
   const popView = useStableCallback((): void => {
     browseNavigation.invalidate();
-    cloneFlowGeneration.current += 1;
+    cloneLookupGeneration.current += 1;
     setIsRemoteProjectLookingUp(false);
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
@@ -2259,7 +2260,7 @@ function OpenCommandPaletteDialog(props: {
       }
 
       setIsRemoteProjectLookingUp(true);
-      const lookupGeneration = ++cloneFlowGeneration.current;
+      const lookupGeneration = ++cloneLookupGeneration.current;
       const lookupResult = await lookupRepository({
         environmentId: addProjectCloneFlow.environmentId,
         input: {
@@ -2267,7 +2268,7 @@ function OpenCommandPaletteDialog(props: {
           repository: rawRepository,
         },
       });
-      if (lookupGeneration !== cloneFlowGeneration.current) return;
+      if (lookupGeneration !== cloneLookupGeneration.current) return;
       setIsRemoteProjectLookingUp(false);
       if (lookupResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(lookupResult)) {
@@ -2351,7 +2352,7 @@ function OpenCommandPaletteDialog(props: {
     }
 
     const paletteAtStart = useCommandPaletteStore.getState();
-    const flowGeneration = cloneFlowGeneration.current;
+    const flowGeneration = cloneLookupGeneration.current;
     setIsRemoteProjectCloning(true);
     const startResult = await startProjectClone({
       environmentId: addProjectCloneFlow.environmentId,
@@ -2382,7 +2383,7 @@ function OpenCommandPaletteDialog(props: {
     );
     if (
       useCommandPaletteStore.getState() !== paletteAtStart ||
-      cloneFlowGeneration.current !== flowGeneration
+      cloneLookupGeneration.current !== flowGeneration
     ) {
       return;
     }
