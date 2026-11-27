@@ -1409,6 +1409,8 @@ const program = Effect.gen(function* () {
             rawOutput: {
               stdout: "src/a.ts:3:const needle = 1;\nsrc/b.ts:9:needle();",
               stderr: "  Permission denied\n2: additional detail",
+              combinedOutput:
+                "src/a.ts:3:const needle = 1;\nsrc/b.ts:9:needle();\n  Permission denied\n2: additional detail",
             },
           },
           {
@@ -1430,6 +1432,20 @@ const program = Effect.gen(function* () {
               ["empty-stderr", { output: "src/a.ts:1:needle", stderr: "" }],
               ["empty-stdout", { stdout: "", output: "src/a.ts:1:needle" }],
               ["warning", { output: "src/a.ts:1:needle", stderr: "warning" }],
+              [
+                "combined-output",
+                {
+                  combinedOutput: "src/a.ts:1:needle\nripgrep:1:warning",
+                  stderr: "ripgrep:1:warning",
+                },
+              ],
+              [
+                "combined-output-snake-case",
+                {
+                  combined_output: "src/a.ts:1:needle\nripgrep:1:warning",
+                  stderr: "ripgrep:1:warning",
+                },
+              ],
             ] as const
           ).map(([name, rawOutput]) => ({
             sessionUpdate: "tool_call_update" as const,

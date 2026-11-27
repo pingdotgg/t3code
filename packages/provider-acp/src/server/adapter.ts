@@ -2249,12 +2249,22 @@ function buildAcpStandardToolTurnItem(input: {
       const outputRecord = unknownRecord(rawOutput);
       const stdout = textFromUnknown(outputRecord?.stdout) || undefined;
       const stderr = textFromUnknown(outputRecord?.stderr) || undefined;
+      const combinedOutput =
+        stdout === undefined && stderr !== undefined
+          ? textFromUnknown(outputRecord?.combinedOutput) ||
+            textFromUnknown(outputRecord?.combined_output) ||
+            undefined
+          : undefined;
       const searchOutput =
-        stdout ??
-        textFromUnknown(stderr === undefined ? rawOutput : { ...outputRecord, stderr: undefined });
-      const diagnosticOutput = stderr
-        ? [searchOutput, stderr].filter(Boolean).join("\n")
-        : searchOutput;
+        combinedOutput === undefined
+          ? (stdout ??
+            textFromUnknown(
+              stderr === undefined ? rawOutput : { ...outputRecord, stderr: undefined },
+            ))
+          : undefined;
+      const diagnosticOutput =
+        combinedOutput ??
+        (stderr ? [searchOutput, stderr].filter(Boolean).join("\n") : searchOutput);
       const grepResults =
         status === "failed" ||
         status === "interrupted" ||

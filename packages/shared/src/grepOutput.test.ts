@@ -98,6 +98,9 @@ describe("parseGrepOutput", () => {
     " 2026: release notes.txt",
     " 2026-release notes.txt",
     " release:12:notes.txt",
+    " Found 2 matches.txt",
+    " File: notes.txt",
+    " ---",
   ])("recognizes the ripgrep heading %j at file boundaries", (fileName) => {
     const block = `${fileName}\n2:needle\n3:another needle\n`;
     const matches = [

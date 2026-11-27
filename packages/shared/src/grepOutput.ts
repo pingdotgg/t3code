@@ -36,17 +36,18 @@ export function parseGrepOutput(
   const lines = output.split(/\r?\n/);
   for (const [index, line] of lines.entries()) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed === "--" || trimmed === "---" || SUMMARY_LINE.test(trimmed)) continue;
+    if (!trimmed) continue;
+    const nextLine = lines[index + 1] ?? "";
+    const followedByRipgrepMatch = RIPGREP_NUMBERED_LINE.test(nextLine);
+    // At a file boundary, an indented heading can look like metadata or another match.
+    if (followedByRipgrepMatch && /^\s/.test(line) && (lines[index - 1] ?? "").trim() === "") {
+      file = line;
+      continue;
+    }
+    if (trimmed === "--" || trimmed === "---" || SUMMARY_LINE.test(trimmed)) continue;
     const heading = FILE_HEADING.exec(trimmed);
     if (heading) {
       file = heading[1];
-      continue;
-    }
-    const nextLine = lines[index + 1] ?? "";
-    const followedByRipgrepMatch = RIPGREP_NUMBERED_LINE.test(nextLine);
-    // At a file boundary, an indented heading can also look like a match or context line.
-    if (followedByRipgrepMatch && /^\s/.test(line) && (lines[index - 1] ?? "").trim() === "") {
-      file = line;
       continue;
     }
     const numbered = file === undefined ? null : NUMBERED_LINE.exec(line);
