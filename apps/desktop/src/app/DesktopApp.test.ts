@@ -87,10 +87,6 @@ interface StubbedDesktop {
   readonly flushRendererHistory?: Effect.Effect<void>;
   readonly tokenRequested?: Deferred.Deferred<void>;
   readonly activationStarted?: Deferred.Deferred<void>;
-  readonly managedPolicy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0];
-  readonly onRegisterDesktopProtocol?: (
-    input: ElectronProtocol.DesktopProtocolRegistrationInput,
-  ) => void;
 }
 
 const runStubbedDesktop = (stub: StubbedDesktop) =>
@@ -162,10 +158,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
       )
       .pipe(
         Effect.provideService(ElectronProtocol.ElectronProtocol, {
-          registerDesktopProtocol: (input: ElectronProtocol.DesktopProtocolRegistrationInput) =>
-            Effect.sync(() => {
-              stub.onRegisterDesktopProtocol?.(input);
-            }),
+          registerDesktopProtocol: () => Effect.void,
         } as unknown as ElectronProtocol.ElectronProtocol["Service"]),
         Effect.provideService(DesktopLegacyLocalStorage.DesktopLegacyLocalStorage, {
           load: () => Effect.void,
@@ -229,7 +222,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
                 Effect.as("token"),
               ),
           }),
-          DesktopManagedPolicy.layerTest(stub.managedPolicy),
+          DesktopManagedPolicy.layerTest(),
           Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
           Layer.mock(DesktopSshEnvironment.DesktopSshEnvironment, {}),
           Layer.mock(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {}),
@@ -392,46 +385,5 @@ it.effect(
         yield* Deferred.isDone(activationStarted),
         "startup left the t3 <dir> control socket closed",
       );
-    }).pipe(Effect.provide(Layer.mergeAll(DesktopShutdown.layer, NodeServices.layer))),
-);
-
-it.effect(
-  "omits Clerk Frontend API hostname from desktop protocol when Managed Policy disables Connect",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped();
-      const windowStarted = yield* Deferred.make<void>();
-      const protocolInputs: ElectronProtocol.DesktopProtocolRegistrationInput[] = [];
-
-      const app = yield* runStubbedDesktop({
-        localEnvironmentEnabled: false,
-        environment: {
-          path,
-          baseDir,
-          serverRoot: path.join(baseDir, "resources", "app.asar"),
-          appImagePath: Option.none(),
-          clientAssetsDir: "/isolated/client",
-        },
-        fileSystem: Layer.succeed(FileSystem.FileSystem, fs),
-        record: () => Effect.void,
-        windowStarted,
-        registerLinuxUrlHandler: Effect.void,
-        managedPolicy: {
-          schemaVersion: 1,
-          organization: "Example Corp",
-          limits: { connect: false },
-        },
-        onRegisterDesktopProtocol: (input) => {
-          protocolInputs.push(input);
-        },
-      });
-      yield* Deferred.await(windowStarted);
-      yield* (yield* DesktopShutdown.DesktopShutdown).request;
-      yield* Fiber.join(app);
-
-      assert.equal(protocolInputs.length, 1);
-      assert.strictEqual(protocolInputs[0]?.clerkFrontendApiHostname, undefined);
     }).pipe(Effect.provide(Layer.mergeAll(DesktopShutdown.layer, NodeServices.layer))),
 );

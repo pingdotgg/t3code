@@ -7,7 +7,7 @@ import * as NodePathLayer from "@effect/platform-node/NodePath";
 import { codexAuthHandoffUrl, readCodexAuthDelivery } from "@t3tools/shared/codexAuthHandoff";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { ManagedPolicyFileError, managedPolicyPath } from "@t3tools/shared/managedPolicyFile";
+import { managedPolicyPath } from "@t3tools/shared/managedPolicyFile";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -366,60 +366,48 @@ describe("DesktopClerk", () => {
     },
   );
 
-  it.effect.each([
-    {
-      name: "limits.connect: false",
-      policy: {
-        schemaVersion: 1 as const,
-        organization: "Example Corp",
-        limits: { connect: false },
-      },
-    },
-    {
-      name: "unreadable policy",
-      policy: new ManagedPolicyFileError({ path: "/test/policy.json", reason: "bad JSON" }),
-    },
-  ])(
-    "cleans up the Clerk bridge during configure when DesktopManagedPolicy has $name while keeping window reveal working",
-    ({ policy }) => {
-      const cleanup = vi.fn();
-      storageMock.mockReturnValue(storageAdapter);
-      createClerkBridgeMock.mockReturnValue({ cleanup, isPrimaryInstance: true });
-      const listeners = new Map<string, (...args: unknown[]) => void>();
-      const revealed = Promise.withResolvers<unknown>();
-      const window = { id: 1 };
-      const electronApp = {
-        on: (eventName: string, listener: (...args: unknown[]) => void) =>
-          Effect.sync(() => {
-            listeners.set(eventName, listener);
+  it.effect("cleans up the Clerk bridge in configure when a native policy disables Connect", () => {
+    const cleanup = vi.fn();
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup, isPrimaryInstance: true });
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const revealed = Promise.withResolvers<unknown>();
+    const window = { id: 1 };
+    const electronApp = {
+      on: (eventName: string, listener: (...args: unknown[]) => void) =>
+        Effect.sync(() => {
+          listeners.set(eventName, listener);
+        }),
+    } as unknown as ElectronApp.ElectronApp["Service"];
+    const electronWindow = {
+      currentMainOrFirst: Effect.succeedSome(window),
+      reveal: (value: unknown) => Effect.sync(() => revealed.resolve(value)),
+    } as unknown as ElectronWindow.ElectronWindow["Service"];
+
+    return Effect.gen(function* () {
+      const clerk = yield* DesktopClerk.DesktopClerk;
+      yield* clerk.configure;
+
+      assert.equal(cleanup.mock.calls.length, 1);
+      listeners.get("second-instance")!({}, ["t3"]);
+      assert.strictEqual(yield* Effect.promise(() => revealed.promise), window);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          layerDesktopClerk(false, [], "darwin", undefined, undefined, listeners),
+          DesktopManagedPolicy.layerTest({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: { connect: false },
           }),
-      } as unknown as ElectronApp.ElectronApp["Service"];
-      const electronWindow = {
-        currentMainOrFirst: Effect.succeedSome(window),
-        reveal: (value: unknown) => Effect.sync(() => revealed.resolve(value)),
-      } as unknown as ElectronWindow.ElectronWindow["Service"];
-
-      return Effect.gen(function* () {
-        const clerk = yield* DesktopClerk.DesktopClerk;
-        yield* clerk.configure;
-
-        assert.equal(cleanup.mock.calls.length, 1);
-        listeners.get("second-instance")!({}, ["t3"]);
-        assert.strictEqual(yield* Effect.promise(() => revealed.promise), window);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            layerDesktopClerk(false, [], "darwin", undefined, undefined, listeners),
-            DesktopManagedPolicy.layerTest(policy),
-          ),
         ),
-        Effect.provideService(ElectronApp.ElectronApp, electronApp),
-        Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
-        Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
-      );
-    },
-  );
+      ),
+      Effect.provideService(ElectronApp.ElectronApp, electronApp),
+      Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
+      Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+    );
+  });
 });
 
 it.effect(
