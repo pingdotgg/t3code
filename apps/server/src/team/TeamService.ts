@@ -2543,178 +2543,195 @@ const make = Effect.gen(function* () {
     return yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const updatedAt = DateTime.formatIso(yield* DateTime.now);
-        const { team, leftResult, otherSessionIds } = yield* withMembershipMutationGate(
-          Effect.gen(function* () {
-            const activeTeam = yield* requireWorkspace();
-            const actor = yield* requireActiveMember(input.sessionId);
-            if (actor.teamId !== activeTeam.id) {
-              return yield* new TeamOperationError({
-                code: "forbidden",
-                message: "This session does not belong to the active team.",
-              });
-            }
-            const memberSessionIds = yield* repository
-              .listSessionIdsForMember(actor.id)
-              .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<AuthSessionId>));
-            const left = yield* repository
-              .leaveTeam({
-                teamId: activeTeam.id,
-                memberId: actor.id,
-                updatedAt,
-              })
-              .pipe(
-                Effect.catchTags({
-                  TeamLastOwnerProtectedError: () =>
-                    Effect.fail(
-                      new TeamOperationError({
-                        code: "last_owner",
-                        message:
-                          "You are the last active owner. Transfer ownership to another member before leaving the team.",
-                      }),
-                    ),
-                  TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
-                }),
-              );
-            if (Option.isNone(left)) {
-              return yield* new TeamOperationError({
-                code: "not_found",
-                message: "Team member could not be found.",
-              });
-            }
-            // Publish removal and view/environment updates immediately after committing to SQLite
-            // (before async pairing revocation) so live streamState subscribers flip
-            // currentMember.status to "removed" with zero stale-stream window.
-            yield* publish({ version: 1, type: "memberUpserted", payload: left.value.member });
-            for (const updatedView of left.value.updatedViews) {
-              yield* publish({ version: 1, type: "viewUpserted", payload: updatedView });
-            }
-            for (const updatedEnvironment of left.value.updatedEnvironments) {
-              yield* publish({
-                version: 1,
-                type: "environmentUpserted",
-                payload: updatedEnvironment,
-              });
-            }
-            yield* publishAccessChange({ type: "member", memberId: left.value.member.id });
-            yield* revokePairingLinksForMember(left.value.member.id);
-            return {
-              team: activeTeam,
-              leftResult: left.value,
-              otherSessionIds: memberSessionIds.filter((sid) => sid !== input.sessionId),
-            };
-          }),
-        );
-
-        const updatedMember = leftResult.member;
-
-        // Inspect caller's proof key and arm disconnect-driven revocation BEFORE async cleanup so
-        // a caller who disconnects mid-cleanup has their session revoked immediately, while a
-        // connected caller still gets the full post-cleanup reply grace period to read `{ left: true }`.
-        const callerJkt = yield* sessionStore
-          .proofKeyThumbprintOf(input.sessionId)
-          .pipe(Effect.orElseSucceed(() => Option.none<string>()));
-        const revokeCallerSession = Effect.gen(function* () {
-          if (Option.isSome(callerJkt)) {
-            yield* sessionStore.revokeByProofKey(callerJkt.value).pipe(Effect.ignore);
-          }
-          yield* sessionStore.revoke(input.sessionId).pipe(Effect.ignore);
-        });
         const deferSpec = input.deferCallerSessionRevocation;
         const isDeferredRevocation =
           deferSpec === true || (deferSpec !== undefined && deferSpec !== false);
         const cleanupDone = yield* Deferred.make<void>();
-        if (isDeferredRevocation) {
-          const fallbackDelay =
-            typeof deferSpec === "object" && deferSpec.fallbackDelay !== undefined
-              ? deferSpec.fallbackDelay
-              : Duration.millis(500);
-          const awaitDisconnect =
-            typeof deferSpec === "object" ? deferSpec.awaitDisconnect : undefined;
-          const graceAfterCleanup = Deferred.await(cleanupDone).pipe(
-            Effect.andThen(Effect.sleep(fallbackDelay)),
-          );
-          const waitForTrigger =
-            awaitDisconnect !== undefined
-              ? Effect.race(awaitDisconnect, graceAfterCleanup)
-              : graceAfterCleanup;
-          yield* Effect.forkDetach(waitForTrigger.pipe(Effect.andThen(revokeCallerSession)));
-        }
+        const { team, leftResult, otherSessionIds, revokeCallerSession, callerJkt } =
+          yield* withMembershipMutationGate(
+            Effect.gen(function* () {
+              const activeTeam = yield* requireWorkspace();
+              const actor = yield* requireActiveMember(input.sessionId);
+              if (actor.teamId !== activeTeam.id) {
+                return yield* new TeamOperationError({
+                  code: "forbidden",
+                  message: "This session does not belong to the active team.",
+                });
+              }
+              const memberSessionIds = yield* repository
+                .listSessionIdsForMember(actor.id)
+                .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<AuthSessionId>));
+              const left = yield* repository
+                .leaveTeam({
+                  teamId: activeTeam.id,
+                  memberId: actor.id,
+                  updatedAt,
+                })
+                .pipe(
+                  Effect.catchTags({
+                    TeamLastOwnerProtectedError: () =>
+                      Effect.fail(
+                        new TeamOperationError({
+                          code: "last_owner",
+                          message:
+                            "You are the last active owner. Transfer ownership to another member before leaving the team.",
+                        }),
+                      ),
+                    TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+                  }),
+                );
+              if (Option.isNone(left)) {
+                return yield* new TeamOperationError({
+                  code: "not_found",
+                  message: "Team member could not be found.",
+                });
+              }
+              // Publish removal and view/environment updates immediately after committing to SQLite
+              // (before async pairing revocation) so live streamState subscribers flip
+              // currentMember.status to "removed" with zero stale-stream window.
+              yield* publish({ version: 1, type: "memberUpserted", payload: left.value.member });
+              for (const updatedView of left.value.updatedViews) {
+                yield* publish({ version: 1, type: "viewUpserted", payload: updatedView });
+              }
+              for (const updatedEnvironment of left.value.updatedEnvironments) {
+                yield* publish({
+                  version: 1,
+                  type: "environmentUpserted",
+                  payload: updatedEnvironment,
+                });
+              }
+              yield* publishAccessChange({ type: "member", memberId: left.value.member.id });
 
-        const otherProofKeys = new Set<string>();
-        for (const sid of otherSessionIds) {
-          const maybeJkt = yield* sessionStore
-            .proofKeyThumbprintOf(sid)
-            .pipe(Effect.orElseSucceed(() => Option.none<string>()));
-          if (
-            Option.isSome(maybeJkt) &&
-            (Option.isNone(callerJkt) || maybeJkt.value !== callerJkt.value)
-          ) {
-            otherProofKeys.add(maybeJkt.value);
-          }
-          yield* sessionStore.revoke(sid).pipe(Effect.ignore);
-        }
-        for (const jkt of otherProofKeys) {
-          yield* sessionStore.revokeByProofKey(jkt).pipe(Effect.ignore);
-        }
-
-        if (Option.isSome(assetsRepositoryOption)) {
-          yield* assetsRepositoryOption.value
-            .revokeLocalSyncTokensForMember(updatedMember.id, updatedAt)
-            .pipe(Effect.ignore);
-        }
-        yield* TeamGitHubOAuth.withMemberGitHubCredentialMutationLock(
-          team.id,
-          updatedMember.id,
-          Effect.gen(function* () {
-            TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(
-              githubOAuthFlowStore,
-              updatedMember.id,
-            );
-            if (Option.isSome(githubRepositoryOption)) {
-              const removedSecretKeyOpt = yield* githubRepositoryOption.value
-                .deleteMemberCredential(updatedMember.id)
+              // Arm disconnect-driven caller session revocation BEFORE async pairing/peer cleanup
+              // so disconnecting during any cleanup phase revokes the caller immediately.
+              const callerJkt = yield* sessionStore
+                .proofKeyThumbprintOf(input.sessionId)
                 .pipe(Effect.orElseSucceed(() => Option.none<string>()));
-              if (Option.isSome(removedSecretKeyOpt) && Option.isSome(secretStoreOption)) {
-                yield* TeamGitHubRepository.removeTeamGitHubSecret(
-                  secretStoreOption.value,
-                  removedSecretKeyOpt.value,
-                ).pipe(Effect.ignore);
+              const revokeCaller = Effect.gen(function* () {
+                if (Option.isSome(callerJkt)) {
+                  yield* sessionStore.revokeByProofKey(callerJkt.value).pipe(Effect.ignore);
+                }
+                yield* sessionStore.revoke(input.sessionId).pipe(Effect.ignore);
+              });
+              if (isDeferredRevocation) {
+                const fallbackDelay =
+                  typeof deferSpec === "object" && deferSpec.fallbackDelay !== undefined
+                    ? deferSpec.fallbackDelay
+                    : Duration.millis(500);
+                const awaitDisconnect =
+                  typeof deferSpec === "object" ? deferSpec.awaitDisconnect : undefined;
+                const graceAfterCleanup = Deferred.await(cleanupDone).pipe(
+                  Effect.andThen(Effect.sleep(fallbackDelay)),
+                );
+                const waitForTrigger =
+                  awaitDisconnect !== undefined
+                    ? Effect.race(awaitDisconnect, graceAfterCleanup)
+                    : graceAfterCleanup;
+                yield* Effect.forkDetach(waitForTrigger.pipe(Effect.andThen(revokeCaller)));
+              }
+
+              yield* revokePairingLinksForMember(left.value.member.id).pipe(
+                Effect.onError(() =>
+                  isDeferredRevocation
+                    ? Deferred.succeed(cleanupDone, undefined).pipe(Effect.asVoid)
+                    : Effect.void,
+                ),
+              );
+              return {
+                team: activeTeam,
+                leftResult: left.value,
+                otherSessionIds: memberSessionIds.filter((sid) => sid !== input.sessionId),
+                revokeCallerSession: revokeCaller,
+                callerJkt,
+              };
+            }),
+          );
+
+        const updatedMember = leftResult.member;
+
+        yield* Effect.gen(function* () {
+          const otherProofKeys = new Set<string>();
+          for (const sid of otherSessionIds) {
+            const maybeJkt = yield* sessionStore
+              .proofKeyThumbprintOf(sid)
+              .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+            if (
+              Option.isSome(maybeJkt) &&
+              (Option.isNone(callerJkt) || maybeJkt.value !== callerJkt.value)
+            ) {
+              otherProofKeys.add(maybeJkt.value);
+            }
+            yield* sessionStore.revoke(sid).pipe(Effect.ignore);
+          }
+          for (const jkt of otherProofKeys) {
+            yield* sessionStore.revokeByProofKey(jkt).pipe(Effect.ignore);
+          }
+
+          if (Option.isSome(assetsRepositoryOption)) {
+            yield* assetsRepositoryOption.value
+              .revokeLocalSyncTokensForMember(updatedMember.id, updatedAt)
+              .pipe(Effect.ignore);
+          }
+          yield* TeamGitHubOAuth.withMemberGitHubCredentialMutationLock(
+            team.id,
+            updatedMember.id,
+            Effect.gen(function* () {
+              TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(
+                githubOAuthFlowStore,
+                updatedMember.id,
+              );
+              if (Option.isSome(githubRepositoryOption)) {
+                const removedSecretKeyOpt = yield* githubRepositoryOption.value
+                  .deleteMemberCredential(updatedMember.id)
+                  .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+                if (Option.isSome(removedSecretKeyOpt) && Option.isSome(secretStoreOption)) {
+                  yield* TeamGitHubRepository.removeTeamGitHubSecret(
+                    secretStoreOption.value,
+                    removedSecretKeyOpt.value,
+                  ).pipe(Effect.ignore);
+                }
+              }
+              yield* notifyGitHubCredentialChanged({
+                kind: "member",
+                teamId: team.id,
+                memberId: updatedMember.id,
+              });
+            }),
+          );
+          if (input.peerClientPairing) {
+            const envs = yield* repository
+              .listEnvironments(team.id)
+              .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
+            const targetEnvIds = envs
+              .filter((env) => !env.isDefault)
+              .map((env) => env.environmentId);
+            if (input.peerLinks) {
+              const allPeers = yield* input.peerLinks.list.pipe(Effect.orElseSucceed(() => []));
+              for (const peer of allPeers) {
+                targetEnvIds.push(peer.environmentId);
               }
             }
-            yield* notifyGitHubCredentialChanged({
-              kind: "member",
-              teamId: team.id,
-              memberId: updatedMember.id,
-            });
-          }),
-        );
-        if (input.peerClientPairing) {
-          const envs = yield* repository
-            .listEnvironments(team.id)
-            .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
-          const targetEnvIds = envs.filter((env) => !env.isDefault).map((env) => env.environmentId);
-          if (input.peerLinks) {
-            const allPeers = yield* input.peerLinks.list.pipe(Effect.orElseSucceed(() => []));
-            for (const peer of allPeers) {
-              targetEnvIds.push(peer.environmentId);
+            const uniqueEnvIds = [...new Set(targetEnvIds)];
+            if (uniqueEnvIds.length > 0) {
+              yield* withRemoteRevocationBarrier(
+                revokeRemoteMemberGrantsForEnvironments({
+                  teamId: team.id,
+                  peerClientPairing: input.peerClientPairing,
+                  environmentIds: uniqueEnvIds,
+                  subjectPrefixes: [remoteSubjectForMember(team.id, updatedMember.id)],
+                }),
+              );
             }
           }
-          const uniqueEnvIds = [...new Set(targetEnvIds)];
-          if (uniqueEnvIds.length > 0) {
-            yield* withRemoteRevocationBarrier(
-              revokeRemoteMemberGrantsForEnvironments({
-                teamId: team.id,
-                peerClientPairing: input.peerClientPairing,
-                environmentIds: uniqueEnvIds,
-                subjectPrefixes: [remoteSubjectForMember(team.id, updatedMember.id)],
-              }),
-            );
-          }
-        }
+        }).pipe(
+          Effect.ensuring(
+            isDeferredRevocation
+              ? Deferred.succeed(cleanupDone, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        );
 
-        if (isDeferredRevocation) {
-          yield* Deferred.succeed(cleanupDone, undefined);
-        } else {
+        if (!isDeferredRevocation) {
           yield* revokeCallerSession;
         }
 
@@ -2890,40 +2907,40 @@ const make = Effect.gen(function* () {
               );
             }
 
-            // 4. Revoke remote peer grants across both attached team environments and any
-            //    still-linked peers BEFORE deleting team_workspaces. Fail closed if an offline
-            //    peer's retry record could not be persisted.
-            if (input.peerClientPairing) {
-              const remoteEnvIds = currentEnvs
-                .filter((env) => !env.isDefault)
-                .map((env) => env.environmentId);
-              for (const peer of allLinkedPeers) {
-                remoteEnvIds.push(peer.environmentId);
-              }
-              const uniqueRemoteEnvIds = [...new Set(remoteEnvIds)];
-              if (uniqueRemoteEnvIds.length > 0) {
-                const remoteOutcome = yield* withRemoteRevocationBarrier(
-                  revokeRemoteMemberGrantsForEnvironments({
-                    teamId: activeTeam.id,
-                    peerClientPairing: input.peerClientPairing,
-                    environmentIds: uniqueRemoteEnvIds,
-                    subjectPrefixes: [remoteSubjectPrefixForTeam(activeTeam.id)],
-                  }),
-                );
-                if (remoteOutcome.enqueueFailed) {
-                  return yield* new TeamOperationError({
-                    code: "internal",
-                    message:
-                      "Failed to persist pending remote peer revocations before deleting team.",
-                  });
+            // 4 & 5. Hold the remote revocation barrier across remote peer revocation AND atomic
+            //        workspace deletion so no concurrent remote pairing grant can be issued between
+            //        revocation and removing team_workspaces.
+            const deleted = yield* withRemoteRevocationBarrier(
+              Effect.gen(function* () {
+                if (input.peerClientPairing) {
+                  const remoteEnvIds = currentEnvs
+                    .filter((env) => !env.isDefault)
+                    .map((env) => env.environmentId);
+                  for (const peer of allLinkedPeers) {
+                    remoteEnvIds.push(peer.environmentId);
+                  }
+                  const uniqueRemoteEnvIds = [...new Set(remoteEnvIds)];
+                  if (uniqueRemoteEnvIds.length > 0) {
+                    const remoteOutcome = yield* revokeRemoteMemberGrantsForEnvironments({
+                      teamId: activeTeam.id,
+                      peerClientPairing: input.peerClientPairing,
+                      environmentIds: uniqueRemoteEnvIds,
+                      subjectPrefixes: [remoteSubjectPrefixForTeam(activeTeam.id)],
+                    });
+                    if (remoteOutcome.enqueueFailed) {
+                      return yield* new TeamOperationError({
+                        code: "internal",
+                        message:
+                          "Failed to persist pending remote peer revocations before deleting team.",
+                      });
+                    }
+                  }
                 }
-              }
-            }
-
-            // 5. Commit workspace and all team table deletions atomically.
-            const deleted = yield* repository
-              .deleteTeam(activeTeam.id)
-              .pipe(Effect.mapError(toInternalError));
+                return yield* repository
+                  .deleteTeam(activeTeam.id)
+                  .pipe(Effect.mapError(toInternalError));
+              }),
+            );
             return {
               team: activeTeam,
               members: currentMembers,
@@ -7938,90 +7955,104 @@ const make = Effect.gen(function* () {
     );
     yield* validateAccessRuleMemberIds(team.id, [accessRule]);
 
-    // Hold remoteEnvLifecycleLock across peer-link acquisition and attachment commit so a
-    // concurrent pending revocation drain cannot unlink the peer between linking and committing.
-    const environment = yield* remoteEnvLifecycleLock.withPermits(1)(
-      Effect.gen(function* () {
-        let environmentId = input.payload.environmentId;
-        let resolvedName = input.payload.name?.trim();
-        let peerLinkId: string | null = null;
-
-        if (input.payload.url !== undefined && input.payload.pairingCode !== undefined) {
-          if (input.peerLinks === undefined) {
+    // Serialize attachment with deleteTeam (withMembershipMutationGate) and pending revocation
+    // drains (remoteEnvLifecycleLock) while preserving lock order:
+    // withMembershipMutationGate -> remoteEnvLifecycleLock.
+    const environment = yield* withMembershipMutationGate(
+      remoteEnvLifecycleLock.withPermits(1)(
+        Effect.gen(function* () {
+          const activeTeam = yield* requireWorkspace();
+          const activeActor = yield* requireActiveMember(input.sessionId);
+          if (
+            activeActor.teamId !== activeTeam.id ||
+            !canManageTeamEnvironments(activeActor.role)
+          ) {
             return yield* new TeamOperationError({
-              code: "environment_unavailable",
-              message: "Peer environment linking is unavailable on this server.",
+              code: "forbidden",
+              message: "Only owner and admin members can attach remote team environments.",
             });
           }
-          const linked = yield* input.peerLinks
-            .linkUnlessLinked({
-              url: input.payload.url,
-              pairingCode: input.payload.pairingCode,
-              access: input.payload.access ?? "full-access",
-            })
-            .pipe(
-              Effect.mapError(
-                (error) =>
+          let environmentId = input.payload.environmentId;
+          let resolvedName = input.payload.name?.trim();
+          let peerLinkId: string | null = null;
+
+          if (input.payload.url !== undefined && input.payload.pairingCode !== undefined) {
+            if (input.peerLinks === undefined) {
+              return yield* new TeamOperationError({
+                code: "environment_unavailable",
+                message: "Peer environment linking is unavailable on this server.",
+              });
+            }
+            const linked = yield* input.peerLinks
+              .linkUnlessLinked({
+                url: input.payload.url,
+                pairingCode: input.payload.pairingCode,
+                access: input.payload.access ?? "full-access",
+              })
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new TeamOperationError({
+                      code: "environment_unavailable",
+                      message: error.message,
+                    }),
+                ),
+              );
+            environmentId = linked.link.environmentId;
+            peerLinkId = linked.link.environmentId;
+            resolvedName = resolvedName || linked.link.label;
+          } else if (environmentId !== undefined) {
+            peerLinkId = environmentId;
+            if (input.peerLinks !== undefined && !resolvedName) {
+              const existingPeer = yield* input.peerLinks
+                .get(environmentId)
+                .pipe(Effect.orElseSucceed(() => Option.none()));
+              if (Option.isSome(existingPeer)) {
+                resolvedName = existingPeer.value.label;
+              }
+            }
+          } else {
+            return yield* new TeamOperationError({
+              code: "invalid_input",
+              message: "Provide either an existing environmentId or a remote URL and pairing code.",
+            });
+          }
+
+          const nowIso = DateTime.formatIso(yield* DateTime.now);
+          const recordId = TeamEnvironmentRecordId.make(
+            yield* random.uuidV4().pipe(Effect.mapError(toInternalError)),
+          );
+          const nextEnvironment: TeamEnvironment = {
+            id: recordId,
+            teamId: activeTeam.id,
+            environmentId,
+            name: resolvedName && resolvedName.length > 0 ? resolvedName : environmentId,
+            isDefault: false,
+            peerLinkId,
+            accessRule,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          };
+          yield* repository.createEnvironment(nextEnvironment).pipe(
+            Effect.catchTags({
+              TeamEnvironmentAlreadyAttachedError: (error) =>
+                Effect.fail(
                   new TeamOperationError({
-                    code: "environment_unavailable",
+                    code: "environment_already_attached",
                     message: error.message,
                   }),
-              ),
-            );
-          environmentId = linked.link.environmentId;
-          peerLinkId = linked.link.environmentId;
-          resolvedName = resolvedName || linked.link.label;
-        } else if (environmentId !== undefined) {
-          peerLinkId = environmentId;
-          if (input.peerLinks !== undefined && !resolvedName) {
-            const existingPeer = yield* input.peerLinks
-              .get(environmentId)
-              .pipe(Effect.orElseSucceed(() => Option.none()));
-            if (Option.isSome(existingPeer)) {
-              resolvedName = existingPeer.value.label;
-            }
-          }
-        } else {
-          return yield* new TeamOperationError({
-            code: "invalid_input",
-            message: "Provide either an existing environmentId or a remote URL and pairing code.",
-          });
-        }
-
-        const nowIso = DateTime.formatIso(yield* DateTime.now);
-        const recordId = TeamEnvironmentRecordId.make(
-          yield* random.uuidV4().pipe(Effect.mapError(toInternalError)),
-        );
-        const nextEnvironment: TeamEnvironment = {
-          id: recordId,
-          teamId: team.id,
-          environmentId,
-          name: resolvedName && resolvedName.length > 0 ? resolvedName : environmentId,
-          isDefault: false,
-          peerLinkId,
-          accessRule,
-          createdAt: nowIso,
-          updatedAt: nowIso,
-        };
-        yield* repository.createEnvironment(nextEnvironment).pipe(
-          Effect.catchTags({
-            TeamEnvironmentAlreadyAttachedError: (error) =>
-              Effect.fail(
-                new TeamOperationError({
-                  code: "environment_already_attached",
-                  message: error.message,
-                }),
-              ),
-            TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
-          }),
-        );
-        // Clear any stale unlink_after_revoke flag from an earlier offline detach so background
-        // revocation drain revokes old sessions without tearing down this re-attached environment.
-        yield* repository
-          .clearPendingRemoteRevocationUnlinkFlag({ teamId: team.id, environmentId })
-          .pipe(Effect.mapError(toInternalError));
-        return nextEnvironment;
-      }),
+                ),
+              TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+            }),
+          );
+          // Clear any stale unlink_after_revoke flag from an earlier offline detach so background
+          // revocation drain revokes old sessions without tearing down this re-attached environment.
+          yield* repository
+            .clearPendingRemoteRevocationUnlinkFlag({ teamId: activeTeam.id, environmentId })
+            .pipe(Effect.mapError(toInternalError));
+          return nextEnvironment;
+        }),
+      ),
     );
     yield* publish({ version: 1, type: "environmentUpserted", payload: environment });
     yield* publishAccessChange({ type: "environment", environmentId: environment.environmentId });

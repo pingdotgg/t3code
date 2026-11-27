@@ -320,5 +320,13 @@ describe("TeamProviderLeaseService", () => {
         serverSettings: DEFAULT_SERVER_SETTINGS,
       }),
     ).toBeNull();
+    expect(
+      resolveLinkedServerProviderProfileDir({
+        stateDir: "/state",
+        driver: "claudeAgent",
+        linkedServerInstanceId: "toString",
+        serverSettings: DEFAULT_SERVER_SETTINGS,
+      }),
+    ).toBeNull();
   });
 });

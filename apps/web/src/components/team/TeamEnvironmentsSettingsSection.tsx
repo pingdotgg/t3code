@@ -237,14 +237,7 @@ export function TeamEnvironmentsSettingsSection({
     });
     setAttaching(false);
     if (result._tag === "Success") {
-      setShowAttachForm(false);
-      setSelectedExistingPeerId(NEW_PEER_SENTINEL);
-      setAttachUrl("");
-      setAttachCode("");
-      setShowAttachCode(false);
-      setAttachName("");
-      setAttachRoles([...ALL_TEAM_ROLES]);
-      setAttachMemberIds([]);
+      resetAttachForm();
       peerLinksQuery.refresh();
       toastManager.add({
         type: "success",
