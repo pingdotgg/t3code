@@ -336,6 +336,13 @@ describe("toStack", () => {
 });
 
 describe("toDiff", () => {
+  it("keeps whitespace in a file path so review threads on it stay on the diff", () => {
+    const { patch } = GitCafePullRequestJson.toDiff(
+      decodeDiff({ items: [{ path: " note.txt", status: "modified", hunks: [] }] }),
+    );
+    assert.include(patch, "diff --git a/ note.txt b/ note.txt\n");
+  });
+
   it.each(["+", "-", " "])("marks unterminated ordinary %j lines", (origin) => {
     const { patch } = GitCafePullRequestJson.toDiff(
       decodeDiff({
