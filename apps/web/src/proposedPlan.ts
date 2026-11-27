@@ -30,7 +30,7 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
     if (isVisibleLine) {
       visibleLineCount += 1;
     }
-    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    const fence = /^ {0,3}(?:(`{3,})[^`]*|(~{3,}).*)$/.exec(line)?.slice(1).find(Boolean);
     if (fence === undefined) {
       continue;
     }

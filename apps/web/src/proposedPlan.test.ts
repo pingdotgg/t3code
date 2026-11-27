@@ -20,10 +20,10 @@ describe("buildCollapsedProposedPlanPreviewMarkdown", () => {
     );
   });
 
-  it("leaves a code block that ends inside the preview alone", () => {
-    const plan = ["~~~~", "```", "~~~~", "", "Next", "More"].join("\n");
-    expect(buildCollapsedProposedPlanPreviewMarkdown(plan, { maxLines: 4 })).toBe(
-      ["~~~~", "```", "~~~~", "", "Next", "", "..."].join("\n"),
+  it("adds no fence when every code block ends inside the preview, inline code included", () => {
+    const plan = ["~~~~", "```", "~~~~", "", "```npm i```", "Next", "More"].join("\n");
+    expect(buildCollapsedProposedPlanPreviewMarkdown(plan, { maxLines: 5 })).toBe(
+      ["~~~~", "```", "~~~~", "", "```npm i```", "Next", "", "..."].join("\n"),
     );
   });
 });
