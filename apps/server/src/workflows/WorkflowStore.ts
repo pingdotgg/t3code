@@ -189,7 +189,7 @@ const mailAddress = (address: SignalAddress) =>
       ? ["run", address.runId, address.wait]
       : ["key", address.workflow, address.channel],
   );
-// Exclusive UTF-8/Unicode successor of `prefix`, or null when no string can sort after all matches.
+// Smallest string above every key starting with `prefix` in SQLite's UTF-8 byte order, or null when none exists.
 const prefixUpperBound = (prefix: string): string | null => {
   const normalized = prefix.toWellFormed();
   for (let i = normalized.length; i > 0;) {
@@ -1435,11 +1435,8 @@ export const make = Effect.gen(function* () {
         ...(filter.workflow === undefined ? [] : [sql`workflow = ${filter.workflow}`]),
         ...(filter.status === undefined ? [] : [sql`status = ${filter.status}`]),
         // A range, not LIKE, which would read `%` and `_` in a key as patterns.
-        ...(prefix === null || prefix === ""
-          ? []
-          : prefixEnd === null
-            ? [sql`idempotency_key >= ${prefix}`]
-            : [sql`idempotency_key >= ${prefix} AND idempotency_key < ${prefixEnd}`]),
+        ...(prefix === null ? [] : [sql`idempotency_key >= ${prefix}`]),
+        ...(prefixEnd === null ? [] : [sql`idempotency_key < ${prefixEnd}`]),
         ...(filter.skippedTopLevel === undefined
           ? []
           : filter.skippedTopLevel

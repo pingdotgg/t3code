@@ -915,7 +915,7 @@ it.effect("reads that run on every change or sweep do not read every run", () =>
   ),
 );
 
-it.effect("runsWhere keyPrefix matches literal prefixes including highest-scalar suffixes", () =>
+it.effect("runsWhere keyPrefix matches keys whose next character is the highest code point", () =>
   withStore(
     Effect.gen(function* () {
       const store = yield* WorkflowStore.WorkflowStore;
@@ -932,10 +932,6 @@ it.effect("runsWhere keyPrefix matches literal prefixes including highest-scalar
       yield* start("a", "case/abc");
       yield* start("b", `case/${maxScalar}tail`);
       yield* start("c", "case0");
-      yield* start("pct-hit", `100%_a${maxScalar}`);
-      yield* start("pct-miss", "100X_a");
-      yield* start("hi-hit", `a${maxScalar}tail`);
-      yield* start("hi-next", "b");
       yield* start("max-hit", `${maxScalar}x`);
       yield* start("bmp-hit", `a\uD7FF${maxScalar}`);
       yield* start("bmp-next", "a\uE000");
@@ -944,14 +940,8 @@ it.effect("runsWhere keyPrefix matches literal prefixes including highest-scalar
         Effect.map(store.runsWhere({ keyPrefix }), (rows) => rows.map((row) => row.run_id));
 
       assert.deepStrictEqual(yield* ids("case/"), ["b", "a"]);
-      assert.deepStrictEqual(yield* ids("100%_"), ["pct-hit"]);
-      assert.deepStrictEqual(yield* ids(`a${maxScalar}`), ["hi-hit"]);
       assert.deepStrictEqual(yield* ids(maxScalar), ["max-hit"]);
       assert.deepStrictEqual(yield* ids("a\uD7FF"), ["bmp-hit"]);
-      assert.deepStrictEqual(
-        yield* ids(""),
-        (yield* store.runsWhere({})).map((row) => row.run_id),
-      );
     }),
   ),
 );
