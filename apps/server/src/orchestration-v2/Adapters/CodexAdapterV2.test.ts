@@ -7544,6 +7544,340 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  const awaitedRosters = (
+    events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+    providerThreadId: OrchestrationV2ProviderThread["id"],
+  ) =>
+    events.flatMap((event) =>
+      event.type === "provider_thread.updated" &&
+      event.providerThread.id === providerThreadId &&
+      event.providerThread.pendingBackgroundTasks !== undefined
+        ? [event.providerThread.pendingBackgroundTasks.map((task) => task.taskId)]
+        : [],
+    );
+
+  it.effect(
+    "lists a command the agent marks awaited, by session id or item id, until it ends",
+    () =>
+      Effect.gen(function* () {
+        const released = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          {
+            ...backgroundExecTranscript,
+            entries: backgroundExecTranscript.entries.map((entry) =>
+              entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
+                ? { ...entry, afterMs: 0 }
+                : entry,
+            ),
+          },
+          undefined,
+          undefined,
+          undefined,
+          (entry) =>
+            entry.label === "item/completed/command-late" ? Deferred.await(released) : Effect.void,
+        );
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-command-background-wait"),
+          text: BG_PROMPT,
+        });
+        yield* harness.runtime.startTurn(turnInput);
+        yield* harness.firstTerminal;
+        const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+        if (awaitBackgroundTasks === undefined) {
+          return yield* Effect.die("Codex adapter runtime must expose awaitBackgroundTasks.");
+        }
+        const rosters = () => awaitedRosters(harness.events, harness.providerThread.id);
+
+        // Codex shows the agent the terminal's session id; T3 knows the item id.
+        assert.deepEqual(
+          yield* awaitBackgroundTasks({
+            providerThread: harness.providerThread,
+            taskIds: ["4242", "9999"],
+            awaited: true,
+          }),
+          { matched: ["4242"] },
+        );
+        yield* harness.until(() => rosters().length === 1);
+        const listed = harness.events.findLast((event) => event.type === "provider_thread.updated");
+        assert.deepEqual(
+          listed?.type === "provider_thread.updated"
+            ? listed.providerThread.pendingBackgroundTasks
+            : undefined,
+          [
+            {
+              taskId: BG_COMMAND_ITEM,
+              kind: "command",
+              command: BG_COMMAND,
+              description: BG_COMMAND,
+              runId: turnInput.runId,
+              awaited: true,
+            },
+          ],
+        );
+        assert.deepEqual(
+          yield* awaitBackgroundTasks({
+            providerThread: harness.providerThread,
+            taskIds: [BG_COMMAND_ITEM],
+            awaited: false,
+          }),
+          { matched: [BG_COMMAND_ITEM] },
+        );
+        yield* awaitBackgroundTasks({
+          providerThread: harness.providerThread,
+          taskIds: [BG_COMMAND_ITEM],
+          awaited: true,
+        });
+        yield* harness.until(() => rosters().length === 3);
+
+        yield* Deferred.succeed(released, undefined);
+        yield* harness.until(() => rosters().length === 4);
+        assert.deepEqual(rosters(), [[BG_COMMAND_ITEM], [], [BG_COMMAND_ITEM], []]);
+        assert.deepEqual(
+          yield* awaitBackgroundTasks({
+            providerThread: harness.providerThread,
+            taskIds: ["4242"],
+            awaited: true,
+          }),
+          { matched: [] },
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect("lists an awaited command's end after a later turn starts from an older snapshot", () =>
+    Effect.gen(function* () {
+      const released = yield* Deferred.make<void>();
+      const entries = backgroundExecTranscript.entries;
+      const late = entries.at(-1);
+      const turnStart = entries.filter(
+        (entry) => entry.type !== "runtime_exit" && entry.label === "turn/start",
+      );
+      const turnStarted = entries.find(
+        (entry) => entry.type !== "runtime_exit" && entry.label === "turn/started",
+      );
+      if (late === undefined || turnStart.length !== 2 || turnStarted === undefined) {
+        return yield* Effect.die("The background exec transcript changed shape.");
+      }
+      const NEXT_TURN = "native-codex-bg-turn-2";
+      const nextTurn = JSON.parse(
+        JSON.stringify([...turnStart, turnStarted])
+          .replaceAll('"id":3', '"id":5')
+          .replaceAll(`"${BG_NATIVE_TURN}"`, `"${NEXT_TURN}"`),
+      ) as Array<CodexReplay.CodexAppServerReplayEntry>;
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "codex-bg-roster-after-next-turn",
+          entries: [
+            ...entries.slice(0, -1),
+            {
+              type: "expect_outbound",
+              label: "list-background-terminals",
+              frame: {
+                id: 4,
+                method: "thread/backgroundTerminals/list",
+                params: { threadId: BG_NATIVE_THREAD },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "list-background-terminals",
+              frame: { id: 4, result: { data: [{ processId: "4242" }], nextCursor: null } },
+            },
+            ...nextTurn,
+            {
+              type: "emit_inbound",
+              label: "turn/completed/next",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: BG_NATIVE_THREAD,
+                  turn: makeCodexReplayTurn({ id: NEXT_TURN, status: "completed" }),
+                },
+              },
+            },
+            { ...late, afterMs: 0 } as CodexReplay.CodexAppServerReplayEntry,
+          ],
+        }),
+        undefined,
+        undefined,
+        undefined,
+        (entry) =>
+          entry.label === "item/completed/command-late" ? Deferred.await(released) : Effect.void,
+      );
+      const startTurn = (attempt: string) =>
+        Effect.flatMap(DateTime.now, (now) =>
+          harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(attempt),
+              text: BG_PROMPT,
+            }),
+          ),
+        );
+      const rosters = () => awaitedRosters(harness.events, harness.providerThread.id);
+      yield* startTurn("attempt-roster-first");
+      yield* harness.firstTerminal;
+      yield* harness.runtime.awaitBackgroundTasks!({
+        providerThread: harness.providerThread,
+        taskIds: ["4242"],
+        awaited: true,
+      });
+      yield* harness.until(() => rosters().length === 1);
+      // The next turn's input predates the roster published above.
+      yield* startTurn("attempt-roster-next");
+      yield* harness.until(() => harness.terminalEvents().length === 2);
+
+      yield* Deferred.succeed(released, undefined);
+      yield* harness.until(() => rosters().length === 2);
+      assert.deepEqual(rosters(), [[BG_COMMAND_ITEM], []]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  // A command that waited on approval starts without a process id; Codex sends it on completion.
+  it.effect("resolves the session id of an approved command Codex started without one", () =>
+    Effect.gen(function* () {
+      const released = yield* Deferred.make<void>();
+      const [started, answer, turnCompleted, late] = backgroundExecTranscript.entries.slice(-4);
+      const liveTerminal = (id: number) => [
+        {
+          type: "expect_outbound" as const,
+          label: `list-background-terminals-${id}`,
+          frame: {
+            id,
+            method: "thread/backgroundTerminals/list",
+            params: { threadId: BG_NATIVE_THREAD },
+          },
+        },
+        {
+          type: "emit_inbound" as const,
+          label: `list-background-terminals-${id}`,
+          frame: {
+            id,
+            result: {
+              data: [
+                {
+                  processId: "4242",
+                  itemId: BG_COMMAND_ITEM,
+                  command: BG_COMMAND,
+                  cwd: "/workspace",
+                },
+              ],
+              nextCursor: null,
+            },
+          },
+        },
+      ];
+      if (
+        started?.type !== "emit_inbound" ||
+        late?.type !== "emit_inbound" ||
+        answer === undefined ||
+        turnCompleted === undefined
+      ) {
+        return yield* Effect.die("The background exec transcript changed shape.");
+      }
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "codex-bg-approved-command",
+          entries: [
+            ...backgroundExecTranscript.entries.slice(0, -4),
+            {
+              ...started,
+              frame: {
+                method: "item/started",
+                params: {
+                  item: {
+                    ...backgroundCommandItem("inProgress"),
+                    processId: null,
+                    source: "agent",
+                  },
+                  threadId: BG_NATIVE_THREAD,
+                  turnId: BG_NATIVE_TURN,
+                  startedAtMs: 1782622440500,
+                },
+              },
+            },
+            ...liveTerminal(4),
+            answer,
+            turnCompleted,
+            ...liveTerminal(5),
+            { ...late, afterMs: 0 },
+          ],
+        }),
+        undefined,
+        undefined,
+        undefined,
+        (entry) =>
+          entry.label === "item/completed/command-late" ? Deferred.await(released) : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-approved-command-wait"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
+        ),
+      );
+      const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+      if (awaitBackgroundTasks === undefined) {
+        return yield* Effect.die("Codex adapter runtime must expose awaitBackgroundTasks.");
+      }
+      assert.deepEqual(
+        yield* awaitBackgroundTasks({
+          providerThread: harness.providerThread,
+          taskIds: ["4242"],
+          awaited: true,
+        }),
+        { matched: ["4242"] },
+      );
+      yield* harness.firstTerminal;
+      yield* Deferred.succeed(released, undefined);
+      const rosters = () => awaitedRosters(harness.events, harness.providerThread.id);
+      yield* harness.until(() => rosters().length === 2);
+      assert.deepEqual(rosters(), [[BG_COMMAND_ITEM], []]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("settles a command Codex never completed once its terminal is gone", () =>
     Effect.gen(function* () {
       const settled = yield* Deferred.make<void>();

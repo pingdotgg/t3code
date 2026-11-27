@@ -387,6 +387,46 @@ describe("derivePendingBackgroundWork kinds", () => {
     ]);
   });
 
+  it("holds for a command the provider lists awaited, over its running turn item", () => {
+    const tasks = derivePendingBackgroundWork({
+      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+      providerThreads: [
+        {
+          id: "provider-thread-1" as never,
+          pendingBackgroundTasks: [
+            { taskId: "tests", kind: "command", description: "npm test", awaited: true },
+          ],
+        },
+      ],
+      turnItems: [
+        {
+          id: "item-tests" as never,
+          type: "command_execution",
+          status: "running",
+          title: null,
+          nativeItemRef: { nativeId: "tests" },
+          input: "npm test",
+        },
+        {
+          id: "item-dev" as never,
+          type: "command_execution",
+          status: "running",
+          title: null,
+          nativeItemRef: { nativeId: "dev" },
+          input: "npm run dev",
+        },
+      ],
+    });
+    expect(tasks).toEqual([
+      { taskId: "tests", description: "npm test", kind: "command", awaited: true },
+      { taskId: "dev", description: "npm run dev", kind: "command" },
+    ]);
+    expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
+    expect(backgroundWorkHoldsCompletion(tasks.filter((task) => task.taskId === "dev"))).toBe(
+      false,
+    );
+  });
+
   describe("pull request watches", () => {
     const watch = {
       startedAt: "2026-10-05T00:00:00.000Z",
