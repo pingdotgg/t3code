@@ -168,21 +168,83 @@ it("stops a pull request handoff when its loading toast is dismissed", async () 
   );
 });
 
-function CheckOutButton() {
-  const { startHandoff } = usePullRequestHandoffs({
+function CheckOutButton({
+  number = 1,
+  label = "Check out",
+  prompt,
+}: {
+  number?: number;
+  label?: string;
+  prompt?: string;
+}) {
+  const { handoff, startHandoff } = usePullRequestHandoffs({
     environmentId: EnvironmentId.make("environment"),
     detail: {
       projectId: ProjectId.make("project"),
       workspaceRoot: "/repo",
-      url: "https://github.com/owner/repo/pull/1",
+      url: `https://github.com/owner/repo/pull/${number}`,
     },
   });
   return (
-    <button type="button" onClick={() => void startHandoff("checkout", null)}>
-      Check out
+    <button
+      type="button"
+      disabled={handoff !== null}
+      onClick={() => void startHandoff("checkout", prompt === undefined ? null : { prompt })}
+    >
+      {label}
     </button>
   );
 }
+
+it("clears a superseded checkout without adding its task to the draft", async () => {
+  setup();
+  const draftId = DraftId.make("shared-checkout-draft");
+  const threadId = ThreadId.make("shared-checkout-thread");
+  state.newThread.mockImplementation(async (projectRef) => {
+    useComposerDraftStore
+      .getState()
+      .setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), projectRef, draftId, {
+        threadId,
+      });
+    return { draftId, threadId };
+  });
+  const success = (number: number) => ({
+    _tag: "Success" as const,
+    value: {
+      branch: `pr-${number}`,
+      worktreePath: `/repo-worktrees/pr-${number}`,
+      isOnPullRequestHead: true,
+      pullRequest: { url: `https://github.com/owner/repo/pull/${number}` },
+    },
+  });
+  const first = deferred<ReturnType<typeof success>>();
+  const second = deferred<ReturnType<typeof success>>();
+  state.prepareThread.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+  await using screen = await render(
+    <ToastProvider>
+      <CheckOutButton label="First checkout" prompt="Review the first pull request" />
+      <CheckOutButton number={2} label="Second checkout" />
+    </ToastProvider>,
+  );
+  const firstButton = screen.getByRole("button", { name: "First checkout" });
+  const secondButton = screen.getByRole("button", { name: "Second checkout" });
+  await userEvent.click(firstButton);
+  await userEvent.click(secondButton);
+  await expect.element(secondButton).toBeDisabled();
+
+  await act(async () => first.resolve(success(1)));
+
+  await expect.element(firstButton).toBeEnabled();
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt ?? "").toBe("");
+
+  await act(async () => second.resolve(success(2)));
+
+  await expect.element(screen.getByRole("dialog", { name: "Checked out" })).toBeVisible();
+  await expect
+    .element(screen.getByRole("dialog", { name: "Preparing the pull request checkout..." }))
+    .not.toBeInTheDocument();
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)?.branch).toBe("pr-2");
+});
 
 it("moves the draft the user typed into during a checkout onto the checkout", async () => {
   setup();
