@@ -5,10 +5,10 @@ function headingText(line: string): string | null {
   return text.replace(/[ \t]#+[ \t]*$/, "").trim();
 }
 
-export function proposedPlanTitle(planMarkdown: string): string | null {
+function findPlanTitle(lines: readonly string[]) {
   let fence = "";
   let comment = false;
-  for (const line of planMarkdown.replace(/^\uFEFF/, "").split(/\r?\n/)) {
+  for (const [index, line] of lines.entries()) {
     const [, marker = "", info = ""] = line.match(/^ {0,3}(`{3,}|~{3,})([^\r\n]*)$/) ?? [];
     if (fence) {
       if (marker[0] === fence[0] && marker.length >= fence.length && /^[ \t]*$/.test(info)) {
@@ -26,16 +26,19 @@ export function proposedPlanTitle(planMarkdown: string): string | null {
       continue;
     }
     const heading = headingText(line);
-    if (heading) return heading;
+    if (heading) return { index, text: heading };
   }
   return null;
 }
 
+export function proposedPlanTitle(planMarkdown: string): string | null {
+  return findPlanTitle(planMarkdown.replace(/^\uFEFF/, "").split(/\r?\n/))?.text ?? null;
+}
+
 export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
-  const lines = planMarkdown
-    .replace(/^\uFEFF/, "")
-    .trimEnd()
-    .split(/\r?\n/);
+  const markdown = planMarkdown.replace(/^\uFEFF/, "");
+  const title = findPlanTitle(markdown.split(/\r?\n/));
+  const lines = markdown.trimEnd().split(/\r?\n/);
   let start = 0;
   let commentStart = -1;
   const preambleBlocks: Array<{ start: number; end: number }> = [];
@@ -52,8 +55,15 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
     start += 1;
   }
   const firstPreambleBlock = preambleBlocks[0];
-  if (headingText(lines[start] ?? "")) {
+  if (title?.index === start) {
     start += 1;
+  } else if (title && title.index > start) {
+    // Keep the blocks on either side of the title separate.
+    lines[title.index] = "";
+    return lines
+      .slice(firstPreambleBlock?.start ?? start)
+      .join("\n")
+      .trimEnd();
   } else if (firstPreambleBlock) {
     return lines.slice(firstPreambleBlock.start).join("\n");
   }
