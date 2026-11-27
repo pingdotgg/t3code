@@ -1,4 +1,5 @@
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
   ChatAttachmentId,
@@ -137,6 +138,7 @@ function Harness(props: {
   const result = useQueuedRunEdit({
     environmentId: ENV,
     routeThreadRef: props.threadRef,
+    currentRouteThreadKeyRef: { current: scopedThreadKey(props.threadRef) },
     threadDraftTarget: props.threadRef,
     activeThreadId: props.threadRef.threadId,
     serverProjection: projection(
