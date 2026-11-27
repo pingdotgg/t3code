@@ -60,7 +60,7 @@ import {
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
+import { pullRequestReviewKey, reviewDraftReplacement } from "./pullRequestReviewDrafts";
 import {
   EnvironmentId,
   ProjectId,
@@ -1114,6 +1114,11 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const selectedRow = data.rows.find((row) => row.id === selectedRowId);
   const selectedFile = data.files.find((file) => file.id === selectedRow?.fileId);
+  const { draftId: replacingDraftId, resetOnReload } = reviewDraftReplacement(
+    reviewDraft.draft,
+    reviewDraft.ready ? diffHead.sha : null,
+    route.params.replacingDraftId,
+  );
   const commentOnLine = (rowId = selectedRowId) => {
     const row = data.rows.find((row) => row.id === rowId);
     const file = data.files.find((file) => file.id === row?.fileId);
@@ -1124,10 +1129,9 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       parsed.kind === "files"
         ? parsed.files.find((entry) => entry.id === file.id)?.previousPath
         : null;
-    if (route.params.replacingDraftId) navigation.setParams({ replacingDraftId: undefined });
     navigation.navigate("PullRequestInlineComment", {
       ...route.params,
-      ...(route.params.replacingDraftId ? { draftId: route.params.replacingDraftId } : {}),
+      ...(replacingDraftId ? { draftId: replacingDraftId } : {}),
       path: file.path,
       ...(oldPath ? { oldPath } : {}),
       position,
@@ -1327,9 +1331,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
         ? [
             {
               id: "comment",
-              title: route.params.replacingDraftId
-                ? gt("Move draft to this line")
-                : gt("Add review comment"),
+              title: replacingDraftId ? gt("Move draft to this line") : gt("Add review comment"),
               icon: "bubble.left",
               onPress: () => commentOnLine(),
             },
@@ -1364,7 +1366,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
         onBack={() => navigation.goBack()}
         menus={verticalControls ? undefined : [diffMenu]}
       />
-      {route.params.replacingDraftId ? (
+      {replacingDraftId ? (
         <Text className="px-4 py-2 text-xs text-foreground-muted">
           <T>Select a current line, then choose “Move draft to this line” from its menu.</T>
         </Text>
@@ -1383,6 +1385,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
           <Button
             label={gt("Reload changes")}
             onPress={() => {
+              if (resetOnReload) navigation.setParams(resetOnReload);
               result.refresh();
               setDiffHead({ scopeKey, sha: detail.data?.headSha ?? null });
               jumpedUnder.current = null;
