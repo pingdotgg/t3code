@@ -1,4 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - verifies isolated native worker processes and their exit events.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { expect, it } from "vite-plus/test";
 
 import { loadNativeSpeechModel } from "./native.ts";
@@ -155,6 +159,37 @@ it("kills a hung streaming feed without waiting for native cleanup", async () =>
   await model.dispose();
   await rejected;
 });
+
+it("skips process exit teardown when the backend dies during native inference", async () => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-speech-orphan-"));
+  const marker = NodePath.join(directory, "exit-teardown");
+  // The exit hook stands in for native atexit teardown; the interval for the threadpool call.
+  const model = await loadNativeSpeechModel(
+    "unused.gguf",
+    new AbortController().signal,
+    streamingFixture(`async () => {
+      const { writeFileSync } = process.getBuiltinModule("node:fs");
+      process.once("exit", () => writeFileSync(${JSON.stringify(marker)}, "ran"));
+      setInterval(() => {}, 1 << 30);
+      process.disconnect();
+      return await new Promise(() => {});
+    }`),
+  );
+  try {
+    await model.begin({ timestamps: "none" }, false);
+    await expect(model.feed(new Float32Array(512).fill(0.25))).rejects.toThrow(
+      "Speech process exited",
+    );
+    expect(
+      NodeFS.existsSync(marker),
+      "orphaned worker ran exit teardown while native inference was in flight",
+    ).toBe(false);
+  } finally {
+    await model.dispose();
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 const vadFixture = ({
   streaming = false,
   failVad = false,
@@ -259,6 +294,28 @@ it("decodes complete stable chunks before Stop and returns the ordered final tai
     expect(update.text).toEqual({ committed: "32000:0.10:0.20", tentative: "" });
     await model.feed(new Float32Array([0.4, 0.5]));
     expect(await model.finish()).toBe("32000:0.10:0.20 16002:0.30:0.50");
+  } finally {
+    await model.dispose();
+  }
+});
+
+it("uses bounded offline chunks for a native streaming model without opening a session", async () => {
+  const moduleUrl = `data:text/javascript,${encodeURIComponent(`
+    export const TranscribeModel = { load: async () => ({
+      capabilities: { supportsStreaming: true, maxAudioMs: 4000 },
+      supports: () => false,
+      createSession: () => { throw new Error("Offline inference must not open a stream"); },
+      transcribe: async pcm => {
+        if (pcm.length > 32000) throw new Error("Model input limit exceeded");
+        return { text: String(pcm.length) };
+      },
+    }) };
+  `)}`;
+  const model = await loadNativeSpeechModel("asr.gguf", new AbortController().signal, moduleUrl);
+  try {
+    expect(
+      await model.transcribe(new Float32Array(48002).fill(0.8), { timestamps: "none" }, false),
+    ).toEqual({ text: "32000 16002" });
   } finally {
     await model.dispose();
   }

@@ -7,8 +7,10 @@ import {
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpRouter from "effect/http/HttpRouter";
@@ -30,6 +32,8 @@ import * as ServerHttp from "../http.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import * as PeerHttp from "./http.ts";
+import * as PeerClientPairing from "./PeerClientPairing.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
@@ -37,7 +41,8 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 class PeerTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.metadata)
-  .add(EnvironmentHttpApi.groups.mcpOAuth) {}
+  .add(EnvironmentHttpApi.groups.mcpOAuth)
+  .add(EnvironmentHttpApi.groups.peerLink) {}
 
 export const descriptorOf = (
   environmentId: string,
@@ -56,41 +61,54 @@ export const descriptorOf = (
   },
 });
 
+/** An environment's own sessions and pairing links, on a database and secret store of its own. */
+export const layerEnvironmentAuth = (prefix: string) =>
+  EnvironmentAuth.layer.pipe(
+    Layer.provide(ManagedPolicy.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
+    Layer.provide(Sqlite.layerMemory),
+    Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provideMerge(ServerEnvironment.layerIdentity),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Layer.fresh,
+  );
+
 /**
  * The environment a link points at, as it runs: its descriptor, MCP OAuth,
  * and `/mcp` with `tools` behind the real client authenticator, on a real
  * socket. The descriptor can be swapped, as when its address comes to answer
  * as another environment, and every bearer it receives is recorded.
  */
-export const servePeer = <E, R>(
+export const servePeer = <E, R, E2 = never, R2 = never>(
   initial: ExecutionEnvironmentDescriptor,
   tools: Layer.Layer<never, E, R>,
+  /** More of its HTTP routes, whose handlers get the same auth and settings. */
+  routes: Layer.Layer<never, E2, R2> = Layer.empty,
 ) =>
   Effect.gen(function* () {
     const descriptor = yield* Ref.make(initial);
     const bearers = yield* Ref.make<ReadonlyArray<string>>([]);
     const probes = yield* Ref.make(0);
+    const asleep = yield* Ref.make(false);
+    const unanswered = yield* Queue.unbounded<void>();
+    const wake = yield* Deferred.make<void>();
     const layerEnvironment = Layer.succeed(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Ref.get(descriptor).pipe(Effect.map((current) => current.environmentId)),
       getDescriptor: Ref.get(descriptor),
     });
-    const authContext = yield* EnvironmentAuth.layer.pipe(
-      Layer.provide(ManagedPolicy.layerTest()),
-      Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
-      Layer.provide(Sqlite.layerMemory),
-      Layer.provideMerge(ServerSecretStore.layer),
-      Layer.provideMerge(ServerEnvironment.layerIdentity),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-peer-" })),
-      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-      Layer.fresh,
-      Layer.build,
-    );
+    const authContext = yield* Layer.build(layerEnvironmentAuth("t3-peer-link-peer-"));
     const layerRecordBearers = HttpRouter.middleware(
       (httpEffect) =>
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
           if (request.url.startsWith("/.well-known/t3/environment")) {
             yield* Ref.update(probes, (count) => count + 1);
+            if (yield* Ref.get(asleep)) {
+              yield* Queue.offer(unanswered, undefined);
+              yield* Deferred.await(wake);
+              return yield* Effect.die("the peer was closed while asleep");
+            }
           }
           const authorization = request.headers.authorization;
           if (authorization !== undefined) {
@@ -119,6 +137,7 @@ export const servePeer = <E, R>(
             ),
           ),
         ),
+        Layer.provide(PeerHttp.layer.pipe(Layer.provide(PeerClientPairing.layerIssuer))),
         Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
         Layer.provide(AuthHttp.layerAuthenticatedAuth),
       ),
@@ -130,6 +149,7 @@ export const servePeer = <E, R>(
         ),
         Layer.provide(McpOAuth.layerMcpClientAuthenticator),
       ),
+      routes,
     ).pipe(
       Layer.provide(layerRecordBearers),
       Layer.provide(layerEnvironment),
@@ -138,9 +158,12 @@ export const servePeer = <E, R>(
     // Fresh, so the peer never shares a toolkit or MCP server with the
     // environment that links to it in the same test.
     yield* HttpRouter.serve(layerRoutes, { disableListenLog: true, disableLogger: true }).pipe(
+      Layer.provide(Layer.succeedContext(authContext)),
       Layer.fresh,
       Layer.build,
     );
+    // An unanswered request would hold the server open past the test.
+    yield* Effect.addFinalizer(() => Deferred.succeed(wake, undefined));
     const address = (yield* HttpServer.HttpServer).address;
     if (address._tag === "UnixPathAddress") return yield* Effect.die("expected a TCP address");
     const url = `http://127.0.0.1:${address.port}`;
@@ -154,6 +177,10 @@ export const servePeer = <E, R>(
       bearers,
       /** How often its descriptor was asked for, as a probe of whether it answers. */
       probes,
+      /** While set, its descriptor never answers, as a machine that is asleep. */
+      asleep,
+      /** One entry per descriptor request it left unanswered while asleep. */
+      unanswered,
       /** The sessions linking created there, which its Connections lists. */
       linkedSessions: auth
         .listSessions()
@@ -184,6 +211,8 @@ export const layerLinkingEnvironment = <E = never>(
     Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
     Layer.provideMerge(database),
     Layer.provide(Layer.mergeAll(secrets, FetchHttpClient.layer)),
+    // Peers here are served on 127.0.0.1, so only `localhost` stands for this machine.
+    Layer.provide(Layer.succeed(PeerLinks.LoopbackHost, (host) => host === "localhost")),
     // Services that act for this environment, such as delegation, name it too.
     Layer.provideMerge(
       Layer.succeed(ServerEnvironment.ServerEnvironment, {

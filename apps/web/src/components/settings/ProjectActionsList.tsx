@@ -1,4 +1,5 @@
 import type { ProjectScript, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { SettingsIcon } from "lucide-react";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { commandForProjectScript } from "../../projectScripts";
@@ -17,10 +18,11 @@ export function ProjectActionsList({
   disabled: boolean;
   onEdit: (script: ProjectScript) => void;
 }) {
+  const gt = useGT();
   if (scripts.length === 0)
     return (
       <p className="px-3 py-2 text-base text-muted-foreground sm:px-4 sm:text-sm">
-        No actions configured.
+        <T>No actions configured.</T>
       </p>
     );
   return scripts.map((script) => {
@@ -35,17 +37,17 @@ export function ProjectActionsList({
             <span className="min-w-0 truncate">{script.name}</span>
             {script.runOnWorktreeCreate ? (
               <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground">
-                setup
+                {gt("setup", { $context: "badge, action runs when a worktree is created" })}
               </span>
             ) : null}
             {script.runOnSettle ? (
               <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground">
-                on settle
+                <T>on settle</T>
               </span>
             ) : null}
             {script.previewUrl ? (
               <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground max-sm:hidden">
-                preview · desktop only
+                <T>preview · desktop only</T>
               </span>
             ) : null}
           </span>
@@ -60,7 +62,7 @@ export function ProjectActionsList({
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label={`Edit ${script.name}`}
+                aria-label={gt("Edit {name}", { name: script.name })}
                 disabled={disabled}
                 onClick={() => onEdit(script)}
               >

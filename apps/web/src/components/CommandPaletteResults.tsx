@@ -1,9 +1,11 @@
 import { startPaletteThreadDrag } from "./CommandPalette.drag";
 import { useLegendListRef } from "~/hooks/useLegendListRef";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronRightIcon } from "lucide-react";
 import { type ReactNode, type RefObject, useState } from "react";
+import { T } from "gt-react";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { shortcutLabelForCommand } from "../keybindings";
@@ -40,9 +42,11 @@ function CommandPaletteEmptyState(props: { emptyStateMessage?: string; isActions
   return (
     <div className="py-10 text-center text-sm text-muted-foreground">
       {props.emptyStateMessage ??
-        (props.isActionsOnly
-          ? "No matching actions."
-          : "No matching commands, projects, or threads.")}
+        (props.isActionsOnly ? (
+          <T>No matching actions.</T>
+        ) : (
+          <T>No matching commands, projects, or threads.</T>
+        ))}
     </div>
   );
 }
@@ -94,6 +98,20 @@ export function scrollCommandPaletteRowIntoView(
   });
 }
 
+// Keeps a mounted row's old data when it shows the same item, so typing re-renders only the
+// rows whose item or position changed.
+function commandPaletteRowsAreEqual(previous: CommandPaletteRow, next: CommandPaletteRow) {
+  if (previous.kind === "label" || next.kind === "label") {
+    return (
+      previous.kind === "label" &&
+      next.kind === "label" &&
+      previous.label === next.label &&
+      previous.first === next.first
+    );
+  }
+  return previous.item === next.item && previous.itemIndex === next.itemIndex;
+}
+
 interface CommandPaletteVirtualizedResultsProps extends Omit<CommandPaletteResultsProps, "groups"> {
   rows: ReadonlyArray<CommandPaletteRow>;
   listRef: RefObject<LegendListRef | null>;
@@ -103,6 +121,8 @@ interface CommandPaletteVirtualizedResultsProps extends Omit<CommandPaletteResul
  * unmounted rows. */
 export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualizedResultsProps) {
   const { listRef } = props;
+  // The palette rebuilds its handler every render; a stable one keeps rows from re-rendering.
+  const onExecuteItem = useStableCallback(props.onExecuteItem);
   const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
   const updateScrollFade = () => {
     const metrics = listRef.current?.getState();
@@ -114,6 +134,11 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
     );
   };
   const scrollRef = useLegendListRef(listRef, updateScrollFade);
+  // Kept rows re-render only when this changes, so it holds everything rows read besides their item.
+  const rowInputs = {
+    highlightedItemValue: props.highlightedItemValue,
+    keybindings: props.keybindings,
+  };
 
   if (props.rows.length === 0) {
     return <CommandPaletteEmptyState {...props} />;
@@ -126,8 +151,9 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
         data={props.rows}
         initialScrollOffset={0}
         keyExtractor={(row) => row.key}
+        itemsAreEqual={commandPaletteRowsAreEqual}
         getItemType={(row) => row.kind}
-        extraData={props.highlightedItemValue}
+        extraData={rowInputs}
         renderItem={({ item: row }) =>
           row.kind === "label" ? (
             <div className={row.first ? undefined : "pt-1.5"}>
@@ -141,7 +167,7 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
               item={row.item}
               keybindings={props.keybindings}
               isActive={props.highlightedItemValue === row.item.value}
-              onExecuteItem={props.onExecuteItem}
+              onExecuteItem={onExecuteItem}
             />
           )
         }
@@ -250,6 +276,9 @@ function CommandPaletteResultRow(props: {
       {...(props.index === undefined ? {} : { index: props.index })}
       value={props.item.value}
       active={props.isActive}
+      {...(props.item.kind === "action" && props.item.checked !== undefined
+        ? { "aria-checked": props.item.checked }
+        : {})}
       onPointerDown={(event) => {
         if (props.item.threadRef) {
           startPaletteThreadDrag(

@@ -5,10 +5,11 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
 import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.logic";
 import { closePreviewSession } from "../components/preview/closePreviewSession";
 import { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
+import { m } from "../i18n/messages";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { focusPanelTerminalAfterClose } from "../lib/terminalFocus";
 import { readLocalApi } from "../localApi";
@@ -19,11 +20,9 @@ import {
   useRightPanelStore,
   type RightPanelSurface,
 } from "../rightPanelStore";
-import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readThreadShell } from "../state/entities";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
-import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -71,13 +70,12 @@ export function useRightPanelSurfaceClose(input: {
       }
     }
     if (
-      surface.kind === "side-chat" &&
-      readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope) &&
-      // A live shell without the side chat means it is already deleted.
-      !(
-        appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live" &&
-        readThreadShell(scopeThreadRef(ref.environmentId, surface.threadId)) === null
-      )
+      surface.kind === "thread" &&
+      // Only a side chat the shell still lists is thrown away with its tab; a subagent belongs to
+      // its parent's work, and an unlisted side chat is already deleted.
+      readThreadShell(scopeThreadRef(ref.environmentId, surface.threadId))?.lineage.sideChat ===
+        true &&
+      readEnvironmentScope(ref.environmentId, AuthOrchestrationOperateScope)
     ) {
       // The server keeps a side chat with a run or message. Reopen skips one it deleted.
       void deleteThread({
@@ -104,18 +102,23 @@ export function useRightPanelSurfaceClose(input: {
       () => undefined,
     );
   };
-  // The active surface closes last so the panel does not flash through it.
   const finishClose = (toClose: readonly RightPanelSurface[]) => {
     if (!threadRef) return;
     const store = useRightPanelStore.getState();
-    const activeId = selectThreadRightPanelState(store.byThreadKey, threadRef).activeSurfaceId;
-    const ordered = toClose.toSorted(
-      (left, right) => Number(left.id === activeId) - Number(right.id === activeId),
+    const { activeSurfaceId, surfaces } = selectThreadRightPanelState(store.byThreadKey, threadRef);
+    const openIds = new Set(surfaces.map((surface) => surface.id));
+    const closingSurfaces = toClose.filter((surface) => openIds.has(surface.id));
+    if (closingSurfaces.length === 0) return;
+    // Close the tabs before releasing sessions, which can prune the tabs during reconciliation.
+    store.closeSurfaces(
+      threadRef,
+      closingSurfaces.map((surface) => surface.id),
     );
-    for (const surface of ordered) {
-      // Releasing a browser drops its session, which prunes the tab automatically; close it
-      // first so the close stays a user action that hides the panel after the last tab.
-      store.closeSurface(threadRef, surface.id);
+    // The active tab's session closes last so reopening restores it first.
+    const releaseOrder = closingSurfaces.toSorted(
+      (left, right) => Number(left.id === activeSurfaceId) - Number(right.id === activeSurfaceId),
+    );
+    for (const surface of releaseOrder) {
       releaseSurfaceResources(threadRef, surface);
     }
     const nextActiveSurface = selectActiveRightPanelSurface(
@@ -125,13 +128,27 @@ export function useRightPanelSurfaceClose(input: {
     if (nextActiveSurface?.kind === "preview" && nextActiveSurface.resourceId) {
       setActivePreviewTab(threadRef, nextActiveSurface.resourceId);
     }
-    focusPanelTerminalAfterClose(threadRef, activeId);
+    focusPanelTerminalAfterClose(threadRef, activeSurfaceId);
   };
   const labelFor = (terminalId: string) =>
-    terminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
+    terminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId, m);
   const closeSurfaces = (toClose: readonly RightPanelSurface[]) => {
     if (!threadRef) return;
-    closeAfterAgentBrowserConfirmation(toClose, () => finishClose(toClose));
+    closeAfterAgentBrowserConfirmation(toClose, () => {
+      const labels = readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
+        ? toClose.flatMap((surface) =>
+            surface.kind === "terminal" ? surface.terminalIds.map(labelFor) : [],
+          )
+        : [];
+      const [first, ...rest] = labels;
+      if (first === undefined) {
+        finishClose(toClose);
+        return;
+      }
+      void confirmTerminalClose([first, ...rest]).then((confirmed) => {
+        if (confirmed) finishClose(toClose);
+      });
+    });
   };
 
   const closeSurface = useStableCallback((surface: RightPanelSurface) => {
@@ -165,6 +182,13 @@ export function useRightPanelSurfaceClose(input: {
     closeSurfaces(surfaces.slice(surfaceIndex + 1));
   });
   const closeAllSurfaces = useStableCallback(() => closeSurfaces(surfaces));
+  const closeSelectedSurfaces = useStableCallback(closeSurfaces);
 
-  return { closeSurface, closeOtherSurfaces, closeSurfacesToRight, closeAllSurfaces };
+  return {
+    closeSurface,
+    closeSelectedSurfaces,
+    closeOtherSurfaces,
+    closeSurfacesToRight,
+    closeAllSurfaces,
+  };
 }

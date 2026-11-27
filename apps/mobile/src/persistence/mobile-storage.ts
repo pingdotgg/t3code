@@ -9,6 +9,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as MobileSecureStorage from "./mobile-secure-storage";
 
 const AGENT_AWARENESS_DEVICE_ID_KEY = "t3code.agent-awareness.device-id";
+const ANALYTICS_DEVICE_ID_KEY = "t3code.analytics.device-id";
 const AGENT_AWARENESS_REGISTRATION_KEY = "t3code.agent-awareness.registration";
 const RECENT_THREAD_SHORTCUTS_KEY = "t3code.recent-thread-shortcuts";
 const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -62,6 +63,11 @@ export class MobileStorage extends Context.Service<
   MobileStorage,
   {
     readonly loadOrCreateAgentAwarenessDeviceId: Effect.Effect<
+      string,
+      MobileSecureStorage.MobileSecureStorageError | MobileDeviceIdGenerationError
+    >;
+    /** Random and used only by analytics, so its hash links to nothing the relay stores. */
+    readonly loadOrCreateAnalyticsDeviceId: Effect.Effect<
       string,
       MobileSecureStorage.MobileSecureStorageError | MobileDeviceIdGenerationError
     >;
@@ -125,16 +131,19 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
     yield* secureStorage.setItem(key, encoded);
   });
 
-  const loadOrCreateAgentAwarenessDeviceId = Effect.gen(function* () {
-    const existing = yield* secureStorage.getItem(AGENT_AWARENESS_DEVICE_ID_KEY);
+  const loadOrCreateRandomId = Effect.fn("MobileStorage.loadOrCreateRandomId")(function* (
+    key: string,
+  ) {
+    const existing = yield* secureStorage.getItem(key);
     if (existing?.trim()) return existing;
-    const deviceId = yield* Effect.tryPromise({
+    const created = yield* Effect.tryPromise({
       try: () => import("../lib/uuid").then(({ uuidv4 }) => uuidv4()),
       catch: (cause) => new MobileDeviceIdGenerationError({ cause }),
     });
-    yield* secureStorage.setItem(AGENT_AWARENESS_DEVICE_ID_KEY, deviceId);
-    return deviceId;
-  }).pipe(deviceIdLock.withPermits(1));
+    yield* secureStorage.setItem(key, created);
+    return created;
+  }, deviceIdLock.withPermits(1));
+  const loadOrCreateAgentAwarenessDeviceId = loadOrCreateRandomId(AGENT_AWARENESS_DEVICE_ID_KEY);
 
   const loadAgentAwarenessDeviceId = secureStorage
     .getItem(AGENT_AWARENESS_DEVICE_ID_KEY)
@@ -182,6 +191,7 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
 
   return MobileStorage.of({
     loadOrCreateAgentAwarenessDeviceId,
+    loadOrCreateAnalyticsDeviceId: loadOrCreateRandomId(ANALYTICS_DEVICE_ID_KEY),
     loadAgentAwarenessDeviceId,
     loadAgentAwarenessRegistrationRecord,
     saveAgentAwarenessRegistrationRecord: Effect.fn(

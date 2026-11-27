@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { msg } from "gt-react-native";
 import { useEffect } from "react";
 import { AppState } from "react-native";
 import * as Atom from "effect/reactivity/Atom";
@@ -13,6 +14,7 @@ import {
   type ReviewDraft,
 } from "./pullRequestReviewDrafts";
 import type { PullRequestParams } from "./usePullRequestDiff";
+import { m } from "../../i18n/messages";
 
 const state = Atom.make<{
   drafts: Record<string, ReviewDraft>;
@@ -41,7 +43,7 @@ function load() {
     } catch {
       appAtomRegistry.set(state, {
         ...appAtomRegistry.get(state),
-        error: "Could not restore review drafts. Reopen this screen to retry.",
+        error: m(msg("Could not restore review drafts. Reopen this screen to retry.")),
       });
       loading = null;
     }
@@ -51,9 +53,10 @@ function load() {
 async function persist() {
   if (timer) clearTimeout(timer);
   timer = null;
-  await queue.run(async () => {
+  return queue.run(async () => {
     const current = appAtomRegistry.get(state);
-    if (!current.ready || current.drafts === savedDrafts) return;
+    if (!current.ready) return false;
+    if (current.drafts === savedDrafts) return true;
     try {
       const drafts = Object.fromEntries(
         Object.entries(current.drafts).filter(
@@ -64,11 +67,13 @@ async function persist() {
       savedDrafts = current.drafts;
       if (appAtomRegistry.get(state).error)
         appAtomRegistry.set(state, { ...appAtomRegistry.get(state), error: null });
+      return true;
     } catch {
       appAtomRegistry.set(state, {
         ...appAtomRegistry.get(state),
-        error: "Drafts are kept in this session, but could not be saved on this device.",
+        error: m(msg("Drafts are kept in this session, but could not be saved on this device.")),
       });
+      return false;
     }
   });
 }

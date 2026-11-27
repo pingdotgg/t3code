@@ -2,12 +2,14 @@ import {
   type EnvironmentId,
   type VcsListRefsInput,
   type VcsListRefsResult,
+  type VcsRefreshStatusResult,
   type VcsStatusResult,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
@@ -26,6 +28,7 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import {
   request,
+  requestGuarded,
   subscribe,
   subscribeVcsBranch,
   refreshVcsBranch,
@@ -35,6 +38,7 @@ import { followStreamInEnvironment } from "./runtime.ts";
 import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import {
   invalidateCachedVcsRefs,
+  invalidateCachedVcsRefsIfChanged,
   vcsRefsCacheStateAtom,
   withVcsRefsPersistenceLock,
 } from "./vcsRefInvalidation.ts";
@@ -292,6 +296,17 @@ export function createVcsEnvironmentAtoms<R, E>(
       cwd: target.input.cwd,
     });
 
+  const invalidateRefsIfChanged = (
+    target: { readonly environmentId: EnvironmentId; readonly input: { readonly cwd: string } },
+    registry: AtomRegistry.AtomRegistry,
+    exit: Exit.Exit<VcsRefreshStatusResult, unknown>,
+  ) =>
+    invalidateCachedVcsRefsIfChanged(
+      registry,
+      { environmentId: target.environmentId, cwd: target.input.cwd },
+      Exit.isSuccess(exit) ? exit.value.refsDigest : undefined,
+    );
+
   return {
     listRefs,
     // An uncached read for decisions that must match the repository now, not
@@ -339,7 +354,16 @@ export function createVcsEnvironmentAtoms<R, E>(
       tag: WS_METHODS.vcsRefreshStatus,
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
-      onSettled: invalidateRefs,
+      onSettled: invalidateRefsIfChanged,
+    }),
+    // Outside the serial queue: it only reads status, and a checkout picked right after opening
+    // the picker must not wait behind that read.
+    refreshLocalStatusForPicker: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:refresh-local-status-for-picker",
+      tag: WS_METHODS.vcsRefreshStatus,
+      execute: (input: { readonly cwd: string }) =>
+        requestGuarded(WS_METHODS.vcsRefreshStatus, { cwd: input.cwd, localOnly: true }),
+      onSettled: invalidateRefsIfChanged,
     }),
     createWorktree: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:create-worktree",

@@ -328,7 +328,7 @@ const makeOtlpSpan = (self: SpanImpl): OtlpSpan => {
   let otelStatus: Status
 
   if (status.exit._tag === "Success") {
-    otelStatus = { code: StatusCode.Ok }
+    otelStatus = { code: StatusCode.Unset }
   } else if (Cause.hasInterruptsOnly(status.exit.cause)) {
     otelStatus = { code: StatusCode.Unset }
     attributes.push({
@@ -341,7 +341,7 @@ const makeOtlpSpan = (self: SpanImpl): OtlpSpan => {
     })
     otelStatus = errors.length > 0
       ? { code: StatusCode.Error, message: errors[0].message }
-      : { code: StatusCode.Ok }
+      : { code: StatusCode.Unset }
     for (const error of errors) {
       events.push({
         name: "exception",
