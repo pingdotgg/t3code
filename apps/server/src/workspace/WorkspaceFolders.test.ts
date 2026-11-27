@@ -1,10 +1,16 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ProjectId, type ProjectTrackedFolder } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type ProjectTrackedFolder,
+  WorkspaceScanFoldersResult,
+} from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -12,6 +18,7 @@ import * as TaskFolderStore from "./TaskFolderStore.ts";
 import * as WorkspaceFolders from "./WorkspaceFolders.ts";
 
 const projectId = ProjectId.make("project:workspace-folders");
+const encodeScanResult = Schema.encodeSync(WorkspaceScanFoldersResult);
 
 const layerFor = (project?: {
   readonly workspaceRoot: string;
@@ -90,6 +97,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         "libs/inline/.git",
         "extra/repo/.git",
         "extra/joined/.git",
+        " notes",
         "notes",
         "src/svc/.git",
         "tree",
@@ -98,6 +106,9 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         "../outside/.git",
       ]) {
         yield* fileSystem.makeDirectory(path.join(root, folder), { recursive: true });
+      }
+      if (!(yield* HostProcess.isWindows)) {
+        yield* fileSystem.makeDirectory(path.join(root, "trailing "), { recursive: true });
       }
       yield* fileSystem.symlink(outside, path.join(root, "linked"));
       yield* fileSystem.symlink(root, path.join(root, "self"));
@@ -140,7 +151,11 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             // Entries that lead nowhere take none of the room the real ones need.
             ${Array.from({ length: 130 }, (_, index) => `{ "path": "gone-${index}" },`).join("")}
             { "path": "api", "name": "API" },
+            { "path": " notes", "name": "Intended" },
             { "path": "notes" },
+            { "path": "trailing ", "name": "Trailing" },
+            { "path": "trailing /", "name": "TrailingSlash" },
+            { "path": "   " },
             { "path": "../outside" },
             { "path": "gone" },
             { "path": "." },
@@ -149,7 +164,8 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
       );
 
       const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
-      assert.deepEqual(yield* workspaceFolders.scan({ workspaceRoot: `${root}${path.sep}` }), {
+      const scanned = yield* workspaceFolders.scan({ workspaceRoot: `${root}${path.sep}` });
+      const expected = {
         workspaceRoot: root,
         isGitRepository: true,
         codeWorkspaceFile: path.join(root, "team.code-workspace"),
@@ -158,6 +174,12 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             path: path.join(root, "api"),
             name: "API",
             isGitRepository: true,
+            source: "code-workspace",
+          },
+          {
+            path: path.join(root, " notes"),
+            name: "Intended",
+            isGitRepository: false,
             source: "code-workspace",
           },
           {
@@ -202,7 +224,9 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           },
           { path: path.join(root, "web"), name: "web", isGitRepository: true, source: "child" },
         ],
-      });
+      } satisfies WorkspaceScanFoldersResult;
+      assert.deepEqual(scanned, expected);
+      assert.deepEqual(encodeScanResult(scanned), expected);
       assert.equal(
         (yield* workspaceFolders.scan({ workspaceRoot: path.join(root, "gone") }).pipe(Effect.flip))
           ._tag,
