@@ -42,6 +42,7 @@ import {
   orchestrationCommandsTotal,
 } from "../observability/Metrics.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -3424,4 +3425,47 @@ it.effect(
       );
       assert.equal(run?.status, "running");
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a message is refused while a launch is still preparing the worktree", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+    const threadId = ThreadId.make("thread:send-before-bind");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-send-before-bind"),
+      threadId,
+      projectId: ProjectId.make("project:send-before-bind"),
+      title: "Send before bind",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    yield* tracker.holdWorkspace(threadId).pipe(Effect.asVoid);
+
+    const sent = yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("send-before-bind"),
+        threadId,
+        messageId: MessageId.make("message:send-before-bind"),
+        text: "Run pwd",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      })
+      .pipe(Effect.result);
+
+    assert.isTrue(Result.isFailure(sent));
+    const projection = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(
+      threadId,
+    );
+    assert.deepEqual(projection.runs, []);
+  }).pipe(Effect.provide(Layer.mergeAll(layerTest, WorktreeSetupTracker.layer))),
 );

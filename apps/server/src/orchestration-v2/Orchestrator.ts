@@ -4917,6 +4917,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type !== "thread.settle" &&
       liveSessions.length > 0
     ) {
+      // Detaching ends a started turn, which may never report completion. Only a workspace
+      // handoff (compare-and-set or continuation) ends its own caller's turn on purpose.
+      if (
+        command.type === "thread.metadata.update" &&
+        command.expectedWorktreePath === undefined &&
+        command.continuation === undefined &&
+        (yield* loadProjectionForCommand(command, ["runs"], { turnItemTypes: [] })).runs.some(
+          (run) => run.status === "starting" || run.status === "running",
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has an active turn. Stop the current turn to switch worktrees.`,
+        });
+      }
       // The provider context holds only the active and target provider threads; a session kept
       // busy by an earlier queued hand-off owns neither, so probe every thread of this one.
       const { providerThreads } = yield* projectionStore
@@ -8107,6 +8123,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
+    // A launch without a message prepares its worktree with no run to queue behind; a message
+    // now would start in the project checkout and lose its turn when the worktree is bound.
+    if (
+      activeRun === undefined &&
+      worktreeMissingRun === undefined &&
+      (dispatchMode.type === "queue_after_active" || dispatchMode.type === "start_immediately") &&
+      projection.thread.worktreePath === null &&
+      (yield* worktreeSetupTracker.workspaceIsHeld(command.threadId))
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is still preparing its worktree. Send the message once its worktree is set up.`,
+      });
+    }
     // A steer whose run already ended still keeps its place in the queue.
     const steerFollowUpSource =
       command.steerFollowUpOfRunId === undefined
