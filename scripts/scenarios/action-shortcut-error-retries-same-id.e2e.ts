@@ -55,14 +55,7 @@ test(
       await writeKeybindings("{invalid JSON");
       await save.tap();
       await editor.getByText(/Unable to parse keybindings config/).waitFor();
-      firstSettings = await runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const client = yield* rpcClient(T3_HOME, origin);
-            return yield* client[WS_METHODS.serverGetSettings]({});
-          }),
-        ),
-      );
+      firstSettings = (await readConfig(origin)).settings;
     } finally {
       await writeKeybindings(original);
     }
