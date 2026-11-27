@@ -792,6 +792,51 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
   expect(editor.element().textContent).toContain("Next draft");
 });
 
+it.each([
+  { from: "default", to: "plan" },
+  { from: "plan", to: "default" },
+] as const)("the composer can switch from $from to $to before sending", async ({ from, to }) => {
+  const thread = { ...threadWithHistory(`mode-${from}`, 1), interactionMode: from };
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const toggle = page.getByRole("button", { name: "Plan mode" });
+  await expect.element(toggle).toHaveAttribute("aria-pressed", String(from === "plan"));
+  await toggle.click();
+  await expect.element(toggle).toHaveAttribute("aria-pressed", String(to === "plan"));
+
+  await page.getByTestId("composer-editor").click();
+  await insertText("Work through the next step");
+  await userEvent.keyboard("{Enter}");
+
+  await vi.waitFor(() => {
+    expect(dispatchedCommands()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "thread.interaction-mode.set",
+          threadId: thread.id,
+          interactionMode: to,
+        }),
+        expect.objectContaining({
+          type: "message.dispatch",
+          threadId: thread.id,
+          text: "Work through the next step",
+        }),
+      ]),
+    );
+  });
+});
+
 it("Enter on an empty prompt resumes an interrupted thread", async () => {
   const history = threadWithHistory("interrupted", 1);
   const interruptedRun = { ...history.runs[0]!, status: "interrupted" as const };

@@ -240,6 +240,7 @@ export interface FakeThread {
   readonly title: string;
   /** Defaults to GPT-5.4 on Codex. */
   readonly modelSelection?: ModelSelection;
+  readonly interactionMode?: OrchestrationV2ThreadShell["interactionMode"];
   /** The first is the thread's active provider thread. */
   readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
   readonly issues?: OrchestrationV2ThreadShell["issues"];
@@ -329,7 +330,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     providerInstanceId: modelSelection.instanceId,
     modelSelection,
     runtimeMode: "full-access",
-    interactionMode: "default",
+    interactionMode: thread.interactionMode ?? "default",
     branch: "main",
     worktreePath: null,
     activeProviderThreadId: thread.providerThreads?.[0]?.id ?? null,

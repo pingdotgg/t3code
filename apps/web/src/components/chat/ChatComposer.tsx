@@ -37,6 +37,7 @@ import type {
   ModelSelection,
   ProjectId,
   PreviewAnnotationPayload,
+  ProviderInteractionMode,
   ThreadContextRecord,
   EnvironmentContextRecord,
   ResolvedKeybindingsConfig,
@@ -257,7 +258,7 @@ import { observeResize } from "~/lib/observeResize";
 const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
 import { toastManager } from "../ui/toast";
 import { m as resolveMessage } from "../../i18n/messages";
-import { BuildingIcon, PlayIcon, ReplyIcon } from "lucide-react";
+import { BuildingIcon, ListChecksIcon, PlayIcon, ReplyIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
 import { assistantCitationNavigation } from "../../lib/assistantCitationNavigation";
@@ -267,7 +268,12 @@ import { useManagedPolicy } from "../../state/managedPolicy";
 import { hasProviderSetup } from "./ProviderStatusBanner";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
-import { isVideoAttachment, type SessionPhase, type Thread } from "../../types";
+import {
+  DEFAULT_INTERACTION_MODE,
+  isVideoAttachment,
+  type SessionPhase,
+  type Thread,
+} from "../../types";
 import { type ComposerPromptHistoryPosition } from "./composerPromptHistory";
 import { usePendingUserInputDraft } from "./usePendingThreadRequests";
 import type { PendingApproval, PendingUserInput, TimelineEntry } from "../../session-logic";
@@ -314,6 +320,7 @@ import {
 } from "./preparingComposerImages";
 import { HELD_COMPOSER_SEND_BANNER_ID } from "./ComposerHeldSendBanner";
 import { ComposerControlsBar } from "./ComposerControlsBar";
+import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 import { promptSuggestionToAccept, usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
@@ -374,6 +381,7 @@ export interface ChatComposerHandle {
     environmentContexts: EnvironmentContextRecord[];
     selectedPromptEffort: string | null;
     selectedModelSelection: ModelSelection;
+    interactionMode: ProviderInteractionMode;
     multipleModelSelections: ReadonlyArray<ModelSelection> | null;
     providerAvailable: boolean;
     selectedProvider: ProviderDriverKind;
@@ -669,6 +677,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isEditingQueuedMessage = editingQueuedAttachments !== null;
   const applyThreadModelPick = useApplyThreadModelPick();
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
+  const setInteractionMode = useComposerDraftStore((store) => store.setInteractionMode);
   const composerDraftTargetKeyRef = useRef("");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed draft target key to a ref read by async handlers
   useLayoutEffect(() => {
@@ -1001,6 +1010,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     lockedInstanceId:
       activeThread?.runtime?.providerInstanceId ?? activeThreadModelSelection?.instanceId,
   });
+  const supportsPlanMode =
+    selectedProviderEntry !== undefined &&
+    selectedProviderEntry.snapshot.showInteractionModeToggle !== false &&
+    multipleModelSelections === null;
+  const interactionMode = supportsPlanMode
+    ? (composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE)
+    : DEFAULT_INTERACTION_MODE;
+  const togglePlanMode = () => {
+    setInteractionMode(
+      composerDraftTarget,
+      interactionMode === "plan" ? DEFAULT_INTERACTION_MODE : "plan",
+    );
+  };
+  const togglePlanModeStable = useStableCallback(togglePlanMode);
   const noProviderAvailable =
     selectedProviderEntry === undefined && multipleModelSelections === null;
   const providerCatalogPending = noProviderAvailable && !providerCatalogKnown;
@@ -2710,6 +2733,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : expandedControlsIconOnlyBlockCount;
   const composerControls = (
     <RuntimeModeLimitsTargetContext value={runtimeModeLimitsFor}>
+      {supportsPlanMode && !isEditingQueuedMessage && pendingUserInputs.length === 0 ? (
+        <ComposerControl
+          size={composerControlsCollapsed ? "xs" : "sm"}
+          aria-label={gt("Plan mode")}
+          aria-pressed={interactionMode === "plan"}
+          title={gt("Plan mode")}
+          disabled={!canOperateThread || isSendBusy}
+          onClick={togglePlanModeStable}
+        >
+          <ComposerControlIcon
+            icon={ListChecksIcon}
+            size={composerControlsCollapsed ? "xs" : "sm"}
+          />
+          <span data-composer-control-label className="hidden sm:inline">
+            {gt("Plan mode")}
+          </span>
+        </ComposerControl>
+      ) : null}
       <ComposerControlsBar
         environmentId={environmentId}
         workspaceCwd={gitCwd}
@@ -3533,6 +3574,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         environmentContexts: composerEnvironmentContexts,
         selectedPromptEffort,
         selectedModelSelection,
+        interactionMode,
         multipleModelSelections:
           routeKind === "draft" && multipleModelSelections !== null
             ? multipleModelSelections.map((selection) =>
@@ -3604,6 +3646,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedInstanceId,
       reportedModelSelection,
       selectedModelSelection,
+      interactionMode,
       multipleModelSelections,
       setMultipleModelSelections,
       routeKind,
