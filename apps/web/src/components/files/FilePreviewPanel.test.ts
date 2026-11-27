@@ -286,6 +286,15 @@ describe("document preview contents", () => {
     expect(escapedBreak.pages[0]!.html).toBe(
       "<p data-rtf-whitespace><strong>ABC</strong><br><strong>D</strong></p>",
     );
+    const underlines = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi{\ul single} {\uldb double\uldb0  plain} {\ulw words} {\uld dotted} {\ulwave wave} {\ulc1 color}}`,
+      ),
+    );
+    if (underlines.type !== "document") throw new Error("Expected document");
+    expect(underlines.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace><u>single</u> <u>double</u> plain <u>words</u> <u>dotted</u> <u>wave</u> color</p>",
+    );
   });
 
   it("breaks lines at the paragraph and line breaks TextEdit writes", () => {
@@ -1013,6 +1022,36 @@ Third}`;
     expect(html).not.toContain("feImage");
     expect(html).toContain('filter="url(#tint)"');
     expect((await book.page(1)).html).toContain('<feDropShadow dx="2">');
+  });
+
+  it("keeps the RGB channel adjustments in EPUB SVG artwork", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="poster" href="poster.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="poster"/></spine></package>',
+      )
+      .file(
+        "poster.svg",
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <filter id="tint"><feComponentTransfer>
+            <feFuncR type="linear" slope="0.5"/>
+            <feFuncG type="discrete" tableValues="0 0.5 1"/>
+            <feFuncB type="gamma" amplitude="2" exponent="3"/>
+          </feComponentTransfer></filter>
+          <rect width="80" height="80" fill="orange" filter="url(#tint)"/>
+        </svg>`,
+      );
+    const book = await openEpub(archive);
+    const { html } = await book.page(0);
+    expect(html.match(/<feFunc[RGB][^>]*>/g) ?? []).toEqual([
+      '<feFuncR type="linear" slope="0.5">',
+      '<feFuncG type="discrete" tableValues="0 0.5 1">',
+      '<feFuncB type="gamma" amplitude="2" exponent="3">',
+    ]);
   });
 
   it("keeps embedded raster images in EPUB SVG artwork", async () => {

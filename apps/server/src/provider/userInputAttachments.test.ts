@@ -1255,6 +1255,18 @@ describe("question answer paths", () => {
         })),
         {
           ext: "odt",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>' +
+              "次は<text:ruby><text:ruby-base>東京</text:ruby-base><text:ruby-text>とうきょう</text:ruby-text></text:ruby>" +
+              "から<text:ruby><text:ruby-base>京都</text:ruby-base><text:ruby-text/></text:ruby>まで。" +
+              "</text:p></office:text></office:body></office:document-content>",
+          },
+          expected: [],
+          exact: "次は東京(とうきょう)から京都まで。",
+        },
+        {
+          ext: "odt",
           bounded: true,
           parts: { "content.xml": '<document><p>Start<s c="1000001"/>Unneeded</p></document>' },
           expected: ["Start", "[Extracted text truncated at document extraction limits.]"],
@@ -1464,6 +1476,28 @@ describe("question answer paths", () => {
           },
           expected: ["Station timetable\nGates open at nine.\n\nVisible section"],
           absent: ["Old timetable", "Draft schedule", "Draft notes", "Draft date"],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml": [
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:other="urn:example:metadata"><office:body><office:text>',
+              "<text:p>Warehouse instructions</text:p>",
+              '<text:p>Use the west entrance.<text:hidden-paragraph text:is-hidden="true"/></text:p>',
+              '<text:h text:outline-level="2">Retired schedule<text:span><t:hidden-paragraph xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" t:is-hidden=" &#x9;1 "/></text:span></text:h>',
+              "<text:p>Use the north entrance.<text:hidden-paragraph/></text:p>",
+              '<text:p><text:hidden-paragraph text:is-hidden="true"/>Deliveries welcome.<text:hidden-paragraph text:is-hidden="false"/></text:p>',
+              '<text:p><text:hidden-paragraph text:is-hidden="0"/>Bring your badge.<text:hidden-paragraph text:is-hidden="true"/></text:p>',
+              '<text:p>Loading dock.<other:hidden-paragraph text:is-hidden="true"/></text:p>',
+              '<text:p>Visitor parking.<text:hidden-paragraph other:is-hidden="true"/></text:p>',
+              '<other:p>Emergency contacts.<text:hidden-paragraph text:is-hidden="true"/></other:p>',
+              "</office:text></office:body></office:document-content>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "Warehouse instructions\nUse the north entrance.\nDeliveries welcome.\nBring your badge.\nLoading dock.\nVisitor parking.\nEmergency contacts.",
         },
         {
           ext: "odt",

@@ -291,6 +291,8 @@ describe("searchSettings", () => {
     for (const [title, id] of [
       ["Automatic worktree cleanup", "storage-worktrees"],
       ["Delete settled worktrees", "storage-worktrees"],
+      ["Delete worktrees with deleted threads", "storage-worktrees"],
+      ["Delete merged worktrees", "storage-worktrees"],
       ["Delete old browser artifacts", "storage-artifacts"],
       ["Delete old rotated logs", "storage-artifacts"],
       ["Custom search URL", "browser-search-engine"],
