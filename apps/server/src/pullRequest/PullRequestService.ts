@@ -973,6 +973,29 @@ export const make = Effect.gen(function* () {
           { concurrency: REPOSITORY_CONCURRENCY },
         ),
       ),
+      // A multi-repository project's folder is usually not a repository itself: each tracked
+      // repository stands in as the project, checked out at its own folder.
+      Effect.flatMap((projects) =>
+        Effect.forEach(
+          projects,
+          (project) =>
+            Effect.forEach(
+              project.trackedFolders ?? [],
+              (folder) =>
+                repositoryIdentities
+                  .resolve(folder.path)
+                  .pipe(
+                    Effect.map((repositoryIdentity) =>
+                      repositoryIdentity === null
+                        ? []
+                        : [{ ...project, workspaceRoot: folder.path, repositoryIdentity }],
+                    ),
+                  ),
+              { concurrency: REPOSITORY_CONCURRENCY },
+            ).pipe(Effect.map((folders) => [project, ...folders.flat()])),
+          { concurrency: REPOSITORY_CONCURRENCY },
+        ).pipe(Effect.map((expanded) => expanded.flat())),
+      ),
       Effect.flatMap((projects) =>
         resolveRemoteHosts(projects, filter).pipe(
           Effect.map((remoteHosts) => ({ remoteHosts, projects })),
@@ -1056,9 +1079,12 @@ export const make = Effect.gen(function* () {
         const own = supported[0];
         const repository = ref.repository.trim();
         const host = ref.host?.trim().toLowerCase();
-        if (own !== undefined && own.repository.toLowerCase() === repository.toLowerCase()) {
-          if (host === undefined || host === own.host) return Effect.succeed(own);
-        }
+        const match = supported.find(
+          (candidate) =>
+            candidate.repository.toLowerCase() === repository.toLowerCase() &&
+            (host === undefined || host === candidate.host),
+        );
+        if (match !== undefined) return Effect.succeed(match);
         if (host === undefined) {
           if (own === undefined) {
             return Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }));
@@ -1178,8 +1204,10 @@ export const make = Effect.gen(function* () {
   const addressedProject: PullRequestService["Service"]["addressedProject"] = (projectId) =>
     listWorkspaceProjects({ projectId }).pipe(
       Effect.map(({ projects, supported }) => {
-        const own = supported[0];
-        if (own === undefined) return projects.find((project) => project.id === projectId);
+        const root = projects.find((project) => project.id === projectId);
+        // One of several tracked repositories is no default for a pull request named by number.
+        const own = supported.find((candidate) => candidate.project === root);
+        if (own === undefined) return root;
         const identity = own.project.repositoryIdentity;
         return identity == null || identity.provider === own.kind
           ? own.project

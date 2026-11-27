@@ -377,6 +377,59 @@ function makeService(input: {
   );
 }
 
+it.effect(
+  "lists and reads pull requests of every repository a multi-repository project tracks",
+  () =>
+    Effect.gen(function* () {
+      const identityOf = (repository: string) =>
+        project({ id: "x", title: "x", workspaceRoot: "/x", repository }).repositoryIdentity!;
+      const identities: Record<string, ReturnType<typeof identityOf>> = {
+        "/ws/web": identityOf("acme/web"),
+        "/ws/api": identityOf("acme/api"),
+      };
+      const detailCwds: Array<string> = [];
+      const service = yield* makeService({
+        projects: [
+          {
+            ...project({ id: "p1", title: "workspace", workspaceRoot: "/ws" }),
+            trackedFolders: [
+              { name: "web", path: "/ws/web", discovered: true },
+              { name: "api", path: "/ws/api", discovered: true },
+              { name: "notes", path: "/ws/notes" },
+            ],
+          },
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            listChangeRequests: ({ repository }) =>
+              Effect.succeed({
+                items: [changeRequest(repository === "acme/web" ? 1 : 2, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: false,
+              }),
+            getChangeRequest: ({ cwd }) =>
+              Effect.sync(() => {
+                detailCwds.push(cwd);
+                return hostedChangeRequest("Body");
+              }),
+          }),
+        ],
+        resolveRepositoryIdentity: (cwd) => Effect.succeed(identities[cwd] ?? null),
+      });
+      const result = yield* service.list({ state: "open" });
+      assert.deepStrictEqual(
+        result.entries
+          .map(({ projectId, repository, number }) => `${projectId} ${repository}#${number}`)
+          .toSorted(),
+        ["p1 acme/api#2", "p1 acme/web#1"],
+      );
+      yield* service.detail({ projectId: "p1" as ProjectId, repository: "acme/api", number: 2 });
+      assert.deepStrictEqual(detailCwds, ["/ws/api"]);
+      // A pull request named by number alone has no one repository to default to.
+      assert.notExists((yield* service.addressedProject("p1" as ProjectId))?.repositoryIdentity);
+    }),
+);
+
 it.effect("lists GitHub Enterprise PRs for a stored unknown repository after host discovery", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
