@@ -7,6 +7,8 @@ import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   latestProviderTurnForAttempt,
   withMessageSenderNote,
+  type CheckpointId,
+  type MessageId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ExecutionNode,
@@ -87,6 +89,7 @@ import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
+  cohortWasStopped,
   pendingStoppedDelegatedTasks,
   restartCancelledBackgroundWorkNote,
   stoppedDelegatedTasksNote,
@@ -151,13 +154,55 @@ export function abandonedProviderTurns(
   });
 }
 
+/**
+ * The run whose ready end checkpoint is still the baseline before `run`: the last run, when every
+ * run since is a queued message steered into it while it ran, after anything that message did.
+ */
+export const findBaselineSourceOrdinal = Effect.fn("findBaselineSourceOrdinal")(function* (
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  run: Pick<OrchestrationV2Run, "ordinal">,
+  readPrompt: (messageId: MessageId) => Effect.Effect<OrchestrationV2TurnItem | null>,
+  readCheckpoints: (
+    id: CheckpointId,
+  ) => Effect.Effect<Pick<OrchestrationV2ThreadProjection, "checkpoints">>,
+) {
+  const owners: Array<RunId | null> = [];
+  // Runs come in ordinal order; a missing ordinal is a queued run that started late.
+  let index = runs.findLastIndex((candidate) => candidate.ordinal < run.ordinal);
+  for (let ordinal = run.ordinal - 1; runs[index]?.ordinal === ordinal; ordinal -= 1, index -= 1) {
+    const previous = runs[index]!;
+    const prompt =
+      previous.status === "cancelled" && previous.checkpointId === null
+        ? yield* readPrompt(previous.userMessageId)
+        : null;
+    if (prompt?.type === "user_message" && prompt.inputIntent === "promoted_queued_to_steer") {
+      owners.push(prompt.runId);
+      continue;
+    }
+    const [checkpoint] =
+      owners.length > 0 &&
+      owners.every((owner) => owner === previous.id) &&
+      previous.checkpointId !== null &&
+      ["completed", "interrupted", "cancelled"].includes(previous.status)
+        ? (yield* readCheckpoints(previous.checkpointId)).checkpoints
+        : [];
+    return checkpoint?.status === "ready" &&
+      checkpoint.runId === previous.id &&
+      checkpoint.appRunOrdinal === ordinal
+      ? ordinal
+      : undefined;
+  }
+  return undefined;
+});
+
 const CUT_TURN_SETTLED = "cut-turn-settled";
 
 /**
- * The previous run's cancelled turn when no adapter said whether it kept the request. A Stop
- * settles that as the turn ends; a restart cancels the turn with no adapter left to tell.
+ * The previous run's cancelled or interrupted turn when no adapter said whether it kept the
+ * request. A Stop settles a cancelled turn as it ends; a restart cancels the turn with no adapter
+ * left to tell, and an interrupted turn the adapter only remembered in memory is lost with its session.
  */
-function unsettledCancelledProviderTurn(
+function unsettledStoppedProviderTurn(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns">,
   run: Pick<OrchestrationV2Run, "ordinal">,
   providerThread: Pick<OrchestrationV2ProviderThread, "id" | "nativeThreadRef">,
@@ -172,7 +217,11 @@ function unsettledCancelledProviderTurn(
         : latest,
     undefined,
   );
-  if (previous?.status !== "cancelled" || previous.activeAttemptId === null) return undefined;
+  if (
+    (previous?.status !== "cancelled" && previous?.status !== "interrupted") ||
+    previous.activeAttemptId === null
+  )
+    return undefined;
   const turn = projection.providerTurns.findLast(
     (candidate) =>
       candidate.runAttemptId === previous.activeAttemptId &&
@@ -182,7 +231,7 @@ function unsettledCancelledProviderTurn(
   if (
     turn === undefined ||
     nativeTurnId == null ||
-    turn.status !== "cancelled" ||
+    (turn.status !== "cancelled" && turn.status !== "interrupted") ||
     turn.promptDropped === true ||
     (turn.nativeThreadRef !== undefined &&
       turn.nativeThreadRef.nativeId !== providerThread.nativeThreadRef?.nativeId)
@@ -606,7 +655,7 @@ export const layer: Layer.Layer<
       },
       captureStartingRun: (run: OrchestrationV2Run) => void,
     ) {
-      const { runId } = input;
+      const { runId, threadId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
       const run = projection.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
@@ -1009,6 +1058,7 @@ export const layer: Layer.Layer<
       // restart superseded, and the session cannot be reused until those turns stop.
       const abandonedTurns = abandonedProviderTurns(projection, run, providerThread.id);
       const abandonedTurn = abandonedTurns.at(-1)?.turn;
+      let providerTurns = projection.providerTurns;
       if (abandonedTurn !== undefined) {
         const liveSession = yield* providerSessions.get(providerSessionId);
         if (Option.isSome(liveSession)) {
@@ -1033,33 +1083,51 @@ export const layer: Layer.Layer<
           }
         }
         const completedAt = yield* DateTime.now;
+        const repairEvents = yield* Effect.forEach(abandonedTurns, ({ turn, run: abandonedRun }) =>
+          Effect.gen(function* () {
+            return {
+              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+              type: "provider-turn.updated" as const,
+              threadId: projection.thread.id,
+              runId: abandonedRun.id,
+              nodeId: turn.nodeId,
+              providerInstanceId: abandonedRun.providerInstanceId,
+              occurredAt: completedAt,
+              payload: { ...turn, status: "interrupted" as const, completedAt },
+            };
+          }),
+        );
         const repaired = yield* eventSink.writeIfRunCurrent({
           threadId: projection.thread.id,
           runId: run.id,
           activeAttemptId: attempt.id,
           expectedStatus: "starting",
-          events: yield* Effect.forEach(abandonedTurns, ({ turn, run: abandonedRun }) =>
-            Effect.gen(function* () {
-              return {
-                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-                type: "provider-turn.updated" as const,
-                threadId: projection.thread.id,
-                runId: abandonedRun.id,
-                nodeId: turn.nodeId,
-                providerInstanceId: abandonedRun.providerInstanceId,
-                occurredAt: completedAt,
-                payload: { ...turn, status: "interrupted" as const, completedAt },
-              };
-            }),
-          ),
+          events: repairEvents,
         });
         if (!repaired.committed) return;
+        const repairedTurns = new Map(
+          repairEvents.map((event) => [event.payload.id, event.payload]),
+        );
+        providerTurns = providerTurns.map((turn) => repairedTurns.get(turn.id) ?? turn);
       }
+      const sourceOrdinalWithinScope = yield* findBaselineSourceOrdinal(
+        projection.runs,
+        run,
+        (messageId) =>
+          projectionStore
+            .getTurnItem({ threadId, itemId: idAllocator.derive.userTurnItem({ messageId }) })
+            .pipe(Effect.orElseSucceed(() => null)),
+        (checkpointId) =>
+          projectionStore
+            .getThreadRecords(threadId, ["checkpoints"], { checkpointIds: [checkpointId] })
+            .pipe(Effect.orElseSucceed(() => ({ checkpoints: [] }))),
+      );
       // Opening a session does not prompt the provider, so the workspace is still unchanged.
       const baseline = yield* runExecution.forkBaseline({
         appThread: projection.thread,
         run,
         checkpointScope,
+        sourceOrdinalWithinScope,
       });
       const brokenNativeThread = providerThread.status === "error";
       // Opened without the broken native id, a session that was not live starts fresh.
@@ -1103,7 +1171,11 @@ export const layer: Layer.Layer<
       }
       const session = sessionResult.success;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
-      const cutTurn = unsettledCancelledProviderTurn(projection, run, providerThread);
+      const cutTurn = unsettledStoppedProviderTurn(
+        { runs: projection.runs, providerTurns },
+        run,
+        providerThread,
+      );
       if (
         cutTurn !== undefined &&
         session.nativeTurnKept !== undefined &&
@@ -1225,9 +1297,7 @@ export const layer: Layer.Layer<
       // A failed read fails the start: a turn that ran without the note would count as telling it.
       const stoppedRunIds = projection.runs
         .filter(
-          (source) =>
-            source.providerThreadId === run.providerThreadId &&
-            source.delegatedCompletion?.disposition === "stopped",
+          (source) => source.providerThreadId === run.providerThreadId && cohortWasStopped(source),
         )
         .map((source) => source.id);
       const stoppedTasks =

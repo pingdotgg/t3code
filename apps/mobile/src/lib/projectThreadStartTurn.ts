@@ -16,7 +16,7 @@ import {
 import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { msg } from "gt-react-native";
 
-import { m } from "../i18n/messages";
+import { m, type MessageResolver } from "../i18n/messages";
 import type { UploadedMobileAttachment } from "./attachmentUpload";
 
 export interface ProjectThreadStartTurnSpec {
@@ -94,9 +94,24 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
   };
 }
 
-export function deriveThreadTitleFromPrompt(value: string): string {
-  const title = threadTitleTextFromPrompt(value, m) || m(msg("New thread"));
+export function deriveThreadTitleFromPrompt(value: string, resolve: MessageResolver = m): string {
+  const title = threadTitleTextFromPrompt(value, resolve) || resolve(msg("New thread"));
   if (title.length <= 72) return title;
   const end = splitsSurrogatePair(title, 69) ? 68 : 69;
   return `${title.slice(0, end).trimEnd()}...`;
+}
+
+/** Titles a new task the server has not created yet; one with only attachments shows their count. */
+export function deriveUnsentThreadTitle(
+  input: { readonly text: string; readonly attachments: ReadonlyArray<unknown> },
+  resolve: MessageResolver = m,
+): string {
+  if (input.text.trim().length > 0 || input.attachments.length === 0) {
+    return deriveThreadTitleFromPrompt(input.text, resolve);
+  }
+  return resolve(
+    msg("{count, plural, one {{count} attachment} other {{count} attachments}}", {
+      count: input.attachments.length,
+    }),
+  );
 }

@@ -1,4 +1,5 @@
 import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
+import { speechModelDownloadPercent } from "@t3tools/shared/speech";
 import { msg, useGT, useMessages } from "gt-react";
 import { CheckIcon, MicIcon, XIcon } from "lucide-react";
 import { useEffect, useState, type PointerEvent, type ReactElement } from "react";
@@ -31,7 +32,10 @@ export function resolveSpeechPresentation(
         status: progress
           ? resolve(
               msg("Downloading model {percent}%", {
-                percent: Math.round((progress.downloaded / Math.max(1, progress.total)) * 100),
+                percent: speechModelDownloadPercent(
+                  progress.downloaded,
+                  Math.max(1, progress.total),
+                ),
               }),
             )
           : resolve(msg("Starting…")),
