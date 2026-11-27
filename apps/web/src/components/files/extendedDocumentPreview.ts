@@ -1,5 +1,6 @@
 import { pipe } from "effect/Function";
 import { IMAGE_DIMENSIONS_HEADER_BYTES } from "@t3tools/shared/imageDimensions";
+import { notebookOutputGroups } from "@t3tools/shared/notebookOutput";
 import { decodeHTMLAttribute } from "entities";
 import type JSZip from "jszip";
 import {
@@ -334,38 +335,41 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
     return {
       kind: cell.cell_type === "markdown" ? "markdown" : cell.cell_type === "code" ? "code" : "raw",
       source: notebookText(cell.source),
-      outputs: outputs
-        .map((value) => {
-          const output = record(value);
-          const data = record(output.data);
-          for (const mime of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
-            if (data[mime]) {
-              const base64 = notebookText(data[mime], 4 * 1024 * 1024).replaceAll(/\s/g, "");
-              if (base64ImageFits(base64))
-                return { kind: "image" as const, text: `data:${mime};base64,${base64}` };
-            }
+      outputs: Array.from(notebookOutputGroups(outputs, notebookText), (group) => {
+        if (group.kind === "stream") {
+          return {
+            kind: "text" as const,
+            text: terminalOutputCollapseRedraws(terminalOutputPlainText(group.text)),
+          };
+        }
+        const output = record(group.output);
+        const data = record(output.data);
+        for (const mime of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
+          if (data[mime]) {
+            const base64 = notebookText(data[mime], 4 * 1024 * 1024).replaceAll(/\s/g, "");
+            if (base64ImageFits(base64))
+              return { kind: "image" as const, text: `data:${mime};base64,${base64}` };
           }
-          const html = notebookText(data["text/html"]);
-          if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
-          const plain = terminalOutputPlainText(
-            notebookText(
-              output.text ??
-                data["text/plain"] ??
-                data["text/markdown"] ??
-                tracebackLines(output.traceback),
-            ),
-          );
-          const text =
-            output.output_type === "stream" ? terminalOutputCollapseRedraws(plain) : plain;
-          if (text.trim() || output.output_type !== "error") return { kind: "text" as const, text };
-          const summary = [output.ename, output.evalue]
-            .filter((part) => typeof part === "string")
-            .map((part) => terminalOutputPlainText(notebookText(part)))
-            .filter((part) => part.trim().length > 0)
-            .join(": ");
-          return { kind: "text" as const, text: summary };
-        })
-        .filter((output) => output.text.trim().length > 0),
+        }
+        const html = notebookText(data["text/html"]);
+        if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
+        const plain = terminalOutputPlainText(
+          notebookText(
+            output.text ??
+              data["text/plain"] ??
+              data["text/markdown"] ??
+              tracebackLines(output.traceback),
+          ),
+        );
+        const text = output.output_type === "stream" ? terminalOutputCollapseRedraws(plain) : plain;
+        if (text.trim() || output.output_type !== "error") return { kind: "text" as const, text };
+        const summary = [output.ename, output.evalue]
+          .filter((part) => typeof part === "string")
+          .map((part) => terminalOutputPlainText(notebookText(part)))
+          .filter((part) => part.trim().length > 0)
+          .join(": ");
+        return { kind: "text" as const, text: summary };
+      }).filter((output) => output.text.trim().length > 0),
     };
   });
   return { type: "notebook", language, cells };
