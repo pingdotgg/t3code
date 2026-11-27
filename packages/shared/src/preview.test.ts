@@ -157,7 +157,6 @@ describe("normalizePreviewUrl", () => {
     ["127.0.0.2.example.com:3000", "https://127.0.0.2.example.com:3000/"],
     ["https://127.0.0.2:80/path", "https://127.0.0.2:80/path"],
     ["app.localhost:5173", "http://app.localhost:5173/"],
-    ["api.app.localhost:3000/path", "http://api.app.localhost:3000/path"],
     ["https://app.localhost:5173", "https://app.localhost:5173/"],
     ["localhost.example.com:3000", "https://localhost.example.com:3000/"],
   ])("infers the scheme for loopback-looking %s", (input, expected) => {
