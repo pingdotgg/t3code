@@ -551,7 +551,7 @@ describe("remote thread lifecycle commands", () => {
         });
         expect(h.registry.get(h.visibleAtom)).toBe(initial);
         yield* Deferred.succeed(request.reply, { sequence: 2 });
-        yield* Fiber.join(result);
+        expect(yield* Fiber.join(result)).toMatchObject({ deferred: true });
         expect(h.registry.get(h.visibleAtom)).toBe(initial);
         const cancel = yield* Effect.forkChild(
           h.commands.cancelSettleWhenDone.run(h.registry, {

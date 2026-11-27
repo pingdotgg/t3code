@@ -2811,8 +2811,9 @@ it.effect.each([
       yield* startHarness(service, h.activation, h.snapshotReads);
       const commands = yield* Ref.get(h.pendingCommands);
       assert.equal(commands[0]?.type ?? null, scenario.action);
-      if (commands[0]?.type === "thread.settle" && scenario.terminal) {
-        assert.isTrue(commands[0].hasActiveTerminal);
+      if (commands[0]?.type === "thread.settle") {
+        assert.deepEqual(commands[0].expectedSettleWhenDone, intent);
+        if (scenario.terminal) assert.isTrue(commands[0].hasActiveTerminal);
       }
       if (commands[0]?.type === "thread.settle-when-done.set") {
         assert.isFalse(commands[0].enabled);
@@ -2827,6 +2828,21 @@ it.effect.each([
         const repeated = yield* Ref.get(h.pendingCommands);
         assert.equal(repeated.length, 2);
         assert.equal(repeated[0]?.commandId, repeated[1]?.commandId);
+        yield* Ref.set(
+          h.snapshots,
+          makeSnapshot([
+            {
+              ...thread,
+              settleWhenDone: { ...intent, requestedAt: "2026-08-28T12:00:01.000Z" },
+            },
+          ]),
+        );
+        yield* TestClock.adjust("1 minute");
+        yield* Queue.take(h.snapshotReads);
+        yield* service.drain;
+        const rearmed = yield* Ref.get(h.pendingCommands);
+        assert.equal(rearmed.length, 3);
+        assert.notEqual(rearmed[1]?.commandId, rearmed[2]?.commandId);
       }
       if (scenario.name === "cancelled followup with terminal") {
         yield* Ref.set(terminalActive, false);

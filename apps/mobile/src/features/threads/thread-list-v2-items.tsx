@@ -1846,6 +1846,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   if (!canSwipe)
     return (
       <View style={rowAppearance.swipeContainerStyle}>
+        {customSnoozeOpen && (
+          <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
+        )}
         {canUseMenu ? rowWithMenu(() => {}) : rowContent(() => {})}
       </View>
     );

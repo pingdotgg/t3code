@@ -2,6 +2,7 @@ import * as NodeSqlite from "node:sqlite";
 
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointScopeId,
   CommandId,
   MessageId,
   EventId,
@@ -3303,6 +3304,8 @@ it.effect.each([
   { status: "interrupted", followup: "none" },
   { status: "completed", followup: "delegated" },
   { status: "completed", followup: "older-delivery" },
+  { status: "completed", followup: "link-card" },
+  { status: "completed", followup: "checkpoint" },
   { status: "completed", followup: "native-answer" },
   { status: "completed", followup: "new-watch" },
   { status: "failed", followup: "unclassified" },
@@ -3369,7 +3372,7 @@ it.effect.each([
         modelSelection,
         providerThreadId,
         userMessageId: MessageId.make(`message:${status}`),
-        rootNodeId: null,
+        rootNodeId: followup === "link-card" ? NodeId.make("settle-link-card-node") : null,
         activeAttemptId: null,
         status: "running",
         requestedAt: now,
@@ -3411,7 +3414,7 @@ it.effect.each([
         });
       }
       let cancelledInputId: RunId | undefined;
-      if (followup === "cancelled-input") {
+      if (followup === "cancelled-input" || followup === "checkpoint") {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("queue-input-before-settle"),
@@ -3558,6 +3561,19 @@ it.effect.each([
       });
       assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, intent);
       const end = yield* DateTime.now;
+      if (followup === "link-card") {
+        yield* orchestrator.dispatch({
+          type: "link_request.record",
+          commandId: CommandId.make("settle-link-card-record"),
+          threadId,
+          runId,
+          nodeId: run.rootNodeId!,
+          turnItemId: TurnItemId.make("settle-link-card"),
+          url: "https://example.test",
+          reason: "Connect the machine",
+          linkStatus: "pending",
+        });
+      }
       yield* projections.apply({
         id: EventId.make(`end:${status}`),
         type: "run.updated",
@@ -3602,6 +3618,78 @@ it.effect.each([
             resolvedAt: null,
           },
         });
+      }
+      if (followup === "checkpoint") {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const effectId = `effect:checkpoint.capture:${runId}`;
+        yield* outbox.enqueue([
+          {
+            id: effectId,
+            commandId: CommandId.make("settle-checkpoint-capture"),
+            threadId,
+            request: {
+              type: "checkpoint.capture",
+              runId,
+              scopeId: CheckpointScopeId.make("settle-checkpoint-scope"),
+            },
+          },
+        ]);
+        const command = {
+          type: "thread.settle" as const,
+          commandId: CommandId.make("settle-before-checkpoint-capture"),
+          threadId,
+          expectedSettleWhenDone: intent,
+        };
+        const held = yield* orchestrator.dispatch(command).pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(held));
+        assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, intent);
+        assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
+        const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+        const workerId = "settle-checkpoint-test";
+        const claimed = Option.getOrThrow(yield* outbox.claimNext({ workerId }));
+        assert.equal(claimed.id, effectId);
+        assert.isTrue(yield* outbox.succeed({ effectId, workerId }));
+        assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+        yield* orchestrator.dispatch(command);
+        assert.equal((yield* projections.getThread(threadId)).settledOverride, "settled");
+        assert.isNull((yield* projections.getThread(threadId)).settleWhenDone ?? null);
+        return;
+      }
+      if (followup === "link-card") {
+        assert.equal(
+          (yield* projections.getThreadShell(threadId))?.pendingRuntimeRequest?.id,
+          RuntimeRequestId.make("settle-link-card"),
+        );
+        const held = yield* orchestrator
+          .dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make("settle-before-link-card-answer"),
+            threadId,
+            expectedSettleWhenDone: intent,
+          })
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(held));
+        assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, intent);
+        assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
+        yield* orchestrator.dispatch({
+          type: "link_request.record",
+          commandId: CommandId.make("settle-link-card-answer"),
+          threadId,
+          runId,
+          nodeId: run.rootNodeId!,
+          turnItemId: TurnItemId.make("settle-link-card"),
+          reason: "Connect the machine",
+          linkStatus: "declined",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("settle-after-link-card-answer"),
+          threadId,
+          expectedSettleWhenDone: intent,
+        });
+        assert.equal((yield* projections.getThread(threadId)).settledOverride, "settled");
+        assert.isNull((yield* projections.getThread(threadId)).settleWhenDone ?? null);
+        return;
       }
       let latestRunId = cancelledInputId ?? runId;
       if (followup === "delegated" || followup === "older-delivery") {

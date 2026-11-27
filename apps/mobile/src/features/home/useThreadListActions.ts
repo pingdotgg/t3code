@@ -135,7 +135,7 @@ function useThreadActionExecutor(
     thread: EnvironmentThreadShell,
     onStarted?: () => void,
     restoreUnsettledAt?: string | null,
-    onSucceeded?: (value: unknown) => void,
+    onSucceeded?: (value: unknown, deferred: boolean) => void,
   ) => {
     const triage = action === "settle" || action === "unsettle";
     if (!checkThreadOperationPermission(thread, actionFailureTitle(action), triage)) return false;
@@ -172,8 +172,17 @@ function useThreadActionExecutor(
       }
       if (action === "unsettle") ThreadUndo.invalidate("settle", key);
       onStarted?.();
-      const run = async () =>
-        action === "unsettle"
+      let deferred = false;
+      const run = async () => {
+        if (action === "settle") {
+          const result = await settleMutation({
+            environmentId: thread.environmentId,
+            input: { threadId: thread.id },
+          });
+          deferred = result._tag === "Success" && result.value.deferred;
+          return result;
+        }
+        return action === "unsettle"
           ? // reason "user" pins the thread active: auto-settle stays
             // suppressed until real activity clears the pin server-side.
             await unsettleMutation({
@@ -185,26 +194,25 @@ function useThreadActionExecutor(
               },
             })
           : await (
-              action === "settle"
-                ? settleMutation
-                : action === "archive"
-                  ? archiveMutation
-                  : action === "unarchive"
-                    ? unarchiveMutation
-                    : deleteMutation
+              action === "archive"
+                ? archiveMutation
+                : action === "unarchive"
+                  ? unarchiveMutation
+                  : deleteMutation
             )({
               environmentId: thread.environmentId,
               input: { threadId: thread.id },
             });
+      };
       const result = await (action === "settle" &&
       (thread.settleWhenDone != null || thread.runtime?.activeRunId != null)
         ? run()
-        : withThreadDismissal(key, run, (result) => result._tag === "Success"));
+        : withThreadDismissal(key, run, (result) => result._tag === "Success" && !deferred));
       if (result._tag === "Failure") {
         Dialog.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
         return false;
       }
-      onSucceeded?.(result.value);
+      onSucceeded?.(result.value, deferred);
       if (action === "archive" || action === "delete") {
         for (const kind of ["settle", "snooze", "pin"]) ThreadUndo.invalidate(kind, key);
       }
@@ -359,13 +367,22 @@ export function useThreadListActions(): {
     const key = scopedThreadKey(thread.environmentId, thread.id);
     const plan = ThreadUndo.planThreadUndo("settle", thread);
     let claim: ReturnType<typeof ThreadUndo.begin> | undefined;
-    const succeeded = await executeAction("settle", thread, () => {
-      ThreadUndo.invalidate("pin", key);
-      ThreadUndo.invalidate("snooze", key);
-      claim = ThreadUndo.begin("settle", key);
-    });
+    let deferred = false;
+    const succeeded = await executeAction(
+      "settle",
+      thread,
+      () => {
+        ThreadUndo.invalidate("pin", key);
+        ThreadUndo.invalidate("snooze", key);
+        claim = ThreadUndo.begin("settle", key);
+      },
+      undefined,
+      (_value, whenDone) => {
+        deferred = whenDone;
+      },
+    );
     if (claim) {
-      if (succeeded) offerUndo(thread, "Settled", claim, plan);
+      if (succeeded && !deferred) offerUndo(thread, "Settled", claim, plan);
       else claim.finish();
     }
     return succeeded;

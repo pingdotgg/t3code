@@ -599,24 +599,28 @@ export function createThreadEnvironmentAtoms<R, E>(
     triage.queueWhenOffline(commands.settle, () => ({ type: "settle" as const })),
     (thread, _input, now, accepted) => applySettle(thread, now, accepted),
   );
-  const settleOrDefer: typeof settleManually = {
+  const settleOrDefer = {
     label: commands.settle.label,
-    run: (registry, target) =>
+    run: (registry: AtomRegistry.AtomRegistry, target: Parameters<typeof settleManually.run>[1]) =>
       Effect.suspend(() => {
         const thread = registry
           .get(snapshotAtom(target.environmentId))
           ?.threads.find((thread) => thread.id === target.input.threadId);
         if (thread?.settleWhenDone != null || thread?.activeRunId != null) {
-          return commands.settle.run(registry, {
-            ...target,
-            input: {
-              ...target.input,
-              whenDone: true,
-              ...(thread.activeRunId == null ? {} : { runId: thread.activeRunId }),
-            },
-          });
+          return commands.settle
+            .run(registry, {
+              ...target,
+              input: {
+                ...target.input,
+                whenDone: true,
+                ...(thread.activeRunId == null ? {} : { runId: thread.activeRunId }),
+              },
+            })
+            .pipe(Effect.map((receipt) => ({ ...receipt, deferred: true })));
         }
-        return settleManually.run(registry, target);
+        return settleManually
+          .run(registry, target)
+          .pipe(Effect.map((receipt) => ({ ...receipt, deferred: false })));
       }),
   };
   return {

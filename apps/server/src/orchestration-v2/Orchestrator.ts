@@ -4877,6 +4877,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
           return;
         }
+        const latest = latestStartedRun(work.filter((run) => !cancelledBeforeStart(run)));
+        if (latest !== undefined && (yield* awaitsCheckpointCapture(latest))) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "The response is waiting for its checkpoint capture.",
+            retryable: true,
+          });
+        }
         if (
           command.hasActiveTerminal === true ||
           projection.runs.some(

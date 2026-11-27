@@ -848,9 +848,8 @@ export function useThreadActions() {
 
   const cancelSettleWhenDoneMutation = useOrchestrationCommand(
     threadEnvironment.cancelSettleWhenDone,
-    {
-      reportFailure: false,
-    },
+    { reportFailure: false },
+    threadTriagePermitted,
   );
   const cancelSettleWhenDone = (target: ScopedThreadRef) =>
     cancelSettleWhenDoneMutation({

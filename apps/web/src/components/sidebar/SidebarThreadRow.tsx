@@ -1788,7 +1788,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         }
                       >
                         <CheckIcon className="size-3.5" />
-                        <T>Settle</T>
+                        {thread.settleWhenDone != null ? <T>Cancel</T> : <T>Settle</T>}
                       </SharedTooltipTrigger>
                     ) : null}
                   </span>
