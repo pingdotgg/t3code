@@ -1858,22 +1858,22 @@ function secretRequestAsPendingInput(
 /**
  * A secret card is answered while its agent waits in the run. A link card's
  * agent asked without waiting, so the card waits on the user after its run,
- * until the user writes in the thread again and so has moved past it.
+ * until the user writes in the thread again or a later run completes, either of
+ * which moves past it. The shell SQL checks the later run in its link queries.
  */
 const waitsOnUser = (
   item: OrchestrationV2TurnItem,
   liveRunIds: ReadonlySet<RunId>,
   latestUserAuthoredMessageAt: DateTime.Utc | null,
+  latestCompletedRunRequestedAt: DateTime.Utc | null,
 ) =>
-  (item.type === "link_request" && linkCardStillAsks(item, latestUserAuthoredMessageAt)) ||
+  (item.type === "link_request" &&
+    linkCardStillAsks(item, latestUserAuthoredMessageAt) &&
+    linkCardStillAsks(item, latestCompletedRunRequestedAt)) ||
   (item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId));
 
-const linkCardStillAsks = (
-  item: OrchestrationV2TurnItem,
-  latestUserAuthoredMessageAt: DateTime.Utc | null,
-) =>
-  latestUserAuthoredMessageAt === null ||
-  !DateTime.isGreaterThan(latestUserAuthoredMessageAt, item.startedAt ?? item.updatedAt);
+const linkCardStillAsks = (item: OrchestrationV2TurnItem, movedOnAt: DateTime.Utc | null) =>
+  movedOnAt === null || !DateTime.isGreaterThan(movedOnAt, item.startedAt ?? item.updatedAt);
 
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
@@ -1920,12 +1920,25 @@ export function threadShellFromProjection(
     );
   const latestUserAuthoredMessageAt =
     userMessages.find((message) => message.createdBy === "user")?.updatedAt ?? null;
+  const latestCompletedRunRequestedAt =
+    runs
+      .filter((run) => run.status === "completed")
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.requestedAt) - DateTime.toEpochMillis(left.requestedAt),
+      )[0]?.requestedAt ?? null;
   if (pendingRuntimeRequest === null || pendingRuntimeRequest.kind === "user_input") {
     const waitingCard = secretRequestAsPendingInput(
       projection.turnItems
         .filter(
           (item) =>
-            item.status === "waiting" && waitsOnUser(item, liveRunIds, latestUserAuthoredMessageAt),
+            item.status === "waiting" &&
+            waitsOnUser(
+              item,
+              liveRunIds,
+              latestUserAuthoredMessageAt,
+              latestCompletedRunRequestedAt,
+            ),
         )
         .toSorted(
           (left, right) =>
@@ -8632,6 +8645,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   INDEXED BY orchestration_v2_projection_turn_items_waiting_link_idx
                 WHERE link.thread_id = t.thread_id
                   AND link.type = 'link_request' AND link.status = 'waiting'
+                  -- linkCardStillAsks: a later completed run has moved past the card.
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs later
+                    WHERE later.thread_id = t.thread_id AND later.status = 'completed'
+                      AND later.requested_at > COALESCE(
+                        json_extract(link.payload_json, '$.startedAt'), link.updated_at
+                      )
+                      AND NOT ${isSilentShellRun("later")}
+                  )
                 ORDER BY link.updated_at DESC, link.turn_item_id DESC
                 LIMIT 1
               ) AS pending_link_request_payload_json,
@@ -9039,7 +9061,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   INDEXED BY orchestration_v2_projection_turn_items_waiting_link_idx
                 WHERE link.thread_id = t.thread_id
                   AND link.type = 'link_request' AND link.status = 'waiting'
-                  -- linkCardStillAsks: once the user writes after the card, it stops asking.
+                  -- linkCardStillAsks: once the user writes or a later run completes after the
+                  -- card, it stops asking.
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs later
+                    WHERE later.thread_id = t.thread_id AND later.status = 'completed'
+                      AND later.requested_at > COALESCE(
+                        json_extract(link.payload_json, '$.startedAt'), link.updated_at
+                      )
+                      AND NOT ${isSilentShellRun("later")}
+                  )
                   AND NOT EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_messages message
                     WHERE message.thread_id = t.thread_id AND message.role = 'user'
