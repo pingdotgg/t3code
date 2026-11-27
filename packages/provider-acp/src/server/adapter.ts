@@ -477,8 +477,11 @@ export interface AcpAdapterV2Flavor {
     EffectAcpSchema.InitializeRequest["clientCapabilities"]
   >["_meta"];
   readonly mcpOverHttp?: boolean;
-  /** The agent has no tool search of its own, so T3 lists optional tools on demand. */
-  readonly deferMcpTools?: boolean;
+  /**
+   * The agent has no tool search of its own, so T3 lists optional tools on demand.
+   * `"proxy"` keeps a fixed core set plus `tool_search` and `tool_call` for agents that freeze tools per turn.
+   */
+  readonly deferMcpTools?: boolean | "proxy";
   readonly normalizeSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
@@ -1135,6 +1138,15 @@ interface AcpMcpContext {
   readonly processEnvironment?: NodeJS.ProcessEnv;
   readonly endpoint?: string;
   readonly authorization?: string;
+  /** Only proxy mode reaches the stdio and MCP-over-ACP bridges; Copilot lists every tool there. */
+  readonly bridgeToolExposure?: McpProviderSession.McpToolExposureMode;
+}
+
+function mcpToolExposureMode(
+  deferMcpTools: boolean | "proxy" | undefined,
+): McpProviderSession.McpToolExposureMode | undefined {
+  if (deferMcpTools === "proxy") return "deferred-proxy";
+  return deferMcpTools === true ? "deferred" : undefined;
 }
 
 // A GUI-subsystem executable (packaged Windows desktop) does not hold the console, so PowerShell
@@ -1174,12 +1186,14 @@ function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
   mcpOverHttp: boolean | undefined,
-  deferMcpTools: boolean | undefined,
+  deferMcpTools: boolean | "proxy" | undefined,
   callLauncher: string | undefined,
 ): AcpMcpContext {
   if (session === undefined) {
     return { servers: [], acpServers: [], httpServers: [] };
   }
+  const exposure = mcpToolExposureMode(deferMcpTools);
+  const bridgeToolExposure = exposure === "deferred-proxy" ? exposure : undefined;
   // codex-acp 1.2.0 and pi-acp drop injected HTTP servers, so HTTP is opt-in per flavor.
   return {
     servers: [
@@ -1191,6 +1205,9 @@ function acpMcpContext(
           { name: "ELECTRON_RUN_AS_NODE", value: "1" },
           { name: "T3_ACP_MCP_ENDPOINT", value: session.endpoint },
           { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
+          ...(bridgeToolExposure === undefined
+            ? []
+            : [{ name: "T3_ACP_MCP_TOOL_EXPOSURE", value: bridgeToolExposure }]),
         ],
       },
     ],
@@ -1204,15 +1221,16 @@ function acpMcpContext(
               url: session.endpoint,
               headers: [
                 { name: "Authorization", value: session.authorizationHeader },
-                ...(deferMcpTools === true
-                  ? [{ name: McpProviderSession.MCP_TOOL_EXPOSURE_HEADER, value: "deferred" }]
-                  : []),
+                ...(exposure === undefined
+                  ? []
+                  : [{ name: McpProviderSession.MCP_TOOL_EXPOSURE_HEADER, value: exposure }]),
               ],
             },
           ]
         : [],
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
+    ...(bridgeToolExposure === undefined ? {} : { bridgeToolExposure }),
     processEnvironment: {
       // The thread id every process the agent starts inherits, so a tool run
       // from its shell can find its T3 thread. Claude and Codex sessions set
@@ -8665,6 +8683,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const mcpBridge = yield* makeAcpMcpOverAcpBridge({
             endpoint: mcpContext.endpoint,
             authorization: mcpContext.authorization,
+            toolExposure: mcpContext.bridgeToolExposure,
             allocateConnectionId: random.uuidV4(),
           });
           yield* Scope.addFinalizer(scope, mcpBridge.dispose);
@@ -9991,10 +10010,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           sessionId: string,
         ) {
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+          const toolExposure = mcpToolExposureMode(flavor.deferMcpTools);
           const instructionState = {
             interactionMode: turnInput.runtimePolicy.interactionMode,
             hasT3Mcp: mcpSession !== undefined,
             hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
+            ...(toolExposure === undefined ? {} : { toolExposure }),
           } satisfies T3AcpInstructionState;
           const userText =
             flavor.rewriteUserText === undefined

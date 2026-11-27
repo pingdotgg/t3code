@@ -75,6 +75,7 @@
     "jszip": "3.10.1",
     "katex": "^0.18.2",
     "lucide-react": "^0.564.0",
+    "parse5": "8.0.1",
     "pdfjs-dist": "6.4.299",
     "pele": "catalog:",
     "property-information": "^7.2.0",
