@@ -218,7 +218,12 @@ for (const { checkoutSucceeds, switchThreads, transcriptFirst } of [
         await screen.getByText("An earlier conversation", { exact: true }).waitFor();
       }
       if (transcriptFirst) transcript.resolve();
-      const launches = () => browser.evaluate(() => window.pendingDictatedCheckout?.launches ?? []);
+      const launches = async (): Promise<unknown> =>
+        JSON.parse(
+          await browser.evaluate(() =>
+            JSON.stringify(window.pendingDictatedCheckout?.launches ?? []),
+          ),
+        );
       const transcriptSaved = () =>
         expect
           .poll(() =>
