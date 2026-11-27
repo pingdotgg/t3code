@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# The maestro dispatcher without a model. Each tick, per project: requeue issues whose worker
-# thread is gone (a fresh worker each time, MAESTRO_RETRIES times), stop workers that stalled, start a maestro-reviewer thread per ready-for-review
-# issue and a maestro-worker thread per frontier issue while fewer than MAESTRO_MAX_WORKERS
-# threads run across all listed projects, close finished epics, and tell the project's master
-# thread about needs-help, epic done and unblocked human tasks.
+# The maestro dispatcher without a model. Each tick, per project: requeue in-progress issues no
+# live worker thread holds (a fresh worker each time, MAESTRO_RETRIES times; a claim it did not make,
+# or a worker its server or provider took down, costs no attempt), stop workers that stalled, start
+# a maestro-reviewer thread per ready-for-review issue and a maestro-worker thread per frontier issue
+# while fewer than MAESTRO_MAX_WORKERS threads run across all listed projects, close finished epics,
+# and tell the project's master thread about needs-help, epic done, unblocked human tasks, a queue
+# that cannot move, and ticks that keep failing.
 # Labels and comments follow SKILL.md, so a maestro thread and this script agree.
 #
 #   queue.sh [--loop] [--interval 60] <project-folder>[=<master-thread-id>]...
@@ -69,6 +71,14 @@ elif [ -n "${MAESTRO_MODEL:-}" ]; then
 fi
 stall_minutes="${MAESTRO_STALL_MINUTES:-60}"
 retries="${MAESTRO_RETRIES:-2}"
+# Workers in a row that die with their server or provider before the issue gets needs-help, so a
+# crash loop stops instead of starting workers forever.
+infra_retries=5
+# A claim younger than this may not have its comment or thread yet (another dispatcher mid-claim).
+claim_grace=300
+# Failed ticks in a row before the master hears of it: five minutes at the default interval, past a
+# server restart or a GitHub blip, well before an outage costs an hour.
+fail_ticks=5
 read -r -a review_models <<<"${MAESTRO_REVIEW_MODELS:-}"
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/maestro-queue"
 mkdir -p "$state_dir"
@@ -90,33 +100,39 @@ review_model_args() {
 
 log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*"; }
 
-# Issue numbers of a project's worker threads that are still alive, one per line. The `mw-<n> `
-# title prefix is also how the web sidebar files them under Workers (sidebar/sidebarWorkers.ts).
-live_workers() {
+# `<issue> <status>` per worker thread of a project, newest first, with every live status shown as
+# `live`. The `mw-<n> ` title prefix is also how the web sidebar files them under Workers
+# (sidebar/sidebarWorkers.ts).
+worker_threads() {
   "${t3[@]}" thread list --project "$1" --json | jq -r --argjson live "$live_statuses" '.[]
     | select(.title | test("^mw-[0-9]+ "))
-    | select(.status as $s | $live | index($s))
-    | .title | capture("^mw-(?<n>[0-9]+) ").n' | sort -u
+    | "\(.title | capture("^mw-(?<n>[0-9]+) ").n) \(if (.status as $s | $live | index($s)) then "live" else .status end)"'
 }
 
-# true when no `maestro: retry` comment follows the issue's last claim, so the attempt left no report.
-attempt_unreported() {
-  gh issue view "$1" --json comments --jq '[.comments[].body] as $b
-    | ([$b | to_entries[] | select(.value | startswith("maestro: claimed")) | .key] | max // -1) as $claim
-    | ([$b | to_entries[] | select(.value | startswith("maestro: retry")) | .key] | max // -1) as $retry
-    | $retry < $claim'
+# Open issues a live worker could hold, for a project whose threads could not be listed: a worker
+# holds in-progress from before its thread starts until it hands off, and a builder that just
+# handed off (ready-for-review) may still be ending.
+held_issues() {
+  gh issue list --state open --limit 100 --search "label:in-progress,ready-for-review" --json number --jq length
 }
 
-# Failed attempts in the current phase: retry comments after the builder's last handoff, so a
-# reviewer gets its own budget instead of whatever the build phase left.
-failed_attempts() {
-  gh issue view "$1" --json comments --jq '[.comments[].body] as $b
-    | ([$b | to_entries[] | select(.value | startswith("maestro: handed off")) | .key] | max // -1) as $handoff
-    | [$b | to_entries[] | select(.key > $handoff and (.value | startswith("maestro: retry")))] | length'
-}
-
-has_comment() {
-  gh issue view "$1" --json comments --jq "any(.comments[]; .body | startswith(\"$2\"))"
+# `<ours> <report> <failed> <infra>` from an issue's comments JSON and when in-progress was last added.
+# ours: a `maestro: claimed` comment follows that label, as start_thread writes it. report: the
+# `maestro: retry` or `maestro: infra` comment after the last claim, or none. failed: retry comments
+# since the last handoff, so a reviewer gets its own budget. infra: infra comments since then and
+# since the last retry, so only deaths in a row count.
+attempt_facts() {
+  jq -r --arg since "$2" '[.comments[] | {b: .body, t: .createdAt}] as $c
+    | def last_of(p): [$c | to_entries[] | select(.value.b | p) | .key] | max // -1;
+    last_of(startswith("maestro: claimed")) as $claim
+    | last_of(startswith("maestro: handed off")) as $handoff
+    | last_of(startswith("maestro: retry")) as $retry
+    | ([$c | to_entries[] | select(.key > $claim) | .value.b
+        | if startswith("maestro: infra") then "infra" elif startswith("maestro: retry") then "retry" else empty end]
+        | last // "none") as $report
+    | "\($claim >= 0 and $c[$claim].t >= $since) \($report)"
+      + " \([$c | to_entries[] | select(.key > $handoff and (.value.b | startswith("maestro: retry")))] | length)"
+      + " \([$c | to_entries[] | select(.key > ([$handoff, $retry] | max) and (.value.b | startswith("maestro: infra")))] | length)"' <<<"$1"
 }
 
 needs_help() {
@@ -129,34 +145,72 @@ tell_master() {
   local master="$1" name="$2" line="$3"
   log "$name $line"
   [ -n "$master" ] || return 0
-  "${t3[@]}" thread send "$master" "$line" >/dev/null || log "$name: could not message the master"
+  "${t3[@]}" thread send "$master" "$line" >/dev/null && return 0
+  log "$name: could not message the master; trying again next tick"
+  return 1
 }
 
-# An in-progress issue this dispatcher claimed whose worker thread is gone: a fresh worker, until
-# MAESTRO_RETRIES attempts after the first have failed. Each failed attempt leaves one retry comment.
+# An in-progress issue no live worker thread holds goes back to its queue, until MAESTRO_RETRIES
+# attempts after the first have failed; each failed attempt leaves one retry comment. A claim this
+# dispatcher did not make is dropped for free. So is a worker whose run ended cancelled or failed:
+# that is how the server records a run its restart or a provider process exit cut off, while a worker
+# that ends on its own completes, and `t3 thread stop` (a stall stop, or a person) interrupts.
 requeue() {
-  local name="$1" live="$2" claimed n labels failed
+  local name="$1" threads="$2" claimed n labels labelled comments facts ours report failed infra status age
   claimed="$(gh issue list --label in-progress --state open --limit 100 --json number,labels \
     --jq '.[] | "\(.number) \([.labels[].name] | join(","))"')" || return 1
   while read -r n labels; do
     [ -n "$n" ] || continue
-    grep -qx "$n" <<<"$live" && continue
+    grep -qx "$n live" <<<"$threads" && continue
     [[ ",$labels," == *",ready-for-human,"* ]] && continue
-    [ "$(has_comment "$n" "maestro: claimed")" = true ] || continue
     if [[ ",$labels," == *",needs-help,"* ]]; then
-      gh issue edit "$n" --remove-label in-progress >/dev/null
-      log "$name #$n needs help; dropped in-progress"
-    else
-      if [ "$(attempt_unreported "$n")" = true ]; then
-        gh issue comment "$n" --body "maestro: retry: the worker ended without finishing or leaving a report." >/dev/null
-      fi
-      failed="$(failed_attempts "$n")"
-      if [ "${failed:-0}" -gt "$retries" ]; then
-        needs_help "$n" "$failed attempts failed; each \`maestro: retry\` comment says what it tried."
+      gh issue edit "$n" --remove-label in-progress >/dev/null && log "$name #$n needs help; dropped in-progress"
+      continue
+    fi
+    if ! labelled="$(gh api "repos/{owner}/{repo}/issues/$n/events" --paginate \
+      --jq '.[] | select(.event == "labeled" and .label.name == "in-progress") | .created_at' | tail -n 1)" ||
+      ! comments="$(gh issue view "$n" --json comments)" ||
+      ! facts="$(attempt_facts "$comments" "$labelled")"; then
+      log "$name #$n: could not read its comments or labels; trying again next tick"
+      continue
+    fi
+    if [ -n "$labelled" ]; then
+      age="$(jq -rn --arg t "$labelled" 'now - ($t | fromdateiso8601) | floor')" || continue
+      [ "$age" -ge "$claim_grace" ] || continue
+    fi
+    read -r ours report failed infra <<<"$facts"
+    if [ "$ours" != true ]; then
+      gh issue edit "$n" --remove-label in-progress >/dev/null || {
+        log "$name #$n: could not drop in-progress; trying again next tick"
+        continue
+      }
+      gh issue comment "$n" --body "maestro: dropped a claim this dispatcher did not make and no live worker holds; it does not count as a failed attempt." >/dev/null
+      log "$name #$n dropped a claim it did not make"
+      continue
+    fi
+    if [ "$report" = none ]; then
+      status="$(awk -v n="$n" '$1 == n { print $2; exit }' <<<"$threads")"
+      if [ "$status" = cancelled ] || [ "$status" = failed ]; then
+        gh issue comment "$n" --body "maestro: infra: the worker's run ended \`$status\`, as when the T3 server restarts or the provider process exits, so the attempt does not count." >/dev/null || {
+          log "$name #$n: could not comment; trying again next tick"
+          continue
+        }
+        report=infra infra=$((infra + 1))
       else
-        gh issue edit "$n" --remove-label in-progress >/dev/null
-        log "$name #$n retried ($failed failed so far)"
+        gh issue comment "$n" --body "maestro: retry: the worker ended without finishing or leaving a report." >/dev/null || {
+          log "$name #$n: could not comment; trying again next tick"
+          continue
+        }
+        report=retry failed=$((failed + 1))
       fi
+    fi
+    if [ "$report" = infra ] && [ "$infra" -gt "$infra_retries" ]; then
+      needs_help "$n" "$infra workers in a row died with their T3 server or provider; each \`maestro: infra\` comment names how the run ended."
+    elif [ "$report" = retry ] && [ "$failed" -gt "$retries" ]; then
+      needs_help "$n" "$failed attempts failed; each \`maestro: retry\` comment says what it tried."
+    else
+      gh issue edit "$n" --remove-label in-progress >/dev/null &&
+        log "$name #$n retried ($failed failed, $infra infrastructure deaths in a row)"
     fi
   done <<<"$claimed"
 }
@@ -173,7 +227,7 @@ stop_stalls() {
     last="$(gh issue view "$n" --json updatedAt --jq .updatedAt)" || continue
     branch="$(gh api "repos/$repo/branches/task/$n" --jq .commit.commit.committer.date 2>/dev/null)" || branch=""
     prs="$(gh pr list --head "task/$n" --state all --json updatedAt --jq '.[].updatedAt' 2>/dev/null)" || prs=""
-    last="$(printf '%s\n' "$last" "$branch" $prs | grep . | sort | tail -n 1)"
+    last="$(printf '%s\n' "$last" "$branch" "$prs" | grep . | sort | tail -n 1)"
     age="$(jq -rn --arg t "$last" '(now - ($t | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) | floor')" || continue
     [ "$age" -ge $((stall_minutes * 60)) ] || continue
     thread="$("${t3[@]}" thread list --project "$folder" --json | jq -r --argjson live "$live_statuses" --arg n "$n" '[.[]
@@ -195,8 +249,8 @@ stop_stalls() {
 # empty for the default branch. Returns 1 when GitHub could not be read, 2 when the branch could not
 # be created (after printing its name).
 integration_base() {
-  local repo="$1" default="$2" n="$3" depth parent sha epic integration
-  for depth in 1 2 3 4 5; do
+  local repo="$1" default="$2" n="$3" parent sha epic integration
+  for _ in 1 2 3 4 5; do
     if ! parent="$(gh api "repos/$repo/issues/$n/parent" \
       --jq '"\(.number) \(any(.labels[]; .name == "epic")) \(any(.labels[]; .name == "integration"))"' 2>&1)"; then
       grep -q "404" <<<"$parent" && return 0
@@ -236,8 +290,17 @@ dispatch_base() {
 start_thread() {
   local folder="$1" name="$2" n="$3" title="$4" claim="$5" message="$6" err
   shift 6
-  gh issue edit "$n" --add-label in-progress >/dev/null
-  gh issue comment "$n" --body "$claim" >/dev/null
+  if ! gh issue edit "$n" --add-label in-progress >/dev/null; then
+    log "$name #$n could not be claimed; trying again next tick" >&2
+    return 1
+  fi
+  # Without its comment the claim is not ours (see requeue), so it is undone. If the undo fails too,
+  # requeue drops it as a claim this dispatcher did not make.
+  if ! gh issue comment "$n" --body "$claim" >/dev/null; then
+    gh issue edit "$n" --remove-label in-progress >/dev/null
+    log "$name #$n could not be claimed; trying again next tick" >&2
+    return 1
+  fi
   if err="$("${t3[@]}" thread start "$folder" "$message" --title "$title" "$@" 2>&1 >/dev/null)"; then
     log "$name #$n dispatched: $title" >&2
   else
@@ -265,7 +328,10 @@ dispatch() {
     [ "$started" -lt "$room" ] || break
     # A builder that just handed off may still be ending; its thread holds the issue until then.
     grep -qx "$n" <<<"$live" && continue
-    free="$(gh issue view "$n" --json state,labels --jq '.state == "OPEN" and any(.labels[]; .name == "ready-for-review") and (any(.labels[]; .name | IN("in-progress", "needs-help", "ready-for-human")) | not)')"
+    free="$(gh issue view "$n" --json state,labels --jq '.state == "OPEN" and any(.labels[]; .name == "ready-for-review") and (any(.labels[]; .name | IN("in-progress", "needs-help", "ready-for-human")) | not)')" || {
+      log "$name #$n: could not read its labels; trying again next tick" >&2
+      continue
+    }
     [ "$free" = true ] || continue
     args=()
     while IFS= read -r arg; do args+=("$arg"); done < <(review_model_args)
@@ -282,11 +348,17 @@ dispatch() {
     [ "$started" -lt "$room" ] || break
     grep -qx "$n" <<<"$live" && continue
     # Search lags by a few seconds; re-read before claiming.
-    free="$(gh issue view "$n" --json state,labels --jq '.state == "OPEN" and (any(.labels[]; .name | IN("in-progress", "needs-help", "ready-for-human", "ready-for-review")) | not)')"
+    free="$(gh issue view "$n" --json state,labels --jq '.state == "OPEN" and (any(.labels[]; .name | IN("in-progress", "needs-help", "ready-for-human", "ready-for-review")) | not)')" || {
+      log "$name #$n: could not read its labels; trying again next tick" >&2
+      continue
+    }
     [ "$free" = true ] || continue
     # The search's -is:blocked lags behind edges added seconds ago, as when an issue is split.
     blockers="$(gh api "repos/$repo/issues/$n/dependencies/blocked_by" --paginate |
-      jq -s '[add // [] | .[] | select(.state == "open")] | length')" || continue
+      jq -s '[add // [] | .[] | select(.state == "open")] | length')" || {
+      log "$name #$n: could not read its blockers; trying again next tick" >&2
+      continue
+    }
     [ "$blockers" = 0 ] || continue
     target="$(dispatch_base "$name" "$repo" "$base" "$n")" || continue
     start_thread "$folder" "$name" "$n" "mw-$n $title" "maestro: claimed" \
@@ -296,12 +368,14 @@ dispatch() {
   echo "$started"
 }
 
-# Lines in $2 (current) missing from state file $1, after which the file holds $2.
-new_since_last() {
-  local file="$1" current="$2"
-  comm -13 <(sort -u "$file" 2>/dev/null) <(sort -u <<<"$current" | grep .)
-  sort -u <<<"$current" | grep . >"$file.tmp"
+# Lines in $2 (current) not yet in state file $1, which keeps only lines still current. The caller
+# appends a line once its notice went out, so a failed send is tried again next tick.
+unsent() {
+  local file="$1" current
+  current="$(sort -u <<<"$2" | grep .)"
+  comm -12 <(sort -u "$file" 2>/dev/null) <(printf '%s\n' "$current" | grep .) >"$file.tmp"
   mv "$file.tmp" "$file"
+  comm -13 "$file" <(printf '%s\n' "$current" | grep .)
 }
 
 needs_help_issues() {
@@ -360,49 +434,129 @@ report() {
   done <<<"$epics"
 
   current="$(needs_help_issues)" || return 1
+  current="$(unsent "$key.needs-help" "$current")"
   while read -r n url; do
     [ -n "$n" ] || continue
     line="$(gh issue view "$n" --json comments --jq '[.comments[].body | select(startswith("maestro: needs help."))] | last // "see the issue." | sub("^maestro: needs help. "; "")')"
-    tell_master "$master" "$name" "#$n needs-help: ${line:-see the issue.} $url"
-  done < <(new_since_last "$key.needs-help" "$current")
+    tell_master "$master" "$name" "#$n needs-help: ${line:-see the issue.} $url" && echo "$n $url" >>"$key.needs-help"
+  done <<<"$current"
 
   current="$(unblocked_human_issues)" || return 1
+  current="$(unsent "$key.ready-for-human" "$current")"
   while read -r n url; do
     [ -n "$n" ] || continue
-    tell_master "$master" "$name" "#$n ready-for-human unblocked $url"
-  done < <(new_since_last "$key.ready-for-human" "$current")
+    tell_master "$master" "$name" "#$n ready-for-human unblocked $url" && echo "$n $url" >>"$key.ready-for-human"
+  done <<<"$current"
+}
+
+# Why the open ready-for-agent issues cannot start, as `<count> <reason>, ...`; empty when none is open.
+stuck_reasons() {
+  local open blocked n labels
+  open="$(gh issue list --label ready-for-agent --state open --limit 100 --json number,labels \
+    --jq '.[] | "\(.number) \([.labels[].name] | join(","))"')" || return 1
+  [ -n "$open" ] || return 0
+  blocked="$(gh issue list --label ready-for-agent --state open --limit 100 --search "is:blocked" \
+    --json number --jq '.[].number')" || return 1
+  while read -r n labels; do
+    if [[ ",$labels," == *",needs-help,"* ]]; then
+      echo "needs-help"
+    elif [[ ",$labels," == *",ready-for-human,"* ]]; then
+      echo "ready-for-human"
+    elif [[ ",$labels," == *",in-progress,"* ]]; then
+      echo "in-progress with no worker"
+    elif grep -qx "$n" <<<"$blocked"; then
+      echo "blocked"
+    else
+      echo "failed to start (see the daemon log)"
+    fi
+  done <<<"$open" | sort | uniq -c | sed 's/^ *//' | paste -sd, - | sed 's/,/, /g'
+}
+
+# With no worker running and none started though there was room ($3 = true), tells the master once
+# per distinct reason why the project's ready-for-agent issues cannot start.
+report_stuck() {
+  local name="$1" master="$2" idle="$3" key reasons
+  key="$(state_key)" || return 1
+  reasons=""
+  if [ "$idle" = true ]; then
+    reasons="$(stuck_reasons)" || return 1
+  fi
+  if [ -z "$reasons" ]; then
+    rm -f "$key.stuck"
+    return 0
+  fi
+  [ "$reasons" = "$(cat "$key.stuck" 2>/dev/null)" ] && return 0
+  tell_master "$master" "$name" "maestro queue for $name can't move: no worker is running and no open ready-for-agent issue can start: $reasons." &&
+    echo "$reasons" >"$key.stuck"
+}
+
+fails=()
+fail_told=()
+
+# Counts a project's failed tick; the master hears once when fail_ticks fail in a row.
+tick_failed() {
+  local i="$1" name="$2" why="$3"
+  fails[i]=$((${fails[$i]:-0} + 1))
+  [ "${fails[$i]}" -ge "$fail_ticks" ] && [ -z "${fail_told[$i]:-}" ] || return 0
+  tell_master "${masters[$i]}" "$name" "maestro queue for $name: the last ${fails[$i]} ticks in a row failed, most recently: $why. Settings > Daemons shows its log." &&
+    fail_told[i]=1
 }
 
 tick() {
-  local folder name live running=0 lives=() i
+  local folder name threads running=0 lives=() threads_of=() skip=() i held started why idle
   for i in "${!projects[@]}"; do
     folder="${projects[$i]}"
-    live="$(live_workers "$folder")" || {
-      log "$folder: could not list threads"
-      return 1
-    }
-    lives[i]="$live"
-    running=$((running + $(grep -c . <<<"$live")))
+    if ! threads="$(worker_threads "$folder")"; then
+      # Skipped this tick. Its workers still count against the cap: every issue one could hold.
+      held="$(cd "$folder" && held_issues)" || held="$max"
+      log "$folder: could not list threads; skipping it this tick and counting $held workers for it"
+      skip[i]=1
+      running=$((running + held))
+      continue
+    fi
+    threads_of[i]="$threads"
+    lives[i]="$(awk '$2 == "live" { print $1 }' <<<"$threads" | sort -u)"
+    running=$((running + $(grep -c . <<<"${lives[$i]}")))
   done
   for i in "${!projects[@]}"; do
     folder="${projects[$i]}"
     name="$(basename "$folder")"
+    if [ -n "${skip[$i]:-}" ]; then
+      tick_failed "$i" "$name" "could not list its threads"
+      continue
+    fi
+    why=""
     (
       cd "$folder" || exit 1
-      requeue "$name" "${lives[$i]}"
-    ) || log "$name: requeue failed"
+      requeue "$name" "${threads_of[$i]}"
+    ) || why="requeue failed"
     (
       cd "$folder" || exit 1
       stop_stalls "$name" "${lives[$i]}" "$folder"
-    ) || log "$name: stall check failed"
-    local started
-    started="$(cd "$folder" && dispatch "$folder" "$name" "${lives[$i]}" $((max - running)))" ||
-      log "$name: dispatch failed"
-    running=$((running + ${started:-0}))
+    ) || why="stall check failed"
+    idle=false
+    if started="$(cd "$folder" && dispatch "$folder" "$name" "${lives[$i]}" $((max - running)))"; then
+      [ -z "${lives[$i]}" ] && [ "$started" -eq 0 ] && [ $((max - running)) -gt 0 ] && idle=true
+    else
+      why="dispatch failed"
+      started=0
+    fi
+    running=$((running + started))
     (
       cd "$folder" || exit 1
       report "$name" "${masters[$i]}"
-    ) || log "$name: report failed"
+    ) || why="report failed"
+    (
+      cd "$folder" || exit 1
+      report_stuck "$name" "${masters[$i]}" "$idle"
+    ) || why="stuck check failed"
+    if [ -n "$why" ]; then
+      log "$name: $why"
+      tick_failed "$i" "$name" "$why"
+    else
+      fails[i]=0
+      fail_told[i]=""
+    fi
   done
   return 0
 }
