@@ -38,23 +38,24 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
     .split(/\r?\n/);
   let start = 0;
   let commentStart = -1;
-  let preambleStart = -1;
-  const preambleBlocks: string[] = [];
+  const preambleBlocks: Array<{ start: number; end: number }> = [];
   for (const line of lines) {
     if (commentStart < 0 && /^ {0,3}<!--/.test(line)) commentStart = start;
     if (commentStart < 0 && line.trim().length > 0 && headingText(line) !== "") break;
     const end = commentStart >= 0 ? line.indexOf("-->") : -1;
     if (end >= 0) {
-      if (preambleStart < 0 && line.slice(end + 3).trim()) preambleStart = commentStart;
-      if (preambleStart >= 0) preambleBlocks.push(lines.slice(commentStart, start + 1).join("\n"));
+      if (preambleBlocks.length > 0 || line.slice(end + 3).trim()) {
+        preambleBlocks.push({ start: commentStart, end: start + 1 });
+      }
       commentStart = -1;
     }
     start += 1;
   }
+  const firstPreambleBlock = preambleBlocks[0];
   if (headingText(lines[start] ?? "")) {
     start += 1;
-  } else if (preambleStart >= 0) {
-    return lines.slice(preambleStart).join("\n");
+  } else if (firstPreambleBlock) {
+    return lines.slice(firstPreambleBlock.start).join("\n");
   }
   while (lines[start]?.trim().length === 0) {
     start += 1;
@@ -66,7 +67,9 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
     }
   }
   const body = lines.slice(start).join("\n");
-  if (preambleStart < 0) return body;
-  const preamble = preambleBlocks.join("\n");
+  if (!firstPreambleBlock) return body;
+  const preamble = preambleBlocks
+    .map(({ start, end }) => lines.slice(start, end).join("\n"))
+    .join("\n");
   return body ? `${preamble}\n\n${body}` : preamble;
 }
