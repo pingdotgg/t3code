@@ -1384,6 +1384,9 @@ function* rtfParts(
             "pict",
             "object",
             "fldinst",
+            // Shape properties, and the drawing that repeats a shape for older readers.
+            "sp",
+            "shprslt",
             "header",
             "headerf",
             "headerl",
@@ -1443,7 +1446,8 @@ function* rtfParts(
           yield* emitByte(rest[0]!.charCodeAt(0));
         else {
           yield* flushBytes();
-          if (rest[0] === "*") state.skip = true;
+          // Shape instructions are an optional destination, but a text box keeps its text there.
+          if (rest[0] === "*" && !/^\*[\r\n]*\\shpinst(?![a-z])/i.test(rest)) state.skip = true;
           // A backslash before a line break is \par; TextEdit ends paragraphs this way.
           else if (!hidden() && (rest[0] === "\n" || rest[0] === "\r")) yield "\n";
           else if (!hidden() && symbols.has(rest[0]!)) yield symbols.get(rest[0]!)!;
