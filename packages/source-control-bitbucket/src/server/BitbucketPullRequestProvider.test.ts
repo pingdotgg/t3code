@@ -129,6 +129,9 @@ for (const operation of [
             });
           } else {
             expect(result._tag).toBe("Success");
+            if (operation === "listChecks" && result._tag === "Success") {
+              expect(result.success).not.toHaveProperty("checksState");
+            }
           }
         }
       }),
@@ -176,6 +179,42 @@ it.effect("reads checks and PR state without diff, mergeability, or permission r
       reason: "rate-limited",
       retryAt: 120_000,
     });
+  }),
+);
+
+it.effect("includes pending check state in pull request details", () =>
+  Effect.gen(function* () {
+    const pullRequest = Result.getOrThrow(
+      decodePullRequestJson(`{
+        "id": 1, "title": "Watch checks", "state": "OPEN",
+        "source": { "branch": { "name": "feature" }, "commit": { "hash": "abc123" } },
+        "destination": { "branch": { "name": "main" } },
+        "created_on": "2026-09-16T00:00:00Z", "updated_on": "2026-09-16T00:00:00Z",
+        "links": { "html": { "href": "https://bitbucket.org/acme/web/pull-requests/1" } }
+      }`),
+    );
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({
+          getPullRequest: () => Effect.succeed(pullRequest),
+          getDiffStat: () => Effect.succeed({ additions: 0, deletions: 0, changedFiles: 0 }),
+          getMergeability: () => Effect.succeed("unknown"),
+          listChecks: () =>
+            Effect.succeed([
+              { name: "build", status: "pending" as const, description: null, url: null },
+            ]),
+          getRepositoryPermission: () => Effect.succeed(true),
+        }),
+      ),
+    );
+    const detail = yield* provider.getChangeRequest({
+      cwd: "/repo",
+      repository: "acme/web",
+      host: "bitbucket.org",
+      number: 1,
+    });
+
+    expect(detail.checksState).toBe("pending");
   }),
 );
 

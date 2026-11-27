@@ -1,6 +1,11 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
+import { rollupCheckStatuses } from "@t3tools/source-control-core/server/pullRequestChecks";
+import type {
+  PullRequestCapabilities,
+  PullRequestCheck,
+  PullRequestViewerPermissions,
+} from "@t3tools/contracts";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
@@ -229,7 +234,7 @@ export const make = Effect.gen(function* () {
           api.getPullRequest(target),
           api.getDiffStat(target),
           recoverRead(api.getMergeability(target), "unknown" as const),
-          recoverRead(api.listChecks(target), []),
+          recoverRead<ReadonlyArray<PullRequestCheck> | null>(api.listChecks(target), null),
           recoverRead(api.getRepositoryPermission(target), true),
         ],
         { concurrency: 5 },
@@ -252,7 +257,10 @@ export const make = Effect.gen(function* () {
             mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
             closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
             reviewers: pullRequest.reviewers,
-            checks,
+            checks: checks ?? [],
+            ...(checks === null
+              ? {}
+              : { checksState: rollupCheckStatuses(checks.map((check) => check.status)) }),
             // Bitbucket exposes no strategy permissions; unsupported strategies fail at merge.
             mergeCapabilities: { merge: true, squash: true, rebase: true },
             viewerPermissions: bitbucketViewerPermissions({ canWrite }),
