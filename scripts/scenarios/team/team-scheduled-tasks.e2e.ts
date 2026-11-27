@@ -635,9 +635,10 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
     .locator("[data-user-message-bubble]")
     .first()
     .waitFor({ state: "visible", timeout: 15_000 });
-  // Modo does NOT have Stop generation or explicit Interrupt on an active automation run.
-  expect(await charlie.page.getByRole("button", { name: "Stop generation" }).count()).toBe(0);
-  expect(await charlie.page.getByTestId("team-admin-interrupt-button").count()).toBe(0);
+  // Modo sees explicit Interrupt on an UNLOCKED active automation run (never Send now).
+  const charlieAutoInterruptBtn = charlie.page.getByTestId("team-admin-interrupt-button");
+  await charlieAutoInterruptBtn.waitFor({ state: "visible", timeout: 15_000 });
+  expect((await charlieAutoInterruptBtn.textContent()) ?? "").toContain("Interrupt");
   await charlieComposer.click();
   await charlieComposer.fill("Charlie follow-up after automation");
   await charlieComposer.press("Enter");
@@ -717,16 +718,34 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
   });
   expect(elevReadAdmin.isError).toBe(false);
 
-  // While held, the automation GitHub lease works; Alice clicks Interrupt -> lease is immediately revoked!
+  // While held and LOCKED:
+  // - The automation GitHub lease works.
+  // - Charlie (modo) CANNOT interrupt a locked thread (no Interrupt button).
+  // - Once Alice unlocks the thread, Charlie (modo) gets explicit Interrupt and clicking it IMMEDIATELY revokes the automation GitHub lease!
   const askpassBeforeInterrupt = queryCapturedAskpass(elevAutoRecord, fakeGitHub.origin);
   expect(askpassBeforeInterrupt.status).toBe(0);
   expect(askpassBeforeInterrupt.stdout.trim()).toBe(fakeGitHub.tokens.automation);
 
   expect(elevAutoRecord.t3ThreadId).toBeTruthy();
+  await charlie.open(`/${topology.teamServer.environmentId}/${elevAutoRecord.t3ThreadId!}`);
+  await charlie.page
+    .locator("[data-user-message-bubble]")
+    .first()
+    .waitFor({ state: "visible", timeout: 15_000 });
+  await charlie.page
+    .getByTestId("team-thread-locked-badge")
+    .waitFor({ state: "visible", timeout: 15_000 });
+  expect(await charlie.page.getByTestId("team-admin-interrupt-button").count()).toBe(0);
+  expect(await charlie.page.getByRole("button", { name: "Stop generation" }).count()).toBe(0);
+
   await alice.open(`/${topology.teamServer.environmentId}/${elevAutoRecord.t3ThreadId!}`);
   const stopButton = alice.page.getByTestId("team-admin-interrupt-button");
   await stopButton.waitFor({ state: "visible", timeout: 15_000 });
-  await stopButton.click();
+  await alice.page.getByTestId("team-thread-lock-button").click();
+
+  const charlieUnlockedInterruptBtn = charlie.page.getByTestId("team-admin-interrupt-button");
+  await charlieUnlockedInterruptBtn.waitFor({ state: "visible", timeout: 15_000 });
+  await charlieUnlockedInterruptBtn.click();
 
   await expect
     .poll(() => queryCapturedAskpass(elevAutoRecord, fakeGitHub.origin).status, { timeout: 15_000 })

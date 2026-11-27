@@ -128,8 +128,13 @@ export function useTeamCommandPaletteActions(
     });
   }
   if (activeThread && activeTeamState?.team != null) {
+    const envAccess = resolveTeamThreadEnvironmentAccessForClient({
+      teamState: activeTeamState,
+      threadId: activeThread.id,
+      viewingOnLocalExecutionEnvironment: false,
+    });
     const activeRunId = activeThreadShell?.runtime?.activeRunId ?? null;
-    if (activeRunId !== null && canOperateActiveThread) {
+    if (activeRunId !== null && canOperateActiveThread && envAccess.canExecute) {
       const interruptPermission = canCurrentMemberInterruptThread({
         teamState: activeTeamState,
         threadId: activeThread.id,
@@ -139,7 +144,17 @@ export function useTeamCommandPaletteActions(
         items.push({
           kind: "action",
           value: "action:team-interrupt-turn",
-          searchTerms: ["team", "interrupt", "stop", "cancel", "admin", "owner", "turn"],
+          searchTerms: [
+            "team",
+            "interrupt",
+            "stop",
+            "cancel",
+            "admin",
+            "owner",
+            "modo",
+            "moderator",
+            "turn",
+          ],
           title: gt("Interrupt active turn"),
           icon: <OctagonXIcon className={ITEM_ICON_CLASS} />,
           run: async () => {
@@ -199,11 +214,6 @@ export function useTeamCommandPaletteActions(
         });
       }
     }
-    const envAccess = resolveTeamThreadEnvironmentAccessForClient({
-      teamState: activeTeamState,
-      threadId: activeThread.id,
-      viewingOnLocalExecutionEnvironment: false,
-    });
     if (!envAccess.canExecute && activeThreadShell) {
       const threadProject = allProjects.find(
         (p) =>

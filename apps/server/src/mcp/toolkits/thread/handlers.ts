@@ -372,7 +372,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           requestId,
         });
         yield* TeamMcpAccess.assertCanPostInThread(projection.thread.id);
-        yield* TeamMcpAccess.assertCanInterruptThread(projection.thread.id);
+        yield* TeamMcpAccess.assertCanRespondToRuntimeRequest(projection.thread.id);
         const result = yield* threads
           .dispatch({
             type: "runtime-request.respond",

@@ -35,6 +35,7 @@ import {
   canMemberPostInTeamThread,
   canMemberPromoteTeamQueuedRun,
   canMemberReadTeamThread,
+  canMemberRespondToTeamRuntimeRequest,
   canMemberSteerActiveTeamTurn,
   canModifyTeamMember,
   canToggleTeamThreadLock,
@@ -44,12 +45,14 @@ import {
   isValidTeamPseudo,
   parseTeamJoinLink,
   requiresTeamNoteApprovalConfirmation,
+  resolveTeamQueuedMessageNotificationRecipients,
   resolveTeamThreadEnvironmentAccess,
   resolveTeamThreadPostBlockReason,
   shouldNotifyTeamMemberForThread,
   TeamId,
   TeamMemberId,
   TeamThreadNoteId,
+  type TeamRole,
 } from "./schemas.ts";
 import { EnvironmentId, ThreadId } from "../baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "../providerInstance.ts";
@@ -261,7 +264,17 @@ describe("team view read/post and locking rules", () => {
       }),
     ).toBe(true);
 
-    // Interrupt: owner/admin can interrupt any thread; creator or active turn author can interrupt own; regular/modo non-creators cannot.
+    // Interrupt: owner/admin can interrupt any readable thread (including locked);
+    // modo can interrupt unlocked readable threads (not locked); regular can interrupt own unlocked thread or own active turn.
+    const lockedBobAttribution = { ...bobAttribution, locked: true };
+    const adminOnlyView = {
+      readRule: { roles: ["owner", "admin"] as TeamRole[], memberIds: [] },
+      postRule: { roles: ["owner", "admin"] as TeamRole[], memberIds: [] },
+    };
+    const otherRegular = {
+      ...regular,
+      id: TeamMemberId.make("m-regular-2"),
+    };
     expect(
       canMemberInterruptTeamTurn({
         member: owner,
@@ -273,7 +286,7 @@ describe("team view read/post and locking rules", () => {
     expect(
       canMemberInterruptTeamTurn({
         member: admin,
-        attribution: bobAttribution,
+        attribution: lockedBobAttribution,
         view: defaultView,
         activeTurnAuthorMemberId: regular.id,
       }),
@@ -288,6 +301,22 @@ describe("team view read/post and locking rules", () => {
     ).toBe(true);
     expect(
       canMemberInterruptTeamTurn({
+        member: regular,
+        attribution: lockedBobAttribution,
+        view: defaultView,
+        activeTurnAuthorMemberId: owner.id,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberInterruptTeamTurn({
+        member: regular,
+        attribution: lockedBobAttribution,
+        view: defaultView,
+        activeTurnAuthorMemberId: regular.id,
+      }),
+    ).toBe(true);
+    expect(
+      canMemberInterruptTeamTurn({
         member: modo,
         attribution: bobAttribution,
         view: defaultView,
@@ -301,6 +330,30 @@ describe("team view read/post and locking rules", () => {
         view: defaultView,
         activeTurnAuthorMemberId: regular.id,
       }),
+    ).toBe(true);
+    expect(
+      canMemberInterruptTeamTurn({
+        member: modo,
+        attribution: lockedBobAttribution,
+        view: defaultView,
+        activeTurnAuthorMemberId: regular.id,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberInterruptTeamTurn({
+        member: modo,
+        attribution: bobAttribution,
+        view: adminOnlyView,
+        activeTurnAuthorMemberId: regular.id,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberInterruptTeamTurn({
+        member: otherRegular,
+        attribution: bobAttribution,
+        view: defaultView,
+        activeTurnAuthorMemberId: regular.id,
+      }),
     ).toBe(false);
     expect(
       canMemberInterruptTeamTurn({
@@ -310,6 +363,23 @@ describe("team view read/post and locking rules", () => {
         activeTurnAuthorMemberId: regular.id,
       }),
     ).toBe(false);
+    // Runtime request responses stay restricted to owner/admin, thread creator (unlocked), or active turn author (never modo on foreign turns).
+    expect(
+      canMemberRespondToTeamRuntimeRequest({
+        member: modo,
+        attribution: bobAttribution,
+        view: defaultView,
+        activeTurnAuthorMemberId: regular.id,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberRespondToTeamRuntimeRequest({
+        member: owner,
+        attribution: bobAttribution,
+        view: defaultView,
+        activeTurnAuthorMemberId: regular.id,
+      }),
+    ).toBe(true);
 
     // Queued run management (edit/cancel): owner/admin, thread creator (if can post), or queued run author (if can post).
     expect(
@@ -984,7 +1054,7 @@ describe("Milestone 8 team displayName, scheduled-task scoping & RBAC, and team-
       }),
     ).toBe(false);
 
-    // Interrupt: owner/admin retain explicit Interrupt on active automation runs; modo/regular cannot.
+    // Interrupt: owner/admin always allowed; modo allowed on unlocked readable automation runs (not locked); regular cannot.
     expect(
       canMemberInterruptTeamTurn({
         member: owner,
@@ -1008,6 +1078,14 @@ describe("Milestone 8 team displayName, scheduled-task scoping & RBAC, and team-
         view: openView,
         activeTurnAuthorMemberId: null,
       }),
+    ).toBe(true);
+    expect(
+      canMemberInterruptTeamTurn({
+        member: modo,
+        attribution: lockedTeamThread,
+        view: openView,
+        activeTurnAuthorMemberId: null,
+      }),
     ).toBe(false);
     expect(
       canMemberInterruptTeamTurn({
@@ -1020,12 +1098,56 @@ describe("Milestone 8 team displayName, scheduled-task scoping & RBAC, and team-
     // Human author of a follow-up turn in a team-owned thread can interrupt their own turn.
     expect(
       canMemberInterruptTeamTurn({
-        member: modo,
+        member: regular,
         attribution: unlockedTeamThread,
         view: openView,
-        activeTurnAuthorMemberId: modo.id,
+        activeTurnAuthorMemberId: regular.id,
       }),
     ).toBe(true);
+
+    // Queued-message notification recipients: creator + distinct human active turn author, never sender.
+    expect(
+      resolveTeamQueuedMessageNotificationRecipients({
+        senderMemberId: modo.id,
+        attribution: aliceMemberThread,
+        activeTurnAuthorMemberId: owner.id,
+      }),
+    ).toEqual([owner.id]);
+    expect(
+      resolveTeamQueuedMessageNotificationRecipients({
+        senderMemberId: modo.id,
+        attribution: aliceMemberThread,
+        activeTurnAuthorMemberId: regular.id,
+      }),
+    ).toEqual([owner.id, regular.id]);
+    expect(
+      resolveTeamQueuedMessageNotificationRecipients({
+        senderMemberId: owner.id,
+        attribution: aliceMemberThread,
+        activeTurnAuthorMemberId: owner.id,
+      }),
+    ).toEqual([]);
+    expect(
+      resolveTeamQueuedMessageNotificationRecipients({
+        senderMemberId: owner.id,
+        attribution: aliceMemberThread,
+        activeTurnAuthorMemberId: regular.id,
+      }),
+    ).toEqual([regular.id]);
+    expect(
+      resolveTeamQueuedMessageNotificationRecipients({
+        senderMemberId: modo.id,
+        attribution: unlockedTeamThread,
+        activeTurnAuthorMemberId: null,
+      }),
+    ).toEqual([]);
+    expect(
+      resolveTeamQueuedMessageNotificationRecipients({
+        senderMemberId: modo.id,
+        attribution: unlockedTeamThread,
+        activeTurnAuthorMemberId: regular.id,
+      }),
+    ).toEqual([regular.id]);
 
     // Notifications: zero default notifications for unfollowed team-owned threads; notifies when followed or own follow-up turn.
     expect(

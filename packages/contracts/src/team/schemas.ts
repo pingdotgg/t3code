@@ -727,8 +727,10 @@ export function canMemberPromoteTeamQueuedRun(
 }
 
 /**
- * Team turn interrupt rules: `owner`/`admin`, the thread creator, or the active turn author may
- * interrupt; `regular`/`modo` non-creators cannot interrupt automation runs or colleagues' turns.
+ * Team turn interrupt rules:
+ * - `owner` and `admin` can always interrupt (including locked and team-owned threads) when they can read the thread.
+ * - `modo` can interrupt active turns on unlocked threads they can read (including colleagues' turns and unlocked team-owned runs).
+ * - `regular` (or any active readable member) can interrupt their own active turn or their own unlocked member-owned thread.
  */
 export function canMemberInterruptTeamTurn(input: {
   readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
@@ -746,11 +748,44 @@ export function canMemberInterruptTeamTurn(input: {
   if (activeTurnAuthorMemberId != null && activeTurnAuthorMemberId === member.id) {
     return true;
   }
-  if (
-    attribution &&
-    !isTeamOwnedThreadAttribution(attribution) &&
-    attribution.creatorMemberId === member.id
-  ) {
+  if (!attribution || attribution.locked) {
+    return false;
+  }
+  if (member.role === "modo") {
+    return true;
+  }
+  if (!isTeamOwnedThreadAttribution(attribution) && attribution.creatorMemberId === member.id) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Runtime approval / user-input response rules: restricted to `owner`/`admin`, the active turn
+ * author, or the thread creator (on unlocked member-owned threads). `modo` may interrupt an
+ * unlocked foreign turn, but cannot approve tool executions or answer prompts under another
+ * member's credentials.
+ */
+export function canMemberRespondToTeamRuntimeRequest(input: {
+  readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
+  readonly attribution:
+    | Pick<TeamThreadAttribution, "ownerKind" | "creatorMemberId" | "locked">
+    | null
+    | undefined;
+  readonly view?: Pick<TeamView, "readRule"> | null | undefined;
+  readonly activeTurnAuthorMemberId?: TeamMemberId | null | undefined;
+}): boolean {
+  const { member, attribution, view, activeTurnAuthorMemberId } = input;
+  if (!member || member.status !== "active") return false;
+  if (view !== undefined && !canMemberReadTeamThread({ member, view })) return false;
+  if (isTeamAdminRole(member.role)) return true;
+  if (activeTurnAuthorMemberId != null && activeTurnAuthorMemberId === member.id) {
+    return true;
+  }
+  if (!attribution || attribution.locked) {
+    return false;
+  }
+  if (!isTeamOwnedThreadAttribution(attribution) && attribution.creatorMemberId === member.id) {
     return true;
   }
   return false;
@@ -1159,6 +1194,52 @@ export const TeamGitHubRemoteLeaseRevokeResponse = Schema.Struct({
 });
 export type TeamGitHubRemoteLeaseRevokeResponse = typeof TeamGitHubRemoteLeaseRevokeResponse.Type;
 
+export const TeamQueuedMessageNotification = Schema.Struct({
+  threadId: ThreadId,
+  queuedRunId: TrimmedNonEmptyString,
+  commandId: Schema.optionalKey(TrimmedNonEmptyString),
+  senderMemberId: Schema.NullOr(TeamMemberId),
+  senderPseudo: TrimmedNonEmptyString,
+  recipientMemberIds: Schema.Array(TeamMemberId),
+  messagePreview: Schema.String,
+  createdAt: IsoDateTime,
+});
+export type TeamQueuedMessageNotification = typeof TeamQueuedMessageNotification.Type;
+
+/**
+ * Resolves the human candidate recipients for a mid-turn queued-message notification:
+ * - the thread creator (when member-owned and distinct from the queued-message sender), and
+ * - the active turn author (when human and distinct from both the sender and the thread creator).
+ * Callers must still verify each candidate is active and permitted to read the thread.
+ */
+export function resolveTeamQueuedMessageNotificationRecipients(input: {
+  readonly senderMemberId: TeamMemberId | null | undefined;
+  readonly attribution:
+    | Pick<TeamThreadAttribution, "ownerKind" | "creatorMemberId">
+    | null
+    | undefined;
+  readonly activeTurnAuthorMemberId?: TeamMemberId | null | undefined;
+}): ReadonlyArray<TeamMemberId> {
+  const { senderMemberId, attribution, activeTurnAuthorMemberId } = input;
+  if (!attribution) return [];
+  const recipients: Array<TeamMemberId> = [];
+  if (
+    !isTeamOwnedThreadAttribution(attribution) &&
+    attribution.creatorMemberId !== null &&
+    attribution.creatorMemberId !== senderMemberId
+  ) {
+    recipients.push(attribution.creatorMemberId);
+  }
+  if (
+    activeTurnAuthorMemberId != null &&
+    activeTurnAuthorMemberId !== senderMemberId &&
+    !recipients.includes(activeTurnAuthorMemberId)
+  ) {
+    recipients.push(activeTurnAuthorMemberId);
+  }
+  return recipients;
+}
+
 export const TeamStateSnapshot = Schema.Struct({
   team: Schema.NullOr(TeamWorkspace),
   currentMember: Schema.NullOr(TeamMember),
@@ -1319,6 +1400,11 @@ export const TeamStateStreamEvent = Schema.Union([
     version: Schema.Literal(1),
     type: Schema.Literal("scheduledTaskMetaDeleted"),
     payload: TeamScheduledTaskMetaDeletedPayload,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("queuedMessageNotification"),
+    payload: TeamQueuedMessageNotification,
   }),
 ]);
 export type TeamStateStreamEvent = typeof TeamStateStreamEvent.Type;

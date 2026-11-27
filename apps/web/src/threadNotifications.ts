@@ -12,6 +12,7 @@ import { msg } from "gt-react";
 
 import completionUrl from "./assets/notification-completion.mp3";
 import inputUrl from "./assets/notification-input.mp3";
+import { m, type MessageResolver } from "./i18n/messages";
 
 type NotificationMode = ClientSettings["notificationMode"];
 export const NOTIFICATION_MODE_LABELS = {
@@ -57,19 +58,58 @@ export function formatTeamNotificationThreadTitle(input: {
   return formatTeamThreadTitle(title, pseudo);
 }
 
+export function formatTeamQueuedMessageNotification(
+  input: {
+    readonly senderPseudo: string;
+    readonly threadTitle: string | null | undefined;
+    readonly messagePreview: string;
+  },
+  resolve: MessageResolver = m,
+): { readonly title: string; readonly body: string } {
+  const trimmedTitle = input.threadTitle?.trim() ?? "";
+  const title =
+    trimmedTitle.length > 0
+      ? resolve(
+          msg('{sender} queued a message in "{threadTitle}"', {
+            sender: input.senderPseudo,
+            threadTitle: trimmedTitle,
+          }),
+        )
+      : resolve(msg("{sender} queued a message", { sender: input.senderPseudo }));
+  const trimmedPreview = input.messagePreview.trim();
+  const body =
+    trimmedPreview.length > 140
+      ? `${trimmedPreview.slice(0, 137)}…`
+      : trimmedPreview.length > 0
+        ? trimmedPreview
+        : resolve(msg("Open thread to review or click Send now."));
+  return { title, body };
+}
+
 const TAG_HASH_OFFSET_BASIS = 0xcbf29ce484222325n;
 const TAG_HASH_PRIME = 0x100000001b3n;
 const TAG_HASH_MASK = 0xffffffffffffffffn;
 
-/** Windows drops toast notifications with the 73-character environment/thread tag. */
-export function threadNotificationTag(environmentId: EnvironmentId, threadId: ThreadId): string {
-  const key = `${environmentId}:${threadId}`;
+function hashNotificationTag(key: string): string {
   let hash = TAG_HASH_OFFSET_BASIS;
   for (let index = 0; index < key.length; index += 1) {
     hash ^= BigInt(key.charCodeAt(index));
     hash = (hash * TAG_HASH_PRIME) & TAG_HASH_MASK;
   }
   return hash.toString(16).padStart(16, "0");
+}
+
+/** Windows drops toast notifications with the 73-character environment/thread tag. */
+export function threadNotificationTag(environmentId: EnvironmentId, threadId: ThreadId): string {
+  return hashNotificationTag(`${environmentId}:${threadId}`);
+}
+
+export function teamQueuedMessageNotificationTag(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  queuedRunId: string,
+): string {
+  return hashNotificationTag(`${environmentId}:${threadId}:queued:${queuedRunId}`);
 }
 
 let originalFavicon: HTMLLinkElement | undefined;

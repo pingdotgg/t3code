@@ -484,6 +484,17 @@ export const make = Effect.gen(function* () {
   const publishConfirmDeadlines = new Map<ThreadId, number>();
   // Threads whose confirmation holds a completion, so a thread that settles during the hold still alerts.
   const heldCompletions = new Set<ThreadId>();
+  const MAX_PUBLISHED_QUEUED_RUN_IDS = 1_000;
+  const publishedQueuedRunIds = new Set<string>();
+  const rememberPublishedQueuedRunId = (queuedRunId: string) => {
+    publishedQueuedRunIds.delete(queuedRunId);
+    publishedQueuedRunIds.add(queuedRunId);
+    while (publishedQueuedRunIds.size > MAX_PUBLISHED_QUEUED_RUN_IDS) {
+      const oldest = publishedQueuedRunIds.values().next().value;
+      if (oldest === undefined) break;
+      publishedQueuedRunIds.delete(oldest);
+    }
+  };
   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const publishRetries = new Map<
     ThreadId,
@@ -784,6 +795,117 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const publishQueuedMessageNotification = Effect.fn("publishQueuedMessageNotification")(function* (
+    trigger: Extract<TeamService.TeamNotificationTriggerEvent, { readonly type: "queuedMessage" }>,
+  ) {
+    if (publishedQueuedRunIds.has(trigger.queuedRunId)) return;
+    if (Option.isNone(teamService)) return;
+    const publishAgentActivity = yield* readPublishAgentActivityEnabled;
+    if (!publishAgentActivity) return;
+    const relayConfig = yield* readRelayConfig;
+    if (!relayConfig) return;
+    if (
+      typeof teamService.value.shouldPublishRelayQueuedMessageNotification !== "function" ||
+      !(yield* teamService.value.shouldPublishRelayQueuedMessageNotification({
+        threadId: trigger.threadId,
+        recipientMemberIds: trigger.recipientMemberIds,
+        cloudUserId: relayConfig.cloudUserId,
+      }))
+    ) {
+      return;
+    }
+    const threadShell = yield* readAwarenessThread(trigger.threadId);
+    if (threadShell === null || threadShell.archivedAt !== null) return;
+    if (!isListedThreadLineage(threadShell.lineage)) return;
+    const project = yield* projects.getById(threadShell.projectId);
+    if (Option.isNone(project)) return;
+    if (
+      publishedRelayConfig?.url !== relayConfig.url ||
+      publishedRelayConfig.issuer !== relayConfig.issuer ||
+      publishedRelayConfig.environmentCredential !== relayConfig.environmentCredential
+    ) {
+      yield* resetPublishedConnection;
+      publishedRelayConfig = relayConfig;
+    }
+    const environmentId = yield* serverEnvironment.getEnvironmentId;
+    const prefixedThreadTitle =
+      typeof teamService.value.formatUpstreamCompatThreadTitle === "function"
+        ? yield* teamService.value.formatUpstreamCompatThreadTitle(
+            trigger.threadId,
+            threadShell.title,
+          )
+        : threadShell.title;
+    const rawDetail =
+      trigger.messagePreview.trim().length > 0
+        ? trigger.messagePreview.trim()
+        : `${trigger.senderPseudo} queued a message in "${prefixedThreadTitle}"`;
+    const state = sanitizeRelayAgentActivityState({
+      environmentId,
+      threadId: trigger.threadId,
+      projectTitle: project.value.title,
+      threadTitle: prefixedThreadTitle,
+      phase: "waiting_for_input",
+      headline: `${trigger.senderPseudo} queued a message`,
+      detail: rawDetail,
+      modelTitle: threadShell.modelSelection.model,
+      updatedAt: trigger.createdAt,
+      deepLink: `/threads/${encodeURIComponent(environmentId)}/${encodeURIComponent(trigger.threadId)}`,
+    });
+    if (state === null) return;
+    if (cachedRelayClient === undefined) {
+      cachedRelayClient = yield* makeRelayClient(relayConfig);
+    }
+    const proof = yield* makePublishProof({
+      relayIssuer: relayConfig.issuer,
+      environmentId,
+      threadId: trigger.threadId,
+      state,
+      jti: yield* random.uuidV4(),
+    }).pipe(Effect.provideService(EnvironmentSigningKey, signingKey));
+    const response = yield* cachedRelayClient.server
+      .publishAgentActivity({
+        params: {
+          environmentId,
+          threadId: trigger.threadId,
+        },
+        payload: { state, proof },
+      })
+      .pipe(Effect.timeout("10 seconds"), withRelayClientTracing);
+    rememberPublishedQueuedRunId(trigger.queuedRunId);
+    yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
+      new Map(publishedStates).set(
+        trigger.threadId,
+        `${agentAwarenessPublishIdentity(state)}:queued:${trigger.queuedRunId}`,
+      ),
+    );
+    yield* Effect.logInfo("agent activity queued message notification published", {
+      environmentId,
+      projectId: threadShell.projectId,
+      threadId: trigger.threadId,
+      queuedRunId: trigger.queuedRunId,
+      ok: response.ok,
+      deliveries: deliveryStats(response.deliveries),
+    });
+  });
+
+  const queuedMessageWorker = yield* makeDrainableWorker(
+    (
+      trigger: Extract<
+        TeamService.TeamNotificationTriggerEvent,
+        { readonly type: "queuedMessage" }
+      >,
+    ) =>
+      publishQueuedMessageNotification(trigger).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("agent activity queued message notification failed", {
+            threadId: trigger.threadId,
+            queuedRunId: trigger.queuedRunId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      ),
+  );
+
   const readAwarenessThread = (threadId: ThreadId) =>
     threads
       .getAgentAwarenessSnapshot(threadId)
@@ -1065,7 +1187,9 @@ export const make = Effect.gen(function* () {
             Stream.runForEach(teamNotificationStream, (trigger) =>
               trigger.type === "thread"
                 ? enqueueThreadPublish(trigger.threadId)
-                : Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid),
+                : trigger.type === "queuedMessage"
+                  ? queuedMessageWorker.enqueue(trigger)
+                  : Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid),
             ),
           );
         }
@@ -1075,7 +1199,7 @@ export const make = Effect.gen(function* () {
 
   return AgentAwarenessRelay.of({
     publishThread,
-    drain: worker.drain,
+    drain: worker.drain.pipe(Effect.andThen(queuedMessageWorker.drain)),
     requestCatchUp: Effect.fn("AgentAwarenessRelay.requestCatchUp")(function () {
       return Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid);
     }),

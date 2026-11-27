@@ -13487,5 +13487,8 @@
   "f83b990c1244d596": "Nome de exibição da equipe",
   "32bbfee4ac2f750f": "Exibido como prefixo nos tópicos de tarefas agendadas da equipe (por exemplo, {displayName}: Daily triage).",
   "6c037e26ecbefe2e": "Nome de exibição (opcional)",
-  "7d63b70705da219f": "Usa o nome da equipe se ficar em branco. Exibido como prefixo nos tópicos de tarefas agendadas da equipe."
+  "7d63b70705da219f": "Usa o nome da equipe se ficar em branco. Exibido como prefixo nos tópicos de tarefas agendadas da equipe.",
+  "d8a2bbf28fcd8545": "{sender} colocou uma mensagem na fila em \"{threadTitle}\"",
+  "d5e1f1c902f3beec": "{sender} colocou uma mensagem na fila",
+  "ffa3612b1d59dc0e": "Abra a thread para revisar ou clique em Enviar agora."
 }

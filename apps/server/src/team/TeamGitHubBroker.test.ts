@@ -516,9 +516,20 @@ describe("TeamGitHubBroker", () => {
         const ghApiTraversal = yield* runHelper("gh", ["api", "../../escape"], aliceChildEnv);
         expect(ghApiTraversal.status).not.toBe(0);
 
-        // Revoke immediately via owner/admin Interrupt hook!
+        // Revoke immediately via modo Interrupt on unlocked thread!
+        const modoInvite = yield* teamService.createInvite({
+          sessionId: ownerSession.sessionId,
+          payload: { role: "modo", prefilledPseudo: "charlie-modo" },
+        });
+        const modoRedeemed = yield* teamService.redeemInvite({
+          token: modoInvite.token,
+          pseudo: "charlie-modo",
+          client: { deviceType: "desktop", label: "Charlie Modo" },
+        });
+        const modoSession = yield* sessionStore.verify(modoRedeemed.accessToken);
+        yield* teamService.assertCanInterruptThread(modoSession.sessionId, threadId, "turn-1");
         yield* teamService.notifyTurnInterrupted({
-          actor: { kind: "session", sessionId: ownerSession.sessionId },
+          actor: { kind: "session", sessionId: modoSession.sessionId },
           threadId,
           runId: "turn-1",
           reason: "interrupt",

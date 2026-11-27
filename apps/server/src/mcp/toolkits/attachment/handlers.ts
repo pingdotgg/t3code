@@ -138,6 +138,14 @@ export const layer = McpToolAccess.toLayer(
               threadId: projection.thread.id,
               turnId: result.run.id,
             });
+            if (result.run.status === "queued" || result.delivery === "queued") {
+              yield* TeamMcpAccess.notifyQueuedMessageByCaller({
+                threadId: projection.thread.id,
+                queuedRunId: result.run.id,
+                commandId,
+                messageText: input.message ?? "",
+              });
+            }
             return {
               threadId: projection.thread.id,
               messageId,

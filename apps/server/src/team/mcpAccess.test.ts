@@ -417,11 +417,33 @@ describe("Team MCP containment (Plane 1) and hub-only isolation (Plane 2)", () =
             ),
           ))._tag,
         ).toBe("Failure");
+        // Modo (Charlie) can interrupt Bob's unlocked readable thread via MCP, cannot respond to runtime requests,
+        // and cannot interrupt once the thread is locked.
+        yield* withClientCaller(
+          charlie.sessionId,
+          TeamMcpAccess.assertCanInterruptThread(bobThread),
+        );
+        expect(
+          (yield* Effect.exit(
+            withClientCaller(
+              charlie.sessionId,
+              TeamMcpAccess.assertCanRespondToRuntimeRequest(bobThread),
+            ),
+          ))._tag,
+        ).toBe("Failure");
+        yield* team.setThreadLocked({
+          sessionId: aliceSession.sessionId,
+          payload: { threadId: bobThread, locked: true },
+        });
         expect(
           (yield* Effect.exit(
             withClientCaller(charlie.sessionId, TeamMcpAccess.assertCanInterruptThread(bobThread)),
           ))._tag,
         ).toBe("Failure");
+        yield* team.setThreadLocked({
+          sessionId: aliceSession.sessionId,
+          payload: { threadId: bobThread, locked: false },
+        });
         yield* withClientCaller(
           charlie.sessionId,
           TeamMcpAccess.assertCanReadThread(aliceStaffThread),

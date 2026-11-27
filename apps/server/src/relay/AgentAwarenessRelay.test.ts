@@ -1397,4 +1397,69 @@ describe("AgentAwarenessRelay team notification gating", () => {
         assert.isNull(publications[3]?.state);
       }),
   );
+
+  it.effect(
+    "publishes prefixed mobile push notification on queuedMessage trigger only for eligible recipients and deduplicates per queuedRunId",
+    () =>
+      Effect.gen(function* () {
+        let allowQueued = false;
+        const triggers = yield* PubSub.unbounded<TeamService.TeamNotificationTriggerEvent>();
+        const teamService = {
+          shouldPublishRelayNotificationForThread: () => Effect.succeed(true),
+          shouldPublishRelayQueuedMessageNotification: () => Effect.sync(() => allowQueued),
+          formatUpstreamCompatThreadTitle: (_threadId: ThreadId, title: string) =>
+            Effect.succeed(`alice: ${title}`),
+          subscribeNotificationEvents: () => Stream.fromPubSub(triggers),
+        } as unknown as TeamService.TeamService["Service"];
+
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: () => Effect.succeed(shell({ status: "running", title: "Release prep" })),
+          teamService,
+        });
+
+        yield* relay.start();
+        yield* Effect.yieldNow;
+
+        // Disallowed recipient (e.g. sender or unrelated colleague) produces 0 push publications.
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: THREAD_ID,
+          queuedRunId: "run-queued-denied",
+          senderMemberId: null,
+          senderPseudo: "bob",
+          recipientMemberIds: [],
+          messagePreview: "Hold deploy",
+          createdAt: "2026-04-06T12:01:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        assert.equal(publications.length, 0);
+
+        // Eligible recipient (thread creator / active turn author) receives prefixed push notification once.
+        allowQueued = true;
+        const allowedTrigger: TeamService.TeamNotificationTriggerEvent = {
+          type: "queuedMessage",
+          threadId: THREAD_ID,
+          queuedRunId: "run-queued-1",
+          senderMemberId: null,
+          senderPseudo: "bob",
+          recipientMemberIds: [],
+          messagePreview: "Wait for green CI",
+          createdAt: "2026-04-06T12:02:00.000Z",
+        };
+        yield* PubSub.publish(triggers, allowedTrigger);
+        yield* PubSub.publish(triggers, allowedTrigger);
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        assert.equal(publications.length, 1);
+        assert.include(publications[0]?.state, {
+          threadId: THREAD_ID,
+          threadTitle: "alice: Release prep",
+          phase: "waiting_for_input",
+          headline: "bob queued a message",
+          detail: "Wait for green CI",
+        });
+      }),
+  );
 });

@@ -36,6 +36,7 @@ import {
   canMemberReadTeamScheduledTask,
   canMemberReadTeamThread,
   canMemberReadTeamView,
+  canMemberRespondToTeamRuntimeRequest,
   canMemberSeeTeamScheduledTaskWebhook,
   canMemberSteerActiveTeamTurn,
   canModifyTeamMember,
@@ -51,6 +52,7 @@ import {
   normalizeTeamPseudo,
   resolveScheduledTaskEffectiveThreadId,
   resolveTeamDisplayName,
+  resolveTeamQueuedMessageNotificationRecipients,
   resolveTeamThreadEnvironmentAccess,
   resolveTeamThreadPostBlockReason,
   shouldNotifyTeamMemberForThread,
@@ -67,6 +69,7 @@ import {
   TeamThreadNoteId,
   TeamViewId,
   ThreadId,
+  TrimmedNonEmptyString,
   defaultTeamProviderDeliveryStrategy,
   type AuthClientMetadata,
   type AuthEnvironmentScope,
@@ -276,7 +279,17 @@ const stripInviteHash = (invite: TeamRepository.StoredTeamInviteRecord): TeamInv
 
 export type TeamNotificationTriggerEvent =
   | { readonly type: "thread"; readonly threadId: ThreadId }
-  | { readonly type: "relayBinding" };
+  | { readonly type: "relayBinding" }
+  | {
+      readonly type: "queuedMessage";
+      readonly threadId: ThreadId;
+      readonly queuedRunId: string;
+      readonly senderMemberId: TeamMemberId | null;
+      readonly senderPseudo: string;
+      readonly recipientMemberIds: ReadonlyArray<TeamMemberId>;
+      readonly messagePreview: string;
+      readonly createdAt: string;
+    };
 
 export type TeamAccessChangeEvent =
   | { readonly type: "workspace" }
@@ -621,6 +634,11 @@ export class TeamService extends Context.Service<
       readonly threadCreatedAt?: string;
       readonly cloudUserId?: string | null;
     }) => Effect.Effect<boolean>;
+    readonly shouldPublishRelayQueuedMessageNotification?: (input: {
+      readonly threadId: ThreadId;
+      readonly recipientMemberIds: ReadonlyArray<TeamMemberId>;
+      readonly cloudUserId?: string | null;
+    }) => Effect.Effect<boolean>;
     readonly bindRelayRecipientForSession: (input: {
       readonly sessionId: AuthSessionId;
       readonly cloudUserId?: string | null;
@@ -777,6 +795,11 @@ export class TeamService extends Context.Service<
       threadId: ThreadId,
       runId?: string | null,
     ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertActorCanRespondToRuntimeRequest: (
+      actor: TeamActor,
+      threadId: ThreadId,
+      runId?: string | null,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
     readonly assertActorCanManageQueuedRun: (
       actor: TeamActor,
       threadId: ThreadId,
@@ -803,6 +826,14 @@ export class TeamService extends Context.Service<
       readonly runId?: string | null;
       readonly reason: TeamTurnInterruptEvent["reason"];
     }) => Effect.Effect<void>;
+    readonly notifyQueuedMessage: (input: {
+      readonly actor: TeamActor;
+      readonly threadId: ThreadId;
+      readonly queuedRunId: string;
+      readonly commandId?: string | null;
+      readonly activeRunId?: string | null;
+      readonly messageText?: string | null;
+    }) => Effect.Effect<{ readonly notifiedMemberIds: ReadonlyArray<TeamMemberId> }>;
     readonly assignProject: (input: {
       readonly sessionId: AuthSessionId;
       readonly payload: TeamAssignProjectInput;
@@ -1072,6 +1103,17 @@ const make = Effect.gen(function* () {
   const accessChangesPubSub = yield* PubSub.unbounded<TeamAccessChangeEvent>();
   const turnInterruptHooks = new Set<TeamTurnInterruptHook>();
   const githubCredentialChangeHooks = new Set<TeamGitHubCredentialChangeHook>();
+  const MAX_NOTIFIED_QUEUED_RUN_KEYS = 2_000;
+  const notifiedQueuedRunKeys = new Set<string>();
+  const rememberNotifiedQueuedKey = (key: string) => {
+    notifiedQueuedRunKeys.delete(key);
+    notifiedQueuedRunKeys.add(key);
+    while (notifiedQueuedRunKeys.size > MAX_NOTIFIED_QUEUED_RUN_KEYS) {
+      const oldest = notifiedQueuedRunKeys.values().next().value;
+      if (oldest === undefined) break;
+      notifiedQueuedRunKeys.delete(oldest);
+    }
+  };
   const noteStateLock = yield* Semaphore.make(1);
   const MAX_REMOTE_PAIRING_PERMITS = 1024;
   // Shared (1 permit) for remote pairing issuance, exclusive (all permits) for ACL/member/detach
@@ -1725,6 +1767,19 @@ const make = Effect.gen(function* () {
                   : Option.none<TeamStateStreamEvent>();
               }
               if (event.type === "threadNoteUpserted" || event.type === "threadNoteDeleted") {
+                const readable = yield* canReadThread(sessionId, event.payload.threadId);
+                return readable
+                  ? Option.some<TeamStateStreamEvent>(event)
+                  : Option.none<TeamStateStreamEvent>();
+              }
+              if (event.type === "queuedMessageNotification") {
+                if (
+                  currentMember === null ||
+                  currentMember.status !== "active" ||
+                  !event.payload.recipientMemberIds.includes(currentMember.id)
+                ) {
+                  return Option.none<TeamStateStreamEvent>();
+                }
                 const readable = yield* canReadThread(sessionId, event.payload.threadId);
                 return readable
                   ? Option.some<TeamStateStreamEvent>(event)
@@ -3871,11 +3926,80 @@ const make = Effect.gen(function* () {
         })
       ) {
         return yield* teamPostAuthError(
-          "Only the thread creator, active turn author, admins, or owners can interrupt this turn.",
+          "Only the thread creator, active turn author, moderators (on unlocked threads), admins, or owners can interrupt this turn.",
         );
       }
     },
   );
+
+  const assertActorCanRespondToRuntimeRequest = Effect.fn(
+    "TeamService.assertActorCanRespondToRuntimeRequest",
+  )(function* (actor: TeamActor, threadId: ThreadId, runId?: string | null) {
+    const ctx = yield* resolveThreadAccessContextForActor(actor, threadId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.assertActorCanRespondToRuntimeRequest failed; denying", {
+          threadId,
+          cause,
+        }),
+      ),
+      Effect.mapError(() =>
+        teamPostAuthError("You do not have permission to respond to requests in this turn."),
+      ),
+    );
+    if (ctx.kind === "personal") return;
+    if (ctx.kind === "wrong_team") {
+      return yield* teamPostAuthError(
+        "You do not have permission to respond to requests in this turn.",
+      );
+    }
+    if (ctx.kind === "unattributed") {
+      if (isMinimalAutomationActor(actor)) {
+        return yield* teamPostAuthError(
+          "Minimal team automations cannot respond to requests on unattributed threads.",
+        );
+      }
+      if (!ctx.member || ctx.member.status !== "active") {
+        return yield* teamPostAuthError("This session is not bound to an active team member.");
+      }
+      if (!ctx.isLegacyPreTeam && !isTeamAdminOrOwner(ctx.member)) {
+        return yield* teamPostAuthError(
+          "You do not have permission to respond to requests in this turn.",
+        );
+      }
+      return;
+    }
+    if (isMinimalAutomationActor(actor)) {
+      yield* assertActorCanInterruptThread(actor, threadId, runId);
+      return;
+    }
+    let activeTurnAuthorOption: Option.Option<TeamMemberId> = Option.none();
+    if (runId != null) {
+      const targetRun = yield* repository
+        .getRunInProjection(threadId, runId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isSome(targetRun) && ACTIVE_RUN_STATUSES.has(targetRun.value.status)) {
+        activeTurnAuthorOption = yield* resolveTurnAuthorMemberId({
+          threadId,
+          runId: targetRun.value.runId,
+          userMessageId: targetRun.value.userMessageId,
+        });
+      }
+    } else {
+      activeTurnAuthorOption = yield* resolveTurnAuthorMemberId({ threadId });
+    }
+    if (
+      !canMemberRespondToTeamRuntimeRequest({
+        member: ctx.member,
+        attribution: ctx.attribution,
+        view: ctx.view,
+        activeTurnAuthorMemberId: Option.getOrNull(activeTurnAuthorOption),
+      })
+    ) {
+      return yield* teamPostAuthError(
+        "Only the thread creator, active turn author, admins, or owners can respond to requests in this turn.",
+      );
+    }
+  });
 
   const assertCanInterruptThread = (
     sessionId: AuthSessionId,
@@ -4039,6 +4163,142 @@ const make = Effect.gen(function* () {
         ),
       { discard: true },
     );
+  });
+
+  const notifyQueuedMessage = Effect.fn("TeamService.notifyQueuedMessage")(function* (input: {
+    readonly actor: TeamActor;
+    readonly threadId: ThreadId;
+    readonly queuedRunId: string;
+    readonly commandId?: string | null;
+    readonly activeRunId?: string | null;
+    readonly messageText?: string | null;
+  }) {
+    const empty = { notifiedMemberIds: [] as ReadonlyArray<TeamMemberId> };
+    const queuedRunId = input.queuedRunId.trim();
+    if (queuedRunId.length === 0) return empty;
+    const runKey = `run:${queuedRunId}`;
+    const commandId = input.commandId?.trim() || undefined;
+    const cmdKey = commandId !== undefined ? `cmd:${commandId}` : null;
+    if (
+      notifiedQueuedRunKeys.has(runKey) ||
+      (cmdKey !== null && notifiedQueuedRunKeys.has(cmdKey))
+    ) {
+      return empty;
+    }
+
+    const workspaceOption = yield* repository
+      .getWorkspace()
+      .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+    if (Option.isNone(workspaceOption)) return empty;
+    const workspace = workspaceOption.value;
+
+    const attributionOption = yield* repository
+      .getThreadAttribution(input.threadId)
+      .pipe(Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()));
+    if (Option.isNone(attributionOption) || attributionOption.value.teamId !== workspace.id) {
+      return empty;
+    }
+    const attribution = attributionOption.value;
+
+    // Only notify when a turn is currently running on this thread (mid-turn queue).
+    const activeRunOption = yield* repository
+      .getActiveRunInProjection(input.threadId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isNone(activeRunOption) && !input.activeRunId) {
+      return empty;
+    }
+
+    const activeTurnAuthorOption = Option.isSome(activeRunOption)
+      ? yield* resolveTurnAuthorMemberId({
+          threadId: input.threadId,
+          runId: activeRunOption.value.runId,
+          userMessageId: activeRunOption.value.userMessageId,
+        })
+      : yield* resolveTurnAuthorMemberId({
+          threadId: input.threadId,
+          runId: input.activeRunId!,
+        });
+
+    const senderOption = yield* resolveMemberForActor(input.actor).pipe(
+      Effect.orElseSucceed(() => Option.none<TeamMember>()),
+    );
+    const senderMember =
+      Option.isSome(senderOption) && senderOption.value.teamId === workspace.id
+        ? senderOption.value
+        : null;
+    const senderMemberId = senderMember?.id ?? null;
+
+    const candidateRecipientIds = resolveTeamQueuedMessageNotificationRecipients({
+      senderMemberId,
+      attribution,
+      activeTurnAuthorMemberId: Option.getOrNull(activeTurnAuthorOption),
+    });
+    if (candidateRecipientIds.length === 0) return empty;
+
+    const [viewOption, defaultViewOption] = yield* Effect.all([
+      repository
+        .getViewById(attribution.viewId)
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamView>())),
+      attribution.viewId === workspace.defaultViewId
+        ? Effect.succeed(Option.none<TeamView>())
+        : repository
+            .getViewById(workspace.defaultViewId)
+            .pipe(Effect.orElseSucceed(() => Option.none<TeamView>())),
+    ]);
+    const threadView = Option.getOrNull(viewOption) ?? Option.getOrNull(defaultViewOption);
+
+    const authorizedRecipients: Array<TeamMemberId> = [];
+    for (const candidateId of candidateRecipientIds) {
+      const candidateOption = yield* repository
+        .getMemberById(candidateId)
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>()));
+      if (
+        Option.isSome(candidateOption) &&
+        candidateOption.value.teamId === workspace.id &&
+        candidateOption.value.status === "active" &&
+        canMemberReadTeamThread({ member: candidateOption.value, view: threadView })
+      ) {
+        authorizedRecipients.push(candidateOption.value.id);
+      }
+    }
+    if (authorizedRecipients.length === 0) return empty;
+
+    rememberNotifiedQueuedKey(runKey);
+    if (cmdKey !== null) rememberNotifiedQueuedKey(cmdKey);
+
+    const senderPseudo = TrimmedNonEmptyString.make(
+      senderMember?.pseudo ?? (workspace.displayName || workspace.name),
+    );
+    const rawPreview = (input.messageText ?? "").trim().replace(/\s+/g, " ");
+    const messagePreview = rawPreview.length > 160 ? `${rawPreview.slice(0, 157)}…` : rawPreview;
+    const createdAt = DateTime.formatIso(yield* DateTime.now);
+
+    yield* publish({
+      version: 1,
+      type: "queuedMessageNotification",
+      payload: {
+        threadId: input.threadId,
+        queuedRunId: TrimmedNonEmptyString.make(queuedRunId),
+        ...(commandId !== undefined ? { commandId: TrimmedNonEmptyString.make(commandId) } : {}),
+        senderMemberId,
+        senderPseudo,
+        recipientMemberIds: authorizedRecipients,
+        messagePreview,
+        createdAt,
+      },
+    });
+    yield* PubSub.publish(notificationTriggersPubSub, {
+      type: "queuedMessage",
+      threadId: input.threadId,
+      queuedRunId,
+      senderMemberId,
+      senderPseudo,
+      recipientMemberIds: authorizedRecipients,
+      messagePreview,
+      createdAt,
+    }).pipe(Effect.asVoid);
+
+    return { notifiedMemberIds: authorizedRecipients };
   });
 
   const assertCanCreateGuestShare = Effect.fn("TeamService.assertCanCreateGuestShare")(function* (
@@ -5237,7 +5497,7 @@ const make = Effect.gen(function* () {
       case "runtime-request.respond":
       case "thread.user-input.dismiss":
         yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId, compatOptions);
-        yield* assertActorCanInterruptThread(actor, command.threadId);
+        yield* assertActorCanRespondToRuntimeRequest(actor, command.threadId);
         return command;
       case "queued-run.edit":
       case "queued-run.cancel":
@@ -5831,6 +6091,42 @@ const make = Effect.gen(function* () {
       isFollowing,
       activeTurnAuthorMemberId,
     });
+  });
+
+  const shouldPublishRelayQueuedMessageNotification = Effect.fn(
+    "TeamService.shouldPublishRelayQueuedMessageNotification",
+  )(function* (input: {
+    readonly threadId: ThreadId;
+    readonly recipientMemberIds: ReadonlyArray<TeamMemberId>;
+    readonly cloudUserId?: string | null;
+  }) {
+    const workspaceOption = yield* repository
+      .getWorkspace()
+      .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+    if (Option.isNone(workspaceOption)) return false;
+    const relayBindingOption = yield* repository
+      .getRelayRecipientBinding()
+      .pipe(Effect.orElseSucceed(() => Option.none<TeamRepository.TeamRelayRecipientBinding>()));
+    if (
+      Option.isNone(relayBindingOption) ||
+      relayBindingOption.value.teamId !== workspaceOption.value.id
+    ) {
+      return false;
+    }
+    if (
+      input.cloudUserId !== undefined &&
+      relayBindingOption.value.cloudUserId !== input.cloudUserId
+    ) {
+      return false;
+    }
+    const recipientMemberId = relayBindingOption.value.memberId;
+    if (!input.recipientMemberIds.includes(recipientMemberId)) {
+      return false;
+    }
+    return yield* canActorReadThread(
+      { kind: "member", memberId: recipientMemberId },
+      input.threadId,
+    );
   });
 
   const subscribeNotificationEvents = () =>
@@ -9905,6 +10201,7 @@ const make = Effect.gen(function* () {
     shouldNotifyMemberForThread,
     listNotificationRecipientsForThread,
     shouldPublishRelayNotificationForThread,
+    shouldPublishRelayQueuedMessageNotification,
     bindRelayRecipientForSession,
     clearRelayRecipientBinding,
     subscribeNotificationEvents,
@@ -9940,6 +10237,7 @@ const make = Effect.gen(function* () {
     assertActorCanSteerActiveTurn,
     assertActorCanPromoteQueuedRun,
     assertActorCanInterruptThread,
+    assertActorCanRespondToRuntimeRequest,
     assertActorCanManageQueuedRun,
     assertActorCanUseWorkflows,
     assertActorCanUseScheduledTasks,
@@ -9947,6 +10245,7 @@ const make = Effect.gen(function* () {
     registerTurnInterruptHook,
     registerGitHubCredentialChangeHook,
     notifyTurnInterrupted,
+    notifyQueuedMessage,
     assignProject,
     unassignProject,
     attachEnvironment,

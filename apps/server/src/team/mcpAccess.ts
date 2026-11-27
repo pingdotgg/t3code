@@ -273,6 +273,19 @@ export const assertCanInterruptThread = Effect.fn("TeamMcpAccess.assertCanInterr
   },
 );
 
+export const assertCanRespondToRuntimeRequest = Effect.fn(
+  "TeamMcpAccess.assertCanRespondToRuntimeRequest",
+)(function* (threadId: ThreadId, runId?: string | null) {
+  const caller = yield* resolveTeamMcpCaller();
+  if (Option.isNone(caller)) return;
+  yield* caller.value.teamService
+    .assertActorCanExecuteOnThreadEnvironment(caller.value.actor, threadId)
+    .pipe(Effect.mapError(toMcpForbidden));
+  yield* caller.value.teamService
+    .assertActorCanRespondToRuntimeRequest(caller.value.actor, threadId, runId)
+    .pipe(Effect.mapError(toMcpForbidden));
+});
+
 export const assertCanManageQueuedRun = Effect.fn("TeamMcpAccess.assertCanManageQueuedRun")(
   function* (threadId: ThreadId, runId: string) {
     const caller = yield* resolveTeamMcpCaller();
@@ -490,3 +503,28 @@ export const notifyTurnInterruptedByCaller = Effect.fn(
     reason: input.reason,
   });
 });
+
+export const notifyQueuedMessageByCaller = Effect.fn("TeamMcpAccess.notifyQueuedMessageByCaller")(
+  function* (input: {
+    readonly threadId: ThreadId;
+    readonly queuedRunId: string;
+    readonly commandId?: string | null;
+    readonly activeRunId?: string | null;
+    readonly messageText?: string | null;
+  }) {
+    const caller = yield* resolveTeamMcpCaller().pipe(
+      Effect.orElseSucceed(() => Option.none<ResolvedTeamMcpCaller>()),
+    );
+    if (Option.isNone(caller)) return;
+    yield* caller.value.teamService
+      .notifyQueuedMessage({
+        actor: caller.value.actor,
+        threadId: input.threadId,
+        queuedRunId: input.queuedRunId,
+        ...(input.commandId !== undefined ? { commandId: input.commandId } : {}),
+        ...(input.activeRunId !== undefined ? { activeRunId: input.activeRunId } : {}),
+        ...(input.messageText !== undefined ? { messageText: input.messageText } : {}),
+      })
+      .pipe(Effect.asVoid);
+  },
+);

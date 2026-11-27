@@ -13487,5 +13487,8 @@
   "f83b990c1244d596": "Team-Anzeigename",
   "32bbfee4ac2f750f": "Wird als Präfix für Team-Threads aus geplanten Aufgaben angezeigt (z. B. {displayName}: Daily triage).",
   "6c037e26ecbefe2e": "Anzeigename (optional)",
-  "7d63b70705da219f": "Verwendet standardmäßig den Teamnamen, wenn leer. Wird als Präfix für Team-Threads aus geplanten Aufgaben angezeigt."
+  "7d63b70705da219f": "Verwendet standardmäßig den Teamnamen, wenn leer. Wird als Präfix für Team-Threads aus geplanten Aufgaben angezeigt.",
+  "d8a2bbf28fcd8545": "{sender} hat eine Nachricht in „{threadTitle}“ eingereiht",
+  "d5e1f1c902f3beec": "{sender} hat eine Nachricht eingereiht",
+  "ffa3612b1d59dc0e": "Thread öffnen, um sie zu prüfen oder auf „Jetzt senden“ zu klicken."
 }

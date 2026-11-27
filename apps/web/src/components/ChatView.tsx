@@ -3908,7 +3908,7 @@ export default function ChatView(props: ChatViewProps) {
                   pendingApprovals={pendingApprovals}
                   heldApprovalRequestIds={heldApprovalRequestIds}
                   respondingRequestIds={respondingRequestIds}
-                  {...(routeKind === "server" && !teamThreadTurnControls.canInterrupt
+                  {...(routeKind === "server" && !teamThreadTurnControls.canRespondToRuntimeRequest
                     ? {}
                     : { onRespondToApproval: onRespondToApprovalStable })}
                   canOperateThread={effectiveCanOperateThread}
@@ -4152,8 +4152,14 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                                 phase={phase}
                                 canSteer={canSteer}
-                                canInterrupt={canInterruptRunningThread}
-                                isExplicitAdminInterrupt={isExplicitAdminInterrupt}
+                                canInterrupt={
+                                  canInterruptRunningThread &&
+                                  (routeKind !== "server" || teamThreadContext.envAccess.canExecute)
+                                }
+                                isExplicitAdminInterrupt={
+                                  isExplicitAdminInterrupt &&
+                                  (routeKind !== "server" || teamThreadContext.envAccess.canExecute)
+                                }
                                 isSendBusy={
                                   (isSendBusy && !sendQueuesBehindSetup) ||
                                   (setupQueueSendThreadKey !== null &&

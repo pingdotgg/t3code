@@ -2342,11 +2342,7 @@ export const layerWsRpc = (
                 if (
                   Option.isSome(projectionStoreOption) &&
                   (effectiveCommand.type === "queued-run.start" ||
-                    (effectiveCommand.type === "message.dispatch" &&
-                      (effectiveCommand.dispatchMode.type === "steer_active" ||
-                        effectiveCommand.dispatchMode.type === "restart_active" ||
-                        effectiveCommand.deliveryIntent === "steer" ||
-                        effectiveCommand.deliveryIntent === "restart")))
+                    effectiveCommand.type === "message.dispatch")
                 ) {
                   if (
                     effectiveCommand.type === "message.dispatch" &&
@@ -2359,7 +2355,10 @@ export const layerWsRpc = (
                       .pipe(Effect.orElseSucceed(() => null));
                     const activeRun = preRecords?.runs.findLast(
                       (candidate) =>
-                        candidate.status === "running" || candidate.status === "starting",
+                        candidate.status === "preparing" ||
+                        candidate.status === "starting" ||
+                        candidate.status === "running" ||
+                        candidate.status === "waiting",
                     );
                     supersededActiveRunId = activeRun?.id;
                   }
@@ -2414,6 +2413,7 @@ export const layerWsRpc = (
                           result.storedEvents,
                           effectiveCommand,
                           reservationToken,
+                          supersededActiveRunId,
                         ).pipe(
                           Effect.andThen(
                             effectiveCommand.type === "run.interrupt" ||
