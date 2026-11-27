@@ -324,7 +324,7 @@ it.effect.each([
           IdAllocator.layer,
           layerNoTrackedFolders,
           Layer.mock(CheckpointStore.CheckpointStore)({
-            isGitRepository: () => Effect.succeed(true),
+            supportsCheckpoints: () => Effect.succeed(true),
             hasCheckpointRef: () => Effect.succeed(false),
             copyCheckpointRef: () =>
               record("copy").pipe(
