@@ -13023,5 +13023,10 @@
       "v": "v"
     },
     " weitere unter Verknüpfte Elemente"
-  ]
+  ],
+  "650721d590c492a5": "Dieses Gerät kann dies nicht erteilen.",
+  "506ba5db0c498443": "Zugriff für {name}",
+  "d5268a0ebccbee67": "Der Zugriff dieses Clients kann nicht mehr geändert werden.",
+  "5ef593bda0102d90": "Der Client-Zugriff konnte nicht geändert werden.",
+  "1e45e65fe542c3b7": "Client-Zugriff konnte nicht geändert werden"
 }

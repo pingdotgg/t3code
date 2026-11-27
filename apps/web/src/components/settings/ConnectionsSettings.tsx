@@ -16,6 +16,7 @@ import {
   allowsPreviewTunnel,
   isManagedSettingPath,
   type AuthClientSession,
+  type AuthMcpClientAccess,
   type AuthPairingLink,
   type AuthPairingCredentialResult,
   type AdvertisedEndpoint,
@@ -358,6 +359,7 @@ function ConnectionsSettingsContent({
     string | null
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
+  const [updatingAccessSessionId, setUpdatingAccessSessionId] = useState<string | null>(null);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
   const [routeTarget, setRouteTarget] = useState<EnvironmentPresentation | null>(null);
   // An address the map already knows for the machine being added; remounts the dialog with it.
@@ -451,6 +453,9 @@ function ConnectionsSettingsContent({
     reportFailure: false,
   });
   const revokeClient = useAtomCommand(authEnvironment.revokeClient, { reportFailure: false });
+  const updateClientAccess = useAtomCommand(authEnvironment.updateClientAccess, {
+    reportFailure: false,
+  });
   const revokeOtherClients = useAtomCommand(authEnvironment.revokeOtherClients, {
     reportFailure: false,
   });
@@ -686,6 +691,45 @@ function ConnectionsSettingsContent({
       );
     }
     setRevokingDesktopClientSessionId(null);
+  };
+
+  const handleChangeClientAccess = async (
+    sessionId: ServerClientSessionRecord["sessionId"],
+    access: AuthMcpClientAccess,
+  ) => {
+    if (
+      accessEnvironmentId === null ||
+      !readEnvironmentScope(accessEnvironmentId, AuthAccessWriteScope)
+    )
+      return;
+    setUpdatingAccessSessionId(sessionId);
+    const result = await updateClientAccess({
+      environmentId: accessEnvironmentId,
+      input: { sessionId, access },
+    });
+    const message =
+      result._tag === "Success"
+        ? result.value
+          ? null
+          : gt("This client's access can no longer be changed.")
+        : isAtomCommandInterrupted(result)
+          ? null
+          : (() => {
+              const error = squashAtomCommandFailure(result);
+              return error instanceof Error
+                ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
+                : gt("Failed to change client access.");
+            })();
+    if (message !== null) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: gt("Could not change client access"),
+          description: message,
+        }),
+      );
+    }
+    setUpdatingAccessSessionId(null);
   };
 
   const handleRevokeOtherDesktopClients = async () => {
@@ -1193,6 +1237,12 @@ function ConnectionsSettingsContent({
       onRevokePairingLink={handleRevokeDesktopPairingLink}
       onRevokeClientSession={requestRevokeClientSession}
       canRevoke={canWriteAccess}
+      accessChange={{
+        grantableScopes: currentSessionScopes ?? [],
+        managedPolicy: accessEnvironment?.serverConfig?.managedPolicy,
+        updatingAccessSessionId,
+        onChangeAccess: (sessionId, access) => void handleChangeClientAccess(sessionId, access),
+      }}
     />
   );
   const renderAuthorizedClients = () => (

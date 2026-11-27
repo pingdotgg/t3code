@@ -2,14 +2,20 @@ import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   authScopeResponse,
+  AuthAccessWriteScope,
   AuthAdministrativeClientScopes,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   connectDeviceVerificationCode,
+  type ManagedPolicyDocument,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
@@ -38,9 +44,12 @@ const layerServerConfig = (overrides?: Partial<ServerConfig.ServerConfig["Servic
     }),
   ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-server-test-" })));
 
-const layerEnvironmentAuth = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
+const layerEnvironmentAuth = (
+  overrides?: Partial<ServerConfig.ServerConfig["Service"]>,
+  policy?: ManagedPolicyDocument,
+) =>
   EnvironmentAuth.layer.pipe(
-    Layer.provide(ManagedPolicy.layerTest()),
+    Layer.provide(ManagedPolicy.layerTest(policy)),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(ServerEnvironment.layerIdentity),
@@ -590,6 +599,168 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         yield* TestClock.adjust("30 days");
         expect(yield* use(used)).toBe("refused");
       }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+    );
+
+    it.effect("changes an MCP client's access from its next request, up and down", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const admin = yield* serverAuth.issueSession({ scopes: AuthAdministrativeClientScopes });
+        const client = yield* serverAuth.issueMcpClientSession({
+          label: "Executor",
+          access: "auto",
+          peerLink: false,
+          client: requestMetadata,
+        });
+        const accessNow = serverAuth
+          .authenticateMcpClient(makeBearerRequest(client.token))
+          .pipe(Effect.map((session) => session.access));
+        const listed = serverAuth
+          .listSessions()
+          .pipe(
+            Effect.map((sessions) =>
+              sessions.find((session) => session.sessionId === client.sessionId),
+            ),
+          );
+        const change = (access: "full-access" | "read-only") =>
+          serverAuth.updateMcpClientAccess({
+            currentSessionId: admin.sessionId,
+            sessionId: client.sessionId,
+            access,
+          });
+        expect(yield* accessNow).toBe("auto");
+        expect((yield* listed)?.mcpAccess).toBe("auto");
+
+        expect(yield* change("full-access")).toBe(true);
+        expect(yield* accessNow).toBe("full-access");
+        expect(yield* listed).toMatchObject({ mcpAccess: "full-access" });
+
+        expect(yield* change("read-only")).toBe(true);
+        expect(yield* accessNow).toBe("read-only");
+        expect((yield* listed)?.scopes).toEqual([AuthOrchestrationReadScope]);
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect("requires every scope of the new level, whether raising or lowering", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const caller = yield* serverAuth.issueSession({
+          scopes: [AuthAccessWriteScope, AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+        });
+        const client = yield* serverAuth.issueMcpClientSession({
+          label: "Executor",
+          access: "auto",
+          peerLink: false,
+          client: requestMetadata,
+        });
+        const change = (access: "full-access" | "read-only") =>
+          serverAuth.updateMcpClientAccess({
+            currentSessionId: caller.sessionId,
+            sessionId: client.sessionId,
+            access,
+          });
+        expect(yield* Effect.flip(change("full-access"))).toMatchObject({
+          _tag: "ServerAuthMcpAccessScopeError",
+          scope: AuthSettingsWriteScope,
+        });
+        const session = yield* serverAuth.authenticateMcpClient(makeBearerRequest(client.token));
+        expect(session.access).toBe("auto");
+
+        expect(yield* change("read-only")).toBe(true);
+        const lowered = yield* serverAuth.authenticateMcpClient(makeBearerRequest(client.token));
+        expect(lowered.access).toBe("read-only");
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect("refuses an MCP client level above the managed policy's ceiling", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const admin = yield* serverAuth.issueSession({ scopes: AuthAdministrativeClientScopes });
+        const client = yield* serverAuth.issueMcpClientSession({
+          label: "Executor",
+          access: "approval-required",
+          peerLink: false,
+          client: requestMetadata,
+        });
+        const change = (access: "auto" | "auto-accept-edits") =>
+          serverAuth.updateMcpClientAccess({
+            currentSessionId: admin.sessionId,
+            sessionId: client.sessionId,
+            access,
+          });
+        expect(yield* Effect.flip(change("auto"))).toMatchObject({
+          _tag: "ManagedPolicyRefusedError",
+          organization: "Example Corp",
+        });
+        expect(yield* change("auto-accept-edits")).toBe(true);
+      }).pipe(
+        Effect.provide(
+          layerEnvironmentAuth(undefined, {
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: { maxRuntimeMode: "auto-accept-edits" },
+          }),
+        ),
+      ),
+    );
+
+    it.effect("leaves a peer link's or a browser session's access alone", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const admin = yield* serverAuth.issueSession({ scopes: AuthAdministrativeClientScopes });
+        const change = (sessionId: Parameters<typeof serverAuth.revokeSession>[0]) =>
+          serverAuth.updateMcpClientAccess({
+            currentSessionId: admin.sessionId,
+            sessionId,
+            access: "full-access",
+          });
+        const peerLink = yield* serverAuth.issueMcpClientSession({
+          label: "T3 Code · A",
+          access: "auto",
+          peerLink: true,
+          client: requestMetadata,
+        });
+        const browser = yield* serverAuth.issueSession({ scopes: AuthAdministrativeClientScopes });
+
+        const link = yield* serverAuth.authenticateMcpClient(makeBearerRequest(peerLink.token));
+        expect(link.access).toBe("auto");
+        expect(yield* change(peerLink.sessionId)).toBe(false);
+        expect(yield* change(browser.sessionId)).toBe(false);
+        const listedLink = (yield* serverAuth.listSessions()).find(
+          (session) => session.sessionId === peerLink.sessionId,
+        );
+        expect(listedLink?.mcpAccess).toBeUndefined();
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect("reads an MCP client issued before levels were stored from its token", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sql = yield* SqlClient.SqlClient;
+        const admin = yield* serverAuth.issueSession({ scopes: AuthAdministrativeClientScopes });
+        const client = yield* serverAuth.issueMcpClientSession({
+          label: "Executor",
+          access: "auto-accept-edits",
+          peerLink: false,
+          client: requestMetadata,
+        });
+        yield* sql`UPDATE auth_sessions SET mcp_access = NULL WHERE session_id = ${client.sessionId}`;
+
+        const session = yield* serverAuth.authenticateMcpClient(makeBearerRequest(client.token));
+        expect(session.access).toBe("auto-accept-edits");
+        const listed = (yield* serverAuth.listSessions()).find(
+          (listedSession) => listedSession.sessionId === client.sessionId,
+        );
+        expect(listed?.mcpAccess).toBe("auto-accept-edits");
+        expect(
+          yield* serverAuth.updateMcpClientAccess({
+            currentSessionId: admin.sessionId,
+            sessionId: client.sessionId,
+            access: "full-access",
+          }),
+        ).toBe(true);
+        const raised = yield* serverAuth.authenticateMcpClient(makeBearerRequest(client.token));
+        expect(raised.access).toBe("full-access");
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
     it.effect("preserves pairing grants after rejecting scopes they do not grant", () =>

@@ -11,7 +11,6 @@ import {
   type AuthClientSession,
   type AuthConnectDevice,
   type AuthCreatePairingCredentialInput,
-  type AuthEnvironmentScope,
   type AuthPairingLink,
   type AuthPairingCredentialResult,
   type AuthSessionId,
@@ -21,8 +20,10 @@ import {
   type ServerAuthSessionMethod,
   type AuthWebSocketTicketResult,
   type AuthWebSocketTicketUse,
+  AuthEnvironmentScope,
   DpopFailureReason,
   type DpopFailureReason as DpopFailureReasonType,
+  isRuntimeModeAbove,
   mcpClientScopes,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
@@ -235,6 +236,17 @@ export class ServerAuthSessionRevocationError extends Schema.TaggedError<ServerA
   }
 }
 
+export class ServerAuthMcpAccessUpdateError extends Schema.TaggedError<ServerAuthMcpAccessUpdateError>()(
+  "ServerAuthMcpAccessUpdateError",
+  {
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to change the MCP client's access.";
+  }
+}
+
 export class ServerAuthOtherSessionsRevocationError extends Schema.TaggedError<ServerAuthOtherSessionsRevocationError>()(
   "ServerAuthOtherSessionsRevocationError",
   {
@@ -383,6 +395,7 @@ export const ServerAuthInternalError = Schema.Union([
   ServerAuthSessionTokenIssueError,
   ServerAuthSessionsListError,
   ServerAuthSessionRevocationError,
+  ServerAuthMcpAccessUpdateError,
   ServerAuthOtherSessionsRevocationError,
   ServerAuthWebSocketTokenIssueError,
   ServerAuthDpopReplayStateRecordError,
@@ -487,6 +500,15 @@ export class ServerAuthMcpApprovalCodeError extends Schema.TaggedError<ServerAut
       : this.reason === "not_a_pairing_code"
         ? "That is not a one-time pairing code."
         : "That pairing code is unknown, expired, or already used.";
+  }
+}
+
+export class ServerAuthMcpAccessScopeError extends Schema.TaggedError<ServerAuthMcpAccessScopeError>()(
+  "ServerAuthMcpAccessScopeError",
+  { scope: AuthEnvironmentScope },
+) {
+  override get message(): string {
+    return `Granting this access needs the ${this.scope} scope.`;
   }
 }
 
@@ -625,6 +647,16 @@ export class EnvironmentAuth extends Context.Service<
     readonly revokeOtherClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<number, ServerAuthInternalError>;
+    readonly updateMcpClientAccess: (input: {
+      readonly currentSessionId: AuthSessionId;
+      readonly sessionId: AuthSessionId;
+      readonly access: AuthMcpClientAccess;
+    }) => Effect.Effect<
+      boolean,
+      | ServerAuthMcpAccessScopeError
+      | ManagedLimits.ManagedPolicyRefusedError
+      | ServerAuthInternalError
+    >;
     readonly authenticateHttpRequest: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
@@ -1520,6 +1552,37 @@ export const make = Effect.gen(function* () {
     return yield* revokeClient(targetSessionId);
   });
 
+  const updateMcpClientAccess: EnvironmentAuth["Service"]["updateMcpClientAccess"] = Effect.fn(
+    "EnvironmentAuth.updateMcpClientAccess",
+  )(function* ({ currentSessionId, sessionId, access }) {
+    const activeSessions = yield* listSessions();
+    const target = activeSessions.find((session) => session.sessionId === sessionId);
+    if (
+      target?.mcpAccess === undefined ||
+      target.subject !== MCP_CLIENT_SUBJECT ||
+      target.method !== "bearer-access-token"
+    ) {
+      return false;
+    }
+    const callerScopes =
+      activeSessions.find((session) => session.sessionId === currentSessionId)?.scopes ?? [];
+    const missingScope = mcpClientScopes(access).find((scope) => !callerScopes.includes(scope));
+    if (missingScope !== undefined) {
+      return yield* new ServerAuthMcpAccessScopeError({ scope: missingScope });
+    }
+    const policy = managedPolicy.summary;
+    const ceiling = policy?.limits?.maxRuntimeMode;
+    if (policy !== undefined && access !== "read-only" && isRuntimeModeAbove(access, ceiling)) {
+      return yield* new ManagedLimits.ManagedPolicyRefusedError({
+        organization: policy.organization,
+        action: `MCP clients above ${ceiling}`,
+      });
+    }
+    return yield* sessions
+      .setMcpAccess(sessionId, access, mcpClientScopes(access))
+      .pipe(Effect.mapError((cause) => new ServerAuthMcpAccessUpdateError({ cause })));
+  });
+
   const revokeOtherClientSessions: EnvironmentAuth["Service"]["revokeOtherClientSessions"] =
     Effect.fn("EnvironmentAuth.revokeOtherClientSessions")(function* (currentSessionId) {
       const currentProofKey = yield* sessions
@@ -1671,12 +1734,24 @@ export const make = Effect.gen(function* () {
               diagnostic: "Only MCP client sessions are accepted here.",
             });
           }
+          const access =
+            session.mcpAccess ??
+            (session.scopes.includes(AuthOrchestrationOperateScope)
+              ? (session.runtimeModeCeiling ?? "approval-required")
+              : "read-only");
+          if (session.mcpAccess === undefined && session.peerLink !== true) {
+            yield* sessions
+              .recordMcpAccess(session.sessionId, access)
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Could not store an MCP client's access level.", { cause }),
+                ),
+              );
+          }
           const client = {
             sessionId: session.sessionId,
             label: session.client.label ?? "MCP client",
-            access: session.scopes.includes(AuthOrchestrationOperateScope)
-              ? (session.runtimeModeCeiling ?? "approval-required")
-              : "read-only",
+            access,
             peerLink: session.peerLink === true,
           } satisfies McpClientSession;
           if (session.peerLink !== true || session.expiresAt === undefined) return client;
@@ -1716,6 +1791,7 @@ export const make = Effect.gen(function* () {
         scopes: mcpClientScopes(input.access),
         ttl: MCP_CLIENT_SESSION_TTL,
         ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
+        ...(input.peerLink ? {} : { mcpAccess: input.access }),
         peerLink: input.peerLink,
         client: { ...input.client, label: input.label, deviceType: "bot" },
       })
@@ -1790,6 +1866,7 @@ export const make = Effect.gen(function* () {
     revokeClient,
     revokeClientSession,
     revokeOtherClientSessions,
+    updateMcpClientAccess,
     authenticateHttpRequest,
     authenticateWebSocketUpgrade,
     issueWebSocketTicket,

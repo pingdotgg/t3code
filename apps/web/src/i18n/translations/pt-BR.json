@@ -13023,5 +13023,10 @@
       "v": "v"
     },
     " mais em Itens vinculados"
-  ]
+  ],
+  "650721d590c492a5": "Este dispositivo não pode conceder isso.",
+  "506ba5db0c498443": "Acesso de {name}",
+  "d5268a0ebccbee67": "O acesso deste cliente não pode mais ser alterado.",
+  "5ef593bda0102d90": "Falha ao alterar o acesso do cliente.",
+  "1e45e65fe542c3b7": "Não foi possível alterar o acesso do cliente"
 }

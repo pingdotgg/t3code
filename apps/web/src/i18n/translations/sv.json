@@ -13030,5 +13030,10 @@
       "v": "v"
     },
     " till i Länkade objekt"
-  ]
+  ],
+  "650721d590c492a5": "Den här enheten kan inte bevilja det här.",
+  "506ba5db0c498443": "Åtkomst för {name}",
+  "d5268a0ebccbee67": "Den här klientens åtkomst kan inte längre ändras.",
+  "5ef593bda0102d90": "Det gick inte att ändra klientåtkomsten.",
+  "1e45e65fe542c3b7": "Kunde inte ändra klientåtkomsten"
 }

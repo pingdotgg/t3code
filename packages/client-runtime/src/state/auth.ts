@@ -7,6 +7,7 @@ import type {
   AuthCreatePairingCredentialInput,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
+  AuthUpdateClientAccessInput,
 } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -122,6 +123,21 @@ export function createAuthEnvironmentAtoms<R, E>(
           timeoutMs: ACCESS_REQUEST_TIMEOUT_MS,
           request: ({ client, headers }) => client.revokeClient({ headers, payload: input }),
         }),
+    }),
+    updateClientAccess: createEnvironmentCommand(runtime, {
+      label: "environment-data:server:auth-update-client-access",
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.sessionId]),
+      },
+      execute: (input: AuthUpdateClientAccessInput) =>
+        executeConnectedEnvironmentHttpRequest({
+          group: "auth",
+          method: "POST",
+          url: (urls) => urls.updateClientAccess(),
+          timeoutMs: ACCESS_REQUEST_TIMEOUT_MS,
+          request: ({ client, headers }) => client.updateClientAccess({ headers, payload: input }),
+        }).pipe(Effect.map((result) => result.updated)),
     }),
     revokeOtherClients: createEnvironmentCommand(runtime, {
       label: "environment-data:server:auth-revoke-other-clients",

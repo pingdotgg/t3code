@@ -13031,5 +13031,10 @@
       "v": "v"
     },
     " more in Linked items"
-  ]
+  ],
+  "650721d590c492a5": "This device cannot grant this.",
+  "506ba5db0c498443": "Access for {name}",
+  "d5268a0ebccbee67": "This client's access can no longer be changed.",
+  "5ef593bda0102d90": "Failed to change client access.",
+  "1e45e65fe542c3b7": "Could not change client access"
 }

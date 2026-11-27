@@ -30,6 +30,7 @@ import {
   AuthMcpTokenResult,
   AuthPairingCredentialResult,
   AuthRevokeClientSessionInput,
+  AuthUpdateClientAccessInput,
   AuthRevokePairingLinkInput,
   AuthApproveConnectDeviceInput,
   AuthApproveConnectDeviceResult,
@@ -147,6 +148,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "pairing_link_revoke_failed",
   "client_sessions_load_failed",
   "client_session_revoke_failed",
+  "client_access_update_failed",
   "connect_device_approve_failed",
   "connect_device_revoke_failed",
   "project_snapshot_failed",
@@ -409,6 +411,10 @@ const EnvironmentSessionRevokeErrors = [
   EnvironmentOperationForbiddenError,
   EnvironmentInternalError,
 ] as const;
+const EnvironmentClientAccessUpdateErrors = [
+  EnvironmentHttpForbiddenError,
+  ...EnvironmentScopedOperationErrors,
+] as const;
 const EnvironmentProjectSnapshotErrors = [
   EnvironmentScopeRequiredError,
   EnvironmentInternalError,
@@ -581,6 +587,11 @@ export const AuthClientSessionRevokeResult = Schema.Struct({
 });
 export type AuthClientSessionRevokeResult = typeof AuthClientSessionRevokeResult.Type;
 
+export const AuthClientAccessUpdateResult = Schema.Struct({
+  updated: Schema.Boolean,
+});
+export type AuthClientAccessUpdateResult = typeof AuthClientAccessUpdateResult.Type;
+
 export const AuthOtherClientSessionsRevokeResult = Schema.Struct({
   revokedCount: Schema.Number,
 });
@@ -652,6 +663,14 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       payload: AuthRevokeClientSessionInput,
       success: AuthClientSessionRevokeResult,
       error: EnvironmentSessionRevokeErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("updateClientAccess", "/api/auth/clients/access", {
+      headers: OptionalBearerHeaders,
+      payload: AuthUpdateClientAccessInput,
+      success: AuthClientAccessUpdateResult,
+      error: EnvironmentClientAccessUpdateErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

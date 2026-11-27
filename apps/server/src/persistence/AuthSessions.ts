@@ -10,6 +10,7 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import {
   AuthClientMetadataDeviceType,
   AuthEnvironmentScopes,
+  AuthMcpClientAccess,
   AuthSessionId,
   ServerAuthSessionMethod,
 } from "@t3tools/contracts";
@@ -41,6 +42,7 @@ export const AuthSessionRecord = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  mcpAccess: Schema.NullOr(AuthMcpClientAccess),
 });
 export type AuthSessionRecord = typeof AuthSessionRecord.Type;
 
@@ -53,6 +55,7 @@ export const CreateAuthSessionInput = Schema.Struct({
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
   proofKeyThumbprint: Schema.optionalKey(Schema.String),
+  mcpAccess: Schema.optionalKey(AuthMcpClientAccess),
 });
 export type CreateAuthSessionInput = typeof CreateAuthSessionInput.Type;
 
@@ -108,6 +111,20 @@ export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
 });
 export type SetAuthSessionLastConnectedAtInput = typeof SetAuthSessionLastConnectedAtInput.Type;
 
+export const SetAuthSessionMcpAccessInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  mcpAccess: AuthMcpClientAccess,
+  scopes: AuthEnvironmentScopes,
+  now: Schema.DateTimeUtcFromString,
+});
+export type SetAuthSessionMcpAccessInput = typeof SetAuthSessionMcpAccessInput.Type;
+
+export const RecordAuthSessionMcpAccessInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  mcpAccess: AuthMcpClientAccess,
+});
+export type RecordAuthSessionMcpAccessInput = typeof RecordAuthSessionMcpAccessInput.Type;
+
 export class AuthSessionRepository extends Context.Service<
   AuthSessionRepository,
   {
@@ -139,6 +156,12 @@ export class AuthSessionRepository extends Context.Service<
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    readonly setMcpAccess: (
+      input: SetAuthSessionMcpAccessInput,
+    ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
+    readonly recordMcpAccess: (
+      input: RecordAuthSessionMcpAccessInput,
+    ) => Effect.Effect<void, AuthSessionRepositoryError>;
     readonly getProofKeyThumbprint: (
       input: GetAuthSessionByIdInput,
     ) => Effect.Effect<Option.Option<string>, AuthSessionRepositoryError>;
@@ -163,6 +186,7 @@ const AuthSessionDbRow = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  mcpAccess: Schema.NullOr(AuthMcpClientAccess),
 });
 
 const AuthSessionRawDbRow = Schema.Struct({
@@ -180,6 +204,7 @@ const AuthSessionRawDbRow = Schema.Struct({
   expiresAt: Schema.Unknown,
   lastConnectedAt: Schema.Unknown,
   revokedAt: Schema.Unknown,
+  mcpAccess: Schema.Unknown,
 });
 
 const decodeAuthSessionDbRow = Schema.decodeUnknownEffect(AuthSessionDbRow);
@@ -202,6 +227,7 @@ function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionReco
     expiresAt: row.expiresAt,
     lastConnectedAt: row.lastConnectedAt,
     revokedAt: row.revokedAt,
+    mcpAccess: row.mcpAccess,
   };
 }
 
@@ -243,7 +269,8 @@ export const make = Effect.gen(function* () {
           issued_at,
           expires_at,
           revoked_at,
-          proof_key_thumbprint
+          proof_key_thumbprint,
+          mcp_access
         )
         VALUES (
           ${input.sessionId},
@@ -259,7 +286,8 @@ export const make = Effect.gen(function* () {
           ${input.issuedAt},
           ${input.expiresAt},
           NULL,
-          ${input.proofKeyThumbprint ?? null}
+          ${input.proofKeyThumbprint ?? null},
+          ${input.mcpAccess ?? null}
         )
         ${ignoreExisting ? sql`ON CONFLICT(session_id) DO NOTHING` : sql``}
       `,
@@ -286,7 +314,8 @@ export const make = Effect.gen(function* () {
           issued_at AS "issuedAt",
           expires_at AS "expiresAt",
           last_connected_at AS "lastConnectedAt",
-          revoked_at AS "revokedAt"
+          revoked_at AS "revokedAt",
+          mcp_access AS "mcpAccess"
         FROM auth_sessions
         WHERE session_id = ${sessionId}
       `,
@@ -330,7 +359,8 @@ export const make = Effect.gen(function* () {
           issued_at AS "issuedAt",
           expires_at AS "expiresAt",
           last_connected_at AS "lastConnectedAt",
-          revoked_at AS "revokedAt"
+          revoked_at AS "revokedAt",
+          mcp_access AS "mcpAccess"
         FROM auth_sessions
         WHERE revoked_at IS NULL
           AND (expires_at > ${now} OR ${sql.in("session_id", connectedSessionIds)})
@@ -346,6 +376,32 @@ export const make = Effect.gen(function* () {
         SET last_connected_at = ${lastConnectedAt}
         WHERE session_id = ${sessionId}
           AND revoked_at IS NULL
+      `,
+  });
+
+  const setMcpAccessRows = SqlSchema.findAll({
+    Request: SetAuthSessionMcpAccessInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ sessionId, mcpAccess, scopes, now }) =>
+      sql`
+        UPDATE auth_sessions
+        SET mcp_access = ${mcpAccess}, scopes = ${JSON.stringify(scopes)}
+        WHERE session_id = ${sessionId}
+          AND mcp_access IS NOT NULL
+          AND revoked_at IS NULL
+          AND expires_at > ${now}
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
+  const recordMcpAccessRow = SqlSchema.void({
+    Request: RecordAuthSessionMcpAccessInput,
+    execute: ({ sessionId, mcpAccess }) =>
+      sql`
+        UPDATE auth_sessions
+        SET mcp_access = ${mcpAccess}
+        WHERE session_id = ${sessionId}
+          AND mcp_access IS NULL
       `,
   });
 
@@ -560,6 +616,29 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const setMcpAccess: AuthSessionRepository["Service"]["setMcpAccess"] = (input) =>
+    setMcpAccessRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.setMcpAccess:query",
+          "AuthSessionRepository.setMcpAccess:encodeRequest",
+          { sessionId: input.sessionId },
+        ),
+      ),
+      Effect.map((rows) => rows.length > 0),
+    );
+
+  const recordMcpAccess: AuthSessionRepository["Service"]["recordMcpAccess"] = (input) =>
+    recordMcpAccessRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.recordMcpAccess:query",
+          "AuthSessionRepository.recordMcpAccess:encodeRequest",
+          { sessionId: input.sessionId },
+        ),
+      ),
+    );
+
   const getProofKeyThumbprint: AuthSessionRepository["Service"]["getProofKeyThumbprint"] = (
     input,
   ) =>
@@ -596,6 +675,8 @@ export const make = Effect.gen(function* () {
     extend,
     revokeAllExcept,
     setLastConnectedAt,
+    setMcpAccess,
+    recordMcpAccess,
     getProofKeyThumbprint,
     revokeByProofKey,
   } satisfies AuthSessionRepository["Service"];

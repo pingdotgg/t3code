@@ -13023,5 +13023,10 @@
       "v": "v"
     },
     " de plus dans Éléments associés"
-  ]
+  ],
+  "650721d590c492a5": "Cet appareil ne peut pas accorder cela.",
+  "506ba5db0c498443": "Accès de {name}",
+  "d5268a0ebccbee67": "L’accès de ce client ne peut plus être modifié.",
+  "5ef593bda0102d90": "Échec de la modification de l’accès du client.",
+  "1e45e65fe542c3b7": "Impossible de modifier l’accès du client"
 }

@@ -1,6 +1,9 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
-import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
+import {
+  managedCapabilityDenial,
+  managedRuntimeModeDenial,
+} from "@t3tools/client-runtime/contract-labels";
 import { AUTH_SCOPE_OPTIONS as PAIRING_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
 import { PlugIcon, PlusIcon, QrCodeIcon } from "lucide-react";
 import { type ReactNode, memo, useId, useRef, useState } from "react";
@@ -14,8 +17,11 @@ import {
   AuthStandardClientScopes,
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
+  AuthMcpClientAccess,
+  mcpClientScopes,
   type AuthEnvironmentScope,
   type AuthGrantScope,
+  type ManagedPolicySummary,
   type AuthPairingCredentialResult,
   type AdvertisedEndpoint,
   type EnvironmentId,
@@ -65,6 +71,7 @@ import { ManagedControl } from "../ManagedPolicy";
 import { openUseInAnotherApp } from "../mcp/UseInAnotherAppDialog";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
+import { AccessLevelSelect } from "./LinkAccessPicker";
 import {
   formatAccessTimestamp,
   selectPairingEndpoint,
@@ -497,11 +504,22 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   );
 });
 
+type ClientAccessChange = {
+  grantableScopes: ReadonlyArray<AuthEnvironmentScope>;
+  managedPolicy: ManagedPolicySummary | undefined;
+  updatingAccessSessionId: string | null;
+  onChangeAccess: (
+    sessionId: ServerClientSessionRecord["sessionId"],
+    access: AuthMcpClientAccess,
+  ) => void;
+};
+
 type ConnectedClientListRowProps = {
   clientSession: ServerClientSessionRecord;
   revokingClientSessionId: string | null;
   onRevokeSession: (sessionId: ServerClientSessionRecord["sessionId"]) => void;
   canRevoke: boolean;
+  accessChange: ClientAccessChange;
 };
 
 const ConnectedClientListRow = memo(function ConnectedClientListRow({
@@ -509,9 +527,25 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
   revokingClientSessionId,
   onRevokeSession,
   canRevoke,
+  accessChange,
 }: ConnectedClientListRowProps) {
   const gt = useGT();
   const m = useMessages();
+  const mcpAccess = clientSession.mcpAccess;
+  const unavailableAccess = new Map(
+    mcpAccess === undefined
+      ? []
+      : AuthMcpClientAccess.literals.flatMap((level) => {
+          const reason =
+            (level === "read-only"
+              ? undefined
+              : managedRuntimeModeDenial(accessChange.managedPolicy, level, m)) ??
+            (!mcpClientScopes(level).every((scope) => accessChange.grantableScopes.includes(scope))
+              ? gt("This device cannot grant this.")
+              : undefined);
+          return reason === undefined ? [] : [[level, reason] as const];
+        }),
+  );
   const nowMs = useNowSecond();
   const isLive = clientSession.current || clientSession.connected;
   const lastConnectedAt = clientSession.lastConnectedAt;
@@ -565,6 +599,18 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
           </p>
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          {mcpAccess !== undefined ? (
+            <AccessLevelSelect
+              compact
+              value={mcpAccess}
+              unavailable={unavailableAccess}
+              disabled={
+                !canRevoke || accessChange.updatingAccessSessionId === clientSession.sessionId
+              }
+              onChange={(access) => accessChange.onChangeAccess(clientSession.sessionId, access)}
+              aria-label={gt("Access for {name}", { name: primaryLabel })}
+            />
+          ) : null}
           {!clientSession.current ? (
             <Button
               size="xs"
@@ -859,6 +905,7 @@ type PairingClientsListProps = {
   onRevokePairingLink: (id: string) => void;
   onRevokeClientSession: (sessionId: ServerClientSessionRecord["sessionId"]) => void;
   canRevoke: boolean;
+  accessChange: ClientAccessChange;
 };
 
 export const PairingClientsList = memo(function PairingClientsList({
@@ -876,6 +923,7 @@ export const PairingClientsList = memo(function PairingClientsList({
   onRevokePairingLink,
   onRevokeClientSession,
   canRevoke,
+  accessChange,
 }: PairingClientsListProps) {
   return (
     <>
@@ -902,6 +950,7 @@ export const PairingClientsList = memo(function PairingClientsList({
           revokingClientSessionId={revokingClientSessionId}
           onRevokeSession={onRevokeClientSession}
           canRevoke={canRevoke}
+          accessChange={accessChange}
         />
       ))}
 

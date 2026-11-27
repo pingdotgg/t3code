@@ -6,6 +6,7 @@ import {
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthEnvironmentScope,
+  type AuthMcpClientAccess,
   AuthWebSocketTicketUse,
   RuntimeMode,
   type ServerAuthSessionMethod,
@@ -63,6 +64,7 @@ export interface VerifiedSession {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly runtimeModeCeiling?: RuntimeMode;
+  readonly mcpAccess?: AuthMcpClientAccess;
   /** An MCP client that is another T3 Code environment's peer link. */
   readonly peerLink?: true;
 }
@@ -411,6 +413,7 @@ export class SessionStore extends Context.Service<
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
       readonly runtimeModeCeiling?: RuntimeMode;
+      readonly mcpAccess?: AuthMcpClientAccess;
       readonly peerLink?: boolean;
       readonly replaceActiveForSubjectAndMethod?: boolean;
       readonly replaceSessionId?: AuthSessionId;
@@ -473,6 +476,15 @@ export class SessionStore extends Context.Service<
     readonly revoke: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<boolean, SessionCredentialInternalError>;
+    readonly setMcpAccess: (
+      sessionId: AuthSessionId,
+      access: AuthMcpClientAccess,
+      scopes: ReadonlyArray<AuthEnvironmentScope>,
+    ) => Effect.Effect<boolean, SessionCredentialInternalError>;
+    readonly recordMcpAccess: (
+      sessionId: AuthSessionId,
+      access: AuthMcpClientAccess,
+    ) => Effect.Effect<void, SessionCredentialInternalError>;
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
@@ -548,9 +560,13 @@ function toClientMetadata(record: {
   };
 }
 
-function toAuthClientSession(input: Omit<AuthClientSession, "current">): AuthClientSession {
+function toAuthClientSession(
+  input: Omit<AuthClientSession, "current" | "mcpAccess">,
+  mcpAccess: AuthMcpClientAccess | null,
+): AuthClientSession {
   return {
     ...input,
+    ...(mcpAccess === null ? {} : { mcpAccess }),
     current: false,
   };
 }
@@ -632,17 +648,20 @@ const make = Effect.gen(function* () {
       return Option.none<AuthClientSession>();
     }
     return Option.some(
-      toAuthClientSession({
-        sessionId: row.value.sessionId,
-        subject: row.value.subject,
-        scopes: row.value.scopes,
-        method: row.value.method,
-        client: toClientMetadata(row.value.client),
-        issuedAt: row.value.issuedAt,
-        expiresAt: row.value.expiresAt,
-        lastConnectedAt: row.value.lastConnectedAt,
-        connected,
-      }),
+      toAuthClientSession(
+        {
+          sessionId: row.value.sessionId,
+          subject: row.value.subject,
+          scopes: row.value.scopes,
+          method: row.value.method,
+          client: toClientMetadata(row.value.client),
+          issuedAt: row.value.issuedAt,
+          expiresAt: row.value.expiresAt,
+          lastConnectedAt: row.value.lastConnectedAt,
+          connected,
+        },
+        row.value.mcpAccess,
+      ),
     );
   });
 
@@ -771,6 +790,7 @@ const make = Effect.gen(function* () {
         issuedAt,
         expiresAt: sessionExpiresAt,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
+        ...(input?.mcpAccess ? { mcpAccess: input.mcpAccess } : {}),
       } satisfies AuthSessions.CreateAuthSessionInput;
       const replacedSessionIds = yield* (
         input?.replaceSessionId !== undefined || input?.replaceActiveForSubjectAndMethod
@@ -798,17 +818,20 @@ const make = Effect.gen(function* () {
         });
       }
       yield* emitUpsert(
-        toAuthClientSession({
-          sessionId,
-          subject: claims.sub,
-          scopes: claims.scopes,
-          method: claims.method,
-          client,
-          issuedAt,
-          expiresAt: sessionExpiresAt,
-          lastConnectedAt: null,
-          connected: false,
-        }),
+        toAuthClientSession(
+          {
+            sessionId,
+            subject: claims.sub,
+            scopes: claims.scopes,
+            method: claims.method,
+            client,
+            issuedAt,
+            expiresAt: sessionExpiresAt,
+            lastConnectedAt: null,
+            connected: false,
+          },
+          input?.mcpAccess ?? null,
+        ),
       );
 
       return {
@@ -930,6 +953,7 @@ const make = Effect.gen(function* () {
         scopes: row.value.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
+        ...(row.value.mcpAccess === null ? {} : { mcpAccess: row.value.mcpAccess }),
         ...(claims.plk === 1 ? { peerLink: true as const } : {}),
       } satisfies VerifiedSession;
     },
@@ -1165,17 +1189,20 @@ const make = Effect.gen(function* () {
       });
 
       return rows.map((row) =>
-        toAuthClientSession({
-          sessionId: row.sessionId,
-          subject: row.subject,
-          scopes: row.scopes,
-          method: row.method,
-          client: toClientMetadata(row.client),
-          issuedAt: row.issuedAt,
-          expiresAt: row.expiresAt,
-          lastConnectedAt: row.lastConnectedAt,
-          connected: connectedSessions.has(row.sessionId),
-        }),
+        toAuthClientSession(
+          {
+            sessionId: row.sessionId,
+            subject: row.subject,
+            scopes: row.scopes,
+            method: row.method,
+            client: toClientMetadata(row.client),
+            issuedAt: row.issuedAt,
+            expiresAt: row.expiresAt,
+            lastConnectedAt: row.lastConnectedAt,
+            connected: connectedSessions.has(row.sessionId),
+          },
+          row.mcpAccess,
+        ),
       );
     },
     Effect.mapError((cause) => new ActiveSessionsListError({ cause })),
@@ -1200,6 +1227,41 @@ const make = Effect.gen(function* () {
       }
       return revoked;
     },
+  );
+
+  const publishUpsert = (sessionId: AuthSessionId) =>
+    loadActiveSession(sessionId).pipe(
+      Effect.flatMap((session) =>
+        Option.isSome(session) ? emitUpsert(session.value) : Effect.void,
+      ),
+    );
+
+  const setMcpAccess: SessionStore["Service"]["setMcpAccess"] = Effect.fn(
+    "SessionStore.setMcpAccess",
+  )(
+    function* (sessionId, access, scopes) {
+      const changed = yield* authSessions.setMcpAccess({
+        sessionId,
+        mcpAccess: access,
+        scopes,
+        now: yield* DateTime.now,
+      });
+      if (changed) yield* publishUpsert(sessionId);
+      return changed;
+    },
+    (effect, sessionId) =>
+      Effect.mapError(effect, (cause) => new SessionCredentialIssueError({ sessionId, cause })),
+  );
+
+  const recordMcpAccess: SessionStore["Service"]["recordMcpAccess"] = Effect.fn(
+    "SessionStore.recordMcpAccess",
+  )(
+    function* (sessionId, access) {
+      yield* authSessions.recordMcpAccess({ sessionId, mcpAccess: access });
+      yield* publishUpsert(sessionId);
+    },
+    (effect, sessionId) =>
+      Effect.mapError(effect, (cause) => new SessionCredentialIssueError({ sessionId, cause })),
   );
 
   const proofKeyThumbprintOf: SessionStore["Service"]["proofKeyThumbprintOf"] = (sessionId) =>
@@ -1353,6 +1415,8 @@ const make = Effect.gen(function* () {
       return Stream.fromPubSub(changesPubSub);
     },
     revoke,
+    setMcpAccess,
+    recordMcpAccess,
     revokeAllExcept,
     proofKeyThumbprintOf,
     revokeByProofKey,

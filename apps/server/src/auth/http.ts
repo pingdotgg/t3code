@@ -562,6 +562,29 @@ export const layer = HttpApiBuilder.group(
         ),
       )
       .handle(
+        "updateClientAccess",
+        Effect.fn("environment.auth.updateClientAccess")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const updated = yield* serverAuth.updateMcpClientAccess({
+              currentSessionId: session.sessionId,
+              sessionId: args.payload.sessionId,
+              access: args.payload.access,
+            });
+            return { updated };
+          },
+          Effect.catchTags({
+            ServerAuthMcpAccessScopeError: (error) => failEnvironmentScopeRequired(error.scope),
+            ManagedPolicyRefusedError: (error) =>
+              Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
+          }),
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("client_access_update_failed", error),
+          ),
+        ),
+      )
+      .handle(
         "approveConnectDevice",
         Effect.fn("environment.auth.approveConnectDevice")(
           function* (args) {
