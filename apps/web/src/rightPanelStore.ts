@@ -1029,7 +1029,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const surface = fileSurface(
               relativePath,
               normalizeRevealLine(line),
-              ++lastFileRevealRequestId,
+              (lastFileRevealRequestId =
+                Math.max(lastFileRevealRequestId, existing?.revealRequestId ?? 0) + 1),
             );
             return {
               ...current,
@@ -1437,15 +1438,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       }),
       migrate: migratePersistedRightPanelState,
-      onRehydrateStorage: () => (state) => {
-        for (const thread of Object.values(state?.byThreadKey ?? {})) {
-          for (const surface of thread.surfaces) {
-            if (surface.kind === "file" && Number.isSafeInteger(surface.revealRequestId)) {
-              lastFileRevealRequestId = Math.max(lastFileRevealRequestId, surface.revealRequestId);
-            }
-          }
-        }
-      },
     },
   ),
 );
