@@ -148,11 +148,13 @@ function UsageScreen(props: {
     (environment) => environment.canReadDiagnostics,
   );
   const accessPrompts: UsageAccessPrompt[] = selectedEnvironments.flatMap((environment) =>
-    (environment.summary?.accessRequests ?? []).map((request) => ({
-      ...request,
-      environmentId: environment.environmentId,
-      environmentLabel: environment.label,
-    })),
+    (environment.canAnswerUsageAccess ? (environment.summary?.accessRequests ?? []) : []).map(
+      (request) => ({
+        ...request,
+        environmentId: environment.environmentId,
+        environmentLabel: environment.label,
+      }),
+    ),
   );
 
   const days = enumerateDays(window.sinceDay, window.untilDay);

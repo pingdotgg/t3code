@@ -14,12 +14,14 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
+import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import { msg, useGT, useLocale, useMessages } from "gt-react";
 import { useState, type ReactNode } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { serverEnvironment } from "../../state/server";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
@@ -139,6 +141,9 @@ function UsageAccessRow({
 }) {
   const gt = useGT();
   const [open, setOpen] = useState(false);
+  const canAnswer = useAtomValue(
+    serverEnvironment.mutateProviderInstance.permissionAtom(environmentId),
+  );
   const provider = providers.find((entry) => entry.instanceId === instanceId);
   if (provider === undefined) return null;
   return (
@@ -148,9 +153,13 @@ function UsageAccessRow({
           {gt("Limits", { $context: "usage limits row label" })}
         </span>
         <span className="col-span-2 text-end">
-          <Button size="micro" variant="outline" onClick={() => setOpen(true)}>
-            {gt("Set up", { $context: "allow reading an agent's usage limits" })}
-          </Button>
+          {canAnswer ? (
+            <Button size="micro" variant="outline" onClick={() => setOpen(true)}>
+              {gt("Set up", { $context: "allow reading an agent's usage limits" })}
+            </Button>
+          ) : (
+            <span className="text-muted-foreground">{gt("Unavailable")}</span>
+          )}
         </span>
       </div>
       {open ? (

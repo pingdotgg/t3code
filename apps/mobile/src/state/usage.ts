@@ -25,6 +25,8 @@ export interface EnvironmentUsageStatus {
   readonly isPending: boolean;
   readonly isConnected: boolean;
   readonly canReadDiagnostics: boolean;
+  /** Whether this session may save a usage access answer for this environment. */
+  readonly canAnswerUsageAccess: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
 }
@@ -51,6 +53,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
           label: presentation.entry.target.label,
           isConnected: presentation.connection.phase === "connected",
           ...access,
+          canAnswerUsageAccess: false,
           summary: null,
         });
         continue;
@@ -71,6 +74,9 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         isPending: result.waiting,
         isConnected: presentation.connection.phase === "connected",
         canReadDiagnostics: true,
+        canAnswerUsageAccess: get(
+          serverEnvironment.mutateProviderInstance.permissionAtom(environmentId),
+        ),
         error: result._tag === "Failure" ? msg("This environment could not report usage.") : null,
         summary,
       });
@@ -87,6 +93,7 @@ const usageEnvironmentsAtom = Atom.make((get): readonly EnvironmentUsageStatus[]
     isPending: true,
     isConnected: presentation.connection.phase === "connected",
     canReadDiagnostics: false,
+    canAnswerUsageAccess: false,
     error: null,
     summary: null,
   })),

@@ -166,6 +166,27 @@ const setup = Effect.gen(function* () {
   };
 });
 
+// One Antigravity step with 100 input and 7 output tokens on 2026-08-01T10:00Z.
+const writeAntigravityStep = async (conversations: string) => {
+  await NodeFSP.mkdir(conversations, { recursive: true });
+  const db = new NodeSqlite.DatabaseSync(NodePath.join(conversations, "profile.db"));
+  try {
+    db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
+    const metadata = new Uint8Array([
+      0x4a,
+      4,
+      0x10,
+      100,
+      0x18,
+      7,
+      ...Buffer.from("420608a087b7d306", "hex"),
+    ]);
+    db.prepare("INSERT INTO steps VALUES (?, ?)").run(0, metadata);
+  } finally {
+    db.close();
+  }
+};
+
 const layerCursorUsageAccounts = <E, R>(
   reader: Layer.Layer<CursorAccountReader.CursorAccountReader, E, R>,
 ) => Layer.fresh(CursorUsageAccounts.layer).pipe(Layer.provide(reader));
@@ -2660,26 +2681,7 @@ describe("UsageService", () => {
         "antigravity-acp",
         "conversations",
       );
-      yield* Effect.promise(async () => {
-        await NodeFSP.mkdir(conversations, { recursive: true });
-        const db = new NodeSqlite.DatabaseSync(NodePath.join(conversations, "profile.db"));
-        try {
-          db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
-          // Step protobuf: 100 input tokens, 7 output tokens, and 2026-08-01T10:00Z.
-          const metadata = new Uint8Array([
-            0x4a,
-            4,
-            0x10,
-            100,
-            0x18,
-            7,
-            ...Buffer.from("420608a087b7d306", "hex"),
-          ]);
-          db.prepare("INSERT INTO steps VALUES (?, ?)").run(0, metadata);
-        } finally {
-          db.close();
-        }
-      });
+      yield* Effect.promise(() => writeAntigravityStep(conversations));
       yield* Effect.gen(function* () {
         assert.strictEqual((yield* ServerConfig.ServerConfig).stateDir, stateDir);
         const service = yield* UsageService.make;
@@ -2697,7 +2699,11 @@ describe("UsageService", () => {
             .reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0),
           7,
         );
-      }).pipe(Effect.provide(layerService({ prefix, home, settings })));
+      }).pipe(
+        Effect.provide(
+          layerService({ prefix, home, settings: withDefaultInstances(settings, "antigravity") }),
+        ),
+      );
     }),
   );
 
@@ -2715,26 +2721,7 @@ describe("UsageService", () => {
         "antigravity-acp",
         "conversations",
       );
-      yield* Effect.promise(async () => {
-        await NodeFSP.mkdir(conversations, { recursive: true });
-        const db = new NodeSqlite.DatabaseSync(NodePath.join(conversations, "profile.db"));
-        try {
-          db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
-          // Step protobuf: 100 input tokens, 7 output tokens, and 2026-08-01T10:00Z.
-          const metadata = new Uint8Array([
-            0x4a,
-            4,
-            0x10,
-            100,
-            0x18,
-            7,
-            ...Buffer.from("420608a087b7d306", "hex"),
-          ]);
-          db.prepare("INSERT INTO steps VALUES (?, ?)").run(0, metadata);
-        } finally {
-          db.close();
-        }
-      });
+      yield* Effect.promise(() => writeAntigravityStep(conversations));
       yield* Effect.gen(function* () {
         assert.notProperty(settings.providerInstances, "antigravity-2");
         const service = yield* UsageService.make;
@@ -2746,7 +2733,47 @@ describe("UsageService", () => {
             .reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0),
           7,
         );
-      }).pipe(Effect.provide(layerService({ prefix, home, settings })));
+      }).pipe(
+        Effect.provide(
+          layerService({ prefix, home, settings: withDefaultInstances(settings, "antigravity") }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("does not count T3-managed Antigravity profiles when Antigravity is denied", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const prefix = "usage-service-antigravity-denied-test";
+      const conversations = NodePath.join(
+        home,
+        prefix,
+        "userdata",
+        "providers",
+        "antigravity",
+        // sha256("antigravity"), the default instance's profile key.
+        "ac0a3dfd6dddb20962cecff6ee5fe65e19d3923be20e52c5ab52ff877f7e4c32",
+        "antigravity-acp",
+        "conversations",
+      );
+      yield* Effect.promise(() => writeAntigravityStep(conversations));
+      const denied = {
+        ...settings,
+        providerInstances: {
+          ...settings.providerInstances,
+          [ProviderInstanceId.make("antigravity")]: {
+            driver: ProviderDriverKind.make("antigravity"),
+            usageAccess: "denied" as const,
+          },
+        },
+      };
+      yield* Effect.gen(function* () {
+        const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
+        assert.isFalse(summary.buckets.some((bucket) => bucket.provider === "antigravity"));
+        assert.isFalse(
+          summary.sources.some((source) => source.fingerprint.provider === "antigravity"),
+        );
+      }).pipe(Effect.provide(layerService({ prefix, home, settings: denied })));
     }),
   );
 
@@ -2947,6 +2974,12 @@ describe("UsageService", () => {
         const allowed = yield* service.readSummary(WINDOW);
         assert.strictEqual(totalOutputTokens(allowed), 5);
         assert.deepStrictEqual(allowed.accessRequests, []);
+
+        // Denying stops counting history already scanned, and a denied agent is not asked again.
+        yield* setClaude({ ...claude, enabled: true, usageAccess: "denied" });
+        const denied = yield* service.readSummary(WINDOW);
+        assert.isFalse(denied.buckets.some((bucket) => bucket.provider === "claude"));
+        assert.deepStrictEqual(denied.accessRequests, []);
       }).pipe(
         Effect.scoped,
         Effect.provide(

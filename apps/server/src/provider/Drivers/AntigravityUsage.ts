@@ -66,6 +66,8 @@ const make = Effect.gen(function* () {
     instances,
     windowStartMs,
   }) {
+    // No allowed instance means nothing to count, not even T3's own Antigravity profiles.
+    if (instances.length === 0) return [];
     const roots: Array<string> = [];
     for (const instance of instances) roots.push(...(yield* dataRoots(instance.environment)));
     for (const { instanceId } of instances) {

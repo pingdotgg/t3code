@@ -235,13 +235,15 @@ export function UsagePage() {
   });
 
   const accessPrompts: UsageAccessPrompt[] = selectedEnvironments.flatMap((environment) =>
-    (environment.summary?.accessRequests ?? []).map((request) => ({
-      environmentId: environment.environmentId,
-      environmentLabel: environment.label,
-      instanceId: request.instanceId,
-      driver: request.driver,
-      paths: request.paths,
-    })),
+    (environment.canAnswerUsageAccess ? (environment.summary?.accessRequests ?? []) : []).map(
+      (request) => ({
+        environmentId: environment.environmentId,
+        environmentLabel: environment.label,
+        instanceId: request.instanceId,
+        driver: request.driver,
+        paths: request.paths,
+      }),
+    ),
   );
 
   const canReadDiagnostics = selectedEnvironments.some(
