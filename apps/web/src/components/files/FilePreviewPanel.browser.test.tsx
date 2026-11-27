@@ -1192,26 +1192,39 @@ describe("large text scroll position", () => {
     await vi.waitFor(() => expect(firstVisibleRow()).toBe(saved));
   });
 
-  const wrappedLog = (count: number, { missingPage = -1, indexing = false, wrap = true } = {}) => (
+  const wrappedLog = (
+    count: number,
+    { missingPage = -1, indexing = false, wrap = true, wide = false } = {},
+  ) => (
     <VirtualTablePreview
       name="wrapped.log"
       count={count}
       indexing={indexing}
-      columns={1}
-      source
+      columns={wide ? 8 : 1}
+      source={!wide}
       wrap={wrap}
       getRows={(page) =>
         page === missingPage
           ? undefined
           : Array.from({ length: PREVIEW_PAGE_ROWS }, (_, local) => {
               const index = page * PREVIEW_PAGE_ROWS + local;
-              return [`entry ${index}: ${index >= 80 ? "wrapped content ".repeat(60) : ""}`];
+              return [
+                `entry ${index}: ${index >= 80 ? "wrapped content ".repeat(wide && index >= 96 ? 2 : 60) : ""}`,
+              ];
             })
       }
     />
   );
   const row = (index: number) =>
     scroller().querySelector<HTMLElement>(`[data-preview-row="${index}"]`);
+  const waitForRowLayout = (index: number) =>
+    new Promise<void>((resolve) => {
+      const observer = new ResizeObserver(() => {
+        observer.disconnect();
+        resolve();
+      });
+      observer.observe(row(index)!);
+    });
   const atEnd = (index: number) =>
     Math.abs(
       (row(index)?.getBoundingClientRect().bottom ?? 0) - scroller().getBoundingClientRect().bottom,
@@ -1283,37 +1296,57 @@ describe("large text scroll position", () => {
       }
       await screen.rerender(opened(key, wrappedLog(100)));
       await vi.waitFor(() => expect(row(99)?.textContent).toContain("entry 99"));
-      await new Promise<void>((resolve) => {
-        const observer = new ResizeObserver(() => {
-          observer.disconnect();
-          resolve();
-        });
-        observer.observe(row(99)!);
-      });
+      await waitForRowLayout(99);
       suppressScroll.abort();
       expect(firstVisibleRow()).toBe(94);
     },
   );
 
-  it("restores a wrapped tail row when its page arrives before the preceding page", async () => {
+  it.each([false, true])(
+    "handles a late preceding page with manual scrolling set to %s",
+    async (manualScroll) => {
+      using _style = withPreviewAppCss();
+      const key = `wrapped log with late preceding page ${manualScroll}`;
+      {
+        await using _screen = await render(opened(key, wrappedLog(100)));
+        await scrollToEnd();
+        await scrollToRow(96);
+      }
+      await using screen = await render(opened(key, wrappedLog(100, { missingPage: 2 })));
+      await vi.waitFor(() => expect(row(96)?.textContent).toContain("entry 96"));
+      await waitForRowLayout(96);
+      const viewport = scroller();
+      if (manualScroll) {
+        viewport.style.overflowAnchor = "none";
+        await scrollToRow(97);
+      }
+      const manualTop = viewport.scrollTop;
+      await screen.rerender(opened(key, wrappedLog(100)));
+      await vi.waitFor(() => expect(row(94)?.textContent).toContain("entry 94"));
+      if (manualScroll) {
+        await waitForRowLayout(94);
+        expect(viewport.scrollTop).toBe(manualTop);
+      } else await vi.waitFor(() => expect(firstVisibleRow()).toBe(96));
+    },
+  );
+
+  it("keeps a wide table at the bottom when the preceding tail page arrives last", async () => {
     using _style = withPreviewAppCss();
-    const key = "wrapped log with late preceding page";
+    const key = "wide table with late preceding page";
     {
-      await using _screen = await render(opened(key, wrappedLog(100)));
+      await using _screen = await render(opened(key, wrappedLog(100, { wide: true })));
       await scrollToEnd();
-      await scrollToRow(96);
     }
-    await using screen = await render(opened(key, wrappedLog(100, { missingPage: 2 })));
-    await vi.waitFor(() => expect(row(96)?.textContent).toContain("entry 96"));
-    await new Promise<void>((resolve) => {
-      const observer = new ResizeObserver(() => {
-        observer.disconnect();
-        resolve();
-      });
-      observer.observe(row(96)!);
+    await using screen = await render(opened(key, wrappedLog(100, { wide: true, missingPage: 2 })));
+    // Require the preview to preserve the bottom even when the browser does not anchor it.
+    scroller().style.overflowAnchor = "none";
+    await vi.waitFor(() => expect(atEnd(99)).toBe(true));
+    await waitForRowLayout(99);
+    await screen.rerender(opened(key, wrappedLog(100, { wide: true })));
+    await vi.waitFor(() => {
+      expect(row(94)?.offsetHeight).toBeGreaterThan(29);
+      expect(atEnd(99)).toBe(true);
     });
-    await screen.rerender(opened(key, wrappedLog(100)));
-    await vi.waitFor(() => expect(firstVisibleRow()).toBe(96));
   });
 
   it("allows scrolling up after a saved tail row can no longer align with the top", async () => {
