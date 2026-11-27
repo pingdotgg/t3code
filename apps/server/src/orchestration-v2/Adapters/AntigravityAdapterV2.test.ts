@@ -1924,6 +1924,40 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  it.effect("releases a terminal-only command's pin when a tool links the terminal later", () =>
+    Effect.gen(function* () {
+      const { session, send, startTurn, throughPromptSettled, throughTerminal } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: [
+            { sessionUpdate: "terminal_update", terminalId: "term_build", command: "make build" },
+          ],
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* throughTerminal;
+      assert.isTrue(yield* session.keepsIdleSessionAlive!, "the running terminal is pinned");
+
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call_build",
+        kind: "execute",
+        title: "make build",
+        status: "in_progress",
+        content: [{ type: "terminal", terminalId: "term_build" }],
+      });
+      yield* send({
+        sessionUpdate: "terminal_update",
+        terminalId: "term_build",
+        exitStatus: { exitCode: 0 },
+      });
+      assert.isFalse(
+        yield* session.keepsIdleSessionAlive!,
+        "a later link must not keep the synthetic command's pin",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   it.effect("keeps a silent scheduled wake in its run past the command hold bound", () =>
     Effect.gen(function* () {
       const { usage, offers, send, startTurn, until, throughPromptSettled } =
