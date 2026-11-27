@@ -3091,6 +3091,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         let loaded = false;
         let loadedConfig: Record<string, unknown> = {};
         let turnSeq = 0;
+        let failNextUnsubscribe = false;
         const observed: Array<{
           readonly method: string;
           readonly params: Record<string, unknown>;
@@ -3153,6 +3154,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       return;
                     }
                     case "thread/unsubscribe": {
+                      if (failNextUnsubscribe) {
+                        failNextUnsubscribe = false;
+                        yield* emit({ id: frame.id, error: { code: -32603, message: "busy" } });
+                        return;
+                      }
                       loaded = false;
                       loadedConfig = {};
                       yield* emit({ id: frame.id, result: { status: "unsubscribed" } });
@@ -3269,6 +3275,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           modelSelection: CODEX_TEST_MODEL_SELECTION,
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
         });
+        // A failed reload fails this turn but must be retried on the next one.
+        failNextUnsubscribe = true;
+        yield* runtime
+          .startTurn(
+            makeCodexTestTurnInput({
+              threadId,
+              providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-2-failed-reload"),
+              text: "second",
+            }),
+          )
+          .pipe(Effect.flip);
         yield* runtime.startTurn(
           makeCodexTestTurnInput({
             threadId,
@@ -3281,7 +3300,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
         const unsubscribes = observed.filter((entry) => entry.method === "thread/unsubscribe");
         const resumes = observed.filter((entry) => entry.method === "thread/resume");
-        assert.equal(unsubscribes.length, 1);
+        assert.equal(unsubscribes.length, 2);
         assert.equal(resumes.length, 2);
         const reloadedConfig = resumes[1]!.params["config"] as Record<string, unknown>;
         assert.equal(reloadedConfig["mcp_servers.alpha.env.T3CODE_THREAD_ID"], threadId);
@@ -3302,7 +3321,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             text: "third",
           }),
         );
-        assert.equal(observed.filter((entry) => entry.method === "thread/unsubscribe").length, 1);
+        assert.equal(observed.filter((entry) => entry.method === "thread/unsubscribe").length, 2);
         assert.equal(observed.filter((entry) => entry.method === "thread/resume").length, 2);
         assert.equal(turnSeq, 3);
       }).pipe(

@@ -8149,7 +8149,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         ) {
           sessionApprovals.delete(threadId);
           mcpStartupFailures.delete(threadId);
-          loadedStdioMcpServersByThread.delete(threadId);
           const { closing, ownClosing } = yield* unsubscribeNativeThread(threadId);
           yield* resumeNativeThread(threadId, {
             excludeTurns: true,
@@ -8164,7 +8163,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             withAppServerDeadline("thread/resume"),
             Effect.tap(() =>
               Effect.sync(() => {
-                recordLoadedStdioMcpServers(threadId, turnInput.threadId, stdioMcpServers);
+                // Replace only after the resume succeeds, so a failed reload is retried next turn.
+                loadedStdioMcpServersByThread.set(threadId, new Set(stdioMcpServers));
                 persistedRolloutThreads.add(threadId);
               }),
             ),
