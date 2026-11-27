@@ -2556,23 +2556,52 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   // GitHub merges a BLOCKED pull request for a viewer who may bypass branch rules, with none of
   // the opt-in github.com asks for, so the merge mutation must never be sent while it is blocked.
-  it.effect.each([
-    { description: "a pull request", stack: {} },
-    { description: "a stack", stack: { stackNumber: 3 } },
-  ])("refuses an immediate merge of $description while branch rules block it", ({ stack }) =>
+  it.effect("refuses an immediate merge while branch rules block the pull request", () =>
     Effect.gen(function* () {
       route(
         ["query PullRequestActionState", actionState({ mergeStateStatus: "BLOCKED" })],
         ["mergePullRequest(", { data: { mergePullRequest: { pullRequest: { state: "MERGED" } } } }],
-        ["merge-async", { status: "merged", details: {} }],
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
       const error = yield* Effect.flip(
-        cli.runPullRequestAction({ ...pullRequestInput, ...stack, action: "merge" }),
+        cli.runPullRequestAction({ ...pullRequestInput, action: "merge" }),
       );
       expect(error._tag).toBe("GitHubMergeBlockedError");
-      // Only the action-state read ran; no merge request was sent.
+      // Only the action-state read ran; the merge mutation was never sent.
       expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("refuses a stack merge while branch rules block a layer it would merge", () =>
+    Effect.gen(function* () {
+      route(["merge-async", { status: "merged", details: {} }]);
+      const answer = mockedExecute.getMockImplementation()!;
+      mockedExecute.mockImplementation((call) =>
+        call.kind === "graphql" && matches(call, "query PullRequestActionState")
+          ? Effect.succeed(
+              output(
+                encodeJson(
+                  actionState({
+                    mergeStateStatus: call.variables?.["number"] === 6 ? "BLOCKED" : "CLEAN",
+                  }),
+                ),
+              ),
+            )
+          : answer(call),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* Effect.flip(
+        cli.runPullRequestAction({
+          ...pullRequestInput,
+          action: "merge",
+          stackNumber: 3,
+          expectedStackHeads: [
+            { number: 6, headSha: "aaa" },
+            { number: 7, headSha: "bbb" },
+          ],
+        }),
+      );
+      expect(error).toMatchObject({ _tag: "GitHubMergeBlockedError", number: 6 });
       expect(restCallsTo("merge-async")).toEqual([]);
     }),
   );
