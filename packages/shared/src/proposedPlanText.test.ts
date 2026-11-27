@@ -75,10 +75,13 @@ it("reads the plan title past a leading byte-order mark", () => {
   expect(proposedPlanTitle("\uFEFF    # Indented code")).toBeNull();
 });
 
+const parseDisplayedPlan = (markdown: string) =>
+  unified().use(remarkParse).parse(stripDisplayedPlanMarkdown(markdown));
+
 it("strips the summary after a title that follows a code example", () => {
   const code = "```sh\nnode x\n```";
   const markdown = `${code}\n\n# Release plan\n\n## Summary\n\nBody`;
-  const body = unified().use(remarkParse).parse(stripDisplayedPlanMarkdown(markdown));
+  const body = parseDisplayedPlan(markdown);
   expect(body.children.filter((node) => node.type !== "definition")).toMatchObject([
     { type: "code", lang: "sh", value: "node x" },
     { type: "paragraph", children: [{ type: "text", value: "Body" }] },
@@ -87,7 +90,7 @@ it("strips the summary after a title that follows a code example", () => {
 
 it("keeps the ordered lists on either side of the plan title separate", () => {
   const markdown = "```sh\nnode x\n```\n\n1. Check staging\n\n# Release plan\n\n1. Deploy";
-  const body = unified().use(remarkParse).parse(stripDisplayedPlanMarkdown(markdown));
+  const body = parseDisplayedPlan(markdown);
   const lists = body.children.filter((node) => node.type === "list");
   expect(lists.map((list) => [list.ordered, list.start, list.children.length])).toEqual([
     [true, 1, 1],
