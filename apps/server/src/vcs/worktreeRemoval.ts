@@ -63,7 +63,7 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
   readonly worktreePath: string;
   readonly force: boolean;
   readonly execute: GitVcsDriver.GitVcsDriver["Service"]["execute"];
-  readonly run: (args: ReadonlyArray<string>) => Effect.Effect<A, E, R>;
+  readonly run: (args: ReadonlyArray<string>, cwd: string) => Effect.Effect<A, E, R>;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -113,14 +113,17 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     Effect.orElseSucceed(() => false),
   );
   if (!linked) {
-    return yield* input.run([
-      ...statusConfig,
-      "worktree",
-      "remove",
-      ...(input.force ? ["--force"] : []),
-      "--",
-      worktreePath,
-    ]);
+    return yield* input.run(
+      [
+        ...statusConfig,
+        "worktree",
+        "remove",
+        ...(input.force ? ["--force"] : []),
+        "--",
+        worktreePath,
+      ],
+      input.cwd,
+    );
   }
 
   const gitOutput = (cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
@@ -246,12 +249,18 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     Effect.tapError(() => fileSystem.writeFileString(gitFile, gitFileContents).pipe(Effect.ignore)),
     Effect.mapError(failedToDelete),
   );
-  // The folder is gone, so Git only drops the worktree's metadata.
-  return yield* input.run([
-    "worktree",
-    "remove",
-    ...(input.force ? ["--force"] : []),
-    "--",
-    worktreePath,
-  ]);
+  // The folder is gone, so Git only drops the worktree's metadata. The caller's `cwd` may
+  // have been inside it; the common Git directory survives, and is named explicitly
+  // because `safe.bareRepository=explicit` refuses to discover it.
+  return yield* input.run(
+    [
+      `--git-dir=${commonDir}`,
+      "worktree",
+      "remove",
+      ...(input.force ? ["--force"] : []),
+      "--",
+      worktreePath,
+    ],
+    commonDir,
+  );
 }, Effect.scoped);
