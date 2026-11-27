@@ -5,6 +5,7 @@ import {
   ConnectionTransientError,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import type { RefObject } from "react";
@@ -41,12 +42,18 @@ import {
 } from "~/lib/composerContextRecords";
 import { assetEnvironment } from "~/state/assets";
 import { copiedComposerAttachmentFile } from "~/lib/copiedComposerAttachments";
-import { countQuestionAttachments, questionAttachmentDraftId } from "../../questionAttachments";
+import {
+  changeQuestionAttachmentPreparation,
+  countQuestionAttachments,
+  openQuestionAttachmentDraft,
+  questionAttachmentDraftId,
+} from "../../questionAttachments";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { pendingDraftWork } from "./pendingDraftWork";
 import { readComposerImageBytes } from "./composerAttachmentFiles";
+import { serializeComposerImages } from "./composerImagePersistence";
 import { randomUUID } from "~/lib/utils";
 import { readPreparedConnection } from "~/state/session";
 import { resolveAssetUrl } from "~/assets/assetUrls";
@@ -62,6 +69,8 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 import { countPreparingComposerImages } from "./preparingComposerImages";
 import type { QueuedAttachmentContextBinding } from "./composerContextUndo";
 import { matchRestorableQueuedAttachment } from "./queuedMessageEdit";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { environmentThreadDetails } from "~/state/threads";
 
 const isUnreachable = Schema.is(
   Schema.Union([ConnectionTransientError, ConnectionBlockedError, EnvironmentRpcUnavailableError]),
@@ -88,7 +97,6 @@ export function useComposerContextImport(input: {
   readonly composerDraftTarget: ChatComposerProps["composerDraftTarget"];
   readonly attachmentDraftTarget: ChatComposerProps["composerDraftTarget"];
   readonly attachmentTargetKey: string;
-  readonly attachmentTargetKeyRef: RefObject<string>;
   readonly questionAttachmentTarget: DraftId | null;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly composerContextRecords: ComposerDraftContextRecords;
@@ -106,7 +114,6 @@ export function useComposerContextImport(input: {
     composerDraftTarget,
     attachmentDraftTarget,
     attachmentTargetKey,
-    attachmentTargetKeyRef,
     questionAttachmentTarget,
     pendingUserInputs,
     composerContextRecords,
@@ -158,6 +165,13 @@ export function useComposerContextImport(input: {
     );
   };
   const countReservedAttachmentsStable = useStableCallback(countReservedAttachments);
+  const questionThread =
+    questionAttachmentTarget && activeThreadId
+      ? scopeThreadRef(environmentId, activeThreadId)
+      : null;
+  const questionRequests = questionThread
+    ? environmentThreadDetails.pendingRequestsAtom(questionThread)
+    : null;
   const runAttachmentImport = async (
     record: Extract<ComposerContextRecord, { kind: "image" | "file" }>,
     localId: string,
@@ -216,8 +230,28 @@ export function useComposerContextImport(input: {
       )
         return;
     }
-    // Question answers have no persistent prompt reference to check after switching away.
-    if (questionAttachmentTarget && attachmentTargetKeyRef.current !== importTargetKey) return;
+    if (
+      questionAttachmentTarget &&
+      (!questionThread ||
+        !questionRequests ||
+        !appAtomRegistry
+          .get(questionRequests)
+          ?.userInputs.some(
+            (request) =>
+              request.responseCapability !== "not_resumable" &&
+              request.questions.some(
+                (question) =>
+                  question.allowCustomAnswer !== false &&
+                  questionAttachmentDraftId(
+                    questionThread.environmentId,
+                    questionThread.threadId,
+                    request.requestId,
+                    question.id,
+                  ) === questionAttachmentTarget,
+              ),
+          ))
+    )
+      return;
     const replacesFileMarker =
       record.kind === "file" &&
       getComposerDraft(attachmentDraftTarget)?.files.some(
@@ -238,29 +272,30 @@ export function useComposerContextImport(input: {
       return;
     }
     if (record.kind === "image") {
-      const accepted = addComposerDraftImages(
-        attachmentDraftTarget,
-        [
-          {
-            type: "image",
-            id: localId,
-            name: record.name,
-            mimeType: file.type,
-            sizeBytes: file.size,
-            previewUrl: URL.createObjectURL(file),
-            file,
-            ...(record.source ? { source: record.source } : {}),
-          },
-        ],
-        {
-          allowDuplicates:
-            getComposerDraft(composerDraftTarget)?.previewAnnotations.some(
-              (annotation) => annotation.id === localId,
-            ) ?? false,
-        },
-      );
-      if (!accepted.includes(localId))
+      const image: ComposerImageAttachment = {
+        type: "image",
+        id: localId,
+        name: record.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        previewUrl: URL.createObjectURL(file),
+        file,
+        ...(record.source ? { source: record.source } : {}),
+      };
+      const accepted = addComposerDraftImages(attachmentDraftTarget, [image], {
+        allowDuplicates:
+          getComposerDraft(composerDraftTarget)?.previewAnnotations.some(
+            (annotation) => annotation.id === localId,
+          ) ?? false,
+      });
+      if (!accepted.includes(localId)) {
         fail(m(msg("The draft rejected this attachment (duplicate or attachment limit reached).")));
+        return;
+      }
+      const serialized = await serializeComposerImages([image], []);
+      await useComposerDraftStore
+        .getState()
+        .appendPersistedAttachments(attachmentDraftTarget, [image], serialized);
     } else {
       const accepted = addComposerFilesToDraft([
         {
@@ -286,9 +321,16 @@ export function useComposerContextImport(input: {
     // attachment behind it, and so bytes for an abandoned draft never enter the next one.
     const importTargetKey = attachmentTargetKey;
     pendingDraftWork.begin(importTargetKey);
-    await runAttachmentImport(record, localId, sourceEnvironmentId, importTargetKey).finally(() =>
-      pendingDraftWork.end(importTargetKey),
-    );
+    const releaseRequests = questionRequests ? appAtomRegistry.mount(questionRequests) : undefined;
+    if (questionAttachmentTarget) changeQuestionAttachmentPreparation(questionAttachmentTarget, 1);
+    try {
+      await runAttachmentImport(record, localId, sourceEnvironmentId, importTargetKey);
+    } finally {
+      if (questionAttachmentTarget)
+        changeQuestionAttachmentPreparation(questionAttachmentTarget, -1);
+      releaseRequests?.();
+      pendingDraftWork.end(importTargetKey);
+    }
   };
   const importContextRecords = (
     records: ReadonlyArray<ComposerContextRecord>,
@@ -452,6 +494,12 @@ export function useComposerContextImport(input: {
             break;
           }
           if (sourceEnvironmentId === null) break;
+          if (
+            questionAttachmentTarget &&
+            (!questionThread ||
+              openQuestionAttachmentDraft(questionThread)?.draftId !== questionAttachmentTarget)
+          )
+            break;
           const localId = dependentAttachmentLocalIds.get(record.contextId) ?? randomUUID();
           rewritten.set(record.contextId, toKindScopedComposerContextId(record.kind, localId));
           void importAttachmentRecord(record, localId, sourceEnvironmentId);

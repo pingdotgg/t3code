@@ -1,9 +1,13 @@
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
+import { Atom } from "effect/reactivity";
 import { useEffect } from "react";
 import {
   type ComposerContextRecord,
   ComposerContextId,
   EnvironmentId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
@@ -12,6 +16,12 @@ import { act, render, stubGlobal } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
 import { rememberCopiedComposerAttachments } from "../../lib/copiedComposerAttachments";
+import {
+  questionAttachmentDraftId,
+  trackOpenQuestionAttachmentDraft,
+} from "../../questionAttachments";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { environmentThreadDetails } from "../../state/threads";
 import { pendingDraftWork } from "./pendingDraftWork";
 import { useComposerContextImport } from "./useComposerContextImport";
 
@@ -52,13 +62,52 @@ it.each([
   { kind: "file", edit: "undo" },
   { kind: "file", edit: "retain" },
   { kind: "file", edit: "switch" },
+  { kind: "image", edit: "reload" },
   { kind: "file", edit: "cached" },
   { kind: "file", edit: "question" },
   { kind: "image", edit: "question" },
+  { kind: "image", edit: "question-switch" },
+  { kind: "image", edit: "question-close" },
   { kind: "image", edit: "annotation" },
   { kind: "image", edit: "delete-annotation" },
 ] as const)("settles a delayed $kind import after $edit", async ({ kind, edit }) => {
-  const target = DraftId.make(`clipboard-${kind}-${edit}`);
+  const isQuestion = edit.startsWith("question");
+  const thread = scopeThreadRef(
+    EnvironmentId.make("clipboard-target"),
+    ThreadId.make(`clipboard-${kind}-${edit}`),
+  );
+  const requestId = RuntimeRequestId.make("request");
+  const question = {
+    id: "question",
+    header: "Question",
+    question: "What did you see?",
+    options: [],
+    multiSelect: false,
+  };
+  const request = {
+    requestId,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    questions: [question],
+    responseCapability: "live",
+    dismissible: false,
+  } satisfies PendingThreadRequests["userInputs"][number];
+  const requests = Atom.make<PendingThreadRequests | null>({
+    approvals: [],
+    userInputs: [request],
+  });
+  const target = isQuestion
+    ? questionAttachmentDraftId(thread.environmentId, thread.threadId, requestId, question.id)
+    : DraftId.make(`clipboard-${kind}-${edit}`);
+  using _requests = vi
+    .spyOn(environmentThreadDetails, "pendingRequestsAtom")
+    .mockImplementation((ref) => {
+      expect(ref).toEqual(thread);
+      return requests;
+    });
+  const untrack = isQuestion
+    ? trackOpenQuestionAttachmentDraft(thread, { draftId: target, requestKeys: [target] })
+    : undefined;
+  using _tracked = { [Symbol.dispose]: () => untrack?.() };
   const store = useComposerDraftStore.getState();
   using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
   const sourceEnvironmentId = EnvironmentId.make("clipboard-source");
@@ -75,24 +124,23 @@ it.each([
   const requested = deferred<void>();
   const settled = deferred<void>();
   const input = {
-    environmentId: EnvironmentId.make("clipboard-target"),
+    environmentId: thread.environmentId,
     linkedEnvironments: new Map(),
     activeThread: undefined,
-    activeThreadId: null,
+    activeThreadId: isQuestion ? thread.threadId : null,
     composerDraftTarget: target,
     attachmentDraftTarget: target,
     attachmentTargetKey: target,
-    attachmentTargetKeyRef: { current: target },
-    questionAttachmentTarget: edit === "question" ? target : null,
-    pendingUserInputs: [],
+    questionAttachmentTarget: isQuestion ? target : null,
+    pendingUserInputs: isQuestion ? [request] : [],
     composerContextRecords: new Map(),
     composerImages: [],
     pendingThreadImportsRef: { current: new Map() },
     addComposerFilesToDraft: (files: Parameters<typeof store.addFiles>[1]) =>
-      store.addFiles(target, files, { appendReference: edit !== "question" }),
+      store.addFiles(target, files, { appendReference: !isQuestion }),
   } satisfies ImportInput;
   let importer!: Importer;
-  await using _screen = await render(
+  await using screen = await render(
     <Harness
       input={input}
       ready={(value) => {
@@ -159,31 +207,44 @@ it.each([
       contextId: remapped.get(annotated ? annotation.contextId : contextId)!,
       label: annotated ? "Page annotation" : "notes.txt",
     });
-    if (edit === "question") pastedPrompt = "Question answer";
+    if (isQuestion) pastedPrompt = "Question answer";
     store.setPrompt(target, pastedPrompt);
     if (edit !== "cached") await requested.promise;
   });
   if (edit !== "cached") expect(pendingDraftWork.has(target)).toBe(true);
   await act(() => {
-    if (
-      edit !== "annotation" &&
-      edit !== "retain" &&
-      edit !== "cached" &&
-      edit !== "question" &&
-      edit !== "switch"
-    ) {
+    if (edit === "delete" || edit === "delete-annotation" || edit === "undo") {
       store.setPrompt(target, "Keep this edit");
     }
     if (edit === "undo") {
       store.setPrompt(target, pastedPrompt);
     }
-    if (edit === "switch") input.attachmentTargetKeyRef.current = DraftId.make("other-draft");
   });
+  if (edit === "switch" || edit === "reload" || edit === "question-switch") {
+    await screen.unmount();
+    untrack?.();
+  }
+  if (edit === "question-close") {
+    untrack?.();
+    appAtomRegistry.set(requests, { approvals: [], userInputs: [] });
+    store.clearComposerContent(target);
+  }
   await act(async () => {
     downloaded.resolve(new Response("notes", { headers: { "Content-Type": attachment.mimeType } }));
     await settled.promise;
   });
   expect(pendingDraftWork.has(target)).toBe(false);
+  if (edit === "reload") {
+    const inMemoryFile = store.getComposerDraft(target)?.images[0]?.file;
+    await useComposerDraftStore.persist.rehydrate();
+    const restored = store.getComposerDraft(target)?.images[0]?.file;
+    expect(restored).not.toBe(inMemoryFile);
+    expect(await restored?.text()).toBe("notes");
+  }
+  if (edit === "question-close") {
+    expect(store.getComposerDraft(target)).toBeNull();
+    return;
+  }
   const draft = store.getComposerDraft(target)!;
   expect(draft.prompt).toBe(
     edit === "delete" || edit === "delete-annotation" ? "Keep this edit" : pastedPrompt,
@@ -197,9 +258,10 @@ it.each([
     edit === "undo" ||
       edit === "retain" ||
       edit === "switch" ||
+      edit === "reload" ||
       edit === "annotation" ||
       edit === "cached" ||
-      edit === "question"
+      isQuestion
       ? ["notes.txt"]
       : [],
   );
@@ -236,7 +298,6 @@ it.each(["same", "other-environment"] as const)(
           composerDraftTarget: target,
           attachmentDraftTarget: target,
           attachmentTargetKey: target,
-          attachmentTargetKeyRef: { current: target },
           questionAttachmentTarget: null,
           pendingUserInputs: [],
           composerContextRecords: new Map([[first.contextId, { kind: "thread", record: first }]]),
