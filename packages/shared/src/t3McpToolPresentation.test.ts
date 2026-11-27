@@ -38,6 +38,9 @@ describe("resolveT3McpToolPresentation", () => {
       resolveT3McpToolPresentation("t3-code-thread_opencode2-adapter_delegate_task")?.displayName,
     ).toBe("Delegate a child task");
     expect(resolveT3McpToolPresentation("t3-code-thread_opencode2-adapter_not_a_tool")).toBeNull();
+    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_bot_watch_add")?.displayName).toBe(
+      "Start watching a thread or run",
+    );
   });
 });
 

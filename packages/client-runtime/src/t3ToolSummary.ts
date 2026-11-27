@@ -1804,6 +1804,139 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "bot-memory-read": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Read its memory {count} time} other {Read its memory {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to read its memory {count} time} other {Tried to read its memory {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "bot-note-read": {
+      const count = countEntities(entityIds("slug"));
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Read {count} note} other {Read {count} notes}}", { count }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to read {count} note} other {Tried to read {count} notes}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "bot-note-write": {
+      const count = countEntities(entityIds("slug"));
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Saved {count} note} other {Saved {count} notes}}", { count }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to save {count} note} other {Tried to save {count} notes}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "bot-note-delete": {
+      const count = countEntities(entityIds("slug"));
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Deleted {count} note} other {Deleted {count} notes}}", {
+              count,
+            }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to delete {count} note} other {Tried to delete {count} notes}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "bot-note-search": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Searched notes {count} time} other {Searched notes {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to search notes {count} time} other {Tried to search notes {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "bot-preference-save": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Saved {count} preference} other {Saved {count} preferences}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to save {count} preference} other {Tried to save {count} preferences}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "bot-watch-add": {
+      const count = countEntities(
+        selected.map((call) => id(call.input?.threadId) ?? id(call.input?.workflowRunId)),
+      );
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Watching {count} thread or run} other {Watching {count} threads or runs}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to watch {count} thread or run} other {Tried to watch {count} threads or runs}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "bot-watch-remove": {
+      const count = countEntities(
+        selected.map((call) => id(call.input?.threadId) ?? id(call.input?.workflowRunId)),
+      );
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Stopped watching {count} thread or run} other {Stopped watching {count} threads or runs}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to stop watching {count} thread or run} other {Tried to stop watching {count} threads or runs}}",
+              { count },
+            ),
+          );
+      break;
+    }
   }
   return { label, failedCount };
 }

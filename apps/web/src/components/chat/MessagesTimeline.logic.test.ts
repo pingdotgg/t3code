@@ -1975,43 +1975,50 @@ describe("deriveMessagesTimelineRows", () => {
       createdAt: at,
       entry: { id, createdAt: at, runId: "turn-1" as never, label: id, ...fields },
     });
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        work("old-thought", "2026-01-01T00:00:01Z", {
-          itemType: "reasoning",
-          detail: "First idea.",
-          tone: "thinking" as const,
-          toolLifecycleStatus: "completed" as const,
-        }),
-        work("new-thought", "2026-01-01T00:00:02Z", {
-          itemType: "reasoning",
-          detail: "Found the cause.",
-          tone: "thinking" as const,
-          toolLifecycleStatus: "completed" as const,
-        }),
-        work("running-command", "2026-01-01T00:00:03Z", {
-          command: "rg cause",
-          requestKind: "command",
-          tone: "tool" as const,
-          toolLifecycleStatus: "inProgress" as const,
-        }),
-      ],
-      latestRun: {
-        runId: "turn-1" as never,
-        status: "running",
-        startedAt: "2026-01-01T00:00:00Z",
-        completedAt: null,
-      },
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:00:00Z",
-      turnDiffSummaries: [],
-      supportsConversationRollback: false,
-    });
+    const derive = (hideReasoning: boolean) =>
+      deriveMessagesTimelineRows({
+        hideReasoning,
+        timelineEntries: [
+          work("old-thought", "2026-01-01T00:00:01Z", {
+            itemType: "reasoning",
+            detail: "First idea.",
+            tone: "thinking" as const,
+            toolLifecycleStatus: "completed" as const,
+          }),
+          work("new-thought", "2026-01-01T00:00:02Z", {
+            itemType: "reasoning",
+            detail: "Found the cause.",
+            tone: "thinking" as const,
+            toolLifecycleStatus: "completed" as const,
+          }),
+          work("running-command", "2026-01-01T00:00:03Z", {
+            command: "rg cause",
+            requestKind: "command",
+            tone: "tool" as const,
+            toolLifecycleStatus: "inProgress" as const,
+          }),
+        ],
+        latestRun: {
+          runId: "turn-1" as never,
+          status: "running",
+          startedAt: "2026-01-01T00:00:00Z",
+          completedAt: null,
+        },
+        isWorking: true,
+        activeTurnStartedAt: "2026-01-01T00:00:00Z",
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
 
-    expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
+    expect(derive(false).find((row) => row.kind === "work-live")).toMatchObject({
       entry: { id: "running-command" },
       thought: { id: "new-thought" },
     });
+    const botRows = derive(true);
+    expect(botRows.find((row) => row.kind === "work-live")).not.toHaveProperty("thought");
+    expect(
+      botRows.flatMap((row) => (row.kind === "work" ? row.groupedEntries : [])),
+    ).not.toContainEqual(expect.objectContaining({ itemType: "reasoning" }));
   });
 
   it("keeps an actually running tool in the shared activity row", () => {

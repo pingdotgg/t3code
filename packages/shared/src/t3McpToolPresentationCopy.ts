@@ -119,6 +119,14 @@ const DISPLAY_NAMES: ReadonlyMap<string, string> = new Map([
   ["Preview an HTML page", msg("Preview an HTML page")],
   ["Render an HTML page", msg("Render an HTML page")],
   ["Send a message", msg("Send a message")],
+  ["Read its memory", msg("Read its memory")],
+  ["Read a note", msg("Read a note")],
+  ["Save a note", msg("Save a note")],
+  ["Delete a note", msg("Delete a note")],
+  ["Search notes", msg("Search notes")],
+  ["Save a preference", msg("Save a preference")],
+  ["Start watching a thread or run", msg("Start watching a thread or run")],
+  ["Stop watching a thread or run", msg("Stop watching a thread or run")],
 ]);
 
 /** @public */

@@ -79,6 +79,22 @@ describe("summarizeT3ToolCalls", () => {
     );
   });
 
+  it("counts the distinct notes and watch targets a Bot touched", () => {
+    expect(
+      summarizeT3ToolCalls("bot-note-write", [
+        completed({ slug: "release" }, { saved: true }),
+        completed({ slug: "release" }, { saved: true }),
+        completed({ slug: "people" }, { saved: true }),
+      ]).label,
+    ).toBe("Saved 2 notes");
+    expect(
+      summarizeT3ToolCalls("bot-watch-add", [
+        completed({ threadId: "thread-1" }, { watches: [] }),
+        completed({ workflowRunId: "run-1" }, { watches: [] }),
+      ]).label,
+    ).toBe("Watching 2 threads or runs");
+  });
+
   it("counts the checks a CI rerun restarted, and the ones the host refused", () => {
     const rerun = (...outcomes: boolean[]) =>
       completed(

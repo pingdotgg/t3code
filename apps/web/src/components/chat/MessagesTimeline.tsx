@@ -276,6 +276,8 @@ interface MessagesTimelineProps {
   detailBehindShell?: boolean;
   runningRunId?: RunId | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
+  /** Bot threads leave reasoning out of their transcript. */
+  hideReasoning?: boolean;
   routeThreadKey: string;
   displayThreadKey?: string;
   /** Off where another region already speaks the thread's status, like a subagent's bar. */
@@ -441,6 +443,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   emptyPlaceholderInset,
   topFadeEnabled = false,
   historyControls,
+  hideReasoning = false,
 }: MessagesTimelineProps) {
   const gt = useGT();
   const canvas = useChatCanvas();
@@ -675,6 +678,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runlessWorkActive,
         toolCallVisibility,
         revealedMessageId,
+        hideReasoning,
       })
     : null;
   const activeFindRunId =
@@ -719,6 +723,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runlessWorkActive,
         toolCallVisibility,
         revealedMessageId,
+        hideReasoning,
       })
     ).get(citedEntry.id);
     setCitationExpandedFor(citationRequest.key);
@@ -780,6 +785,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     worktreeSetup,
     toolCallVisibility,
     revealedMessageId,
+    hideReasoning,
   });
   const rows = useStableRows(rawRows, listIdentityKey);
   const matchedApprovalRequestIds = new Set<string>();

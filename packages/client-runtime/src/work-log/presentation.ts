@@ -735,6 +735,11 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "attachment-prepare":
     case "attachment-discard":
     case "attachment-send":
+    case "bot-note-write":
+    case "bot-note-delete":
+    case "bot-preference-save":
+    case "bot-watch-add":
+    case "bot-watch-remove":
       return 0;
     case "other":
     case "update":

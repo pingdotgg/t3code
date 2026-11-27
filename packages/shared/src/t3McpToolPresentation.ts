@@ -88,7 +88,15 @@ export type T3McpToolSummaryAction =
   | "device"
   | "html-preview"
   | "html-render"
-  | "send-to-user";
+  | "send-to-user"
+  | "bot-memory-read"
+  | "bot-note-read"
+  | "bot-note-write"
+  | "bot-note-delete"
+  | "bot-note-search"
+  | "bot-preference-save"
+  | "bot-watch-add"
+  | "bot-watch-remove";
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -441,6 +449,23 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
   send_to_user: tool(["Send", "Sending", "Sent", "a message"], "send-to-user"),
+  t3_bot_memory_read: tool(["Read", "Reading", "Read", "its memory"], "bot-memory-read"),
+  t3_bot_note_read: tool(["Read", "Reading", "Read", "a note"], "bot-note-read"),
+  t3_bot_note_write: tool(["Save", "Saving", "Saved", "a note"], "bot-note-write"),
+  t3_bot_note_delete: tool(["Delete", "Deleting", "Deleted", "a note"], "bot-note-delete"),
+  t3_bot_note_search: tool(["Search", "Searching", "Searched", "notes"], "bot-note-search"),
+  t3_bot_preferences_append: tool(
+    ["Save", "Saving", "Saved", "a preference"],
+    "bot-preference-save",
+  ),
+  t3_bot_watch_add: tool(
+    ["Start watching", "Starting to watch", "Started watching", "a thread or run"],
+    "bot-watch-add",
+  ),
+  t3_bot_watch_remove: tool(
+    ["Stop watching", "Unwatching", "Stopped watching", "a thread or run"],
+    "bot-watch-remove",
+  ),
 };
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));

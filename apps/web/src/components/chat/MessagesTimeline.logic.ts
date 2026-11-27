@@ -1536,10 +1536,15 @@ function timelineRowEntries(
     | "latestRun"
     | "runningRunId"
     | "pendingApprovalRequestIds"
+    | "hideReasoning"
   >,
 ) {
   const visibility = input.toolCallVisibility ?? "showAll";
-  const entries = input.timelineEntries;
+  const entries = input.hideReasoning
+    ? input.timelineEntries.filter(
+        (entry) => entry.kind !== "work" || entry.entry.itemType !== "reasoning",
+      )
+    : input.timelineEntries;
   let shown = entries;
   if (visibility === "zen") {
     const answering = input.isWorking && input.latestRun?.turnEnded !== true;
@@ -1584,6 +1589,7 @@ function deriveTimelineTurnFolds(
     | "runningRunId"
     | "toolCallVisibility"
     | "revealedMessageId"
+    | "hideReasoning"
   >,
 ) {
   if (input.toolCallVisibility === "zen") return new Map<string, TurnFold>();
@@ -1629,6 +1635,8 @@ export function deriveMessagesTimelineRows(
     worktreeSetup?: WorktreeSetupSnapshot | null;
     toolCallVisibility?: ToolCallVisibility;
     revealedMessageId?: MessageId | null;
+    /** Bot threads leave reasoning out of their transcript. */
+    hideReasoning?: boolean;
   },
   resolve: MessageResolver = m,
 ): MessagesTimelineRow[] {
@@ -2535,6 +2543,7 @@ export function timelineTurnFoldRunIdsByEntryId(
     | "runningRunId"
     | "toolCallVisibility"
     | "revealedMessageId"
+    | "hideReasoning"
   >,
 ): ReadonlyMap<string, RunId> {
   const byEntryId = new Map<string, RunId>();
@@ -2613,7 +2622,7 @@ function replaceStreamingMessageRows(
     }
     if (entry.kind === "work" && previousEntry.kind === "work") {
       if (!isStreamingThoughtUpdate(previousEntry.entry, entry.entry)) return null;
-      thoughts.set(entry.id, entry.entry);
+      if (!input.hideReasoning) thoughts.set(entry.id, entry.entry);
       continue;
     }
     if (entry.kind === "proposed-plan" && previousEntry.kind === "proposed-plan") {
