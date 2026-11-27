@@ -22,6 +22,7 @@ import {
   resolveThreadStatusPill,
   resolveWindowTitleThreadStatus,
   resolveWorkingStartedAt,
+  pullRequestMatchesSearchQuery,
   searchSidebarThreads,
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
@@ -411,6 +412,39 @@ describe("searchSidebarThreads", () => {
         contentMatches: [threads[1]],
       },
     );
+  });
+});
+
+describe("pullRequestMatchesSearchQuery", () => {
+  const linkedPullRequest = {
+    projectId: ProjectId.make("project-1"),
+    number: 22889,
+    repository: "acme/widgets",
+    url: "https://github.com/acme/widgets/pull/22889",
+  };
+  const thread = {
+    environmentId: localEnvironmentId,
+    id: ThreadId.make("thread-pr"),
+    title: "Trim model lists",
+    branch: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-10-20T00:00:00.000Z",
+    latestUserMessageAt: "2026-10-20T00:00:00.000Z",
+    opens: null,
+    linkedPullRequest,
+  };
+
+  it("shows the number for every pull request query the search lists the thread for", () => {
+    const now = Date.parse("2026-10-23T00:00:00.000Z");
+    for (const query of ["#22889", "pr 22889", "PR #22889", "pull request 22889", '"#22889"']) {
+      expect(searchSidebarThreads([thread], query, undefined, now).titleMatches, query).toEqual([
+        thread,
+      ]);
+      expect(pullRequestMatchesSearchQuery({ linkedPullRequest }, query), query).toBe(true);
+    }
+    expect(pullRequestMatchesSearchQuery({ linkedPullRequest }, "22889")).toBe(true);
+    expect(pullRequestMatchesSearchQuery({ linkedPullRequest }, "acme/widgets#22889")).toBe(true);
+    expect(pullRequestMatchesSearchQuery({ linkedPullRequest }, "trim")).toBe(false);
   });
 });
 
