@@ -218,10 +218,7 @@ export function useQueuedRunEdit(input: {
   readonly activeThreadId: ThreadId | null;
   readonly serverProjection: ThreadStructure | null;
   readonly promptRef: { current: string };
-  readonly composerRef: RefObject<Pick<
-    ChatComposerHandle,
-    "focusAtEnd" | "resetCursorState"
-  > | null>;
+  readonly composerRef: RefObject<ChatComposerHandle | null>;
 }) {
   const {
     environmentId,

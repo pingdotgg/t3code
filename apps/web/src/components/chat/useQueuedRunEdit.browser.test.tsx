@@ -31,6 +31,7 @@ import { deriveComposerSendState } from "../ChatView.logic";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { useQueuedRunEdit } from "./useQueuedRunEdit";
+import type { ChatComposerHandle } from "./ChatComposer";
 import { readAttachmentUpload, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
 
 interface RunStatus {
@@ -283,7 +284,10 @@ describe("useQueuedRunEdit", () => {
     await act(() => {
       for (const frame of frames.splice(0)) frame(0);
     });
-    composer.composerRef.current = { focusAtEnd, resetCursorState };
+    composer.composerRef.current = {
+      focusAtEnd,
+      resetCursorState,
+    } as unknown as ChatComposerHandle;
 
     const setThreadError = vi.fn();
     const saved = requireHook(hook).saveEdit(savedContent("changed"), setThreadError);
