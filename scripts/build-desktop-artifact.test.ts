@@ -691,7 +691,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
      2 valid identities found`;
     assert.strictEqual(resolveLocalSigningHash("Example (ABCDEFGHIJ)", identities), hash);
     assert.strictEqual(resolveLocalSigningHash(hash, identities), hash);
-    assert.strictEqual(resolveLocalSigningHash(hash, identities + identities), hash);
+    assert.strictEqual(resolveLocalSigningHash(hash.toLowerCase(), identities), hash);
+    assert.strictEqual(resolveLocalSigningHash(hash, `${identities}\n${identities}`), hash);
     assert.strictEqual(resolveLocalSigningHash("T3 Code Local", identities), otherHash);
     assert.throws(() => resolveLocalSigningHash("T3 Code", identities));
     assert.throws(() => resolveLocalSigningHash("valid identities", identities));
@@ -1492,12 +1493,26 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it.effect("accepts a macOS app whose packaged server bundle resolves", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const path = yield* Path.Path;
         const fixture = yield* makePackagedAppFixture({});
         yield* validateMacPackagedPayload({ stageDistDir: fixture.stageDistDir });
         yield* verifyLocalMacSignature(fixture.stageDistDir, "A".repeat(40), false).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
-            ChildProcessSpawner.make(() => Effect.succeed(mockProcess(0))),
+            ChildProcessSpawner.make((command) => {
+              assert.strictEqual(command._tag, "StandardCommand");
+              if (command._tag === "StandardCommand") {
+                assert.strictEqual(command.command, "codesign");
+                assert.deepStrictEqual(command.args, [
+                  "--verify",
+                  "--strict",
+                  "-R",
+                  `=certificate leaf = H"${"A".repeat(40)}"`,
+                  path.join(fixture.stageDistDir, "mac-arm64/T3 Code.app"),
+                ]);
+              }
+              return Effect.succeed(mockProcess(0));
+            }),
           ),
         );
         const error = yield* verifyLocalMacSignature(

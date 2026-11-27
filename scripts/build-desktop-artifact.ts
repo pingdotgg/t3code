@@ -1055,8 +1055,11 @@ export function resolveLocalSigningIdentity(value: string | undefined): string |
 }
 
 export function resolveLocalSigningHash(identity: string, identities: string): string {
+  const normalizedHash = identity.toUpperCase();
   const matches = [...identities.matchAll(/^\s*\d+\) ([A-Fa-f0-9]{40}) "(.+)"\s*$/gm)].filter(
-    (match) => match[1] === identity || resolveLocalSigningIdentity(match[2]) === identity,
+    (match) =>
+      match[1]?.toUpperCase() === normalizedHash ||
+      resolveLocalSigningIdentity(match[2]) === identity,
   );
   const hashes = [...new Set(matches.map((match) => match[1]))];
   const hash = hashes.length === 1 ? hashes[0] : undefined;
@@ -1424,10 +1427,7 @@ export function renderMacPasskeyEntitlements(
     <true/>`
     : "";
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-  <dict>
+  return renderMacEntitlements(`
     <key>com.apple.application-identifier</key>
     <string>${escapeXml(`${configuration.teamId}.${configuration.appId}`)}</string>
     <key>com.apple.developer.team-identifier</key>
@@ -1435,7 +1435,14 @@ export function renderMacPasskeyEntitlements(
     <key>com.apple.developer.associated-domains</key>
     <array>
 ${associatedDomains}
-    </array>${keychainAccessGroups}${browserPasskeys}
+    </array>${keychainAccessGroups}${browserPasskeys}`);
+}
+
+export function renderMacEntitlements(signingEntitlements = ""): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>${signingEntitlements}
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
@@ -2865,7 +2872,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     | undefined,
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
-  localSigningHash?: string,
+  localMacSigning?: { readonly hash: string; readonly entitlementsPath: string },
 ) {
   const buildConfig: Record<string, unknown> = {
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
@@ -2924,20 +2931,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "mac") {
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
-    // A persistent local identity keeps Keychain approvals valid across fork rebuilds.
-    const localSigningIdentity = signed
-      ? undefined
-      : yield* Effect.try({
-          try: () =>
-            resolveLocalSigningIdentity(
-              loadRepoEnv({ repoRoot }).T3CODE_DESKTOP_LOCAL_SIGNING_IDENTITY,
-            ),
-          catch: MacLocalSigningIdentityNotFoundError.fromCause,
-        });
     buildConfig.mac = {
-      ...(localSigningIdentity
+      ...(localMacSigning
         ? {
-            identity: localSigningHash ?? localSigningIdentity,
+            identity: localMacSigning.hash,
+            entitlements: localMacSigning.entitlementsPath,
             type: "development",
             forceCodeSigning: true,
             notarize: false,
@@ -2990,9 +2988,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       ],
       // The custom signer receives the resolved certificate hash; the default one only its name.
-      ...(signed || localSigningIdentity
-        ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") }
-        : {}),
+      ...(signed || localMacSigning ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -3702,7 +3698,7 @@ export const verifyLocalMacSignature = Effect.fn("desktopArtifact.verifyLocalMac
           "--verify",
           "--strict",
           "-R",
-          `certificate leaf = H"${localSigningHash}"`,
+          `=certificate leaf = H"${localSigningHash}"`,
           app,
         ]),
         { label: "verify local macOS signing identity", verbose },
@@ -4010,7 +4006,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
           catch: MacLocalSigningIdentityNotFoundError.fromCause,
         })
       : undefined;
-  let localSigningHash: string | undefined;
+  let localMacSigning: { hash: string; entitlementsPath: string } | undefined;
   if (localSigningIdentity) {
     // With a custom signer set, electron-builder skips a missing or expired identity silently.
     const identities = yield* spawnAndCollectOutput(
@@ -4019,10 +4015,13 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     if (identities.exitCode !== 0) {
       return yield* new MacLocalSigningIdentityNotFoundError({ identity: localSigningIdentity });
     }
-    localSigningHash = yield* Effect.try({
+    const hash = yield* Effect.try({
       try: () => resolveLocalSigningHash(localSigningIdentity, identities.stdout),
       catch: MacLocalSigningIdentityNotFoundError.fromCause,
     });
+    const entitlementsPath = path.join(stageAppDir, "entitlements.mac.plist");
+    yield* fs.writeFileString(entitlementsPath, renderMacEntitlements());
+    localMacSigning = { hash, entitlementsPath };
   }
 
   const configuredMacPasskeySigning =
@@ -4112,7 +4111,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
       options.arch,
-      localSigningHash,
+      localMacSigning,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -4297,8 +4296,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     yield* validateMacPackagedPayload({ stageDistDir, verbose: options.verbose });
   }
 
-  if (localSigningHash) {
-    yield* verifyLocalMacSignature(stageDistDir, localSigningHash, options.verbose);
+  if (localMacSigning) {
+    yield* verifyLocalMacSignature(stageDistDir, localMacSigning.hash, options.verbose);
   }
 
   const copiedArtifacts = yield* copyDesktopBuildArtifacts(
