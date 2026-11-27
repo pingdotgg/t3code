@@ -11087,6 +11087,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       seconds: 60,
     },
     {
+      cooldown:
+        " via provider claude (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.) (reset after 2h16m10s)",
+      seconds: 8170,
+    },
+    {
+      cooldown: " via provider claude (reset after 4m 6s) (last error: rate limited)",
+      seconds: 246,
+    },
+    {
       cooldown: " (last error: Request rejected (429) (reset after 1h) (last error: rate limited))",
       seconds: 0,
     },
