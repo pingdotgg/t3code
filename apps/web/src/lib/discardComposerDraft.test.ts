@@ -80,6 +80,23 @@ describe("discardComposerDraft", () => {
     }
   });
 
+  it("discards and restores a draft session that has no composer record", async () => {
+    useComposerDraftStore.getState().setProjectDraftThreadId(projectRef, draftId);
+    const before = useComposerDraftStore.getState();
+    expect(before.draftsByThreadKey).toEqual({});
+
+    discardComposerDraft(draftId);
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBeNull();
+
+    await undoNotice().undo();
+    const after = useComposerDraftStore.getState();
+    expect(after.getDraftSession(draftId)).toEqual(before.getDraftSession(draftId));
+    expect(after.draftsByThreadKey).toEqual({});
+    expect(after.logicalProjectDraftThreadKeyByLogicalProjectKey).toEqual(
+      before.logicalProjectDraftThreadKeyByLogicalProjectKey,
+    );
+  });
+
   it("releases a discarded existing-thread preview when Undo is committed", async () => {
     using preview = imagePreview();
     useComposerDraftStore.getState().addImage(threadRef, preview.image);

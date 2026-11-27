@@ -104,6 +104,8 @@ const defaultDiscoveries = [
   }),
 ];
 
+const onPath = (command: string) => `/usr/local/bin/${command}`;
+
 const layerDiscovery = (
   runProcess = run,
   discoveries: ReadonlyArray<SourceControlProviderDiscoverySpec> = defaultDiscoveries,
@@ -172,7 +174,10 @@ it.effect("reports every hosting integration in registry order with its sign-in"
         ["jj", "available"],
       ],
     );
-  }).pipe(Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery())))),
+  }).pipe(
+    Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery()))),
+    Effect.provideService(SpawnExecutableResolution, onPath),
+  ),
 );
 
 it.effect("explains a CLI whose version probe failed instead of advising an install", () =>
@@ -201,6 +206,7 @@ it.effect("explains a CLI whose version probe failed instead of advising an inst
     assert.notInclude(git.installHint, "Install Git from");
     assert.include(git.installHint, "`git --version` exited with status 1");
   }).pipe(
+    Effect.provideService(SpawnExecutableResolution, onPath),
     Effect.provide(
       SourceControlDiscovery.layer.pipe(
         Layer.provide(
@@ -250,7 +256,7 @@ it.effect.each(["darwin", "linux"] as const)(
       }
     }).pipe(
       Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery(runProcess)))),
-      Effect.provideService(SpawnExecutableResolution, (command) => `/usr/local/bin/${command}`),
+      Effect.provideService(SpawnExecutableResolution, onPath),
       Effect.provideService(HostProcess.Platform, platform),
       Effect.provideService(HostProcess.Architecture, "arm64"),
     );

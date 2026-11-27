@@ -2,8 +2,8 @@
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { T, useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
-import type { Root, RootContent } from "mdast";
 import ChatMarkdown from "~/components/ChatMarkdown";
+import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import { Button } from "~/components/ui/button";
 import ReadOnlySourcePreview from "./ReadOnlySourcePreview";
 import DocumentPages from "./DocumentPages";
@@ -11,24 +11,7 @@ import { FileSurfaceNotice } from "./fileSurfaceChrome";
 import type { OfficeWorkerResult } from "./officePreviewProtocol";
 
 // Saved notebooks must not load URLs or turn authored links into app actions.
-function inertNotebookMarkdown() {
-  function clean(nodes: RootContent[]): RootContent[] {
-    return nodes.flatMap((node): RootContent[] => {
-      if (node.type === "html" || node.type === "definition") return [];
-      if (node.type === "image" || node.type === "imageReference")
-        return [{ type: "text", value: node.alt ?? "" }];
-      if (node.type === "link" || node.type === "linkReference") return clean(node.children);
-      if (node.type === "inlineCode") return [{ type: "text", value: node.value }];
-      if (node.type === "code" && node.lang === "mermaid") return [{ ...node, lang: "text" }];
-      if ("children" in node) node.children = clean(node.children) as typeof node.children;
-      return [node];
-    });
-  }
-  return (tree: Root) => {
-    tree.children = clean(tree.children) as Root["children"];
-  };
-}
-const NOTEBOOK_PLUGINS = [inertNotebookMarkdown];
+const NOTEBOOK_MARKDOWN: MarkdownExtensions = { inert: true };
 
 function NotebookSource(props: { readonly name: string; readonly text: string }) {
   const [height, setHeight] = useState(Math.min(360, props.text.split("\n").length * 20 + 16));
@@ -64,36 +47,42 @@ export default function NotebookPreview(props: {
   useEffect(() => {
     const root = scroll.current;
     if (!root || !outputCount) return;
-    const candidates = new Map<Element, string>();
-    let active: Element[] = [];
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting)
-            candidates.set(entry.target, (entry.target as HTMLElement).dataset.notebookOutput!);
-          else candidates.delete(entry.target);
-        }
-        // Bound browsing contexts even when a cell contains hundreds of tiny HTML outputs.
-        const next = [...candidates.keys()].slice(0, 16);
-        const measured = active
-          .filter((node) => !next.includes(node))
-          .map(
-            (node) =>
-              [
-                (node as HTMLElement).dataset.notebookOutput!,
-                node.getBoundingClientRect().height,
-              ] as const,
-          );
-        active = next;
-        setOutputView((old) => ({
-          mounted: new Set(next.map((node) => candidates.get(node)!)),
-          heights: new Map([...old.heights, ...measured]),
-        }));
-      },
-      { root, rootMargin: "160px" },
-    );
-    for (const node of root.querySelectorAll("[data-notebook-output]")) observer.observe(node);
-    return () => observer.disconnect();
+    const inView = new Set<Element>();
+    const nearby = new Set<Element>();
+    let active = new Set<Element>();
+    const outputKey = (node: Element) => node.getAttribute("data-notebook-output")!;
+    const track = (candidates: Set<Element>) => (entries: IntersectionObserverEntry[]) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) candidates.add(entry.target);
+        else candidates.delete(entry.target);
+      }
+      // Mount every visible output. Only preload while the total is below 16.
+      const next = new Set(inView);
+      for (const node of nearby) {
+        if (next.size >= 16) break;
+        next.add(node);
+      }
+      const departing = [...active].filter((node) => !next.has(node));
+      if (active.size === next.size && departing.length === 0) return;
+      const measured = departing
+        .map((node) => [outputKey(node), node.clientHeight] as const)
+        .filter(([, height]) => height > 0);
+      active = next;
+      setOutputView((old) => ({
+        mounted: new Set(Array.from(next, outputKey)),
+        heights: new Map([...old.heights, ...measured]),
+      }));
+    };
+    const viewportObserver = new IntersectionObserver(track(inView), { root });
+    const preloadObserver = new IntersectionObserver(track(nearby), { root, rootMargin: "160px" });
+    for (const node of root.querySelectorAll("[data-notebook-output]")) {
+      viewportObserver.observe(node);
+      preloadObserver.observe(node);
+    }
+    return () => {
+      viewportObserver.disconnect();
+      preloadObserver.disconnect();
+    };
   }, [outputCount]);
   return (
     <>
@@ -129,7 +118,7 @@ export default function NotebookPreview(props: {
                   text={cell.source}
                   cwd={undefined}
                   parseRawHtml={false}
-                  extraRemarkPlugins={NOTEBOOK_PLUGINS}
+                  extensions={NOTEBOOK_MARKDOWN}
                   className="px-4 py-3"
                 />
               ) : cell.source.trim() ? (
@@ -138,42 +127,43 @@ export default function NotebookPreview(props: {
                   text={cell.source}
                 />
               ) : null}
-              {cell.outputs.map((output, outputIndex) => (
-                <div
-                  key={outputIndex}
-                  data-notebook-output={
-                    output.kind === "html" ? `${index}-${outputIndex}` : undefined
-                  }
-                  className="border-t border-border/60"
-                  style={{
-                    minHeight:
-                      output.kind !== "html" || outputView.mounted.has(`${index}-${outputIndex}`)
-                        ? undefined
-                        : (outputView.heights.get(`${index}-${outputIndex}`) ?? 80),
-                  }}
-                >
-                  {output.kind === "html" ? (
-                    !outputView.mounted.has(`${index}-${outputIndex}`) ? null : (
-                      <DocumentPages
-                        html={output.text}
-                        name={gt("Cell {number} HTML output", { number: String(index + 1) })}
-                        output
+              {cell.outputs.map((output, outputIndex) => {
+                const key = `${index}-${outputIndex}`;
+                const mounted = outputView.mounted.has(key);
+                const estimatedHeight = outputView.heights.get(key) ?? 80;
+                return (
+                  <div
+                    key={outputIndex}
+                    data-notebook-output={output.kind === "html" ? key : undefined}
+                    className="box-content border-t border-border/60"
+                    style={{
+                      minHeight: output.kind === "html" && !mounted ? estimatedHeight : undefined,
+                    }}
+                  >
+                    {output.kind === "html" ? (
+                      mounted ? (
+                        <DocumentPages
+                          html={output.text}
+                          name={gt("Cell {number} HTML output", { number: String(index + 1) })}
+                          output
+                          estimatedOutputHeight={estimatedHeight}
+                        />
+                      ) : null
+                    ) : output.kind === "image" ? (
+                      <img
+                        src={output.text}
+                        alt={gt("Cell {number} output", { number: String(index + 1) })}
+                        loading="lazy"
+                        className="max-h-96 max-w-full p-4 object-contain"
                       />
-                    )
-                  ) : output.kind === "image" ? (
-                    <img
-                      src={output.text}
-                      alt={gt("Cell {number} output", { number: String(index + 1) })}
-                      loading="lazy"
-                      className="max-h-96 max-w-full p-4 object-contain"
-                    />
-                  ) : (
-                    <pre className="overflow-x-auto p-4 text-xs whitespace-pre-wrap break-words">
-                      {output.text}
-                    </pre>
-                  )}
-                </div>
-              ))}
+                    ) : (
+                      <pre className="overflow-x-auto p-4 text-xs whitespace-pre-wrap break-words">
+                        {output.text}
+                      </pre>
+                    )}
+                  </div>
+                );
+              })}
             </section>
           ))}
           {props.notebook.cells.length === 0 ? (

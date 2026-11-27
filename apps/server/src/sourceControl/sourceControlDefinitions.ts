@@ -1,7 +1,7 @@
 import * as AzureDevOpsDriver from "@t3tools/source-control-azure-devops/server/driver";
 import * as BitbucketDriver from "@t3tools/source-control-bitbucket/server/driver";
 import * as CursorOriginDriver from "@t3tools/source-control-cursor-origin/server/driver";
-import { makeBuiltInSourceControlDefinitions } from "@t3tools/source-control-definitions/registry";
+import { builtInSourceControlDefinitions } from "@t3tools/source-control-definitions/registry";
 import * as ForgejoDriver from "@t3tools/source-control-forgejo/server/driver";
 import * as GitCafeDriver from "@t3tools/source-control-gitcafe/server/driver";
 import * as GitHubDriver from "@t3tools/source-control-github/server/driver";
@@ -9,26 +9,21 @@ import * as GitLabDriver from "@t3tools/source-control-gitlab/server/driver";
 import * as TanStackSourceDriver from "@t3tools/source-control-tanstack-source/server/driver";
 
 /**
- * TanStack Source is in private beta, so its forge exists only on a server started with
- * `T3CODE_TANSTACK_SOURCE=1`. Read once at load: the registry below is a module constant.
+ * In the shared registry's order, which is the order hosts are listed and probed in. Feature
+ * flags leave some out; see `builtInDrivers.ts`.
  */
-const tanStackSourceEnabled = process.env.T3CODE_TANSTACK_SOURCE?.trim() === "1";
-
-/** In the shared registry's order, which is the order hosts are listed and probed in. */
 export const BUILT_IN_SOURCE_CONTROL_DRIVER_LIST = [
   GitHubDriver.driver,
   CursorOriginDriver.driver,
   GitLabDriver.driver,
   GitCafeDriver.driver,
-  ...(tanStackSourceEnabled ? [TanStackSourceDriver.driver] : []),
+  TanStackSourceDriver.driver,
   ForgejoDriver.driver,
   BitbucketDriver.driver,
   AzureDevOpsDriver.driver,
 ];
 
-export const sourceControlDefinitions = makeBuiltInSourceControlDefinitions({
-  tanStackSource: tanStackSourceEnabled,
-});
+export const sourceControlDefinitions = builtInSourceControlDefinitions;
 
 /** A host CLI command that merges or closes a change request, such as `gh pr merge`. */
 export const isChangeRequestCloseCommand = (command: string) =>
@@ -37,10 +32,15 @@ export const isChangeRequestCloseCommand = (command: string) =>
   );
 
 // A quoted or bare shell word. An unclosed quote, as Codex's `/bin/zsh -lc "gh pr merge 19"`
-// leaves after the match, runs to the end.
-const SHELL_WORD = /"((?:\\[\s\S]|[^"\\])*)"?|'([^']*)'?|((?:\\[\s\S]|[^\s"'\\])+)/gu;
-// A whole word that names one, so a number inside `--subject "Release 20"` does not.
-const NAMED_CHANGE_REQUEST = /^(?:--?[\w-]+=)?#?(\d+)$|^\S*\/(?:pulls?|merge_requests)\/(\d+)\/?$/u;
+// leaves after the match, runs to the end. A closed one right after `=` stays in that word and is
+// unquoted before matching, so `--id="19"` names 19 and `--subject="20"` names none, while the
+// wrapper's closing quote in `-lc "gh pr merge 19" > "log"` still ends the word `19`.
+const SHELL_WORD =
+  /"((?:\\[\s\S]|[^"\\])*)"?|'([^']*)'?|((?:\\[\s\S]|[^\s"'\\])+(?:(?<==)(?:"(?:\\[\s\S]|[^"\\])*"|'[^']*'))?)/gu;
+// A whole word that names one, so a number inside `--subject "Release 20"` does not. Of the
+// hosts' close commands only Azure's selects one with a flag, so `--subject=2026` and
+// `--body=<pull request URL>` are option text.
+const NAMED_CHANGE_REQUEST = /^(?:--id=)?#?(\d+)$|^(?!-)\S*\/(?:pulls?|merge_requests)\/(\d+)\/?$/u;
 
 /**
  * The change request numbers a merge or close command names, or "any" when one names none, as a
@@ -58,7 +58,8 @@ export function changeRequestsClosedBy(command: string): ReadonlySet<number> | "
       for (const [, double, single, bare] of args.matchAll(SHELL_WORD)) {
         // A comment ends the command.
         if (bare !== undefined && /^#(?!\d+$)/u.test(bare)) break;
-        const [, number, url] = NAMED_CHANGE_REQUEST.exec(double ?? single ?? bare ?? "") ?? [];
+        const word = double ?? single ?? bare?.replace(/\\([\s\S])|["']/gu, "$1") ?? "";
+        const [, number, url] = NAMED_CHANGE_REQUEST.exec(word) ?? [];
         target = number ?? url;
         if (target !== undefined) break;
       }

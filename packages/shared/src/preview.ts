@@ -1,7 +1,7 @@
 import type { BrowserSearchEngine } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { isLocalLoopbackHost } from "./hostClassification.ts";
+import { isLocalLoopbackHost, normalizeHostname } from "./hostClassification.ts";
 
 const TAB_ID_PREFIX = "tab_";
 let nextPreviewTabSequence = 0;
@@ -216,8 +216,12 @@ export function normalizePreviewUrl(rawUrl: string): string {
       protocol: parsed.protocol,
     });
   }
+  // RFC 6761 keeps every *.localhost name on loopback, and Chromium resolves them there.
+  const loopback =
+    isLocalLoopbackHost(parsed.hostname) ||
+    normalizeHostname(parsed.hostname).endsWith(".localhost");
   // Re-parse rather than swap the protocol so an explicit :443 survives as a non-default HTTP port.
-  if (!hasExplicitScheme && !useHttp && isLocalLoopbackHost(parsed.hostname)) {
+  if (!hasExplicitScheme && !useHttp && loopback) {
     return new URL(`http://${trimmed}`).href;
   }
   return parsed.href;

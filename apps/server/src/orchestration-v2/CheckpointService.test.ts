@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -152,6 +153,7 @@ it.effect(
                   yield* Deferred.succeed(firstSnapshotStarted, undefined);
                   yield* Effect.sleep("10 seconds");
                   yield* Ref.update(refs, (current) => new Set([...current, checkpointRef]));
+                  return null;
                 }),
             }),
           ),
@@ -200,6 +202,58 @@ it.effect(
         assert.strictEqual((yield* Ref.get(refs)).size, 1);
       }).pipe(Effect.provide(layerTest));
     }),
+);
+
+it.effect.each([
+  { label: "a reused checkpoint", source: 2, copy: true, calls: ["copy"] },
+  { label: "a declined copy", source: 2, copy: false, calls: ["copy", "snapshot"] },
+  { label: "a copy slower than its budget", source: 2, calls: ["copy", "snapshot"] },
+])("baselines a turn after steered queued messages with $label", (row) =>
+  Effect.gen(function* () {
+    const scope: OrchestrationV2CheckpointScope = {
+      id: CheckpointScopeId.make("checkpoint-scope:queue-gap"),
+      threadId: ThreadId.make("thread:queue-gap"),
+      runId: RunId.make("run:queue-gap:1"),
+      nodeId: NodeId.make("node:queue-gap:1"),
+      parentScopeId: null,
+      providerThreadId: ProviderThreadId.make("provider-thread:queue-gap"),
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/repo/queue-gap",
+      createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+    };
+    const calls = yield* Ref.make<ReadonlyArray<string>>([]);
+    const record = (call: string) => Ref.update(calls, (current) => [...current, call]);
+    const layerTest = CheckpointService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          layerNoTrackedFolders,
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            isGitRepository: () => Effect.succeed(true),
+            hasCheckpointRef: () => Effect.succeed(false),
+            copyCheckpointRef: () =>
+              record("copy").pipe(
+                Effect.andThen(row.copy === undefined ? Effect.never : Effect.succeed(row.copy)),
+              ),
+            captureCheckpoint: () => record("snapshot").pipe(Effect.as(null)),
+          }),
+        ),
+      ),
+      Layer.provideMerge(NodeCrypto.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      const baseline = yield* checkpoints
+        .captureBaseline({ scope, ordinalWithinScope: 4, sourceOrdinalWithinScope: row.source })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(baseline);
+      assert.deepEqual(yield* Ref.get(calls), row.calls);
+    }).pipe(Effect.provide(layerTest));
+  }),
 );
 
 it.effect(
@@ -481,7 +535,9 @@ it.effect("backs off only baseline retries after repeated workspace capture time
             captureCheckpoint: () =>
               Effect.suspend(() => {
                 attempts++;
-                return healthy ? Effect.void : Effect.fail(nonTimeoutFailure ? failure : timeout);
+                return healthy
+                  ? Effect.succeed(null)
+                  : Effect.fail(nonTimeoutFailure ? failure : timeout);
               }),
           }),
         ),
@@ -550,6 +606,156 @@ it.effect("backs off only baseline retries after repeated workspace capture time
   }),
 );
 
+it.effect("skips post-turn captures that waited out another capture's timeout in the folder", () =>
+  Effect.gen(function* () {
+    const scopeFor = (name: string): OrchestrationV2CheckpointScope => ({
+      id: CheckpointScopeId.make(`checkpoint-scope:shared-folder:${name}`),
+      threadId: ThreadId.make(`thread:shared-folder:${name}`),
+      runId: RunId.make(`run:shared-folder:${name}:1`),
+      nodeId: NodeId.make(`node:shared-folder:${name}:1`),
+      parentScopeId: null,
+      providerThreadId: ProviderThreadId.make(`provider-thread:shared-folder:${name}`),
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/repo/shared",
+      createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+    });
+    const attempts = yield* Ref.make(0);
+    // Outcomes for upcoming attempts; an attempt with none scripted times out.
+    const script = yield* Ref.make<ReadonlyArray<"ready" | "timeout">>([]);
+    const started = yield* Queue.unbounded<void>();
+    const layerTest = CheckpointService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          layerNoTrackedFolders,
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            isGitRepository: () => Effect.succeed(true),
+            hasCheckpointRef: () => Effect.succeed(false),
+            resolveCleanHead: () => Effect.succeed(null),
+            captureCheckpoint: ({ cwd }) =>
+              Effect.gen(function* () {
+                yield* Ref.update(attempts, (count) => count + 1);
+                yield* Queue.offer(started, undefined);
+                yield* Effect.sleep("30 seconds");
+                const [next = "timeout", ...rest] = yield* Ref.get(script);
+                yield* Ref.set(script, rest);
+                if (next === "ready") return null;
+                return yield* new VcsProcessTimeoutError({
+                  operation: "GitVcsDriver.checkpoints.captureCheckpoint",
+                  command: "git",
+                  cwd,
+                  timeoutMs: 30_000,
+                });
+              }),
+          }),
+        ),
+      ),
+      Layer.provideMerge(NodeCrypto.layer),
+    );
+    yield* Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      const captureTurn = (scope: OrchestrationV2CheckpointScope) =>
+        checkpoints
+          .capture({
+            scope,
+            ordinalWithinScope: 1,
+            runId: scope.runId!,
+            nodeId: scope.nodeId!,
+            appRunOrdinal: 1,
+            capturedAt: scope.createdAt,
+          })
+          .pipe(Effect.forkChild);
+      // A baseline's short budget running out says nothing about a post-turn capture.
+      const baseline = yield* checkpoints
+        .captureBaseline({ scope: scopeFor("baseline"), ordinalWithinScope: 0 })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Queue.take(started);
+      const afterBaseline = yield* captureTurn(scopeFor("after-baseline"));
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(baseline);
+      yield* Queue.take(started);
+      yield* TestClock.adjust("30 seconds");
+      assert.strictEqual((yield* Fiber.join(afterBaseline)).status, "error");
+      assert.strictEqual(yield* Ref.get(attempts), 2);
+
+      const first = yield* captureTurn(scopeFor("first"));
+      yield* Queue.take(started);
+      // Other threads in the same folder finish their turns while the first capture hangs.
+      const waiting = [
+        yield* captureTurn(scopeFor("second")),
+        yield* captureTurn(scopeFor("third")),
+      ];
+      const repository = scopeFor("repository");
+      const repositoryWaiting = yield* checkpoints
+        .captureRepository({
+          scope: repository,
+          runId: repository.runId!,
+          nodeId: repository.nodeId!,
+          ordinalWithinScope: 1,
+          capturedAt: repository.createdAt,
+          baselineCapturedAt: repository.createdAt,
+          baselineRecorded: true,
+        })
+        .pipe(Effect.forkChild);
+      // A thread's root capture first materializes its baseline, which waits on the lock too.
+      const root = scopeFor("root");
+      const rootWaiting = yield* Effect.gen(function* () {
+        const capturesBeforeLock = yield* checkpoints.capturesSoFar(root.cwd);
+        yield* checkpoints.materializeBaselineCheckpoint({
+          scope: root,
+          ordinalWithinScope: 0,
+          nodeId: root.nodeId!,
+          capturedAt: root.createdAt,
+        });
+        return yield* checkpoints.capture({
+          scope: root,
+          ordinalWithinScope: 1,
+          runId: root.runId!,
+          nodeId: root.nodeId!,
+          appRunOrdinal: 1,
+          capturedAt: root.createdAt,
+          capturesBeforeLock,
+        });
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("30 seconds");
+      assert.strictEqual((yield* Fiber.join(first)).status, "error");
+      // Room for every waiter to probe, so the count below is what fails without the fix.
+      yield* TestClock.adjust("120 seconds");
+      for (const fiber of waiting) {
+        assert.strictEqual((yield* Fiber.join(fiber)).status, "error");
+      }
+      const repositoryCaptured = yield* Fiber.join(repositoryWaiting);
+      assert.strictEqual(Option.getOrThrow(repositoryCaptured).checkpoint.status, "error");
+      assert.strictEqual((yield* Fiber.join(rootWaiting)).status, "error");
+      assert.strictEqual(yield* Ref.get(attempts), 3, "each waiter spent its own full timeout");
+
+      // A capture that starts after the timeout still probes for recovery.
+      const later = yield* captureTurn(scopeFor("later"));
+      yield* TestClock.adjust("30 seconds");
+      assert.strictEqual((yield* Fiber.join(later)).status, "error");
+      assert.strictEqual(yield* Ref.get(attempts), 4);
+
+      // A success ahead in the queue does not hide a timeout that follows it.
+      yield* Ref.set(script, ["ready", "timeout"]);
+      const recovered = yield* captureTurn(scopeFor("recovered"));
+      const relapsed = yield* captureTurn(scopeFor("relapsed"));
+      const queuedBehind = yield* captureTurn(scopeFor("queued-behind"));
+      yield* TestClock.adjust("90 seconds");
+      assert.deepEqual(
+        [
+          (yield* Fiber.join(recovered)).status,
+          (yield* Fiber.join(relapsed)).status,
+          (yield* Fiber.join(queuedBehind)).status,
+        ],
+        ["ready", "error", "error"],
+      );
+      assert.strictEqual(yield* Ref.get(attempts), 6, "the waiter probed after a later timeout");
+    }).pipe(Effect.provide(layerTest));
+  }),
+);
+
 it.effect("keeps the pre-rewind snapshot of a folder a failed rewind could not put back", () => {
   const targets = ["first", "second"].map((name) => ({
     scope: { id: CheckpointScopeId.make(`checkpoint-scope:rewind:${name}`), cwd: `/repo/${name}` },
@@ -586,6 +792,7 @@ it.effect("keeps the pre-rewind snapshot of a folder a failed rewind could not p
               captured.push(input.cwd);
               existing.add(input.checkpointRef);
               preRewindRefs.set(input.cwd, input.checkpointRef);
+              return null;
             }),
           // The second folder's rewind fails, and then so does putting the first one back.
           restoreCheckpoint: (input) =>

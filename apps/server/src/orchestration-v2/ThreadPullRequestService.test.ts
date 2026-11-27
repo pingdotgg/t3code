@@ -800,6 +800,105 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     }),
   );
 
+  it.effect("startup backfill looks up a branch once for threads whose worktrees are gone", () =>
+    Effect.gen(function* () {
+      // Removed worktree folders all fall back to the project root, so they share one lookup.
+      const shared = ["a", "b", "c", "d"].map((suffix) => ({
+        ...threadShell(`gone-worktree-${suffix}`),
+        branch: "feature/shared",
+        worktreePath: `/workspace/worktrees/gone-${suffix}`,
+        settledAt: NOW,
+      }));
+      // Every start repeats the backfill, so it reads only the most recently updated threads.
+      const older = Array.from({ length: 100 }, (_, index) => ({
+        ...threadShell(`old-${index}`),
+        branch: `t3/old-${index}`,
+        worktreePath: `/workspace/worktrees/old-${index}`,
+        settledAt: NOW,
+        updatedAt: DateTime.subtract(NOW, { minutes: index + 1 }),
+      }));
+      const threads = [...older.toReversed(), ...shared];
+      const project: OrchestrationProjectShell = {
+        id: threads[0]!.projectId,
+        title: "Project",
+        workspaceRoot: "/workspace/project",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      };
+      const activation = yield* Deferred.make<void>();
+      const sweeps = yield* Queue.unbounded<void>();
+      const lookups: Array<{ readonly cwd: string; readonly branch: string }> = [];
+      const dependencies = Layer.mergeAll(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          streamDomainEvents: Stream.never,
+          getPullRequestSnapshot: () =>
+            Queue.offer(sweeps, undefined).pipe(
+              Effect.as({
+                schemaVersion: 2,
+                snapshotSequence: 1,
+                threads,
+                archivedThreads: [],
+              }),
+            ),
+        }),
+        Layer.mock(ProjectStore.ProjectStoreV2)({
+          listShells: () => Effect.succeed([project]),
+          getShell: () => Effect.succeedSome(project),
+        }),
+        Layer.mock(GitManager.GitManager)({
+          branchPullRequest: (input) =>
+            Effect.sync(() => {
+              lookups.push({ cwd: input.cwd, branch: input.branch });
+              return null;
+            }),
+        }),
+        Layer.mock(PullRequestService.PullRequestService)({
+          notifyLinkedThreadsChanged: Effect.void,
+        }),
+        Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+          resolve: () =>
+            Effect.succeed({
+              canonicalKey: "github.com/acme/project",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "git@github.com:acme/project.git",
+              },
+              provider: SourceControlProviderKind.make("github"),
+              owner: "acme",
+              name: "project",
+            }),
+        }),
+        Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+          shouldRunScopeWork: () => Effect.succeed(true),
+          shouldRunOpportunisticWork: Effect.succeed(true),
+        }),
+        Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+        Layer.succeed(
+          SecureRandom.SecureRandom,
+          SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+        ),
+        FileSystem.layerNoop({}),
+        Path.layer,
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadPullRequestService.make;
+        yield* service.start();
+        yield* Deferred.succeed(activation, undefined);
+
+        yield* Queue.take(sweeps);
+        yield* service.drain;
+
+        expect(lookups.map((lookup) => lookup.branch).toSorted()).toEqual(
+          ["feature/shared", ...older.slice(0, 60).map((thread) => thread.branch)].toSorted(),
+        );
+        expect(lookups.every((lookup) => lookup.cwd === project.workspaceRoot)).toBe(true);
+      }).pipe(Effect.provide(dependencies));
+    }),
+  );
+
   it.effect.each([
     { state: "open", checkedOut: false },
     { state: "merged", checkedOut: false },

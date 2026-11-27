@@ -7,6 +7,9 @@ import {
   type ProjectSnapshot,
   ProjectId,
 } from "@t3tools/contracts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -395,12 +398,14 @@ const projectAddCommand = Command.make("add", {
           (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
         );
         const path = yield* Path.Path;
+        const home = yield* HostProcess.HomeDirectory;
         const named = flags.track
           .map((folder) => {
-            const resolved = path.resolve(folder);
+            const resolved = path.resolve(expandHomePath(folder, home));
+            const name = (path.basename(resolved) || resolved).trimStart();
             return {
               path: resolved,
-              name: (path.basename(resolved) || resolved).slice(0, 128).trim(),
+              name: name.slice(0, splitsSurrogatePair(name, 128) ? 127 : 128).trim(),
             };
           })
           .filter(

@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@react-navigation/native", () => ({
+  useFocusEffect: () => {},
   useNavigation: () => ({
     goBack: () => state.goBackCalls++,
     isFocused: () => state.focused,
@@ -65,9 +66,11 @@ vi.mock("../../../state/use-selected-thread-worktree", () => ({
 vi.mock("../../../state/use-selected-thread-git-state", () => ({
   useSelectedThreadGitState: () => ({
     selectedThreadBranches: [{ name: "release/stable", worktreePath: null }],
-    selectedThreadBranchesLoading: false,
     gitOperationLabel: null,
   }),
+}));
+vi.mock("../../../state/queries", () => ({
+  usePaginatedBranches: () => ({ data: null, refs: [], isPending: false }),
 }));
 vi.mock("../../../state/use-selected-thread-git-actions", () => ({
   useSelectedThreadGitActions: () => ({
