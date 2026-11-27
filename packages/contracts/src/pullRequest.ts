@@ -249,6 +249,7 @@ export const PullRequestCommit = Schema.Struct({
   committedDate: IsoDateTime,
   additions: Schema.optional(NonNegativeInt),
   deletions: Schema.optional(NonNegativeInt),
+  changedFiles: Schema.optional(NonNegativeInt),
   authors: Schema.optional(Schema.Array(PullRequestActor)),
 });
 export type PullRequestCommit = typeof PullRequestCommit.Type;

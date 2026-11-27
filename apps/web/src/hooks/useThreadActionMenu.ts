@@ -23,6 +23,7 @@ import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.sn
 import {
   buildThreadActionMenuItems,
   isFolderMenuAction,
+  canMarkLatestRunUnread,
   isThreadTriageAction,
   threadActionRequiresOperate,
   threadFolderNames,
@@ -152,7 +153,7 @@ export function useThreadActionMenu(input: {
       canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
       isRegeneratingTitle,
       isRunning: !threadRuntimeCanArchive(thread.runtime),
-      hasCompletedRun: thread.latestRun?.completedAt != null,
+      hasCompletedRun: canMarkLatestRunUnread(thread.latestRun),
       supports,
       snoozePresets,
       canShareWithGuest,

@@ -104,18 +104,23 @@ const decodeCodeWorkspace = Schema.decodeUnknownEffect(
 
 const GIT_CONFIG_ESCAPES: Record<string, string> = { n: "\n", t: "\t", b: "\b" };
 const GIT_CONFIG_SECTION = /^\s*\[((?:"(?:\\.|[^"\\])*"|[^\]"])*)\]/s;
+const GIT_SUBMODULE_SECTION = /^submodule(?:\.([a-z0-9.-]*))?(?:\s+"((?:\\.|[^"\\])*)")?$/is;
 
 /** Submodule paths a `.gitmodules` file declares, relative to its folder with `/` separators. */
 export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> => {
   const lines = text.split(/\r?\n/);
-  const paths: Array<string> = [];
-  let inSubmodule = false;
+  const paths = new Map<string, string>();
+  let submoduleName: string | undefined;
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     // Git allows a key, or another section, on the same line after a section header.
     let rest = lines[lineIndex] ?? "";
     let header = GIT_CONFIG_SECTION.exec(rest);
     while (header !== null) {
-      inSubmodule = /^submodule(?:\s+"|\.)/i.test(header[1] ?? "");
+      const [, dottedName, quotedName] = GIT_SUBMODULE_SECTION.exec(header[1] ?? "") ?? [];
+      const dotted = dottedName?.toLowerCase();
+      const quoted = quotedName?.replace(/\\(.)/gs, "$1");
+      submoduleName =
+        dotted !== undefined && quoted !== undefined ? `${dotted}.${quoted}` : (dotted ?? quoted);
       rest = rest.slice(header[0].length);
       header = GIT_CONFIG_SECTION.exec(rest);
     }
@@ -145,12 +150,11 @@ export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> => {
         value += GIT_CONFIG_ESCAPES[next] ?? next;
       }
     }
-    const normalized = value.replace(/\/+$/, "");
-    if (inSubmodule && entry[1]?.toLowerCase() === "path" && normalized !== "") {
-      paths.push(normalized);
+    if (submoduleName !== undefined && entry[1]?.toLowerCase() === "path") {
+      paths.set(submoduleName, value.replace(/\/+$/, ""));
     }
   }
-  return paths;
+  return [...paths.values()].filter((path) => path !== "");
 };
 
 // Built once per operation: the probes share the caller's file system and path services.

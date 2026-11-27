@@ -26,6 +26,15 @@ function renderMarkdown(markdown: string): string {
 
 describe("remarkNormalizeListItemIndentation", () => {
   it.each([
+    "-       Read [the guide][guide].\n\n[guide]: https://example.com/guide",
+    '> [guide]: https://example.com/guide\n>   "Guide"\n\n-       Read [the guide][GUIDE].',
+    ">>[my\n> > guide]: https://example.com/guide\n\n-       Read [the guide][my guide].",
+  ])("uses document reference definitions in recovered items: %j", (markdown) => {
+    expect(renderMarkdown(markdown)).toBe(renderMarkdown(markdown.replace("-       ", "- ")));
+    expect(renderMarkdown(markdown)).toContain('<a href="https://example.com/guide"');
+  });
+
+  it.each([
     ["-     \tfoo\n          bar", '<span data-leading-whitespace="">  </span>bar'],
     ["-        foo\n      \tbar", "\nbar"],
   ])("keeps continuation indentation aligned to tab stops: %j", (markdown, expected) => {
@@ -62,6 +71,11 @@ describe("remarkNormalizeListItemIndentation", () => {
 
     expect(html).toContain("<strong>first block</strong>");
     expect(html).toContain('<a href="https://example.com">second block</a>');
+    expect(
+      renderMarkdown(
+        "-       Read [the guide][guide].\n\n        [guide]: /local\n\n[guide]: /document",
+      ),
+    ).toContain('<a href="/local">the guide</a>');
     expect(renderMarkdown("-       first\n\n        ```\n        \tcode\n        ```")).toContain(
       "<pre><code>\tcode\n</code></pre>",
     );
