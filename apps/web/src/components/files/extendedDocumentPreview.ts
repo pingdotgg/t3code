@@ -40,9 +40,9 @@ function base64ImageFits(base64: string) {
 function htmlImagesFit(html: string) {
   // HTML attribute entities can obscure a data URL until the client parses it.
   for (const match of decodeHTMLAttribute(html).matchAll(
-    /data:image\/(?:png|jpeg|gif|webp);base64,([a-z\d+/]*={0,2})/gi,
+    /(?<=[\t\n\f\r "'/])src[\t\n\f\r ]*=[\t\n\f\r ]*(["'])[\t\n\f\r ]*data:image\/(?:png|jpeg|gif|webp);base64,([a-z\d+/\t\n\f\r ]*(?:=[\t\n\f\r ]*){0,2})\1|data:image\/(?:png|jpeg|gif|webp);base64,([a-z\d+/]*={0,2})/gi,
   ))
-    if (!base64ImageFits(match[1]!)) return false;
+    if (!base64ImageFits(match[2]?.replaceAll(/[\t\n\f\r ]/g, "") ?? match[3]!)) return false;
   return true;
 }
 async function imageData(archive: JSZip, path: string | null): Promise<string> {

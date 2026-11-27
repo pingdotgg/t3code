@@ -16,6 +16,7 @@ const LINE_START = Symbol("line-start");
 const THEMATIC_BREAK = Symbol("thematic-break");
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
+const ODF_DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 type TextPart =
   | string
   | typeof CELL_START
@@ -79,6 +80,7 @@ interface XmlNode {
   epubTable?: boolean;
   mathmlFirstChildSeen?: boolean;
   epubBlock?: boolean;
+  odfTextBox?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -177,6 +179,8 @@ function xml(source: string, extension: string): XmlNode {
     if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
     stack.at(-1)!.children.push(node);
     stack.push(node);
+    if (odf && node.name === "text-box" && namespaceOf(tag.name, stack) === ODF_DRAW_NS)
+      node.odfTextBox = true;
     if (
       extension === ".epub" &&
       node.name === "semantics" &&
@@ -199,11 +203,11 @@ function xml(source: string, extension: string): XmlNode {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
     if (extension === ".docx" && node.name === "outlineLvl" && parent.name === "pPr") {
-      const paragraph = stack.at(-2);
+      const owner = stack.at(-2);
       const outline = Number(node.attrs.val?.match(/^\s*[+-]?\d+\s*$/u)?.[0]);
-      if (paragraph?.name === "p" && outline >= 0 && outline <= 9) {
+      if ((owner?.name === "p" || owner?.name === "style") && outline >= 0 && outline <= 9) {
         // Word's outline is zero-based, with 9 reserved for body text.
-        paragraph.wordOutlineHeadingLevel = outline === 9 ? 0 : outline + 1;
+        owner.wordOutlineHeadingLevel = outline === 9 ? 0 : outline + 1;
       }
     }
     // MathML Core displays only the first element child of semantics by default.
@@ -343,7 +347,21 @@ function* text(node: XmlNode): Generator<TextPart, void> {
   }
   // Word text boxes hold their own paragraphs inside the anchoring paragraph.
   if (node.name === "txbxContent") yield* paragraphs(node);
-  else if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
+  else if (node.odfTextBox) {
+    // An ODF box can sit inline, so only add breaks between its own paragraphs.
+    let seenParagraph = false;
+    for (const child of node.children) {
+      if (typeof child === "string") {
+        yield child;
+        continue;
+      }
+      if (child.name === "p" || child.name === "h") {
+        if (seenParagraph) yield "\n";
+        seenParagraph = true;
+      }
+      yield* text(child);
+    }
+  } else if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
   else if (["br", "line-break", "cr"].includes(node.name)) yield "\n";
   else if (node.name === "noBreakHyphen") yield "\u2011";
   else if (node.spaceCount !== undefined) {
@@ -378,6 +396,23 @@ function hasXstringText(node: XmlNode): boolean {
   return false;
 }
 
+function wordStyleOutlineLevel(
+  outlines: Map<string, number | string | undefined>,
+  id: string,
+): number | undefined {
+  let outline = outlines.get(id);
+  if (typeof outline !== "string") return outline;
+  const visited = new Set<string>();
+  while (typeof outline === "string" && !visited.has(id)) {
+    visited.add(id);
+    id = outline;
+    outline = outlines.get(id);
+  }
+  const level = typeof outline === "number" ? outline : undefined;
+  for (const styleId of visited) outlines.set(styleId, level);
+  return level;
+}
+
 function* paragraphs(node: XmlNode): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
   if (node.imageDescription !== undefined) {
@@ -395,15 +430,15 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield LINE_START;
     } else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
       yield THEMATIC_BREAK;
-      const style =
-        all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value?.attrs.val ?? "";
+      const style = all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value;
       const level =
         child.name === "h"
           ? Number(child.attrs["outline-level"]) || 1
           : /^h[1-6]$/.test(child.name)
             ? Number(child.name[1])
             : (child.wordOutlineHeadingLevel ??
-              (Number(style.match(/^Heading([1-6])$/i)?.[1]) || 0));
+              style?.wordOutlineHeadingLevel ??
+              (Number(style?.attrs.val?.match(/^Heading([1-6])$/i)?.[1]) || 0));
       if (level) yield `${"#".repeat(Math.min(6, level))} `;
       yield* text(child);
       yield "\n";
@@ -782,6 +817,47 @@ const RTF_CODE_PAGES = new Map([
 const rtfCodePage = (value: number) =>
   RTF_CODE_PAGES.get(value) ?? (value >= 1250 && value <= 1258 ? `windows-${value}` : undefined);
 
+const MAX_RTF_DEPTH = 128;
+
+function rtfGroupEnd(source: string, start: number, outerDepth: number) {
+  // Match group boundaries without counting escaped braces or braces in binary data.
+  const structure = /[{}]|\\(?:(bin)(?![a-z])(-?\d+)? ?|[\\{}])/gi;
+  structure.lastIndex = start;
+  let depth = outerDepth + 1;
+  let token: RegExpExecArray | null;
+  while (depth <= MAX_RTF_DEPTH && (token = structure.exec(source))) {
+    if (token[0] === "{") depth++;
+    else if (token[0] === "}") {
+      if (--depth === outerDepth) return structure.lastIndex;
+    } else if (token[1] === "bin") {
+      const size = Number(token[2]);
+      if (!Number.isSafeInteger(size) || size < 0) return;
+      structure.lastIndex += size;
+    }
+  }
+}
+
+function rtfUnicodeDestination(
+  source: string,
+  start: number,
+  outerDepth: number,
+  verifiedThrough: number,
+) {
+  const ansiStart = /[\r\n]*\{/y;
+  ansiStart.lastIndex = start;
+  if (!ansiStart.test(source)) return;
+  const ansiEnd = rtfGroupEnd(source, ansiStart.lastIndex, outerDepth);
+  if (ansiEnd === undefined) return;
+
+  const unicodeStart = /[\r\n]*\{[\r\n]*\\\*[\r\n]*\\ud(?![a-zA-Z]|-?\d) ?/y;
+  unicodeStart.lastIndex = ansiEnd;
+  if (!unicodeStart.test(source)) return;
+  const body = unicodeStart.lastIndex;
+  // An enclosing group already checked for balance also proves its nested groups close.
+  const end = body < verifiedThrough ? verifiedThrough : rtfGroupEnd(source, body, outerDepth);
+  if (end !== undefined) return { body, end };
+}
+
 function* rtf(source: string): Generator<string, void> {
   if (!source.startsWith("{\\rtf")) throw new Error("Invalid RTF document");
   let state = {
@@ -795,6 +871,10 @@ function* rtf(source: string): Generator<string, void> {
     decoder: new TextDecoder("windows-1252"),
   };
   const stack: Array<typeof state> = [];
+  const openGroup = () => {
+    stack.push({ ...state });
+    if (stack.length > MAX_RTF_DEPTH) throw new Truncation("RTF depth limit");
+  };
   // A font's \cpg, else its \fcharset, not the document code page, encodes the bytes written in
   // that font. A \cpg inside \fontfile encodes the font's file name instead.
   const fonts = new Map<number, typeof state.decoder>();
@@ -841,6 +921,7 @@ function* rtf(source: string): Generator<string, void> {
     ["-", ""],
   ]);
   let fallback = 0;
+  let verifiedThrough = 0;
   for (let i = 0; i < source.length; i++) {
     const char = source[i]!;
     if (char === "{" || char === "}") {
@@ -848,8 +929,7 @@ function* rtf(source: string): Generator<string, void> {
       fallback = 0;
     }
     if (char === "{") {
-      stack.push({ ...state });
-      if (stack.length > 128) throw new Truncation("RTF depth limit");
+      openGroup();
     } else if (char === "}") state = stack.pop() ?? state;
     else if (char === "\\") {
       const rest = source.slice(i + 1, i + 80);
@@ -873,6 +953,15 @@ function* rtf(source: string): Generator<string, void> {
           continue;
         }
         yield* flushBytes();
+        if (control === "upr") {
+          const unicode = rtfUnicodeDestination(source, i + 1, stack.length, verifiedThrough);
+          if (unicode) {
+            openGroup();
+            verifiedThrough = unicode.end;
+            i = unicode.body - 1;
+          }
+          continue;
+        }
         if (
           [
             "fonttbl",
@@ -1016,19 +1105,30 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       const dir = `/${NodePath.posix.dirname(main)}`;
       const styles = NodePath.posix.resolve(dir, target || "styles.xml").slice(1);
       if (has(styles)) {
-        // Word localizes style ids while keeping built-in English names.
+        const outlines = new Map<string, number | string | undefined>();
         const headings = new Map<string, string>();
         for (const style of all(read(styles), "style")) {
           const id = style.attrs.styleId;
           if ((style.attrs.type ?? "paragraph") !== "paragraph" || !id) continue;
-          const name = children(style).find((c) => c.name === "name")?.attrs.val;
+          const properties = children(style);
+          const outline =
+            style.wordOutlineHeadingLevel ??
+            properties.find((c) => c.name === "basedOn")?.attrs.val;
+          if (outline !== undefined) outlines.set(id, outline);
+          // Word localizes style ids while keeping built-in English names.
+          const name = properties.find((c) => c.name === "name")?.attrs.val;
           const level = name?.match(/^heading ([1-6])$/i)?.[1];
           if (level && id !== `Heading${level}`) headings.set(id, `Heading${level}`);
         }
-        if (headings.size)
-          for (const pStyle of all(doc, "pStyle")) {
-            const heading = headings.get(pStyle.attrs.val ?? "");
-            if (heading) pStyle.attrs.val = heading;
+        if (outlines.size || headings.size)
+          for (const pStyle of all(doc, "pStyle", ["pPrChange"])) {
+            const id = pStyle.attrs.val ?? "";
+            const outline = wordStyleOutlineLevel(outlines, id);
+            if (outline !== undefined) pStyle.wordOutlineHeadingLevel = outline;
+            else {
+              const heading = headings.get(id);
+              if (heading) pStyle.attrs.val = heading;
+            }
           }
       }
       yield* paragraphs(doc);
@@ -1103,7 +1203,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             return !!raw && !!populatedStrings[Number(raw)];
           }
           if (cell.attrs.t === "inlineStr") return hasXstringText(cell);
-          if (value && hasCellText(value)) return true;
+          if (value && hasXstringText(value)) return true;
           for (const formula of all(cell, "f")) if (hasCellText(formula)) return true;
           return false;
         };
@@ -1139,7 +1239,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             else if (cell.attrs.t === "b" && (raw.trim() === "0" || raw.trim() === "1"))
               yield* inCell([raw.trim() === "1" ? "true" : "false"]);
             else {
-              if (value && hasCellText(value)) yield* inCell(xstringText(value));
+              if (value && hasXstringText(value)) yield* inCell(xstringText(value));
               else for (const formula of all(cell, "f")) yield* inCell(text(formula));
               const formatId = formats[Number(cell.attrs.s ?? 0)]?.attrs.numFmtId;
               const format = formatId ? customFormats.get(formatId) : undefined;

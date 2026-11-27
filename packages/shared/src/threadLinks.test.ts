@@ -185,6 +185,59 @@ describe("thread links", () => {
   );
 
   it.each([
+    ["a blank line", "Intro\n\n", "    ", "~~~", ""],
+    ["an indented heading", "Intro\n  # Example\n", "    ", "~~~", ""],
+    ["a closed fence", "Intro\n```\nexample\n```\n", "    ", "~~~", ""],
+    ["a literal list marker", "# Example\n", "    ", "- ```md", ""],
+    ["a heading in a quote", "> # Example\n", ">     ", "~~~", "> "],
+  ])(
+    "keeps indented code literal and rewrites prose after %s",
+    (_name, before, indent, fence, quote) => {
+      const inside = "<t3-thread://v2/local/code>";
+      const outside = "<t3-thread://v2/local/prose>";
+      const example = `${before}${indent}${fence}\n${indent}${inside}\n${quote.trimEnd()}\n${quote}See `;
+      expect(replaceThreadLinks(`${example}${outside}`, () => "linked")).toBe(`${example}linked`);
+    },
+  );
+
+  it.each([
+    ["a paragraph with four spaces", "Intro\n    ~~~"],
+    ["a paragraph with a tab", "Intro\n\t```"],
+    ["a list paragraph", "- Intro\n      ~~~"],
+    ["an HTML block", "<div>\n    ~~~\n</div>"],
+    ["deeply nested quotes", ">".repeat(6000) + " text\n\n    ~~~"],
+  ])("rewrites the prose link after %s", (_name, before) => {
+    const prose = `${before}\n\nSee `;
+    expect(replaceThreadLinks(`${prose}<t3-thread://v2/local/prose>`, () => "linked")).toBe(
+      `${prose}linked`,
+    );
+  });
+
+  it("rewrites a link in footnote prose before an indented fence", () => {
+    const footnote = "Note[^n].\n\n[^n]: note\n\n    See ";
+    expect(
+      replaceThreadLinks(`${footnote}<t3-thread://v2/local/prose>\n\n    ~~~`, () => "linked"),
+    ).toBe(`${footnote}linked\n\n    ~~~`);
+  });
+
+  it.each([
+    ["a paragraph code span", "Intro\n    ```\n    <t3-thread://v2/local/code>\n    ```"],
+    [
+      "a fence with over-indented markers",
+      "~~~\n    ~~~\n    ~~~\n<t3-thread://v2/local/code>\n~~~",
+    ],
+    [
+      "a fence in a footnote",
+      "Note[^n].\n\n[^n]: note\n\n    ~~~\n    <t3-thread://v2/local/code>\n    ~~~",
+    ],
+  ])("keeps links literal inside %s and rewrites the link after it", (_name, code) => {
+    const prose = `${code}\n\nSee `;
+    expect(replaceThreadLinks(`${prose}<t3-thread://v2/local/prose>`, () => "linked")).toBe(
+      `${prose}linked`,
+    );
+  });
+
+  it.each([
     ["4 spaces", "    ```md\n    <t3-thread://v1/abc>\n    ```", ""],
     ["tab", "\t```md\n\t<t3-thread://v1/abc>\n\t```", ""],
     ["list + 5 spaces", "-     ```md\n      <t3-thread://v1/abc>\n      ```", ""],
