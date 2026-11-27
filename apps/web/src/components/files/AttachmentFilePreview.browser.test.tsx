@@ -2132,12 +2132,15 @@ it.each([
   expect(new DOMParser().parseFromString(html, "text/html").body.textContent).toBe(expected);
 });
 
-it.each(["odt", "odp"] as const)("preserves rendered %s spaces and tabs", async (kind) => {
+it.each(["odt", "odp", "rtf"] as const)("preserves rendered %s spaces and tabs", async (kind) => {
   const archive = new JSZip().file(
     "content.xml",
     `<office:document>${kind === "odt" ? "<office:text>" : "<draw:page>"}<text:p>A<text:s text:c="3"/>B<text:tab/>C</text:p>${kind === "odt" ? "</office:text>" : "</draw:page>"}</office:document>`,
   );
-  const bytes = await archive.generateAsync({ type: "arraybuffer" });
+  const bytes =
+    kind === "rtf"
+      ? new TextEncoder().encode(String.raw`{\rtf1\ansi A\tab B  C}`).buffer
+      : await archive.generateAsync({ type: "arraybuffer" });
   const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
     type: "module",
   });
@@ -2152,18 +2155,23 @@ it.each(["odt", "odp"] as const)("preserves rendered %s spaces and tabs", async 
     });
     if (result.type !== "document") throw new Error("Expected document");
     await using screen = await render(
-      <DocumentPages html={result.pages[0]!.html} name="spacing" output />,
+      <DocumentPages html={result.pages[0]!.html + "<p>A\tB  C</p>"} name="spacing" output />,
     );
     await vi.waitFor(() => {
       const doc = screen.container.querySelector("iframe")?.contentDocument;
-      const spans = doc?.querySelectorAll<HTMLElement>("span[data-odf-whitespace]");
-      expect(doc?.querySelector("p")?.textContent).toBe("A   B\tC");
-      expect(spans).toHaveLength(2);
+      const spans = doc?.querySelectorAll<HTMLElement>(
+        kind === "rtf" ? "p[data-rtf-whitespace]" : "span[data-odf-whitespace]",
+      );
+      expect(doc?.querySelector("p")?.innerText).toBe(kind === "rtf" ? "A\tB  C" : "A   B\tC");
+      expect(spans).toHaveLength(kind === "rtf" ? 1 : 2);
       for (const span of spans!) {
         expect(doc!.defaultView!.getComputedStyle(span).whiteSpace).toBe("pre-wrap");
         expect(span.getBoundingClientRect().width).toBeGreaterThan(0);
       }
       expect(spans![0]!.getBoundingClientRect().width).toBeGreaterThan(10);
+      const plain = doc!.querySelector<HTMLElement>("p:last-child")!;
+      expect(plain.innerText).toBe("A B C");
+      expect(doc!.defaultView!.getComputedStyle(plain).whiteSpace).toBe("normal");
     });
   } finally {
     worker.terminate();
