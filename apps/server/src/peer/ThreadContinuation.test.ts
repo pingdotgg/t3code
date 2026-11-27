@@ -19,6 +19,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { ChildProcessSpawner } from "effect/process";
 import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -50,6 +51,14 @@ const appProjectId = ProjectId.make("project-app");
 const canonicalKey = "github.com/acme/app";
 const remoteUrl = "https://github.com/acme/app.git";
 const branch = "feat/login";
+const mainCheckout = "/work/project-app";
+const remoteCommit = "abc123";
+const newWorktreeStrategy = {
+  type: "worktree",
+  baseRef: "origin/feat/login",
+  branch,
+  startFromOrigin: false,
+} as const;
 
 const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
   instanceId: codex,
@@ -134,10 +143,31 @@ interface Scenario {
   readonly launches: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly gitActions: Array<string>;
   readonly fetchedBases: Array<string>;
+  /** The local branches here. */
+  readonly localBranches: ReadonlyArray<string>;
+  /** The checkouts here, the main checkout first, as Git lists them. */
+  readonly worktrees: ReadonlyArray<{ readonly path: string; readonly branch: string | null }>;
+  /** Whether refreshing a checked-out branch reaches the fetched commit. */
+  readonly refreshOnTarget: boolean;
+  /** Whether the local branch's commit is an ancestor of the fetched commit. */
+  readonly localIsAncestor: boolean;
+  readonly deletedBranches: Array<string>;
+  readonly upstreams: Array<GitVcsDriver.GitSetBranchUpstreamInput>;
 }
 
 function scenario(
-  overrides: Partial<Pick<Scenario, "access" | "hasWorkingTreeChanges" | "projects">> = {},
+  overrides: Partial<
+    Pick<
+      Scenario,
+      | "access"
+      | "hasWorkingTreeChanges"
+      | "projects"
+      | "localBranches"
+      | "worktrees"
+      | "refreshOnTarget"
+      | "localIsAncestor"
+    >
+  > = {},
 ): Scenario {
   return {
     access: "full-access",
@@ -148,9 +178,22 @@ function scenario(
     launches: [],
     gitActions: [],
     fetchedBases: [],
+    localBranches: [],
+    worktrees: [{ path: mainCheckout, branch: "main" }],
+    refreshOnTarget: true,
+    localIsAncestor: true,
+    deletedBranches: [],
+    upstreams: [],
     ...overrides,
   };
 }
+
+/** The sender's branch already exists here, in the given checkouts. */
+const branchHere = (
+  overrides: Partial<
+    Pick<Scenario, "worktrees" | "refreshOnTarget" | "localIsAncestor" | "hasWorkingTreeChanges">
+  >,
+) => scenario({ localBranches: ["main", branch], ...overrides });
 
 const layerFakes = (world: Scenario) =>
   Layer.unwrap(
@@ -238,7 +281,38 @@ const layerFakes = (world: Scenario) =>
         Layer.mock(GitVcsDriver.GitVcsDriver)({
           fetchWorktreeBaseCommit: (input) => {
             world.fetchedBases.push(input.refName);
-            return Effect.succeed({ commitSha: "abc123", remoteRefName: input.refName });
+            return Effect.succeed({ commitSha: remoteCommit, remoteRefName: input.refName });
+          },
+          listLocalBranchNames: () => Effect.succeed([...world.localBranches]),
+          listWorktreePaths: () => Effect.succeed(world.worktrees.map((worktree) => worktree.path)),
+          readCurrentBranch: (cwd) =>
+            Effect.succeed(
+              world.worktrees.find((worktree) => worktree.path === cwd)?.branch ?? null,
+            ),
+          refreshCheckedOutBranch: (input) =>
+            Effect.succeed({
+              headCommit: world.refreshOnTarget ? input.targetCommit : "local-commit",
+              moved: world.refreshOnTarget,
+              onTarget: world.refreshOnTarget,
+            }),
+          setBranchUpstream: (input) => {
+            world.upstreams.push(input);
+            return Effect.void;
+          },
+          resolveCommit: () => Effect.succeed({ commitSha: "local-commit" }),
+          execute: (input) =>
+            input.args[0] === "merge-base"
+              ? Effect.succeed({
+                  exitCode: ChildProcessSpawner.ExitCode(world.localIsAncestor ? 0 : 1),
+                  stdout: "",
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                })
+              : Effect.die(`Unexpected git ${input.args.join(" ")}`),
+          deleteLocalBranch: (input) => {
+            world.deletedBranches.push(input.refName);
+            return Effect.void;
           },
           readConfigValue: (_cwd, key) =>
             Effect.succeed(
@@ -488,12 +562,7 @@ it.effect(
       });
       const [launch] = world.launches;
       assert.strictEqual(launch?.projectId, appProjectId);
-      assert.deepEqual(launch?.workspaceStrategy, {
-        type: "worktree",
-        baseRef: "origin/feat/login",
-        branch,
-        startFromOrigin: false,
-      });
+      assert.deepEqual(launch?.workspaceStrategy, newWorktreeStrategy);
       assert.deepEqual(world.fetchedBases, ["origin/feat/login"]);
       assert.deepEqual(launch?.modelSelection, { instanceId: codex, model: "test-model" });
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -505,6 +574,95 @@ it.effect(
           ["assistant", "The session cookie expires early."],
         ],
       );
+    }).pipe(Effect.provide(layerFor(world)));
+  },
+);
+
+it.effect(
+  "receive reuses the main checkout that has the branch, and points it at the sender's remote",
+  () => {
+    const world = branchHere({ worktrees: [{ path: mainCheckout, branch }] });
+    return Effect.gen(function* () {
+      yield* receive(receiveInput);
+
+      assert.deepEqual(world.launches[0]?.workspaceStrategy, { type: "root" });
+      assert.deepEqual(world.upstreams, [
+        { cwd: mainCheckout, branch, remoteName: "origin", remoteBranch: branch },
+      ]);
+      assert.deepEqual(world.deletedBranches, []);
+    }).pipe(Effect.provide(layerFor(world)));
+  },
+);
+
+it.effect("receive reuses the other worktree that has the branch checked out", () => {
+  const worktreePath = "/work/worktrees/login";
+  const world = branchHere({
+    worktrees: [
+      { path: mainCheckout, branch: "main" },
+      { path: worktreePath, branch },
+    ],
+  });
+  return Effect.gen(function* () {
+    yield* receive(receiveInput);
+
+    assert.deepEqual(world.launches[0]?.workspaceStrategy, {
+      type: "existing_worktree",
+      worktreePath,
+    });
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
+it.effect(
+  "receive refuses a checked-out branch with work the remote does not have, and creates nothing",
+  () => {
+    const world = branchHere({
+      worktrees: [{ path: mainCheckout, branch }],
+      refreshOnTarget: false,
+    });
+    return Effect.gen(function* () {
+      assert.strictEqual(yield* failureReason(receive(receiveInput)), "branch_conflict");
+      assert.deepEqual(world.launches, []);
+      assert.deepEqual(world.upstreams, []);
+    }).pipe(Effect.provide(layerFor(world)));
+  },
+);
+
+it.effect(
+  "receive refuses a checked-out branch with uncommitted changes, even on the remote commit",
+  () => {
+    const world = branchHere({
+      worktrees: [{ path: mainCheckout, branch }],
+      hasWorkingTreeChanges: true,
+    });
+    return Effect.gen(function* () {
+      assert.strictEqual(yield* failureReason(receive(receiveInput)), "branch_conflict");
+      assert.deepEqual(world.launches, []);
+      assert.deepEqual(world.upstreams, []);
+    }).pipe(Effect.provide(layerFor(world)));
+  },
+);
+
+it.effect(
+  "receive replaces a branch that is not checked out and has nothing the remote lacks",
+  () => {
+    const world = branchHere({ localIsAncestor: true });
+    return Effect.gen(function* () {
+      yield* receive(receiveInput);
+
+      assert.deepEqual(world.deletedBranches, [branch]);
+      assert.deepEqual(world.launches[0]?.workspaceStrategy, newWorktreeStrategy);
+    }).pipe(Effect.provide(layerFor(world)));
+  },
+);
+
+it.effect(
+  "receive refuses a branch that is not checked out and has commits the remote lacks",
+  () => {
+    const world = branchHere({ localIsAncestor: false });
+    return Effect.gen(function* () {
+      assert.strictEqual(yield* failureReason(receive(receiveInput)), "branch_conflict");
+      assert.deepEqual(world.deletedBranches, []);
+      assert.deepEqual(world.launches, []);
     }).pipe(Effect.provide(layerFor(world)));
   },
 );

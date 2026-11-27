@@ -59,6 +59,7 @@ export class ThreadContinuationError extends Schema.TaggedError<ThreadContinuati
       "unpushed_work",
       "thread_running",
       "project_ambiguous",
+      "branch_conflict",
       "receive_failed",
     ]),
     message: Schema.String,
@@ -478,27 +479,121 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /** The checkout here that has `branch`, and whether it is the project's main checkout. */
+  const branchCheckout = Effect.fn("ThreadContinuation.branchCheckout")(function* (
+    root: string,
+    branch: string,
+  ) {
+    const worktreePaths = yield* git.listWorktreePaths(root);
+    for (const [index, worktreePath] of worktreePaths.entries()) {
+      const current = yield* git.readCurrentBranch(worktreePath);
+      // Git lists the main checkout first. Paths are not compared because Windows short names
+      // can spell the same folder in two ways.
+      if (current === branch) return { path: worktreePath, isMain: index === 0 };
+    }
+    return null;
+  }, Effect.mapError(receiveFailed));
+
+  /**
+   * Where the received thread works. A branch that is new here gets a new worktree. A branch
+   * that is already here is reused when it has nothing the remote does not have.
+   */
+  const receivingWorkspace = Effect.fn("ThreadContinuation.receivingWorkspace")(function* (
+    input: ThreadReceiveInput,
+    project: Project,
+    remoteName: string,
+  ) {
+    const root = project.workspaceRoot;
+    const baseRef = `${remoteName}/${input.branch}`;
+    const fetched = yield* git
+      .fetchWorktreeBaseCommit({ cwd: root, refName: baseRef })
+      .pipe(Effect.mapError(receiveFailed));
+    if (fetched === null) {
+      return yield* new ThreadContinuationError({
+        reason: "receive_failed",
+        message: `Branch ${input.branch} is not on ${remoteName}.`,
+      });
+    }
+    // A branch started from the remote-tracking ref tracks it, so the thread can move on again
+    // without a push. Starting from origin would start it from the fetched commit instead.
+    const newWorktree: ThreadLaunch.ThreadLaunchWorkspaceStrategy = {
+      type: "worktree",
+      baseRef,
+      branch: input.branch,
+      startFromOrigin: false,
+    };
+    const localBranches = yield* git
+      .listLocalBranchNames(root)
+      .pipe(Effect.mapError(receiveFailed));
+    if (!localBranches.includes(input.branch)) return newWorktree;
+
+    const checkout = yield* branchCheckout(root, input.branch);
+    if (checkout !== null) {
+      // The refresh keeps a dirty checkout that is already on the remote commit, so check first.
+      const status = yield* gitWorkflow
+        .localStatus({ cwd: checkout.path })
+        .pipe(Effect.mapError(receiveFailed));
+      const refreshed = status.hasWorkingTreeChanges
+        ? null
+        : yield* git
+            .refreshCheckedOutBranch({ cwd: checkout.path, targetCommit: fetched.commitSha })
+            .pipe(Effect.mapError(receiveFailed));
+      if (refreshed === null || !refreshed.onTarget) {
+        return yield* new ThreadContinuationError({
+          reason: "branch_conflict",
+          message: `Branch ${input.branch} is checked out at ${checkout.path} with changes or commits that are not on ${remoteName}. Commit and push them, or clean that checkout, then try again.`,
+        });
+      }
+      yield* git
+        .setBranchUpstream({
+          cwd: checkout.path,
+          branch: input.branch,
+          remoteName,
+          remoteBranch: input.branch,
+        })
+        .pipe(Effect.mapError(receiveFailed));
+      const reused: ThreadLaunch.ThreadLaunchWorkspaceStrategy = checkout.isMain
+        ? { type: "root" }
+        : { type: "existing_worktree", worktreePath: checkout.path };
+      return reused;
+    }
+
+    const local = yield* git
+      .resolveCommit({ cwd: root, revision: `refs/heads/${input.branch}` })
+      .pipe(Effect.mapError(receiveFailed));
+    const ancestor = yield* git
+      .execute({
+        operation: "ThreadContinuation.receive.isAncestor",
+        cwd: root,
+        args: ["merge-base", "--is-ancestor", local.commitSha, fetched.commitSha],
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.mapError(receiveFailed));
+    if (ancestor.exitCode !== 0) {
+      return yield* new ThreadContinuationError({
+        reason: "branch_conflict",
+        message: `Branch ${input.branch} here has commits that are not on ${remoteName}. Push or remove them, then try again.`,
+      });
+    }
+    yield* git
+      .deleteLocalBranch({ cwd: root, refName: input.branch, force: true })
+      .pipe(Effect.mapError(receiveFailed));
+    return newWorktree;
+  });
+
   const receive: ThreadContinuation["Service"]["receive"] = Effect.fn("ThreadContinuation.receive")(
     function* (input) {
       const { project, remoteName } = yield* receivingProject(input);
       const { modelSelection, runtimeMode } = yield* receivingModes(input, project);
-      const baseRef = `${remoteName}/${input.branch}`;
-      // A branch started from the remote-tracking ref tracks it, so the thread can move on again
-      // without a push. Starting from origin would start it from the fetched commit instead.
-      yield* git
-        .fetchWorktreeBaseCommit({ cwd: project.workspaceRoot, refName: baseRef })
-        .pipe(Effect.mapError(receiveFailed));
-      const worktree: ThreadLaunch.ThreadLaunchWorkspaceStrategy = {
-        type: "worktree",
-        baseRef,
-        branch: input.branch,
-        startFromOrigin: false,
-      };
-      // Launch accepts worktree failures and reports them inside the thread; check first so they
-      // come back to the sender and no thread is left behind.
-      yield* launches
-        .checkWorktreeBase({ projectId: project.id, workspaceStrategy: worktree })
-        .pipe(Effect.mapError(receiveFailed));
+      const workspace = yield* receivingWorkspace(input, project, remoteName);
+      if (workspace.type === "worktree") {
+        // Launch accepts worktree failures and reports them inside the thread; check first so
+        // they come back to the sender and no thread is left behind.
+        yield* launches
+          .checkWorktreeBase({ projectId: project.id, workspaceStrategy: workspace })
+          .pipe(Effect.mapError(receiveFailed));
+      }
+      const deferWorktree = input.message !== undefined && workspace.type === "worktree";
       const commandId = yield* newCommandId;
       const launched = yield* launches
         .launch({
@@ -509,7 +604,7 @@ const make = Effect.gen(function* () {
           modelSelection,
           runtimeMode,
           interactionMode: "default",
-          workspaceStrategy: input.message === undefined ? worktree : { type: "root" },
+          workspaceStrategy: deferWorktree ? { type: "root" } : workspace,
           importedHistory: input.importedHistory,
           createdBy: "user",
           creationSource: "server",
@@ -521,7 +616,7 @@ const make = Effect.gen(function* () {
           threadId: launched.threadId,
           text: input.message,
           modelSelection,
-          workspaceStrategy: worktree,
+          workspaceStrategy: workspace,
         });
       }
       return {

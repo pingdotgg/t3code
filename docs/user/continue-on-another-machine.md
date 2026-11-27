@@ -33,6 +33,10 @@ Tool activity, reasoning, attachments, checkpoints, and uncommitted files stay o
 
 - **New project if necessary**: If the project is not on that machine, T3 Code clones the repository into its projects folder and adds the project.
 - **Same branch**: The new thread gets a new worktree on the same branch. Pushes go to the same branch and the same pull request.
+- **Branch already on that machine**: This happens when you send a thread back to a machine that had it before. T3 Code makes that branch match the pushed branch, so you can send the thread again later. The result depends on local work, that is, uncommitted changes or unpushed commits on that branch:
+  - **Checked out, no local work**: The project folder or a worktree has the branch checked out. T3 Code moves that checkout forward to the pushed commits, and the new thread starts there.
+  - **Not checked out, no local work**: T3 Code replaces the branch with the pushed branch and makes a new worktree.
+  - **Local work**: T3 Code stops the send, shows a message, and creates nothing. On that machine, commit and push the work, or discard it. Then send the thread again.
 
 ## On this machine
 
