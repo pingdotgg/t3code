@@ -198,10 +198,12 @@ export function ProviderAuthenticationSection({
     tab: Window | null,
     signal: AbortSignal,
   ) {
-    let opened = false;
+    const flowId = started.flowId;
+    if (flowId === null) {
+      tab?.close();
+      return;
+    }
     try {
-      if (started.flowId === null) return;
-      const flowId = started.flowId;
       const page = settleAuthorizationPage(started, flowId);
       const url =
         page === undefined
@@ -212,18 +214,17 @@ export function ProviderAuthenticationSection({
               signal,
             })
           : page;
-      if (!url || signal.aborted || !isWebUrl(url)) return;
-      if (tab && !tab.closed) {
-        tab.location.href = url;
-        opened = true;
-      } else if (window.desktopBridge) {
-        await ensureLocalApi().shell.openExternal(url);
+      if (url && !signal.aborted && isWebUrl(url)) {
+        if (tab && !tab.closed) {
+          tab.location.href = url;
+          return;
+        }
+        if (window.desktopBridge) await ensureLocalApi().shell.openExternal(url);
       }
     } catch {
       setError(gt("Could not open the sign-in page. Copy the link and open it in your browser."));
-    } finally {
-      if (!opened) tab?.close();
     }
+    tab?.close();
   }
 
   async function startSignIn() {
