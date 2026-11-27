@@ -2949,21 +2949,21 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     if (input.refs.length === 0) return { stats: [] };
     const { supported } = yield* listWorkspaceProjects({});
-    const byProject = new Map(supported.map((project) => [project.project.id, project]));
+    // A multi-repository project supports several repositories under one id.
+    const repositoryKey = (projectId: string, repository: string) =>
+      `${projectId} ${repository.trim().toLowerCase()}`;
+    const byRepository = new Map(
+      supported.map((project) => [repositoryKey(project.project.id, project.repository), project]),
+    );
     const wanted = new Map<
       string,
       { readonly project: SupportedProject; readonly number: number }
     >();
     for (const ref of input.refs) {
-      const project = byProject.get(ref.projectId);
-      if (
-        project === undefined ||
-        project.api.listChangeRequestStats === undefined ||
-        project.repository.toLowerCase() !== ref.repository.trim().toLowerCase()
-      ) {
-        continue;
-      }
-      wanted.set(`${project.project.id} ${ref.number}`, { project, number: ref.number });
+      const key = repositoryKey(ref.projectId, ref.repository);
+      const project = byRepository.get(key);
+      if (project === undefined || project.api.listChangeRequestStats === undefined) continue;
+      wanted.set(`${key} ${ref.number}`, { project, number: ref.number });
     }
     const byHost = new Map<string, Array<{ project: SupportedProject; number: number }>>();
     for (const entry of wanted.values()) {

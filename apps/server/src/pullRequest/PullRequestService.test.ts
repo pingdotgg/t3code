@@ -412,6 +412,15 @@ it.effect(
                 detailCwds.push(cwd);
                 return hostedChangeRequest("Body");
               }),
+            listChangeRequestStats: ({ changeRequests }) =>
+              Effect.succeed(
+                changeRequests.map(({ repository, number }) => ({
+                  repository,
+                  number,
+                  additions: repository === "acme/web" ? 10 : 20,
+                  deletions: 0,
+                })),
+              ),
           }),
         ],
         resolveRepositoryIdentity: (cwd) => Effect.succeed(identities[cwd] ?? null),
@@ -422,6 +431,18 @@ it.effect(
           .map(({ projectId, repository, number }) => `${projectId} ${repository}#${number}`)
           .toSorted(),
         ["p1 acme/api#2", "p1 acme/web#1"],
+      );
+      const { stats } = yield* service.listStats({
+        refs: [
+          { projectId: "p1" as ProjectId, repository: "acme/web", number: 7 },
+          { projectId: "p1" as ProjectId, repository: "acme/api", number: 7 },
+        ],
+      });
+      assert.deepStrictEqual(
+        stats
+          .map(({ repository, number, additions }) => `${repository}#${number} +${additions}`)
+          .toSorted(),
+        ["acme/api#7 +20", "acme/web#7 +10"],
       );
       yield* service.detail({ projectId: "p1" as ProjectId, repository: "acme/api", number: 2 });
       assert.deepStrictEqual(detailCwds, ["/ws/api"]);
