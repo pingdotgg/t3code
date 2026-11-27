@@ -706,6 +706,16 @@ Third}`;
     );
   });
 
+  it("maps ODT heading outline levels to HTML heading tags", async () => {
+    const xml =
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:h text:outline-level="1">1</text:h><text:h text:outline-level="2">2</text:h><text:h text:outline-level="3">3</text:h><text:h text:outline-level="6">6</text:h><text:h text:outline-level="10">10</text:h><text:h text:outline-level="0">0</text:h><text:h text:outline-level="1.5">1.5</text:h><text:h text:outline-level="abc">abc</text:h><text:h>none</text:h></office:text></office:body></office:document-content>';
+    const result = await openDocument(new JSZip().file("content.xml", xml), "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<h1>1</h1><h2>2</h2><h3>3</h3><h6>6</h6><h6>10</h6><h2>0</h2><h2>1.5</h2><h2>abc</h2><h2>none</h2>",
+    );
+  });
+
   // LibreOffice writes every index as the templates it was built from, then the built index.
   const indexes = [
     "table-of-content",
