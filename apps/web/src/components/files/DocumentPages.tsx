@@ -54,6 +54,7 @@ export function sanitizeDocumentHtml(source: string): string {
       "alt",
       "colspan",
       "rowspan",
+      "value",
       "data-odf-whitespace",
       "data-rtf-whitespace",
     ],

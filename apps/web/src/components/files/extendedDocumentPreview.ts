@@ -73,6 +73,7 @@ async function odfHtml(
   imageAlt = "",
   inRepeatedRow = false,
   list: [string, number] = ["", 0],
+  inOrderedList = false,
 ): Promise<string> {
   if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
   if (node.name === "text:s" || node.name === "text:tab")
@@ -128,18 +129,27 @@ async function odfHtml(
       : node.name === "text:list-item" || node.name === "text:list-header"
         ? list
         : ["", 0];
-  for (const child of node.children)
-    children += await odfHtml(child, archive, listStyles, childImageAlt, repeatedRow, nextList);
   const numbered =
     node.name === "text:list" &&
-    listStyles
+    (listStyles
       .get(nextList[0])
       ?.children.some(
         (level) =>
           level.name === "text:list-level-style-number" &&
           level.attrs["text:level"] === String(nextList[1]) &&
           !!level.attrs["style:num-format"],
-      );
+      ) ??
+      false);
+  for (const child of node.children)
+    children += await odfHtml(
+      child,
+      archive,
+      listStyles,
+      childImageAlt,
+      repeatedRow,
+      nextList,
+      numbered,
+    );
   const tags: Record<string, string> = {
     "text:p": "p",
     "text:h": "h2",
@@ -160,7 +170,13 @@ async function odfHtml(
       : tag === "td"
         ? repeat(node.attrs["table:number-columns-repeated"], TABLE_PREVIEW_MAX_COLUMNS)
         : 1;
-  let spans = "";
+  let attributes = "";
+  if (tag === "li" && inOrderedList) {
+    const start = node.attrs["text:start-value"]?.trim() ?? "";
+    const value = Number(start);
+    if (/^[+-]?\d+$/.test(start) && value >= 0 && value <= 2_147_483_647)
+      attributes = ` value="${value}"`;
+  }
   // Spans on repeated cells or rows would multiply past the preview's table limits.
   if (tag === "td" && count === 1)
     for (const [name, attr, max] of [
@@ -169,9 +185,9 @@ async function odfHtml(
     ] as const) {
       const span = Number(node.attrs[attr]);
       if (max > 1 && Number.isSafeInteger(span) && span > 1)
-        spans += ` ${name}="${Math.min(span, max)}"`;
+        attributes += ` ${name}="${Math.min(span, max)}"`;
     }
-  const markup = `<${tag}${spans}>${children}</${tag}>`;
+  const markup = `<${tag}${attributes}>${children}</${tag}>`;
   reserveMarkup(count * markup.length - children.length);
   return markup.repeat(count);
 }
