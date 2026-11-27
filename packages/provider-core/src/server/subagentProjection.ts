@@ -235,9 +235,15 @@ function withStopNotice(
 
 type MonitorNotice = Pick<OrchestrationV2ConversationMessage, "runId" | "notification">;
 
-/** Runs that only acknowledge a monitor update are never a task's work. */
-export function monitorUpdateRunIds(messages: ReadonlyArray<MonitorNotice>) {
-  return new Set(
+/**
+ * Runs that only acknowledged a monitor update are never a task's work. One still executing, or
+ * one that ended without completing, may have stopped or lost the work the task waits on.
+ */
+export function monitorUpdateRunIds(
+  messages: ReadonlyArray<MonitorNotice>,
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">>,
+) {
+  const updateRunIds = new Set(
     messages
       .filter(
         (message) =>
@@ -245,6 +251,9 @@ export function monitorUpdateRunIds(messages: ReadonlyArray<MonitorNotice>) {
           message.notification.outcome === "updated",
       )
       .map((message) => message.runId),
+  );
+  return new Set(
+    runs.flatMap((run) => (run.status === "completed" && updateRunIds.has(run.id) ? [run.id] : [])),
   );
 }
 
@@ -260,7 +269,7 @@ export function delegatedTaskReportRuns(
   run: OrchestrationV2Run,
 ): ReadonlyArray<OrchestrationV2Run> {
   if (run.status !== "completed") return [];
-  const monitorRuns = monitorUpdateRunIds(projection.messages);
+  const monitorRuns = monitorUpdateRunIds(projection.messages, projection.runs);
   const earlier = projection.runs
     .filter(
       (candidate) =>
@@ -406,7 +415,7 @@ export function delegatedTaskProgress(projection: {
 }) {
   const terminal = (status: string) =>
     ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
-  const monitorRuns = monitorUpdateRunIds(projection.messages);
+  const monitorRuns = monitorUpdateRunIds(projection.messages, projection.runs);
   const workRuns = projection.runs.filter(
     (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
   );

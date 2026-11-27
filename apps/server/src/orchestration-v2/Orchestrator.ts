@@ -1353,7 +1353,7 @@ function reportRunsRead(
   if (floor === undefined || run.status !== "completed") return true;
   const oldest = reportRuns.at(-1) ?? run;
   if (!ranSince(oldest, floor)) return false;
-  const monitorRuns = monitorUpdateRunIds(controls.messages);
+  const monitorRuns = monitorUpdateRunIds(controls.messages, controls.runs);
   return controls.runs.some(
     (candidate) =>
       candidate.id !== run.id &&
