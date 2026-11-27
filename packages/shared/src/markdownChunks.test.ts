@@ -7,6 +7,7 @@ import remarkRehype from "remark-rehype";
 import { unified } from "unified";
 
 import {
+  joinMarkdownChunks,
   LARGE_MARKDOWN_CHUNK_MAX_CHARS,
   splitMarkdown,
   withMarkdownDefinitions,
@@ -93,6 +94,48 @@ describe("splitMarkdown", () => {
       "<div>",
       "# heading",
     ]);
+  });
+
+  it("splits CR-only Markdown into bounded chunks like LF and preserves line endings", () => {
+    const cr = `first\r\r# ${"x\r\r# ".repeat(30_000)}end`;
+    const lf = cr.replaceAll("\r", "\n");
+    const crResult = splitMarkdown(cr);
+    const lfResult = splitMarkdown(lf);
+
+    expect(crResult.chunks.length).toBe(lfResult.chunks.length);
+    expect(crResult.chunks.length).toBeGreaterThan(1);
+    expect(
+      crResult.chunks.every((chunk) => chunk.text.length <= LARGE_MARKDOWN_CHUNK_MAX_CHARS),
+    ).toBe(true);
+    expect(crResult.chunks.reduce((sum, chunk) => sum + chunk.lines, 0)).toBe(
+      lfResult.chunks.reduce((sum, chunk) => sum + chunk.lines, 0),
+    );
+    expect(joinMarkdownChunks(crResult.chunks)).toBe(cr);
+    const rendered = unified().use(remarkParse).use(remarkRehype);
+    expect(toHtml(rendered.runSync(rendered.parse(crResult.chunks[1]!.text)))).toContain(
+      "<h1>x</h1>",
+    );
+
+    const mixed = `---\rtitle: cr\r---\r\r[ref]: /cr-link\r\r\`\`\`md\r# inside fence\r\`\`\`\r\r<details>\r\r${"x".repeat(32 * 1024)}\r\r</details>\r\r# After [ref]\r\n\r\n- [ ] task`;
+    const mixedResult = splitMarkdown(mixed);
+    expect(mixedResult.definitions).toBe("[ref]: /cr-link");
+    expect(mixedResult.chunks.map((chunk) => chunk.text.split(/\r\n?|\n/)[0])).toEqual([
+      "---",
+      "# After [ref]",
+    ]);
+    expect(joinMarkdownChunks(mixedResult.chunks)).toBe(mixed);
+    const secondChunk = withMarkdownDefinitions(
+      mixedResult.chunks[1]!.text,
+      mixedResult.definitions,
+    );
+    const list = unified()
+      .use(remarkParse)
+      .use(remarkGfm)
+      .parse(secondChunk)
+      .children.find((node) => node.type === "list");
+    const marker = taskListMarkerOffset(secondChunk, list!.position!.start.offset!);
+    const secondStart = mixedResult.chunks[0]!.text.length + 1;
+    expect(secondStart + marker! - (mixedResult.definitions.length + 2)).toBe(mixed.indexOf("[ ]"));
   });
 
   it("keeps HTML blocks and display math open across blank lines", () => {
@@ -203,6 +246,58 @@ describe("splitMarkdown", () => {
     expect(splitLargeMarkdown(text, 6).map((chunk) => chunk.text)).toEqual([
       "# a\n\nb\n",
       "# c\n\nd",
+    ]);
+  });
+
+  it("keeps the complete sample fence before a later oversized source chunk", () => {
+    const example = ["```md", "Sample Markdown", "", "# Sample heading", "```"].join("\n");
+    const preview = ["x".repeat(4200), "<span>", example, "More prose", "<span>"].join("\n");
+    const oversized = "# Appendix\n" + "[link](/example) ".repeat(11_000);
+    const { chunks } = splitMarkdown(preview + "\n" + oversized);
+    expect(chunks.map((chunk) => chunk.text)).toEqual([preview, oversized]);
+  });
+
+  it.each(["===", "---", "***"])(
+    "keeps HTML together after a long paragraph and %s",
+    (boundary) => {
+      const text = ["x".repeat(9000), boundary, "<span>", "# literal"].join("\n");
+      expect(splitMarkdown(text).chunks.map((chunk) => chunk.text)).toEqual([text]);
+    },
+  );
+
+  it.each([
+    ["a fence", "```md", "```"],
+    ["an HTML comment", "<!--", "-->"],
+    ["display math", "$$", "$$"],
+  ])("keeps %s intact after an ambiguous standalone tag", (_, open, close) => {
+    const block = [open, "Sample Markdown", "", "# Sample heading", close].join("\n");
+    const preview = ["x".repeat(9000), "<span>", block].join("\n");
+    expect(splitMarkdown(preview).chunks.map((chunk) => chunk.text)).toEqual([preview]);
+  });
+
+  it("preserves an oversized ambiguous region for source display", () => {
+    const oversized = ["x".repeat(LARGE_MARKDOWN_CHUNK_MAX_CHARS), "<span>", "# Heading"].join(
+      "\n",
+    );
+    const next = "# Next";
+    const text = oversized + "\n\n" + next;
+    expect(splitMarkdown(text).chunks.map((chunk) => chunk.text)).toEqual([oversized + "\n", next]);
+  });
+
+  it.each([
+    ["multiline math with backticks", ["$$", "```", "$$", " # Heading"]],
+    ["single-line display math", ["$$x$$"]],
+  ])("keeps standalone HTML intact after %s", (_, math) => {
+    const text = ["x".repeat(4200), "<span>", ...math, "<span>", "# literal"].join("\n");
+    expect(splitMarkdown(text).chunks.map((chunk) => chunk.text)).toEqual([text]);
+  });
+
+  it("can cut at a heading after a tag in a lazy quote continuation", () => {
+    const quote = ["> " + "x".repeat(4200), "continued", "<span>"].join("\n");
+    const heading = "# Next";
+    expect(splitMarkdown(quote + "\n" + heading).chunks.map((chunk) => chunk.text)).toEqual([
+      quote,
+      heading,
     ]);
   });
 
@@ -331,6 +426,91 @@ describe("withMarkdownDefinitions", () => {
     expect(chunks).toHaveLength(2);
     expect(html(withMarkdownDefinitions(chunks[1]!.text, definitions))).toContain('href="/first"');
     expect(chunks.map((chunk) => chunk.text).join("\n")).toBe(text);
+  });
+
+  it.each([
+    ["a wrapped label with an inline destination", "[release\nnotes]: /first", "/first", ""],
+    ["a wrapped label with a next-line destination", "[release\nnotes]:\n  /first", "/first", ""],
+    [
+      "a title on the next line of the preceding definition",
+      '[other]: /other\n  "Other"\n[release notes]: /first',
+      "/first",
+      "",
+    ],
+    [
+      "a title starting on the destination line",
+      '[release notes]: /first "First\n  release"',
+      "/first",
+      'title="First\nrelease"',
+    ],
+    [
+      "a destination ending in a nonbreaking space",
+      "[release notes]:\n  /first\u00a0",
+      "/first%C2%A0",
+      "",
+    ],
+  ])("preserves the first reference with %s", (_, first, href, title) => {
+    const text = `${first}\n\n${"x".repeat(4100)}\n\n# Next\n[release notes]: /later\n\n[Release][release notes]`;
+    const { chunks, definitions } = splitMarkdown(text);
+    expect(chunks).toHaveLength(2);
+    const rendered = html(withMarkdownDefinitions(chunks[1]!.text, definitions));
+    expect(rendered).toContain(`href="${href}"`);
+    if (title) expect(rendered).toContain(title);
+  });
+
+  it("shares a wrapped label at the Markdown length limit with an escaped bracket", () => {
+    const definition = `[${"a".repeat(995)}\\]\nct]: /first`;
+    expect(splitMarkdown(definition).definitions).toBe(definition);
+  });
+
+  it("leaves oversized titles with their source definitions", () => {
+    const title = "t".repeat(16 * 1024);
+    const text = `[id]\n\n[id]:\n  /first\n  "${title}"\n\n# Next\n[ID]: /later\n\n[id]`;
+    const { chunks, definitions } = splitMarkdown(text);
+    expect(chunks).toHaveLength(2);
+    const first = html(withMarkdownDefinitions(chunks[0]!.text, definitions));
+    expect(first).toContain('href="/first"');
+    expect(first).toContain(`title="${title}"`);
+  });
+
+  it.each(["", '" trailing text', '\\"'])(
+    "shares a complete definition before a long quote-led paragraph ending in %j",
+    (suffix) => {
+      const text = `[id]:\n  /first\n  "${"x".repeat(16 * 1024)}${suffix}\n\n# Next\n[id]: /later\n\n[id]`;
+      const { chunks, definitions } = splitMarkdown(text);
+      expect(chunks).toHaveLength(2);
+      const rendered = html(withMarkdownDefinitions(chunks[1]!.text, definitions));
+      expect(rendered).toContain('href="/first"');
+    },
+  );
+
+  it.each([
+    ["inline links", "[a](/x)".repeat(2000), "\n\n", 64],
+    ["link-like text separated by thematic breaks", "[note] text\n***", "\n", 2000],
+    ["invalid definitions separated by thematic breaks", "[note]: /invalid)\n***", "\n", 2000],
+  ])("keeps long runs of %s out of shared definitions", (_, block, separator, count) => {
+    const text = Array.from({ length: count }, () => block).join(separator);
+    const { chunks, definitions } = splitMarkdown(text);
+    expect(definitions).toBe("");
+    expect(chunks.map((chunk) => chunk.text).join("\n")).toBe(text);
+  });
+
+  it("keeps a display math opener and its contents out of shared definitions", () => {
+    const text = "[actual]\n\n[unused]:\n$$\n\n[actual]: /wrong\n\n$$\n\n[actual]: /right";
+    const { chunks, definitions } = splitMarkdown(text, 1);
+    expect(html(withMarkdownDefinitions(chunks[0]!.text, definitions))).toContain('href="/right"');
+    expect(definitions).toBe("[actual]: /right");
+    expect(chunks.map((chunk) => chunk.text).join("\n")).toBe(text);
+  });
+
+  it("collects a long run of titled references within the shared definition budget", () => {
+    const references = Array.from({ length: 2000 }, (_, index) => `[r${index}]:\n  /url "Title"`);
+    const source = references.join("\n");
+    const { definitions } = splitMarkdown(source);
+    expect(definitions).toBe(source.slice(0, definitions.length));
+    expect(definitions).toContain(references[500]);
+    expect(definitions.length).toBeLessThanOrEqual(16 * 1024);
+    expect(definitions).not.toContain("[r1999]");
   });
 
   it("keeps frontmatter hidden and task offsets shifted by exactly the prefix", () => {
