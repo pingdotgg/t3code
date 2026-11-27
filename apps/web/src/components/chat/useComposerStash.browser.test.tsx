@@ -111,6 +111,7 @@ it("reports a failed file upload instead of asking to wait when stashing", async
     sizeBytes: 5,
     file: new File(["notes"], "notes.txt", { type: "text/plain" }),
   };
+  const uploadingFile = { ...file, id: "stash-uploading-file" };
   const previousUploads = useAttachmentUploadStore.getState().uploadsByImageId;
   using _uploads = {
     [Symbol.dispose]: () =>
@@ -118,6 +119,7 @@ it("reports a failed file upload instead of asking to wait when stashing", async
   };
   useAttachmentUploadStore.setState({
     uploadsByImageId: {
+      [uploadingFile.id]: { status: "uploading", environmentId, progress: 0 },
       [file.id]: { status: "failed", environmentId, reason: "Upload failed" },
     },
   });
@@ -126,7 +128,7 @@ it("reports a failed file upload instead of asking to wait when stashing", async
     environmentId,
     composerDraftTarget: target,
     promptRef,
-    readAttachmentDraft: () => ({ images: [], files: [file] }),
+    readAttachmentDraft: () => ({ images: [], files: [uploadingFile, file] }),
     readTerminalContexts: () => [],
     routeThreadRef: { environmentId, threadId: ThreadId.make("stash-thread") },
     projectSelectionRequired: false,
