@@ -305,6 +305,19 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           (yield* WorkspaceFolders.discoverFolders(workspaceRoot)).map((folder) => folder.name),
           ["code", "heroicons", "other"],
         );
+
+        yield* fileSystem.writeFileString(path.join(workspaceRoot, "mix.exs"), "");
+        yield* fileSystem.makeDirectory(path.join(workspaceRoot, "zzz/.git"), {
+          recursive: true,
+        });
+        yield* fileSystem.symlink(
+          path.join(workspaceRoot, "zzz"),
+          path.join(workspaceRoot, "deps/alias"),
+        );
+        assert.deepEqual(
+          (yield* WorkspaceFolders.discoverFolders(workspaceRoot)).map((folder) => folder.name),
+          ["code", "zzz"],
+        );
       }),
   );
 

@@ -228,6 +228,7 @@ const readCodeWorkspaceFolders = Effect.fn("WorkspaceFolders.readCodeWorkspaceFo
 const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
   input: WorkspaceScanFoldersInput,
   limit: number = PROJECT_TRACKED_FOLDERS_MAX,
+  excludedChildFolders: ReadonlyArray<string> = [],
 ): Effect.fn.Return<
   WorkspaceScanFoldersResult,
   WorkspaceFoldersError,
@@ -288,6 +289,14 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
   );
   const seen = new Set<string>();
   const candidates = resolved.flatMap(({ folder, real }) => {
+    if (
+      folder.source === "child" &&
+      excludedChildFolders.some(
+        (excluded) => folder.path === excluded || isWithinRoot(path, folder.path, excluded),
+      )
+    ) {
+      return [];
+    }
     // The scanned folder and its parents are never tracked, however a symlink names them.
     if (seen.has(real) || isWithinRoot(path, realRoot, real)) return [];
     seen.add(real);
@@ -339,24 +348,23 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
   ).map((entry) => path.resolve(root, entry));
   // Everything the scan could find would be dropped, so skip the walk.
   if (ignored.some((entry) => isWithinRoot(path, root, entry))) return [];
-  // Uncapped: the folders outside the project are dropped below, and must not use up the room.
-  const scan = yield* scanFolders({ workspaceRoot }, Number.POSITIVE_INFINITY).pipe(Effect.option);
-  if (Option.isNone(scan)) return [];
   const mixDeps = (yield* fileSystem
     .exists(path.join(root, "mix.exs"))
     .pipe(Effect.orElseSucceed(() => false)))
     ? path.join(root, "deps")
     : null;
+  // Uncapped: the folders outside the project are dropped below, and must not use up the room.
+  const scan = yield* scanFolders(
+    { workspaceRoot },
+    Number.POSITIVE_INFINITY,
+    mixDeps === null ? [] : [mixDeps],
+  ).pipe(Effect.option);
+  if (Option.isNone(scan)) return [];
   const realRoot = yield* realPath(root);
   const inside = yield* Effect.filter(
     scan.value.folders.filter(
       (folder) =>
         folder.isGitRepository &&
-        !(
-          mixDeps !== null &&
-          folder.source === "child" &&
-          (folder.path === mixDeps || isWithinRoot(path, folder.path, mixDeps))
-        ) &&
         !ignored.some((entry) => folder.path === entry || isWithinRoot(path, folder.path, entry)),
     ),
     // A link to a repository elsewhere is not inside the project, whatever its name says, and a
