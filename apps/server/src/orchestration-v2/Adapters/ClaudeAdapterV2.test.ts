@@ -19214,7 +19214,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               type: "user",
               message: {
                 role: "user",
-                content: [{ type: "text", text: "Stop hook feedback:\nCheck the board first." }],
+                content: [{ type: "text", text: "Stop hook feedback:\nRun the tests first." }],
               },
               parent_tool_use_id: null,
               uuid: "00000000-0000-4000-8000-000000000308",
