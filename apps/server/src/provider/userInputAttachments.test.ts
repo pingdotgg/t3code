@@ -1981,6 +1981,7 @@ describe("question answer paths", () => {
               '<p style="--label: &quot;example;display:none!important;&quot;">Payment due tomorrow.</p>' +
               '<p style="--options: {label: draft; display:none!important;};">Payment instructions.</p>' +
               '<p style="--options:[);display:none!important">Accounts contact.</p>' +
+              '<p style="display:none!important;--label:&quot;draft&#10;;display:block!important">Visible total: $700.</p>' +
               '<img alt="Hidden old payment instructions" style="--label:old\\ payment;display:none"/></body></html>',
             "OEBPS/c.xhtml": '<html hidden=""><body><p>Root hidden</p></body></html>',
             "OEBPS/d.xhtml":
@@ -2007,7 +2008,7 @@ describe("question answer paths", () => {
             "Indented\n  Alpha",
             "Board now.\nKeep reading.",
             "Service charge: $700.\nReview this invoice.\nTotal due: $700.",
-            "Bank transfer accepted.\nPayment due tomorrow.\nPayment instructions.\nAccounts contact.",
+            "Bank transfer accepted.\nPayment due tomorrow.\nPayment instructions.\nAccounts contact.\nVisible total: $700.",
             "## Chapter 2",
             "Last chapter",
             "Totals\nTable 1: Revenue\nQ1\tQ2\n100\t200",
