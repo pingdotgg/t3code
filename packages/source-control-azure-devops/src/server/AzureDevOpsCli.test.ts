@@ -587,6 +587,28 @@ describe("scopeAzureCliArgs", () => {
     ]);
   });
 
+  it.each([
+    ["https://dev.azure.com/acme/_git/My%20Repo", "https://dev.azure.com/acme", "My Repo"],
+    ["https://acme.visualstudio.com/_git/My%20Repo", "https://acme.visualstudio.com", "My Repo"],
+    [
+      "https://acme.visualstudio.com/DefaultCollection/_git/My%20Repo",
+      "https://acme.visualstudio.com",
+      "My Repo",
+    ],
+    ["https://dev.azure.com/acme/_git/Repo.git", "https://dev.azure.com/acme", "Repo.git"],
+  ])("reads shorthand %s as a project named after its repository", (url, organization, name) => {
+    expect(scopeAzureCliArgs(show, url)).toEqual([
+      "repos",
+      "show",
+      "--detect",
+      "false",
+      "--organization",
+      organization,
+      `--project=${name}`,
+      `--repository=${name}`,
+    ]);
+  });
+
   it("joins names starting with `-` to their options", () => {
     expect(
       scopeAzureCliArgs(
@@ -623,11 +645,13 @@ describe("scopeAzureCliArgs", () => {
     [["repos", "show", "--detect", "true", "--org", "https://dev.azure.com/explicit"], origin],
     [show, "https://github.com/acme/repo"],
     [show, "https://dev.azure.com/acme"],
+    [show, "https://dev.azure.com/acme/_git/"],
     [show, "https://dev.azure.com/acme/%XX/_git/Repo"],
     [show, "git@ssh.dev.azure.com:v4/acme/Project/Repo"],
     [show, "git@vs-ssh.visualstudio.com:v3/acme.invalid/Project/Repo"],
     // az would replace the value with the contents of a local file.
     [show, "https://dev.azure.com/acme/Project/_git/%40.env"],
+    [show, "https://dev.azure.com/acme/_git/%40.env"],
   ])("leaves %j to az when %s gives no scope", (args, url) => {
     expect(scopeAzureCliArgs(args, url)).toEqual(args);
   });
@@ -644,6 +668,13 @@ describe("primaryRemoteUrl", () => {
     [
       remotes(["github", "https://github.com/acme/repo"], azure("zebra"), azure("alpha")),
       azure("zebra")[1],
+    ],
+    [
+      remotes(
+        ["github", "https://github.com/acme/repo"],
+        ["azure", "https://dev.azure.com/acme/_git/Repo"],
+      ),
+      "https://dev.azure.com/acme/_git/Repo",
     ],
     // A non-Azure origin leaves detection to az rather than scoping another repository.
     [
