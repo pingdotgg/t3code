@@ -2471,6 +2471,17 @@ const make = Effect.gen(function* () {
             message: "Team member could not be found.",
           });
         }
+        yield* publish({ version: 1, type: "memberUpserted", payload: updated.value.member });
+        // Coalesce scrubbed view/environment ACL notifications into a single snapshot trigger so
+        // each subscriber refreshes getState(sessionId) at most once regardless of ACL count.
+        const firstUpdatedView = updated.value.updatedViews[0];
+        const firstUpdatedEnv = updated.value.updatedEnvironments[0];
+        if (firstUpdatedView !== undefined) {
+          yield* publish({ version: 1, type: "viewUpserted", payload: firstUpdatedView });
+        } else if (firstUpdatedEnv !== undefined) {
+          yield* publish({ version: 1, type: "environmentUpserted", payload: firstUpdatedEnv });
+        }
+        yield* publishAccessChange({ type: "member", memberId: updated.value.member.id });
         if (updated.value.member.status !== "active") {
           yield* revokeSessionsForMember(updated.value.member.id);
           yield* revokePairingLinksForMember(updated.value.member.id);
@@ -2479,12 +2490,6 @@ const make = Effect.gen(function* () {
       }),
     );
     const updatedMember = updatedResult.member;
-    for (const updatedView of updatedResult.updatedViews) {
-      yield* publish({ version: 1, type: "viewUpserted", payload: updatedView });
-    }
-    for (const updatedEnvironment of updatedResult.updatedEnvironments) {
-      yield* publish({ version: 1, type: "environmentUpserted", payload: updatedEnvironment });
-    }
     if (updatedMember.status !== "active") {
       if (Option.isSome(assetsRepositoryOption)) {
         yield* assetsRepositoryOption.value
@@ -2538,8 +2543,6 @@ const make = Effect.gen(function* () {
         );
       }
     }
-    yield* publish({ version: 1, type: "memberUpserted", payload: updatedMember });
-    yield* publishAccessChange({ type: "member", memberId: updatedMember.id });
     return updatedMember;
   });
 
@@ -2600,18 +2603,19 @@ const make = Effect.gen(function* () {
                   message: "Team member could not be found.",
                 });
               }
-              // Publish removal and view/environment updates immediately after committing to SQLite
-              // (before async pairing revocation) so live streamState subscribers flip
-              // currentMember.status to "removed" with zero stale-stream window.
+              // Publish removal and a single coalesced ACL snapshot trigger immediately after
+              // committing to SQLite so live streamState subscribers flip currentMember.status
+              // to "removed" and refresh scrubbed views/environments once per subscriber.
               yield* publish({ version: 1, type: "memberUpserted", payload: left.value.member });
-              for (const updatedView of left.value.updatedViews) {
-                yield* publish({ version: 1, type: "viewUpserted", payload: updatedView });
-              }
-              for (const updatedEnvironment of left.value.updatedEnvironments) {
+              const firstUpdatedView = left.value.updatedViews[0];
+              const firstUpdatedEnv = left.value.updatedEnvironments[0];
+              if (firstUpdatedView !== undefined) {
+                yield* publish({ version: 1, type: "viewUpserted", payload: firstUpdatedView });
+              } else if (firstUpdatedEnv !== undefined) {
                 yield* publish({
                   version: 1,
                   type: "environmentUpserted",
-                  payload: updatedEnvironment,
+                  payload: firstUpdatedEnv,
                 });
               }
               yield* publishAccessChange({ type: "member", memberId: left.value.member.id });

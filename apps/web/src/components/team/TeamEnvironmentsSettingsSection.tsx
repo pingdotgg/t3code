@@ -231,7 +231,7 @@ export function TeamEnvironmentsSettingsSection({
         ...(attachName.trim().length > 0 ? { name: attachName.trim() } : {}),
         accessRule: {
           roles: [...attachRoles],
-          memberIds: [...attachMemberIds],
+          memberIds: attachMemberIds.filter((id) => memberById.get(id)?.status !== "removed"),
         },
       },
     });
