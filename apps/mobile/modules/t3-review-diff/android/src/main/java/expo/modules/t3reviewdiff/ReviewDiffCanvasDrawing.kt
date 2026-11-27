@@ -612,7 +612,7 @@ private class ReviewDiffTypefaces(
   assets: AssetManager,
   private val codeFamily: String,
   private val uiFamily: String,
-  private val uiBoldFamily: String,
+  private val uiBoldFamily: String
 ) {
   private val fonts = ReactFontManager.getInstance()
   val regular: Typeface = fonts.getTypeface(codeFamily, Typeface.NORMAL, assets)
