@@ -17,6 +17,7 @@ export {
   sleep,
   step,
   stop,
+  subject,
   tags,
   title,
   wait,

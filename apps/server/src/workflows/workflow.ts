@@ -31,8 +31,15 @@ import {
   type WebhookTrigger,
 } from "./triggers.ts";
 import type { WorkflowAgents } from "./WorkflowAgents.ts";
-import { unavailable, WorkflowForge } from "./WorkflowForge.ts";
+import {
+  type SubjectInput,
+  subjectReference,
+  unavailable,
+  WorkflowForge,
+} from "./WorkflowForge.ts";
+import { subjectSet } from "./runReferences.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
+import { withoutRoutineSpans } from "@t3tools/shared/observability";
 
 /** A step that could not be completed. Its run is paused until someone resumes it. */
 export class StepFailed extends Schema.TaggedError<StepFailed>()("StepFailed", {
@@ -196,6 +203,13 @@ export const journaled = <A, I, E>(
 ) => {
   const codec = Schema.toCodecJson(returns);
   const encodable = Schema.encodeEffect(codec);
+  // A wake can preempt the run while a failed step is still finishing, and the engine then
+  // replays the paused run and runs the step again. Only a resume, which unpauses first, may.
+  const unlessPaused = Effect.flatMap(run.store.run(run.runId), (row) =>
+    row?.status === "paused"
+      ? Effect.fail(new StepFailed({ step: name, reason: "The run is paused." }))
+      : Effect.void,
+  );
   return Activity.make({
     name: action,
     success: returns,
@@ -217,6 +231,7 @@ export const journaled = <A, I, E>(
           Effect.andThen(run.store.runPaused(run.runId, error.message, held), run.placesFreed),
         ),
       ),
+      (attempt) => Effect.andThen(unlessPaused, attempt),
     ),
   });
 };
@@ -324,12 +339,15 @@ const stepAs = <A, I, X, E>(
       `step/${name}`,
       options.returns,
       settle(
-        retry.times === 0
-          ? execute
-          : Effect.retry(execute, {
-              times: retry.times,
-              ...(retry.schedule === undefined ? {} : { schedule: retry.schedule }),
-            }),
+        // A step and its retry schedule are the workflow author's own work, never sampled.
+        withoutRoutineSpans(
+          retry.times === 0
+            ? execute
+            : Effect.retry(execute, {
+                times: retry.times,
+                ...(retry.schedule === undefined ? {} : { schedule: retry.schedule }),
+              }),
+        ),
       ).pipe(
         // A value that does not encode fails the step, so it is never marked done first.
         Effect.tap((value) =>
@@ -804,6 +822,30 @@ export const tags = (
     const name = `tags/${n}`;
     return Effect.flatMap(claim(name), (run) =>
       Activity.make({ name, execute: run.store.runTags(run.runId, kept) }),
+    );
+  }).pipe(Effect.orDie);
+};
+
+/**
+ * Say what the run is about: an issue or pull request a trigger or listing gave, `{ threadId }`,
+ * or a web address. Lists show it and link to it, and `runs({ subject })` and
+ * `t3 workflow list --subject` find the run by it. Calling it again replaces the subject.
+ */
+export const subject = (
+  value: SubjectInput,
+  ...rest: ReadonlyArray<never>
+): Effect.Effect<void, never, InRun> => {
+  if (rest.length > 0) {
+    throw new Error("subject takes only what the run is about, and no step name.");
+  }
+  const reference = subjectReference("subject", value);
+  return Effect.flatMap(RunContext, (current) => {
+    // Numbered by how many came before in the body, which a replay walks the same way.
+    let n = 0;
+    while (current.names.has(`subject/${n}`)) n++;
+    const name = `subject/${n}`;
+    return Effect.flatMap(claim(name), (run) =>
+      Activity.make({ name, execute: subjectSet(run.store, run.runId, reference) }),
     );
   }).pipe(Effect.orDie);
 };

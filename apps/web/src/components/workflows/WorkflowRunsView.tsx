@@ -1,4 +1,4 @@
-import { type EnvironmentId, type WorkflowRunReference } from "@t3tools/contracts";
+import { type EnvironmentId, type WorkflowRunSubject } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { WorkflowIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
@@ -21,6 +21,7 @@ import {
   type WorkflowThreadTarget,
 } from "./WorkflowRunFeed";
 import type { WorkflowPaneTab } from "./workflowPane.logic";
+import { WorkflowReferenceChip } from "./WorkflowReferences";
 import {
   allWorkflowRunNodes,
   defaultWorkflowListTab,
@@ -28,6 +29,7 @@ import {
   groupWorkflowRuns,
   listedWorkflowRuns,
   workflowQuestionKinds,
+  workflowReferenceThreadId,
   workflowRunAskingKind,
   workflowRunAsksKind,
   workflowRunLists,
@@ -98,7 +100,7 @@ export function WorkflowRunsView({
   readonly shownTab: WorkflowPaneTab | null;
   readonly onSelect: (runId: string | null) => void;
   readonly onOpenThread: (runId: string, thread: WorkflowThreadTarget) => void;
-  readonly onOpenReference: (runId: string, reference: WorkflowRunReference) => void;
+  readonly onOpenReference: (runId: string, reference: WorkflowRunSubject) => void;
   readonly onOpenDefinitions: () => void;
 }) {
   const live = useEnvironmentQuery(serverEnvironment.workflowsLive({ environmentId, input: {} }));
@@ -207,6 +209,11 @@ export function WorkflowRunsView({
   const lists = workflowRunLists(groups);
   const all = allWorkflowRunNodes(groups);
   const section = groups.workflows.find((candidate) => candidate.name === workflow) ?? null;
+  // With a workflow picked, the list holds only its runs, so count only its skipped ones.
+  const skipped = listedWorkflowRuns(
+    section === null ? snapshot.runs : snapshot.runs.filter((run) => run.workflow === section.name),
+    false,
+  ).skipped;
   // A run that another invoked is not in the list itself; the one it is part of stands for it.
   const listedFor = (node: WorkflowRunNode | null): string | null => {
     if (node === null) return null;
@@ -396,17 +403,21 @@ export function WorkflowRunsView({
                       key={node.run.runId}
                       node={node}
                       current={node.run.runId === currentRunId}
+                      subjectOpen={
+                        node.run.runId === selectedRunId && subjectShows(node.run.subject, shownTab)
+                      }
                       onSelect={openListed}
+                      onOpenSubject={(subject) => onOpenReference(node.run.runId, subject)}
                     />
                   ))}
                 </ul>
               )}
-              {tab === "all" && visible.skipped > 0 && !openedSkipped ? (
+              {tab === "all" && skipped > 0 && !openedSkipped ? (
                 <div className="flex justify-center pt-2">
                   <Button size="xs" variant="ghost" onClick={() => setShowSkipped(!showSkipped)}>
                     {showSkipped
                       ? gt("Hide skipped")
-                      : gt("Show {count} skipped", { count: visible.skipped })}
+                      : gt("Show {count} skipped", { count: skipped })}
                   </Button>
                 </div>
               ) : null}
@@ -441,26 +452,40 @@ export function WorkflowRunsView({
   );
 }
 
+/** Whether `shown` is the subject's tab: a thread's is its transcript, as `onOpenReference` opens it. */
+function subjectShows(subject: WorkflowRunSubject | undefined, shown: WorkflowPaneTab | null) {
+  if (subject === undefined || shown === null) return false;
+  return "thread" in shown
+    ? shown.thread === workflowReferenceThreadId(subject)
+    : shown.kind === subject.kind && shown.key === subject.key;
+}
+
 /** A run in the thread list's own shape: which workflow, its state in a word, and what it is at. */
 function WorkflowRunListItem({
   node,
   current,
+  subjectOpen,
   onSelect,
+  onOpenSubject,
 }: {
   readonly node: WorkflowRunNode;
   readonly current: boolean;
+  /** The run's subject shows beside it now. */
+  readonly subjectOpen: boolean;
   readonly onSelect: (runId: string | null) => void;
+  readonly onOpenSubject: (subject: WorkflowRunSubject) => void;
 }) {
   const { run } = node;
+  const about = run.subject;
   const m = useMessages();
   return (
-    <li>
+    <li className={cn("rounded-lg", current ? "bg-accent" : undefined)}>
       <button
         type="button"
         aria-current={current ? "true" : undefined}
         className={cn(
           "flex w-full cursor-pointer flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:outline-none focus-visible:ring-inset",
-          current ? "bg-accent" : "hover:bg-accent/50",
+          current ? undefined : "hover:bg-accent/50",
         )}
         onClick={() => onSelect(run.runId)}
       >
@@ -477,6 +502,16 @@ function WorkflowRunListItem({
           </span>
         </span>
       </button>
+      {about === undefined ? null : (
+        <div className="flex min-w-0 px-2 pb-1.5">
+          <WorkflowReferenceChip
+            reference={about}
+            small
+            open={subjectOpen}
+            onOpen={() => onOpenSubject(about)}
+          />
+        </div>
+      )}
     </li>
   );
 }

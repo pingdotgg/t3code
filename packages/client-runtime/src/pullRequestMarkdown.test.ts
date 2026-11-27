@@ -325,6 +325,20 @@ describe("reference links around lifted media", () => {
     const marker = segment.text.indexOf("[ ]");
     expect(body.slice(segment.sourceOffset + marker)).toBe("[ ] Read [the docs][guide]");
   });
+
+  it.each([
+    ["\uFEFF", "", 0],
+    ["intro\n\n\uFEFF", "intro\n\n\uFEFF", 0],
+    [`${recording}\n\n\uFEFF`, "\uFEFF", 1],
+  ])("preserves BOM meaning and task offsets after prefix %j", (prefix, kept, pick) => {
+    const definition = "[guide]: https://example.com/docs";
+    const task = "- [ ] Read [guide]";
+    const body = `${prefix}${task}\n\n${recording}\n\n${definition}`;
+    const segment = splitPullRequestBody(body, () => [definition])[pick]!;
+    if (segment.kind !== "markdown") throw new Error("expected prose");
+    expect(segment.text).toBe(`${definition}\n\n${kept}${task}`);
+    expect(segment.sourceOffset + segment.text.indexOf("[ ]")).toBe(body.indexOf("[ ]"));
+  });
 });
 
 describe("media on custom hosts", () => {
@@ -334,6 +348,15 @@ describe("media on custom hosts", () => {
     ["<https://drop.example.com/shot.webp>", "image"],
   ])("recognizes %s without a request", (body, media) => {
     expect(split(body)).toEqual([expect.objectContaining({ kind: "attachment", media })]);
+  });
+
+  it.each([
+    "[Open report](https://example.com/report?file=demo.mp4)",
+    "https://example.com/report#demo.png",
+  ])("keeps %s a link when only its query or fragment names media", (body) => {
+    expect(split(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
   });
 
   it("keeps inline links and media examples in code as prose", () => {

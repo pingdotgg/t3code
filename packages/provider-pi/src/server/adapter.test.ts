@@ -163,6 +163,10 @@ interface FakePi {
   readonly emit: (record: PiRpcRecord, chunkBytes?: number) => Effect.Effect<void>;
   readonly takeRequest: (type: string) => Effect.Effect<PiRpcRecord>;
   readonly queueEntries: (data: unknown) => void;
+  readonly setSessionEntries: (
+    entries: ReadonlyArray<ReturnType<typeof sessionMessage>>,
+    forkFile: string,
+  ) => void;
   readonly queueMessages: (data: unknown) => void;
   readonly vetoNextSwitch: () => void;
   readonly failNextFork: () => void;
@@ -231,6 +235,8 @@ const makeFakePiWithResponses = Effect.fnUntraced(function* (
   const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const requests = yield* Queue.unbounded<PiRpcRecord>();
   const entriesQueue: Array<unknown> = [];
+  let sessionEntries: ReadonlyArray<ReturnType<typeof sessionMessage>> | undefined;
+  let forkFile: string | undefined;
   const messagesQueue: Array<unknown> = [];
   const stateQueue: Array<Record<string, unknown>> = [];
   const statsQueue: Array<unknown> = [];
@@ -353,7 +359,13 @@ const makeFakePiWithResponses = Effect.fnUntraced(function* (
         return { ...base, data: { cancelled } };
       }
       case "get_entries":
-        return { ...base, data: entriesQueue.shift() ?? { entries: [], leafId: null } };
+        return {
+          ...base,
+          data: entriesQueue.shift() ?? {
+            entries: sessionEntries ?? [],
+            leafId: sessionEntries?.at(-1)?.id ?? null,
+          },
+        };
       case "get_messages":
         return { ...base, data: messagesQueue.shift() ?? { messages: [] } };
       case "get_session_stats":
@@ -362,6 +374,13 @@ const makeFakePiWithResponses = Effect.fnUntraced(function* (
         if (failFork) {
           failFork = false;
           return { ...base, success: false, error: "Invalid entry ID for forking" };
+        }
+        if (sessionEntries !== undefined && forkFile !== undefined) {
+          const index = sessionEntries.findIndex((entry) => entry.id === record["entryId"]);
+          if (index === -1)
+            return { ...base, success: false, error: "Invalid entry ID for forking" };
+          sessionEntries = sessionEntries.slice(0, index);
+          sessionFile = forkFile;
         }
         serviceTier = null;
         return { ...base, data: { text: "Hello pi", cancelled: false } };
@@ -471,6 +490,10 @@ const makeFakePiWithResponses = Effect.fnUntraced(function* (
     emit,
     takeRequest,
     queueEntries: (data) => entriesQueue.push(data),
+    setSessionEntries: (entries, file) => {
+      sessionEntries = entries;
+      forkFile = file;
+    },
     queueMessages: (data) => messagesQueue.push(data),
     deferNextState: (started) => {
       deferState = true;
@@ -2662,8 +2685,8 @@ describe("PiAdapterV2", () => {
           nativeContextEstimate: 307_543,
           modelContextWindow: runtime.getModelContextWindow?.(modelSelection(model)),
         });
-      assert.equal(budget("default"), 16_000);
-      assert.equal(budget("anthropic/large"), 16_000);
+      assert.equal(budget("default"), 64_000);
+      assert.equal(budget("anthropic/large"), 64_000);
       assert.equal(runtime.getModelContextWindow?.(modelSelection("anthropic/small")), 32_000);
       assert.equal(budget("anthropic/small"), 0);
       assert.isUndefined(runtime.getModelContextWindow?.(modelSelection("anthropic/unknown")));
@@ -4825,6 +4848,126 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    {
+      checkpoint: "strong",
+      ordinal: 2,
+      handoff: "command",
+      returnedPrompt: false,
+      discarded: true,
+    },
+    { checkpoint: "strong", ordinal: 2, handoff: "prompt", returnedPrompt: true, discarded: true },
+    {
+      checkpoint: "command",
+      ordinal: 2,
+      handoff: "prompt",
+      returnedPrompt: false,
+      discarded: false,
+    },
+    { checkpoint: "weak", ordinal: 2, handoff: "prompt", returnedPrompt: false, discarded: false },
+    {
+      checkpoint: "command",
+      ordinal: 1,
+      handoff: "prompt",
+      returnedPrompt: false,
+      discarded: false,
+    },
+    { checkpoint: "weak", ordinal: 1, handoff: "prompt", returnedPrompt: true, discarded: true },
+  ] as const)("restores the Pi checkpoint after a session round trip %j", (scenario) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const ref = (nativeId: string, strength: "strong" | "weak" = "strong") => ({
+        driver: PI_PROVIDER,
+        nativeId,
+        strength,
+      });
+      const sessionFile = providerThread.nativeThreadRef!.nativeId!;
+      const forkFile = "/fake/rewound.jsonl";
+      const turn = (
+        ordinal: number,
+        nativeTurnRef: OrchestrationV2ProviderTurn["nativeTurnRef"],
+        file = sessionFile,
+      ): OrchestrationV2ProviderTurn => ({
+        id: ProviderTurnId.make(`turn-${ordinal}`),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make(`node-${ordinal}`),
+        runAttemptId: null,
+        nativeTurnRef,
+        nativeThreadRef: ref(file),
+        ordinal,
+        status: "completed",
+        startedAt: at(ordinal * 50 - 50),
+        completedAt: at(ordinal * 50),
+      });
+      const target = turn(
+        scenario.ordinal,
+        scenario.checkpoint === "strong"
+          ? ref("u2")
+          : scenario.checkpoint === "weak"
+            ? ref("uncaptured", "weak")
+            : null,
+      );
+      const retained =
+        scenario.ordinal === 1 || scenario.checkpoint === "command"
+          ? TURN_ONE_ENTRIES
+          : [
+              ...TURN_ONE_ENTRIES,
+              sessionMessage("u2", "a1b", "user", 60),
+              sessionMessage("a2", "u2", "assistant", 80),
+            ];
+      const retainedHead = retained.at(-1)!.id;
+      const entries = [
+        ...retained,
+        ...(scenario.discarded
+          ? [
+              sessionMessage("discarded", retainedHead, "user", 110),
+              sessionMessage("discarded-answer", "discarded", "assistant", 120),
+            ]
+          : []),
+        ...(scenario.returnedPrompt ? [sessionMessage("u5", "discarded-answer", "user", 210)] : []),
+      ];
+      fake.setSessionEntries(entries, forkFile);
+      const restored = yield* runtime.rollbackThread({
+        providerThread,
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("checkpoint-1"),
+          appRunOrdinal: target.ordinal,
+          providerTurn: target,
+        },
+        providerThreadTurns: [
+          ...(target.ordinal === 2 ? [turn(1, ref("u1"))] : []),
+          target,
+          turn(
+            target.ordinal + 1,
+            scenario.handoff === "prompt" ? ref("away") : null,
+            "/fake/other.jsonl",
+          ),
+          turn(target.ordinal + 2, null, "/fake/clone.jsonl"),
+          turn(target.ordinal + 3, null),
+          ...(scenario.returnedPrompt ? [turn(target.ordinal + 4, ref("u5"))] : []),
+        ],
+      });
+      const requests = fake.allRequests();
+      assert.isFalse(requests.some((request) => request.type === "switch_session"));
+      assert.deepEqual(
+        requests.filter((request) => request.type === "fork").map((request) => request.entryId),
+        scenario.discarded ? ["discarded"] : [],
+      );
+      assert.equal(
+        restored.providerThread.nativeThreadRef?.nativeId,
+        scenario.discarded ? forkFile : sessionFile,
+      );
+      assert.equal(restored.providerThread.nativeConversationHeadRef?.nativeId, retainedHead);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("rolls back a persisted thread on a fresh runtime after its session was released", () =>
     Effect.gen(function* () {
       const previousFake = yield* makeFakePi;
@@ -6694,6 +6837,45 @@ describe("PiAdapterV2", () => {
         status: "completed",
         text: "",
       });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("does not show an empty text block that outlives the stream flush", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const text = (event: Record<string, unknown>) =>
+        fake.emit({ type: "message_update", assistantMessageEvent: event });
+      // Gemini sends an empty text part on tool-use steps; it stays open past one flush.
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      yield* text({ type: "text_start", contentIndex: 0 });
+      yield* text({ type: "text_delta", contentIndex: 0, delta: "" });
+      yield* fake.emit({ type: "tool_execution_start", toolCallId: "read-call", toolName: "read" });
+      yield* takeEvent((event) => event.type === "turn_item.updated");
+      yield* TestClock.adjust(Duration.millis(120));
+      yield* text({ type: "text_end", contentIndex: 0, content: "" });
+      yield* fake.emit({ type: "message_end", message: { role: "assistant" } });
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      yield* text({ type: "text_end", contentIndex: 0, content: "Answer" });
+      yield* fake.emit({ type: "message_end", message: { role: "assistant" } });
+      yield* fake.emit({ type: "agent_settled" });
+      const texts: Array<string> = [];
+      while (true) {
+        const event = yield* takeEvent(
+          (event) => event.type === "message.updated" || event.type === "turn.terminal",
+        );
+        if (event.type !== "message.updated") break;
+        texts.push(event.message.text);
+      }
+      assert.deepEqual(texts, ["Answer"]);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
