@@ -897,6 +897,15 @@ export class ClaudeConversationNotFoundError extends Schema.TaggedError<ClaudeCo
   }
 }
 
+export class ClaudeStartRejectedError extends Schema.TaggedError<ClaudeStartRejectedError>()(
+  "ClaudeStartRejectedError",
+  { error: Schema.String },
+) {
+  override get message(): string {
+    return `Claude Code could not start this turn: ${this.error}`;
+  }
+}
+
 export class ClaudeCodeStartupExitError extends Schema.TaggedError<ClaudeCodeStartupExitError>()(
   "ClaudeCodeStartupExitError",
   {
@@ -5770,6 +5779,8 @@ interface ClaudeLiveQueryContext {
   stopping: boolean;
   // A turn that had not attached when the CLI exited fails its start with this cause.
   exitCause: Cause.Cause<ClaudeAgentSdkQueryRunnerError> | undefined;
+  // An error result before any turn attached, such as a rejected resumeSessionAt; not a background wake.
+  rejectedStart: SDKResultMessage | undefined;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
   // Subagents this process still ran when a replacement took over; only its exit can end them.
   handedOffSubagents: ReadonlySet<ActiveClaudeSubagent>;
@@ -11699,6 +11710,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   onlyIfRunningInRun: registered.task.runId,
                 });
               }
+            } else if (
+              message.type === "result" &&
+              message.is_error &&
+              liveQuery.lastTurn === null
+            ) {
+              liveQuery.rejectedStart = message;
             } else {
               yield* applyBackgroundTaskRosterMessage({
                 nativeThreadId: liveQuery.nativeThreadId,
@@ -14357,6 +14374,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             permissionMode: queryOptions.permissionMode,
             stopping: false,
             exitCause: undefined,
+            rejectedStart: undefined,
             handedOffSubagents: new Set(),
             subagentsFromEarlierProcesses: new Set(
               [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
@@ -14740,12 +14758,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
               if (!attached) {
                 yield* Ref.update(activeTurn, (current) => (current === context ? null : current));
+                const rejection =
+                  querySession.rejectedStart === undefined
+                    ? undefined
+                    : resultUserFacingError(querySession.rejectedStart);
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver: CLAUDE_PROVIDER,
                   detail: CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL,
-                  ...(querySession.exitCause === undefined
-                    ? {}
-                    : { cause: querySession.exitCause }),
+                  ...(rejection !== undefined
+                    ? { cause: new ClaudeStartRejectedError({ error: rejection }) }
+                    : querySession.exitCause === undefined
+                      ? {}
+                      : { cause: querySession.exitCause }),
                 });
               }
               if (

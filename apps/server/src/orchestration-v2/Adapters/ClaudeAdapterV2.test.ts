@@ -16715,6 +16715,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       const started = yield* harness.runtime.startTurn(harness.turnInput("a", 1)).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(started));
+      if (Exit.isFailure(started)) {
+        assert.strictEqual(
+          makeProviderFailure({ cause: started.cause, class: "transport_error" }).message,
+          "Claude Code could not start this turn: No message found with message.uuid of: 00000000-0000-4000-8000-000000004400",
+        );
+      }
       if (harness.runtime.hasPendingBackgroundWork === undefined) {
         return yield* Effect.die("Claude adapter runtime must expose hasPendingBackgroundWork.");
       }
