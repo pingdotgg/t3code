@@ -952,19 +952,50 @@ export function workflowStepTime(ms: number): string {
 }
 
 /**
- * The first sentence of a reply, as one line of plain text: a heading, list mark, inline code,
- * emphasis or link reads as its words. Code keeps its text, and an underscore inside a word, as in
- * snake_case, is not emphasis.
+ * The first prose sentence of a reply, as one line of plain text: headings, tables, and fenced
+ * code blocks are skipped; indented text is a fallback. List marks, code, emphasis, and links read as words.
+ * Code keeps its text, and an underscore inside a word, as in snake_case, is not emphasis.
  */
 export function workflowOneLine(text: string): string {
+  let fence: string | null = null;
+  let fenceQuoteDepth = 0;
+  let indented: string | undefined;
   const line =
     text
       .split("\n")
-      .map((candidate) => candidate.trim())
-      .find((candidate) => candidate !== "" && !/^(#|```|\|)/.test(candidate))
-      ?.replace(/^([-*>]|\d+\.)\s+/, "") ?? "";
+      .find((candidate) => {
+        const quote = /^(?: {0,3}>[ \t]?)+/.exec(candidate)?.[0] ?? "";
+        const quoteDepth = quote.replace(/[^>]/g, "").length;
+        const content = candidate.slice(quote.length);
+        const [, marker, rest] = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/.exec(content) ?? [];
+        if (quoteDepth < fenceQuoteDepth) fence = null;
+        if (fence !== null) {
+          if (
+            quoteDepth === fenceQuoteDepth &&
+            marker?.startsWith(fence) &&
+            /^[ \t]*\r?$/.test(rest ?? "")
+          ) {
+            fence = null;
+          }
+          return false;
+        }
+        if (marker !== undefined && !(marker[0] === "`" && rest?.includes("`"))) {
+          fence = marker;
+          fenceQuoteDepth = quoteDepth;
+          return false;
+        }
+        if (/^\s*$/.test(content) || /^[ \t]*[#|]/.test(candidate)) return false;
+        if (!/^(?: {4}| {0,3}\t)/.test(content)) return true;
+        indented ??= candidate;
+        return false;
+      })
+      ?.trim() ??
+    indented?.trim() ??
+    "";
   const code: string[] = [];
   const plain = line
+    .replace(/^(?:>\s*)+/, "")
+    .replace(/^([-*]|\d+\.)\s+/, "")
     .replace(/(`+)(.+?)\1(?!`)/g, (_, _ticks, inner: string) => `\0${code.push(inner) - 1}\0`)
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/(?<![\p{L}\p{M}\p{N}_/])(__|_)(\S(?:.*?\S)?)\1(?![\p{L}\p{M}\p{N}_/])/gu, "$2")

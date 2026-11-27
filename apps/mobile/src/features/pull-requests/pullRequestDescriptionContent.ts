@@ -1,3 +1,4 @@
+import { mediaReferenceFileName } from "@t3tools/client-runtime/media-reference";
 import type { PullRequestBodySegment } from "@t3tools/client-runtime/pull-request-markdown";
 import { msg } from "gt-react-native";
 import type { MarkdownNode } from "../../lib/markdownDocument";
@@ -46,7 +47,7 @@ export function pullRequestDescriptionContent(
       return;
     }
     if (segment.kind === "attachment" && !attachments.has(segment.url)) {
-      const name = new URL(segment.url).pathname.split("/").pop();
+      const name = mediaReferenceFileName({ kind: "url", url: segment.url });
       attachments.set(segment.url, {
         uri: segment.url,
         caption: segment.media === "video" ? resolve(msg("Video")) : name || resolve(msg("Image")),

@@ -5,6 +5,7 @@ import { useRef, type KeyboardEventHandler } from "react";
 import { Spinner } from "~/components/ui/spinner";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import {
+  joinMarkdownChunks,
   LARGE_MARKDOWN_CHUNK_MAX_CHARS,
   type MarkdownChunk,
   withMarkdownDefinitions,
@@ -72,9 +73,22 @@ export function ChunkedMarkdown(props: {
       onCopy={(event) => {
         // Select All only reaches rendered pieces; copying all of it copies the whole file.
         const list = event.currentTarget.firstElementChild;
-        if (!list || !window.getSelection()?.containsNode(list)) return;
+        const selection = window.getSelection();
+        if (!list || !selection?.rangeCount) return;
+        // Chromium's containsNode says false for a list selected through its parent's children.
+        const range = selection.getRangeAt(0);
+        const listRange = document.createRange();
+        listRange.selectNode(list);
+        if (
+          range.compareBoundaryPoints(Range.START_TO_START, listRange) > 0 ||
+          range.compareBoundaryPoints(Range.END_TO_END, listRange) < 0
+        ) {
+          return;
+        }
         event.preventDefault();
-        event.clipboardData.setData("text/plain", chunks.map((chunk) => chunk.text).join("\n"));
+        // A rendered piece's own handler already wrote just its part.
+        event.clipboardData.clearData();
+        event.clipboardData.setData("text/plain", joinMarkdownChunks(chunks));
       }}
     >
       <LegendList<ChunkItem>
@@ -127,7 +141,10 @@ export function ChunkedMarkdown(props: {
                   onTaskListChange &&
                   ((input) =>
                     onTaskListChange({
-                      markerOffset: item.start + input.markerOffset,
+                      markerOffset:
+                        item.start +
+                        input.markerOffset -
+                        (props.definitions ? props.definitions.length + 2 : 0),
                       checked: input.checked,
                     }))
                 }

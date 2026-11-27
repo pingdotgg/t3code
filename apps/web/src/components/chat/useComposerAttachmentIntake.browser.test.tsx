@@ -455,6 +455,7 @@ it("releases thread.undo on intake and records snapshotted draft indices for emp
         focus: () => {},
         focusAt: () => {},
         focusAtEnd: () => {},
+        pasteAtCodeBlockEnd: () => false,
         readSelectionRange: () => ({ start: 0, end: 0 }),
         captureAttachmentInsertion: () => undefined,
         insertAttachmentReferences: () => false,
