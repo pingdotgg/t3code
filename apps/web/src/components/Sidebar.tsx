@@ -45,7 +45,11 @@ import {
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
 import { foldSearchQuery, rankMessageMatches } from "@t3tools/shared/paletteSearch";
-import { findForMessageMatch, openThreadFindOnQuery } from "./chat/threadFindStore";
+import {
+  closeThreadFind,
+  findForMessageMatch,
+  openThreadFindOnQuery,
+} from "./chat/threadFindStore";
 import {
   threadRuntimeCanArchive,
   type EnvironmentThreadShell,
@@ -1557,6 +1561,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
 
   const clearThreadSearch = () => {
+    closeThreadFind("sidebar");
     setThreadSearchQuery("");
     setSearchHighlightKey(null);
   };
@@ -1569,7 +1574,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const query = threadSearch.query;
     clearThreadSearch();
     navigateToThread(ref);
-    if (match) openThreadFindOnQuery(scopedThreadKey(ref), findForMessageMatch(match, query));
+    if (match)
+      openThreadFindOnQuery(scopedThreadKey(ref), findForMessageMatch(match, query), "sidebar");
   };
   const handleThreadSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -3368,6 +3374,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               searchInputRef={threadSearchInputRef}
               searchQuery={threadSearchQuery}
               onSearchQueryChange={(value) => {
+                closeThreadFind("sidebar");
                 setThreadSearchQuery(value);
                 setSearchHighlightKey(null);
               }}
