@@ -37,6 +37,7 @@ import { environmentThreadDetails } from "~/state/threads";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
+  acceptPendingCommand,
   answerAssetUrls,
   answerRpc,
   assistantItem,
@@ -1063,6 +1064,57 @@ it("a subagent tab shows its read-only bar under no header of its own", async ()
   await expect
     .element(screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true }))
     .toBeVisible();
+});
+
+it("opens and focuses a side chat when /side is picked from the slash menu", async () => {
+  // Menu options need real layout to be clickable.
+  const style = document.createElement("style");
+  style.textContent = stylesheet;
+  document.head.append(style);
+  using _style = { [Symbol.dispose]: () => style.remove() };
+  const thread = threadWithHistory("side-menu", 1);
+  using _environment = installFakeEnvironment([thread], {
+    acceptCommands: true,
+    holdCommand: (command) => command.type === "thread.fork",
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await page.viewport(1400, 900);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  const container = document.createElement("div");
+  container.style.cssText = "height: 900px; width: 1400px;";
+  await using screen = await render(<AppRoot router={router} />, {
+    container,
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const mainInput = screen.getByRole("textbox", { name: `Message ${thread.title}` });
+  const sideInput = screen.getByRole("textbox", { name: "Message Side chat" });
+  const sideOption = page.getByRole("option", { name: /^\/side / });
+  await expect.element(mainInput).toBeVisible();
+  await userEvent.type(mainInput, " keep this question");
+  // Moving the caret alone opens no menu, so the command is typed in front of the question.
+  await userEvent.keyboard("{Home}/sid");
+  await sideOption.click();
+  // With other text in the draft, picking the command only completes it.
+  await expect.element(mainInput).toHaveTextContent("/side keep this question");
+  await expect.element(sideInput).not.toBeInTheDocument();
+
+  await mainInput.fill("");
+  await userEvent.type(mainInput, "/sid");
+  await expect.element(sideOption).toBeVisible();
+  // The question is typed straight after Enter, before the side chat exists.
+  await userEvent.keyboard("{Enter}a side");
+  await acceptPendingCommand();
+  await expect.element(sideInput).toHaveFocus();
+  await userEvent.keyboard(" question");
+  await expect.element(sideInput).toHaveTextContent("a side question");
+  await expect.element(mainInput).toHaveTextContent("");
 });
 
 it("/side sends the draft's attachments and context, and keeps them when it does not start", async () => {

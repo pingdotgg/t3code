@@ -215,6 +215,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { threadContextAttachment } from "~/lib/threadContextAttachment";
+import { takeSideChatDraft } from "~/lib/sideChatPane";
 import {
   type ComposerCommandItem,
   ComposerCommandMenu,
@@ -2080,214 +2081,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   };
 
-  const { onUsageLimitsCommand } = props;
-  const onSelectComposerItem = (item: ComposerCommandItem) => {
-    if (composerSelectLockRef.current) return;
-    composerSelectLockRef.current = true;
-    window.requestAnimationFrame(() => {
-      composerSelectLockRef.current = false;
-    });
-    const { snapshot, trigger } = resolveActiveComposerTrigger();
-    if (!trigger) return;
-    if (item.type === "path") {
-      if (!isPathSuggestionCurrent(item.searchTarget, trigger, environmentId, gitCwd)) return;
-      const replacement = `${serializeComposerFileLink(item.path)} `;
-      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
-        snapshot.value,
-        trigger.rangeEnd,
-        replacement,
-      );
-      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
-        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
-      });
-      if (applied) {
-        setComposerHighlightedItemId(null);
-      }
-      return;
-    }
-    if (item.type === "slash-command") {
-      if (item.command === "model") {
-        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
-          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
-          focusEditorAfterReplace: false,
-        });
-        if (applied) {
-          setComposerHighlightedItemId(null);
-          setIsComposerModelPickerOpen(true);
-        }
-        return;
-      }
-      if (item.command === "clear") {
-        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
-          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
-        });
-        if (applied) {
-          setComposerHighlightedItemId(null);
-          props.onFreshSession?.();
-        }
-        return;
-      }
-      if (item.command === "side" || item.command === "btw") {
-        if (props.sideChatDisabledReason) return;
-        const applied = applyPromptReplacement(
-          trigger.rangeStart,
-          trigger.rangeEnd,
-          `/${item.command} `,
-          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
-        );
-        if (applied) setComposerHighlightedItemId(null);
-        return;
-      }
-      return;
-    }
-    if (item.type === "provider-slash-command") {
-      if (item.command.name === USAGE_LIMITS_COMMAND.name && onUsageLimitsCommand) {
-        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
-          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
-          focusEditorAfterReplace: false,
-        });
-        if (applied) {
-          setComposerHighlightedItemId(null);
-          onUsageLimitsCommand();
-        }
-        return;
-      }
-      const replacement = `/${item.command.name} `;
-      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
-        snapshot.value,
-        trigger.rangeEnd,
-        replacement,
-      );
-      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
-        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
-      });
-      if (applied) {
-        setComposerHighlightedItemId(null);
-      }
-      return;
-    }
-    if (item.type === "skill") {
-      const replacement = `$${item.skill.name} `;
-      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
-        snapshot.value,
-        trigger.rangeEnd,
-        replacement,
-      );
-      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
-        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
-      });
-      if (applied) {
-        setComposerHighlightedItemId(null);
-      }
-      return;
-    }
-    if (item.type === "pull-request") {
-      if (
-        trigger.kind !== "pull-request" ||
-        !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
-      ) {
-        return;
-      }
-      const comment = buildPullRequestReferenceContext(item.pullRequest);
-      const replacement = `${formatInlineContextReference(
-        reviewCommentContextReference(comment),
-      )} `;
-      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
-        snapshot.value,
-        trigger.rangeEnd,
-        replacement,
-      );
-      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
-        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
-      });
-      if (applied) {
-        addComposerDraftReviewComment(composerDraftTarget, comment, {
-          appendReference: false,
-        });
-        setComposerHighlightedItemId(null);
-      }
-      return;
-    }
-    if (item.type === "thread") {
-      if (trigger.kind !== "path") return;
-      const shell = readThreadShell(item.thread);
-      if (!shell) return;
-      const record = threadContextRecord(item.thread, shell.title);
-      const replacement = `${formatInlineContextReference(threadContextReference(record))} `;
-      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
-        snapshot.value,
-        trigger.rangeEnd,
-        replacement,
-      );
-      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
-        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
-      });
-      if (applied) {
-        addComposerDraftThreadContexts(attachmentDraftTarget, [record], {
-          appendReference: false,
-        });
-        setComposerHighlightedItemId(null);
-      }
-      return;
-    }
-    if (item.type === "model") {
-      if (trigger.kind !== "path") return;
-      const replacement = `${formatComposerModelMention(item.instanceId, item.model)} `;
-      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
-        snapshot.value,
-        trigger.rangeEnd,
-        replacement,
-      );
-      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
-        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
-      });
-      if (applied) {
-        setComposerHighlightedItemId(null);
-      }
-      return;
-    }
-    if (item.type === "environment") {
-      if (trigger.kind !== "path") return;
-      const record = environmentContextRecord(item.environmentId, item.label);
-      const replacement = `${formatInlineContextReference(environmentContextReference(record))} `;
-      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
-        snapshot.value,
-        trigger.rangeEnd,
-        replacement,
-      );
-      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
-        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
-      });
-      if (applied) {
-        addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
-          appendReference: false,
-        });
-        setComposerHighlightedItemId(null);
-      }
-      return;
-    }
-  };
-  const onSelectComposerItemStable = useStableCallback(onSelectComposerItem);
-
-  const onComposerMenuItemHighlighted = (itemId: string | null) => {
-    setComposerHighlightedItemId(itemId);
-    setComposerHighlightedSearchKey(composerMenuSearchKey);
-  };
-  const onComposerMenuItemHighlightedStable = useStableCallback(onComposerMenuItemHighlighted);
-
-  const nudgeComposerMenuHighlight = (key: "ArrowDown" | "ArrowUp") => {
-    if (composerMenuItems.length === 0) return;
-    const highlightedIndex = composerMenuItems.findIndex(
-      (item) => item.id === composerHighlightedItemId,
-    );
-    const normalizedIndex = highlightedIndex >= 0 ? highlightedIndex : key === "ArrowDown" ? -1 : 0;
-    const offset = key === "ArrowDown" ? 1 : -1;
-    const nextIndex =
-      (normalizedIndex + offset + composerMenuItems.length) % composerMenuItems.length;
-    const nextItem = composerMenuItems[nextIndex];
-    setComposerHighlightedItemId(nextItem?.id ?? null);
-  };
-
   const blurMobileComposerAfterSend = () => {
     if (!isSoftwareKeyboardOpen) return;
     if (composerBlurFrameRef.current !== null) {
@@ -2487,6 +2280,230 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
     },
   });
+
+  const { onUsageLimitsCommand } = props;
+  const onSelectComposerItem = (item: ComposerCommandItem) => {
+    if (composerSelectLockRef.current) return;
+    composerSelectLockRef.current = true;
+    window.requestAnimationFrame(() => {
+      composerSelectLockRef.current = false;
+    });
+    const { snapshot, trigger } = resolveActiveComposerTrigger();
+    if (!trigger) return;
+    if (item.type === "path") {
+      if (!isPathSuggestionCurrent(item.searchTarget, trigger, environmentId, gitCwd)) return;
+      const replacement = `${serializeComposerFileLink(item.path)} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "slash-command") {
+      if (item.command === "model") {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          focusEditorAfterReplace: false,
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          setIsComposerModelPickerOpen(true);
+        }
+        return;
+      }
+      if (item.command === "clear") {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          props.onFreshSession?.();
+        }
+        return;
+      }
+      if (item.command === "side" || item.command === "btw") {
+        if (props.sideChatDisabledReason) return;
+        const openImmediately =
+          !isEditingQueuedMessage &&
+          snapshot.value.slice(0, trigger.rangeStart).trim() === "" &&
+          snapshot.value.slice(trigger.rangeEnd).trim() === "";
+        const replacement = `/${item.command} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          {
+            expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+            focusEditorAfterReplace: !openImmediately,
+          },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          if (openImmediately) submitComposer();
+        }
+        return;
+      }
+      return;
+    }
+    if (item.type === "provider-slash-command") {
+      if (item.command.name === USAGE_LIMITS_COMMAND.name && onUsageLimitsCommand) {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          focusEditorAfterReplace: false,
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          onUsageLimitsCommand();
+        }
+        return;
+      }
+      const replacement = `/${item.command.name} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "skill") {
+      const replacement = `$${item.skill.name} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "pull-request") {
+      if (
+        trigger.kind !== "pull-request" ||
+        !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
+      ) {
+        return;
+      }
+      const comment = buildPullRequestReferenceContext(item.pullRequest);
+      const replacement = `${formatInlineContextReference(
+        reviewCommentContextReference(comment),
+      )} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        addComposerDraftReviewComment(composerDraftTarget, comment, {
+          appendReference: false,
+        });
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "thread") {
+      if (trigger.kind !== "path") return;
+      const shell = readThreadShell(item.thread);
+      if (!shell) return;
+      const record = threadContextRecord(item.thread, shell.title);
+      const replacement = `${formatInlineContextReference(threadContextReference(record))} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        addComposerDraftThreadContexts(attachmentDraftTarget, [record], {
+          appendReference: false,
+        });
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "model") {
+      if (trigger.kind !== "path") return;
+      const replacement = `${formatComposerModelMention(item.instanceId, item.model)} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "environment") {
+      if (trigger.kind !== "path") return;
+      const record = environmentContextRecord(item.environmentId, item.label);
+      const replacement = `${formatInlineContextReference(environmentContextReference(record))} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
+          appendReference: false,
+        });
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+  };
+  const onSelectComposerItemStable = useStableCallback(onSelectComposerItem);
+
+  const onComposerMenuItemHighlighted = (itemId: string | null) => {
+    setComposerHighlightedItemId(itemId);
+    setComposerHighlightedSearchKey(composerMenuSearchKey);
+  };
+  const onComposerMenuItemHighlightedStable = useStableCallback(onComposerMenuItemHighlighted);
+
+  const nudgeComposerMenuHighlight = (key: "ArrowDown" | "ArrowUp") => {
+    if (composerMenuItems.length === 0) return;
+    const highlightedIndex = composerMenuItems.findIndex(
+      (item) => item.id === composerHighlightedItemId,
+    );
+    const normalizedIndex = highlightedIndex >= 0 ? highlightedIndex : key === "ArrowDown" ? -1 : 0;
+    const offset = key === "ArrowDown" ? 1 : -1;
+    const nextIndex =
+      (normalizedIndex + offset + composerMenuItems.length) % composerMenuItems.length;
+    const nextItem = composerMenuItems[nextIndex];
+    setComposerHighlightedItemId(nextItem?.id ?? null);
+  };
   const handleSubmitMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     const running = phase === "running" || phase === "connecting";
@@ -2968,6 +2985,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return inserted;
   };
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new side chat's composer takes the parent's typing and focus in one frame
+  useEffect(() => {
+    if (!activeThreadId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const text = takeSideChatDraft(activeThreadId);
+      if (text === null) return;
+      if (text) insertComposerTextAtEndStable(text);
+      composerEditorRef.current?.focusAtEnd();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeThreadId, insertComposerTextAtEndStable]);
 
   const insertComposerFolders = async (
     folders: File[],

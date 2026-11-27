@@ -433,7 +433,10 @@ let projects: ReadonlyArray<OrchestrationProjectShell> = [project];
 let holdCommand: (command: OrchestrationV2Command) => boolean = () => false;
 let pendingDispatches: Array<{
   readonly command: OrchestrationV2Command;
-  readonly reply: Deferred.Deferred<never, OrchestrationV2DispatchCommandError>;
+  readonly reply: Deferred.Deferred<
+    { readonly sequence: number },
+    OrchestrationV2DispatchCommandError
+  >;
 }> = [];
 let pendingAssetUrls: Array<Deferred.Deferred<AssetCreateUrlResult>> = [];
 let sequence = 1;
@@ -452,32 +455,38 @@ const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>
     }),
   );
 
+const accept = (command: OrchestrationV2Command) =>
+  Effect.suspend(() => {
+    if (command.type !== "thread.fork" || !command.sideChat || shellSubscriber === null)
+      return Effect.succeed({ sequence: sequence + 1 });
+    const fork: FakeThread = {
+      id: command.targetThreadId,
+      title: command.title ?? "Side chat",
+      sideChatOf: command.sourceThreadId,
+      runs: [],
+      items: [],
+    };
+    threads = [...threads, fork];
+    sequence += 1;
+    return Queue.offer(shellSubscriber, {
+      kind: "thread.updated",
+      sequence,
+      location: "active",
+      thread: shellOf(fork),
+    }).pipe(Effect.as({ sequence }));
+  });
+
 const handlers: Record<string, (input: never) => unknown> = {
   // Recorded, and accepted only when the scenario asks, since a pending command holds every
   // later command on its thread. Accepted commands' events never arrive.
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
     Effect.suspend(() => {
       dispatched.push(command);
-      if (acceptCommands && !holdCommand(command)) {
-        if (command.type !== "thread.fork" || !command.sideChat || shellSubscriber === null)
-          return Effect.succeed({ sequence: sequence + 1 });
-        const fork: FakeThread = {
-          id: command.targetThreadId,
-          title: command.title ?? "Side chat",
-          sideChatOf: command.sourceThreadId,
-          runs: [],
-          items: [],
-        };
-        threads = [...threads, fork];
-        sequence += 1;
-        return Queue.offer(shellSubscriber, {
-          kind: "thread.updated",
-          sequence,
-          location: "active",
-          thread: shellOf(fork),
-        }).pipe(Effect.as({ sequence }));
-      }
-      const reply = Deferred.makeUnsafe<never, OrchestrationV2DispatchCommandError>();
+      if (acceptCommands && !holdCommand(command)) return accept(command);
+      const reply = Deferred.makeUnsafe<
+        { readonly sequence: number },
+        OrchestrationV2DispatchCommandError
+      >();
       pendingDispatches.push({ command, reply });
       return Deferred.await(reply);
     }),
@@ -611,7 +620,7 @@ export function installFakeEnvironment(
     readonly acceptCommands?: boolean;
     readonly keybindings?: ResolvedKeybindingsConfig;
     readonly extraProjects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "title">>;
-    /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
+    /** Commands left unanswered even when accepting, until `acceptPendingCommand` or `rejectPendingCommand`. */
     readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
     readonly providers?: ReadonlyArray<unknown>;
   },
@@ -696,6 +705,17 @@ export async function answerAssetUrls(): Promise<void> {
       Deferred.succeed(reply, { relativeUrl: "/api/assets/fake", expiresAt: 4_102_444_800_000 }),
     );
   }
+}
+
+/** Answers the oldest unanswered command as if the server accepted it. */
+export async function acceptPendingCommand(): Promise<void> {
+  const pending = pendingDispatches.shift();
+  if (!pending) throw new Error("No pending command");
+  await Effect.runPromise(
+    accept(pending.command).pipe(
+      Effect.flatMap((result) => Deferred.succeed(pending.reply, result)),
+    ),
+  );
 }
 
 /** Commands the app dispatched to the environment, oldest first. */
