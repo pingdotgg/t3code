@@ -199,11 +199,13 @@ it.each([
       </GTProvider>,
     );
 
+    const ageInput = (age: string) =>
+      Array.from(screen.container.querySelectorAll("input")).find((input) => input.value === age);
     const unitBesideAge = (age: string) =>
-      Array.from(screen.container.querySelectorAll("input")).find((input) => input.value === age)
-        ?.nextElementSibling?.textContent;
-    await expect.poll(() => unitBesideAge("1")).toBe(one);
-    expect(unitBesideAge("8")).toBe(other);
+      ageInput(age)?.closest("[data-slot=input-group]")?.textContent;
+    // One day is a preset here, so its singular shows in the rule's picker, not beside a field.
+    await expect.poll(() => unitBesideAge("8")).toBe(other);
+    await expect.poll(() => screen.container.textContent).toContain(`1 ${one}`);
   },
 );
 

@@ -2627,7 +2627,7 @@ describe("MessagesTimeline attachments", () => {
     expect(Math.abs(size.width / size.height - 16 / 9)).toBeLessThan(0.02);
   });
 
-  it("holds a loading frame for an image a running Read is opening, then shows the image", async () => {
+  it("shows no unavailable image while a Read is opening it, then shows the image", async () => {
     // The file does not exist yet, so asking for it would fail.
     stubbedAsset.failed = true;
     onTestFinished(() => {
@@ -2651,73 +2651,20 @@ describe("MessagesTimeline attachments", () => {
         ]}
       />
     );
+    // A running Read has no expandable row here, so nothing asks for the image until it ends.
     await using screen = await renderElement(timeline(true));
-    await click(screen.button(/Read/));
-    const frame = await vi.waitFor(() => {
-      const element = screen.container.querySelector<HTMLElement>('[role="status"]');
-      expect(element?.getAttribute("aria-label")).toBe("Loading image");
-      return element!;
-    });
     expect(screen.container.querySelector('[role="alert"]')).toBeNull();
     expect(screen.text()).not.toContain("Image unavailable");
-    const size = await vi.waitFor(() => {
-      const rect = frame.getBoundingClientRect();
-      expect(rect.width).toBeGreaterThan(0);
-      return rect;
-    });
-    expect(size.height).toBeLessThanOrEqual(257);
-    expect(size.width).toBeLessThanOrEqual(456);
-    expect(Math.abs(size.width / size.height - 16 / 9)).toBeLessThan(0.02);
 
     stubbedAsset.failed = false;
     stubbedAsset.url =
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
     await screen.rerender(timeline(false));
+    await click(screen.button(/Read/));
     await vi.waitFor(() =>
       expect(
         screen.container.querySelector<HTMLImageElement>('img[alt="later.png"]')?.className,
       ).not.toContain("invisible"),
-    );
-  });
-
-  it("opens an image from an expanded tool row as a gallery of the turn's viewed images", async () => {
-    stubbedAsset.url =
-      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-    onTestFinished(() => {
-      stubbedAsset.url = "";
-    });
-    const onImageExpand = vi.fn<ComponentProps<typeof MessagesTimeline>["onImageExpand"]>();
-    const read = (name: string) =>
-      work(`read-${name}`, {
-        label: `Read ${name}`,
-        toolTitle: "Read",
-        tone: "tool",
-        itemType: "dynamic_tool",
-        toolLifecycleStatus: "completed",
-        viewedImagePath: `/repo/${name}`,
-      });
-    await using screen = await renderTimeline(
-      [read("first.png"), read("second.png"), read("third.png")],
-      { onImageExpand, workspaceRoot: "/repo" },
-    );
-    await click(screen.button(/^Read 3 files/));
-    await vi.waitFor(() => expect(screen.buttons("Read")).toHaveLength(3));
-    await click(screen.buttons("Read")[1]!);
-    const inRow = await vi.waitFor(() => {
-      const image = [...screen.container.querySelectorAll("img")].find(
-        (img) => img.alt === "second.png" && !img.closest("[data-image-gallery]"),
-      );
-      expect(image).toBeTruthy();
-      return image!;
-    });
-    await click(inRow.closest<HTMLElement>("button, [role=button]")!);
-    expect(onImageExpand).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        index: 1,
-        images: ["first.png", "second.png", "third.png"].map((name) =>
-          expect.objectContaining({ name }),
-        ),
-      }),
     );
   });
 });

@@ -220,7 +220,7 @@ it("leaves J and K to floating layers, side chats, and IME while stepping inside
       </SheetPopup>
     </Sheet>,
   );
-  await expect.element(page.getByRole("dialog")).toBeVisible();
+  await expect.element(page.getByRole("dialog").first()).toBeVisible();
   page.getByRole("button", { name: "Next stop" }).element().focus();
   await userEvent.keyboard("j");
   await expect.element(page.getByText("Prose for the second stop.")).toBeVisible();

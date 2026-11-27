@@ -93,7 +93,7 @@ it("submits step 1 of the text generator wizard on Enter when Connect is enabled
     />,
   );
   await userEvent.click(page.getByRole("button", { name: "Add generator" }));
-  await userEvent.click(page.getByRole("radio", { name: "Custom" }));
+  await userEvent.click(page.getByRole("button", { name: "Custom", exact: true }));
 
   const baseUrl = page.getByLabelText("Base URL");
   await expect.element(page.getByRole("button", { name: "Connect" })).toBeDisabled();

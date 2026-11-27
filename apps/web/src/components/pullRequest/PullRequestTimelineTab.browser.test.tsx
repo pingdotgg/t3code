@@ -230,16 +230,10 @@ it("opens activity host links through the link-target setting", async () => {
       />
     </div>,
   );
-  await userEvent.click(screen.getByRole("button", { name: "Open activity on host" }));
+  // The rail links reviews to the host; its comments have no host button.
+  await userEvent.click(screen.getByRole("button", { name: "Open review on host" }));
   expect(linkState.useOpenLink).toHaveBeenCalledWith(threadRef);
   expect(linkState.openLink).toHaveBeenLastCalledWith(reviewUrl, {
-    event: expect.objectContaining({ metaKey: false, ctrlKey: false }),
-  });
-
-  await userEvent.click(screen.getByRole("button", { name: /1 comment/ }));
-  const buttons = screen.getByRole("button", { name: "Open activity on host" }).all();
-  await userEvent.click(buttons[1]!);
-  expect(linkState.openLink).toHaveBeenLastCalledWith(commentUrl, {
     event: expect.objectContaining({ metaKey: false, ctrlKey: false }),
   });
 });

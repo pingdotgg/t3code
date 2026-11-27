@@ -72,6 +72,7 @@ function TabVisit({ tabId, threadRef = threadA }: { tabId: string; threadRef?: S
 it("visits a layout tab only on screen and retains visits across render eviction", async () => {
   mocks.visitRun.mockReset().mockReturnValue(Effect.void);
   setShell(threadA, "2026-01-02T00:00:00.000Z");
+  using _focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
   using _timers = fakeTimers();
   vi.setSystemTime(NOW);
   useLayoutStore.setState({ layout: createLayoutState(), onScreenThreadKeys: new Set() });
@@ -107,6 +108,7 @@ it("sends one visit when a tab switches threads", async () => {
   mocks.visitRun.mockReset().mockReturnValue(Effect.void);
   setShell(threadA, "2026-01-02T00:00:00.000Z");
   setShell(threadB, "2026-01-03T00:00:00.000Z");
+  using _focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
   using _timers = fakeTimers();
   vi.setSystemTime(NOW);
   useLayoutStore.setState({

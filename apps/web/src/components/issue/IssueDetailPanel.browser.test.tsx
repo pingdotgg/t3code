@@ -112,11 +112,9 @@ describe("IssueDetailPanel", () => {
         threadRef={threadRef}
       />,
     );
-    const number = screen.getByRole("link", { name: "Open #7 on GitHub" });
-    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
-    (await number.element()).dispatchEvent(click);
+    // The key is a button here, so there is no link default for a popup to follow.
+    await userEvent.click(screen.getByRole("button", { name: "Open #7 on GitHub" }));
 
-    expect(click.defaultPrevented).toBe(true);
     expect(state.openLink).toHaveBeenCalledOnce();
     expect(state.openLink).toHaveBeenCalledWith(url, { event: expect.anything() });
   });
@@ -186,7 +184,7 @@ describe("IssueDetailPanel", () => {
     await using screen = await render(
       <IssueDetailPanel environmentId={"env-1" as never} reference={reference} />,
     );
-    await screen.getByRole("combobox", { name: "Change labels" }).click();
+    await screen.getByRole("button", { name: "Change labels" }).click();
     await userEvent.fill(page.getByRole("combobox", { name: "Search labels" }), " bug ");
 
     await expect.element(page.getByRole("option", { name: "bug" })).toBeInTheDocument();
@@ -198,7 +196,7 @@ describe("IssueDetailPanel", () => {
     await using screen = await render(
       <IssueDetailPanel environmentId={"env-1" as never} reference={reference} />,
     );
-    await screen.getByRole("combobox", { name: "Change assignees" }).click();
+    await screen.getByRole("button", { name: "Change assignees" }).click();
     await userEvent.fill(page.getByRole("combobox", { name: "Search people" }), " alice ");
 
     await expect.element(page.getByRole("option", { name: "alice" })).toBeInTheDocument();
