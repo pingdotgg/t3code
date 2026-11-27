@@ -805,6 +805,22 @@ describe("copying a table as CSV", () => {
     expect(html).toBe(`<meta charset="utf-8"><pre>${aligned}</pre>`);
   });
 
+  it("bounds rowspans by their row group and keeps empty rows while placing spans", () => {
+    const cell = (tag: string, text: string, attributes: Record<string, string> = {}) =>
+      new FakeElement(tag, [], attributes).append(new FakeText(text));
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(row(cell("TH", "A", { rowspan: "0" }), cell("TH", "B"))),
+      new FakeElement("TBODY").append(
+        row(cell("TD", "X", { rowspan: "2" }), cell("TD", "P", { rowspan: "2" })),
+        new FakeElement("TR"),
+        row(cell("TD", "Y"), cell("TD", "Z")),
+      ),
+    );
+
+    const { text } = serializeTableElementForChat(table as unknown as Element);
+    expect(text).toBe(["```", "A  B", "-  -", "X  P", "Y  Z", "```"].join("\n"));
+  });
+
   it("counts flag and keycap emoji as two columns, and plain digits as one", () => {
     const table = new FakeElement("TABLE").append(
       new FakeElement("THEAD").append(

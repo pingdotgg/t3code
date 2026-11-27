@@ -575,47 +575,51 @@ function padToWidth(text: string, width: number, align: string): string {
  * Slack show monospaced; rich targets (Teams, Slack) paste the HTML flavor as a code block.
  */
 export function serializeTableElementForChat(table: Element): MarkdownClipboardPayload {
-  const rows = [
-    ...table.querySelectorAll(
-      ":scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr, :scope > tr",
-    ),
-  ]
-    .map((row) =>
-      [...row.children].filter((cell) => cell.tagName === "TH" || cell.tagName === "TD"),
-    )
-    .filter((cells) => cells.length > 0);
-  if (rows.length === 0) return { text: "", html: "" };
   // Lay cells onto the grid the table renders, so values after a span stay under their headers.
-  const grid: Array<Array<{ text: string; cell: Element }>> = rows.map(() => []);
-  rows.forEach((cells, rowIndex) => {
-    const gridRow = grid[rowIndex]!;
-    let column = 0;
-    for (const cell of cells) {
-      while (gridRow[column]) column++;
-      const text = csvCellText(cell).replace(/\s+/g, " ").trim();
-      const colSpan = Math.max(1, tableCellSpan(cell, "colSpan", "colspan"));
-      // rowspan="0" runs to the end of its section; the last row is close enough here.
-      const rowSpan = tableCellSpan(cell, "rowSpan", "rowspan") || rows.length - rowIndex;
-      for (let down = 0; down < rowSpan && rowIndex + down < rows.length; down++) {
-        for (let across = 0; across < colSpan; across++) {
-          grid[rowIndex + down]![column + across] = {
-            text: down === 0 && across === 0 ? text : "",
-            cell,
-          };
+  // As in the HTML table model, a row group bounds every rowspan and an empty row still takes a row.
+  const groups = [
+    table,
+    ...table.querySelectorAll(":scope > thead, :scope > tbody, :scope > tfoot"),
+  ].map((group) => [...group.children].filter((child) => child.tagName === "TR"));
+  const grid: Array<{ slots: Array<{ text: string; cell: Element }>; hasCells: boolean }> = [];
+  for (const groupRows of groups) {
+    const start = grid.length;
+    for (const _ of groupRows) grid.push({ slots: [], hasCells: false });
+    groupRows.forEach((row, offset) => {
+      const gridRow = grid[start + offset]!;
+      let column = 0;
+      for (const cell of row.children) {
+        if (cell.tagName !== "TH" && cell.tagName !== "TD") continue;
+        gridRow.hasCells = true;
+        while (gridRow.slots[column]) column++;
+        const text = csvCellText(cell).replace(/\s+/g, " ").trim();
+        const colSpan = Math.max(1, tableCellSpan(cell, "colSpan", "colspan"));
+        const remaining = groupRows.length - offset;
+        // rowspan="0" runs to the end of its row group.
+        const rowSpan = Math.min(tableCellSpan(cell, "rowSpan", "rowspan") || remaining, remaining);
+        for (let down = 0; down < rowSpan; down++) {
+          for (let across = 0; across < colSpan; across++) {
+            grid[start + offset + down]!.slots[column + across] = {
+              text: down === 0 && across === 0 ? text : "",
+              cell,
+            };
+          }
         }
+        column += colSpan;
       }
-      column += colSpan;
-    }
-  });
-  const columns = Math.max(...grid.map((gridRow) => gridRow.length));
-  const texts = grid.map((gridRow) =>
+    });
+  }
+  const rows = grid.filter((gridRow) => gridRow.hasCells).map((gridRow) => gridRow.slots);
+  if (rows.length === 0) return { text: "", html: "" };
+  const columns = Math.max(...rows.map((gridRow) => gridRow.length));
+  const texts = rows.map((gridRow) =>
     Array.from({ length: columns }, (_, column) => gridRow[column]?.text ?? ""),
   );
   const widths = Array.from({ length: columns }, (_, column) =>
     Math.max(1, ...texts.map((cells) => monospaceWidth(cells[column] ?? ""))),
   );
   const aligns = widths.map((_, column) => {
-    const header = grid[0]?.[column]?.cell as HTMLElement | undefined;
+    const header = rows[0]?.[column]?.cell as HTMLElement | undefined;
     return header?.style?.textAlign || header?.getAttribute("align") || "";
   });
   const line = (cells: string[]) =>
