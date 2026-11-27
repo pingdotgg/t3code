@@ -693,12 +693,26 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     Option.isNone(replacement.upgradeTo),
   );
 
+  const sessionClosed = Effect.fnUntraced(function* (session: RpcSession.RpcSession) {
+    const probe = yield* session.closed.pipe(
+      Effect.exit,
+      Effect.forkChild({ startImmediately: true, uninterruptible: false }),
+    );
+    const closed = probe.pollUnsafe() !== undefined;
+    if (!closed) yield* Fiber.interrupt(probe);
+    return closed;
+  });
+
   const takeHandoff = Effect.gen(function* () {
     const taken = yield* Ref.getAndSet(pendingReplacement, Option.none());
     if (Option.isNone(taken)) return Option.none<Handoff>();
     const replacement = taken.value;
     const exit = replacement.fiber.pollUnsafe();
     if (exit !== undefined && Exit.isSuccess(exit)) {
+      if (yield* sessionClosed(exit.value.lease.session)) {
+        yield* closeReplacement(replacement);
+        return Option.none<Handoff>();
+      }
       return Option.some<Handoff>({ replacement, ready: Option.some(exit.value) });
     }
     if (exit !== undefined || (yield* replacementExpired(replacement))) {
@@ -758,14 +772,21 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     function* (generation: number, upgradeTo: Option.Option<string>, live?: ConnectedLease) {
       const pending = yield* Ref.get(pendingReplacement);
       if (Option.isSome(pending)) {
-        if (!(yield* replacementExpired(pending.value))) return;
+        const pendingExit = pending.value.fiber.pollUnsafe();
+        const pendingClosed =
+          pendingExit !== undefined &&
+          Exit.isSuccess(pendingExit) &&
+          (yield* sessionClosed(pendingExit.value.lease.session));
+        if (!pendingClosed && !(yield* replacementExpired(pending.value))) return;
         yield* discardReplacement();
         // A better route that answered its check but stalled waits like one
         // that failed, instead of a new stalled connection every minute.
-        const stalledUpgrade = pending.value.upgradeTo;
-        if (Option.isSome(stalledUpgrade)) {
-          yield* coolDownRoute(stalledUpgrade.value);
-          if (Option.contains(upgradeTo, stalledUpgrade.value)) return;
+        if (!pendingClosed) {
+          const stalledUpgrade = pending.value.upgradeTo;
+          if (Option.isSome(stalledUpgrade)) {
+            yield* coolDownRoute(stalledUpgrade.value);
+            if (Option.contains(upgradeTo, stalledUpgrade.value)) return;
+          }
         }
       }
       const startedAt = yield* Clock.monotonicTimeNanos;
@@ -896,11 +917,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         yield* discardSuspectReplacement;
         return undefined;
       }
-      // One on a worse route waits as the fallback in case the socket is dead.
       const exit = next.replacement.fiber.pollUnsafe();
-      if (Option.isNone(next.replacement.upgradeTo) && exit !== undefined && Exit.isSuccess(exit)) {
-        const rank = yield* routeRank(connectionRouteId(exit.value.lease.prepared.target));
-        if (rank > (yield* routeIndex(lease))) return undefined;
+      if (exit !== undefined && Exit.isSuccess(exit)) {
+        if (yield* sessionClosed(exit.value.lease.session)) {
+          if (Option.isSome(next.replacement.upgradeTo)) {
+            yield* coolDownRoute(next.replacement.upgradeTo.value);
+          }
+          yield* discardReplacement((current) => current === next.replacement);
+          return undefined;
+        }
+        // One on a worse route waits as the fallback in case the socket is dead.
+        if (Option.isNone(next.replacement.upgradeTo)) {
+          const rank = yield* routeRank(connectionRouteId(exit.value.lease.prepared.target));
+          if (rank > (yield* routeIndex(lease))) return undefined;
+        }
       }
       return "replace";
     }

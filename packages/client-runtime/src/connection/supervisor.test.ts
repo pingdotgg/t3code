@@ -348,6 +348,16 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
         sequence: event.sequence + 1,
         reason,
       })),
+    closeSession: Effect.fn("TestConnectionHarness.closeSession")(function* (
+      attempt: number,
+      exit: Exit.Exit<never, ConnectionTransientError> = Exit.fail(transient("Session closed.")),
+    ) {
+      const sessions = yield* Ref.get(closedSessions);
+      const target = sessions[attempt - 1];
+      if (target) {
+        yield* Deferred.done(target, exit);
+      }
+    }),
     closeLatestSession: Effect.fn("TestConnectionHarness.closeLatestSession")(function* (
       exit: Exit.Exit<never, ConnectionTransientError> = Exit.fail(transient("Session closed.")),
     ) {
@@ -3164,6 +3174,77 @@ describe("EnvironmentSupervisor routes", () => {
       );
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
       expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("skips a closed relay fallback when the LAN socket drops", () =>
+    Effect.gen(function* () {
+      const lanReachable = yield* Ref.make(true);
+      const fallbackReady = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Ref.get(lanReachable).pipe(
+                Effect.map((reachable) => (reachable ? "answered" : "silent")),
+              )
+            : Effect.succeed("unchecked"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        ready: (attempt) =>
+          attempt === 2
+            ? Deferred.succeed(fallbackReady, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "BearerConnectionTarget",
+      );
+
+      yield* Ref.set(lanReachable, false);
+      yield* harness.wake("network-changed");
+      yield* Deferred.await(fallbackReady);
+      yield* Effect.yieldNow;
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+
+      const publishedSessions = yield* Ref.make<ReadonlyArray<RpcSession.RpcSession>>([]);
+      yield* SubscriptionRef.changes(supervisor.session).pipe(
+        Stream.runForEach((session) =>
+          Option.isSome(session)
+            ? Ref.update(publishedSessions, (all) => [...all, session.value])
+            : Effect.void,
+        ),
+        Effect.forkChild({ startImmediately: true }),
+      );
+
+      yield* harness.closeSession(2);
+      yield* harness.closeSession(1);
+      yield* TestClock.adjust("1 second");
+
+      const reconnected = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation >= 2,
+      );
+      yield* Effect.yieldNow;
+
+      expect(reconnected.generation).toBe(2);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(3);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(2);
+      // Only the initial LAN session and the fresh reconnect are ever published.
+      expect((yield* Ref.get(publishedSessions)).length).toBe(2);
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
