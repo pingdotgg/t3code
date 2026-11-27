@@ -30,6 +30,7 @@ import {
   parseWslRuntimeArchiveMembers,
   readWorkspaceConfig,
   createBuildConfig,
+  createStagePatchedDependencies,
   DESKTOP_FILE_EXCLUSIONS,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
@@ -687,6 +688,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         },
         arch: "arm64",
         fffNodeVersion: "0.9.4",
+        electronWebAuthnMacosVersion: "1.3.1",
       }),
       {
         "@cursor/sdk": "1.0.22",
@@ -695,6 +697,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "@napi-rs/keyring": "1.3.0",
         "playwright-core": "1.60.0",
         "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
+        "@electron-webauthn/macos": "1.3.1",
       },
     );
 
@@ -705,6 +708,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         desktopDependencies: { "@crowecawcaw/xa11y": "0.13.0" },
         arch: "x64",
         fffNodeVersion: "0.9.4",
+        electronWebAuthnMacosVersion: "1.3.1",
       }),
       {
         "@ff-labs/fff-node": "0.9.4",
@@ -713,6 +717,24 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "@ff-labs/fff-bin-linux-x64-gnu": "0.9.4",
         "@ff-labs/fff-bin-linux-x64-musl": "0.9.4",
       },
+    );
+
+    // @electron-webauthn/macos is only a transitive optional dependency of electron-webauthn.
+    assert.deepStrictEqual(
+      createStagePatchedDependencies(
+        {
+          "@electron-webauthn/macos@1.3.1": "patches/@electron-webauthn__macos@1.3.1.patch",
+        },
+        resolveMergedStageDependencies({
+          platform: "mac",
+          serverDependencies: {},
+          desktopDependencies: { "electron-webauthn": "1.3.1" },
+          arch: "universal",
+          fffNodeVersion: "0.9.4",
+          electronWebAuthnMacosVersion: "1.3.1",
+        }),
+      ),
+      { "@electron-webauthn/macos@1.3.1": "patches/@electron-webauthn__macos@1.3.1.patch" },
     );
   });
 
