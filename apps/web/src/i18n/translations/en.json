@@ -1578,6 +1578,8 @@
   "737d3c6bec93f9e6": "Choose files for the page",
   "e6a3fa7cfc14f86a": "Browser dialog",
   "61a552a67e9e3eac": "Dialog response",
+  "cb5c27218e96e407": "Username",
+  "182a659d70f8ea72": "Password",
   "3d000b56e95f3150": "Release control",
   "0633c3bcdcb95b2f": "Take control",
   "b8ba763621bcdd70": "The server's browser loaded this page but is not drawing it. Try reloading, or open the page in a browser on this computer.",
@@ -13047,5 +13049,7 @@
   "0eceb5780908eb6c": "Read aloud",
   "3ee98da81538c6de": "Could not play narration.",
   "95435f0b59cb2193": "Audio preview",
-  "4a12506938295127": "Enter the {field} first."
+  "4a12506938295127": "Enter the {field} first.",
+  "5807c08e225c6b3d": "Download",
+  "0d50b5bfe7151ece": "Could not download file"
 }
