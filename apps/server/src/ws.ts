@@ -2342,7 +2342,8 @@ export const layerWsRpc = (
                 if (
                   Option.isSome(projectionStoreOption) &&
                   (effectiveCommand.type === "queued-run.start" ||
-                    effectiveCommand.type === "message.dispatch")
+                    effectiveCommand.type === "message.dispatch") &&
+                  (yield* teamService.isTeamConfigured())
                 ) {
                   if (
                     effectiveCommand.type === "message.dispatch" &&

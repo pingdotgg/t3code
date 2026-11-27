@@ -219,6 +219,7 @@ export function CollapsedComposerStopAction({
   children,
   canOperateThread,
   canInterrupt,
+  isExplicitAdminInterrupt = false,
   runId,
   hasSendableContent,
   isEditingQueuedMessage,
@@ -227,12 +228,17 @@ export function CollapsedComposerStopAction({
   children: ReactNode;
   canOperateThread: boolean;
   canInterrupt: boolean;
+  isExplicitAdminInterrupt?: boolean;
   runId: string | null;
   hasSendableContent: boolean;
   isEditingQueuedMessage: boolean;
   onInterrupt: () => void;
 }) {
-  const [stopPhase, setStopPhase] = useStopPhase({ runId, canInterrupt, canOperateThread });
+  const [stopPhase, setStopPhase] = useStopPhase({
+    runId,
+    canInterrupt,
+    canOperateThread: canOperateThread || isExplicitAdminInterrupt,
+  });
   if (
     !(canInterrupt || stopPhase === "pending" || stopPhase === "timedOut") ||
     hasSendableContent ||
@@ -250,6 +256,7 @@ export function CollapsedComposerStopAction({
         stopPhase={stopPhase}
         canOperateThread={canOperateThread}
         insidePendingAction={false}
+        isExplicitAdminInterrupt={isExplicitAdminInterrupt}
         preserveComposerFocusOnPointerDown
         onStopRequested={() => setStopPhase("pending")}
         onInterrupt={onInterrupt}

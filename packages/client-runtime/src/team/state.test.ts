@@ -1638,6 +1638,40 @@ describe("team client-runtime state and presentation", () => {
       }),
     ).toEqual({ canInterrupt: false, isExplicitAdminInterrupt: false });
 
+    // On a locked member-owned thread before turnAttributed lands, the locked-out regular creator
+    // must fail closed for interrupt and runtime-request controls (no speculative creator fallback).
+    const lockedMemberThreadId = ThreadId.make("thread-m8-locked-member");
+    const lockedMemberState = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "threadAttributed",
+      payload: {
+        threadId: lockedMemberThreadId,
+        teamId,
+        ownerKind: "member",
+        creatorMemberId: state.currentMember!.id,
+        creatorPseudo: state.currentMember!.pseudo,
+        teamDisplayName: "Ops Bot",
+        viewId,
+        locked: true,
+        lockedByMemberId: alice.id,
+        executionEnvironmentId: envId,
+        executionEnvironmentLabel: "Main Server",
+        isLocalSynced: false,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    expect(
+      resolveTeamThreadTurnControls({
+        teamState: lockedMemberState,
+        threadId: lockedMemberThreadId,
+        activeRunId: "run-unattributed-locked",
+      }),
+    ).toMatchObject({
+      canInterrupt: false,
+      canRespondToRuntimeRequest: false,
+      isExplicitAdminInterrupt: false,
+    });
+
     // Scheduled task RBAC for modo: can create & mutate minimal task, cannot configure privileged or mutate elevated task.
     expect(canCurrentMemberCreateTeamScheduledTask(state, envId)).toBe(true);
     expect(canCurrentMemberConfigurePrivilegedTeamScheduledTask(state)).toBe(false);

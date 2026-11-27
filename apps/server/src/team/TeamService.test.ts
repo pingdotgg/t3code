@@ -2119,6 +2119,102 @@ describe("TeamService", () => {
         });
         expect(bobQueueRes.notifiedMemberIds).toEqual([eve.member.id]);
 
+        // Concurrent duplicate notifications for the same queuedRunId emit only once (no TOCTOU race).
+        const [raceA, raceB] = yield* Effect.all(
+          [
+            team.notifyQueuedMessage({
+              actor: { kind: "session", sessionId: charlie.sessionId },
+              threadId: bobThreadId,
+              queuedRunId: "run-m4-concurrent-dedup",
+              commandId: "cmd-m4-concurrent-dedup",
+              activeRunId: eveActiveRunId,
+              messageText: "Concurrent test",
+            }),
+            team.notifyQueuedMessage({
+              actor: { kind: "session", sessionId: charlie.sessionId },
+              threadId: bobThreadId,
+              queuedRunId: "run-m4-concurrent-dedup",
+              commandId: "cmd-m4-concurrent-dedup",
+              activeRunId: eveActiveRunId,
+              messageText: "Concurrent test",
+            }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect([raceA.notifiedMemberIds.length, raceB.notifiedMemberIds.length].toSorted()).toEqual(
+          [0, 2],
+        );
+
+        // If Eve's active run completes and Charlie's queued run advances to running before notification
+        // processing, supplying the captured activeRunId still resolves Eve (not Charlie).
+        yield* sql`
+          UPDATE orchestration_v2_projection_runs
+          SET status = 'completed'
+          WHERE run_id = ${eveActiveRunId}
+        `;
+        const charliePromotedRunId = "run-m4-charlie-promoted";
+        yield* team.recordTurnAuthored({
+          sessionId: charlie.sessionId,
+          threadId: bobThreadId,
+          turnId: charliePromotedRunId,
+        });
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runs (
+            run_id, thread_id, ordinal, provider, provider_thread_id,
+            status, requested_at, completed_at, payload_json
+          ) VALUES (
+            ${charliePromotedRunId},
+            ${bobThreadId},
+            101,
+            'codex',
+            NULL,
+            'running',
+            '2026-01-01T00:02:00.000Z',
+            NULL,
+            ${JSON.stringify({ id: charliePromotedRunId, threadId: bobThreadId, status: "running", userMessageId: "msg-charlie-promoted" })}
+          )
+        `;
+        const capturedActiveRunRes = yield* team.notifyQueuedMessage({
+          actor: { kind: "session", sessionId: charlie.sessionId },
+          threadId: bobThreadId,
+          queuedRunId: charliePromotedRunId,
+          activeRunId: eveActiveRunId,
+          messageText: "Queued before Eve finished",
+        });
+        expect(capturedActiveRunRes.notifiedMemberIds).toEqual([bob.member.id, eve.member.id]);
+
+        // Idle thread (no active run in projection and no captured activeRunId) notifies nobody.
+        yield* sql`
+          UPDATE orchestration_v2_projection_runs
+          SET status = 'completed'
+          WHERE thread_id = ${bobThreadId}
+        `;
+        const idleQueueRes = yield* team.notifyQueuedMessage({
+          actor: { kind: "session", sessionId: charlie.sessionId },
+          threadId: bobThreadId,
+          queuedRunId: "run-m4-idle-thread",
+          messageText: "Should not notify on idle thread",
+        });
+        expect(idleQueueRes.notifiedMemberIds).toEqual([]);
+
+        // Suspended candidate recipient is excluded even when named as active turn author.
+        yield* team.updateMemberStatus({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: eve.member.id, status: "suspended" },
+        });
+        const suspendedActiveRes = yield* team.notifyQueuedMessage({
+          actor: { kind: "session", sessionId: charlie.sessionId },
+          threadId: bobThreadId,
+          queuedRunId: "run-m4-eve-suspended",
+          activeRunId: eveActiveRunId,
+          messageText: "Eve suspended",
+        });
+        expect(suspendedActiveRes.notifiedMemberIds).toEqual([bob.member.id]);
+        yield* team.updateMemberStatus({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: eve.member.id, status: "active" },
+        });
+
         yield* Fiber.interrupt(bobFiber);
         yield* Fiber.interrupt(eveFiber);
         yield* Fiber.interrupt(charlieFiber);

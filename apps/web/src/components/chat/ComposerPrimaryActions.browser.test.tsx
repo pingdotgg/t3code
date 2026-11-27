@@ -195,6 +195,27 @@ it("swaps the collapsed composer's send button for Stop while a turn can be stop
   await expect.element(screen.getByRole("button", { name: "Send message" })).toBeVisible();
 });
 
+it("keeps CollapsedComposerStopAction clickable for explicit admin/modo interrupt when read-only", async () => {
+  const onInterrupt = vi.fn();
+  await using screen = await render(
+    <CollapsedComposerStopAction
+      canOperateThread={false}
+      canInterrupt
+      isExplicitAdminInterrupt
+      runId="run-ro"
+      hasSendableContent={false}
+      isEditingQueuedMessage={false}
+      onInterrupt={onInterrupt}
+    >
+      <button type="button">Send message</button>
+    </CollapsedComposerStopAction>,
+  );
+  const interruptBtn = screen.getByTestId("team-admin-interrupt-button");
+  await expect.element(interruptBtn).toBeEnabled();
+  await act(() => (interruptBtn.element() as HTMLButtonElement).click());
+  expect(onInterrupt).toHaveBeenCalledTimes(1);
+});
+
 it("shows explicit Interrupt button for owner/admin/modo on an unlocked foreign active turn even while drafting or read-only, and hides stop when canInterrupt is false", async () => {
   const props = setup();
   await using screen = await render(

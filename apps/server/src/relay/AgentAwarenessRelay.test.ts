@@ -1452,14 +1452,103 @@ describe("AgentAwarenessRelay team notification gating", () => {
         yield* Effect.yieldNow;
         yield* relay.drain;
 
-        assert.equal(publications.length, 1);
-        assert.include(publications[0]?.state, {
+        assert.equal(publications.length, 3);
+        assert.deepEqual(
+          publications.map((entry) => entry.state?.phase),
+          ["running", "waiting_for_input", "running"],
+        );
+        assert.include(publications[1]?.state, {
           threadId: THREAD_ID,
-          threadTitle: "alice: Release prep",
+          threadTitle: "bob queued a message · alice: Release prep",
           phase: "waiting_for_input",
           headline: "bob queued a message",
           detail: "Wait for green CI",
         });
+        assert.equal(publications[2]?.state?.threadTitle, "alice: Release prep");
+
+        // A second distinct queued message re-transitions running -> waiting_for_input -> running
+        // so upstream APNs/FCM transition-based alerts fire for every new queued message.
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: THREAD_ID,
+          queuedRunId: "run-queued-2",
+          senderMemberId: null,
+          senderPseudo: "charlie",
+          recipientMemberIds: [],
+          messagePreview: "Also check migrations",
+          createdAt: "2026-04-06T12:03:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        assert.equal(publications.length, 5);
+        assert.deepEqual(
+          publications.slice(3).map((entry) => entry.state?.phase),
+          ["waiting_for_input", "running"],
+        );
+        assert.include(publications[3]?.state, {
+          threadTitle: "charlie queued a message · alice: Release prep",
+          headline: "charlie queued a message",
+          detail: "Also check migrations",
+        });
+
+        // A subsequent thread publish while still running is a no-op because the running state was restored.
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications.length, 5);
+      }),
+  );
+
+  it.effect(
+    "does not clobber waiting_for_approval or trigger duplicate approval alerts when a message is queued",
+    () =>
+      Effect.gen(function* () {
+        const triggers = yield* PubSub.unbounded<TeamService.TeamNotificationTriggerEvent>();
+        const teamService = {
+          shouldPublishRelayNotificationForThread: () => Effect.succeed(true),
+          shouldPublishRelayQueuedMessageNotification: () => Effect.succeed(true),
+          formatUpstreamCompatThreadTitle: (_threadId: ThreadId, title: string) =>
+            Effect.succeed(`alice: ${title}`),
+          subscribeNotificationEvents: () => Stream.fromPubSub(triggers),
+        } as unknown as TeamService.TeamService["Service"];
+
+        const waitingShell = shell({
+          status: "waiting",
+          title: "Deploy prod",
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("req-approval-1"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe(NOW),
+          },
+        });
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: () => Effect.succeed(waitingShell),
+          teamService,
+        });
+
+        yield* relay.start();
+        yield* Effect.yieldNow;
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications.length, 1);
+        assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+
+        // Interleave a queued-message trigger with a normal thread publish (such as run.created).
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: THREAD_ID,
+          queuedRunId: "run-queued-during-approval",
+          senderMemberId: null,
+          senderPseudo: "bob",
+          recipientMemberIds: [],
+          messagePreview: "Wait for me",
+          createdAt: "2026-04-06T12:01:00.000Z",
+        });
+        yield* relay.publishThread(THREAD_ID);
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        // Neither waiting_for_input overwrite nor duplicate waiting_for_approval alert is published.
+        assert.equal(publications.length, 1);
+        assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
       }),
   );
 });

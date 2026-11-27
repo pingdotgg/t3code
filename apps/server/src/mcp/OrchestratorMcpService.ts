@@ -4104,7 +4104,10 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         turnId: result.run.id,
       });
-      if (result.run.status === "queued" || result.delivery === "queued") {
+      if (
+        result.dispatch?.replayed !== true &&
+        (result.run.status === "queued" || result.delivery === "queued")
+      ) {
         yield* TeamMcpAccess.notifyQueuedMessageByCaller({
           threadId: input.threadId,
           queuedRunId: result.run.id,

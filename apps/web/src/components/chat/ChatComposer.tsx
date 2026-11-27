@@ -3823,6 +3823,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   key={`${environmentId}:${activeThreadId ?? "new"}`}
                   canOperateThread={canOperateThread}
                   canInterrupt={canInterrupt}
+                  isExplicitAdminInterrupt={isExplicitAdminInterrupt}
                   runId={activeThread?.runtime?.activeRunId ?? null}
                   hasSendableContent={hasMessageToSend}
                   isEditingQueuedMessage={isEditingQueuedMessage}

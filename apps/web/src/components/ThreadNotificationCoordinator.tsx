@@ -528,11 +528,21 @@ export function startThreadNotifications(
       environmentThreadShells.delegatedUnderParentAtom,
       reobserve,
     );
+    const MAX_SEEN_QUEUED_RUN_IDS = 1_000;
     const seenQueuedRunIds = new Set<string>();
+    const rememberSeenQueuedRunId = (queuedRunId: string) => {
+      seenQueuedRunIds.delete(queuedRunId);
+      seenQueuedRunIds.add(queuedRunId);
+      while (seenQueuedRunIds.size > MAX_SEEN_QUEUED_RUN_IDS) {
+        const oldest = seenQueuedRunIds.values().next().value;
+        if (oldest === undefined) break;
+        seenQueuedRunIds.delete(oldest);
+      }
+    };
     const initialTeamState = readTeamEnvironmentStateFromRegistry(registry, environmentId);
     if (initialTeamState !== null) {
       for (const item of initialTeamState.queuedMessageNotifications) {
-        seenQueuedRunIds.add(item.queuedRunId);
+        rememberSeenQueuedRunId(item.queuedRunId);
       }
     }
     const unsubscribeTeam = registry.subscribe(teamEnvironment.state(environmentId), () => {
@@ -546,7 +556,7 @@ export function startThreadNotifications(
         const currentMemberId = teamState.currentMember.id;
         for (const item of teamState.queuedMessageNotifications) {
           if (seenQueuedRunIds.has(item.queuedRunId)) continue;
-          seenQueuedRunIds.add(item.queuedRunId);
+          rememberSeenQueuedRunId(item.queuedRunId);
           if (item.senderMemberId === currentMemberId) continue;
           if (!item.recipientMemberIds.includes(currentMemberId)) continue;
           const rawThreadTitle =

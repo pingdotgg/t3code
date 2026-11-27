@@ -517,7 +517,11 @@ export function canCurrentMemberInterruptThread(input: {
     userMessageId: activeUserMessageId,
   });
   const activeTurnAuthorMemberId: TeamMemberId | null =
-    activeTurn !== undefined ? activeTurn.authorMemberId : attribution.creatorMemberId;
+    activeTurn !== undefined
+      ? activeTurn.authorMemberId
+      : attribution.locked
+        ? null
+        : attribution.creatorMemberId;
   const canInterrupt = canMemberInterruptTeamTurn({
     member,
     attribution,
@@ -552,7 +556,11 @@ function canCurrentMemberRespondToRuntimeRequest(input: {
     userMessageId: activeUserMessageId,
   });
   const activeTurnAuthorMemberId: TeamMemberId | null =
-    activeTurn !== undefined ? activeTurn.authorMemberId : attribution.creatorMemberId;
+    activeTurn !== undefined
+      ? activeTurn.authorMemberId
+      : attribution.locked
+        ? null
+        : attribution.creatorMemberId;
   return canMemberRespondToTeamRuntimeRequest({
     member,
     attribution,

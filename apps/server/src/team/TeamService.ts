@@ -1115,6 +1115,7 @@ const make = Effect.gen(function* () {
     }
   };
   const noteStateLock = yield* Semaphore.make(1);
+  const notifyQueuedMessageLock = yield* Semaphore.make(1);
   const MAX_REMOTE_PAIRING_PERMITS = 1024;
   // Shared (1 permit) for remote pairing issuance, exclusive (all permits) for ACL/member/detach
   // revocations so in-flight pairing calls finish before revokeSubject/unlink run.
@@ -4173,132 +4174,153 @@ const make = Effect.gen(function* () {
     readonly activeRunId?: string | null;
     readonly messageText?: string | null;
   }) {
-    const empty = { notifiedMemberIds: [] as ReadonlyArray<TeamMemberId> };
-    const queuedRunId = input.queuedRunId.trim();
-    if (queuedRunId.length === 0) return empty;
-    const runKey = `run:${queuedRunId}`;
-    const commandId = input.commandId?.trim() || undefined;
-    const cmdKey = commandId !== undefined ? `cmd:${commandId}` : null;
-    if (
-      notifiedQueuedRunKeys.has(runKey) ||
-      (cmdKey !== null && notifiedQueuedRunKeys.has(cmdKey))
-    ) {
-      return empty;
-    }
+    return yield* notifyQueuedMessageLock.withPermits(1)(
+      Effect.gen(function* () {
+        const empty = { notifiedMemberIds: [] as ReadonlyArray<TeamMemberId> };
+        const queuedRunId = input.queuedRunId.trim();
+        if (queuedRunId.length === 0) return empty;
+        const runKey = `run:${queuedRunId}`;
+        const commandId = input.commandId?.trim() || undefined;
+        const cmdKey = commandId !== undefined ? `cmd:${commandId}` : null;
+        if (
+          notifiedQueuedRunKeys.has(runKey) ||
+          (cmdKey !== null && notifiedQueuedRunKeys.has(cmdKey))
+        ) {
+          return empty;
+        }
 
-    const workspaceOption = yield* repository
-      .getWorkspace()
-      .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
-    if (Option.isNone(workspaceOption)) return empty;
-    const workspace = workspaceOption.value;
+        const workspaceOption = yield* repository
+          .getWorkspace()
+          .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+        if (Option.isNone(workspaceOption)) return empty;
+        const workspace = workspaceOption.value;
 
-    const attributionOption = yield* repository
-      .getThreadAttribution(input.threadId)
-      .pipe(Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()));
-    if (Option.isNone(attributionOption) || attributionOption.value.teamId !== workspace.id) {
-      return empty;
-    }
-    const attribution = attributionOption.value;
+        const attributionOption = yield* repository
+          .getThreadAttribution(input.threadId)
+          .pipe(Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()));
+        if (Option.isNone(attributionOption) || attributionOption.value.teamId !== workspace.id) {
+          return empty;
+        }
+        const attribution = attributionOption.value;
 
-    // Only notify when a turn is currently running on this thread (mid-turn queue).
-    const activeRunOption = yield* repository
-      .getActiveRunInProjection(input.threadId)
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    if (Option.isNone(activeRunOption) && !input.activeRunId) {
-      return empty;
-    }
+        // Only notify when a turn was active when the message was queued. Prefer the run captured
+        // at acceptance time so a fast turn finish cannot attribute recipients to the next run.
+        const suppliedActiveRunId = input.activeRunId?.trim() || null;
+        const effectiveSuppliedActiveRunId =
+          suppliedActiveRunId !== null && suppliedActiveRunId !== queuedRunId
+            ? suppliedActiveRunId
+            : null;
+        const activeRunOption =
+          effectiveSuppliedActiveRunId !== null
+            ? Option.none()
+            : yield* repository
+                .getActiveRunInProjection(input.threadId)
+                .pipe(Effect.orElseSucceed(() => Option.none()));
+        const resolvedActiveRun =
+          Option.isSome(activeRunOption) && activeRunOption.value.runId !== queuedRunId
+            ? activeRunOption.value
+            : null;
+        if (effectiveSuppliedActiveRunId === null && resolvedActiveRun === null) {
+          return empty;
+        }
 
-    const activeTurnAuthorOption = Option.isSome(activeRunOption)
-      ? yield* resolveTurnAuthorMemberId({
-          threadId: input.threadId,
-          runId: activeRunOption.value.runId,
-          userMessageId: activeRunOption.value.userMessageId,
-        })
-      : yield* resolveTurnAuthorMemberId({
-          threadId: input.threadId,
-          runId: input.activeRunId!,
+        const activeTurnAuthorOption =
+          effectiveSuppliedActiveRunId !== null
+            ? yield* resolveTurnAuthorMemberId({
+                threadId: input.threadId,
+                runId: effectiveSuppliedActiveRunId,
+              })
+            : yield* resolveTurnAuthorMemberId({
+                threadId: input.threadId,
+                runId: resolvedActiveRun!.runId,
+                userMessageId: resolvedActiveRun!.userMessageId,
+              });
+
+        const senderOption = yield* resolveMemberForActor(input.actor).pipe(
+          Effect.orElseSucceed(() => Option.none<TeamMember>()),
+        );
+        const senderMember =
+          Option.isSome(senderOption) && senderOption.value.teamId === workspace.id
+            ? senderOption.value
+            : null;
+        const senderMemberId = senderMember?.id ?? null;
+
+        const candidateRecipientIds = resolveTeamQueuedMessageNotificationRecipients({
+          senderMemberId,
+          attribution,
+          activeTurnAuthorMemberId: Option.getOrNull(activeTurnAuthorOption),
         });
+        if (candidateRecipientIds.length === 0) return empty;
 
-    const senderOption = yield* resolveMemberForActor(input.actor).pipe(
-      Effect.orElseSucceed(() => Option.none<TeamMember>()),
-    );
-    const senderMember =
-      Option.isSome(senderOption) && senderOption.value.teamId === workspace.id
-        ? senderOption.value
-        : null;
-    const senderMemberId = senderMember?.id ?? null;
-
-    const candidateRecipientIds = resolveTeamQueuedMessageNotificationRecipients({
-      senderMemberId,
-      attribution,
-      activeTurnAuthorMemberId: Option.getOrNull(activeTurnAuthorOption),
-    });
-    if (candidateRecipientIds.length === 0) return empty;
-
-    const [viewOption, defaultViewOption] = yield* Effect.all([
-      repository
-        .getViewById(attribution.viewId)
-        .pipe(Effect.orElseSucceed(() => Option.none<TeamView>())),
-      attribution.viewId === workspace.defaultViewId
-        ? Effect.succeed(Option.none<TeamView>())
-        : repository
-            .getViewById(workspace.defaultViewId)
+        const [viewOption, defaultViewOption] = yield* Effect.all([
+          repository
+            .getViewById(attribution.viewId)
             .pipe(Effect.orElseSucceed(() => Option.none<TeamView>())),
-    ]);
-    const threadView = Option.getOrNull(viewOption) ?? Option.getOrNull(defaultViewOption);
+          attribution.viewId === workspace.defaultViewId
+            ? Effect.succeed(Option.none<TeamView>())
+            : repository
+                .getViewById(workspace.defaultViewId)
+                .pipe(Effect.orElseSucceed(() => Option.none<TeamView>())),
+        ]);
+        const threadView = Option.getOrNull(viewOption) ?? Option.getOrNull(defaultViewOption);
 
-    const authorizedRecipients: Array<TeamMemberId> = [];
-    for (const candidateId of candidateRecipientIds) {
-      const candidateOption = yield* repository
-        .getMemberById(candidateId)
-        .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>()));
-      if (
-        Option.isSome(candidateOption) &&
-        candidateOption.value.teamId === workspace.id &&
-        candidateOption.value.status === "active" &&
-        canMemberReadTeamThread({ member: candidateOption.value, view: threadView })
-      ) {
-        authorizedRecipients.push(candidateOption.value.id);
-      }
-    }
-    if (authorizedRecipients.length === 0) return empty;
+        const authorizedRecipients: Array<TeamMemberId> = [];
+        for (const candidateId of candidateRecipientIds) {
+          const candidateOption = yield* repository
+            .getMemberById(candidateId)
+            .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>()));
+          if (
+            Option.isSome(candidateOption) &&
+            candidateOption.value.teamId === workspace.id &&
+            candidateOption.value.status === "active" &&
+            canMemberReadTeamThread({ member: candidateOption.value, view: threadView })
+          ) {
+            authorizedRecipients.push(candidateOption.value.id);
+          }
+        }
+        if (authorizedRecipients.length === 0) return empty;
 
-    rememberNotifiedQueuedKey(runKey);
-    if (cmdKey !== null) rememberNotifiedQueuedKey(cmdKey);
+        rememberNotifiedQueuedKey(runKey);
+        if (cmdKey !== null) rememberNotifiedQueuedKey(cmdKey);
 
-    const senderPseudo = TrimmedNonEmptyString.make(
-      senderMember?.pseudo ?? (workspace.displayName || workspace.name),
+        const senderPseudo = TrimmedNonEmptyString.make(
+          senderMember?.pseudo ?? (workspace.displayName || workspace.name),
+        );
+        const rawPreview = (input.messageText ?? "").trim().replace(/\s+/g, " ");
+        const messagePreview =
+          rawPreview.length > 160 ? `${rawPreview.slice(0, 157)}…` : rawPreview;
+        const createdAt = DateTime.formatIso(yield* DateTime.now);
+
+        yield* publish({
+          version: 1,
+          type: "queuedMessageNotification",
+          payload: {
+            threadId: input.threadId,
+            queuedRunId: TrimmedNonEmptyString.make(queuedRunId),
+            ...(commandId !== undefined
+              ? { commandId: TrimmedNonEmptyString.make(commandId) }
+              : {}),
+            senderMemberId,
+            senderPseudo,
+            recipientMemberIds: authorizedRecipients,
+            messagePreview,
+            createdAt,
+          },
+        });
+        yield* PubSub.publish(notificationTriggersPubSub, {
+          type: "queuedMessage",
+          threadId: input.threadId,
+          queuedRunId,
+          senderMemberId,
+          senderPseudo,
+          recipientMemberIds: authorizedRecipients,
+          messagePreview,
+          createdAt,
+        }).pipe(Effect.asVoid);
+
+        return { notifiedMemberIds: authorizedRecipients };
+      }),
     );
-    const rawPreview = (input.messageText ?? "").trim().replace(/\s+/g, " ");
-    const messagePreview = rawPreview.length > 160 ? `${rawPreview.slice(0, 157)}…` : rawPreview;
-    const createdAt = DateTime.formatIso(yield* DateTime.now);
-
-    yield* publish({
-      version: 1,
-      type: "queuedMessageNotification",
-      payload: {
-        threadId: input.threadId,
-        queuedRunId: TrimmedNonEmptyString.make(queuedRunId),
-        ...(commandId !== undefined ? { commandId: TrimmedNonEmptyString.make(commandId) } : {}),
-        senderMemberId,
-        senderPseudo,
-        recipientMemberIds: authorizedRecipients,
-        messagePreview,
-        createdAt,
-      },
-    });
-    yield* PubSub.publish(notificationTriggersPubSub, {
-      type: "queuedMessage",
-      threadId: input.threadId,
-      queuedRunId,
-      senderMemberId,
-      senderPseudo,
-      recipientMemberIds: authorizedRecipients,
-      messagePreview,
-      createdAt,
-    }).pipe(Effect.asVoid);
-
-    return { notifiedMemberIds: authorizedRecipients };
   });
 
   const assertCanCreateGuestShare = Effect.fn("TeamService.assertCanCreateGuestShare")(function* (

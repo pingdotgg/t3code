@@ -461,6 +461,9 @@ const EMPTY_TURN_ITEMS: ThreadStructure["turnItems"] = [];
 const EMPTY_RUNS: ThreadStructure["runs"] = [];
 const EMPTY_AUTO_UPDATE_ENVIRONMENTS: ReadonlyArray<EnvironmentPresentation> = [];
 const EMPTY_COMPOSER_BANNER_ITEMS: ReadonlyArray<ComposerBannerStackItem> = [];
+const EMPTY_PENDING_APPROVALS: ReturnType<typeof usePendingThreadRequests>["pendingApprovals"] = [];
+const EMPTY_PENDING_USER_INPUTS: ReturnType<typeof usePendingThreadRequests>["pendingUserInputs"] =
+  [];
 
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 
@@ -1254,6 +1257,13 @@ export default function ChatView(props: ChatViewProps) {
       ? scopeProjectRef(activeThreadEnvironmentId, activeThreadProjectId)
       : null;
   const activeProject = useProject(activeProjectRef);
+  const teamThreadContext = useTeamThreadContext({
+    environmentId,
+    threadId,
+    project: activeProject,
+  });
+  const canExecuteActiveTeamThreadEnv =
+    routeKind !== "server" || teamThreadContext.envAccess.canExecute;
   const activeProjectSettings = resolveProjectSettings(
     settings,
     activeProject?.id ?? null,
@@ -1640,6 +1650,16 @@ export default function ChatView(props: ChatViewProps) {
     activeRunId: activeRunningTurn?.id ?? activeRuntime?.activeRunId ?? null,
     activeUserMessageId: activeRunningTurn?.userMessageId ?? null,
   });
+  const canRespondToRuntimeRequest =
+    routeKind !== "server" || teamThreadTurnControls.canRespondToRuntimeRequest;
+  const composerActivePendingApproval = canRespondToRuntimeRequest ? activePendingApproval : null;
+  const composerPendingApprovals = canRespondToRuntimeRequest
+    ? pendingApprovals
+    : EMPTY_PENDING_APPROVALS;
+  const composerPendingUserInputs = canRespondToRuntimeRequest
+    ? pendingUserInputs
+    : EMPTY_PENDING_USER_INPUTS;
+  const composerActivePendingUserInput = canRespondToRuntimeRequest ? activePendingUserInput : null;
   const canSteer =
     threadCanSteer(serverProjection, {
       compactCommandIsActive,
@@ -2042,6 +2062,7 @@ export default function ChatView(props: ChatViewProps) {
     useComposerFocus(composerRef);
   const canInterruptRunningThread =
     canOperateThread &&
+    canExecuteActiveTeamThreadEnv &&
     (routeKind !== "server" || teamThreadTurnControls.canInterrupt) &&
     deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
   const isExplicitAdminInterrupt =
@@ -2666,7 +2687,9 @@ export default function ChatView(props: ChatViewProps) {
     routeThreadKey,
     currentRouteThreadKeyRef,
     canOperateThread: effectiveCanOperateThread,
-    canInterruptTurn: routeKind !== "server" || teamThreadTurnControls.canInterrupt,
+    canInterruptTurn:
+      canExecuteActiveTeamThreadEnv &&
+      (routeKind !== "server" || teamThreadTurnControls.canInterrupt),
     clientSettingsHydrated,
     activeThread,
     activeThreadId,
@@ -2841,11 +2864,6 @@ export default function ChatView(props: ChatViewProps) {
   const connectedEnvironmentIds = environments
     .filter((env) => env.connection.phase === "connected")
     .map((env) => env.environmentId);
-  const teamThreadContext = useTeamThreadContext({
-    environmentId,
-    threadId,
-    project: activeProject,
-  });
   const isTeamNoteModeRequested = useTeamThreadNoteMode(routeThreadKey);
   const effectiveTeamNoteMode =
     isServerThread &&
@@ -3163,7 +3181,7 @@ export default function ChatView(props: ChatViewProps) {
     // A queued-message edit or a question's answer owns the composer even when its text is empty.
     composerEmpty:
       !queuedRunEdit.isEditing &&
-      pendingUserInputs.length === 0 &&
+      composerPendingUserInputs.length === 0 &&
       !composerHasNonPromptContent &&
       promptRef.current.trim().length === 0,
     composerRequiresModifier: composerRequiresModifier(settings.sendShortcut, promptRef.current),
@@ -3432,9 +3450,9 @@ export default function ChatView(props: ChatViewProps) {
     loadBalancing,
     refreshBeforeSend,
     readPendingEnvironmentChange,
-    pendingApprovals,
+    pendingApprovals: composerPendingApprovals,
     respondingRequestIds,
-    activePendingUserInput,
+    activePendingUserInput: composerActivePendingUserInput,
     onAdvanceActivePendingUserInput,
     onRespondToApproval: onRespondToApprovalStable,
     beginLocalDispatch,
@@ -4220,10 +4238,10 @@ export default function ChatView(props: ChatViewProps) {
                                     : undefined
                                 }
                                 environmentUnavailable={activeEnvironmentUnavailableState}
-                                activePendingApproval={activePendingApproval}
-                                pendingApprovals={pendingApprovals}
+                                activePendingApproval={composerActivePendingApproval}
+                                pendingApprovals={composerPendingApprovals}
                                 onHeldRequestIdsChange={onHeldRequestIdsChange}
-                                pendingUserInputs={pendingUserInputs}
+                                pendingUserInputs={composerPendingUserInputs}
                                 activePendingIsResponding={activePendingIsResponding}
                                 respondingRequestIds={respondingRequestIds}
                                 runtimeMode={runtimeMode}
