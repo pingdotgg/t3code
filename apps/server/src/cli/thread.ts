@@ -373,9 +373,11 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   // through a symlink (macOS /tmp), so both sides compare as real paths.
   const realPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
-  const target = yield* realPath(
-    path.resolve(yield* HostProcess.WorkingDirectory, yield* expandHomePath(identifier)),
+  const requestedPath = path.resolve(
+    yield* HostProcess.WorkingDirectory,
+    yield* expandHomePath(identifier),
   );
+  const target = yield* realPath(requestedPath);
   const roots = yield* Effect.forEach(projects, (project) =>
     Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
   );
@@ -386,12 +388,21 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
       (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
     );
   };
-  const deepestContaining = (candidate: string) =>
-    roots
+  const deepestContaining = (candidate: string, originalPath?: string) => {
+    // Projects can register the same directory through separate symlinks.
+    const matchingPathLength = (root: string) =>
+      originalPath !== undefined && contains(root, originalPath) ? root.length : 0;
+    return roots
       .filter(({ root }) => contains(root, candidate))
-      .toSorted((left, right) => right.root.length - left.root.length)[0]?.project;
+      .toSorted(
+        (left, right) =>
+          right.root.length - left.root.length ||
+          matchingPathLength(right.project.workspaceRoot) -
+            matchingPathLength(left.project.workspaceRoot),
+      )[0]?.project;
+  };
 
-  const containing = deepestContaining(target);
+  const containing = deepestContaining(target, requestedPath);
   if (containing !== undefined) return containing;
   const targetInfo = yield* fileSystem.stat(target).pipe(Effect.option);
   const gitDirectory =
