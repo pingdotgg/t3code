@@ -393,9 +393,13 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
   await bob.page
     .getByTestId("team-display-name-value")
     .waitFor({ state: "visible", timeout: 20_000 });
-  expect(((await bob.page.getByTestId("team-display-name-value").textContent()) ?? "").trim()).toBe(
-    "Acme Bot",
-  );
+  await expect
+    .poll(
+      async () =>
+        ((await bob.page.getByTestId("team-display-name-value").textContent()) ?? "").trim(),
+      { timeout: 15_000 },
+    )
+    .toBe("Acme Bot");
   expect(await bob.page.getByTestId("team-display-name-input").count()).toBe(0);
 
   // 2. Alice connects her personal GitHub PAT (leaving Team Automation GitHub UNCONFIGURED)
@@ -460,6 +464,10 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
   const scopeFilter = charlie.page.getByTestId("scheduled-tasks-team-env-filter");
   await scopeFilter.waitFor({ state: "visible", timeout: 20_000 });
   await scopeFilter.click();
+  await charlie.page
+    .getByRole("option", { name: /Acme Bot/ })
+    .first()
+    .waitFor({ state: "visible", timeout: 15_000 });
   const optionTexts = await charlie.page.getByRole("option").allTextContents();
   expect(optionTexts.some((text) => text.includes("Acme Bot"))).toBe(true);
   expect(optionTexts.some((text) => /personal/i.test(text))).toBe(false);
