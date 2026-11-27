@@ -1,10 +1,11 @@
-import type {
-  EnvironmentId,
-  ProviderInstanceId,
-  ServerProvider,
-  ServerProviderUsageLimits,
-  ServerProviderUsageWindow,
-  UsageLimitSourceSnapshots,
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderUsageLimits,
+  type ServerProviderUsageWindow,
+  type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
   type LimitPace,
@@ -14,14 +15,13 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
-import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import { msg, useGT, useLocale, useMessages } from "gt-react";
 import { useState, type ReactNode } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
-import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
@@ -141,9 +141,7 @@ function UsageAccessRow({
 }) {
   const gt = useGT();
   const [open, setOpen] = useState(false);
-  const canAnswer = useAtomValue(
-    serverEnvironment.mutateProviderInstance.permissionAtom(environmentId),
-  );
+  const canAnswer = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const provider = providers.find((entry) => entry.instanceId === instanceId);
   if (provider === undefined) return null;
   return (

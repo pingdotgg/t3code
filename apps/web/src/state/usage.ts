@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  AuthProvidersManageScope,
   AuthDiagnosticsReadScope,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
@@ -18,7 +19,7 @@ import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/sh
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
-import { environmentSession, readEnvironmentScope } from "./session";
+import { environmentSession, readEnvironmentScope, sessionHasScope } from "./session";
 import { m } from "../i18n/messages";
 
 export interface EnvironmentUsageStatus {
@@ -73,9 +74,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         label: presentation.entry.target.label,
         isPending: result.waiting,
         canReadDiagnostics: true,
-        canAnswerUsageAccess: get(
-          serverEnvironment.mutateProviderInstance.permissionAtom(environmentId),
-        ),
+        canAnswerUsageAccess: sessionHasScope(sessionResult, AuthProvidersManageScope),
         isConnected,
         error:
           result._tag === "Failure" ? m(msg("This environment could not report usage.")) : null,

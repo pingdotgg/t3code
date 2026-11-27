@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  AuthProvidersManageScope,
   AuthDiagnosticsReadScope,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
@@ -17,7 +18,7 @@ import { keepMarked } from "../i18n/messages";
 import { appAtomRegistry } from "./atom-registry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
-import { environmentSession, readEnvironmentScope } from "./session";
+import { environmentSession, readEnvironmentScope, sessionHasScope } from "./session";
 
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
@@ -74,9 +75,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         isPending: result.waiting,
         isConnected: presentation.connection.phase === "connected",
         canReadDiagnostics: true,
-        canAnswerUsageAccess: get(
-          serverEnvironment.mutateProviderInstance.permissionAtom(environmentId),
-        ),
+        canAnswerUsageAccess: sessionHasScope(sessionResult, AuthProvidersManageScope),
         error: result._tag === "Failure" ? msg("This environment could not report usage.") : null,
         summary,
       });
