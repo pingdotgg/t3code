@@ -680,7 +680,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runlessWorkActive,
         toolCallVisibility,
         revealedMessageId,
-        botPresentation: bot !== null,
       })
     : null;
   const activeFindRunId =
@@ -725,7 +724,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runlessWorkActive,
         toolCallVisibility,
         revealedMessageId,
-        botPresentation: bot !== null,
       })
     ).get(citedEntry.id);
     setCitationExpandedFor(citationRequest.key);
@@ -768,27 +766,30 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const pendingApprovalRequestIds = new Set(
     pendingApprovals.filter(isVisiblePendingApproval).map((approval) => approval.requestId),
   );
-  const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
-    timelineEntries,
-    pendingApprovalRequestIds,
-    latestRun,
-    usageLimitRunId,
-    runningRunId,
-    expandedRunIds: visibleExpandedRunIds,
-    expandedAttemptIds: visibleExpandedAttemptIds,
-    expandedWorkGroupIds,
-    isWorking,
-    runlessWorkActive,
-    activeTurnStartedAt,
-    turnDiffSummaries,
-    supportsConversationRollback,
-    threadStartCheckpointAvailable,
-    availableRevertTurnCounts,
-    worktreeSetup,
-    toolCallVisibility,
-    revealedMessageId,
-    botPresentation: bot !== null,
-  });
+  const rawRows = useIncrementalTimelineRows(
+    `${listIdentityKey}\0${workspaceRoot ?? ""}\0${bot !== null}`,
+    {
+      timelineEntries,
+      pendingApprovalRequestIds,
+      latestRun,
+      usageLimitRunId,
+      runningRunId,
+      expandedRunIds: visibleExpandedRunIds,
+      expandedAttemptIds: visibleExpandedAttemptIds,
+      expandedWorkGroupIds,
+      isWorking,
+      runlessWorkActive,
+      activeTurnStartedAt,
+      turnDiffSummaries,
+      supportsConversationRollback,
+      threadStartCheckpointAvailable,
+      availableRevertTurnCounts,
+      worktreeSetup,
+      toolCallVisibility,
+      revealedMessageId,
+    },
+    bot !== null,
+  );
   const rows = useStableRows(rawRows, listIdentityKey);
   const matchedApprovalRequestIds = new Set<string>();
   for (const row of pendingApprovalRequestIds.size > 0 ? rows : []) {

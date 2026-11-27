@@ -645,7 +645,7 @@ type MessagesTimelineRowContent =
       groupedWithPrevious?: boolean;
       /** Set when the message above is a steer too, so the label shows once. */
       continuesSteer?: boolean;
-      /** The Bot's first reply since your last message or its last wake carries its avatar. */
+      /** A Bot's reply, shown under its name and avatar. */
       botAvatar?: true;
     }
   | {
@@ -744,7 +744,7 @@ export function resolveAssistantMessageCopyState({
   };
 }
 
-function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
+export function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
   const lastAssistantMessageIdByResponseKey = new Map<string, string>();
   let nullTurnResponseIndex = 0;
 
@@ -900,7 +900,7 @@ function deriveSupersededAttemptFolds(
 }
 
 // After send, the previous turn stays active until the server creates its replacement.
-function deriveUnsettledRunId(
+export function deriveUnsettledRunId(
   latestRun: TimelineLatestRun | null,
   runningRunId: RunId | null = null,
 ): RunId | null {
@@ -1546,15 +1546,10 @@ function timelineRowEntries(
     | "latestRun"
     | "runningRunId"
     | "pendingApprovalRequestIds"
-    | "botPresentation"
   >,
 ) {
   const visibility = input.toolCallVisibility ?? "showAll";
-  const entries = input.botPresentation
-    ? input.timelineEntries.filter(
-        (entry) => entry.kind !== "work" || entry.entry.itemType !== "reasoning",
-      )
-    : input.timelineEntries;
+  const entries = input.timelineEntries;
   let shown = entries;
   if (visibility === "zen") {
     const answering = input.isWorking && input.latestRun?.turnEnded !== true;
@@ -1586,48 +1581,7 @@ function timelineRowEntries(
         entry.kind !== "work" || !workEntryHiddenByToolCallVisibility(entry.entry, visibility),
     );
   }
-  if (input.botPresentation) {
-    const answering = input.isWorking && input.latestRun?.turnEnded !== true;
-    return botConversationEntries(
-      entries,
-      answering ? deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null) : null,
-      input.pendingApprovalRequestIds,
-    );
-  }
   return withoutSubagentDelegationRows(settleSupersededReasoning(shown));
-}
-
-/**
- * A Bot reads as a chat: each turn's final reply, plus what it asks and what fails.
- * Its progress and tool calls only show live, in the typing row.
- */
-function botConversationEntries(
-  entries: ReadonlyArray<TimelineEntry>,
-  activeRunId: RunId | null,
-  pendingApprovalRequestIds: ReadonlySet<RuntimeRequestId> | undefined,
-): ReadonlyArray<TimelineEntry> {
-  const finalReplyIds = deriveTerminalAssistantMessageIds(entries);
-  return entries.filter((entry) => {
-    if (entry.kind === "message") {
-      const { message } = entry;
-      return (
-        message.role !== "assistant" ||
-        (finalReplyIds.has(message.id) && (activeRunId === null || message.runId !== activeRunId))
-      );
-    }
-    // The Bot's reply names the workers it starts; the panel lists them.
-    if (entry.kind === "event") return entry.projectedItem?.item.type !== "thread_created";
-    if (entry.kind !== "work") return true;
-    const work = entry.entry;
-    const item = work.projectedItem?.item;
-    return (
-      work.questionAnswer !== undefined ||
-      work.tone === "error" ||
-      work.sourceActivityKind === "runtime.error" ||
-      (work.itemType === "error" && work.toolLifecycleStatus === "failed") ||
-      (item?.type === "approval_request" && pendingApprovalRequestIds?.has(item.requestId) === true)
-    );
-  });
 }
 
 function deriveTimelineTurnFolds(
@@ -1640,12 +1594,9 @@ function deriveTimelineTurnFolds(
     | "runningRunId"
     | "toolCallVisibility"
     | "revealedMessageId"
-    | "botPresentation"
   >,
 ) {
-  if (input.toolCallVisibility === "zen" || input.botPresentation) {
-    return new Map<string, TurnFold>();
-  }
+  if (input.toolCallVisibility === "zen") return new Map<string, TurnFold>();
   const timelineEntries = timelineRowEntries(input);
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
@@ -1688,11 +1639,6 @@ export function deriveMessagesTimelineRows(
     worktreeSetup?: WorktreeSetupSnapshot | null;
     toolCallVisibility?: ToolCallVisibility;
     revealedMessageId?: MessageId | null;
-    /**
-     * Bot threads read as a chat: no reasoning, turn folds or work timers, one tool disclosure
-     * per turn, wakes as captions, and a typing row while the Bot runs.
-     */
-    botPresentation?: boolean;
   },
   resolve: MessageResolver = m,
 ): MessagesTimelineRow[] {
@@ -1745,9 +1691,8 @@ export function deriveMessagesTimelineRows(
     isWorking: input.isWorking,
   });
   const runlessWorkActive = input.isWorking && input.runlessWorkActive === true;
-  const botPresentation = input.botPresentation === true;
   const foldsByAnchorEntryId =
-    input.toolCallVisibility === "zen" || botPresentation
+    input.toolCallVisibility === "zen"
       ? new Map<string, TurnFold>()
       : deriveTurnFolds({
           timelineEntries: timelineEntries,
@@ -1800,7 +1745,7 @@ export function deriveMessagesTimelineRows(
     : timelineEntries.length;
 
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
-  if (!botPresentation && input.isWorking && (unsettledRunId !== null || runlessWorkActive)) {
+  if (input.isWorking && (unsettledRunId !== null || runlessWorkActive)) {
     let tailAttemptId: string | null | undefined;
     for (let index = timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
       const entry = timelineEntries[index]!;
@@ -1955,7 +1900,7 @@ export function deriveMessagesTimelineRows(
     timelineEntries.findLastIndex((entry) => timelineEntryRunId(entry) === endedRunId) >=
       activeTurnHeaderIndex;
   const appendWorkingRow = () => {
-    if (botPresentation || compactionOnlyRunFinished || zenAnswerLanded) return;
+    if (compactionOnlyRunFinished || zenAnswerLanded) return;
     if (runningCompactionRunId !== null && activeCompactionRunId === null) return;
     nextRows.push({
       kind: "working",
@@ -2172,10 +2117,7 @@ export function deriveMessagesTimelineRows(
         workEntryIsVisibleInGroup(entry, workEntryIsInActiveRun(entry)),
       );
       if (visibleGroupedEntries.length > 0) {
-        // A Bot turn keeps one disclosure; the typing row says it is still at work.
-        const activeInProgressToolEntries = botPresentation
-          ? []
-          : visibleGroupedEntries.filter(workEntryIsInActiveRun);
+        const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
         if (activeInProgressToolEntries.length > 0) {
           const groupId = workGroupId(timelineEntry.id);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
@@ -2449,41 +2391,7 @@ export function deriveMessagesTimelineRows(
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
   }
-  if (botPresentation) {
-    if (
-      input.isWorking &&
-      input.latestRun?.turnEnded !== true &&
-      !input.pendingApprovalRequestIds?.size
-    ) {
-      const progress = input.timelineEntries.findLast(
-        (entry) =>
-          entry.kind === "message" &&
-          entry.message.role === "assistant" &&
-          entry.message.runId === unsettledRunId &&
-          entry.message.text.trim() !== "",
-      );
-      const detail =
-        progress?.kind === "message"
-          ? progress.message.text
-              .trim()
-              .split("\n")
-              .findLast((line) => line.trim() !== "")
-          : undefined;
-      nextRows.push({
-        kind: "bot-typing",
-        id: LIVE_ACTIVITY_ROW_ID,
-        createdAt: null,
-        ...(detail === undefined
-          ? {}
-          : {
-              detail: detail
-                .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-                .replaceAll("`", "")
-                .trim(),
-            }),
-      });
-    }
-  } else if (
+  if (
     input.isWorking &&
     input.latestRun?.turnEnded !== true &&
     !replyIsStreaming &&
@@ -2523,24 +2431,23 @@ export function deriveMessagesTimelineRows(
   }
 
   const result = attachTrailingToolGroupsToAssistant(
-    attachCreatedThreadSummaries(
-      nextRows,
-      timelineEntries,
-      collapsedFoldMemberIds,
-      botPresentation,
+    attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
+  );
+  return groupOwnUserMessages(
+    result.map((row, index) =>
+      timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])
+        ? { ...row, continuesWorkLog: true }
+        : row,
     ),
   );
-  return result.map((row, index) => {
-    if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
-      return { ...row, continuesWorkLog: true };
-    }
-    // A Bot shows one reply per turn, so each one is its own chat message.
-    if (botPresentation && row.kind === "message" && row.message.role === "assistant") {
-      return { ...row, botAvatar: true };
-    }
+}
+
+/** Marks your consecutive messages so they sit together and a steer label shows once. */
+export function groupOwnUserMessages(rows: MessagesTimelineRow[]): MessagesTimelineRow[] {
+  return rows.map((row, index) => {
     if (!timelineRowIsOwnUserMessage(row)) return row;
-    const previous = result[index - 1];
-    const groupedWithNext = timelineRowIsOwnUserMessage(result[index + 1]);
+    const previous = rows[index - 1];
+    const groupedWithNext = timelineRowIsOwnUserMessage(rows[index + 1]);
     const groupedWithPrevious = timelineRowIsOwnUserMessage(previous);
     const continuesSteer =
       groupedWithPrevious && messageIsSteer(row.message) && messageIsSteer(previous.message);
@@ -2577,8 +2484,6 @@ function attachCreatedThreadSummaries(
   rows: MessagesTimelineRow[],
   timelineEntries: ReadonlyArray<TimelineEntry>,
   collapsedFoldMemberIds: ReadonlySet<string>,
-  /** A Bot turn names the threads it created once, after its reply. */
-  summaryOnly: boolean,
 ): MessagesTimelineRow[] {
   const terminalIndexes = new Map<RunId, number>();
   const createdByRun = new Map<RunId, Array<Extract<MessagesTimelineRow, { kind: "event" }>>>();
@@ -2607,7 +2512,7 @@ function attachCreatedThreadSummaries(
       const terminalIndex = runId === null ? undefined : terminalIndexes.get(runId);
       if (
         terminalIndex !== undefined &&
-        (summaryOnly || collapsedFoldMemberIds.has(row.id) || index > terminalIndex)
+        (collapsedFoldMemberIds.has(row.id) || index > terminalIndex)
       )
         return [];
     }
@@ -2648,7 +2553,6 @@ export function timelineTurnFoldRunIdsByEntryId(
     | "runningRunId"
     | "toolCallVisibility"
     | "revealedMessageId"
-    | "botPresentation"
   >,
 ): ReadonlyMap<string, RunId> {
   const byEntryId = new Map<string, RunId>();
@@ -2727,7 +2631,7 @@ function replaceStreamingMessageRows(
     }
     if (entry.kind === "work" && previousEntry.kind === "work") {
       if (!isStreamingThoughtUpdate(previousEntry.entry, entry.entry)) return null;
-      if (!input.botPresentation) thoughts.set(entry.id, entry.entry);
+      thoughts.set(entry.id, entry.entry);
       continue;
     }
     if (entry.kind === "proposed-plan" && previousEntry.kind === "proposed-plan") {
