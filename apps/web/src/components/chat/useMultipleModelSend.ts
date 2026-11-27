@@ -26,6 +26,8 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { useUiStateStore } from "../../uiStateStore";
+import { newThreadCreateTags } from "../sidebar/ProjectRail.logic";
 import { DEFAULT_INTERACTION_MODE } from "../../types";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -158,6 +160,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
           clearedDraftSnapshot &&
         appAtomRegistry.get(fanoutSelectionsAtom) === submittedSelections;
       setThreadError(threadId, null);
+      const folderTags = newThreadCreateTags(useUiStateStore.getState().sidebarProjectScopeKeys);
       const starts = Promise.all(
         targets.map(async (target) => {
           const started = await startFanoutThread({
@@ -196,6 +199,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                       branch,
                       worktreePath: null,
                       createdAt: createdAt,
+                      ...folderTags,
                     },
                     prepareWorktree: {
                       projectCwd: project.workspaceRoot,

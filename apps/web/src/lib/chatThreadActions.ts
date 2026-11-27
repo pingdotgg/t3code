@@ -1,8 +1,4 @@
-import {
-  scopedThreadKey,
-  scopeProjectRef,
-  scopeThreadRef,
-} from "@t3tools/client-runtime/environment";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type {
   EnvironmentId,
@@ -12,9 +8,6 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { ComposerThreadDraftState, DraftThreadEnvMode } from "../composerDraftStore";
-import { newThreadFolderTag } from "../components/sidebar/ProjectRail.logic";
-import { setNewThreadFolder } from "../newThreadFolderStore";
-import { useUiStateStore } from "../uiStateStore";
 
 type ComposerModelSelectionState = Pick<
   ComposerThreadDraftState,
@@ -117,20 +110,6 @@ export async function startNewThreadFromContext(
     return false;
   }
 
-  await startNewThreadInSidebarScope(context.handleNewThread, projectRef);
+  await context.handleNewThread(projectRef);
   return true;
-}
-
-export async function startNewThreadInSidebarScope(
-  handleNewThread: NewThreadHandler,
-  projectRef: ScopedProjectRef,
-): Promise<void> {
-  const tag = newThreadFolderTag(useUiStateStore.getState().sidebarProjectScopeKeys);
-  const opened = await handleNewThread(projectRef);
-  if (opened) {
-    setNewThreadFolder(
-      scopedThreadKey(scopeThreadRef(projectRef.environmentId, opened.threadId)),
-      tag,
-    );
-  }
 }

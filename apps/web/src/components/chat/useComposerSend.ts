@@ -69,8 +69,9 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { readPendingWorkspaceDefault } from "../../lib/draftWorkspaceDefaults";
-import { readNewThreadFolder, setNewThreadFolder } from "../../newThreadFolderStore";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { useUiStateStore } from "../../uiStateStore";
+import { newThreadCreateTags } from "../sidebar/ProjectRail.logic";
 import {
   beginBackgroundDraftSubmissionByRef,
   clearBackgroundDraftSubmissionByRef,
@@ -394,7 +395,6 @@ export function useComposerSend(input: ComposerSendInput) {
   const uploadThreadFeedback = useOrchestrationCommand(threadEnvironment.uploadFeedback, {
     reportFailure: false,
   });
-  const setThreadTag = useOrchestrationCommand(threadEnvironment.setTag);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const sendToMultipleModels = useMultipleModelSend({
@@ -1552,6 +1552,7 @@ export function useComposerSend(input: ComposerSendInput) {
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
+                      ...newThreadCreateTags(useUiStateStore.getState().sidebarProjectScopeKeys),
                     },
                   }
                 : {}),
@@ -1633,18 +1634,6 @@ export function useComposerSend(input: ComposerSendInput) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        const folderThreadKey = scopedThreadKey(scopeThreadRef(environmentId, threadIdForSend));
-        const folderTag = isLocalDraftThread ? readNewThreadFolder(folderThreadKey) : null;
-        if (folderTag !== null) {
-          void setThreadTag({
-            environmentId,
-            input: { threadId: threadIdForSend, tag: folderTag, tagged: true },
-          }).then((result) => {
-            // On success the entry stands in until the shell carries the tag; a tag edit clears it.
-            if (result._tag === "Success") return;
-            setNewThreadFolder(folderThreadKey, null);
-          });
-        }
         if (checkoutPullRequestUrl) {
           linkCheckoutPullRequest(
             scopeThreadRef(environmentId, threadIdForSend),

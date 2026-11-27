@@ -9,11 +9,10 @@ import {
   railOrderAfterMove,
   railKeysAfterFolderEdit,
   folderIconsPatchAfterEdit,
-  newThreadFolderTag,
+  newThreadCreateTags,
   pruneStaleFolderKeys,
   resolveProjectRailTileStates,
   threadFilterTarget,
-  withNewThreadFolderTags,
 } from "./ProjectRail.logic";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -285,28 +284,11 @@ describe("thread filter target", () => {
 });
 
 describe("new thread in a folder scope", () => {
-  it("takes the folder only when it is the whole scope", () => {
-    expect(newThreadFolderTag(["tag:ops"])).toBe("ops");
-    expect(newThreadFolderTag([])).toBeNull();
-    expect(newThreadFolderTag(["group:a"])).toBeNull();
-    expect(newThreadFolderTag(["tag:ops", "group:a"])).toBeNull();
-    expect(newThreadFolderTag(["tag:ops", "tag:infra"])).toBeNull();
-  });
-
-  it("shows a new thread in its folder before the tag lands", () => {
-    const threads: { id: string; tags?: readonly string[] }[] = [
-      { id: "t1", tags: [] },
-      { id: "t2", tags: ["infra"] },
-      { id: "t3" },
-    ];
-    const result = withNewThreadFolderTags(
-      threads,
-      { t1: "ops", t2: "ops" },
-      (thread) => thread.id,
-    );
-    expect(result.map((thread) => thread.tags)).toEqual([["ops"], ["infra"], undefined]);
-    expect(withNewThreadFolderTags(threads, {}, () => "")).toBe(threads);
-    // A leftover entry for a thread that is not listed keeps the list as it was.
-    expect(withNewThreadFolderTags(threads, { gone: "ops" }, (thread) => thread.id)).toBe(threads);
+  it("creates the thread in the folder only when it is the whole scope", () => {
+    expect(newThreadCreateTags(["tag:ops"])).toEqual({ tags: ["ops"] });
+    expect(newThreadCreateTags([])).toEqual({});
+    expect(newThreadCreateTags(["group:a"])).toEqual({});
+    expect(newThreadCreateTags(["tag:ops", "group:a"])).toEqual({});
+    expect(newThreadCreateTags(["tag:ops", "tag:infra"])).toEqual({});
   });
 });

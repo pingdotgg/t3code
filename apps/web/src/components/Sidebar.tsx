@@ -253,9 +253,7 @@ import {
   pruneStaleFolderKeys,
   railOrderAfterMove,
   threadFilterTarget,
-  withNewThreadFolderTags,
 } from "./sidebar/ProjectRail.logic";
-import { useNewThreadFolderStore } from "../newThreadFolderStore";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import { createSidebarShiftGuard } from "./Sidebar.shiftGuard";
 import {
@@ -1172,11 +1170,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // loaded. The stored keys are left alone, so the scope returns with its project.
   // An archived project's scope reads as all projects, matching the menu.
   const scopeGroups = pickableProjectGroups(projectGroups);
-  const threads = withNewThreadFolderTags(
-    useQuietThreadShells(),
-    useNewThreadFolderStore((store) => store.tagByThreadKey),
-    threadShellKey,
-  );
+  const threads = useQuietThreadShells();
   const archivedProjectKeys = new Set(
     projectGroups.filter((project) => project.archived).map((project) => project.projectKey),
   );

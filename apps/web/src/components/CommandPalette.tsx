@@ -159,7 +159,6 @@ import { isShownUnderParent, visibleLinkedThreads } from "@t3tools/client-runtim
 import {
   resolveThreadActionProjectRef,
   startNewThreadFromContext,
-  startNewThreadInSidebarScope,
   threadHasStarted,
 } from "../lib/chatThreadActions";
 import {
@@ -948,8 +947,7 @@ function OpenCommandPaletteDialog(props: {
                 member.id === contextualProjectRef.projectId &&
                 isPickableProjectMember(member),
             );
-          await startNewThreadInSidebarScope(
-            handleNewThread,
+          await handleNewThread(
             contextualProjectIsEligible
               ? contextualProjectRef
               : scopeProjectRef(project.environmentId, project.id),
