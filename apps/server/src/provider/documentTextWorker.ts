@@ -157,6 +157,22 @@ function namespaceOf(tagName: string, scope: readonly XmlNode[]) {
   return scope.findLast((node) => Object.hasOwn(node.attrs, binding))?.attrs[binding];
 }
 
+function odfTextAttribute(
+  attributes: Record<string, string>,
+  localName: string,
+  scope: readonly XmlNode[],
+) {
+  return Object.entries(attributes).find(
+    ([name]) => name.endsWith(`:${localName}`) && namespaceOf(name, scope) === ODF_TEXT_NS,
+  )?.[1];
+}
+
+function isHiddenOdfField(attributes: Record<string, string>, scope: readonly XmlNode[]) {
+  return /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u.test(
+    odfTextAttribute(attributes, "is-hidden", scope) ?? "",
+  );
+}
+
 function isHiddenOdfSection(
   tagName: string,
   attributes: Record<string, string>,
@@ -262,10 +278,7 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
       );
       // A visible field keeps the paragraph visible even if another field hides it.
       if (paragraph && paragraph.odfParagraphHidden !== false) {
-        const visibility = Object.entries(tag.attributes).find(
-          ([name]) => name.endsWith(":is-hidden") && namespaceOf(name, stack) === ODF_TEXT_NS,
-        )?.[1];
-        paragraph.odfParagraphHidden = /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u.test(visibility ?? "");
+        paragraph.odfParagraphHidden = isHiddenOdfField(tag.attributes, stack);
       }
     }
     if (
@@ -289,6 +302,21 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (extension === ".odt" && node.name === "hidden-text") {
+      const scope = [...stack, node];
+      if (namespaceOf(tag.name, scope) === ODF_TEXT_NS) {
+        if (isHiddenOdfField(tag.attributes, scope)) {
+          parent.children.pop();
+          return;
+        }
+        // ODF stores the visible field value in text:string-value when present.
+        const value = odfTextAttribute(tag.attributes, "string-value", scope);
+        if (value !== undefined) {
+          node.children = [value];
+          node.hasText = value.trim() !== "";
+        }
+      }
+    }
     if (extension === ".pptx" && node.name === "cNvPr") {
       const hidden = tag.attributes.hidden?.trim();
       const drawing = stack.at(-2);
