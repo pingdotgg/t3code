@@ -595,6 +595,31 @@ it.each([
   expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
 });
 
+// Pasted lines land as if typed: the first continues the caret's line, the last runs into the text after it.
+it.each([
+  {
+    value: "Fix this error: ",
+    caret: "Fix this error: ".length,
+    expected: "Fix this error: foo\nbar",
+  },
+  { value: "before after", caret: "before ".length, expected: "before foo\nbarafter" },
+])("pastes two lines into $value at $caret", async ({ value, caret, expected }) => {
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection(caret + 1);
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "foo\nbar");
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(expected);
+  await act(async () => {
+    const { from, to } = editor.state.selection;
+    typeText(editor, from, to, "!");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(expected.replace("bar", "bar!"));
+});
+
 // regression: #31079 paste rules restyled dropped text, and dropped Markdown skipped the composer's parser
 it.each([
   // Shown bold like the same paste; the sent text stays verbatim.
