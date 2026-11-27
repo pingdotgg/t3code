@@ -329,8 +329,20 @@ export function LinkEnvironmentDialog({
   const throughCandidate =
     prefilledThrough ?? (targetId === null || canMint ? null : (routes.get(targetId) ?? null));
   const via = useEnvironment(throughCandidate?.viaEnvironmentId ?? null);
+  // The environment holding the link refuses a level this client's session there does not hold.
+  const mayPairThrough = useAtomValue(
+    peerLinkEnvironment.pairLink.permissionAtom(
+      throughCandidate?.viaEnvironmentId ?? null,
+      throughCandidate === null
+        ? undefined
+        : { environmentId: throughCandidate.environmentId, access },
+    ),
+  );
   const through =
-    throughCandidate !== null && via !== null && !throughFailed.has(throughCandidate.environmentId)
+    throughCandidate !== null &&
+    via !== null &&
+    mayPairThrough &&
+    !throughFailed.has(throughCandidate.environmentId)
       ? throughCandidate
       : null;
   const linkBack = useLinkBackOffers(environmentId, targetId === null ? [] : [targetId], open);
@@ -659,7 +671,7 @@ export function useForgetPeerLink(environmentId: EnvironmentId, link: PeerLinkSu
   const forget = async () => {
     const confirmed = await (requestConfirmDialog(
       gt(
-        "Forget {label}? Agents here stop working there. Revoke \"T3 Code · …\" in {label}''s Sharing & access to end the session there too.",
+        "Forget {label}? Agents here stop working there, and their session on {label} ends too if it answers.",
         { label: link.label },
       ),
       { variant: "destructive" },
@@ -668,7 +680,18 @@ export function useForgetPeerLink(environmentId: EnvironmentId, link: PeerLinkSu
     setBusy(true);
     const result = await unlink({ environmentId, input: { environmentId: link.environmentId } });
     setBusy(false);
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+    if (result._tag === "Success") {
+      if (result.value.removed && result.value.endedThere !== true) {
+        toastManager.add({
+          type: "warning",
+          title: gt("{label} did not answer", { label: link.label }),
+          description: gt(
+            "Revoke \"T3 Code · …\" in {label}''s Sharing & access to end the session there too.",
+            { label: link.label },
+          ),
+        });
+      }
+    } else if (!isAtomCommandInterrupted(result)) {
       failureToast(gt("Could not forget the link"), String(squashAtomCommandFailure(result)));
     }
   };

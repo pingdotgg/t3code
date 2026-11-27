@@ -99,7 +99,6 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   getClientSettings,
   persistClientSettingsUpdate,
@@ -117,9 +116,11 @@ import {
 } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 import { AdvancedSettings } from "./AdvancedSettings";
+import { commitNumberFieldOnEnter } from "./commitNumberFieldOnEnter";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
 import type { ImportOutcome } from "./browserImportWizard.logic";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const FILL_VALUE = "fill";
 const RESPONSIVE_VALUE = "responsive";
@@ -444,7 +445,10 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
                 onValueCommitted={(value) => commitDimension("width", value)}
               >
                 <NumberFieldGroup>
-                  <NumberFieldInput aria-label={gt("Default viewport width")} />
+                  <NumberFieldInput
+                    aria-label={gt("Default viewport width")}
+                    onKeyDown={commitNumberFieldOnEnter}
+                  />
                 </NumberFieldGroup>
               </NumberField>
               <span className="text-xs text-muted-foreground">×</span>
@@ -459,33 +463,36 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
                 onValueCommitted={(value) => commitDimension("height", value)}
               >
                 <NumberFieldGroup>
-                  <NumberFieldInput aria-label={gt("Default viewport height")} />
+                  <NumberFieldInput
+                    aria-label={gt("Default viewport height")}
+                    onKeyDown={commitNumberFieldOnEnter}
+                  />
                 </NumberFieldGroup>
               </NumberField>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="icon-sm"
-                      variant="ghost-muted"
-                      disabled={disabled}
-                      aria-label={
-                        presentedSize.height >= presentedSize.width
-                          ? gt("Rotate to landscape")
-                          : gt("Rotate to portrait")
-                      }
-                      onClick={() =>
-                        updateSettings({ browserDefaultViewport: rotateViewport(sized) })
-                      }
-                    >
-                      <ScreenRotationIcon />
-                    </Button>
-                  }
-                />
-                <TooltipPopup side="top">
-                  <T>Rotate</T>
-                </TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                render={
+                  <Button
+                    size="icon-sm"
+                    variant="ghost-muted"
+                    disabled={disabled}
+                    aria-label={
+                      presentedSize.height >= presentedSize.width
+                        ? gt("Rotate to landscape")
+                        : gt("Rotate to portrait")
+                    }
+                    onClick={() =>
+                      updateSettings({ browserDefaultViewport: rotateViewport(sized) })
+                    }
+                  >
+                    <ScreenRotationIcon />
+                  </Button>
+                }
+                label={
+                  <>
+                    <T>Rotate</T>
+                  </>
+                }
+              />
             </div>
           ) : null}
         </div>

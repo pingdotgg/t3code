@@ -68,7 +68,7 @@ const make = Effect.gen(function* () {
   }) {
     const roots: Array<string> = [];
     for (const instance of instances) roots.push(...(yield* dataRoots(instance.environment)));
-    for (const { instanceId } of instances.filter((instance) => instance.configured)) {
+    for (const { instanceId } of instances) {
       const directories = yield* resolveAntigravityInstanceDirectories(
         host.paths.stateDir,
         instanceId,
@@ -85,6 +85,14 @@ const make = Effect.gen(function* () {
         ),
       );
       roots.push(path.join(directories.profile, "antigravity-acp"));
+    }
+    // Profiles of removed or renamed instances keep their history on disk; keep counting it.
+    const profilesDir = path.join(host.paths.stateDir, "providers", "antigravity");
+    const profiles = yield* fileSystem
+      .readDirectory(profilesDir)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    for (const profile of profiles) {
+      roots.push(path.join(profilesDir, profile, "antigravity-acp"));
     }
     const conversationDirs = new Set<string>();
     for (const root of roots) {

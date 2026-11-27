@@ -78,4 +78,35 @@ describe("resolveTimelineMinimapPreview", () => {
       "The cache misses on a cold start. Where do README.md and math.ts cover this?",
     );
   });
+
+  it("runs a tight list item's inline text together, as in a paragraph", () => {
+    const preview = resolveTimelineMinimapPreview({
+      id: "turn-1",
+      rowIndex: 0,
+      userText: null,
+      assistantText:
+        "Done:\n\n- **Cache**: warm on start.\n- Run `vp test`, then [ship](https://example.com/ship).",
+    });
+    expect(preview?.assistantText).toBe("Done: Cache: warm on start. Run vp test, then ship.");
+    const nested = resolveTimelineMinimapPreview({
+      id: "turn-1",
+      rowIndex: 0,
+      userText: null,
+      assistantText: "- **One**\n  - two\n\n  three\n- ```\n  four\n  ```",
+    });
+    expect(nested?.assistantText).toBe("One two three four");
+  });
+
+  it("does not split a surrogate pair at the preview slice boundary", () => {
+    const linkStart = "[Build log](https://example.com/builds/1042/log?sig=";
+    const linkEnd = ") ";
+    const pad = "a".repeat(1_499 - linkStart.length - linkEnd.length);
+    const preview = resolveTimelineMinimapPreview({
+      id: "turn-1",
+      rowIndex: 0,
+      userText: `${linkStart}${pad}${linkEnd}🎉 the release build passed`,
+      assistantText: null,
+    });
+    expect(preview?.userText).toBe("Build log");
+  });
 });

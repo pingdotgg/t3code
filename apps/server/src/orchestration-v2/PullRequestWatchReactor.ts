@@ -985,11 +985,10 @@ export const make = Effect.gen(function* () {
     yield* forkParked(
       Stream.runForEach(engine.streamDomainEvents, (event) => {
         if (event.type !== "thread.pull-request-synced") return Effect.void;
-        const unread = visibleThreadPullRequests(event.payload.pullRequests ?? []).flatMap(
-          (link) =>
-            link.watch === undefined || lives.has(lifeKeyOf(event.threadId, link, link.watch))
-              ? []
-              : [threadPullRequestKeyOf(link)],
+        const unread = visibleThreadPullRequests(event.payload.pullRequests ?? []).flatMap((link) =>
+          link.watch === undefined || lives.has(lifeKeyOf(event.threadId, link, link.watch))
+            ? []
+            : [threadPullRequestKeyOf(link)],
         );
         return Effect.forEach(new Set(unread), readOnChange, { discard: true });
       }).pipe(Effect.catchCause(logFailure("pull request watch event stream failed", {}))),

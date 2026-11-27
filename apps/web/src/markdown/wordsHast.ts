@@ -1,8 +1,10 @@
 import type { Element, ElementContent, Root, Text } from "hast";
 import {
+  init as initWords,
   renderToHtml as wordsRenderToHtml,
   type RenderOptions as WordsRenderOptions,
-} from "@pierre/words";
+} from "@pierre/words/core";
+import wordsWasm from "@pierre/words/wasm";
 import { decodeHTML, decodeHTMLAttribute } from "entities";
 import { find, html as htmlSchema, svg as svgSchema } from "property-information";
 import { resolveCodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
@@ -10,10 +12,11 @@ import { resolveCodexFileCitationLink } from "@t3tools/shared/codexFileCitations
 import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
 import { expandGithubEmojiAliases } from "@t3tools/client-runtime/pull-request-markdown";
 import { resolveChangeRequestMediaUrl } from "@t3tools/client-runtime/pull-request-references";
+import { expandIndentedCodeTabs } from "@t3tools/shared/markdownListIndentation";
 import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 import { absoluteFilePathMatches } from "@t3tools/shared/markdownLinks";
 import {
-  rehypeNormalizeLocalEditorLinks,
+  rehypeNormalizeLocalFileLinks,
   rehypePreserveImageSourceMeta,
   sanitizeChatHast,
 } from "@t3tools/shared/markdownHast";
@@ -42,6 +45,13 @@ export interface MarkdownExtensions {
   };
   /** Expand GitHub `:alias:` emoji shortcodes in prose outside code. */
   readonly githubEmoji?: boolean;
+  /**
+   * Chunked Markdown footnote rendering mode:
+   * - `"omit"` hides the per-chunk `<section data-footnotes>`.
+   * - `"omit-seeded"` also strips the synthetic leading `<p>` used to seed prior footnote numbers.
+   * - `"only"` keeps only the `<section data-footnotes>` element.
+   */
+  readonly footnotes?: "omit" | "omit-seeded" | "only";
 }
 
 export interface WordsHastOptions {
@@ -81,11 +91,22 @@ const PARAGRAPH_SCOPE = new Set([
   "template",
   "button",
 ]);
+// HTML special elements stop implicit </li> closing, except address, div, and p.
+const LIST_ITEM_SCOPE = new Set(
+  "applet area article aside base basefont bgsound blockquote body br button caption center col colgroup dd details dir dl dt embed fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hgroup hr html iframe img input li link listing main marquee menu meta nav noembed noframes noscript object ol param plaintext pre script search section select source style summary table tbody td template textarea tfoot th thead title tr track ul wbr xmp".split(
+    " ",
+  ),
+);
 
 type RenderOptions = Omit<WordsRenderOptions, "frontmatter">;
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
+
+// Browsers can disable WebAssembly (JIT off by policy, CSP); renderToHtml then falls back below.
+try {
+  initWords(new WebAssembly.Module(wordsWasm));
+} catch {}
 
 function renderToHtml(markdown: string, options: RenderOptions): Uint8Array {
   try {
@@ -175,6 +196,16 @@ function tokenize(html: string, offsetOf: (byte: number) => number): Tokenized {
       continue;
     }
     const inSvg = svgDepth > 0 || tagName === "svg";
+    if (!inSvg && tagName === "li") {
+      for (let index = stack.length - 1; index > 0; index--) {
+        const openTag = (stack[index] as Element).tagName;
+        if (openTag === "li") {
+          stack.length = index;
+          break;
+        }
+        if (LIST_ITEM_SCOPE.has(openTag)) break;
+      }
+    }
     if (!inSvg && CLOSES_PARAGRAPH.has(tagName)) {
       const paragraph = openParagraph(stack);
       if (paragraph > 0) stack.length = paragraph;
@@ -366,6 +397,8 @@ function sanitizeMath(node: Element): Element | null {
 interface Walk {
   /** Words' hast for more Markdown, rendered with the same options; `indent` as leadingWhitespace's. */
   readonly render: (markdown: string, indent: number) => Root;
+  /** Reference definitions for re-rendering `markdown`; its own come first, as the first one wins. */
+  readonly definitions: (markdown: string) => string;
   readonly source: string;
   readonly options: WordsHastOptions;
   readonly math: Map<string, Element>;
@@ -457,7 +490,7 @@ function codexDirective(node: Element, walk: Walk, inLink: boolean): ElementCont
   };
 }
 
-const INLINE_PREFIX = "t3-markdown-inline-prefix:";
+const INLINE_PREFIX = "t3-markdown-inline-prefix ";
 
 function stripPositions(node: ElementContent) {
   delete node.position;
@@ -480,18 +513,19 @@ function recoverIndentedCode(
   const start = code?.position?.start.offset;
   const itemStart = item.position?.start.offset;
   if (!isElement(code, "pre") || start === undefined || itemStart === undefined) return false;
-  const value = textOf(code);
+  let value = textOf(code);
   if (!/^[\t ]/.test(value)) return false;
   if (walk.source.slice(itemStart, start).includes("\n") || /[`~]/.test(walk.source[start]!)) {
     return false;
   }
+  value = expandIndentedCodeTabs(value, walk.source, itemStart);
   // The trimmed first line sets where the item's content starts.
   const indent = [.../^[\t ]*/.exec(value)![0]].reduce(
     (column, character) => (character === "\t" ? (Math.floor(column / 4) + 1) * 4 : column + 1),
     0,
   );
   // The prefix keeps block syntax at the start, such as `#`, from opening a block.
-  const source = `${INLINE_PREFIX}${value.trim()}`;
+  const source = `${walk.definitions(value)}${INLINE_PREFIX}${value.trim()}`;
   const recovered = walk.render(source, indent);
   const paragraph = recovered.children.find((child) => child.type === "element");
   const first = isElement(paragraph, "p") ? paragraph.children[0] : undefined;
@@ -695,8 +729,10 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
         checkbox.properties = { type: "checkbox", checked, disabled: true };
         if (node.type === "element") node.properties.className = ["contains-task-list"];
       }
-      breakLines(child, walk.options.breaks);
-    } else if (tagName === "p") {
+      if (child.position) breakLines(child, walk.options.breaks);
+    } else if (tagName === "p" && Object.keys(child.properties).length === 0) {
+      // Words writes a Markdown paragraph bare; one with attributes is raw HTML, which keeps its
+      // lines as written, as remark-breaks never touched raw HTML.
       breakLines(child, walk.options.breaks);
     } else if (tagName === "blockquote") {
       // remarkGithubAlerts
@@ -753,8 +789,43 @@ function imageOwnsLine(items: ElementContent[], at: number): boolean {
 const isBlockElement = (node: ElementContent | undefined) =>
   node?.type === "element" && CLOSES_PARAGRAPH.has(node.tagName);
 
+/** Where the images that end a paragraph after its text start: a caption, then its screenshots. */
+function trailingImagesStart(items: ElementContent[]): number | undefined {
+  let start: number | undefined;
+  for (let at = items.length - 1; at >= 0; at--) {
+    const item = items[at]!;
+    if (isMarkdownImage(item)) start = at;
+    else if (!isElement(item, "br") && !(item.type === "text" && !item.value.trim())) return start;
+  }
+  return undefined;
+}
+
 function breakLines(paragraph: Element, breaks: boolean) {
   const items = paragraph.children;
+  // Inline elements recurse here under `breaks`; only a paragraph's own end is a caption's end.
+  const trailing =
+    paragraph.tagName === "p" || paragraph.tagName === "li"
+      ? trailingImagesStart(items)
+      : undefined;
+  const trailingImage = trailing === undefined ? undefined : items[trailing];
+  const beforeTrailing = trailing === undefined ? undefined : items[trailing - 1];
+  // A line ending before the images breaks below; kept indentation already starts a line.
+  if (
+    trailing !== undefined &&
+    beforeTrailing &&
+    !(
+      beforeTrailing.type === "element" &&
+      (beforeTrailing.tagName === "br" ||
+        (beforeTrailing.tagName === "span" && "dataLeadingWhitespace" in beforeTrailing.properties))
+    ) &&
+    !(beforeTrailing.type === "text" && /\n[ \t]*$/.test(beforeTrailing.value))
+  ) {
+    items.splice(trailing, 0, BREAK, { type: "text", value: "\n" });
+    if (beforeTrailing.type === "text") {
+      beforeTrailing.value = beforeTrailing.value.replace(/[ \t]+$/, "");
+      if (!beforeTrailing.value) items.splice(trailing - 1, 1);
+    }
+  }
   for (let at = 0; at < items.length; at++) {
     const item = items[at]!;
     if (
@@ -767,7 +838,9 @@ function breakLines(paragraph: Element, breaks: boolean) {
     }
     if (item.type !== "text" || !item.value.includes("\n")) continue;
     const afterImage = imageOwnsLine(items, at - 1);
-    const beforeImage = imageOwnsLine(items, at + 1);
+    const beforeImage =
+      imageOwnsLine(items, at + 1) ||
+      (trailingImage !== undefined && items[at + 1] === trailingImage);
     const afterBlock = isBlockElement(items[at - 1]) || (at === 0 && paragraph.tagName === "li");
     const beforeBlock =
       isBlockElement(items[at + 1]) || (at === items.length - 1 && paragraph.tagName === "li");
@@ -860,7 +933,7 @@ function restoreMath(node: Root | Element, math: Map<string, Element>) {
 const addHeadingIds = rehypeHeadingIds();
 const addTextDirection = rehypeTextDirection();
 const preserveImageSourceMeta = rehypePreserveImageSourceMeta();
-const normalizeLocalEditorLinks = rehypeNormalizeLocalEditorLinks();
+const normalizeLocalFileLinks = rehypeNormalizeLocalFileLinks();
 const groupChipPunctuation = rehypeChipPunctuation();
 
 const INSIGHT_OPENING = /^( {0,3})(`?)★ Insight[ \t]+─{3,}\2[ \t]*$/u;
@@ -895,7 +968,7 @@ function insightSource(text: string, options: RenderOptions): InsightSource | nu
   const nonce = Math.random().toString(36).slice(2);
   const marker = new RegExp(String.raw`^\[!T3-INSIGHT-${nonce}-(\d+)\](?:\r?\n)?`);
   const anywhere = new RegExp(String.raw`\[!T3-INSIGHT-${nonce}-(\d+)\]`, "g");
-  const lines = text.split(/(?<=\n)/u);
+  const lines = text.split(/(?<=\n)|(?<=\r)(?!\n)/u);
   const skipped = new Set<number>();
   for (;;) {
     // Each line's offset in the message and in the source, and how much longer it got.
@@ -961,7 +1034,14 @@ function insightSource(text: string, options: RenderOptions): InsightSource | nu
       tree,
       marker,
       toOriginal: (offset) => {
-        const line = offsets.findLast((entry) => entry.source <= offset) ?? offsets[0]!;
+        let low = 0;
+        let high = offsets.length - 1;
+        while (low < high) {
+          const mid = (low + high + 1) >>> 1;
+          if (offsets[mid]!.source <= offset) low = mid;
+          else high = mid - 1;
+        }
+        const line = offsets[low]!;
         return (
           line.original + Math.min(Math.max(offset - line.source - line.delta, 0), line.length)
         );
@@ -1097,6 +1177,62 @@ function makeInert(node: Root | Element) {
   }
 }
 
+function isFootnotesSection(node: Root["children"][number]): boolean {
+  return (
+    node.type === "element" &&
+    node.tagName === "section" &&
+    node.properties.dataFootnotes !== undefined
+  );
+}
+
+function isFootnoteSeedParagraph(node: Root["children"][number]): boolean {
+  if (node.type !== "element" || node.tagName !== "p") return false;
+  let hasRef = false;
+  for (const child of node.children) {
+    if (child.type === "text") {
+      if (child.value.trim() !== "") return false;
+      continue;
+    }
+    if (
+      child.type === "element" &&
+      child.tagName === "sup" &&
+      child.children.length === 1 &&
+      child.children[0]?.type === "element" &&
+      child.children[0].tagName === "a" &&
+      child.children[0].properties.dataFootnoteRef !== undefined
+    ) {
+      hasRef = true;
+      continue;
+    }
+    return false;
+  }
+  return hasRef;
+}
+
+function applyFootnoteMode(hast: Root, mode: NonNullable<MarkdownExtensions["footnotes"]>) {
+  if (mode === "only") {
+    hast.children = hast.children.filter(isFootnotesSection);
+    return;
+  }
+  let droppedSeed = mode !== "omit-seeded";
+  const kept: Root["children"] = [];
+  for (const child of hast.children) {
+    if (isFootnotesSection(child)) continue;
+    if (!droppedSeed && isFootnoteSeedParagraph(child)) {
+      droppedSeed = true;
+      continue;
+    }
+    if (kept.length === 0 && child.type === "text" && child.value.trim() === "") continue;
+    kept.push(child);
+  }
+  while (kept.length > 0) {
+    const tail = kept.at(-1);
+    if (tail?.type === "text" && tail.value.trim() === "") kept.pop();
+    else break;
+  }
+  hast.children = kept;
+}
+
 /** ChatMarkdown's sanitized hast for `text`, rendered by Words. */
 export function wordsHast(text: string, options: WordsHastOptions): Root {
   const { extensions } = options;
@@ -1118,7 +1254,15 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   const insights = options.insights ? insightSource(text, renderOptions) : null;
   const source = insights?.source ?? text;
   const tree = insights?.tree ?? parse(source, renderOptions);
+  let documentDefinitions: string[] | undefined;
   const walk: Walk = {
+    definitions: (markdown) =>
+      [
+        ...markdownReferenceDefinitions(markdown),
+        ...(documentDefinitions ??= markdownReferenceDefinitions(source)),
+      ]
+        .map((definition) => `${definition}\n\n`)
+        .join(""),
     render: (markdown, indent) =>
       parse(markdown, {
         ...renderOptions,
@@ -1132,10 +1276,11 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   };
   transform(tree, walk, false, false);
   preserveImageSourceMeta(tree as never);
-  normalizeLocalEditorLinks(tree as never);
+  normalizeLocalFileLinks(tree as never);
   const hast = sanitizeChatHast(tree);
   if (walk.math.size > 0) restoreMath(hast, walk.math);
   if (insights) restorePositions(hast, insights.toOriginal);
+  if (extensions.footnotes) applyFootnoteMode(hast, extensions.footnotes);
   if (extensions.inert) makeInert(hast);
   if (extensions.preview) return flattenPreview(hast, extensions.preview);
   addHeadingIds(hast);
@@ -1261,32 +1406,37 @@ export function markdownHtmlComments(markdown: string): Array<{ start: number; e
 
 /**
  * The first definition of each label in `markdown`, as one line of Markdown. Words decides which
- * `[label]:` text defines one: each label is looked up again after the text.
+ * `[label]:` text defines one: each label is looked up before the text so an unclosed trailing
+ * block cannot consume the lookups.
  */
 export function markdownReferenceDefinitions(markdown: string): string[] {
   const labels = new Map<string, string>();
   for (const match of markdown.matchAll(/\[((?:[^\\[\]]|\\.){1,999})\]:/g)) {
-    const key = match[1]!.replace(/\s+/g, " ").trim().toLowerCase();
+    const label = match[1]!.replace(/[ \t\r\n\f\v]+/g, " ");
+    const key = label.trim().toLowerCase();
     // `[^1]:` is a footnote.
-    if (key !== "" && !key.startsWith("^") && !labels.has(key)) labels.set(key, match[1]!);
+    if (key !== "" && !key.startsWith("^") && !labels.has(key)) labels.set(key, label);
   }
   if (labels.size === 0) return [];
-  let probe = `${markdown}\n\n`;
+  let probe = "";
   const lookups = new Map<number, string>();
   for (const label of labels.values()) {
     lookups.set(probe.length, label);
     probe += `[${label}]\n\n`;
   }
+  probe += markdown.replace(/^\uFEFF/, "");
   const definitions: string[] = [];
   const visit = (node: Root | Element) => {
     for (const child of node.children) {
       if (child.type !== "element") continue;
       const label = lookups.get(child.position?.start.offset ?? -1);
       if (child.tagName === "a" && label !== undefined) {
-        const href = String(child.properties.href ?? "").replace(/[<>\\\n]/g, encodeURIComponent);
+        const href = String(child.properties.href ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/[<>\\\n]/g, encodeURIComponent);
         const title = child.properties.title;
         definitions.push(
-          `[${label}]: <${href}>${typeof title === "string" ? ` "${title.replace(/\s+/g, " ").replace(/["\\]/g, "\\$&")}"` : ""}`,
+          `[${label}]: <${href}>${typeof title === "string" ? ` "${title.replace(/\s+/g, " ").replace(/["\\]/g, "\\$&").replace(/&/g, "&amp;")}"` : ""}`,
         );
       } else visit(child);
     }

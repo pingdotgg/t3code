@@ -11,10 +11,19 @@ import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpRespon
 
 /** ACP mandates stdio MCP support; HTTP/SSE support varies. */
 
+const JsonRpcError = Schema.Struct({ code: Schema.Number, message: Schema.String });
+
 export class AcpMcpBridgeError extends Schema.TaggedError<AcpMcpBridgeError>()(
   "AcpMcpBridgeError",
-  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    /** The JSON-RPC error the server answered with, when it answered. */
+    rpcError: Schema.optional(JsonRpcError),
+  },
 ) {}
+
+const decodeRpcError = Schema.decodeUnknownOption(JsonRpcError);
 
 const isAcpMcpBridgeError = Schema.is(AcpMcpBridgeError);
 
@@ -139,8 +148,10 @@ export const mcpToolSession = (
     const responses = yield* send({ jsonrpc: "2.0", id, method, params });
     const envelope = asEnvelope(responses.find((entry) => asEnvelope(entry)?.id === id));
     if (envelope === null || envelope.error !== undefined) {
+      const rpcError = Option.getOrUndefined(decodeRpcError(envelope?.error));
       return yield* new AcpMcpBridgeError({
         message: `T3 Code MCP ${method} failed${envelope?.error === undefined ? "." : `: ${JSON.stringify(envelope.error)}`}`,
+        ...(rpcError === undefined ? {} : { rpcError }),
       });
     }
     return envelope;

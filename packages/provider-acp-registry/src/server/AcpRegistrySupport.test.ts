@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodePath from "@effect/platform-node/NodePath";
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -298,18 +299,46 @@ describe("AcpRegistrySupport", () => {
         registryUrl,
       }).pipe(Effect.provideService(HostProcess.Environment, environment));
       const resolved = yield* resolver.resolve(
-        decodeAcpRegistrySettings({ source: "local", commandPath }),
+        decodeAcpRegistrySettings({
+          source: "local",
+          commandPath: (yield* Path.Path).relative(process.cwd(), commandPath),
+        }),
         "/workspace",
       );
 
-      expect(resolved.spawn).toEqual({
-        command: commandPath,
+      expect(resolved.spawn).toMatchObject({
         args: [],
         cwd: "/workspace",
         env: environment,
         shell: false,
       });
+      expect((yield* Path.Path).isAbsolute(resolved.spawn.command)).toBe(true);
+      expect(yield* fileSystem.realPath(resolved.spawn.command)).toBe(
+        yield* fileSystem.realPath(commandPath),
+      );
       expect(resolved.agent).toBeUndefined();
+
+      yield* fileSystem.makeDirectory(`${cacheDir}/target/nested`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${cacheDir}/target/dsh wrapper`,
+        "#!/bin/sh\necho target\n",
+      );
+      yield* fileSystem.chmod(`${cacheDir}/target/dsh wrapper`, 0o755);
+      yield* fileSystem.symlink(`${cacheDir}/target/nested`, `${cacheDir}/link`);
+      const symlinkCommand = `${cacheDir}/link/../dsh wrapper`;
+      for (const command of [
+        symlinkCommand,
+        `${(yield* Path.Path).relative(process.cwd(), cacheDir)}/link/../dsh wrapper`,
+      ]) {
+        const throughSymlink = yield* resolver.resolve(
+          decodeAcpRegistrySettings({ source: "local", commandPath: command }),
+          "/workspace",
+        );
+        expect((yield* Path.Path).isAbsolute(throughSymlink.spawn.command)).toBe(true);
+        expect(yield* fileSystem.readFileString(throughSymlink.spawn.command)).toBe(
+          "#!/bin/sh\necho target\n",
+        );
+      }
 
       for (const extension of [".cmd", ".BAT"]) {
         const windowsResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
@@ -318,7 +347,7 @@ describe("AcpRegistrySupport", () => {
           registryUrl,
         }).pipe(
           Effect.provideService(HostProcess.Platform, "win32"),
-          Effect.provideService(SpawnExecutableResolution, () => `C:\\bin\\dsh${extension}`),
+          Effect.provideService(SpawnExecutableResolution, async () => `C:\\bin\\dsh${extension}`),
         );
         const localSettings = decodeAcpRegistrySettings({ source: "local", commandPath: "dsh" });
         for (const failure of [
@@ -351,6 +380,7 @@ describe("AcpRegistrySupport", () => {
         }).pipe(
           Effect.provideService(HostProcess.Platform, "win32"),
           Effect.provideService(SpawnExecutableResolution, () => executable),
+          Effect.provide(NodePath.layerWin32),
         );
 
       const bare = decodeAcpRegistrySettings({ source: "local", commandPath: "cmdc" });
@@ -358,6 +388,16 @@ describe("AcpRegistrySupport", () => {
       expect(
         yield* (yield* catalog("C:\\bin\\cmdc.exe")).resolve(bare, "/workspace"),
       ).toMatchObject({ spawn: { command: "C:\\bin\\cmdc.exe", shell: false } });
+      const windowsPath = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
+      for (const drive of ["C:", "D:"]) {
+        const command = `${drive}tools\\link\\..\\cmdc.exe`;
+        expect(yield* (yield* catalog(command)).resolve(bare, "/workspace")).toMatchObject({
+          spawn: {
+            command: `${windowsPath.resolve(drive)}\\tools\\link\\..\\cmdc.exe`,
+            shell: false,
+          },
+        });
+      }
       // A bare name that PATHEXT resolves to a batch shim never launches, so the transport it
       // selects cannot matter: there is no session to attach MCP servers to.
       expect(
@@ -572,6 +612,66 @@ describe("AcpRegistrySupport", () => {
         command: path.join(userGlobalBin, "example-agent"),
         env: { PATH: expect.stringMatching(new RegExp(`^${userGlobalBin}:`, "u")) },
       });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  it.effect("installs into its managed prefix with an npm that ignores npm_config_prefix", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-npm-shim-prefix-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, FAKE_NPM_IGNORE_PREFIX_ENV: "1" };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
+
+      const resolved = yield* resolver.resolve(settings(), "/workspace", environment);
+
+      expect(resolved.spawn.command).toBe(toolchain.executablePath);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  it.effect("names the npm shim when npm cannot install into the managed prefix", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-npm-shim-no-prefix-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, FAKE_NPM_IGNORE_PREFIX: "1" };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
+
+      const error = yield* resolver
+        .resolve(settings(), "/workspace", environment)
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("shim");
+      const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
+      expect(npmCommands).not.toMatch(/^install /mu);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -1206,6 +1306,7 @@ describe("AcpRegistrySupport", () => {
       name: "Codex Darwin",
     } satisfies AcpRegistrySupport.AcpRegistryAgent;
 
+    const lookups: string[] = [];
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -1215,9 +1316,15 @@ describe("AcpRegistrySupport", () => {
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
-      });
+      }).pipe(
+        Effect.provideService(SpawnExecutableResolution, async (command) => {
+          lookups.push(command);
+          return "/bin/npm";
+        }),
+      );
       const result = yield* resolver.search({ query: "codex" });
 
+      expect(lookups).toEqual(["npm"]);
       expect(result.agents.map((agent) => agent.id)).toEqual(["codex-acp", "other-agent"]);
       expect(result.agents[0]).toMatchObject({
         authors: ["OpenAI", "Zed Industries"],
@@ -2176,6 +2283,99 @@ describe("AcpRegistrySupport", () => {
             ),
           ),
         ),
+      ),
+    );
+  });
+
+  it.effect("refreshes stale disk indexes with max-age, offline backoff, and invalidation", () => {
+    const v1 = makeAgent({ npx: { package: "example-agent@1.0.0" } });
+    const v2 = {
+      ...makeAgent({ npx: { package: "example-agent@2.0.0" } }),
+      version: "2.0.0",
+    };
+    let currentAgent = v2;
+    let failNetwork = false;
+    let requests = 0;
+
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-refresh-index-",
+      });
+      yield* fileSystem.makeDirectory(`${cacheDir}/acp-registry`, { recursive: true });
+      yield* fileSystem.writeFileString(`${cacheDir}/acp-registry/registry.json`, makeRegistry(v1));
+
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+
+      expect(yield* resolver.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "1.2.3",
+      });
+      expect(requests).toBe(0);
+
+      // Cold disk cache has no network timestamp, so refreshIndex fetches v2.
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        true,
+      );
+      expect(requests).toBe(1);
+      expect(yield* resolver.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "2.0.0",
+      });
+
+      // Within maxAgeMs, no network call happens.
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        false,
+      );
+      expect(requests).toBe(1);
+
+      // After invalidateIndex, an offline failure preserves in-memory v2 and backs off.
+      yield* resolver.invalidateIndex();
+      failNetwork = true;
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        false,
+      );
+      expect(requests).toBe(2);
+      expect(yield* resolver.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "2.0.0",
+      });
+
+      // Within failureBackoffMs, repeated background refreshes do not hammer the network.
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        false,
+      );
+      expect(requests).toBe(2);
+
+      // Explicit invalidateIndex clears backoff so the next refresh retries immediately.
+      failNetwork = false;
+      currentAgent = {
+        ...makeAgent({ npx: { package: "example-agent@2.0.0", args: ["--flag"] } }),
+        version: "2.0.0",
+      };
+      yield* resolver.invalidateIndex();
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        true,
+      );
+      expect(requests).toBe(3);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          requests += 1;
+          if (failNetwork) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: 503 })),
+            );
+          }
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(makeRegistry(currentAgent))),
+          );
+        }),
       ),
     );
   });

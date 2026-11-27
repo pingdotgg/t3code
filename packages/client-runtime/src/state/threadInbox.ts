@@ -1,9 +1,5 @@
 // @effect-diagnostics globalTimers:off - Shelf placement timers run in web and native clients, outside an Effect runtime.
-import {
-  threadRuntimeIsActive,
-  type EnvironmentThreadShell,
-  type ThreadStructureRuntime,
-} from "./models.ts";
+import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
 import { effectiveSnoozed } from "./threadSettled.ts";
 
@@ -32,14 +28,6 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
     run.status !== "waiting" &&
     thread.runtime?.activeRunId !== run.runId;
   return !(thread.interactionMode === "plan" && thread.hasActionableProposedPlan && runSettled);
-}
-
-// Unread surfaces only as the completion pill, which a Working thread never shows: an active
-// run has no completion yet, and held background work (idle) shows Waiting instead.
-export function threadRuntimeHidesMarkUnread(
-  runtime: ThreadStructureRuntime | null | undefined,
-): boolean {
-  return threadRuntimeIsActive(runtime) || runtime?.status === "idle";
 }
 
 /**
