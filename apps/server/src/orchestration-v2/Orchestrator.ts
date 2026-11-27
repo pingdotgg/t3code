@@ -26,7 +26,6 @@ import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type ChatAttachment,
   CommandId,
-  didRunReachProvider,
   type GuestMessageId,
   isCompactionCommandMessage,
   isDeliveredProviderTurn,
@@ -1615,7 +1614,13 @@ function rootProviderThreadsForProvider(
 }
 
 function isHandoffSourceRun(run: OrchestrationV2Run): boolean {
-  return didRunReachProvider(run);
+  return (
+    run.status === "completed" ||
+    run.status === "failed" ||
+    run.status === "interrupted" ||
+    // A queued request cancelled before it started never reached any provider.
+    (run.status === "cancelled" && run.startedAt !== null)
+  );
 }
 
 function lastDeliveredRunForProviderThread(
@@ -2535,6 +2540,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return true;
   });
 
+  const hasPendingRollbackEffect = Effect.fn("Orchestrator.hasPendingRollbackEffect")(function* (
+    threadId: ThreadId,
+    thread: Pick<
+      OrchestrationV2AppThread,
+      "rollbackRequestId" | "rollbackCompletedRequestId" | "rollbackFailure"
+    >,
+  ) {
+    const requestId = thread.rollbackRequestId;
+    if (
+      requestId == null ||
+      thread.rollbackCompletedRequestId === requestId ||
+      thread.rollbackFailure?.requestId === requestId
+    ) {
+      return false;
+    }
+    const rollbackEffects = yield* effectOutbox.listByCommandId(requestId);
+    return rollbackEffects.some(
+      (effect) =>
+        effect.threadId === threadId &&
+        effect.request.type === "provider-thread.rollback" &&
+        (effect.status === "pending" || effect.status === "running"),
+    );
+  });
+
   const startNextQueuedRunOnce = Effect.fn("Orchestrator.startNextQueuedRun")(
     function* (
       threadId: ThreadId,
@@ -2554,6 +2583,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.deletedAt !== null ||
         projection.runs.some(isActiveRun)
       ) {
+        return;
+      }
+      if (yield* hasPendingRollbackEffect(threadId, projection.thread)) {
         return;
       }
 
@@ -2768,39 +2800,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         freshContext && queuedMessage.scheduledTaskId === undefined
           ? pendingForkTransferForThread(projection)
           : undefined;
-      // A pending rollback may close the provider thread this queued run points to.
-      if (
-        projection.thread.rollbackRequestId != null &&
-        projection.thread.rollbackFailure == null
-      ) {
-        const rollbackEffects = yield* effectOutbox
-          .listByCommandId(projection.thread.rollbackRequestId)
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new OrchestratorDispatchError({
-                  commandId,
-                  commandType: "message.dispatch",
-                  cause,
-                }),
-            ),
-          );
-        if (
-          rollbackEffects.some(
-            (effect) =>
-              effect.threadId === threadId &&
-              effect.request.type === "provider-thread.rollback" &&
-              (effect.status === "pending" || effect.status === "running"),
-          )
-        ) {
-          return yield* new OrchestratorDispatchError({
-            commandId,
-            commandType: "message.dispatch",
-            cause:
-              "This thread is currently rewinding. Wait for the rewind to finish before starting a queued message.",
-          });
-        }
-      }
       const activeProviderThread = dispatchProviderThread(projection, queuedMessage, freshContext);
       const contextBoundary = freshContext ? ordinal : contextBoundaryOrdinal(projection);
       // A run queued before a fresh run or rollback is bound to the conversation left behind.
@@ -8108,25 +8107,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     // A pending rollback may close the currently active provider thread; reject new sends until it settles.
-    if (projection.thread.rollbackRequestId != null && projection.thread.rollbackFailure == null) {
-      const rollbackEffects = yield* effectOutbox
-        .listByCommandId(projection.thread.rollbackRequestId)
-        .pipe(mapDispatchError(command));
-      if (
-        rollbackEffects.some(
-          (effect) =>
-            effect.threadId === command.threadId &&
-            effect.request.type === "provider-thread.rollback" &&
-            (effect.status === "pending" || effect.status === "running"),
-        )
-      ) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause:
-            "This thread is currently rewinding. Wait for the rewind to finish before sending a message.",
-        });
-      }
+    if (
+      yield* hasPendingRollbackEffect(command.threadId, projection.thread).pipe(
+        mapDispatchError(command),
+      )
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause:
+          "This thread is currently rewinding. Wait for the rewind to finish before sending a message.",
+      });
     }
 
     const activeProviderThread = dispatchProviderThread(
@@ -14991,6 +14982,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         runsToRollback,
         retainedRuns,
         sessions: projection.providerSessions,
+        providerTurns: projection.providerTurns,
       });
       if (classified.needsTargetProviderRollback) {
         const capabilities = yield* providerAdapters.get(providerThread.providerInstanceId).pipe(
@@ -15172,6 +15164,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: {
           ...projection.thread,
           rollbackRequestId: command.commandId,
+          rollbackCompletedRequestId: null,
           rollbackFailure: null,
           rollbackUnrestored: null,
           updatedAt: now,
@@ -16976,11 +16969,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.type === "queue.resume" ||
       command.type === "queued-run.start" ||
+      command.type === "checkpoint.rollback.fail" ||
       (command.type === "thread.runtime-mode.set" && runtimeModeCeiling !== undefined)
     ) {
       yield* mapDispatchError(command)(
         startNextQueuedRun(command.threadId, {
-          userStarted: command.type !== "thread.runtime-mode.set",
+          userStarted: command.type === "queue.resume" || command.type === "queued-run.start",
           ...(command.type === "queued-run.start" ? { queuedRunId: command.runId } : {}),
         }),
       );
@@ -17346,6 +17340,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ),
     Effect.forkScoped,
   );
+
+  // Resume any queued run waiting on a rollback that committed without rolling back any runs.
+  const lastCompletedRollbackByThread = new Map<ThreadId, CommandId>();
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "thread.metadata-updated" })
+    .pipe(
+      Stream.filter((stored) => {
+        if (stored.event.type !== "thread.metadata-updated") return false;
+        const completedId = stored.event.payload.rollbackCompletedRequestId;
+        if (completedId == null) return false;
+        if (lastCompletedRollbackByThread.get(stored.event.threadId) === completedId) return false;
+        lastCompletedRollbackByThread.set(stored.event.threadId, completedId);
+        return true;
+      }),
+      Stream.runForEach((stored) =>
+        threadReactions.run(
+          stored.event.threadId,
+          threadDispatch
+            .withLock(stored.event.threadId, startNextQueuedRun(stored.event.threadId))
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Failed to start queued V2 run after rollback", {
+                  threadId: stored.event.threadId,
+                  cause,
+                }),
+              ),
+            ),
+        ),
+      ),
+      Effect.forkScoped,
+    );
 
   const recoverDelegatedTasks = Effect.gen(function* () {
     yield* projectionStore.getRecoveryThreadIds("subagent-results").pipe(

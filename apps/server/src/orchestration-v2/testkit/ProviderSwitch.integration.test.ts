@@ -7624,24 +7624,42 @@ describe("orchestration v2 provider switching", () => {
             (turn) => turn.providerThreadId === codexB4ThreadId,
           )!;
 
-          // Rewind to A1: closes codexB4ThreadId while heldRun remains queued.
-          const afterRewindWithHeld = yield* rollbackToOrdinal(1, "with-held-queue");
-          assert.equal(
-            afterRewindWithHeld.providerThreads.find((thread) => thread.id === codexB4ThreadId)
-              ?.status,
-            "closed",
-          );
-
-          // Resume queue: must rebind to a brand-new Codex thread and native conversation, never codexB4ThreadId.
+          // Dispatch rewind to A1 and resume the held queue while the rollback effect is still pending:
+          // the queued run must stay queued (not marked failed) and start once the rollback settles.
+          const cp1ForHeld = beforeRewindWithHeld.checkpoints.find(
+            (candidate) => candidate.appRunOrdinal === 1 && candidate.status === "ready",
+          )!;
+          yield* orchestrator.dispatch({
+            type: "checkpoint.rollback",
+            commandId: CommandId.make("command:spanning:rollback:with-held-queue"),
+            threadId: testThreadId,
+            scopeId: cp1ForHeld.scopeId,
+            checkpointId: cp1ForHeld.id,
+            restoreFiles: false,
+          });
           yield* orchestrator.dispatch({
             type: "queue.resume",
             commandId: CommandId.make("command:spanning:resume-held"),
             threadId: testThreadId,
           });
+          const whileRollbackPending = yield* orchestrator.getThreadProjection(testThreadId);
+          const pendingQueuedRun = whileRollbackPending.runs.find((run) => run.id === heldRun.id);
+          assert.equal(pendingQueuedRun?.status, "queued");
+          assert.notEqual(pendingQueuedRun?.queueHeld, true);
+
+          // Drain the pending rollback effect; the queued run must now automatically start and
+          // rebind to a brand-new Codex thread and native conversation, never codexB4ThreadId.
           yield* worker.drain();
           yield* waitForIdle(testThreadId);
           yield* worker.drain();
           const afterResumed = yield* orchestrator.getThreadProjection(testThreadId);
+          assert.equal(afterResumed.thread.rollbackFailure ?? null, null);
+          assert.equal(
+            afterResumed.thread.rollbackCompletedRequestId,
+            CommandId.make("command:spanning:rollback:with-held-queue"),
+          );
+          const resumedRun = afterResumed.runs.find((run) => run.id === heldRun.id);
+          assert.equal(resumedRun?.status, "completed");
           const resumedTurn = (yield* Ref.get(capturedTurns)).at(-1)!;
           assert.notEqual(resumedTurn.providerThreadId, codexB4ThreadId);
           assert.notEqual(resumedTurn.nativeThreadId, b4Turn.nativeThreadId);
@@ -7688,7 +7706,10 @@ describe("orchestration v2 provider switching", () => {
           instanceId: altClaudeInstance,
           model: CLAUDE_MODEL_SELECTION.model,
         };
-        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        const nativeThreadGeneration = yield* Ref.make(0);
+        const holdFirstTurn = yield* Deferred.make<void>();
+        const releaseFirstTurn = yield* Deferred.make<void>();
+        const adapters = [
           makeTestAdapter({
             instanceId: CLAUDE_MODEL_SELECTION.instanceId,
             driver: CLAUDE_DRIVER,
@@ -7696,6 +7717,9 @@ describe("orchestration v2 provider switching", () => {
             modelSelection: CLAUDE_MODEL_SELECTION,
             rollback: "truncates",
             rollbackCalls: claudeRollbacks,
+            nativeThreadGeneration,
+            holdFirstTurn,
+            releaseFirstTurn,
             responseByRunOrdinal: {
               1: "Claude account 1 turn 1.",
             },
@@ -7708,12 +7732,36 @@ describe("orchestration v2 provider switching", () => {
             modelSelection: altClaudeModelSelection,
             rollback: "truncates",
             rollbackCalls: claudeRollbacks,
+            nativeThreadGeneration,
             responseByRunOrdinal: {
               2: "Claude account 2 turn 2.",
             },
             capturedTurns,
           }),
-        ]);
+        ];
+        const layerRegistry = Layer.succeed(
+          ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+          ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+            get: (instanceId) => {
+              const adapter = adapters.find((candidate) => candidate.instanceId === instanceId);
+              return adapter === undefined
+                ? Effect.fail(
+                    new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({
+                      instanceId,
+                    }),
+                  )
+                : Effect.succeed(adapter);
+            },
+            list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
+            getMetadata: () =>
+              Effect.succeed({
+                driver: CLAUDE_DRIVER,
+                continuationKey: "claude:shared-native-account-history",
+                enabled: true,
+                capabilities: ClaudeProviderCapabilitiesV2,
+              }),
+          }),
+        );
 
         return yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -7733,35 +7781,44 @@ describe("orchestration v2 provider switching", () => {
             createdBy: "user",
             creationSource: "web",
           });
-          let step = 0;
-          const send = (text: string, modelSelection: ModelSelection) =>
-            Effect.gen(function* () {
-              step += 1;
-              yield* orchestrator.dispatch({
-                type: "message.dispatch",
-                createdBy: "user",
-                creationSource: "web",
-                commandId: CommandId.make(`command:shared-native:msg-${step}`),
-                threadId: testThreadId,
-                messageId: MessageId.make(`message:shared-native:${step}`),
-                text,
-                attachments: [],
-                modelSelection,
-                dispatchMode: { type: "start_immediately" },
-              });
-              yield* worker.drain();
-              yield* waitForIdle(testThreadId);
-              yield* worker.drain();
-              return yield* orchestrator.getThreadProjection(testThreadId);
-            });
-
-          const after1 = yield* send("Turn 1 on account 1", CLAUDE_MODEL_SELECTION);
-          const thread1Id = after1.thread.activeProviderThreadId!;
-          const after2 = yield* send("Turn 2 on account 2", altClaudeModelSelection);
+          // Start turn 1 on account 1, queue turn 2 on compatible account 2 while turn 1 runs so
+          // turn 2 reserves its own provider-thread row and resumes the same nativeThreadRef.
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:shared-native:msg-1"),
+            threadId: testThreadId,
+            messageId: MessageId.make("message:shared-native:1"),
+            text: "Turn 1 on account 1",
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Deferred.await(holdFirstTurn);
+          const during1 = yield* orchestrator.getThreadProjection(testThreadId);
+          const thread1Id = during1.thread.activeProviderThreadId!;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:shared-native:msg-2"),
+            threadId: testThreadId,
+            messageId: MessageId.make("message:shared-native:2"),
+            text: "Turn 2 on account 2",
+            attachments: [],
+            modelSelection: altClaudeModelSelection,
+            dispatchMode: { type: "queue_after_active" },
+          });
+          yield* Deferred.succeed(releaseFirstTurn, undefined);
+          yield* waitForIdle(testThreadId);
+          yield* worker.drain();
+          const after2 = yield* orchestrator.getThreadProjection(testThreadId);
           const thread2Id = after2.thread.activeProviderThreadId!;
           assert.notEqual(thread2Id, thread1Id);
           const thread1 = after2.providerThreads.find((t) => t.id === thread1Id)!;
           const thread2 = after2.providerThreads.find((t) => t.id === thread2Id)!;
+          assert.isNotNull(thread1.nativeThreadRef?.nativeId);
           assert.equal(thread2.nativeThreadRef?.nativeId, thread1.nativeThreadRef?.nativeId);
 
           // Rewind to turn 1: even though turn 2 has a different providerThreadId, it appended to

@@ -510,6 +510,80 @@ describe("CodexAdapterV2 rollback mapping", () => {
       assert.equal(numTurns, 2);
     }),
   );
+
+  it.effect(
+    "counts terminal turns across provider-thread aliases whose row-local ordinals restart at 1",
+    () =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const providerThreadId = ProviderThreadId.make("provider-thread-codex-alias-1");
+        const aliasProviderThreadId = ProviderThreadId.make("provider-thread-codex-alias-2");
+        const providerThread: OrchestrationV2ProviderThread = {
+          id: providerThreadId,
+          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerSessionId: ProviderSessionId.make("provider-session-codex-alias"),
+          appThreadId: ThreadId.make("thread-codex-alias"),
+          ownerNodeId: null,
+          nativeThreadRef: {
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            nativeId: "native-thread-codex-shared",
+            strength: "strong",
+          },
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const keptTurn: OrchestrationV2ProviderTurn = {
+          id: ProviderTurnId.make("provider-turn-alias-1"),
+          providerThreadId,
+          nodeId: NodeId.make("node-alias-1"),
+          runAttemptId: RunAttemptId.make("attempt-alias-1"),
+          nativeTurnRef: {
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            nativeId: "native-turn-1",
+            strength: "strong",
+          },
+          ordinal: 1,
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+        };
+        const discardedAliasTurn: OrchestrationV2ProviderTurn = {
+          id: ProviderTurnId.make("provider-turn-alias-2"),
+          providerThreadId: aliasProviderThreadId,
+          nodeId: NodeId.make("node-alias-2"),
+          runAttemptId: RunAttemptId.make("attempt-alias-2"),
+          nativeTurnRef: {
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            nativeId: "native-turn-2",
+            strength: "strong",
+          },
+          ordinal: 1,
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+        };
+
+        const numTurns = yield* CodexAdapterV2.resolveCodexRollbackTurnCount({
+          providerThread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint-alias-1"),
+            appRunOrdinal: 1,
+            providerTurn: keptTurn,
+          },
+          providerThreadTurns: [keptTurn, discardedAliasTurn],
+        });
+
+        assert.equal(numTurns, 1);
+      }),
+  );
 });
 
 describe("CodexAdapterV2 fork boundary", () => {

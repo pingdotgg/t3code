@@ -999,8 +999,13 @@ export async function waitForRevertedMessage(
         finish(new Error(failure.message));
         return;
       }
+      if (accepted && thread.thread.rollbackCompletedRequestId === requestId) {
+        finish();
+        return;
+      }
       if (
         accepted &&
+        thread.thread.rollbackCompletedRequestId === undefined &&
         thread.providerThreads.some(
           (providerThread) =>
             !isRetiredProviderThread(providerThread) &&
@@ -1775,7 +1780,9 @@ export function deriveAvailableRevertTurnCounts(
   for (const run of projection.runs) {
     if (!isRollbackableSettledRunStatus(run.status)) continue;
     if (run.ordinal > maxRollbackableOrdinal) maxRollbackableOrdinal = run.ordinal;
-    if (!didRunReachProvider(run) || run.providerThreadId === null) continue;
+    if (!didRunReachProvider(run, projection.providerTurns) || run.providerThreadId === null) {
+      continue;
+    }
     const runOwner = providerThreadsById.get(run.providerThreadId);
     const conversationKey =
       runOwner === undefined ? run.providerThreadId : providerThreadNativeConversationKey(runOwner);

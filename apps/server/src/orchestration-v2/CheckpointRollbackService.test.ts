@@ -42,7 +42,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
@@ -1030,6 +1030,379 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
         assert.deepEqual(history.restored, []);
         assert.deepEqual(history.committed, []);
       }),
+    );
+
+    it.effect(
+      "retires every alias of an un-rewindable shared conversation and ignores undelivered failed runs",
+      () =>
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make("thread:classify-shared");
+          const targetThreadId = ProviderThreadId.make("pt:target");
+          const grokAlias1Id = ProviderThreadId.make("pt:grok-1");
+          const grokAlias2Id = ProviderThreadId.make("pt:grok-2");
+          const makeThread = (
+            id: ProviderThreadId,
+            driver: string,
+            nativeId: string,
+            firstRunOrdinal: number,
+            lastRunOrdinal: number,
+          ) => ({
+            id,
+            driver: ProviderDriverKind.make(driver),
+            providerInstanceId: ProviderInstanceId.make(id.replaceAll(":", "-")),
+            providerSessionId: ProviderSessionId.make(`session:${id}`),
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: {
+              driver: ProviderDriverKind.make(driver),
+              nativeId,
+              strength: "strong" as const,
+            },
+            nativeConversationHeadRef: null,
+            status: "idle" as const,
+            firstRunOrdinal,
+            lastRunOrdinal,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          });
+          const targetThread = makeThread(targetThreadId, "codex", "codex:1", 3, 3);
+          const grokAlias1 = makeThread(grokAlias1Id, "acp", "grok:shared", 1, 1);
+          const grokAlias2 = makeThread(grokAlias2Id, "acp", "grok:shared", 2, 4);
+          const makeRun = (
+            ordinal: number,
+            providerThreadId: ProviderThreadId,
+            status: "completed" | "failed" | "interrupted",
+            startedAt: DateTime.Utc | null,
+            activeAttemptId: RunAttemptId | null,
+          ) =>
+            ({
+              id: RunId.make(`run:${ordinal}`),
+              threadId,
+              ordinal,
+              providerInstanceId: ProviderInstanceId.make(providerThreadId.replaceAll(":", "-")),
+              modelSelection: {
+                instanceId: ProviderInstanceId.make(providerThreadId.replaceAll(":", "-")),
+                model: "test",
+              },
+              providerThreadId,
+              userMessageId: MessageId.make(`msg:${ordinal}`),
+              rootNodeId: NodeId.make(`node:${ordinal}`),
+              activeAttemptId,
+              status,
+              requestedAt: now,
+              startedAt,
+              completedAt: now,
+              checkpointId: CheckpointId.make(`cp:${ordinal}`),
+              contextHandoffId: null,
+            }) as const;
+
+          // Shared non-rollback conversation: grokAlias1 (run 1) and grokAlias2 (run 2 + discarded run 4).
+          // Rewinding to codex run 3 must retire BOTH grok aliases so grokAlias1 cannot reuse run 4.
+          const sharedResult = ProjectionStore.classifyRollbackProviderThreads({
+            targetProviderThread: targetThread,
+            activeProviderThreadId: grokAlias2Id,
+            targetOrdinal: 3,
+            rootProviderThreads: [grokAlias1, grokAlias2, targetThread],
+            runsToRollback: [
+              makeRun(4, grokAlias2Id, "completed", now, RunAttemptId.make("att:4")),
+            ],
+            retainedRuns: [
+              makeRun(1, grokAlias1Id, "completed", now, RunAttemptId.make("att:1")),
+              makeRun(2, grokAlias2Id, "completed", now, RunAttemptId.make("att:2")),
+              makeRun(3, targetThreadId, "completed", now, RunAttemptId.make("att:3")),
+            ],
+            sessions: [],
+            canRollbackProvider: (pt) => pt.id === targetThreadId,
+          });
+          assert.sameMembers(
+            sharedResult.abandonedProviderThreads.map((pt) => pt.id),
+            [grokAlias1Id, grokAlias2Id],
+          );
+          assert.deepEqual(sharedResult.spanningProviderThreads, []);
+
+          // Undelivered pre-start failed run and promptDropped interrupted run on target do not
+          // require native rollback on target.
+          const undeliveredResult = ProjectionStore.classifyRollbackProviderThreads({
+            targetProviderThread: grokAlias1,
+            activeProviderThreadId: targetThreadId,
+            targetOrdinal: 1,
+            rootProviderThreads: [grokAlias1, targetThread],
+            runsToRollback: [
+              makeRun(2, targetThreadId, "completed", now, RunAttemptId.make("att:2")),
+              makeRun(3, grokAlias1Id, "failed", null, null),
+              makeRun(4, grokAlias1Id, "interrupted", now, RunAttemptId.make("att:4")),
+            ],
+            retainedRuns: [makeRun(1, grokAlias1Id, "completed", now, RunAttemptId.make("att:1"))],
+            sessions: [],
+            providerTurns: [
+              { runAttemptId: RunAttemptId.make("att:1") },
+              { runAttemptId: RunAttemptId.make("att:2") },
+              { runAttemptId: RunAttemptId.make("att:4"), promptDropped: true },
+            ],
+            canRollbackProvider: () => false,
+          });
+          assert.isFalse(undeliveredResult.needsTargetProviderRollback);
+        }),
+    );
+
+    it.effect(
+      "rolls back the target before spanning threads and retires a spanning thread whose rollback fails",
+      () =>
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make("thread:spanning-fallback");
+          const targetThreadId = ProviderThreadId.make("pt:target-a");
+          const spanningThreadId = ProviderThreadId.make("pt:spanning-b");
+          const scopeId = CheckpointScopeId.make("scope:spanning-fallback");
+          const targetCheckpointId = CheckpointId.make("cp:2");
+          const spanningCheckpointId = CheckpointId.make("cp:1");
+          const targetAttemptId = RunAttemptId.make("att:2");
+          const spanningAttemptId = RunAttemptId.make("att:1");
+          const targetTurnId = ProviderTurnId.make("turn:2");
+          const spanningTurnId = ProviderTurnId.make("turn:1");
+          const makeThread = (id: ProviderThreadId, lastRunOrdinal: number) => ({
+            id,
+            driver: ProviderDriverKind.make("codex"),
+            providerInstanceId: ProviderInstanceId.make(id.replaceAll(":", "-")),
+            providerSessionId: ProviderSessionId.make(`session:${id}`),
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: {
+              driver: ProviderDriverKind.make("codex"),
+              nativeId: `native:${id}`,
+              strength: "strong" as const,
+            },
+            nativeConversationHeadRef: null,
+            status: "idle" as const,
+            firstRunOrdinal: 1,
+            lastRunOrdinal,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          });
+          const targetThread = makeThread(targetThreadId, 4);
+          const spanningThread = makeThread(spanningThreadId, 3);
+          const callOrder: Array<ProviderThreadId> = [];
+          const written: Array<OrchestrationV2DomainEvent> = [];
+          const makeRun = (
+            ordinal: number,
+            providerThreadId: ProviderThreadId,
+            checkpointId: CheckpointId,
+            activeAttemptId: RunAttemptId,
+          ) => ({
+            id: RunId.make(`run:${ordinal}`),
+            threadId,
+            ordinal,
+            providerInstanceId: ProviderInstanceId.make(providerThreadId.replaceAll(":", "-")),
+            modelSelection: {
+              instanceId: ProviderInstanceId.make(providerThreadId.replaceAll(":", "-")),
+              model: "test",
+            },
+            providerThreadId,
+            userMessageId: MessageId.make(`msg:${ordinal}`),
+            rootNodeId: NodeId.make(`node:${ordinal}`),
+            activeAttemptId,
+            status: "completed" as const,
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId,
+            contextHandoffId: null,
+          });
+          const serviceLayer = layerCheckpointRollbackService.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                ThreadCommandExecutor.layer,
+                IdAllocator.layer,
+                Layer.mock(CheckpointService.CheckpointServiceV2)({
+                  discardRepositorySnapshots: () => Effect.void,
+                }),
+                Layer.mock(EventSink.EventSinkV2)({
+                  write: ({ events }) =>
+                    Effect.sync(() => {
+                      written.push(...events);
+                      return [];
+                    }),
+                }),
+                Layer.mock(ProjectionStore.ProjectionStoreV2)({
+                  getThread: () =>
+                    Effect.succeed({
+                      id: threadId,
+                      projectId: ProjectId.make("project:1"),
+                      title: "Spanning fallback",
+                      providerInstanceId: targetThread.providerInstanceId,
+                      modelSelection: {
+                        instanceId: targetThread.providerInstanceId,
+                        model: "test",
+                      },
+                      runtimeMode: "approval-required",
+                      interactionMode: "default",
+                      branch: null,
+                      worktreePath: null,
+                      activeProviderThreadId: targetThreadId,
+                      deletedAt: null,
+                      archivedAt: null,
+                      createdAt: now,
+                      updatedAt: now,
+                    } as never),
+                  getProviderControlContext: () => Effect.succeed({ attempt: undefined } as never),
+                  getCheckpointRollbackContext: () =>
+                    Effect.succeed({
+                      thread: {
+                        id: threadId,
+                        projectId: ProjectId.make("project:1"),
+                        title: "Spanning fallback",
+                        providerInstanceId: targetThread.providerInstanceId,
+                        modelSelection: {
+                          instanceId: targetThread.providerInstanceId,
+                          model: "test",
+                        },
+                        runtimeMode: "approval-required",
+                        interactionMode: "default",
+                        branch: null,
+                        worktreePath: null,
+                        activeProviderThreadId: targetThreadId,
+                        deletedAt: null,
+                        archivedAt: null,
+                        createdAt: now,
+                        updatedAt: now,
+                      },
+                      providerThread: targetThread,
+                      providerSession: undefined,
+                      checkpoint: {
+                        id: targetCheckpointId,
+                        scopeId,
+                        appRunOrdinal: 2,
+                        ordinalWithinScope: 2,
+                        status: "ready",
+                        ref: CheckpointRef.make("refs/t3/cp-2"),
+                      },
+                      scope: { id: scopeId, kind: "thread", cwd: "/tmp/test" },
+                      targetRun: makeRun(2, targetThreadId, targetCheckpointId, targetAttemptId),
+                      targetAttempt: {
+                        ordinal: 2,
+                        id: targetAttemptId,
+                        providerTurnId: targetTurnId,
+                      },
+                      targetConversationThreadIds: [targetThreadId],
+                      providerTurns: [
+                        {
+                          id: spanningTurnId,
+                          providerThreadId: spanningThreadId,
+                          nodeId: NodeId.make("node:1"),
+                          runAttemptId: spanningAttemptId,
+                          nativeTurnRef: null,
+                          ordinal: 1,
+                          status: "completed",
+                          startedAt: now,
+                          completedAt: now,
+                        },
+                        {
+                          id: targetTurnId,
+                          providerThreadId: targetThreadId,
+                          nodeId: NodeId.make("node:2"),
+                          runAttemptId: targetAttemptId,
+                          nativeTurnRef: null,
+                          ordinal: 1,
+                          status: "completed",
+                          startedAt: now,
+                          completedAt: now,
+                        },
+                      ],
+                      rolledBackAttemptIds: [],
+                      runsToRollback: [
+                        makeRun(
+                          3,
+                          spanningThreadId,
+                          CheckpointId.make("cp:3"),
+                          RunAttemptId.make("att:3"),
+                        ),
+                        makeRun(
+                          4,
+                          targetThreadId,
+                          CheckpointId.make("cp:4"),
+                          RunAttemptId.make("att:4"),
+                        ),
+                      ],
+                      rootNodes: [],
+                      staleCheckpoints: [],
+                      spanningProviderThreads: [
+                        {
+                          providerThread: spanningThread,
+                          providerSession: undefined,
+                          targetRun: makeRun(
+                            1,
+                            spanningThreadId,
+                            spanningCheckpointId,
+                            spanningAttemptId,
+                          ),
+                          targetAttempt: {
+                            ordinal: 1,
+                            id: spanningAttemptId,
+                            providerTurnId: spanningTurnId,
+                          },
+                          targetCheckpointId: spanningCheckpointId,
+                          conversationThreadIds: [spanningThreadId],
+                          needsRollback: true,
+                        },
+                      ],
+                      abandonedProviderThreads: [],
+                      abandonedSessions: [],
+                      backgroundCheckSessions: [],
+                    } as never),
+                }),
+                Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+                  open: () =>
+                    Effect.succeed({
+                      rollbackThread: (
+                        input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput,
+                      ) =>
+                        Effect.gen(function* () {
+                          callOrder.push(input.providerThread.id);
+                          if (input.providerThread.id === spanningThreadId) {
+                            return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                              driver: ProviderDriverKind.make("codex"),
+                              providerThreadId: spanningThreadId,
+                              cause: "spanning rollback refused",
+                            });
+                          }
+                          return { providerThread: input.providerThread };
+                        }),
+                    } as never),
+                }),
+                Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+                  resolve: () => Effect.succeed({} as never),
+                }),
+              ),
+            ),
+          );
+
+          const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2.pipe(
+            Effect.provide(serviceLayer),
+          );
+          yield* service.execute({
+            threadId,
+            providerThreadId: targetThreadId,
+            scopeId,
+            checkpointId: targetCheckpointId,
+            restoreFiles: false,
+          });
+
+          assert.deepEqual(callOrder, [targetThreadId, spanningThreadId]);
+          const spanningUpdate = written.find(
+            (event) =>
+              event.type === "provider-thread.updated" && event.payload.id === spanningThreadId,
+          );
+          assert.isDefined(spanningUpdate);
+          if (spanningUpdate?.type === "provider-thread.updated") {
+            assert.equal(spanningUpdate.payload.status, "closed");
+            assert.isNull(spanningUpdate.payload.lastRunOrdinal);
+          }
+        }),
     );
   },
 );

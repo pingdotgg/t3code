@@ -568,6 +568,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   /** Set by a rename or a naming launch until a generated title replaces it; absent reads false. */
   titleRenamed: Schema.optional(Schema.Boolean),
   rollbackRequestId: Schema.optional(CommandId),
+  rollbackCompletedRequestId: Schema.optional(Schema.NullOr(CommandId)),
   rollbackFailure: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -1449,15 +1450,26 @@ export function providerThreadNativeConversationKey(
     : providerThread.id;
 }
 
-/** Runs cancelled before starting (or still queued) never reached any provider conversation. */
+/**
+ * Whether a settled run reached its provider conversation and therefore requires native rollback
+ * when discarded. Pre-start failures/interrupts/cancellations (`startedAt === null`) and runs
+ * with no delivered provider turn did not mutate provider conversation history.
+ */
 export function didRunReachProvider(
-  run: Pick<OrchestrationV2Run, "status" | "startedAt">,
+  run: Pick<OrchestrationV2Run, "status" | "startedAt" | "activeAttemptId">,
+  providerTurns?: ReadonlyArray<
+    Pick<OrchestrationV2ProviderTurn, "runAttemptId" | "promptDropped">
+  >,
 ): boolean {
-  return (
-    run.status === "completed" ||
-    run.status === "failed" ||
-    run.status === "interrupted" ||
-    (run.status === "cancelled" && run.startedAt !== null)
+  if (run.status === "completed") return true;
+  if (run.status !== "failed" && run.status !== "interrupted" && run.status !== "cancelled") {
+    return false;
+  }
+  if (run.startedAt === null) return false;
+  if (providerTurns === undefined) return true;
+  if (run.activeAttemptId === null) return false;
+  return providerTurns.some(
+    (turn) => turn.runAttemptId === run.activeAttemptId && isDeliveredProviderTurn(turn),
   );
 }
 

@@ -25,7 +25,7 @@ import {
   rememberCheckoutIsRepo,
   resolveThreadErrorBanner,
 } from "./ChatView.logic";
-import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { ProviderDriverKind, RunAttemptId, type ServerProvider } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { ensureInlineContextReferences } from "../lib/composerContextReferences";
 import {
@@ -1147,6 +1147,80 @@ describe("waitForRevertedMessage", () => {
     }
   });
 
+  it("completes across a bounded reconnect snapshot when rollbackCompletedRequestId matches, and ignores another client's shallower rewind", async () => {
+    vi.useFakeTimers();
+    const { state, projection } = projectionAtom();
+    const otherProviderThreadId = ProviderThreadId.make("provider-thread-other");
+    const run1 = projection.runs[0]!;
+    const run2 = {
+      ...projection.runs[1]!,
+      id: RunId.make("run-2-b"),
+      ordinal: 2,
+      providerThreadId: otherProviderThreadId,
+      activeAttemptId: RunAttemptId.make("attempt-2-b"),
+    };
+    const run3 = {
+      ...projection.runs[1]!,
+      id: RunId.make("run-3-c"),
+      ordinal: 3,
+      providerThreadId: otherProviderThreadId,
+      activeAttemptId: RunAttemptId.make("attempt-3-c"),
+    };
+    const initial = {
+      ...projection,
+      thread: {
+        ...projection.thread,
+        activeProviderThreadId: otherProviderThreadId,
+        rollbackCompletedRequestId: null,
+      },
+      providerThreads: [
+        { ...projection.providerThreads[0]!, lastRunOrdinal: 1 },
+        { ...projection.providerThreads[0]!, id: otherProviderThreadId, lastRunOrdinal: 3 },
+      ],
+      runs: [run1, run2, run3],
+    };
+    appAtomRegistry.set(state, { data: Option.some(initial) });
+    let outcome = "pending";
+    const waiting = waitForRevertedMessage(threadRef, 1, requestId, async () => {}).then(() => {
+      outcome = "reverted";
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      // Another client's shallower rewind commits with a different requestId and drops run2 in a bounded snapshot.
+      appAtomRegistry.set(state, {
+        data: Option.some({
+          ...initial,
+          thread: {
+            ...initial.thread,
+            rollbackCompletedRequestId: CommandId.make("other-client-shallower-rewind"),
+          },
+          runs: [run1, { ...run3, status: "rolled_back" as const }],
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(outcome).toBe("pending");
+
+      // Our rewind commits and a bounded reconnect snapshot omits run2.
+      appAtomRegistry.set(state, {
+        data: Option.some({
+          ...initial,
+          thread: {
+            ...initial.thread,
+            activeProviderThreadId: projection.providerThreads[0]!.id,
+            rollbackCompletedRequestId: requestId,
+          },
+          runs: [run1, { ...run3, status: "rolled_back" as const }],
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(outcome).toBe("reverted");
+      await waiting;
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects a stale edit already rewound by another client during attachment preparation", async () => {
     vi.useFakeTimers();
     const { state, projection } = projectionAtom();
@@ -1954,6 +2028,13 @@ describe("deriveAvailableRevertTurnCounts", () => {
           ordinal: 1,
           providerThreadId: otherProviderThreadId,
         },
+        {
+          id: "turn-7",
+          runAttemptId: "attempt-7",
+          ordinal: 3,
+          providerThreadId: grokThreadId,
+          promptDropped: true as const,
+        },
       ],
       runs: [
         {
@@ -1995,6 +2076,22 @@ describe("deriveAvailableRevertTurnCounts", () => {
           startedAt: null,
           queueHeld: true,
           activeAttemptId: null,
+          providerThreadId: grokThreadId,
+        },
+        {
+          id: RunId.make("run-6-prestart-failed"),
+          ordinal: 6,
+          status: "failed" as const,
+          startedAt: null,
+          activeAttemptId: null,
+          providerThreadId: grokThreadId,
+        },
+        {
+          id: RunId.make("run-7-dropped-interrupted"),
+          ordinal: 7,
+          status: "interrupted" as const,
+          startedAt: now,
+          activeAttemptId: "attempt-7",
           providerThreadId: grokThreadId,
         },
       ],
