@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 
 import {
@@ -207,7 +208,12 @@ it.effect.each(["provider", "mcp"] as const)(
       });
       assert.equal(settledAt && DateTime.formatIso(settledAt), DateTime.formatIso(childCreatedAt));
     }).pipe(
-      Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
+      Effect.provide(
+        ProjectionStore.layer.pipe(
+          Layer.provide(NodeCrypto.layerDigest),
+          Layer.provideMerge(SqlitePersistence.layerMemory),
+        ),
+      ),
     ),
 );
 
