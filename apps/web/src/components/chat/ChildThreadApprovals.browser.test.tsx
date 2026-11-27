@@ -8,7 +8,10 @@ import { render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({ respond: vi.fn(), approvalsAtom: null as unknown }));
 
-vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../state/session", () => ({
+  useEnvironmentScope: () => true,
+  usePreparedConnection: () => ({ _tag: "Some" }),
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.respond }));
 vi.mock("../../state/threads", () => ({
   childThreadApprovalsAtom: () => state.approvalsAtom,

@@ -12,9 +12,10 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import * as Option from "effect/Option";
 import { T, useGT, useMessages, Var } from "gt-react";
 import { useState } from "react";
-import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ApprovalText } from "./ApprovalText";
@@ -46,12 +47,15 @@ export function OtherThreadApproval({
   thread: ScopedThreadRef;
   approval: ThreadPendingApproval;
 }) {
-  const canRespond = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const connected = Option.isSome(usePreparedConnection(thread.environmentId));
+  const canRespond =
+    useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope) && connected;
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
   const gt = useGT();
   const messages = useMessages();
   const [responding, setResponding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const notice = !connected ? gt("Not connected") : error;
   return (
     <>
       {approval.pushHooks ? (
@@ -102,12 +106,12 @@ export function OtherThreadApproval({
             return result;
           }}
         />
+        {notice !== null ? (
+          <p role="alert" className="min-w-0 self-center truncate text-destructive">
+            {notice}
+          </p>
+        ) : null}
       </div>
-      {error !== null ? (
-        <p role="alert" className="mt-2 text-destructive">
-          {error}
-        </p>
-      ) : null}
     </>
   );
 }
