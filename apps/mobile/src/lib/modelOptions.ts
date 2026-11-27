@@ -266,8 +266,7 @@ export function resolveSelectableModelSelection(
   const provider = config.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
-  const driver =
-    provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
+  const driver = selectionDriver(config, selection.instanceId);
   if (isDriverDisallowed(config, driver)) {
     return null;
   }
