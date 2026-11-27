@@ -30,7 +30,9 @@ const AFTER_QUOTE = String.raw`(?:(?<=>)[ \t]*)?`;
 const TOP_LEVEL_ATX_HEADING = String.raw`#{1,6}(?:[ \t][^\r\n]*)?`;
 const HEADING_LINE = new RegExp(`^${TOP_LEVEL_ATX_HEADING}$`);
 // Four columns at document start or after a top-level heading start indented code.
-const NOT_INDENTED_CODE = String.raw`(?!(?= {0,3}\t| {4})(?:(?<![\s\S])|(?<=(?<![^\r\n])${TOP_LEVEL_ATX_HEADING}(?:\r\n?|\n))))`;
+const AFTER_HEADING = String.raw`(?<=(?<![^\r\n])${TOP_LEVEL_ATX_HEADING}(?:\r\n?|\n))`;
+const CODE_INDENT = String.raw`(?: {0,3}\t| {4})`;
+const NOT_INDENTED_CODE = String.raw`(?!(?=${CODE_INDENT})(?:(?<![\s\S])|${AFTER_HEADING}[ \t]*(?:\`{3,}|~{3,})))`;
 const OPENER_LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]{1,4}(?![ \t]))*`;
 // Fence-looking lines declined by `fencedCode` may still open an indented code block.
 const INDENTED_FENCE = String.raw`(?<![^\r\n])(?<indentedFence>[ \t>*+\-\d.)]*?(?:\`{3,}[^\`\r\n]*|~{3,}[^\r\n]*))(?=[\r\n]|(?![\s\S]))`;
@@ -354,7 +356,8 @@ function findIndentedCodeEnd(markdown: string, openIndex: number, openerLength: 
     if (
       opener.list
         ? !prev.blank
-        : prev.quotes > 0 || (!prev.blank && prevStart > 0 && !HEADING_LINE.test(previousLine))
+        : prev.quotes > 0 ||
+          (!prev.blank && prevStart > 0 && (opener.quotes > 0 || !HEADING_LINE.test(previousLine)))
     )
       return -1;
   }
