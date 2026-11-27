@@ -17,7 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { normalizeNativeMarkdownUrl } from "../lib/markdownLinks";
 import { AsyncResult } from "effect/reactivity";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../lib/haptics";
 import { useEffect, useRef, useState } from "react";
 
 import { useRefreshAssetUrl } from "./assets";

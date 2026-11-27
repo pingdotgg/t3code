@@ -7,7 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/vcs";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../lib/haptics";
 import { msg, useMessages } from "gt-react-native";
 import { useSyncExternalStore } from "react";
 

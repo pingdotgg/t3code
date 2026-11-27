@@ -1,6 +1,6 @@
 import * as Hash from "effect/Hash";
 import { File, Paths } from "expo-file-system";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../lib/haptics";
 import { T, useGT, Var } from "gt-react-native";
 import type { DiagramType } from "pele/lazy";
 import { Suspense, use, useRef, useState } from "react";
