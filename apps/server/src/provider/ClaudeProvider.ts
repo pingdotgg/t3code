@@ -787,7 +787,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   const probeFailure =
     probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
-  const reportedModels = claudeReportedModels(
+  const { models: reportedModels, hasNonCatalogModels } = claudeReportedModels(
     modelCatalog,
     claudeSettings.customModels,
     capabilities?.models,
@@ -911,8 +911,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     },
   });
   // Claude Code lists gateway models only while its one gateway cache holds this base URL, and
-  // then all of them, so a list without any may lack this gateway's models.
-  return reportedModels.length === 0 ? { ...provider, modelsIncomplete: true } : provider;
+  // then all of them, including those already configured as custom models.
+  return hasNonCatalogModels ? provider : { ...provider, modelsIncomplete: true };
 });
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);

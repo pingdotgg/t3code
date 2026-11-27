@@ -10,6 +10,7 @@ interface MarkdownPosition {
 
 interface MarkdownAstNode {
   readonly type: string;
+  readonly identifier?: unknown;
   readonly value?: unknown;
   readonly position?: MarkdownPosition;
   children?: MarkdownAstNode[];
@@ -50,6 +51,7 @@ function isSameLineOverIndentedCode(
     nodeStart?.line === undefined ||
     nodeStart.offset === undefined ||
     parentStart?.line === undefined ||
+    parentStart.offset === undefined ||
     nodeStart.line !== parentStart.line
   ) {
     return false;
@@ -59,11 +61,11 @@ function isSameLineOverIndentedCode(
   return sourceCharacter !== "`" && sourceCharacter !== "~";
 }
 
-function parseRecoveredMarkdown(value: string, parser: MarkdownParser): RecoveredMarkdown {
+function parseRecoveredMarkdown(value: string, parser: MarkdownParser, refs: string) {
   // Prefix block-looking input to parse inline extensions; retain later block children after blank lines.
-  const source = `${INLINE_PARSE_PREFIX}${value}`;
+  const source = `${refs}${INLINE_PARSE_PREFIX}${value}`;
   const document = parser.parse(source) as MarkdownAstNode;
-  const blocks = document.children;
+  const blocks = document.children?.filter((n) => (n.position?.start?.offset ?? 0) >= refs.length);
   const paragraph = blocks?.[0];
   const children = paragraph?.type === "paragraph" ? paragraph.children : undefined;
   const first = children?.[0];
@@ -91,9 +93,35 @@ function parseRecoveredMarkdown(value: string, parser: MarkdownParser): Recovere
   };
 }
 
-function blocksFromIndentedCode(node: MarkdownAstNode, parser: MarkdownParser): RecoveredMarkdown {
+/**
+ * Indented code in an item starts five columns past the marker, so its tabs reach tab stops
+ * measured from there. Expands the leading tabs up to the first line's content as the source
+ * columns place them, since the recovered text is measured again from column zero.
+ */
+export function expandIndentedCodeTabs(value: string, source: string, start: number): string {
+  if (!value.includes("\t")) return value;
+  const columns = (text: string, from = 0) =>
+    [...text].reduce((col, c) => col + (c === "\t" ? 4 - (col % 4) : 1), from);
+  const marker = /^([-*+]|\d{1,9}[.)])/.exec(source.slice(start))![0];
+  const before = source.slice(0, start);
+  const prefix = before.slice(Math.max(before.lastIndexOf("\n"), before.lastIndexOf("\r")) + 1);
+  const base = columns(prefix + marker) + 5;
+  const end = columns(/^[\t ]*/.exec(value)![0], base);
+  return value.replace(/^[\t ]+/gm, (indent) => {
+    let col = base;
+    let at = 0;
+    while (at < indent.length && col < end) col = columns(indent[at++]!, col);
+    return " ".repeat(col - base) + indent.slice(at);
+  });
+}
+
+function blocksFromIndentedCode(
+  node: MarkdownAstNode,
+  parser: MarkdownParser,
+  refs: string,
+): RecoveredMarkdown {
   const value = typeof node.value === "string" ? node.value.trim() : "";
-  const recovered = parseRecoveredMarkdown(value, parser);
+  const recovered = parseRecoveredMarkdown(value, parser, refs);
   if (keepsOrderedListNumbers(parser)) {
     for (const block of recovered.blocks) keepOrderedListNumbers(block, recovered.source);
   }
@@ -123,6 +151,29 @@ function attachListItemIndentationNormalizer(this: MarkdownParser) {
       return;
     }
     const markdown = file.value;
+    const identifiers: string[] = [];
+    const collect = (node: MarkdownAstNode) => {
+      if (node.type === "definition" && typeof node.identifier === "string") {
+        identifiers.push(node.identifier);
+      }
+      node.children?.forEach(collect);
+    };
+    collect(tree);
+    // micromark only parses `[text][label]` as a reference when the label is defined; the href
+    // still comes from the document's own definition when mdast becomes hast. Stubs are limited
+    // to labels the text can name, matched as mdast normalizes identifiers, to keep reparses small.
+    const definitionsFor = (value: string) => {
+      if (identifiers.length === 0) return "";
+      const text = value
+        .replace(/[\t\n\r ]+/g, " ")
+        .toLowerCase()
+        .toUpperCase()
+        .toLowerCase();
+      return identifiers
+        .filter((identifier) => text.includes(identifier))
+        .map((identifier) => `[${identifier}]: <>\n\n`)
+        .join("");
+    };
 
     const visit = (node: MarkdownAstNode, source: string) => {
       if (!node.children) {
@@ -134,7 +185,13 @@ function attachListItemIndentationNormalizer(this: MarkdownParser) {
       }
       node.children = node.children.flatMap((child) => {
         if (isSameLineOverIndentedCode(child, node, source)) {
-          const recovered = blocksFromIndentedCode(child, this);
+          const start = node.position!.start!.offset!;
+          const value = expandIndentedCodeTabs(String(child.value), source, start);
+          const recovered = blocksFromIndentedCode(
+            { ...child, value },
+            this,
+            definitionsFor(value),
+          );
           for (const block of recovered.blocks) {
             visit(block, recovered.source);
           }

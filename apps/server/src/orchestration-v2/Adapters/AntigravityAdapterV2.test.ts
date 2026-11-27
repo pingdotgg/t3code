@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ChatFileAttachment,
+  EnvironmentId,
   MessageId,
   NodeId,
   ProjectId,
@@ -18,6 +19,7 @@ import {
   htmlRenderFromToolItem,
   previewRecordingIdFromToolItem,
   sentMessageFromToolItem,
+  toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -746,6 +748,15 @@ describe("AntigravityAdapterV2 html_render pages", () => {
       let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
       const instanceId = ProviderInstanceId.make("antigravity-html-render-test");
       const threadId = ThreadId.make("thread-antigravity-html-render");
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("env-antigravity-html-render"),
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-html-render"),
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:3773/mcp",
+        authorizationHeader: "Bearer antigravity-html-render-token",
+        browserToolsAvailable: true,
+      });
       const page = (name: string) => ({
         attachmentId: `${threadId}-${name}-html`,
         title: "Revenue",
@@ -761,11 +772,26 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         title: "Telemetry",
         height: 411,
       };
+      const proxied = {
+        html: "<p>Proxied chart</p>",
+        title: "Proxied",
+        height: 300,
+      };
+      let capturedMcpServers:
+        | {
+            readonly stdio: ReadonlyArray<EffectAcpSchema.McpServer>;
+            readonly http: ReadonlyArray<EffectAcpSchema.McpServer>;
+          }
+        | undefined;
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: (input) =>
-          makeAntigravityAcpRuntime({
+        makeRuntime: (input) => {
+          capturedMcpServers = {
+            stdio: input.mcpServers ?? [],
+            http: input.httpMcpServers ?? [],
+          };
+          return makeAntigravityAcpRuntime({
             ...input,
             childProcessSpawner,
             spawn: {
@@ -892,10 +918,30 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     toolCallId: "agy-1.5.8",
                     status: "completed",
                   });
+                  // Deferred-proxy calls wrap html_render inside `tool_call`.
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "tool-call-proxy",
+                    title: "Run mcp_t3-code_tool_call",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: {
+                      name: "html_render",
+                      arguments: proxied,
+                      toolSummary: "Render proxied",
+                    },
+                  });
+                  yield* mcpSessions.recordHtmlRender(threadId, proxied, page("tool-call-proxy"));
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "tool-call-proxy",
+                    status: "completed",
+                  });
                   return { stopReason: "end_turn" as const };
                 }),
             })),
-          ),
+          );
+        },
         withProcess: (_stop, task) => task,
         defaultModel: Effect.undefined,
       });
@@ -1017,7 +1063,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         ),
         [page("report"), page("report"), page("replacement"), page("replacement")],
       );
-      for (const name of ["failed-retry", "error-retry", "agy-1.5.8"]) {
+      for (const name of ["failed-retry", "error-retry", "agy-1.5.8", "tool-call-proxy"]) {
         assert.deepEqual(tool(name), {
           status: "completed",
           toolName: "t3-code.html_render",
@@ -1029,6 +1075,35 @@ describe("AntigravityAdapterV2 html_render pages", () => {
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, failed), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, errored), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, telemetry), undefined);
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, proxied), undefined);
+      assert.isDefined(capturedMcpServers);
+      const stdioServer = capturedMcpServers!.stdio[0];
+      const httpServer = capturedMcpServers!.http[0];
+      const stdioEnv =
+        stdioServer !== undefined && !("type" in stdioServer) ? (stdioServer.env ?? []) : [];
+      const httpHeaders =
+        httpServer !== undefined &&
+        "type" in httpServer &&
+        httpServer.type === "http" &&
+        Array.isArray(httpServer.headers)
+          ? httpServer.headers
+          : [];
+      assert.isTrue(
+        stdioEnv.some(
+          (entry) => entry.name === "T3_ACP_MCP_TOOL_EXPOSURE" && entry.value === "deferred-proxy",
+        ),
+      );
+      assert.isTrue(
+        httpHeaders.some(
+          (entry) =>
+            typeof entry === "object" &&
+            entry !== null &&
+            "name" in entry &&
+            entry.name === "t3-tool-exposure" &&
+            "value" in entry &&
+            entry.value === "deferred-proxy",
+        ),
+      );
     }).pipe(Effect.provide(layerSession)),
   );
 
@@ -1054,6 +1129,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         const lateText = "Confirmed on a later completion.";
         const lateErrorText = "Late explicit error.";
         const unfinishedText = "Still running when turn ended.";
+        const largeShot = "A".repeat(12 * 1024 * 1024);
         const adapter = yield* makeAntigravityAdapterV2({
           instanceId,
           selfInvocation: yield* resolveSelfInvocation(),
@@ -1239,6 +1315,28 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     );
                     yield* updateTool("recording-stop", "completed");
 
+                    // The agent offloads a screenshot and completes the call with no result.
+                    yield* startTool("snapshot", "preview_snapshot", { includeImage: true });
+                    yield* mcpSessions.recordToolResult(
+                      threadId,
+                      "preview_snapshot",
+                      { includeImage: true },
+                      { content: [{ type: "image", mimeType: "image/png", data: "AAAA" }] },
+                    );
+                    yield* updateTool("snapshot", "completed");
+
+                    // Recovered screenshots stay with the turn, so their bytes are bounded.
+                    for (const tabId of ["tab-1", "tab-2", "tab-3"]) {
+                      yield* startTool(`large-${tabId}`, "preview_snapshot", { tabId });
+                      yield* mcpSessions.recordToolResult(
+                        threadId,
+                        "preview_snapshot",
+                        { tabId },
+                        { content: [{ type: "image", mimeType: "image/png", data: largeShot }] },
+                      );
+                      yield* updateTool(`large-${tabId}`, "completed");
+                    }
+
                     // Unfinished call projected at turn end must not claim or leak to Turn 2.
                     yield* startTool("send-unfinished", "send_to_user", {
                       message: unfinishedText,
@@ -1351,6 +1449,16 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         assert.strictEqual(
           previewRecordingIdFromToolItem(tool("recording-stop")!),
           `${threadId}-rec-1`,
+        );
+        assert.deepEqual(toolOutputImages(tool("snapshot")?.output), [
+          { mimeType: "image/png", data: "AAAA" },
+        ]);
+        assert.isTrue(yield* mcpSessions.areToolResultImagesRecovered(instanceId));
+        assert.deepEqual(
+          ["tab-1", "tab-2", "tab-3"].map((tabId) =>
+            toolOutputImages(tool(`large-${tabId}`)?.output).map((image) => image.data?.length),
+          ),
+          [[largeShot.length], [largeShot.length], [undefined]],
         );
       }).pipe(Effect.provide(layerSession)),
   );

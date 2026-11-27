@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { guestHostImageType, repliesShowImage } from "./guestAttachments.ts";
+import { classifyGuestUploads, guestHostImageType, repliesShowImage } from "./guestAttachments.ts";
 
 describe("guest host images", () => {
   it.each([
@@ -39,5 +39,15 @@ describe("guest host images", () => {
   ])("%j serves %j as %j", (text, path, type) => {
     const served = guestHostImageType(path) !== null && repliesShowImage(path, [{ text }]);
     expect(served ? guestHostImageType(path) : null).toBe(type);
+  });
+});
+
+describe("guest upload names", () => {
+  it("cuts a long name between characters, never inside an emoji", () => {
+    const name = `${"a".repeat(254)}\u{1F600}.txt`;
+    const classified = classifyGuestUploads([
+      { name, contentType: "text/plain", sizeBytes: 1, header: new Uint8Array([0x61]) },
+    ]);
+    expect(classified.ok && classified.attachments[0]?.name).toBe("a".repeat(254));
   });
 });
