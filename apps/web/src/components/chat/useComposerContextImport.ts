@@ -202,21 +202,19 @@ export function useComposerContextImport(input: {
       }
       file = new File([blob], record.name, { type: record.mimeType || blob.type });
       if (record.kind === "image") await readComposerImageBytes(file);
-      if (!questionAttachmentTarget) {
-        // The open composer can change during the download. Check the original draft's
-        // reference, which may belong to an annotation instead of the image itself.
-        const draft = getComposerDraft(composerDraftTarget);
-        const references = new Set(collectInlineContextIds(draft?.prompt ?? ""));
-        if (
-          !references.has(toKindScopedComposerContextId(record.kind, localId)) &&
-          !(
-            record.kind === "image" &&
-            references.has(previewAnnotationContextId(localId)) &&
-            draft?.previewAnnotations.some((annotation) => annotation.id === localId)
-          )
+      // Question attachments have no inline reference; annotations can own their screenshots.
+      const draft = getComposerDraft(composerDraftTarget);
+      const references = new Set(collectInlineContextIds(draft?.prompt ?? ""));
+      if (
+        !questionAttachmentTarget &&
+        !references.has(toKindScopedComposerContextId(record.kind, localId)) &&
+        !(
+          record.kind === "image" &&
+          references.has(previewAnnotationContextId(localId)) &&
+          draft?.previewAnnotations.some((annotation) => annotation.id === localId)
         )
-          return;
-      }
+      )
+        return;
     }
     // Question answers have no persistent prompt reference to check after switching away.
     if (questionAttachmentTarget && attachmentTargetKeyRef.current !== importTargetKey) return;
