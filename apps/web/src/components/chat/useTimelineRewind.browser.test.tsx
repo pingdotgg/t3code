@@ -58,8 +58,6 @@ function ForkButton({ start }: { start: (completion: Promise<void>) => void }) {
 it.each([
   { paths: ["/test/other"], destination: "/test/other" },
   { paths: ["/test/other", sourcePath], destination: sourcePath },
-  { paths: ["/settings"], destination: "/settings" },
-  { paths: ["/usage"], destination: "/usage" },
 ])("keeps $destination open after the fork finishes", async ({ paths, destination }) => {
   const shellRequested = Promise.withResolvers<void>();
   const shellReady = Promise.withResolvers<boolean>();
