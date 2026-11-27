@@ -258,6 +258,8 @@ describe("extractInlineCodeSpans", () => {
       ["./a/shared.ts", "./b/shared.ts"],
     ],
     ["- ```\n  `./a/shared.ts`\n  ```\nEdit `./b/shared.ts`", ["./b/shared.ts"]],
+    ["    ~~~\n\nEdit `./a/shared.ts` and `./b/shared.ts`", ["./a/shared.ts", "./b/shared.ts"]],
+    ["> ~~~\n> `./a/shared.ts`\n> ~~~\nEdit `./b/shared.ts`", ["./b/shared.ts"]],
   ])("skips fenced code blocks without breaking inline spans in %j", (markdown, spans) => {
     expect(extractInlineCodeSpans(markdown)).toEqual(spans);
   });

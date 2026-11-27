@@ -471,7 +471,7 @@ function parseFilePathLink(path: string, hash: string): FilePathPosition | null 
 }
 
 const CODE_FENCE_PATTERN =
-  /^((?:[ \t]*(?:>|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t])))*[ \t]*)(`{3,}|~{3,})([^\n]*)/;
+  /^((?:[ \t]*(?:>|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t])))*)([ \t]*)(`{3,}|~{3,})([^\n]*)/;
 
 const BACKTICK_RUN_PATTERN = /`+/g;
 
@@ -480,8 +480,9 @@ export function extractInlineCodeSpans(text: string): string[] {
   const spans: string[] = [];
   let openFence: { marker: string; prefix: string } | null = null;
   for (const line of text.split("\n")) {
-    const [, prefix = "", marker = "", rest = ""] =
+    const [, containers = "", indent = "", marker = "", rest = ""] =
       (line.includes("```") || line.includes("~~~") ? CODE_FENCE_PATTERN.exec(line) : null) ?? [];
+    const prefix = containers + indent;
     if (openFence) {
       if (
         marker[0] === openFence.marker[0] &&
@@ -496,7 +497,10 @@ export function extractInlineCodeSpans(text: string): string[] {
       }
       continue;
     }
-    if (marker && (marker[0] === "~" || !rest.includes("`"))) {
+    // Deeper indentation is indented code, except inside a list item, which is not tracked here;
+    // only tilde openers are held to it so backtick fences keep their old behaviour there.
+    const tildeIsIndentedCode = indent.replaceAll("\t", "    ").length > (containers ? 4 : 3);
+    if (marker && (marker[0] === "~" ? !tildeIsIndentedCode : !rest.includes("`"))) {
       openFence = { marker, prefix };
       continue;
     }
