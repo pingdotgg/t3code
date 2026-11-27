@@ -99,6 +99,34 @@ describe("createInboxReturnTracker", () => {
     expect(tracker.returnedAt(finished)).toBe(200_000);
   });
 
+  it("grants grace when the last background subagent finishes long after its parent run ended", () => {
+    const tracker = createInboxReturnTracker();
+    const parentRun = {
+      runId: RunId.make("parent"),
+      status: "completed" as const,
+      requestedAt: "1970-01-01T00:00:02.000Z",
+      startedAt: "1970-01-01T00:00:02.000Z",
+      completedAt: "1970-01-01T00:00:09.000Z",
+      assistantMessageId: null,
+    };
+    const runtime = thread("a", true).runtime!;
+    // A pending background subagent parks the thread at idle after its parent run completes.
+    const waiting = {
+      ...thread("a", false),
+      latestRun: parentRun,
+      runtime: { ...runtime, status: "idle" as const },
+    };
+    const finished = { ...waiting, runtime: { ...runtime, status: "completed" as const } };
+    tracker.observe([waiting]);
+    vi.setSystemTime(199_000);
+    tracker.observe([waiting]);
+    expect(tracker.isWorking(waiting)).toBe(true);
+    vi.setSystemTime(200_000);
+    tracker.observe([finished]);
+    expect(tracker.isWorking(finished)).toBe(true);
+    expect(tracker.returnedAt(finished)).toBeUndefined();
+  });
+
   it("cancels a transient return on resume and grants a fresh grace after the next finish", () => {
     const tracker = createInboxReturnTracker();
     tracker.observe([thread("a", false)]);
