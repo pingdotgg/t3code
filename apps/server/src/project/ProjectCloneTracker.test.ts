@@ -697,6 +697,40 @@ describe("ProjectCloneTracker", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect("a discard keeps files a clone refuses while it is being interrupted", () => {
+    const started = Deferred.makeUnsafe<void>();
+    const gate = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({
+      clone: () =>
+        Effect.uninterruptible(
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(gate)),
+            Effect.andThen(
+              Effect.fail(
+                new SourceControlRepositoryError({
+                  operation: "cloneRepository",
+                  provider: SourceControlProviderKind.make("unknown"),
+                  detail: SourceControlRepositoryService.DESTINATION_NOT_EMPTY,
+                }),
+              ),
+            ),
+          ),
+        ),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Deferred.await(started);
+      // Runs until it waits on the clone's interrupt, before the clone refuses.
+      const discarding = yield* tracker
+        .discard(projectId)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(discarding);
+      expect(harness.discarded).toEqual([]);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("an unreadable clone journal is never overwritten", () => {
     const { persistence, control } = faultyPersistence({ failRead: true });
     const harness = makeHarness({ persistence });

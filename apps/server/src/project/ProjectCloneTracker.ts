@@ -546,6 +546,9 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const keepsFiles = (projectId: ProjectId) =>
+    Ref.get(clones).pipe(Effect.map((current) => current.get(projectId)?.recovered === true));
+
   const get: ProjectCloneTracker["Service"]["get"] = (projectId) =>
     Ref.get(clones).pipe(Effect.map((current) => current.get(projectId)?.snapshot ?? null));
 
@@ -561,7 +564,10 @@ export const make = Effect.gen(function* () {
           const after = yield* get(projectId);
           if (after?.phase === "done") return;
           if (after?.phase === "running") yield* finish(projectId, "cancelled", null);
-          yield* repositories.discardClone(tracked.snapshot.destinationPath).pipe(Effect.ignore);
+          // Read after the interrupt: a clone refused before git ran marks its files as not its own.
+          if (!(yield* keepsFiles(projectId))) {
+            yield* repositories.discardClone(tracked.snapshot.destinationPath).pipe(Effect.ignore);
+          }
           const snapshot = yield* get(projectId);
           if (snapshot) {
             yield* writeJournal(snapshot.destinationPath, {
@@ -663,7 +669,7 @@ export const make = Effect.gen(function* () {
     // Git may have finished while the interrupt was landing; the project
     // is going away either way, but a complete checkout is the user's.
     const after = yield* get(projectId);
-    if (after?.phase !== "done" && !tracked.recovered) {
+    if (after?.phase !== "done" && !(yield* keepsFiles(projectId))) {
       yield* repositories.discardClone(tracked.snapshot.destinationPath).pipe(Effect.ignore);
     }
     yield* writeJournal(tracked.snapshot.destinationPath, null).pipe(Effect.ignore({ log: true }));
