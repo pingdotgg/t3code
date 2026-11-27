@@ -396,7 +396,7 @@ export function filterKeybindingRows(
   return searchItems(rows, normalizedQuery, (row) => [
     commandLabel(row.command, resolve),
     row.command,
-    { value: formatShortcutLabel(row.binding.shortcut, platform), weight: 100 },
+    { value: formatShortcutLabel(row.binding.shortcut, platform), weight: 100, fuzzy: false },
     { value: row.key, weight: 100 },
     { value: row.when, weight: 200, fuzzy: false },
     { value: row.source, weight: 200 },
@@ -465,6 +465,7 @@ export function buildKeybindingCommandOptions(
 const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "workspace.focusNext": msg("Focus Next Workspace Area"),
   "workspace.focusPrevious": msg("Focus Previous Workspace Area"),
+  "composer.deletePreviousWord": msg("Composer: Delete Previous Word"),
   "composer.sendAlternate": msg("Composer: Opposite Queue or Steer Action"),
   "composer.sendBackground": msg("Composer: Start in Background"),
   "composer.sendAndNewThread": msg("Composer: Send and Start New Thread"),

@@ -729,12 +729,12 @@ export default function DiffPanel({
         selectedTurn.status === "ready"
       : selectedGitScope === "unstaged" || selectedGitSource?.baseRef != null);
   const handleOpenInCrit = async () => {
-    if (!canOpenInCrit || !activeThread || !activeCwd) return;
+    if (!canOpenInCrit || !panelThreadRef || !activeCwd) return;
     let scope: CritOpenInput["scope"];
     if (selectedTurn && selectedCheckpointRange) {
       scope = {
         kind: "turn",
-        threadId: activeThread.id,
+        threadId: panelThreadRef.threadId,
         fromTurnCount: selectedCheckpointRange.fromTurnCount,
         ...(previousCheckpointRef ? { fromRef: previousCheckpointRef } : {}),
         toRef: selectedTurn.checkpointRef,

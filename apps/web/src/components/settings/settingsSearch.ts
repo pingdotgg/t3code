@@ -1791,15 +1791,18 @@ export function searchSettings(
           {
             value: sourceLabel(SETTINGS_SECTION_LABELS[item.to]),
             weight: SEARCH_SECONDARY_FIELD_WEIGHT,
+            fuzzy: false,
           },
           translate(item.title),
           {
             value: displayedNavLabel === navLabel ? sourceLabel(navLabel) : displayedNavLabel,
             weight: SEARCH_SECONDARY_FIELD_WEIGHT,
+            fuzzy: false,
           },
           {
             value: translate(SETTINGS_SECTION_LABELS[item.to]),
             weight: SEARCH_SECONDARY_FIELD_WEIGHT,
+            fuzzy: false,
           },
           ...(item.searchTerms ?? [])
             .flatMap((term) => [sourceLabel(term), translate(term)])

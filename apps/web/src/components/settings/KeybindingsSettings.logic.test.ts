@@ -13,8 +13,6 @@ import { resolveShortcutCommand } from "../../keybindings";
 import {
   buildKeybindingRows,
   buildKeybindingCommandOptions,
-  filterKeybindingRows,
-  groupKeybindingRows,
   buildWhenVariableOptions,
   commandLabel,
   filterKeybindingRows,
