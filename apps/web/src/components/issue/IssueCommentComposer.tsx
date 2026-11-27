@@ -34,6 +34,12 @@ export function IssueCommentComposer({
   const gt = useGT();
   // Internal by default: a customer reply is always an explicit choice.
   const [audience, setAudience] = useState<IssueCommentAudience>("internal");
+  // Read at send: a send queued behind dictation goes out with the audience shown then.
+  const latestAudience = useRef(audience);
+  const changeAudience = (value: IssueCommentAudience) => {
+    latestAudience.current = value;
+    setAudience(value);
+  };
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -54,7 +60,11 @@ export function IssueCommentComposer({
     setSubmitting(true);
     const result = await comment({
       environmentId,
-      input: { ...reference, body: text, ...(audiences ? { audience } : {}) },
+      input: {
+        ...reference,
+        body: text,
+        ...(audiences ? { audience: latestAudience.current } : {}),
+      },
     });
     setSubmitting(false);
     if (result._tag === "Failure") {
@@ -130,7 +140,7 @@ export function IssueCommentComposer({
                   <MenuPopup align="start">
                     <MenuRadioGroup
                       value={audience}
-                      onValueChange={(value: IssueCommentAudience) => setAudience(value)}
+                      onValueChange={(value: IssueCommentAudience) => changeAudience(value)}
                     >
                       <MenuRadioItem value="internal" closeOnClick>
                         {gt("Internal note")}
