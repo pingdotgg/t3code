@@ -513,8 +513,23 @@ it("keeps the chosen comment order when the right panel remounts the tab", async
 
 it("comes back at the scroll position it left when the right panel remounts the tab", async () => {
   setup();
-  const body = Array.from({ length: 80 }, (_, index) => `Paragraph ${index}`).join("\n\n");
-  const value = { ...detail, body, url: "https://github.com/owner/repo/pull/2" };
+  const body = Array.from({ length: 6 }, (_, index) => `Paragraph ${index}`).join("\n\n");
+  const comments = Array.from({ length: 10 }, (_, index) => ({
+    id: `comment-${index}`,
+    kind: "issue-comment" as const,
+    body,
+    author: detail.author,
+    createdAt: `2026-09-01T00:${String(index).padStart(2, "0")}:00Z`,
+    url: null,
+    path: null,
+    reviewState: null,
+  }));
+  const value = {
+    ...detail,
+    comments,
+    commentCount: comments.length,
+    url: "https://github.com/owner/repo/pull/2",
+  };
   const mount = async (shown = value) => {
     const container = document.createElement("div");
     container.className = "flex h-[300px]";
@@ -529,7 +544,7 @@ it("comes back at the scroll position it left when the right panel remounts the 
     await act(async () => screen.scroller.dispatchEvent(new Event("scroll")));
   }
   // The tab can come back before the content that reached that position has loaded.
-  await using screen = await mount({ ...value, body: "Paragraph 0" });
+  await using screen = await mount({ ...value, comments: [], commentCount: 0 });
   await screen.rerender(tab(value));
   await vi.waitFor(() => expect(screen.scroller.scrollTop).toBe(500));
   await screen.unmount();

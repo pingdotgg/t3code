@@ -94,12 +94,13 @@ describe("UsageLimitsPooled next refill", () => {
     await using screen = await render(
       <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-25T17:30:00Z")} />,
     );
-    await expect.element(screen.getByText("↻ +30%", { exact: true })).toBeVisible();
-    await expect.element(screen.getByText("↻ +30% in 30m")).toBeVisible();
+    // The redesign uses an aria-hidden RotateCwIcon instead of the text glyph ↻.
+    await expect.element(screen.getByText("+30%", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("+30% in 30m")).toBeVisible();
 
     await screen.rerender(
       <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-25T18:00:00Z")} />,
     );
-    await expect.element(screen.getByText(/^↻ \+\d+%$/)).not.toBeInTheDocument();
+    await expect.element(screen.getByText(/^\+\d+%$/)).not.toBeInTheDocument();
   });
 });
