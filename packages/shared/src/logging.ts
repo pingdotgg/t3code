@@ -112,13 +112,7 @@ function makeRotation<E>(fs: RotationFileSystem<E>, filePath: string, maxFiles: 
     if (!(yield* fs.exists(staged))) return;
     yield* fs.remove(draft);
     if (yield* fs.exists(filePath)) yield* publish;
-    else {
-      // An older rotation may have parked the oldest backup before recording a plan.
-      if (!(yield* fs.exists(backup(maxFiles))) && (yield* fs.exists(backup(maxFiles + 1)))) {
-        yield* fs.rename(backup(maxFiles + 1), backup(maxFiles));
-      }
-      yield* restoreActive;
-    }
+    else yield* restoreActive;
   });
 
   const rotate = Effect.gen(function* () {

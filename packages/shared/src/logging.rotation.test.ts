@@ -145,25 +145,6 @@ effectIt.layer(NodeServices.layer)("log rotation recovery", (it) => {
       }),
   );
 
-  it.effect.each(modes)("%s sink restores a numbered backup parked before publication", (mode) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      const filePath = path.join(directory, "provider.log");
-      yield* fs.writeFileString(`${filePath}.rotating`, "active");
-      yield* fs.writeFileString(`${filePath}.1`, "previous");
-      yield* fs.writeFileString(`${filePath}.3`, "oldest");
-
-      const sink = yield* openSink(mode, filePath, 9, 2);
-      yield* sink.write("ok");
-      expect(yield* fs.readFileString(filePath)).toBe("activeok");
-      expect(yield* fs.readFileString(`${filePath}.1`)).toBe("previous");
-      expect(yield* fs.readFileString(`${filePath}.2`)).toBe("oldest");
-      expect(yield* fs.exists(`${filePath}.3`)).toBe(false);
-    }),
-  );
-
   it.effect.each(modes)("%s sink retries blocked recovery before writing after reopen", (mode) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
