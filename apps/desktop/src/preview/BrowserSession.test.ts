@@ -456,6 +456,13 @@ describe("BrowserSession", () => {
       assert.isFalse(yield* request());
       assert.isFalse(yield* request());
       assert.strictEqual(showMessageBox.mock.calls.length, 1);
+
+      guest.emit("did-start-navigation", { isMainFrame: true, isSameDocument: true });
+      assert.isFalse(yield* request());
+      assert.strictEqual(showMessageBox.mock.calls.length, 1);
+      guest.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+      assert.isFalse(yield* request());
+      assert.strictEqual(showMessageBox.mock.calls.length, 2);
     }).pipe(Effect.provide(layer)),
   );
 

@@ -407,6 +407,20 @@ export const make = Effect.gen(function* BrowserSessionMake() {
         ),
     );
   };
+  // A page that retries an app handoff must not re-prompt after Cancel; the next document may ask again.
+  const cancelledExternalLinks = new WeakMap<WebContents, Set<string>>();
+  const rememberCancelledExternalLink = (requester: WebContents, url: string): void => {
+    let cancelled = cancelledExternalLinks.get(requester);
+    if (cancelled === undefined) {
+      const links = new Set<string>();
+      cancelled = links;
+      cancelledExternalLinks.set(requester, links);
+      requester.on("did-start-navigation", (event) => {
+        if (event.isMainFrame && !event.isSameDocument) links.clear();
+      });
+    }
+    cancelled.add(url);
+  };
   /** Electron launches external protocols after granting openExternal; untrusted pages require confirmation. */
   const confirmOpenExternal = (
     requester: WebContents | null,
@@ -414,7 +428,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     callback: (granted: boolean) => void,
   ): void => {
     const url = externalProtocolPromptUrl(rawUrl);
-    if (url === null) {
+    if (url === null || (requester !== null && cancelledExternalLinks.get(requester)?.has(url))) {
       callback(false);
       return;
     }
@@ -432,7 +446,10 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           url: truncateForPrompt(url),
         }),
       },
-      (answer) => callback(answer === true),
+      (answer) => {
+        if (answer === false && requester !== null) rememberCancelledExternalLink(requester, url);
+        callback(answer === true);
+      },
     );
   };
 
