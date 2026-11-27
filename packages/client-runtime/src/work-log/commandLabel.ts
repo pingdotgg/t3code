@@ -13,6 +13,8 @@ const WINDOWS_SHELL_PROGRAMS = new Set([
   "pwsh.exe",
 ]);
 const SHELL_OPTIONS_WITH_VALUE = new Set(["-o", "-O", "--rcfile", "--init-file"]);
+// `-euo pipefail` and `+o history`: a short-option bundle ending in o or O takes the next word.
+const SHELL_OPTION_BUNDLE_WITH_VALUE = /^[-+][a-zA-Z]*[oO]$/;
 const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
 const SHELL_PRECOMMAND_MODIFIERS = new Set(["nocorrect", "noglob", "time"]);
 const POWERSHELL_SETUP_PROGRAMS = new Set(["pop-location", "push-location", "set-location"]);
@@ -200,8 +202,8 @@ function shellCommandArgumentIndex(
 ): number | null {
   for (let index = start; index < tokens.length; index += 1) {
     const option = tokens[index]!;
-    if (option === "--" || !option.startsWith("-")) return null;
-    if (SHELL_OPTIONS_WITH_VALUE.has(option)) {
+    if (option === "--" || !/^[-+]/.test(option)) return null;
+    if (SHELL_OPTIONS_WITH_VALUE.has(option) || SHELL_OPTION_BUNDLE_WITH_VALUE.test(option)) {
       index += 1;
       continue;
     }

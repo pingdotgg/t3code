@@ -298,7 +298,20 @@ export function useThreadListActions(): {
           await ThreadUndo.executeThreadUndo(
             plan,
             async (step) => {
-              if (cancelledOnDevice) return true;
+              if (
+                cancelledOnDevice &&
+                !ThreadUndo.restoresAfterDeviceCancel(
+                  step,
+                  appAtomRegistry
+                    .get(environmentThreadShells.threadShellsAtom)
+                    .find(
+                      (shell) =>
+                        shell.environmentId === thread.environmentId && shell.id === thread.id,
+                    ),
+                )
+              ) {
+                return true;
+              }
               switch (step.action) {
                 case "unsettle":
                   return unsettleThread(thread, step.restoreUnsettledAt, (value) => {

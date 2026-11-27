@@ -72,7 +72,9 @@ export function PullRequestListEmptyState({
 }) {
   const gt = useGT();
   const shownQuery =
-    query.length > 48 ? `${query.slice(0, splitsSurrogatePair(query, 48) ? 47 : 48)}…` : query;
+    query.length > 48
+      ? `${query.slice(0, splitsSurrogatePair(query, 48) ? 47 : 48).trimEnd()}…`
+      : query;
   if (!hasProjects) {
     return (
       <Empty>
