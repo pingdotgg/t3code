@@ -4,7 +4,8 @@ import { m } from "../../i18n/messages";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import { readAloudController } from "../read-aloud/playback";
-import { ReadAloudButton } from "../read-aloud/ReadAloudButton";
+import { PlayFromHereButton, ReadAloudButton } from "../read-aloud/ReadAloudButton";
+import { readAloudQueue, type ReadAloudMessage } from "@t3tools/client-runtime/read-aloud";
 import { ReadAloudMarkdownText } from "../read-aloud/ReadAloudMarkdownText";
 import {
   markReadAloudUserScroll,
@@ -2010,6 +2011,7 @@ function renderFeedEntry(
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleUserMessage: (rowId: string, anchorKey: string) => void;
+    readonly readAloudQueueFrom: (messageId: string) => ReadonlyArray<ReadAloudMessage>;
     readonly onToggleTurnFold: (runId: RunId) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
@@ -2660,6 +2662,13 @@ function renderFeedEntry(
                 </Pressable>
               ) : null}
               {presentation.text.trim().length > 0 ? (
+                <PlayFromHereButton
+                  messages={() => props.readAloudQueueFrom(message.id)}
+                  buttonSize={28}
+                  iconSize={13}
+                />
+              ) : null}
+              {presentation.text.trim().length > 0 ? (
                 <UserMessageCopyButton
                   text={presentation.text}
                   onCopy={
@@ -2742,6 +2751,11 @@ function renderFeedEntry(
             <ReadAloudButton
               id={readAloudId}
               text={renderedText}
+              buttonSize={props.replyActionSize.button}
+              iconSize={props.replyActionSize.icon}
+            />
+            <PlayFromHereButton
+              messages={() => props.readAloudQueueFrom(message.id)}
               buttonSize={props.replyActionSize.button}
               iconSize={props.replyActionSize.icon}
             />
@@ -3891,6 +3905,21 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     guestShare,
     m,
   );
+  // Read when "Play from here" is pressed, so rows rendered earlier still see later messages.
+  const shownFeed = useRef(presentedFeed);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the press handler's view of the feed current without re-rendering rows
+  useLayoutEffect(() => {
+    shownFeed.current = presentedFeed;
+  });
+  const readAloudQueueFrom = useCallback(
+    (messageId: string) =>
+      readAloudQueue(
+        shownFeed.current.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
+        messageId,
+        `${props.environmentId}:${props.threadId}`,
+      ),
+    [props.environmentId, props.threadId],
+  );
   const pendingFoldMessageId =
     presentedFeed.findLast((entry) => entry.type === "pending-fold")?.messageId ?? null;
   const jumpRunId =
@@ -4313,6 +4342,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onToggleWorkGroup,
             onToggleWorkRow,
             onToggleUserMessage,
+            readAloudQueueFrom,
             onToggleTurnFold,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,

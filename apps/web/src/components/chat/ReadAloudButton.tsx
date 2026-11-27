@@ -7,10 +7,10 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 
-/** Shows `title` and the error when reading message `id` failed. */
-export function toastReadAloudError(id: string, title: string) {
+/** Shows `title` and the error when reading message `id` failed, or any message when null. */
+export function toastReadAloudError(id: string | null, title: string) {
   const result = readAloudController.getSnapshot();
-  if (result.id === id && result.status === "error")
+  if ((id === null || result.id === id) && result.status === "error")
     toastManager.add({ type: "error", title, description: result.error });
 }
 

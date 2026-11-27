@@ -67,6 +67,7 @@ const audio = vi.hoisted(() => ({
 }));
 vi.mock("../features/read-aloud/ReadAloudButton", () => ({
   ReadAloudButton: () => null,
+  PlayFromHereButton: () => null,
   useReadAloudHighlight: () => null,
 }));
 vi.mock("../features/read-aloud/playback", () => ({

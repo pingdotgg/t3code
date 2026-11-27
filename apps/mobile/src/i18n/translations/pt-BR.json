@@ -5769,5 +5769,7 @@
   "f53ecfde9e26b2b9": "Pesquisar vozes",
   "8316084813411801": "{count, plural, one {Mostrar a voz} other {Mostrar todas as {count} vozes}}",
   "172bd168010e1783": "Nenhum modelo de voz corresponde.",
-  "15cf1e5f6faf65ee": "Nenhuma voz corresponde."
+  "15cf1e5f6faf65ee": "Nenhuma voz corresponde.",
+  "55340dff9b7bc1c1": "Reproduzir a partir daqui",
+  "51d25519c1027039": "Pular para a próxima mensagem"
 }

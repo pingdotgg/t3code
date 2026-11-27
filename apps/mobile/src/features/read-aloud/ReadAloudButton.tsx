@@ -7,7 +7,7 @@ import { Pressable } from "react-native";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
-import type { ReadAloudHighlight } from "@t3tools/client-runtime/read-aloud";
+import type { ReadAloudHighlight, ReadAloudMessage } from "@t3tools/client-runtime/read-aloud";
 import { readAloudController, warmReadAloud } from "./playback";
 
 /**
@@ -21,10 +21,11 @@ export function useReadAloudHighlight(id: string): ReadAloudHighlight | null {
   });
 }
 
-/** Shows `title` and the error when reading message `id` failed. */
-export function alertReadAloudError(id: string, title: string) {
+/** Shows `title` and the error when reading message `id` failed, or any message when null. */
+export function alertReadAloudError(id: string | null, title: string) {
   const result = readAloudController.getSnapshot();
-  if (result.id === id && result.status === "error") Dialog.alert(title, result.error);
+  if ((id === null || result.id === id) && result.status === "error")
+    Dialog.alert(title, result.error);
 }
 
 export function ReadAloudButton({
@@ -72,6 +73,43 @@ export function ReadAloudButton({
     >
       <SymbolView
         name={stoppable ? "stop.fill" : "play"}
+        size={iconSize}
+        tintColorClassName="accent-foreground-secondary"
+      />
+    </Pressable>
+  );
+}
+
+/** Reads this message and every one after it aloud. */
+export function PlayFromHereButton({
+  messages,
+  buttonSize,
+  iconSize,
+}: {
+  /** The message and those after it, as the thread shows them when pressed. */
+  messages: () => ReadonlyArray<ReadAloudMessage>;
+  buttonSize: number;
+  iconSize: number;
+}) {
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const settings = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.readAloud ?? DEFAULT_READ_ALOUD_SETTINGS)
+    : DEFAULT_READ_ALOUD_SETTINGS;
+  const gt = useGT();
+  if (settings.provider === "off") return null;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={gt("Play from here")}
+      className="items-center justify-center"
+      style={{ width: buttonSize, height: buttonSize }}
+      onPress={async () => {
+        await readAloudController.playFrom(messages(), settings);
+        alertReadAloudError(null, gt("Could not read aloud"));
+      }}
+    >
+      <SymbolView
+        name="forward.end"
         size={iconSize}
         tintColorClassName="accent-foreground-secondary"
       />

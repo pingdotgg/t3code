@@ -1,3 +1,4 @@
+import type { ReadAloudMessage } from "@t3tools/client-runtime/read-aloud";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/models";
@@ -59,6 +60,8 @@ export interface TimelineRowSharedState {
   listRef: React.RefObject<LegendListRef | null>;
   timestampFormat: TimestampFormat;
   routeThreadKey: string;
+  /** What "Play from here" on a message reads: it and the shown messages after it. */
+  readAloudQueue: (messageId: MessageId) => ReadAloudMessage[];
   threadRef: ScopedThreadRef | null;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";

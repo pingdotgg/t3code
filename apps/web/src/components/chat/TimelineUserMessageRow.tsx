@@ -58,6 +58,7 @@ import {
 } from "./SnapShotAttachmentDetails";
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { PlayFromHereButton } from "./PlayFromHereButton";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { formatBytes } from "../../lib/formatBytes";
@@ -373,6 +374,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
               {typeof revertTurnCount === "number" && (
                 <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
               )}
+              <PlayFromHereButton messageId={row.message.id} />
               <MessageCopyButton text={text} variant="ghost" />
               {promptLink !== null && (
                 <MessageCopyButton
@@ -874,6 +876,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         {typeof revertTurnCount === "number" && (
           <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
         )}
+        {copyText && <PlayFromHereButton messageId={row.message.id} />}
         {copyText && (
           <MessageCopyButton
             text={contextClipboardFragment ? copyText : plainText}

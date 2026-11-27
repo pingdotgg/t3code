@@ -109,6 +109,8 @@ import IconPlayerPauseFilled from "@tabler/icons-react-native/IconPlayerPauseFil
 import IconPlayerPlay from "@tabler/icons-react-native/IconPlayerPlay";
 import IconPlayerPlayFilled from "@tabler/icons-react-native/IconPlayerPlayFilled";
 import IconPlayerStopFilled from "@tabler/icons-react-native/IconPlayerStopFilled";
+import IconPlayerTrackNext from "@tabler/icons-react-native/IconPlayerTrackNext";
+import IconPlayerTrackNextFilled from "@tabler/icons-react-native/IconPlayerTrackNextFilled";
 import IconPlus from "@tabler/icons-react-native/IconPlus";
 import IconQrcode from "@tabler/icons-react-native/IconQrcode";
 import IconRefresh from "@tabler/icons-react-native/IconRefresh";
@@ -257,6 +259,8 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "pin.slash": IconPinnedOff,
   play: IconPlayerPlay,
   "play.fill": IconPlayerPlayFilled,
+  "forward.end": IconPlayerTrackNext,
+  "forward.end.fill": IconPlayerTrackNextFilled,
   pause: IconPlayerPause,
   "pause.fill": IconPlayerPauseFilled,
   plus: IconPlus,

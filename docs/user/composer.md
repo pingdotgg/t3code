@@ -129,6 +129,10 @@ and brings you back to the word being read after you scroll away. Click or tap a
 reply to continue reading from it. On web and desktop, you can also select text in a reply and
 choose **Read from here**.
 
+To listen to a conversation, use **Play from here** beside any of your messages or a reply. It
+reads that message and every finished one after it, yours and the agent's, in order. Skip in the
+player moves on to the next message.
+
 System voices run on your device. Grok TTS, OpenRouter, and ElevenLabs send the reply text
 through your selected environment and use API billing. They share the API keys saved for dictation. Choose a model and
 voice, then use the preview to try it. For OpenRouter, you can choose **Sign in with OpenRouter**

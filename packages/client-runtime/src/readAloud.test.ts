@@ -4,6 +4,7 @@ import {
   createReadAloudController,
   createReadAloudWarmup,
   createTimedWords,
+  readAloudQueue,
   type SpeechPlayback,
   type SpokenWord,
 } from "./readAloud.ts";
@@ -446,4 +447,56 @@ it("follows the environment's word timings on the audio clock and estimates them
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("queues the chosen message and the finished ones after it", () => {
+  const messages = [
+    { id: "1", role: "user", text: "earlier" },
+    { id: "2", role: "user", text: "question" },
+    { id: "3", role: "system", text: "notice" },
+    { id: "4", role: "assistant", text: "answer" },
+    { id: "5", role: "assistant", text: "partial", streaming: true },
+  ];
+  expect(readAloudQueue(messages, "2", "thread")).toEqual([
+    { id: "thread:2", markdown: "question" },
+    { id: "thread:4", markdown: "answer" },
+  ]);
+});
+
+it("reads queued messages in turn, skips on request, and drops the queue on stop", async () => {
+  const spoken: string[] = [];
+  const playing: Array<() => void> = [];
+  let started = deferred<void>();
+  const controller = createReadAloudController(async (text) => {
+    const finished = deferred<void>();
+    spoken.push(text);
+    playing.push(() => finished.resolve());
+    return {
+      play: async () => started.resolve(),
+      pause: () => {},
+      stop: () => finished.resolve(),
+      finished: finished.promise,
+    };
+  });
+  const nextStart = async () => {
+    await started.promise;
+    started = deferred<void>();
+  };
+  const run = controller.playFrom(
+    ["One.", "Two.", "Three.", "Four."].map((markdown) => ({ id: markdown, markdown })),
+    { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "system" },
+  );
+  await nextStart();
+  expect(controller.getSnapshot()).toMatchObject({ id: "One.", hasNext: true });
+  playing[0]!();
+  await nextStart();
+  expect(controller.getSnapshot().id).toBe("Two.");
+  const skipped = controller.skip();
+  await nextStart();
+  expect(controller.getSnapshot().id).toBe("Three.");
+  controller.stop();
+  await Promise.all([run, skipped]);
+  expect(spoken).toEqual(["One.", "Two.", "Three."]);
+  expect(controller.getSnapshot()).toEqual({ id: null, status: "idle" });
+  expect(controller.skip()).toBeNull();
 });

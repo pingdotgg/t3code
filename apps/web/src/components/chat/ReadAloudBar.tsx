@@ -1,6 +1,13 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useGT } from "gt-react";
-import { ArrowDownIcon, ArrowUpIcon, PauseIcon, PlayIcon, SquareIcon } from "lucide-react";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  PauseIcon,
+  PlayIcon,
+  SkipForwardIcon,
+  SquareIcon,
+} from "lucide-react";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { readAloudController } from "../../speech/readAloud";
 import {
@@ -14,6 +21,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerBanner } from "./ComposerBanner";
 import { VoiceWaveform } from "./VoiceInputPill";
+import { toastReadAloudError } from "./ReadAloudButton";
 
 const SPEEDS = [0.75, 1, 1.25, 1.5];
 
@@ -97,6 +105,18 @@ export function ReadAloudBar() {
                 </SelectPopup>
               </Select>
             </div>
+            {state.hasNext ? (
+              <BarButton
+                label={gt("Skip to next message")}
+                onClick={() => {
+                  void readAloudController
+                    .skip()
+                    ?.then(() => toastReadAloudError(null, gt("Could not read aloud")));
+                }}
+              >
+                <SkipForwardIcon className="fill-current" />
+              </BarButton>
+            ) : null}
             <BarButton label={gt("Stop reading")} onClick={() => readAloudController.stop()}>
               <SquareIcon className="fill-current" />
             </BarButton>

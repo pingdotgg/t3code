@@ -1,4 +1,5 @@
 import { readAloudController } from "../../speech/readAloud";
+import { readAloudQueue } from "@t3tools/client-runtime/read-aloud";
 import { setReadAloudRevealer } from "../../speech/readAloudHighlight";
 import { readAloudSourceAt } from "../../speech/readAloudHighlight";
 import { toastReadAloudError } from "./ReadAloudButton";
@@ -1197,6 +1198,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     listRef,
     timestampFormat,
     routeThreadKey,
+    readAloudQueue: (messageId) =>
+      readAloudQueue(
+        rows.flatMap((row) => (row.kind === "message" ? [row.message] : [])),
+        messageId,
+        routeThreadKey,
+      ),
     threadRef: citationThreadRef,
     markdownCwd,
     resolvedTheme,

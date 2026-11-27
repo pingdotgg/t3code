@@ -18,6 +18,8 @@ import {
   type ReadAloudWords,
   type SpeakMath,
 } from "@t3tools/shared/read-aloud";
+import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import { resolveUserMessagePresentation } from "./userMessage.ts";
 import { prepareReadAloudEmoji } from "./readAloudEmoji.ts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -209,6 +211,39 @@ function spokenWordStart(speech: ReadAloudSpeech, from: number) {
   return at === -1 ? undefined : spokenWordAt(speech.text, at).start;
 }
 
+/** A message to read aloud: the id its buttons and highlight use, and its markdown. */
+export type ReadAloudMessage = { readonly id: string; readonly markdown: string };
+
+/**
+ * What "Play from here" reads: message `fromId` and every finished message after it, the user's
+ * and the agent's, in thread order. Ids are prefixed as the client's read-aloud ids are.
+ */
+export function readAloudQueue(
+  messages: ReadonlyArray<
+    Parameters<typeof resolveUserMessagePresentation>[0] & {
+      readonly id: string;
+      readonly role: string;
+      readonly streaming?: boolean;
+    }
+  >,
+  fromId: string,
+  idPrefix: string,
+): ReadAloudMessage[] {
+  const from = messages.findIndex((message) => message.id === fromId);
+  if (from === -1) return [];
+  return messages.slice(from).flatMap((message) => {
+    if (message.streaming || (message.role !== "user" && message.role !== "assistant")) return [];
+    const markdown =
+      message.role === "user"
+        ? replaceComposerContextReferences(
+            resolveUserMessagePresentation(message).text,
+            (reference) => reference.label,
+          )
+        : message.text;
+    return markdown.trim() ? [{ id: `${idPrefix}:${message.id}`, markdown }] : [];
+  });
+}
+
 export function createReadAloudController(
   /** `from` is the offset in `text` where the audio should start, after a spoken lead-in. */
   prepare: (
@@ -226,6 +261,8 @@ export function createReadAloudController(
     id: string | null;
     status: "idle" | "loading" | "playing" | "paused" | "error";
     error?: string;
+    /** More messages follow the one being read, so it can be skipped. */
+    hasNext?: boolean;
   };
   let state: State = { id: null, status: "idle" };
   let active: AbortController | null = null;
@@ -257,8 +294,8 @@ export function createReadAloudController(
       });
   };
   const listeners = new Set<() => void>();
-  const publish = (next: State) => {
-    state = next;
+  const publish = ({ hasNext: _, ...next }: State) => {
+    state = reading?.queue.length && next.id ? { ...next, hasNext: true } : next;
     for (const listener of listeners) listener();
   };
   // Separate from `state` so a new word re-renders only the message being read.
@@ -295,8 +332,12 @@ export function createReadAloudController(
     readonly markdown: string;
     readonly settings: ReadAloudSettings;
     readonly words: ReadAloudWords;
+    /** The messages to read after this one. */
+    readonly queue: ReadonlyArray<ReadAloudMessage>;
   } | null = null;
-  const stop = () => {
+  // Counts requests, so one still preparing its text gives way to a newer start or stop.
+  let requests = 0;
+  const halt = () => {
     reading = null;
     stopFollowing();
     active?.abort();
@@ -309,6 +350,10 @@ export function createReadAloudController(
     playback = null;
     publish({ id: null, status: "idle" });
   };
+  const stop = () => {
+    requests++;
+    halt();
+  };
   /**
    * Reads `markdown` aloud from the top, or from the first block that ends after markdown offset
    * `from`, such as the paragraph a user picks.
@@ -320,7 +365,14 @@ export function createReadAloudController(
     settings: ReadAloudSettings,
     from?: number,
     fromWord = false,
-  ) => {
+    queue: ReadonlyArray<ReadAloudMessage> = [],
+  ): Promise<void> => {
+    const request = ++requests;
+    /** Reads the queued messages, if any, with the settings in use by then. */
+    const readNext = (current: ReadAloudSettings): Promise<void> | undefined => {
+      const [next, ...rest] = queue;
+      return next && start(next.id, next.markdown, current, undefined, false, rest);
+    };
     // Only replies with formulas or emoji wait for their words, so others start in the same turn.
     const pendingMath = prepareMath(markdown);
     const pendingEmoji = prepareReadAloudEmoji(markdown);
@@ -328,6 +380,7 @@ export function createReadAloudController(
       math: pendingMath instanceof Promise ? await pendingMath.catch(() => undefined) : pendingMath,
       emoji: pendingEmoji && (await pendingEmoji.catch(() => undefined)),
     };
+    if (request !== requests) return;
     const speech = readAloudSpeech(markdown, settings.skipCodeBlocks, words);
     const offset =
       from === undefined
@@ -337,9 +390,8 @@ export function createReadAloudController(
           : readAloudBlockFrom(speech, from)?.spokenStart;
     // Nothing is read after `from`, such as in a skipped closing code block: keep reading.
     if (offset === undefined) return;
-    stop();
+    halt();
     if (settings.provider === "off") return;
-    reading = { id, markdown, settings, words };
     // Environments make speech picked up mid-sentence from the sentence's start, for context.
     // Platform engines cannot start partway into their audio, so they start at the word.
     const leadIn =
@@ -351,7 +403,9 @@ export function createReadAloudController(
       speech.text.slice(leadIn),
       settings.provider === "system" ? undefined : SPEECH_SYNTHESIS_MAX_TEXT,
     ).map((chunk) => ({ ...chunk, start: leadIn + chunk.start }));
-    if (!chunks.length) return;
+    // Such as a message that is only a skipped code block.
+    if (!chunks.length) return readNext(settings);
+    reading = { id, markdown, settings, words, queue };
     const owner = new AbortController();
     active = owner;
     try {
@@ -398,7 +452,11 @@ export function createReadAloudController(
         dispose(next);
         playback = null;
       }
-      if (active === owner) stop();
+      if (active !== owner) return;
+      const current = reading?.settings ?? settings;
+      if (!queue.length) return stop();
+      // Returned, so the caller's promise settles once the whole queue has been read.
+      return readNext(current);
     } catch (error) {
       if (active !== owner) return;
       stop();
@@ -467,7 +525,27 @@ export function createReadAloudController(
         }
       }
     },
-    start,
+    start: (
+      id: string,
+      markdown: string,
+      settings: ReadAloudSettings,
+      from?: number,
+      fromWord?: boolean,
+    ) => start(id, markdown, settings, from, fromWord),
+    /** Reads `messages` one after another, from the first. */
+    playFrom(messages: ReadonlyArray<ReadAloudMessage>, settings: ReadAloudSettings) {
+      const [first, ...rest] = messages;
+      return first
+        ? start(first.id, first.markdown, settings, undefined, false, rest)
+        : Promise.resolve();
+    },
+    /** Moves on to the next queued message; null when none follows. */
+    skip() {
+      const [next, ...rest] = reading?.queue ?? [];
+      return reading && next
+        ? start(next.id, next.markdown, reading.settings, undefined, false, rest)
+        : null;
+    },
     /** Whether message `id` is being read, paused, or made into speech. */
     isReading,
     /**
@@ -475,7 +553,9 @@ export function createReadAloudController(
      * settings; null when it is not being read.
      */
     jump(id: string, from: number) {
-      return reading && isReading(id) ? start(id, reading.markdown, reading.settings, from) : null;
+      return reading && isReading(id)
+        ? start(id, reading.markdown, reading.settings, from, false, reading.queue)
+        : null;
     },
     /**
      * While message `id` is being read, moves to the word at markdown offset `from`: within the
@@ -493,7 +573,7 @@ export function createReadAloudController(
       if (at === undefined) return null;
       if (at >= chunkFrom && at < chunkEnd && playback?.seek?.(at - chunkStart))
         return Promise.resolve();
-      return start(id, reading.markdown, reading.settings, from, true);
+      return start(id, reading.markdown, reading.settings, from, true, reading.queue);
     },
     /** Reads on at `speed`; players that cannot change rate read again from the current word. */
     setSpeed(speed: number) {
@@ -512,7 +592,7 @@ export function createReadAloudController(
       const from = speech.sources.slice(spokenAt).find((source) => source >= 0);
       return from === undefined
         ? null
-        : start(current.id, current.markdown, reading.settings, from, true);
+        : start(current.id, current.markdown, reading.settings, from, true, current.queue);
     },
     /** How loud the reply being read is, from 0 to 1, while it plays. */
     subscribeLevel(listener: (level: number) => void) {

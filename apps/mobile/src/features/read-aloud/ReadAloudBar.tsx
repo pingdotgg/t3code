@@ -48,7 +48,7 @@ export function ReadAloudBar(props: {
       entering={FadeInDown.duration(180)}
       exiting={FadeOut.duration(120)}
     >
-      <ReadAloudBarControls id={id} status={state.status} />
+      <ReadAloudBarControls id={id} status={state.status} hasNext={state.hasNext === true} />
     </Animated.View>
   );
 }
@@ -56,6 +56,7 @@ export function ReadAloudBar(props: {
 function ReadAloudBarControls(props: {
   readonly id: string;
   readonly status: "loading" | "playing" | "paused";
+  readonly hasNext: boolean;
 }) {
   const { id, status } = props;
   const gt = useGT();
@@ -131,6 +132,17 @@ function ReadAloudBarControls(props: {
             }}
           />
         )}
+        {props.hasNext ? (
+          <BarButton
+            label={gt("Skip to next message")}
+            icon="forward.end.fill"
+            onPress={() => {
+              void readAloudController
+                .skip()
+                ?.then(() => alertReadAloudError(null, gt("Could not read aloud")));
+            }}
+          />
+        ) : null}
         <BarButton label={gt("Stop reading")} icon="stop.fill" onPress={readAloudController.stop} />
         <View className="min-w-0 flex-1 flex-row justify-end">
           {away?.id === id ? (
