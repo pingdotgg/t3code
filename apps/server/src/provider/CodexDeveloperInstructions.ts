@@ -31,6 +31,10 @@ const toolInstructions = (tools: T3CodeToolAvailability): string =>
     .filter(Boolean)
     .join("\n\n");
 
+// Codex wakes the agent when any background command ends, so T3 can't tell a wait from a dev server.
+const CODEX_BACKGROUND_WAIT_INSTRUCTIONS =
+  "To wait for a background command you started (tests, a build), pass its session ID to `t3_background_wait` before you end your turn. Do not mark work you leave running, or PRs.";
+
 export interface CodexRuntimeInfo {
   readonly agentFeedback?: AgentFeedbackMode;
   readonly model: string;
@@ -58,5 +62,6 @@ export function buildCodexAdditionalContext(
       value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
     },
     ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),
+    t3_code_background_wait: { kind: "application", value: CODEX_BACKGROUND_WAIT_INSTRUCTIONS },
   };
 }

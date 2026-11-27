@@ -2000,6 +2000,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     monitor: Schema.optional(Schema.Boolean),
     /** The provider wakes the agent when this command finishes after its turn. */
     completionWake: Schema.optional(Schema.Literal("always")),
+    /** The agent marked this running command as work it waits on, so it holds the thread. */
+    awaited: Schema.optional(Schema.Literal(true)),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2902,6 +2904,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     monitor: Schema.optional(Schema.Boolean),
     /** The provider wakes the agent when this command finishes after its turn. */
     completionWake: Schema.optional(Schema.Literal("always")),
+    /** The agent marked this running command as work it waits on, so it holds the thread. */
+    awaited: Schema.optional(Schema.Literal(true)),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

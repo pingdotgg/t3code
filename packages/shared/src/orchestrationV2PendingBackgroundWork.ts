@@ -167,6 +167,7 @@ type PendingBackgroundWorkTurnItem = {
   } | null;
   readonly input?: unknown;
   readonly monitor?: boolean | undefined;
+  readonly awaited?: true | undefined;
   readonly prompt?: string | undefined;
   readonly childThreadId?: ThreadId | null;
 };
@@ -225,7 +226,11 @@ function pendingTaskFromTurnItem(
         ...(item.childThreadId == null ? {} : { childThreadId: item.childThreadId }),
       };
     case "command_execution":
-      return { ...named, kind: item.monitor === true ? "monitor" : "command" };
+      return {
+        ...named,
+        kind: item.monitor === true ? "monitor" : "command",
+        ...(item.awaited === true ? { awaited: true as const } : {}),
+      };
     default:
       return { ...named, kind: "background_task" };
   }

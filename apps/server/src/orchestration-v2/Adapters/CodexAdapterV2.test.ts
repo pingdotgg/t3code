@@ -7544,6 +7544,104 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("marks a running command awaited by its session id or item id until it ends", () =>
+    Effect.gen(function* () {
+      const released = yield* Deferred.make<void>();
+      const harness = yield* makeCodexReplayHarness(
+        {
+          ...backgroundExecTranscript,
+          entries: backgroundExecTranscript.entries.map((entry) =>
+            entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
+              ? { ...entry, afterMs: 0 }
+              : entry,
+          ),
+        },
+        undefined,
+        undefined,
+        undefined,
+        (entry) =>
+          entry.label === "item/completed/command-late" ? Deferred.await(released) : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-command-background-wait"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* harness.firstTerminal;
+      const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
+      if (awaitBackgroundTasks === undefined) {
+        return yield* Effect.die("Codex adapter runtime must expose awaitBackgroundTasks.");
+      }
+      const commands = () =>
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+            ? [[event.turnItem.status, event.turnItem.awaited]]
+            : [],
+        );
+
+      // Codex shows the agent the terminal's session id; T3 knows the item id.
+      assert.deepEqual(
+        yield* awaitBackgroundTasks({
+          providerThread: harness.providerThread,
+          taskIds: ["4242", "9999"],
+          awaited: true,
+        }),
+        { matched: ["4242"] },
+      );
+      yield* harness.until(() => commands().length === 2);
+      assert.deepEqual(commands(), [
+        ["running", undefined],
+        ["running", true],
+      ]);
+      assert.deepEqual(
+        yield* awaitBackgroundTasks({
+          providerThread: harness.providerThread,
+          taskIds: [BG_COMMAND_ITEM],
+          awaited: false,
+        }),
+        { matched: [BG_COMMAND_ITEM] },
+      );
+      yield* awaitBackgroundTasks({
+        providerThread: harness.providerThread,
+        taskIds: [BG_COMMAND_ITEM],
+        awaited: true,
+      });
+      yield* harness.until(() => commands().length === 4);
+
+      yield* Deferred.succeed(released, undefined);
+      yield* harness.until(() => commands().some(([status]) => status === "completed"));
+      assert.deepEqual(commands(), [
+        ["running", undefined],
+        ["running", true],
+        ["running", undefined],
+        ["running", true],
+        ["completed", undefined],
+      ]);
+      assert.deepEqual(
+        yield* awaitBackgroundTasks({
+          providerThread: harness.providerThread,
+          taskIds: ["4242"],
+          awaited: true,
+        }),
+        { matched: [] },
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("settles a command Codex never completed once its terminal is gone", () =>
     Effect.gen(function* () {
       const settled = yield* Deferred.make<void>();
