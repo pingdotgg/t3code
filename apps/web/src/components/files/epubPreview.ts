@@ -115,7 +115,7 @@ const svgAttrs = (
   "clip-rule clipPathUnits mask maskUnits maskContentUnits patternUnits patternContentUnits patternTransform startOffset " +
   "marker-start marker-mid marker-end markerWidth markerHeight markerUnits refX refY orient " +
   "filter filterUnits primitiveUnits stdDeviation in in2 result type values color-interpolation-filters flood-color flood-opacity mode " +
-  "kernelUnitLength surfaceScale specularExponent specularConstant lighting-color azimuth elevation operator slope intercept"
+  "kernelUnitLength surfaceScale specularExponent specularConstant lighting-color azimuth elevation operator slope intercept tableValues amplitude exponent"
 ).split(" ");
 const mathAttrs = (
   "display displaystyle mathvariant mathsize mathcolor mathbackground accent accentunder columnalign " +
