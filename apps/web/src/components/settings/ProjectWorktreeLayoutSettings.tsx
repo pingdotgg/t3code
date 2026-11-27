@@ -81,7 +81,7 @@ function CheckoutWorktreeLayout({
           title={gt("Could not load the worktree layout commands")}
           description={query.error}
           control={
-            <Button size="xs" variant="outline" onClick={query.refresh}>
+            <Button size="xs" variant="secondary" onClick={query.refresh}>
               <T>Retry</T>
             </Button>
           }
@@ -116,7 +116,7 @@ function CheckoutWorktreeLayout({
 
   return (
     <SettingsSection id="project-worktree-layout" title={gt("Worktree layout")}>
-      <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
+      <p className="px-3 py-2.5 text-meta text-muted-foreground sm:px-4">
         {policyDenial ?? (
           <T>
             This project's <code>t3.json</code> sets up worktree threads with its own commands. They
@@ -125,8 +125,9 @@ function CheckoutWorktreeLayout({
           </T>
         )}
         {showCheckout ? (
-          <span className="mt-1 block truncate">
-            {member.environmentLabel ?? gt("Environment")} · {member.workspaceRoot}
+          <span className="mt-1 flex min-w-0 gap-2">
+            <span className="shrink-0">{member.environmentLabel ?? gt("Environment")}</span>
+            <span className="min-w-0 truncate">{member.workspaceRoot}</span>
           </span>
         ) : null}
       </p>
@@ -137,7 +138,7 @@ function CheckoutWorktreeLayout({
             <span className="flex min-w-0 items-center gap-2">
               <span className="min-w-0 truncate">{m(COMMAND_TITLES[command.kind])}</span>
               {policyDenial !== undefined ? (
-                <Badge size="sm" variant="outline">
+                <Badge size="sm" variant="secondary">
                   <T>Off</T>
                 </Badge>
               ) : command.approved ? (
@@ -155,7 +156,7 @@ function CheckoutWorktreeLayout({
           control={
             <Button
               size="xs"
-              variant={command.approved ? "ghost" : "outline"}
+              variant={command.approved ? "ghost" : "secondary"}
               disabled={
                 !canApprove ||
                 !isConnected ||
@@ -174,18 +175,18 @@ function CheckoutWorktreeLayout({
             </Button>
           }
         >
-          <pre className="mb-2 max-h-48 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md border bg-muted/40 px-3 py-2 font-mono text-xs">
+          <pre className="mb-2 max-h-48 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-control surface-well px-3 py-2 font-mono text-caption">
             {command.command}
           </pre>
         </SettingsRow>
       ))}
       {!canApprove ? (
-        <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
+        <p className="px-3 py-2 text-meta text-muted-foreground sm:px-4">
           <T>This connection cannot approve commands. Use a client that can use the terminal.</T>
         </p>
       ) : null}
       {query.error ? (
-        <p role="alert" className="px-3 py-2 text-xs text-warning-foreground sm:px-4">
+        <p role="alert" className="px-3 py-2 text-meta text-warning-foreground sm:px-4">
           {query.error}
         </p>
       ) : null}

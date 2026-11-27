@@ -55,10 +55,10 @@ export function WorktreeLayoutApprovalDialogHost() {
           <div className="flex flex-col gap-3 pt-2 text-left">
             {request?.commands.map((command) => (
               <div key={command.kind} className="flex min-w-0 flex-col gap-1">
-                <span className="text-xs text-muted-foreground">
+                <span className="text-meta text-muted-foreground">
                   {m(WORKTREE_LAYOUT_COMMAND_LABELS[command.kind])}
                 </span>
-                <pre className="max-h-48 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md border bg-muted/40 px-3 py-2 font-mono text-xs">
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-control surface-well px-3 py-2 font-mono text-caption">
                   {command.command}
                 </pre>
               </div>
@@ -67,7 +67,7 @@ export function WorktreeLayoutApprovalDialogHost() {
         </AlertDialogHeader>
         {/* New buttons for each request: a press begun on one request cannot answer the next. */}
         <AlertDialogFooter key={request?.id}>
-          <AlertDialogClose render={<Button variant="outline" />}>
+          <AlertDialogClose render={<Button variant="secondary" />}>
             <T>Cancel</T>
           </AlertDialogClose>
           <Button
