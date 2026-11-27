@@ -14,13 +14,14 @@ import {
 } from "@t3tools/contracts";
 import { ChevronLeftIcon, PlusIcon } from "lucide-react";
 import { T, useGT } from "gt-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { useThreadGroupingActions } from "~/hooks/useThreadGroupingActions";
 import { m } from "~/i18n/messages";
 import { readLocalApi } from "~/localApi";
 import { botFilesEnvironment } from "~/state/botFiles";
 import { useQuietThreadShell } from "~/state/entities";
+import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { RelativeTime } from "../RelativeTime";
@@ -50,46 +51,76 @@ function PreferencesForm(props: {
   const gt = useGT();
   const write = useAtomCommand(botFilesEnvironment.writePreferences, { reportFailure: false });
   const [saving, setSaving] = useState(false);
-  const save = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const contents = String(new FormData(event.currentTarget).get("preferences") ?? "");
+  const [text, setText] = useState(props.preferences);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const speech = useTextFieldSpeech({
+    environmentId: props.threadRef.environmentId,
+    ownerKey: JSON.stringify([
+      "bot-instructions",
+      props.threadRef.environmentId,
+      props.threadRef.threadId,
+    ]),
+    text,
+    textareaRef,
+    onTextChange: setText,
+    disabled: !props.canWrite,
+    offerSetup: true,
+  });
+  const save = (contents: string) => {
     if (contents === props.preferences) return;
     setSaving(true);
-    const message = failureMessage(
-      await write({
-        environmentId: props.threadRef.environmentId,
-        input: { threadId: props.threadRef.threadId, contents },
-      }),
-      gt("An error occurred."),
-    );
-    setSaving(false);
-    if (message !== null) {
-      toastManager.add({
-        type: "error",
-        title: gt("Failed to save Bot instructions"),
-        description: message,
-      });
-    }
+    void write({
+      environmentId: props.threadRef.environmentId,
+      input: { threadId: props.threadRef.threadId, contents },
+    }).then((result) => {
+      setSaving(false);
+      const message = failureMessage(result, gt("An error occurred."));
+      if (message !== null) {
+        toastManager.add({
+          type: "error",
+          title: gt("Failed to save Bot instructions"),
+          description: message,
+        });
+      }
+    });
   };
+  const changed = text !== props.preferences || speech.blocksSubmission;
   return (
-    <form className="flex flex-col gap-1.5" onSubmit={save}>
+    <form
+      className="flex flex-col gap-1"
+      onSubmit={(event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        speech.submitAfterDictation(save);
+      }}
+    >
       <Label htmlFor="bot-preferences">
         <T>Instructions</T>
       </Label>
-      <Textarea
+      <textarea
         id="bot-preferences"
-        name="preferences"
-        rows={4}
-        size="sm"
+        ref={textareaRef}
+        rows={3}
         maxLength={BOT_FILE_MAX_CHARS}
-        defaultValue={props.preferences}
-        readOnly={!props.canWrite}
+        value={text}
+        onChange={(event) => setText(event.currentTarget.value)}
+        readOnly={!props.canWrite || speech.freezesEditor}
         placeholder={gt("How you like the Bot to work.")}
+        className="-mx-1.5 field-sizing-content block max-h-64 min-h-16 w-[calc(100%+--spacing(3))] resize-none rounded-md bg-transparent px-1.5 py-1 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:bg-accent/40 focus-visible:bg-accent/50"
       />
       {props.canWrite ? (
-        <Button type="submit" size="sm" disabled={saving} className="self-end">
-          <T>Save</T>
-        </Button>
+        <div className="flex min-h-7 flex-wrap items-center justify-end gap-2">
+          <TextFieldSpeechControls speech={speech} />
+          {changed ? (
+            <Button
+              type="submit"
+              size="xs"
+              disabled={saving || speech.preparing}
+              onPointerDown={(event) => event.preventDefault()}
+            >
+              <T>Save</T>
+            </Button>
+          ) : null}
+        </div>
       ) : null}
     </form>
   );
