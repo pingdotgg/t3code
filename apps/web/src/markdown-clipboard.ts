@@ -548,9 +548,9 @@ export function serializeTableElementToCsv(table: Element): string {
   return lines.join("\n");
 }
 
-// CJK and emoji count as two columns: close enough to East Asian Width for chat fonts.
+// CJK, emoji, flags and keycaps count as two columns: close enough to East Asian Width for chat fonts.
 const WIDE_GRAPHEME =
-  /\p{Extended_Pictographic}|[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/u;
+  /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3|[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/u;
 let graphemes: Intl.Segmenter | undefined;
 
 function monospaceWidth(text: string): number {
@@ -575,21 +575,47 @@ function padToWidth(text: string, width: number, align: string): string {
  * Slack show monospaced; rich targets (Teams, Slack) paste the HTML flavor as a code block.
  */
 export function serializeTableElementForChat(table: Element): MarkdownClipboardPayload {
-  const rows = [...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr")]
+  const rows = [
+    ...table.querySelectorAll(
+      ":scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr, :scope > tr",
+    ),
+  ]
     .map((row) =>
       [...row.children].filter((cell) => cell.tagName === "TH" || cell.tagName === "TD"),
     )
     .filter((cells) => cells.length > 0);
   if (rows.length === 0) return { text: "", html: "" };
-  const texts = rows.map((cells) =>
-    cells.map((cell) => csvCellText(cell).replace(/\s+/g, " ").trim()),
+  // Lay cells onto the grid the table renders, so values after a span stay under their headers.
+  const grid: Array<Array<{ text: string; cell: Element }>> = rows.map(() => []);
+  rows.forEach((cells, rowIndex) => {
+    const gridRow = grid[rowIndex]!;
+    let column = 0;
+    for (const cell of cells) {
+      while (gridRow[column]) column++;
+      const text = csvCellText(cell).replace(/\s+/g, " ").trim();
+      const colSpan = Math.max(1, tableCellSpan(cell, "colSpan", "colspan"));
+      // rowspan="0" runs to the end of its section; the last row is close enough here.
+      const rowSpan = tableCellSpan(cell, "rowSpan", "rowspan") || rows.length - rowIndex;
+      for (let down = 0; down < rowSpan && rowIndex + down < rows.length; down++) {
+        for (let across = 0; across < colSpan; across++) {
+          grid[rowIndex + down]![column + across] = {
+            text: down === 0 && across === 0 ? text : "",
+            cell,
+          };
+        }
+      }
+      column += colSpan;
+    }
+  });
+  const columns = Math.max(...grid.map((gridRow) => gridRow.length));
+  const texts = grid.map((gridRow) =>
+    Array.from({ length: columns }, (_, column) => gridRow[column]?.text ?? ""),
   );
-  const columns = Math.max(...texts.map((cells) => cells.length));
   const widths = Array.from({ length: columns }, (_, column) =>
     Math.max(1, ...texts.map((cells) => monospaceWidth(cells[column] ?? ""))),
   );
   const aligns = widths.map((_, column) => {
-    const header = rows[0]?.[column] as HTMLElement | undefined;
+    const header = grid[0]?.[column]?.cell as HTMLElement | undefined;
     return header?.style?.textAlign || header?.getAttribute("align") || "";
   });
   const line = (cells: string[]) =>
@@ -755,12 +781,19 @@ function parseTableSpan(value: string | null): number {
   return Number.isNaN(span) || span < 0 ? 1 : span;
 }
 
+// The DOM normalizes spans; the attribute fallback covers non-DOM callers.
+function tableCellSpan(
+  cell: Element,
+  property: "colSpan" | "rowSpan",
+  attribute: "colspan" | "rowspan",
+): number {
+  const span = (cell as Partial<HTMLTableCellElement>)[property];
+  return typeof span === "number" ? span : parseTableSpan(cell.getAttribute(attribute));
+}
+
 function htmlSpanAttributes(cell: Element): string {
-  // The DOM normalizes spans; the attribute fallback covers non-DOM callers.
-  const { colSpan, rowSpan } = cell as Partial<HTMLTableCellElement>;
-  const columns =
-    typeof colSpan === "number" ? colSpan : parseTableSpan(cell.getAttribute("colspan"));
-  const rows = typeof rowSpan === "number" ? rowSpan : parseTableSpan(cell.getAttribute("rowspan"));
+  const columns = tableCellSpan(cell, "colSpan", "colspan");
+  const rows = tableCellSpan(cell, "rowSpan", "rowspan");
   let attributes = columns > 1 ? ` colspan="${columns}"` : "";
   // rowspan="0" runs to the end of its section.
   if (rows !== 1) attributes += ` rowspan="${rows}"`;

@@ -804,4 +804,56 @@ describe("copying a table as CSV", () => {
     expect(text).toBe(`\`\`\`\`\n${aligned}\n\`\`\`\``);
     expect(html).toBe(`<meta charset="utf-8"><pre>${aligned}</pre>`);
   });
+
+  it("counts flag and keycap emoji as two columns, and plain digits as one", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(new FakeElement("TH").append(new FakeText("ID")), td(new FakeText("Value"))),
+      ),
+      new FakeElement("TBODY").append(
+        row(td(new FakeText("🇺🇸")), td(new FakeText("x"))),
+        row(td(new FakeText("1️⃣")), td(new FakeText("y"))),
+        row(td(new FakeText("1")), td(new FakeText("z"))),
+      ),
+    );
+
+    const { text } = serializeTableElementForChat(table as unknown as Element);
+    expect(text).toBe(
+      ["```", "ID  Value", "--  -----", "🇺🇸  x", "1️⃣  y", "1   z", "```"].join("\n"),
+    );
+  });
+
+  it("keeps values under their headers across spans, and copies footer rows", () => {
+    const span = (attributes: Record<string, string>, text: string) =>
+      new FakeElement("TD", [], attributes).append(new FakeText(text));
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(
+          new FakeElement("TH").append(new FakeText("A")),
+          new FakeElement("TH").append(new FakeText("B")),
+          new FakeElement("TH").append(new FakeText("C")),
+        ),
+      ),
+      new FakeElement("TBODY").append(
+        row(span({ rowspan: "2" }, "tall"), span({ colspan: "2" }, "wide")),
+        row(td(new FakeText("b2")), td(new FakeText("c2"))),
+      ),
+      new FakeElement("TFOOT").append(
+        row(td(new FakeText("total")), td(new FakeText("")), td(new FakeText("9"))),
+      ),
+    );
+
+    const { text } = serializeTableElementForChat(table as unknown as Element);
+    expect(text).toBe(
+      [
+        "```",
+        "A      B     C",
+        "-----  ----  --",
+        "tall   wide",
+        "       b2    c2",
+        "total        9",
+        "```",
+      ].join("\n"),
+    );
+  });
 });
