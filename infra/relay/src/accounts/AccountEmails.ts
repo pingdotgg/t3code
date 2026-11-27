@@ -37,7 +37,6 @@ T3 Tools, Inc. · https://t3.codes`;
 // Hosted by the marketing site; email clients don't render SVG or inline images reliably.
 const BRAND_ICON_URL = "https://t3.codes/apple-touch-icon.png";
 const SANS = "-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Helvetica,Arial,sans-serif";
-const MONO = "'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace";
 
 // Dark palette and outro-card styling from the launch-video kit (apps/web dark theme).
 const deletionNoticeHtml = `<!doctype html>
@@ -71,13 +70,13 @@ const deletionNoticeHtml = `<!doctype html>
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0e0e0f;border:1px solid #1d1d20;border-radius:16px;">
                   <tr>
                     <td style="padding:22px 24px;border-bottom:1px solid #1d1d20;">
-                      <p style="margin:0 0 6px;font-family:${MONO};font-size:12px;letter-spacing:0.02em;color:#6e9bfb;">Our systems</p>
+                      <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#6e9bfb;">Our systems</p>
                       <p style="margin:0;font-size:15px;line-height:1.6;color:#f1f3f7;">Everything associated with your account will be deleted within <span style="white-space:nowrap;font-weight:650;">30 days</span>.</p>
                     </td>
                   </tr>
                   <tr>
                     <td style="padding:22px 24px;">
-                      <p style="margin:0 0 6px;font-family:${MONO};font-size:12px;letter-spacing:0.02em;color:#6e9bfb;">Your devices</p>
+                      <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#6e9bfb;">Your devices</p>
                       <p style="margin:0;font-size:15px;line-height:1.6;color:#f1f3f7;">Threads, projects and settings stored on your devices stay where they are. To remove them, uninstall T3 Code or delete its data folder.</p>
                     </td>
                   </tr>
@@ -94,7 +93,7 @@ const deletionNoticeHtml = `<!doctype html>
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #1d1d20;">
                   <tr>
                     <td style="padding:20px 0 0;font-size:12px;line-height:1.6;color:#8e8e93;">T3 Tools, Inc.</td>
-                    <td align="right" style="padding:20px 0 0;font-family:${MONO};font-size:12px;line-height:1.6;"><a href="https://t3.codes" style="color:#8e8e93;text-decoration:none;">t3.codes</a></td>
+                    <td align="right" style="padding:20px 0 0;font-size:12px;line-height:1.6;"><a href="https://t3.codes" style="color:#8e8e93;text-decoration:none;">t3.codes</a></td>
                   </tr>
                   <tr>
                     <td colspan="2" style="padding:6px 0 0;font-size:12px;line-height:1.6;color:#636368;">Sent because a T3 Code account using this address was deleted.</td>
