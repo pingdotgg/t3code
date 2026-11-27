@@ -4991,6 +4991,7 @@
   "13cf3cd978eef92a": "Behåll bilagorna på den här datorn",
   "a4ca7da61227002d": "Ta bort bilagorna innan du väljer automatisk routning och bifoga dem sedan på den valda datorn.",
   "512d8afab852df1a": "Kunde inte byta dator",
+  "ee3ea4351c88e7d7": "Projektet är inte längre tillgängligt.",
   "32e421d1e2dfdaff": "Kontrollerar datorer…",
   "0db14066bd4ce117": "Automatisk balansering är inte tillgänglig",
   "55b562c00e37321b": "Kunde inte tvångsstoppa agenten",
@@ -6943,6 +6944,19 @@
   "36b7fbe31bde05f3": "Det här repot har inga etiketter.",
   "2764eab1d2853980": "Det här repot har fler etiketter än som listas här. Lägg till resten på värden.",
   "5e5917c3b907c7d6": "Tillagd",
+  "4affc3da49f673c2": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": "kommenterade"
+    }
+  ],
   "404ee0e0134b60ae": "Söker på alla värdar efter ”{query}”",
   "ca612a0074954046": "Kontrollerar...",
   "8b04f78f836b6c11": "Inget med de här filtren",
@@ -7240,19 +7254,6 @@
       "t": "span",
       "i": 2,
       "c": "granskade"
-    }
-  ],
-  "4affc3da49f673c2": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ",
-    {
-      "t": "span",
-      "i": 2,
-      "c": "kommenterade"
     }
   ],
   "04ea50285b00dcdd": "Översikt",
@@ -9313,7 +9314,6 @@
   "b76e857a764ea02a": "Grupperingsregel för {path} på {environment}",
   "e6e55f343639ae71": "Standard ({mode})",
   "87158e7b8e714bc6": "Lägg till ett projekt från sidofältet för att konfigurera det här.",
-  "ee3ea4351c88e7d7": "Projektet är inte längre tillgängligt.",
   "062d19d24615e108": "Projekttiteln får inte vara tom",
   "303af9de2741db90": "Kunde inte byta namn på projektet",
   "f578154800d7af01": "Kunde inte uppdatera projektikonen",
@@ -10242,6 +10242,7 @@
   "0ce04933a7047deb": "Fönstertitel för skärmläsare",
   "3426d304db392999": "Strömning av svar",
   "d166a1c83e0fdfd7": "Uppdateringskontroller för leverantörer",
+  "79ef9a95eab15a30": "Model price lookups",
   "cfaa3b1d638ad6df": "Fortsätt trådar efter omstarter",
   "ae3a141bcd5f923a": "Bakgrundsaktivitet",
   "d24e3cd7bcf08490": "Håll vaken medan agenter arbetar",
@@ -10350,6 +10351,9 @@
   "e6267e91cd042010": "Sök efter nyare versioner av installerade leverantörs-CLI:er och hämta uppdateringar av modellkatalogen. När det är avstängt visas nya modeller kanske inte.",
   "2bc0086d479dff21": "Återställ uppdateringskontroller för leverantörer till standard",
   "615928bec4a7836f": "Kontrollera leverantörsversioner",
+  "519b8211f9b0ddf1": "Download the public LiteLLM price table from GitHub once a day to estimate what cloud models cost. When off, usage shows tokens without a price.",
+  "5fece434b43d7ffa": "Reset model price lookups to default",
+  "b3072ba916bdd9ba": "Look up model prices",
   "4cae745392800cef": "Återuppta avbrutna trådar automatiskt efter en uppdatering, krasch eller omstart av datorn i de valda miljöerna.",
   "cba23f294948120b": "Alla valda anslutna miljöer måste stödja fortsättning efter omstart.",
   "6febe9cf5aaf097b": "Återställ fortsätt trådar efter omstarter till standard",
@@ -11612,6 +11616,9 @@
   "7b707533ce3a3f53": "Återställ terminaltypsnitt till standard",
   "de5999e77cb1f98f": "Terminalutdata, oberoende av kodblock och diffar.",
   "72a22e6ddcc788ac": "Teckenstorlek i terminalen",
+  "3cbf54eac1c41c6f": "Använd monospace-teckensnittet i hela gränssnittet.",
+  "a075a2fea254fb7f": "Återställ monospace-teckensnitt till standard",
+  "843d809009912d89": "Använd monospace-teckensnitt",
   "01d178d8e7c6689d": "Använd tunnare utjämning av text i gråskala i stället för macOS-standarden.",
   "4de8fe3c6ae844cd": "Återställ typsnittsutjämning till standard",
   "f7f094d73b29a862": "Teckenutjämning",
@@ -11957,6 +11964,7 @@
   "6113c17109ee0d57": "latex tex katex ekvationer formler markdown",
   "8c8364d44fa28d22": "dev nightly latest kanal grafik pill etikett dölj ingen",
   "2d90635156dfcb5a": "typografi typsnitt familj storlek system sans",
+  "3266678e9b239923": "typography monospace fixed width interface ui font",
   "d32e93777e4819c8": "typografi typsnitt familj storlek inmatningsfält inmatning",
   "120d2e7e8c848ee9": "typografi typsnitt familj storlek fast bredd monospace kodblock diffar filförhandsvisningar",
   "0b9c40baa3536bff": "typografi typsnitt familj storlek fast bredd monospace utdata",
@@ -12020,6 +12028,7 @@
   "9d1013084c46ecce": "kö styr om pågående omgång skicka standardbeteende inmatningsfält",
   "e5e7f5e1fb1f2e4c": "subagent sidochatt länkad tråd klick högerpanel sidopanel huvudvy kommando ctrl mittenklick",
   "5b8b854de7ee6f4d": "installerade cli versioner nyare tillgänglig codex claude cursor grok fx kiro opencode",
+  "c032cbbcbcf3e04c": "cost estimate price table litellm usage spend download",
   "64f12530d55d2ad1": "återuppta pågående aktiv avbrutet arbete omstart starta om dator krasch skrivbord uppdatering automatiskt",
   "214a98497c4ed05d": "caffeinate viloläge förhindra håll vaken ström laptop lock förhindra",
   "00469926c7027e2d": "balanserad prestanda batterisparläge avancerat git fetch leverantör hälsa uppdatera värd ström övervakning inaktiv policy",
@@ -13009,10 +13018,5 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
-  "5e85e163a59abec5": "modell api api-nyckel openai openrouter llm gateway anthropic ollama lm studio anpassad slutpunkt bas-url trådtitlar commit-meddelanden",
-  "3cbf54eac1c41c6f": "Använd monospace-teckensnittet i hela gränssnittet.",
-  "a075a2fea254fb7f": "Återställ monospace-teckensnitt till standard",
-  "843d809009912d89": "Använd monospace-teckensnitt",
-  "3266678e9b239923": "typografi monospace fast bredd gränssnitt ui teckensnitt"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
 }

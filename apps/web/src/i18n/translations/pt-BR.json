@@ -4990,6 +4990,7 @@
   "13cf3cd978eef92a": "Manter os anexos nesta máquina",
   "a4ca7da61227002d": "Remova os anexos antes de escolher o roteamento automático e depois anexe-os na máquina selecionada.",
   "512d8afab852df1a": "Não foi possível trocar de máquina",
+  "ee3ea4351c88e7d7": "Este projeto não está mais disponível.",
   "32e421d1e2dfdaff": "Verificando as máquinas…",
   "0db14066bd4ce117": "Balanceamento automático indisponível",
   "55b562c00e37321b": "Não foi possível forçar a parada do agente",
@@ -6937,6 +6938,19 @@
   "36b7fbe31bde05f3": "Este repositório não tem rótulos.",
   "2764eab1d2853980": "Este repositório tem mais rótulos do que os listados aqui. Aplique os demais no host.",
   "5e5917c3b907c7d6": "Aplicada",
+  "4affc3da49f673c2": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": "comentou"
+    }
+  ],
   "404ee0e0134b60ae": "Pesquisando “{query}” em todos os hosts",
   "ca612a0074954046": "Verificando...",
   "8b04f78f836b6c11": "Nada com estes filtros",
@@ -7234,19 +7248,6 @@
       "t": "span",
       "i": 2,
       "c": "revisou"
-    }
-  ],
-  "4affc3da49f673c2": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ",
-    {
-      "t": "span",
-      "i": 2,
-      "c": "comentou"
     }
   ],
   "04ea50285b00dcdd": "Visão geral",
@@ -9307,7 +9308,6 @@
   "b76e857a764ea02a": "Regra de agrupamento de {path} em {environment}",
   "e6e55f343639ae71": "Padrão ({mode})",
   "87158e7b8e714bc6": "Adicione um projeto pela barra lateral para configurá-lo aqui.",
-  "ee3ea4351c88e7d7": "Este projeto não está mais disponível.",
   "062d19d24615e108": "O título do projeto não pode ficar vazio",
   "303af9de2741db90": "Falha ao renomear o projeto",
   "f578154800d7af01": "Falha ao atualizar o ícone do projeto",
@@ -10234,6 +10234,7 @@
   "0ce04933a7047deb": "Título da janela para leitor de tela",
   "3426d304db392999": "Streaming de respostas",
   "d166a1c83e0fdfd7": "Verificação de atualizações dos provedores",
+  "79ef9a95eab15a30": "Model price lookups",
   "cfaa3b1d638ad6df": "Continuar threads após reinícios",
   "ae3a141bcd5f923a": "Atividade em segundo plano",
   "d24e3cd7bcf08490": "Manter ativo enquanto os agentes trabalham",
@@ -10342,6 +10343,9 @@
   "e6267e91cd042010": "Verifica se há versões mais novas dos CLIs de provedores instalados e busca atualizações do catálogo de modelos. Quando desativado, novos modelos podem não aparecer.",
   "2bc0086d479dff21": "Redefinir a verificação de atualizações dos provedores para o padrão",
   "615928bec4a7836f": "Verificar versões dos provedores",
+  "519b8211f9b0ddf1": "Download the public LiteLLM price table from GitHub once a day to estimate what cloud models cost. When off, usage shows tokens without a price.",
+  "5fece434b43d7ffa": "Reset model price lookups to default",
+  "b3072ba916bdd9ba": "Look up model prices",
   "4cae745392800cef": "Retoma automaticamente as threads interrompidas após uma atualização, uma falha ou uma reinicialização da máquina nos ambientes selecionados.",
   "cba23f294948120b": "Todos os ambientes conectados selecionados precisam suportar a continuação após reinícios.",
   "6febe9cf5aaf097b": "Redefinir a continuação de threads após reinicializações para o padrão",
@@ -11604,6 +11608,9 @@
   "7b707533ce3a3f53": "Redefinir a fonte do terminal para o padrão",
   "de5999e77cb1f98f": "Saída do terminal, independente dos blocos de código e diffs.",
   "72a22e6ddcc788ac": "Tamanho da fonte do terminal",
+  "3cbf54eac1c41c6f": "Usar a fonte monoespaçada em toda a interface.",
+  "a075a2fea254fb7f": "Redefinir a fonte monoespaçada para o padrão",
+  "843d809009912d89": "Usar fonte monoespaçada",
   "01d178d8e7c6689d": "Usa uma suavização de texto em tons de cinza mais fina em vez da padrão do macOS.",
   "4de8fe3c6ae844cd": "Redefinir a suavização de fontes para o padrão",
   "f7f094d73b29a862": "Suavização de fonte",
@@ -11949,6 +11956,7 @@
   "6113c17109ee0d57": "latex tex katex equações fórmulas markdown",
   "8c8364d44fa28d22": "dev nightly latest canal arte pílula rótulo ocultar nenhum",
   "2d90635156dfcb5a": "tipografia família tamanho sistema sans",
+  "3266678e9b239923": "typography monospace fixed width interface ui font",
   "d32e93777e4819c8": "tipografia família tamanho editor de mensagens entrada",
   "120d2e7e8c848ee9": "tipografia família tamanho monoespaçada blocos de código diffs pré-visualizações de arquivos",
   "0b9c40baa3536bff": "tipografia família tamanho monoespaçada saída",
@@ -12012,6 +12020,7 @@
   "9d1013084c46ecce": "fila enfileirar direcionar turno em execução enviar comportamento padrão editor de mensagens",
   "e5e7f5e1fb1f2e4c": "subagente chat paralelo thread vinculada clique painel direito painel lateral visualização principal comando ctrl clique do meio",
   "5b8b854de7ee6f4d": "cli instaladas versões mais novas disponíveis codex claude cursor grok fx kiro opencode",
+  "c032cbbcbcf3e04c": "cost estimate price table litellm usage spend download",
   "64f12530d55d2ad1": "retomar em execução ativo interrompido trabalho reiniciar reboot máquina falha atualização do desktop automaticamente",
   "214a98497c4ed05d": "caffeinate repouso impedir manter acordado energia notebook tampa inibir",
   "00469926c7027e2d": "equilibrado desempenho economia de bateria avançado git fetch verificação de provedores atualizar host energia monitor política de ociosidade",
@@ -13002,10 +13011,5 @@
   "27d76249d09eb69f": "Guia de revisão pronto",
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
-  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
-  "5e85e163a59abec5": "modelo api chave de api openai openrouter llm gateway anthropic ollama lm studio endpoint personalizado url base títulos de threads mensagens de commit",
-  "3cbf54eac1c41c6f": "Usar a fonte monoespaçada em toda a interface.",
-  "a075a2fea254fb7f": "Redefinir a fonte monoespaçada para o padrão",
-  "843d809009912d89": "Usar fonte monoespaçada",
-  "3266678e9b239923": "tipografia monoespaçada largura fixa interface ui fonte"
+  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão"
 }

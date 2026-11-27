@@ -4992,6 +4992,7 @@
   "13cf3cd978eef92a": "Keep attachments on this machine",
   "a4ca7da61227002d": "Remove attachments before choosing automatic routing, then attach them on the selected machine.",
   "512d8afab852df1a": "Could not switch machine",
+  "ee3ea4351c88e7d7": "This project is no longer available.",
   "32e421d1e2dfdaff": "Checking machines…",
   "0db14066bd4ce117": "Auto balance unavailable",
   "55b562c00e37321b": "Could not force stop the agent",
@@ -6944,6 +6945,19 @@
   "36b7fbe31bde05f3": "This repository has no labels.",
   "2764eab1d2853980": "This repository has more labels than are listed here. Apply the rest on the host.",
   "5e5917c3b907c7d6": "Applied",
+  "4affc3da49f673c2": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": "commented"
+    }
+  ],
   "404ee0e0134b60ae": "Searching every host for “{query}”",
   "ca612a0074954046": "Checking...",
   "8b04f78f836b6c11": "Nothing under these filters",
@@ -7241,19 +7255,6 @@
       "t": "span",
       "i": 2,
       "c": "reviewed"
-    }
-  ],
-  "4affc3da49f673c2": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ",
-    {
-      "t": "span",
-      "i": 2,
-      "c": "commented"
     }
   ],
   "04ea50285b00dcdd": "Overview",
@@ -9315,7 +9316,6 @@
   "b76e857a764ea02a": "Grouping rule for {path} on {environment}",
   "e6e55f343639ae71": "Default ({mode})",
   "87158e7b8e714bc6": "Add a project from the sidebar to configure it here.",
-  "ee3ea4351c88e7d7": "This project is no longer available.",
   "062d19d24615e108": "Project title cannot be empty",
   "303af9de2741db90": "Failed to rename project",
   "f578154800d7af01": "Failed to update project icon",
@@ -10244,6 +10244,7 @@
   "0ce04933a7047deb": "Screen reader window title",
   "3426d304db392999": "Response streaming",
   "d166a1c83e0fdfd7": "Provider update checks",
+  "79ef9a95eab15a30": "Model price lookups",
   "cfaa3b1d638ad6df": "Continue threads after restarts",
   "ae3a141bcd5f923a": "Background activity",
   "d24e3cd7bcf08490": "Keep awake while agents work",
@@ -10352,6 +10353,9 @@
   "e6267e91cd042010": "Check installed provider CLIs for newer available versions and fetch model catalog updates. When off, new models may not appear.",
   "2bc0086d479dff21": "Reset provider update checks to default",
   "615928bec4a7836f": "Check provider versions",
+  "519b8211f9b0ddf1": "Download the public LiteLLM price table from GitHub once a day to estimate what cloud models cost. When off, usage shows tokens without a price.",
+  "5fece434b43d7ffa": "Reset model price lookups to default",
+  "b3072ba916bdd9ba": "Look up model prices",
   "4cae745392800cef": "Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments.",
   "cba23f294948120b": "All selected connected environments must support restart continuation.",
   "6febe9cf5aaf097b": "Reset continue threads after restarts to default",
@@ -11614,6 +11618,9 @@
   "7b707533ce3a3f53": "Reset terminal font to default",
   "de5999e77cb1f98f": "Terminal output, independent from code blocks and diffs.",
   "72a22e6ddcc788ac": "Terminal font size",
+  "3cbf54eac1c41c6f": "Use the monospace font for the entire interface.",
+  "a075a2fea254fb7f": "Reset monospace font setting to default",
+  "843d809009912d89": "Use monospace font",
   "01d178d8e7c6689d": "Use thinner grayscale text smoothing instead of the macOS default.",
   "4de8fe3c6ae844cd": "Reset font smoothing to default",
   "f7f094d73b29a862": "Font smoothing",
@@ -11959,6 +11966,7 @@
   "6113c17109ee0d57": "latex tex katex equations formulas markdown",
   "8c8364d44fa28d22": "dev nightly latest channel artwork pill label hide none",
   "2d90635156dfcb5a": "typography family size system sans",
+  "3266678e9b239923": "typography monospace fixed width interface ui font",
   "d32e93777e4819c8": "typography family size composer input",
   "120d2e7e8c848ee9": "typography family size monospace code blocks diffs file previews",
   "0b9c40baa3536bff": "typography family size monospace output",
@@ -12022,6 +12030,7 @@
   "9d1013084c46ecce": "queue steer running turn send default behavior composer",
   "e5e7f5e1fb1f2e4c": "subagent side chat linked thread click right panel side panel main view command ctrl middle click",
   "5b8b854de7ee6f4d": "installed cli versions newer available codex claude cursor grok fx kiro opencode",
+  "c032cbbcbcf3e04c": "cost estimate price table litellm usage spend download",
   "64f12530d55d2ad1": "resume running active interrupted work restart reboot machine crash desktop update automatically",
   "214a98497c4ed05d": "caffeinate sleep prevent stay awake power laptop lid inhibit",
   "00469926c7027e2d": "balanced performance battery saver advanced git fetch provider health refresh host power monitor idle policy",
@@ -13011,10 +13020,5 @@
   "27d76249d09eb69f": "Review guide ready",
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
-  "9e91e9a77b664e4e": "Could not start a review guide",
-  "5e85e163a59abec5": "model api api key openai openrouter llm gateway anthropic ollama lm studio custom endpoint base url thread titles commit messages",
-  "3cbf54eac1c41c6f": "Use the monospace font for the entire interface.",
-  "a075a2fea254fb7f": "Reset monospace font setting to default",
-  "843d809009912d89": "Use monospace font",
-  "3266678e9b239923": "typography monospace fixed width interface ui font"
+  "9e91e9a77b664e4e": "Could not start a review guide"
 }

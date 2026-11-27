@@ -4990,6 +4990,7 @@
   "13cf3cd978eef92a": "Mantener los adjuntos en esta máquina",
   "a4ca7da61227002d": "Quita los adjuntos antes de elegir el enrutamiento automático y adjúntalos en la máquina seleccionada.",
   "512d8afab852df1a": "No se pudo cambiar de máquina",
+  "ee3ea4351c88e7d7": "Este proyecto ya no está disponible.",
   "32e421d1e2dfdaff": "Comprobando máquinas…",
   "0db14066bd4ce117": "Equilibrio automático no disponible",
   "55b562c00e37321b": "No se pudo forzar la detención del agente",
@@ -6937,6 +6938,19 @@
   "36b7fbe31bde05f3": "Este repositorio no tiene etiquetas.",
   "2764eab1d2853980": "Este repositorio tiene más etiquetas de las que aparecen aquí. Aplica el resto en el host.",
   "5e5917c3b907c7d6": "Aplicada",
+  "4affc3da49f673c2": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": "comentó"
+    }
+  ],
   "404ee0e0134b60ae": "Buscando «{query}» en todos los hosts",
   "ca612a0074954046": "Comprobando...",
   "8b04f78f836b6c11": "No hay nada con estos filtros",
@@ -7234,19 +7248,6 @@
       "t": "span",
       "i": 2,
       "c": "revisó"
-    }
-  ],
-  "4affc3da49f673c2": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ",
-    {
-      "t": "span",
-      "i": 2,
-      "c": "comentó"
     }
   ],
   "04ea50285b00dcdd": "General",
@@ -9305,7 +9306,6 @@
   "b76e857a764ea02a": "Regla de agrupación de {path} en {environment}",
   "e6e55f343639ae71": "Predeterminado ({mode})",
   "87158e7b8e714bc6": "Añade un proyecto desde la barra lateral para configurarlo aquí.",
-  "ee3ea4351c88e7d7": "Este proyecto ya no está disponible.",
   "062d19d24615e108": "El título del proyecto no puede estar vacío",
   "303af9de2741db90": "No se pudo renombrar el proyecto",
   "f578154800d7af01": "No se pudo actualizar el icono del proyecto",
@@ -10232,6 +10232,7 @@
   "0ce04933a7047deb": "Título de ventana para el lector de pantalla",
   "3426d304db392999": "Streaming de respuestas",
   "d166a1c83e0fdfd7": "Comprobación de actualizaciones de proveedores",
+  "79ef9a95eab15a30": "Model price lookups",
   "cfaa3b1d638ad6df": "Continuar los hilos tras los reinicios",
   "ae3a141bcd5f923a": "Actividad en segundo plano",
   "d24e3cd7bcf08490": "Mantener activo mientras trabajan los agentes",
@@ -10340,6 +10341,9 @@
   "e6267e91cd042010": "Busca versiones más recientes de las CLI de proveedores instaladas y descarga las actualizaciones del catálogo de modelos. Si está desactivado, puede que no aparezcan modelos nuevos.",
   "2bc0086d479dff21": "Restablecer la comprobación de actualizaciones de proveedores al valor predeterminado",
   "615928bec4a7836f": "Comprobar versiones de proveedores",
+  "519b8211f9b0ddf1": "Download the public LiteLLM price table from GitHub once a day to estimate what cloud models cost. When off, usage shows tokens without a price.",
+  "5fece434b43d7ffa": "Reset model price lookups to default",
+  "b3072ba916bdd9ba": "Look up model prices",
   "4cae745392800cef": "Reanuda automáticamente los hilos interrumpidos tras una actualización, un fallo o un reinicio de la máquina en los entornos seleccionados.",
   "cba23f294948120b": "Todos los entornos conectados seleccionados deben admitir la continuación tras reinicios.",
   "6febe9cf5aaf097b": "Restablecer continuar hilos tras reiniciar al valor predeterminado",
@@ -11599,6 +11603,9 @@
   "7b707533ce3a3f53": "Restablecer la fuente de la terminal al valor predeterminado",
   "de5999e77cb1f98f": "Salida de la terminal, independiente de los bloques de código y los diffs.",
   "72a22e6ddcc788ac": "Tamaño de la fuente de la terminal",
+  "3cbf54eac1c41c6f": "Usar la fuente monoespaciada en toda la interfaz.",
+  "a075a2fea254fb7f": "Restablecer la fuente monoespaciada al valor predeterminado",
+  "843d809009912d89": "Usar fuente monoespaciada",
   "01d178d8e7c6689d": "Usa un suavizado de texto en escala de grises más fino en lugar del predeterminado de macOS.",
   "4de8fe3c6ae844cd": "Restablecer el suavizado de fuentes al valor predeterminado",
   "f7f094d73b29a862": "Suavizado de fuentes",
@@ -11944,6 +11951,7 @@
   "6113c17109ee0d57": "latex tex katex ecuaciones fórmulas markdown",
   "8c8364d44fa28d22": "dev nightly latest canal ilustración píldora etiqueta ocultar ninguno",
   "2d90635156dfcb5a": "tipografía familia tamaño sistema sans",
+  "3266678e9b239923": "typography monospace fixed width interface ui font",
   "d32e93777e4819c8": "tipografía familia tamaño cuadro mensaje compositor entrada",
   "120d2e7e8c848ee9": "tipografía familia tamaño monoespaciada bloques de código diffs vistas previas de archivos",
   "0b9c40baa3536bff": "tipografía familia tamaño monoespaciada salida",
@@ -12007,6 +12015,7 @@
   "9d1013084c46ecce": "cola redirigir turno en ejecución enviar comportamiento predeterminado cuadro mensaje compositor",
   "e5e7f5e1fb1f2e4c": "subagente chat lateral hilo vinculado clic panel derecho panel lateral vista principal comando ctrl clic central",
   "5b8b854de7ee6f4d": "instalado cli versiones más recientes disponibles codex claude cursor grok fx kiro opencode",
+  "c032cbbcbcf3e04c": "cost estimate price table litellm usage spend download",
   "64f12530d55d2ad1": "reanudar en ejecución activo interrumpido trabajo reiniciar máquina fallo actualización de escritorio automáticamente",
   "214a98497c4ed05d": "caffeinate reposo evitar mantener activo energía portátil tapa inhibir",
   "00469926c7027e2d": "equilibrado rendimiento ahorro de batería avanzado git fetch proveedor estado actualizar host energía monitor inactivo política",
@@ -12997,10 +13006,5 @@
   "27d76249d09eb69f": "Guía de revisión lista",
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
-  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
-  "5e85e163a59abec5": "modelo api clave de api openai openrouter llm gateway anthropic ollama lm studio endpoint personalizado url base títulos de hilos mensajes de commit",
-  "3cbf54eac1c41c6f": "Usar la fuente monoespaciada en toda la interfaz.",
-  "a075a2fea254fb7f": "Restablecer la fuente monoespaciada al valor predeterminado",
-  "843d809009912d89": "Usar fuente monoespaciada",
-  "3266678e9b239923": "tipografía monoespaciada ancho fijo interfaz ui fuente"
+  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión"
 }

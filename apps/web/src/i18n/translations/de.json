@@ -4993,6 +4993,7 @@
   "13cf3cd978eef92a": "Anhänge auf diesem Rechner behalten",
   "a4ca7da61227002d": "Entferne die Anhänge, bevor du automatisches Routing wählst, und hänge sie dann auf dem ausgewählten Rechner an.",
   "512d8afab852df1a": "Rechner konnte nicht gewechselt werden",
+  "ee3ea4351c88e7d7": "Dieses Projekt ist nicht mehr verfügbar.",
   "32e421d1e2dfdaff": "Rechner werden geprüft…",
   "0db14066bd4ce117": "Automatische Verteilung nicht verfügbar",
   "55b562c00e37321b": "Der Agent konnte nicht zwangsweise gestoppt werden",
@@ -6937,6 +6938,19 @@
   "36b7fbe31bde05f3": "Dieses Repository hat keine Labels.",
   "2764eab1d2853980": "Dieses Repository hat mehr Labels, als hier aufgelistet sind. Wende die übrigen auf dem Host an.",
   "5e5917c3b907c7d6": "Angewendet",
+  "4affc3da49f673c2": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": "hat kommentiert"
+    }
+  ],
   "404ee0e0134b60ae": "Alle Hosts werden nach „{query}“ durchsucht",
   "ca612a0074954046": "Wird geprüft...",
   "8b04f78f836b6c11": "Nichts mit diesen Filtern",
@@ -7233,19 +7247,6 @@
       "t": "span",
       "i": 2,
       "c": "hat ein Review abgegeben"
-    }
-  ],
-  "4affc3da49f673c2": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ",
-    {
-      "t": "span",
-      "i": 2,
-      "c": "hat kommentiert"
     }
   ],
   "04ea50285b00dcdd": "Übersicht",
@@ -9307,7 +9308,6 @@
   "b76e857a764ea02a": "Gruppierungsregel für {path} auf {environment}",
   "e6e55f343639ae71": "Standard ({mode})",
   "87158e7b8e714bc6": "Füge über die Seitenleiste ein Projekt hinzu, um es hier zu konfigurieren.",
-  "ee3ea4351c88e7d7": "Dieses Projekt ist nicht mehr verfügbar.",
   "062d19d24615e108": "Projekttitel darf nicht leer sein",
   "303af9de2741db90": "Projekt konnte nicht umbenannt werden",
   "f578154800d7af01": "Projektsymbol konnte nicht aktualisiert werden",
@@ -10235,6 +10235,7 @@
   "0ce04933a7047deb": "Fenstertitel für Screenreader",
   "3426d304db392999": "Antwort-Streaming",
   "d166a1c83e0fdfd7": "Update-Prüfungen für Anbieter",
+  "79ef9a95eab15a30": "Model price lookups",
   "cfaa3b1d638ad6df": "Threads nach Neustarts fortsetzen",
   "ae3a141bcd5f923a": "Hintergrundaktivität",
   "d24e3cd7bcf08490": "Wach halten, während Agenten arbeiten",
@@ -10343,6 +10344,9 @@
   "e6267e91cd042010": "Installierte Anbieter-CLIs auf neuere Versionen prüfen und Aktualisierungen des Modellkatalogs abrufen. Wenn aus, erscheinen neue Modelle eventuell nicht.",
   "2bc0086d479dff21": "Update-Prüfung für Anbieter auf Standard zurücksetzen",
   "615928bec4a7836f": "Anbieterversionen prüfen",
+  "519b8211f9b0ddf1": "Download the public LiteLLM price table from GitHub once a day to estimate what cloud models cost. When off, usage shows tokens without a price.",
+  "5fece434b43d7ffa": "Reset model price lookups to default",
+  "b3072ba916bdd9ba": "Look up model prices",
   "4cae745392800cef": "Unterbrochene Threads nach einem Update, Absturz oder Neustart des Rechners in den ausgewählten Umgebungen automatisch fortsetzen.",
   "cba23f294948120b": "Alle ausgewählten verbundenen Umgebungen müssen das Fortsetzen nach Neustarts unterstützen.",
   "6febe9cf5aaf097b": "Threads nach Neustarts fortsetzen auf Standard zurücksetzen",
@@ -11604,6 +11608,9 @@
   "7b707533ce3a3f53": "Terminal-Schrift auf Standard zurücksetzen",
   "de5999e77cb1f98f": "Terminal-Ausgabe, unabhängig von Codeblöcken und Diffs.",
   "72a22e6ddcc788ac": "Schriftgröße im Terminal",
+  "3cbf54eac1c41c6f": "Die Monospace-Schriftart für die gesamte Oberfläche verwenden.",
+  "a075a2fea254fb7f": "Monospace-Schriftart auf Standard zurücksetzen",
+  "843d809009912d89": "Monospace-Schriftart verwenden",
   "01d178d8e7c6689d": "Dünnere Graustufen-Kantenglättung statt der macOS-Standardeinstellung verwenden.",
   "4de8fe3c6ae844cd": "Schriftglättung auf Standard zurücksetzen",
   "f7f094d73b29a862": "Kantenglättung",
@@ -11951,6 +11958,7 @@
   "6113c17109ee0d57": "latex tex katex gleichungen formeln markdown",
   "8c8364d44fa28d22": "dev nightly latest kanal artwork badge bezeichnung ausblenden keine",
   "2d90635156dfcb5a": "typografie schriftart größe system sans",
+  "3266678e9b239923": "typography monospace fixed width interface ui font",
   "d32e93777e4819c8": "typografie schriftart größe eingabefeld eingabe",
   "120d2e7e8c848ee9": "typografie schriftart größe monospace codeblöcke diffs dateivorschauen",
   "0b9c40baa3536bff": "typografie schriftart größe monospace ausgabe",
@@ -12014,6 +12022,7 @@
   "9d1013084c46ecce": "warteschlange einreihen umlenken laufende runde senden standardverhalten eingabefeld",
   "e5e7f5e1fb1f2e4c": "subagent nebenchat verknüpfter thread klick rechte leiste seitenleiste hauptansicht befehl strg mittelklick",
   "5b8b854de7ee6f4d": "installierte cli versionen neuer verfügbar codex claude cursor grok fx kiro opencode",
+  "c032cbbcbcf3e04c": "cost estimate price table litellm usage spend download",
   "64f12530d55d2ad1": "fortsetzen laufende aktive unterbrochene arbeit neustart rechner absturz desktop update automatisch",
   "214a98497c4ed05d": "caffeinate ruhezustand verhindern wach bleiben energie laptop deckel inhibit",
   "00469926c7027e2d": "ausgewogen leistung akku sparen erweitert git fetch anbieter zustand aktualisieren host energie überwachen inaktiv richtlinie",
@@ -13002,10 +13011,5 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
-  "5e85e163a59abec5": "modell api api-schlüssel openai openrouter llm gateway anthropic ollama lm studio eigener endpunkt basis-url thread-titel commit-nachrichten",
-  "3cbf54eac1c41c6f": "Die Monospace-Schriftart für die gesamte Oberfläche verwenden.",
-  "a075a2fea254fb7f": "Monospace-Schriftart auf Standard zurücksetzen",
-  "843d809009912d89": "Monospace-Schriftart verwenden",
-  "3266678e9b239923": "typografie monospace festbreite oberfläche ui schriftart"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
 }

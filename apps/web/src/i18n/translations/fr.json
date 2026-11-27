@@ -4991,6 +4991,7 @@
   "13cf3cd978eef92a": "Garder les pièces jointes sur cette machine",
   "a4ca7da61227002d": "Retirez les pièces jointes avant de choisir le routage automatique, puis joignez-les sur la machine sélectionnée.",
   "512d8afab852df1a": "Impossible de changer de machine",
+  "ee3ea4351c88e7d7": "Ce projet n’est plus disponible.",
   "32e421d1e2dfdaff": "Vérification des machines…",
   "0db14066bd4ce117": "Répartition automatique indisponible",
   "55b562c00e37321b": "Impossible de forcer l’arrêt de l’agent",
@@ -6938,6 +6939,19 @@
   "36b7fbe31bde05f3": "Ce dépôt n’a aucun label.",
   "2764eab1d2853980": "Ce dépôt a plus de labels que ceux listés ici. Appliquez les autres sur l’hôte.",
   "5e5917c3b907c7d6": "Appliqué",
+  "4affc3da49f673c2": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": "a commenté"
+    }
+  ],
   "404ee0e0134b60ae": "Recherche de « {query} » sur tous les hôtes",
   "ca612a0074954046": "Vérification...",
   "8b04f78f836b6c11": "Rien avec ces filtres",
@@ -7235,19 +7249,6 @@
       "t": "span",
       "i": 2,
       "c": "a fait une revue"
-    }
-  ],
-  "4affc3da49f673c2": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ",
-    {
-      "t": "span",
-      "i": 2,
-      "c": "a commenté"
     }
   ],
   "04ea50285b00dcdd": "Vue d’ensemble",
@@ -9307,7 +9308,6 @@
   "b76e857a764ea02a": "Règle de regroupement de {path} sur {environment}",
   "e6e55f343639ae71": "Par défaut ({mode})",
   "87158e7b8e714bc6": "Ajoutez un projet depuis la barre latérale pour le configurer ici.",
-  "ee3ea4351c88e7d7": "Ce projet n’est plus disponible.",
   "062d19d24615e108": "Le titre du projet ne peut pas être vide",
   "303af9de2741db90": "Échec du renommage du projet",
   "f578154800d7af01": "Échec de la mise à jour de l’icône du projet",
@@ -10234,6 +10234,7 @@
   "0ce04933a7047deb": "Titre de fenêtre pour le lecteur d’écran",
   "3426d304db392999": "Affichage progressif des réponses",
   "d166a1c83e0fdfd7": "Vérification des mises à jour des fournisseurs",
+  "79ef9a95eab15a30": "Model price lookups",
   "cfaa3b1d638ad6df": "Poursuivre les fils après un redémarrage",
   "ae3a141bcd5f923a": "Activité en arrière-plan",
   "d24e3cd7bcf08490": "Empêcher la mise en veille pendant que les agents travaillent",
@@ -10342,6 +10343,9 @@
   "e6267e91cd042010": "Vérifie si des versions plus récentes des CLI de fournisseurs installées sont disponibles et récupère les mises à jour du catalogue de modèles. Désactivé, les nouveaux modèles peuvent ne pas apparaître.",
   "2bc0086d479dff21": "Réinitialiser la vérification des mises à jour des fournisseurs à la valeur par défaut",
   "615928bec4a7836f": "Vérifier les versions des fournisseurs",
+  "519b8211f9b0ddf1": "Download the public LiteLLM price table from GitHub once a day to estimate what cloud models cost. When off, usage shows tokens without a price.",
+  "5fece434b43d7ffa": "Reset model price lookups to default",
+  "b3072ba916bdd9ba": "Look up model prices",
   "4cae745392800cef": "Reprend automatiquement les fils interrompus après une mise à jour, un plantage ou un redémarrage de la machine dans les environnements sélectionnés.",
   "cba23f294948120b": "Tous les environnements connectés sélectionnés doivent prendre en charge la reprise après redémarrage.",
   "6febe9cf5aaf097b": "Réinitialiser la reprise des fils après un redémarrage à la valeur par défaut",
@@ -11604,6 +11608,9 @@
   "7b707533ce3a3f53": "Réinitialiser la police du terminal à la valeur par défaut",
   "de5999e77cb1f98f": "Sortie du terminal, indépendamment des blocs de code et des diffs.",
   "72a22e6ddcc788ac": "Taille de police du terminal",
+  "3cbf54eac1c41c6f": "Utiliser la police à chasse fixe pour toute l’interface.",
+  "a075a2fea254fb7f": "Réinitialiser la police à chasse fixe par défaut",
+  "843d809009912d89": "Utiliser une police à chasse fixe",
   "01d178d8e7c6689d": "Utilise un lissage du texte en niveaux de gris plus fin au lieu de celui de macOS par défaut.",
   "4de8fe3c6ae844cd": "Réinitialiser le lissage des polices à la valeur par défaut",
   "f7f094d73b29a862": "Lissage des polices",
@@ -11949,6 +11956,7 @@
   "6113c17109ee0d57": "latex tex katex équations formules markdown",
   "8c8364d44fa28d22": "dev nightly dernière canal illustration pastille libellé masquer aucun",
   "2d90635156dfcb5a": "typographie famille taille système sans",
+  "3266678e9b239923": "typography monospace fixed width interface ui font",
   "d32e93777e4819c8": "typographie famille taille zone de saisie saisie",
   "120d2e7e8c848ee9": "typographie famille taille chasse fixe blocs de code diffs aperçus de fichiers",
   "0b9c40baa3536bff": "typographie famille taille chasse fixe sortie",
@@ -12012,6 +12020,7 @@
   "9d1013084c46ecce": "file d’attente réorienter tour en cours envoyer comportement par défaut zone de saisie",
   "e5e7f5e1fb1f2e4c": "sous-agent discussion annexe fil associé clic panneau droit panneau latéral vue principale commande ctrl clic du milieu",
   "5b8b854de7ee6f4d": "installé cli versions plus récentes disponibles codex claude cursor grok fx kiro opencode",
+  "c032cbbcbcf3e04c": "cost estimate price table litellm usage spend download",
   "64f12530d55d2ad1": "reprendre en cours actif interrompu travail redémarrer redémarrage machine plantage mise à jour bureau automatiquement",
   "214a98497c4ed05d": "caffeinate veille empêcher rester éveillé alimentation portable capot inhiber",
   "00469926c7027e2d": "équilibré performances économie batterie avancé git fetch fournisseur état actualisation hôte énergie surveillance inactif politique",
@@ -13002,10 +13011,5 @@
   "27d76249d09eb69f": "Guide de revue prêt",
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
-  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
-  "5e85e163a59abec5": "modèle api clé d’api openai openrouter llm gateway anthropic ollama lm studio point de terminaison personnalisé url de base titres de fils messages de commit",
-  "3cbf54eac1c41c6f": "Utiliser la police à chasse fixe pour toute l’interface.",
-  "a075a2fea254fb7f": "Réinitialiser la police à chasse fixe par défaut",
-  "843d809009912d89": "Utiliser une police à chasse fixe",
-  "3266678e9b239923": "typographie monospace chasse fixe interface ui police"
+  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue"
 }
