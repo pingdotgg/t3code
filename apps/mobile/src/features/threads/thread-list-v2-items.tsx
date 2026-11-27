@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
-  THREAD_LIST_V2_MONO_FONT as MONO_FONT,
   THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
   THREAD_LIST_V2_ROW_DIVIDERS,
   selectedThreadRowColors,
@@ -643,12 +642,11 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
             {branch ? (
               <Text
                 className={cn(
-                  "text-xs",
+                  "font-mono text-xs",
                   selected
                     ? selectedThreadRowColors.mutedForegroundClassName
                     : rowAppearance.mutedForegroundClassName,
                 )}
-                style={{ fontFamily: MONO_FONT }}
               >
                 {branch}
               </Text>
@@ -1592,8 +1590,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             />
             <Text
               accessibilityLabel={pr.accessibilityLabel}
-              className={cn("text-xs", pr.textClassName)}
-              style={{ fontFamily: MONO_FONT }}
+              className={cn("font-mono text-xs", pr.textClassName)}
             >
               {pr.label}
             </Text>
@@ -1754,14 +1751,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           <Text
             className={cn(
-              "text-sm tabular-nums",
+              "font-mono text-sm tabular-nums",
               selected
                 ? selectedThreadRowColors.mutedForegroundClassName
                 : snoozedRow
                   ? rowAppearance.mutedForegroundClassName
                   : rowAppearance.tertiaryForegroundClassName,
             )}
-            style={{ fontFamily: MONO_FONT }}
           >
             {!pendingSync && snoozedRow && snoozeWakeLabelText !== undefined
               ? snoozeWakeLabelText

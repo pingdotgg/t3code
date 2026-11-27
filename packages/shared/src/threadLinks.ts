@@ -11,8 +11,8 @@ const HOSTED_PREFIX = `${DEFAULT_HOSTED_APP_URL}/threads/`;
 const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+";
 const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${HOSTED_SEGMENT}/${HOSTED_SEGMENT}`;
 const THREAD_HREF = String.raw`t3-thread:\/\/v[12]\/`;
-// A label stops at any bracket, so a run of unclosed brackets is scanned once, not once per bracket.
-const LABEL = String.raw`[^[\]\n]*`;
+// Unescaped brackets end a label, so consecutive unclosed brackets cannot restart a long scan.
+const LABEL = String.raw`(?:\\[^\n]|[^\\[\]\n])*`;
 const LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*`;
 const QUOTE_PREFIX = new RegExp(String.raw`^([ \t]*${LIST_MARKERS})(>(?:[ \t]*>)+)`, "gm");
 // Move inter-marker spacing before the quote so fence depth matches and offsets stay intact. A label
@@ -63,7 +63,8 @@ function codeSpanLines(markdown: string) {
   const listIndents: number[] = [];
   let paragraphDepth: number | undefined;
   let start = 0;
-  for (const line of markdown.split("\n")) {
+  for (const rawLine of markdown.split(/(?<=\n)|(?<=\r)(?!\n)/u)) {
+    const line = rawLine.replace(/[\r\n]+$/u, "");
     let offset = 0;
     let depth = 0;
     let hasList = false;
@@ -112,7 +113,7 @@ function codeSpanLines(markdown: string) {
     const effectiveDepth = endsParagraph || hasList ? depth : Math.max(depth, paragraphDepth ?? 0);
     lines.push({ start, depth: effectiveDepth, breaksSpan });
     paragraphDepth = endsParagraph ? undefined : effectiveDepth;
-    start += line.length + 1;
+    start += rawLine.length;
   }
   return lines;
 }
@@ -131,7 +132,7 @@ function findCodeSpanEnd(
       while (markdown[runEnd] === "`") runEnd++;
       if (runEnd - i === tickCount) return runEnd;
       i = runEnd - 1;
-    } else if (markdown[i] === "\n") {
+    } else if (i + 1 === lines[lineIndex + 1]?.start) {
       lineIndex++;
       SPAN_BREAK_LINE.lastIndex = i + 1;
       const line = lines[lineIndex]!;
