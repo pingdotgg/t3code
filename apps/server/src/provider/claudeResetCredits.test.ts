@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -153,22 +154,83 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, client),
       );
-      expect(credits).toMatchObject({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(credits).toMatchObject({
+        _tag: "read",
+        credits: { availableCount: 1, nextCreditId: "grant_a" },
+      });
     }),
   );
 
-  it.effect("reads nothing from keychain logins or failed requests", () =>
+  it.effect("reads nothing from keychain logins or failed requests, and reports rate limits", () =>
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
       const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(HttpClient.HttpClient, refuseRequests),
       );
+      const failed = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HttpClient.HttpClient, respond(500, {})),
+      );
       const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, respond(429, {})),
       );
-      expect([darwin, limited]).toEqual([undefined, undefined]);
+      expect([darwin, failed, limited]).toEqual([
+        { _tag: "read", credits: undefined },
+        { _tag: "read", credits: undefined },
+        { _tag: "rateLimited", retryAfterMillis: 0 },
+      ]);
+    }),
+  );
+
+  it.effect("keeps the last credits through a rate limit and waits out Retry-After", () =>
+    Effect.gen(function* () {
+      const login = yield* writeLogin;
+      let limited = false;
+      let requests = 0;
+      const client = HttpClient.make((request) => {
+        requests++;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            limited
+              ? Response.json({}, { status: 429, headers: { "retry-after": "60" } })
+              : Response.json({
+                  cedar_ember: { eligible: true, next_grant_id: "grant_a", grants: [grant({})] },
+                }),
+          ),
+        );
+      });
+      const reader = yield* ClaudeResetCredits.makeClaudeResetCreditsReader();
+      const read = reader
+        .read({ ...login, version: "2.1.0" })
+        .pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HttpClient.HttpClient, client),
+        );
+      expect((yield* read)?.nextCreditId).toBe("grant_a");
+      limited = true;
+      expect((yield* read)?.nextCreditId).toBe("grant_a");
+      yield* TestClock.adjust("59 seconds");
+      expect((yield* read)?.nextCreditId).toBe("grant_a");
+      expect(requests).toBe(2);
+      yield* TestClock.adjust("1 second");
+      yield* read;
+      expect(requests).toBe(3);
+      yield* reader.forget;
+      expect(yield* read).toBeUndefined();
+
+      // Another organization is not held to the previous one's Retry-After.
+      expect(requests).toBe(3);
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(
+        login.accountConfigPath,
+        '{"oauthAccount":{"organizationUuid":"org-2"}}',
+      );
+      limited = false;
+      expect((yield* read)?.nextCreditId).toBe("grant_a");
+      expect(requests).toBe(4);
     }),
   );
 });
