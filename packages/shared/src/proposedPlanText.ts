@@ -36,9 +36,11 @@ export function proposedPlanTitle(planMarkdown: string): string | null {
 }
 
 export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
-  const markdown = planMarkdown.replace(/^\uFEFF/, "");
-  const title = findPlanTitle(markdown.split(/\r?\n/));
-  const lines = markdown.trimEnd().split(/\r?\n/);
+  const lines = planMarkdown
+    .replace(/^\uFEFF/, "")
+    .trimEnd()
+    .split(/\r?\n/);
+  const title = findPlanTitle(lines);
   let start = 0;
   let commentStart = -1;
   const preambleBlocks: Array<{ start: number; end: number }> = [];
