@@ -846,6 +846,9 @@ describe("question answer paths", () => {
               "<div>Note<div>  <em>indented</em></div></div>",
               "<section>Summary of decisions.<article><strong>Motion 12 carried.</strong></article><article><em>Motion 13 deferred.</em></article>Meeting adjourned.</section>",
               "<div>Keep <article></article>reading.</div>",
+              '<section>Choose a route.<nav><a href="#east">East pier</a> | <a href="#west">West pier</a></nav>All departures are in local time.</section>',
+              "<div>Keep <nav></nav>walking.</div>",
+              '<div>Keep<x:nav xmlns:x="urn:example"> this </x:nav>inline.</div>',
               "</body></html>",
             ].join(""),
           },
@@ -857,6 +860,7 @@ describe("question answer paths", () => {
             "Name\nValue",
             "Note\n  indented",
             "Summary of decisions.\nMotion 12 carried.\nMotion 13 deferred.\nMeeting adjourned.\nKeep reading.",
+            "Choose a route.\nEast pier | West pier\nAll departures are in local time.\nKeep walking.\nKeep this inline.",
           ],
         },
         // A prefixed span attribute is foreign markup, not an XHTML span.
