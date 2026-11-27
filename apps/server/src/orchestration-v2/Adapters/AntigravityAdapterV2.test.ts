@@ -1958,6 +1958,97 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  it.effect("releases a linked command's pin when its terminal exits without a tool status", () =>
+    Effect.gen(function* () {
+      const { session, send, startTurn, throughPromptSettled, throughTerminal } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: [
+            {
+              sessionUpdate: "tool_call",
+              toolCallId: "call_build",
+              kind: "execute",
+              title: "make build",
+              rawInput: { CommandLine: "make build", WaitMsBeforeAsync: 10000 },
+              status: "in_progress",
+              content: [{ type: "terminal", terminalId: "term_build" }],
+            },
+            { sessionUpdate: "terminal_update", terminalId: "term_build", command: "make build" },
+          ],
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* throughTerminal;
+      assert.isTrue(yield* session.keepsIdleSessionAlive!, "the linked command is pinned");
+
+      yield* send({
+        sessionUpdate: "terminal_update",
+        terminalId: "term_build",
+        exitStatus: { exitCode: 0 },
+      });
+      assert.isFalse(
+        yield* session.keepsIdleSessionAlive!,
+        "the command's only terminal has exited",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("does not pin a linked command whose terminal already exited", () =>
+    Effect.gen(function* () {
+      const { session, startTurn, throughPromptSettled, throughTerminal } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: [
+            {
+              sessionUpdate: "tool_call",
+              toolCallId: "call_build",
+              kind: "execute",
+              title: "make build",
+              rawInput: { CommandLine: "make build", WaitMsBeforeAsync: 10000 },
+              status: "in_progress",
+              content: [{ type: "terminal", terminalId: "term_build" }],
+            },
+            { sessionUpdate: "terminal_update", terminalId: "term_build", command: "make build" },
+            {
+              sessionUpdate: "terminal_update",
+              terminalId: "term_build",
+              exitStatus: { exitCode: 0 },
+            },
+          ],
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* throughTerminal;
+      assert.isFalse(
+        yield* session.keepsIdleSessionAlive!,
+        "a command whose terminal exited is not left running",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("drops command pins when the inactivity watchdog retires the agent", () =>
+    Effect.gen(function* () {
+      const { session, startTurn, until, throughPromptSettled, throughTerminal } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* throughTerminal;
+      assert.isTrue(yield* session.keepsIdleSessionAlive!, "the running command is pinned");
+
+      // The next prompt never answers, so the watchdog quarantines this agent for a restart.
+      yield* startTurn(2, false);
+      yield* TestClock.adjust("16 minutes");
+      const silent = yield* until((event) => event.type === "turn.terminal");
+      const terminal = silent.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "failed");
+      assert.isFalse(
+        yield* session.keepsIdleSessionAlive!,
+        "a retired agent cannot deliver the command's wake",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   it.effect("keeps a silent scheduled wake in its run past the command hold bound", () =>
     Effect.gen(function* () {
       const { usage, offers, send, startTurn, until, throughPromptSettled } =

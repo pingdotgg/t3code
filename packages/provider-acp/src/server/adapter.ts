@@ -3080,6 +3080,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const runningBackgroundTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
         // These commands keep the session alive but must not gate other commands' wakes.
         const expiredHoldCommandIds = new Set<string>();
+        // A command whose every linked terminal has exited is done, whatever its tool status says.
+        const commandTerminalsExited = (sessionId: string, toolCallId: string) => {
+          const terminalIds =
+            embeddedTerminalsByToolCallId.get(sessionScopedId(sessionId, toolCallId))
+              ?.terminalIds ?? [];
+          return (
+            terminalIds.length > 0 &&
+            terminalIds.every(
+              (terminalId) =>
+                agentTerminalsById.get(sessionScopedId(sessionId, terminalId))?.exitStatus !==
+                undefined,
+            )
+          );
+        };
         // Background command task id → the completed turn that owns its row. Ended commands stay,
         // bounded, so a later authoritative terminal still corrects the row on its run.
         const detachedBackgroundCommands = yield* Ref.make<ReadonlyMap<string, ActiveAcpTurn>>(
@@ -8064,7 +8078,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 );
               }
               // A terminal-only command is pinned under its synthetic tool ID, even if a tool links
-              // the terminal later; a linked tool's own pin clears with its own updates.
+              // the terminal later. A linked command is done once all of its terminals exit, even
+              // when the agent never sends its final tool status.
               if (update.sessionUpdate === "terminal_update") {
                 const terminalKey = sessionScopedId(normalized.sessionId, update.terminalId);
                 if (agentTerminalsById.get(terminalKey)?.exitStatus !== undefined) {
@@ -8074,6 +8089,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       `acp-agent-terminal:${update.terminalId}`,
                     ),
                   );
+                  for (const toolCallId of toolCallIdsByAgentTerminalId.get(terminalKey) ?? []) {
+                    if (commandTerminalsExited(normalized.sessionId, toolCallId)) {
+                      expiredHoldCommandIds.delete(
+                        sessionScopedId(normalized.sessionId, toolCallId),
+                      );
+                    }
+                  }
                 }
               }
             },
@@ -8726,6 +8748,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Scope.close(runtimeScope, Exit.void);
           }
           runtimeScope = yield* Scope.make();
+          // Closing the old scope ended its commands; none of them can wake the new process.
+          expiredHoldCommandIds.clear();
           const mcpContext = yield* readMcpContext(threadId);
           runtimeMcpBridge = yield* makeRuntimeMcpBridge(mcpContext, runtimeScope);
           const runtimeGeneration = yield* Ref.get(runtimeCallbackGeneration);
@@ -9858,6 +9882,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     const status = context.promptSettledStatus ?? "completed";
                     if (status === "completed") {
                       for (const { toolCallId } of commands) {
+                        if (commandTerminalsExited(context.nativeThreadId, toolCallId)) continue;
                         expiredHoldCommandIds.add(
                           sessionScopedId(context.nativeThreadId, toolCallId),
                         );
@@ -9917,6 +9942,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* quarantineNativeTransportAtGeneration(generation);
               yield* advanceRuntimeCallbackGeneration;
               yield* Ref.set(runtimeRestartRequired, true);
+              // The quarantined agent can no longer wake this session, so its commands stop pinning.
+              expiredHoldCommandIds.clear();
               yield* cancelPendingRuntimeRequests();
               yield* terminalizeOpenForegroundTools(context, "failed");
               // Bounded: it runs under the transition permit that Stop and the next turn wait on.
