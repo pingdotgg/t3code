@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- node:sqlite reads the native session database read-only.
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeURL from "node:url";
 
@@ -16,7 +17,13 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
-import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
+import {
+  ANTIGRAVITY_SHARED_APP_DATA_DIR,
+  antigravityManagedPath,
+  antigravityProfileRoot,
+  isValidAntigravityNativeId,
+  resolveAntigravitySessionAppDataSegments,
+} from "./AntigravityProfilePaths.ts";
 import {
   boundAntigravityToolText,
   isCutAntigravityToolText,
@@ -187,8 +194,6 @@ interface InvokeRecord {
   }>;
 }
 
-const NATIVE_ID = /^[A-Za-z0-9-]{1,64}$/;
-
 /** Undefined for steps this reader cannot decode, so they never count as proof. */
 const safely =
   <A>(decode: (payload: Uint8Array) => A) =>
@@ -207,7 +212,8 @@ const decodeInvokeRecord = safely((payload): InvokeRecord | undefined => {
     conversationId: text(result, 1) ?? "",
     logUri: text(result, 2) ?? "",
   }));
-  if (!children.every((child) => NATIVE_ID.test(child.conversationId))) return undefined;
+  if (!children.every((child) => isValidAntigravityNativeId(child.conversationId)))
+    return undefined;
   return {
     toolCallId: text(message(message(payload, STEP_METADATA), METADATA_TOOL_CALL), 1),
     launches: messages(invoke, INVOKE_SPECS).map((spec) => ({
@@ -234,6 +240,35 @@ const payloadOf = (row: unknown) =>
   row.step_payload instanceof Uint8Array
     ? row.step_payload
     : undefined;
+
+/** Lists child conversation IDs referenced by DB-backed `invoke_subagent` steps. */
+export function readAntigravityInvokeChildIds(dbPath: string): ReadonlyArray<string> {
+  const database = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
+  try {
+    database.exec("PRAGMA busy_timeout = 100");
+    const hasSteps =
+      database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'steps'")
+        .get() !== undefined;
+    if (!hasSteps) return [];
+    const rows = database
+      .prepare(
+        "SELECT step_payload FROM steps WHERE step_type = ? AND step_format = 0 AND length(step_payload) <= ?",
+      )
+      .iterate(INVOKE_SUBAGENT_STEP_TYPE, MAX_STEP_BYTES);
+    const ids = new Set<string>();
+    for (const row of rows) {
+      const payload = payloadOf(row);
+      if (payload === undefined) continue;
+      const record = decodeInvokeRecord(payload);
+      if (record === undefined) continue;
+      for (const child of record.children) ids.add(child.conversationId);
+    }
+    return [...ids];
+  } finally {
+    database.close();
+  }
+}
 
 interface BatchLaunch {
   readonly title: string | null;
@@ -944,22 +979,13 @@ function transcriptSteps(
 /** Reads the tail of the transcript at the named child's own unlinked profile path. */
 async function readChildTranscriptRaw(
   profileRoot: string,
+  appDataSegments: ReadonlyArray<string>,
   child: InvokeRecord["children"][number],
   byteCap: number,
 ) {
+  const segments = ["brain", child.conversationId, ".system_generated", "logs", "transcript.jsonl"];
   const expected = (
-    await antigravityManagedPath(
-      profileRoot,
-      [
-        "antigravity-acp",
-        "brain",
-        child.conversationId,
-        ".system_generated",
-        "logs",
-        "transcript.jsonl",
-      ],
-      "file",
-    )
+    await antigravityManagedPath(profileRoot, [...appDataSegments, ...segments], "file")
   )?.path;
   if (expected === undefined) return undefined;
   if (child.logUri !== undefined) {
@@ -969,7 +995,23 @@ async function readChildTranscriptRaw(
     } catch {
       return undefined;
     }
-    if ((await NodeFSP.realpath(named).catch(() => undefined)) !== expected) return undefined;
+    const resolved = await NodeFSP.realpath(named).catch(() => undefined);
+    if (resolved !== expected) {
+      if (appDataSegments[0] === ANTIGRAVITY_SHARED_APP_DATA_DIR) return undefined;
+      const legacySuffix =
+        NodePath.sep + [ANTIGRAVITY_SHARED_APP_DATA_DIR, ...segments].join(NodePath.sep);
+      const literal = NodePath.resolve(named);
+      const matchesLegacy =
+        NodePath.sep === "\\"
+          ? literal.toLowerCase().endsWith(legacySuffix.toLowerCase())
+          : literal.endsWith(legacySuffix);
+      const rootMatches =
+        matchesLegacy &&
+        (await NodeFSP.realpath(literal.slice(0, -legacySuffix.length) || NodePath.sep).catch(
+          () => undefined,
+        )) === profileRoot;
+      if (!rootMatches) return undefined;
+    }
   }
   const handle = await NodeFSP.open(
     expected,
@@ -999,11 +1041,12 @@ async function readChildTranscriptRaw(
 
 async function readChildTranscript(
   profileRoot: string,
+  appDataSegments: ReadonlyArray<string>,
   child: InvokeRecord["children"][number],
   prompt: string,
   byteCap: number,
 ) {
-  const raw = await readChildTranscriptRaw(profileRoot, child, byteCap);
+  const raw = await readChildTranscriptRaw(profileRoot, appDataSegments, child, byteCap);
   if (raw === undefined) return undefined;
   return {
     steps: raw.contents.length === 0 ? [] : transcriptSteps(raw.contents, prompt),
@@ -1022,6 +1065,7 @@ class AntigravityChildWorkReadError extends Schema.TaggedError<AntigravityChildW
 
 async function resolveAntigravityInvokeRecord(
   profileRoot: string,
+  appDataSegments: ReadonlyArray<string>,
   input: {
     readonly rootSessionId: string;
     readonly nativeTaskId: string;
@@ -1032,11 +1076,12 @@ async function resolveAntigravityInvokeRecord(
 ): Promise<InvokeRecord | undefined> {
   const detached = await findDetachedInvokeRecord(
     profileRoot,
+    appDataSegments,
     input.rootSessionId,
     input.nativeTaskId,
   );
   if (detached !== undefined) return detached;
-  if (input.childSessionId != null && NATIVE_ID.test(input.childSessionId)) {
+  if (input.childSessionId != null && isValidAntigravityNativeId(input.childSessionId)) {
     return {
       toolCallId: input.nativeTaskId,
       launches: [{ role: input.launch.title ?? "", prompt: input.launch.prompt }],
@@ -1046,7 +1091,7 @@ async function resolveAntigravityInvokeRecord(
   const databasePath = (
     await antigravityManagedPath(
       profileRoot,
-      ["antigravity-acp", "conversations", `${input.rootSessionId}.db`],
+      [...appDataSegments, "conversations", `${input.rootSessionId}.db`],
       "file",
     )
   )?.path;
@@ -1073,11 +1118,15 @@ export const readAntigravitySubagentTranscript = Effect.fn("readAntigravitySubag
     readonly siblings: ReadonlyArray<BatchLaunch & { readonly nativeTaskId: string }>;
     readonly finalize?: boolean | undefined;
   }): Effect.fn.Return<ReadonlyArray<AcpSubagentTranscriptEntry>> {
-    if (!NATIVE_ID.test(input.rootSessionId)) return [];
+    if (!isValidAntigravityNativeId(input.rootSessionId)) return [];
     const read = async (): Promise<ReadonlyArray<AcpSubagentTranscriptEntry>> => {
       const profileRoot = await antigravityProfileRoot(input.profileDirectory);
       if (profileRoot === undefined) return [];
-      const record = await resolveAntigravityInvokeRecord(profileRoot, input);
+      const appDataSegments = await resolveAntigravitySessionAppDataSegments(
+        profileRoot,
+        input.rootSessionId,
+      );
+      const record = await resolveAntigravityInvokeRecord(profileRoot, appDataSegments, input);
       if (record === undefined) return [];
       const { launches, children } = record;
       const byteCap = Math.min(
@@ -1087,9 +1136,12 @@ export const readAntigravitySubagentTranscript = Effect.fn("readAntigravitySubag
       const multiChild = children.length > 1;
       const perChild = await Promise.all(
         children.map(async (child, index) => {
-          const raw = await readChildTranscriptRaw(profileRoot, child, byteCap).catch(
-            () => undefined,
-          );
+          const raw = await readChildTranscriptRaw(
+            profileRoot,
+            appDataSegments,
+            child,
+            byteCap,
+          ).catch(() => undefined);
           if (raw === undefined || raw.contents.length === 0) return [];
           const launch = launches[index];
           // Prefix even a lone child, so its item ids hold when a sibling appears later.
@@ -1132,12 +1184,16 @@ export const readAntigravityChildWork = Effect.fn("readAntigravityChildWork")(fu
   /** The thread's other Antigravity batches from this instance. */
   readonly siblings: ReadonlyArray<BatchLaunch & { readonly nativeTaskId: string }>;
 }) {
-  if (!NATIVE_ID.test(input.rootSessionId)) return [];
+  if (!isValidAntigravityNativeId(input.rootSessionId)) return [];
   return yield* Effect.tryPromise({
     try: async (): Promise<ReadonlyArray<OrchestrationV2NativeChildWork>> => {
       const profileRoot = await antigravityProfileRoot(input.profileDirectory);
       if (profileRoot === undefined) return [];
-      const record = await resolveAntigravityInvokeRecord(profileRoot, input);
+      const appDataSegments = await resolveAntigravitySessionAppDataSegments(
+        profileRoot,
+        input.rootSessionId,
+      );
+      const record = await resolveAntigravityInvokeRecord(profileRoot, appDataSegments, input);
       if (record === undefined) return [];
       const { launches, children } = record;
       // One budget for the whole batch, so the response stays small however many children ran.
@@ -1149,6 +1205,7 @@ export const readAntigravityChildWork = Effect.fn("readAntigravityChildWork")(fu
         children.map(async (child, index) => {
           const transcript = await readChildTranscript(
             profileRoot,
+            appDataSegments,
             child,
             launches[index]?.prompt ?? "",
             byteCap,
@@ -1207,8 +1264,12 @@ const decodeDetachedSubagent = Schema.decodeUnknownOption(
 );
 
 /** A conversation's inbox. Throws past a bound or on a file it cannot read, so nothing is proven. */
-async function readInbox(profileRoot: string, conversationId: string) {
-  const directory = ["antigravity-acp", "brain", conversationId, ".system_generated", "messages"];
+async function readInbox(
+  profileRoot: string,
+  appDataSegments: ReadonlyArray<string>,
+  conversationId: string,
+) {
+  const directory = [...appDataSegments, "brain", conversationId, ".system_generated", "messages"];
   const inbox = await antigravityManagedPath(profileRoot, directory, "directory");
   if (inbox === undefined) return [];
   // `read.json` is the runtime's read receipts, not a message.
@@ -1229,18 +1290,21 @@ type ChildMessage = Awaited<ReturnType<typeof readInbox>>[number];
 
 async function listDetachedChildIds(
   profileRoot: string,
+  appDataSegments: ReadonlyArray<string>,
   rootSessionId: string,
 ): Promise<ReadonlyArray<string> | undefined> {
   const children = await antigravityManagedPath(
     profileRoot,
-    ["antigravity-acp", "brain", rootSessionId, ".system_generated", "subagents"],
+    [...appDataSegments, "brain", rootSessionId, ".system_generated", "subagents"],
     "directory",
   );
   if (children === undefined) return undefined;
   const entries = await NodeFSP.readdir(children.path).catch(() => undefined);
   if (entries === undefined) return undefined;
   const childIds = entries.flatMap((name) =>
-    name.endsWith(".json") && NATIVE_ID.test(name.slice(0, -5)) ? [name.slice(0, -5)] : [],
+    name.endsWith(".json") && isValidAntigravityNativeId(name.slice(0, -5))
+      ? [name.slice(0, -5)]
+      : [],
   );
   return childIds.length > MAX_DETACHED_CHILDREN ? undefined : childIds;
 }
@@ -1289,11 +1353,12 @@ interface DiskSwarmMember {
 
 async function readDiskSwarmMembersByConversationId(
   profileRoot: string,
+  appDataSegments: ReadonlyArray<string>,
   rootSessionId: string,
 ): Promise<ReadonlyMap<string, DiskSwarmMember>> {
   const file = await antigravityManagedPath(
     profileRoot,
-    ["antigravity-acp", "brain", rootSessionId, ".system_generated", "swarm", "members.json"],
+    [...appDataSegments, "brain", rootSessionId, ".system_generated", "swarm", "members.json"],
     "file",
   );
   if (file === undefined || file.info.size > MAX_STEP_BYTES) return new Map();
@@ -1305,7 +1370,7 @@ async function readDiskSwarmMembersByConversationId(
   const byConversation = new Map<string, DiskSwarmMember>();
   for (const [name, member] of Object.entries(members)) {
     const convId = member.conversation_id;
-    if (convId === undefined || !NATIVE_ID.test(convId)) continue;
+    if (convId === undefined || !isValidAntigravityNativeId(convId)) continue;
     const role = member.role ?? "worker";
     if (role === "coordinator") continue;
     const killed = member.desired_state === "KILLED" || member.phase === "KILLED";
@@ -1315,11 +1380,16 @@ async function readDiskSwarmMembersByConversationId(
   return byConversation;
 }
 
-async function readDetachedSubagent(profileRoot: string, rootSessionId: string, childId: string) {
+async function readDetachedSubagent(
+  profileRoot: string,
+  appDataSegments: ReadonlyArray<string>,
+  rootSessionId: string,
+  childId: string,
+) {
   const file = await antigravityManagedPath(
     profileRoot,
     [
-      "antigravity-acp",
+      ...appDataSegments,
       "brain",
       rootSessionId,
       ".system_generated",
@@ -1344,21 +1414,27 @@ async function readDetachedSubagent(profileRoot: string, rootSessionId: string, 
  */
 async function findDetachedInvokeRecord(
   profileRoot: string,
+  appDataSegments: ReadonlyArray<string>,
   rootSessionId: string,
   nativeTaskId: string,
 ): Promise<InvokeRecord | undefined> {
-  const childIds = await listDetachedChildIds(profileRoot, rootSessionId);
+  const childIds = await listDetachedChildIds(profileRoot, appDataSegments, rootSessionId);
   if (childIds === undefined || childIds.length === 0) return undefined;
   const matches: Array<InvokeRecord & { readonly isSwarm: boolean }> = [];
   for (const childId of childIds) {
-    const messages = await readInbox(profileRoot, childId).catch(() => undefined);
+    const messages = await readInbox(profileRoot, appDataSegments, childId).catch(() => undefined);
     // An unreadable or oversized sibling inbox could also claim this id, so uniqueness is unproven.
     if (messages === undefined) return undefined;
     const launchMessage = messages.find(
       (message) => detachedLaunchCall(message, rootSessionId)?.id === nativeTaskId,
     );
     if (launchMessage === undefined) continue;
-    const subagent = await readDetachedSubagent(profileRoot, rootSessionId, childId);
+    const subagent = await readDetachedSubagent(
+      profileRoot,
+      appDataSegments,
+      rootSessionId,
+      childId,
+    );
     if (subagent === undefined) return undefined;
     const call = launchMessage.sourceMetadata?.tool?.toolCall;
     const isSwarm = call?.name === "swarm";
@@ -1425,9 +1501,10 @@ const decodeInboxPriorityMessage = Schema.decodeUnknownOption(
 
 async function hasUnreadWakingInboxMessage(
   profileRoot: string,
+  appDataSegments: ReadonlyArray<string>,
   sessionId: string,
 ): Promise<boolean> {
-  const directory = ["antigravity-acp", "brain", sessionId, ".system_generated", "messages"];
+  const directory = [...appDataSegments, "brain", sessionId, ".system_generated", "messages"];
   const inbox = await antigravityManagedPath(profileRoot, directory, "directory");
   if (inbox === undefined) return false;
   const entries = await NodeFSP.readdir(inbox.path).catch(() => undefined);
@@ -1465,11 +1542,12 @@ async function hasUnreadWakingInboxMessage(
 
 async function readLastTranscriptLine(
   profileRoot: string,
+  appDataSegments: ReadonlyArray<string>,
   sessionId: string,
 ): Promise<Schema.Schema.Type<typeof TranscriptLine> | undefined> {
   const transcript = await antigravityManagedPath(
     profileRoot,
-    ["antigravity-acp", "brain", sessionId, ".system_generated", "logs", "transcript.jsonl"],
+    [...appDataSegments, "brain", sessionId, ".system_generated", "logs", "transcript.jsonl"],
     "file",
   );
   if (transcript === undefined) return undefined;
@@ -1564,12 +1642,17 @@ export const readAntigravityExecutedModel = Effect.fn("readAntigravityExecutedMo
  */
 export const readAntigravityPendingReply = Effect.fn("readAntigravityPendingReply")(
   function* (input: { readonly profileDirectory: string; readonly sessionId: string }) {
-    if (!NATIVE_ID.test(input.sessionId)) return false;
+    if (!isValidAntigravityNativeId(input.sessionId)) return false;
     const read = async (): Promise<boolean> => {
       const profileRoot = await antigravityProfileRoot(input.profileDirectory);
       if (profileRoot === undefined) return false;
-      if (await hasUnreadWakingInboxMessage(profileRoot, input.sessionId)) return true;
-      const lastStep = await readLastTranscriptLine(profileRoot, input.sessionId);
+      const appDataSegments = await resolveAntigravitySessionAppDataSegments(
+        profileRoot,
+        input.sessionId,
+      );
+      if (await hasUnreadWakingInboxMessage(profileRoot, appDataSegments, input.sessionId))
+        return true;
+      const lastStep = await readLastTranscriptLine(profileRoot, appDataSegments, input.sessionId);
       if (lastStep === undefined || lastStep.type !== "SYSTEM_MESSAGE") return false;
       return (
         lastStep.content === undefined ||
@@ -1596,19 +1679,28 @@ export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenA
     readonly rootSessionId: string;
     readonly toolCallIds: ReadonlyArray<string>;
   }) {
-    if (!NATIVE_ID.test(input.rootSessionId)) return [];
+    if (!isValidAntigravityNativeId(input.rootSessionId)) return [];
     const read = async (): Promise<ReadonlyArray<string>> => {
       const profileRoot = await antigravityProfileRoot(input.profileDirectory);
-      const childIds =
-        profileRoot === undefined
-          ? undefined
-          : await listDetachedChildIds(profileRoot, input.rootSessionId);
-      if (profileRoot === undefined || childIds === undefined) return [];
+      if (profileRoot === undefined) return [];
+      const appDataSegments = await resolveAntigravitySessionAppDataSegments(
+        profileRoot,
+        input.rootSessionId,
+      );
+      const childIds = await listDetachedChildIds(
+        profileRoot,
+        appDataSegments,
+        input.rootSessionId,
+      );
+      if (childIds === undefined) return [];
       const reported = new Set(
-        (await readInbox(profileRoot, input.rootSessionId)).map((message) => message.sender),
+        (await readInbox(profileRoot, appDataSegments, input.rootSessionId)).map(
+          (message) => message.sender,
+        ),
       );
       const swarmMembers = await readDiskSwarmMembersByConversationId(
         profileRoot,
+        appDataSegments,
         input.rootSessionId,
       );
       const atWork = new Set<string>();
@@ -1617,13 +1709,18 @@ export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenA
         const swarmMember = swarmMembers.get(childId);
         if (swarmMember?.killed === true || swarmMember?.parked === true) continue;
         // `manage_subagents` kill only marks the record; a killed child never reports.
-        const subagent = await readDetachedSubagent(profileRoot, input.rootSessionId, childId);
+        const subagent = await readDetachedSubagent(
+          profileRoot,
+          appDataSegments,
+          input.rootSessionId,
+          childId,
+        );
         if (subagent?.state === "SUBAGENT_STATE_KILLED") continue;
         const directTaskId = `swarm:${childId}`;
         if (input.toolCallIds.includes(directTaskId)) {
           atWork.add(directTaskId);
         }
-        for (const message of await readInbox(profileRoot, childId)) {
+        for (const message of await readInbox(profileRoot, appDataSegments, childId)) {
           const launch = detachedLaunchCall(message, input.rootSessionId);
           if (launch !== undefined && input.toolCallIds.includes(launch.id)) {
             atWork.add(launch.id);

@@ -25,6 +25,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -61,9 +62,22 @@ import {
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
+  ANTIGRAVITY_DISPOSABLE_DIR,
+  ANTIGRAVITY_SESSIONS_DIR,
+  ANTIGRAVITY_SHARED_APP_DATA_DIR,
+  isValidAntigravityNativeId,
+  readAntigravitySessionSlotId,
+} from "../acp/AntigravityProfilePaths.ts";
+import {
   removeAntigravitySessionFiles,
   retireAntigravityRuntimeTempDirs,
 } from "../acp/AntigravitySessionFiles.ts";
+import {
+  clearAntigravitySessionAuthFiles,
+  migrateLegacyAntigravitySession,
+  prepareAntigravitySessionAppDataDir,
+  writeAntigravitySessionSlot,
+} from "../acp/AntigravitySessionSlots.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -86,6 +100,11 @@ import {
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
+
+type AppDataMode =
+  | "shared"
+  | "disposable"
+  | { readonly kind: "session"; readonly resumeSessionId?: string | undefined };
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
@@ -166,8 +185,9 @@ export const AntigravityDriver: ProviderDriver<
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
+    const platform = yield* HostProcess.Platform;
     const userHome = resolveAntigravityUserHome(
-      yield* HostProcess.Platform,
+      platform,
       processEnvironment,
       yield* HostProcess.HomeDirectory,
     );
@@ -188,6 +208,7 @@ export const AntigravityDriver: ProviderDriver<
       ),
     );
     const profileDirectory = directories.profile;
+    const migrationLock = yield* Semaphore.make(1);
     // Only a session reports whether agy offers Auto, so keep the last answer across restarts.
     const runtimeModesPath = path.join(profileDirectory, "t3-runtime-modes.json");
     const rememberedRuntimeModes = yield* fileSystem.readFileString(runtimeModesPath).pipe(
@@ -202,7 +223,8 @@ export const AntigravityDriver: ProviderDriver<
     );
     for (const directory of [
       directories.runtimeTemp,
-      path.join(profileDirectory, "antigravity-acp", "tmp"),
+      path.join(profileDirectory, ANTIGRAVITY_SHARED_APP_DATA_DIR, "tmp"),
+      path.join(profileDirectory, ANTIGRAVITY_DISPOSABLE_DIR),
     ]) {
       const removeRetired = yield* retireAntigravityRuntimeTempDirs(directory).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -229,10 +251,12 @@ export const AntigravityDriver: ProviderDriver<
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
       cwd: string,
       baseEnv: NodeJS.ProcessEnv,
+      appDataMode: AppDataMode,
     ): Effect.fn.Return<
       {
         readonly executable: AntigravityInstallation.AntigravityExecutable;
         readonly spawn: AcpSessionRuntime.AcpSpawnInput;
+        readonly bindSessionId: (sessionId: string) => Effect.Effect<void, AcpErrors.AcpError>;
       },
       AcpErrors.AcpError | ProviderSetupError,
       Scope.Scope
@@ -301,8 +325,125 @@ export const AntigravityDriver: ProviderDriver<
               ),
             ),
       );
+
+      let appDataDir: string;
+      let bindSessionId: (sessionId: string) => Effect.Effect<void, AcpErrors.AcpError> = () =>
+        Effect.void;
+      if (appDataMode === "shared") {
+        appDataDir = ANTIGRAVITY_SHARED_APP_DATA_DIR;
+      } else if (appDataMode === "disposable") {
+        const slotId = yield* random.uuidV4();
+        const slotDirectory = path.join(profile.geminiHome, ANTIGRAVITY_DISPOSABLE_DIR, slotId);
+        yield* Effect.addFinalizer(() =>
+          fileSystem
+            .remove(slotDirectory, { recursive: true, force: true })
+            .pipe(
+              Effect.catch(() =>
+                Effect.logWarning("Could not remove an Antigravity disposable session directory."),
+              ),
+            ),
+        );
+        const prepared = yield* prepareAntigravitySessionAppDataDir({
+          profile,
+          auth,
+          kind: "disposable",
+          slotId,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provideService(Path.Path, path),
+        );
+        appDataDir = prepared.appDataDir;
+      } else {
+        const profileRoot = yield* fileSystem.realPath(profile.geminiHome).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AcpErrors.AcpTransportError({
+                detail: "Could not resolve the Antigravity profile.",
+                cause,
+              }),
+          ),
+        );
+        const resumeId =
+          appDataMode.resumeSessionId !== undefined &&
+          isValidAntigravityNativeId(appDataMode.resumeSessionId)
+            ? appDataMode.resumeSessionId
+            : undefined;
+        const resolved =
+          resumeId === undefined
+            ? { slotId: yield* random.uuidV4(), isNewSlot: true, clearSummaryState: false }
+            : yield* migrationLock.withPermits(1)(
+                Effect.gen(function* () {
+                  const existingSlot = yield* Effect.promise(() =>
+                    readAntigravitySessionSlotId(profileRoot, resumeId),
+                  );
+                  if (existingSlot !== undefined) {
+                    return { slotId: existingSlot, isNewSlot: false, clearSummaryState: true };
+                  }
+                  const candidateSlot = yield* random.uuidV4();
+                  const migrated = yield* migrateLegacyAntigravitySession({
+                    profileDirectory: profileRoot,
+                    sessionId: resumeId,
+                    slotId: candidateSlot,
+                  }).pipe(
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(HostProcess.Platform, platform),
+                    Effect.provideService(Path.Path, path),
+                  );
+                  return {
+                    slotId: candidateSlot,
+                    isNewSlot: !migrated,
+                    clearSummaryState: false,
+                  };
+                }),
+              );
+        let bound = !resolved.isNewSlot;
+        const slotDirectory = path.join(profileRoot, ANTIGRAVITY_SESSIONS_DIR, resolved.slotId);
+        if (resolved.isNewSlot) {
+          yield* Effect.addFinalizer(() =>
+            bound
+              ? Effect.void
+              : fileSystem
+                  .remove(slotDirectory, { recursive: true, force: true })
+                  .pipe(
+                    Effect.catch(() =>
+                      Effect.logWarning(
+                        "Could not remove an unused Antigravity session directory.",
+                      ),
+                    ),
+                  ),
+          );
+        }
+        const prepared = yield* prepareAntigravitySessionAppDataDir({
+          profile,
+          auth,
+          kind: "session",
+          slotId: resolved.slotId,
+          clearSummaryState: resolved.clearSummaryState,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provideService(Path.Path, path),
+        );
+        appDataDir = prepared.appDataDir;
+        bindSessionId = (sessionId: string) =>
+          !bound || sessionId !== resumeId
+            ? writeAntigravitySessionSlot(profileRoot, sessionId, resolved.slotId).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(HostProcess.Platform, platform),
+                Effect.provideService(Path.Path, path),
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    bound = true;
+                  }),
+                ),
+              )
+            : Effect.void;
+      }
+
       return {
         executable,
+        bindSessionId,
         spawn: buildAntigravityAcpSpawnInput({
           installation: executable,
           profile,
@@ -310,6 +451,7 @@ export const AntigravityDriver: ProviderDriver<
           baseEnv,
           auth,
           runtimeTempDirectory,
+          appDataDir,
         }),
       };
     });
@@ -367,6 +509,7 @@ export const AntigravityDriver: ProviderDriver<
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
       input: AntigravityAdapterV2RuntimeInput,
+      appDataMode: AppDataMode = { kind: "session", resumeSessionId: input.resumeSessionId },
     ): Effect.fn.Return<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
       AcpErrors.AcpError | ProviderSetupError,
@@ -375,11 +518,12 @@ export const AntigravityDriver: ProviderDriver<
       // `buildAntigravityAcpSpawnInput` sets `extendEnv: false`, so thread variables only reach the
       // agent's shell through `baseEnv`.
       const { processEnvironment: threadEnvironment, ...runtimeInput } = input;
-      const { executable, spawn } = yield* prepareSpawn(
+      const { executable, spawn, bindSessionId } = yield* prepareSpawn(
         runtimeInput.cwd,
         threadEnvironment === undefined
           ? processEnvironment
           : { ...processEnvironment, ...threadEnvironment },
+        appDataMode,
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,
@@ -416,6 +560,7 @@ export const AntigravityDriver: ProviderDriver<
           ),
         start: () =>
           startCompatible().pipe(
+            Effect.tap((started) => bindSessionId(started.sessionId)),
             Effect.tapError((cause): Effect.Effect<void> =>
               runtimeInput.onAuthorizationUrl === undefined &&
               isAntigravitySignInRequiredError(cause)
@@ -426,8 +571,9 @@ export const AntigravityDriver: ProviderDriver<
       };
     });
 
-    const makeDisposableRuntime = Effect.fn("AntigravityDriver.makeDisposableRuntime")(function* (
+    const makeSetupRuntime = Effect.fn("AntigravityDriver.makeSetupRuntime")(function* (
       input: Pick<AntigravityAcpRuntimeInput, "onAuthorizationUrl">,
+      mode: "shared" | "disposable",
     ) {
       const cwd = yield* fileSystem
         .makeTempDirectoryScoped({ prefix: "t3-antigravity-setup-" })
@@ -442,21 +588,26 @@ export const AntigravityDriver: ProviderDriver<
           ),
         );
       let sessionId: string | undefined;
-      yield* Effect.addFinalizer(() =>
-        removeAntigravitySessionFiles({
-          profileDirectory,
-          sessionId,
+      if (mode === "shared") {
+        yield* Effect.addFinalizer(() =>
+          removeAntigravitySessionFiles({
+            profileDirectory,
+            sessionId,
+            cwd,
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          ),
+        );
+      }
+      const runtime = yield* makeRuntime(
+        {
           cwd,
-        }).pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-        ),
+          mcpServers: [],
+          ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
+        },
+        mode,
       );
-      const runtime = yield* makeRuntime({
-        cwd,
-        mcpServers: [],
-        ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
-      });
       return {
         ...runtime,
         start: () =>
@@ -488,7 +639,7 @@ export const AntigravityDriver: ProviderDriver<
               }),
           ),
         );
-      const { spawn } = yield* prepareSpawn(cwd, processEnvironment);
+      const { spawn } = yield* prepareSpawn(cwd, processEnvironment, "shared");
       const failed = (detail: string, cause?: unknown) =>
         new ProviderSetupError({ instanceId, operation: "start", detail, cause });
       // Without a display it prints the link only, instead of opening a browser on this machine.
@@ -575,11 +726,25 @@ export const AntigravityDriver: ProviderDriver<
       yield* runtime.drainEvents;
     }, Effect.scoped);
 
-    const authFlow: AntigravityAuth = yield* makeAntigravityAuth({
+    const authFlow: AntigravityAuth = yield* makeAntigravityAuth<
+      AcpSessionRuntime.AcpSessionRuntime["Service"]
+    >({
       instanceId,
-      makeRuntime: makeDisposableRuntime,
+      makeRuntime: (input) => makeSetupRuntime(input, "shared"),
       onAuthenticated: publishCatalog,
-      onSignedOut: Effect.suspend(() => provider.onSignedOut),
+      onSignedOut: clearAntigravitySessionAuthFiles(profileDirectory).pipe(
+        Effect.provideService(Path.Path, path),
+        Effect.mapError(
+          (cause) =>
+            new ProviderSetupError({
+              instanceId,
+              operation: "logout",
+              detail: cause.detail ?? cause.message,
+              cause,
+            }),
+        ),
+        Effect.andThen(Effect.suspend(() => provider.onSignedOut)),
+      ),
       usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
       codeLogin,
     });
@@ -719,10 +884,13 @@ export const AntigravityDriver: ProviderDriver<
       defaultModel,
       withProcess: authFlow.withProcess,
       makeRuntime: (cwd) =>
-        makeRuntime({
-          cwd,
-          mcpServers: [],
-        }),
+        makeRuntime(
+          {
+            cwd,
+            mcpServers: [],
+          },
+          "disposable",
+        ),
     });
 
     const refreshModels = Effect.fn("AntigravityDriver.refreshModels")(
@@ -733,7 +901,7 @@ export const AntigravityDriver: ProviderDriver<
           .withProcess(
             Scope.close(processScope, Exit.void),
             Effect.gen(function* () {
-              const runtime = yield* makeDisposableRuntime({});
+              const runtime = yield* makeSetupRuntime({}, "disposable");
               const started = yield* runtime.start();
               yield* publishCatalog(started, runtime);
             }),

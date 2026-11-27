@@ -168,7 +168,10 @@ export function makeAntigravityAcpAdapterFlavor(
             sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
           }),
         )
-        .pipe(Effect.provideService(Scope.Scope, scope));
+        .pipe(
+          Effect.provideService(Scope.Scope, scope),
+          Effect.onError(() => Scope.close(scope, Exit.void)),
+        );
       // Repair keeps state across updates, so each runtime must have one session-update handler.
       const reads = makeAntigravityReadRepair();
       const plans = makeAntigravityUpdateStepsPlans();
@@ -231,6 +234,7 @@ export function makeAntigravityAcpAdapterFlavor(
   return {
     driver: ANTIGRAVITY_PROVIDER,
     runtimeHarness: "Antigravity",
+    restartRuntimeOnSessionSwitch: true,
     capabilities: AntigravityProviderCapabilitiesV2,
     supportsNativeGoals: options.supportsNativeGoals ?? Effect.succeed(false),
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.

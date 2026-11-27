@@ -361,14 +361,16 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           h.first.executablePath,
           h.second.executablePath,
         ]);
+        expect(new Set(agentLaunches.map((launch) => launch.args[4])).size).toBe(2);
         for (const launch of agentLaunches) {
-          expect(launch.args).toEqual([
+          expect(launch.args).toHaveLength(5);
+          expect(launch.args.slice(0, 4)).toEqual([
             "acp",
             "--gemini-dir",
             h.profileDirectory,
             "--app-data-dir",
-            "antigravity-acp",
           ]);
+          expect(launch.args[4]).toMatch(/^disposable\/[0-9a-f-]{36}$/i);
           expect(launch.profileDirectory).toBe(h.profileDirectory);
           expect(launch.forceFileStorage).toBe("1");
           expect(launch.extendEnv).toBe(false);
@@ -442,6 +444,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
 
         // The agy CLI rejects `yolo` and `auto_edit`; it stays in `default` and T3 answers its requests.
         h.controls.selected = yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" });
+        const sessionDirs = new Set<string>();
         for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
           const requestsBefore = (yield* h.readRequests).length;
           const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
@@ -461,13 +464,16 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             modelSelection,
             runtimePolicy: cliPolicy,
           });
-          expect(h.launches.at(-1)?.args).toEqual([
+          const args = h.launches.at(-1)?.args ?? [];
+          expect(args).toHaveLength(5);
+          expect(args.slice(0, 4)).toEqual([
             "acp",
             "--gemini-dir",
             h.profileDirectory,
             "--app-data-dir",
-            "antigravity-acp",
           ]);
+          expect(args[4]).toMatch(/^sessions\/[0-9a-f-]{36}$/i);
+          if (args[4] !== undefined) sessionDirs.add(args[4]);
           expect(
             (yield* h.readRequests)
               .slice(requestsBefore)
@@ -479,6 +485,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
               .map((request) => request.params?.value),
           ).toEqual(["default"]);
         }
+        expect(sessionDirs.size).toBe(2);
       }),
   );
 
@@ -710,6 +717,9 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           instanceId,
         );
         const legacyRoot = path.join(directories.profile, "antigravity-acp", "tmp");
+        const disposable = path.join(directories.profile, "disposable");
+        yield* fs.makeDirectory(path.join(disposable, "orphan-slot"), { recursive: true });
+        yield* fs.writeFileString(path.join(disposable, "orphan-slot", "payload.bin"), "stale");
         for (const root of [directories.runtimeTemp, legacyRoot]) {
           const orphan = path.join(root, "run-orphan", "_MEI123", "google3");
           yield* fs.makeDirectory(orphan, { recursive: true });
@@ -732,6 +742,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         );
         expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
         expect(yield* fs.exists(legacyRoot)).toBe(false);
+        expect(yield* fs.exists(disposable)).toBe(false);
       }),
   );
 

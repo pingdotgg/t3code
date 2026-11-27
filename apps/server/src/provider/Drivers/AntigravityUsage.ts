@@ -14,6 +14,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
+import {
+  ANTIGRAVITY_SESSIONS_DIR,
+  ANTIGRAVITY_SHARED_APP_DATA_DIR,
+  antigravityManagedPath,
+  antigravityProfileRoot,
+  isValidAntigravitySlotId,
+} from "../acp/AntigravityProfilePaths.ts";
 import { resolveAntigravityInstanceDirectories } from "../antigravityAuthSupport.ts";
 import {
   antigravityRateModel,
@@ -67,11 +74,12 @@ const make = Effect.gen(function* () {
     windowStartMs,
   }) {
     const roots: Array<string> = [];
-    for (const instance of instances) roots.push(...(yield* dataRoots(instance.environment)));
-    for (const { instanceId } of instances) {
+    const profileDirs: Array<string> = [];
+    for (const instance of instances) {
+      roots.push(...(yield* dataRoots(instance.environment)));
       const directories = yield* resolveAntigravityInstanceDirectories(
         host.paths.stateDir,
-        instanceId,
+        instance.instanceId,
       ).pipe(
         Effect.provideService(Digest.Digest, digest),
         Effect.provideService(Path.Path, path),
@@ -84,7 +92,7 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      roots.push(path.join(directories.profile, "antigravity-acp"));
+      profileDirs.push(directories.profile);
     }
     // Profiles of removed or renamed instances keep their history on disk; keep counting it.
     const profilesDir = path.join(host.paths.stateDir, "providers", "antigravity");
@@ -92,7 +100,65 @@ const make = Effect.gen(function* () {
       .readDirectory(profilesDir)
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
     for (const profile of profiles) {
-      roots.push(path.join(profilesDir, profile, "antigravity-acp"));
+      profileDirs.push(path.join(profilesDir, profile));
+    }
+
+    const sessionRoots = new Map<
+      string,
+      { readonly directories: Array<string>; readonly failed: boolean }
+    >();
+    for (const profileDir of profileDirs) {
+      roots.push(path.join(profileDir, ANTIGRAVITY_SHARED_APP_DATA_DIR));
+      const profileRoot = yield* Effect.promise(() => antigravityProfileRoot(profileDir));
+      if (profileRoot === undefined) continue;
+      const sessionsDir = yield* Effect.promise(() =>
+        antigravityManagedPath(profileRoot, [ANTIGRAVITY_SESSIONS_DIR], "directory"),
+      );
+      if (sessionsDir === undefined || sessionRoots.has(sessionsDir.path)) continue;
+      let failed = false;
+      const slots = yield* fileSystem.readDirectory(sessionsDir.path).pipe(
+        Effect.catchTags({
+          PlatformError: (error) => {
+            if (error.reason._tag !== "NotFound") failed = true;
+            return Effect.succeed([]);
+          },
+        }),
+      );
+      const slotDirs: Array<string> = [];
+      for (const slotId of slots.filter(isValidAntigravitySlotId).sort()) {
+        const conversations = yield* Effect.promise(() =>
+          antigravityManagedPath(
+            profileRoot,
+            [ANTIGRAVITY_SESSIONS_DIR, slotId, "conversations"],
+            "directory",
+          ),
+        );
+        if (conversations !== undefined) {
+          slotDirs.push(conversations.path);
+          continue;
+        }
+        const slotPath = path.join(sessionsDir.path, slotId);
+        const slotInfo = yield* fileSystem.stat(slotPath).pipe(
+          Effect.catchTags({
+            PlatformError: (error) => {
+              if (error.reason._tag !== "NotFound") failed = true;
+              return Effect.undefined;
+            },
+          }),
+        );
+        if (slotInfo?.type === "Directory") {
+          yield* fileSystem.stat(path.join(slotPath, "conversations")).pipe(
+            Effect.asVoid,
+            Effect.catchTags({
+              PlatformError: (error) => {
+                if (error.reason._tag !== "NotFound") failed = true;
+                return Effect.void;
+              },
+            }),
+          );
+        }
+      }
+      sessionRoots.set(sessionsDir.path, { directories: slotDirs, failed });
     }
     const conversationDirs = new Set<string>();
     for (const root of roots) {
@@ -105,7 +171,18 @@ const make = Effect.gen(function* () {
         : resolvedRoot;
       conversationDirs.add(yield* fileSystem.realPath(dir).pipe(Effect.orElseSucceed(() => dir)));
     }
-    const result = yield* readAntigravityUsage([...conversationDirs], windowStartMs, cache).pipe(
+    for (const dir of sessionRoots.keys()) {
+      conversationDirs.delete(dir);
+    }
+    const sources: Array<
+      string | { readonly root: string; readonly directories: ReadonlyArray<string> }
+    > = [
+      ...conversationDirs,
+      ...[...sessionRoots.entries()]
+        .filter(([, entry]) => entry.directories.length > 0)
+        .map(([root, entry]) => ({ root, directories: entry.directories })),
+    ];
+    const result = yield* readAntigravityUsage(sources, windowStartMs, cache).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
@@ -120,6 +197,17 @@ const make = Effect.gen(function* () {
       scanned.push({
         dir,
         files: !exists && !failed ? null : result.files.filter((file) => file.root === dir),
+        status: failed ? "partial" : "ok",
+        ...(failed ? { message: "Some Antigravity history could not be read." } : {}),
+      });
+    }
+    for (const [dir, entry] of sessionRoots) {
+      const failed =
+        entry.failed ||
+        result.errors.some((error) => error === dir || error.startsWith(`${dir}${path.sep}`));
+      scanned.push({
+        dir,
+        files: result.files.filter((file) => file.root === dir),
         status: failed ? "partial" : "ok",
         ...(failed ? { message: "Some Antigravity history could not be read." } : {}),
       });

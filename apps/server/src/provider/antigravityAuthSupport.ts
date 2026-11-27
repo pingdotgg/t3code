@@ -19,6 +19,7 @@ import * as AcpErrors from "effect-acp/errors";
 
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { ANTIGRAVITY_SHARED_APP_DATA_DIR } from "./acp/AntigravityProfilePaths.ts";
 import {
   antigravityUserSkillDirectories,
   resolveAntigravityUserHome,
@@ -143,7 +144,9 @@ export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string 
  * `auth.type` names the selected method so a native logout clears only that method's credentials
  * instead of every stored token. Never holds a credential.
  */
-function antigravityProfileSettings(auth: AntigravityAuthConfig): string {
+export function antigravityProfileSettings(
+  auth: AntigravityAuthConfig = ANTIGRAVITY_PERSONAL_AUTH,
+): string {
   const gcp = {
     ...(auth.gcpProject ? { project: auth.gcpProject } : {}),
     ...(auth.gcpLocation ? { location: auth.gcpLocation } : {}),
@@ -160,8 +163,8 @@ export interface AntigravityAuthorizationUrl {
   readonly state: string;
 }
 
-function authSupportError(detail: string) {
-  return new AcpErrors.AcpTransportError({ detail, cause: undefined });
+export function authSupportError(detail: string, cause?: unknown) {
+  return new AcpErrors.AcpTransportError({ detail, cause });
 }
 
 // The 1.5 CLI answers `authenticate` with this internal error when it has no sign-in and no display.
@@ -440,7 +443,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   }
 
   const geminiHome = path.resolve(input.profileDirectory);
-  const acpDirectory = path.join(geminiHome, "antigravity-acp");
+  const acpDirectory = path.join(geminiHome, ANTIGRAVITY_SHARED_APP_DATA_DIR);
   const tempDirectory = input.tempDirectory ?? path.join(acpDirectory, "tmp");
   let caBundlePath: string | undefined;
   if (platform === "linux") {
@@ -551,7 +554,9 @@ export function buildAntigravityAcpSpawnInput(input: {
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly auth?: AntigravityAuthConfig;
   readonly runtimeTempDirectory?: string;
+  readonly appDataDir?: string;
 }): AcpSessionRuntime.AcpSpawnInput {
+  const appDataDir = input.appDataDir ?? ANTIGRAVITY_SHARED_APP_DATA_DIR;
   return {
     command: input.installation.executablePath,
     args: [
@@ -560,7 +565,7 @@ export function buildAntigravityAcpSpawnInput(input: {
       input.profile.geminiHome,
       "--app-data-dir",
       // The CLI joins this beneath gemini-dir, including when the value is absolute.
-      "antigravity-acp",
+      appDataDir,
     ],
     cwd: input.cwd,
     env: antigravityEnvironment(

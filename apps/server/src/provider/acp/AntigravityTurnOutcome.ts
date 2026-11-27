@@ -11,7 +11,12 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
+import {
+  antigravityManagedPath,
+  antigravityProfileRoot,
+  isValidAntigravityNativeId,
+  resolveAntigravitySessionAppDataSegments,
+} from "./AntigravityProfilePaths.ts";
 
 // CORTEX_STEP_TYPE_ERROR_MESSAGE in the native trajectory.
 const ERROR_STEP_TYPE = 17;
@@ -73,7 +78,6 @@ const GO_DURATION_UNIT_MS: Record<string, number> = {
   m: 60_000,
   h: 3_600_000,
 };
-const NATIVE_SESSION_ID = /^[\w-]+$/;
 
 interface LastStep {
   readonly type: number;
@@ -284,8 +288,6 @@ function turnFailure(
     : reusable(failure);
 }
 
-const conversationSegments = ["antigravity-acp", "conversations"];
-
 /**
  * Antigravity reports an upstream API failure as a chat message and `end_turn`. Its
  * session log ends that turn with an error step, so the check reads only steps the
@@ -298,12 +300,14 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
 ) {
   const typedOnly = (result: EffectAcpSchema.PromptResponse) =>
     DateTime.now.pipe(Effect.map((now) => turnFailure(result.stopReason, undefined, now)));
-  if (!NATIVE_SESSION_ID.test(sessionId)) return typedOnly;
-  const segments = [...conversationSegments, `${sessionId}.db`];
+  if (!isValidAntigravityNativeId(sessionId)) return typedOnly;
   const before = yield* Effect.tryPromise({
     try: async () => {
       const root = await antigravityProfileRoot(profileDirectory);
       if (root === undefined) return undefined;
+      const appDataSegments = await resolveAntigravitySessionAppDataSegments(root, sessionId);
+      const conversationSegments = [...appDataSegments, "conversations"];
+      const segments = [...conversationSegments, `${sessionId}.db`];
       if ((await antigravityManagedPath(root, conversationSegments, "directory")) === undefined) {
         return undefined;
       }
@@ -314,9 +318,9 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
           () => true,
           () => false,
         );
-        return present ? undefined : { root, identity: undefined, startIndex: -1 };
+        return present ? undefined : { root, segments, identity: undefined, startIndex: -1 };
       }
-      return { root, identity: database.info, startIndex: undefined };
+      return { root, segments, identity: database.info, startIndex: undefined };
     },
     catch: sessionLogError,
   }).pipe(Effect.orElseSucceed(() => undefined));
@@ -326,7 +330,7 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
   }
   const startIndex =
     before.startIndex ??
-    (yield* readSteps(NodePath.join(before.root, ...segments), lastStepIndex).pipe(
+    (yield* readSteps(NodePath.join(before.root, ...before.segments), lastStepIndex).pipe(
       Effect.map((index) => index ?? -1),
       Effect.orElseSucceed(() => undefined),
     ));
@@ -340,7 +344,7 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
   ) {
     // The same file as before the prompt, or one this prompt created, still unlinked.
     const after = yield* Effect.tryPromise({
-      try: () => antigravityManagedPath(before.root, segments, "file"),
+      try: () => antigravityManagedPath(before.root, before.segments, "file"),
       catch: sessionLogError,
     }).pipe(Effect.orElseSucceed(() => undefined));
     const sameFile =
