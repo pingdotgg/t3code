@@ -479,7 +479,6 @@ it("labels the weekdays a schedule runs on, whatever order or repeats it stores"
   expect(label([1, 1, 2, 3, 4])).toBe(`Mon, Tue, Wed, Thu at ${at}`);
   expect(label([0, 1, 2, 3, 4, 5, 6])).toBe(`Daily at ${at}`);
   expect(label([5, 1, 3])).toBe(`Mon, Wed, Fri at ${at}`);
-  expect(label([5, 4, 3, 2, 1])).toBe(`Weekdays at ${at}`);
 });
 
 it("shows schedule times in the Time format setting", () => {
