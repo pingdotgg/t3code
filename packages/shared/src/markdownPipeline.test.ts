@@ -7,7 +7,6 @@ import remarkRehype from "remark-rehype";
 import type { Link, Root, RootContent } from "mdast";
 import { markdownWithSpacedFilePaths } from "./markdownSpacedFilePaths.ts";
 import {
-  chatMarkdownImageSources,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
@@ -1142,16 +1141,20 @@ it("repairs bare local media embeds and file links with spaces across Windows, P
   ]);
 
   const processor = unified().use(remarkParse).use(CHAT_MARKDOWN_REMARK_PLUGINS);
-  const linkUrls: string[] = [];
-  const visit = (node: Root | RootContent) => {
-    if (node.type === "link") linkUrls.push(node.url);
-    if ("children" in node) node.children.forEach(visit);
+  const linkUrlsOf = (markdown: string) => {
+    const urls: string[] = [];
+    const visit = (node: Root | RootContent) => {
+      if (node.type === "link") urls.push(decodeURI(node.url));
+      if ("children" in node) node.children.forEach(visit);
+    };
+    visit(processor.runSync(processor.parse(markdown), markdown) as Root);
+    return urls;
   };
-  visit(processor.runSync(processor.parse(authored), authored) as Root);
-  expect(linkUrls.map(decodeURI)).toContain(`file:///${winFileLink}`);
-  expect(linkUrls.map(decodeURI)).toContain(homePath);
-  expect(linkUrls.map(decodeURI)).toContain(relDoc);
-  expect(linkUrls.map(decodeURI)).not.toContain("see section 1/2");
+  const linkUrls = linkUrlsOf(authored);
+  expect(linkUrls).toContain(`file:///${winFileLink}`);
+  expect(linkUrls).toContain(homePath);
+  expect(linkUrls).toContain(relDoc);
+  expect(linkUrls).not.toContain("see section 1/2");
 
   const codeSpan = "![`label](/work/c d.png)`";
   expect(
@@ -1164,13 +1167,7 @@ it("repairs bare local media embeds and file links with spaces across Windows, P
 
   // A spaced link inside an existing link label must not break the outer link, while a linked image still repairs.
   const nestedLink = "[outer [inner](/tmp/a b.ts)](https://example.test)";
-  const nestedLinkUrls: string[] = [];
-  const collectLinks = (node: Root | RootContent) => {
-    if (node.type === "link") nestedLinkUrls.push(node.url);
-    if ("children" in node) node.children.forEach(collectLinks);
-  };
-  collectLinks(processor.runSync(processor.parse(nestedLink), nestedLink) as Root);
-  expect(nestedLinkUrls).toEqual(["https://example.test"]);
+  expect(linkUrlsOf(nestedLink)).toEqual(["https://example.test"]);
 
   const linkedImage = "[![Shot](/tmp/my shot.png)](https://example.test)";
   expect(chatMarkdownImageSources(linkedImage).map(decodeURI)).toEqual(["/tmp/my shot.png"]);
@@ -1180,13 +1177,7 @@ it("repairs bare local media embeds and file links with spaces across Windows, P
     "[Open `README.md`](/tmp/My Project/README.md)",
     "[Open `README\n.md`](/tmp/My Project/README.md)",
   ]) {
-    const codeLabelUrls: string[] = [];
-    const collectCodeLabelLinks = (node: Root | RootContent) => {
-      if (node.type === "link") codeLabelUrls.push(node.url);
-      if ("children" in node) node.children.forEach(collectCodeLabelLinks);
-    };
-    collectCodeLabelLinks(processor.runSync(processor.parse(codeLabelLink), codeLabelLink) as Root);
-    expect(codeLabelUrls.map(decodeURI)).toEqual(["/tmp/My Project/README.md"]);
+    expect(linkUrlsOf(codeLabelLink)).toEqual(["/tmp/My Project/README.md"]);
   }
 });
 
