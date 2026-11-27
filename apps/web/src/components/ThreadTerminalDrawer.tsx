@@ -770,8 +770,8 @@ function TerminalSessionViewport({
               ? { text, ...(fallback === undefined ? {} : { fallback }) }
               : null,
           ),
-        // Surface listeners start before WASM loading finishes and the terminal handler exists.
         inputLifecycle: () => readTerminalSession().lifecycleVersion,
+        // Surface listeners start before WASM loading finishes and the terminal handler exists.
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);
         },
