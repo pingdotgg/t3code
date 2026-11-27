@@ -539,6 +539,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   if (!source.startsWith("{\\rtf")) throw new PreviewError({ code: "rtf-invalid" });
   let state = {
     skip: false,
+    nestedTableProperties: false,
     deleted: false,
     hiddenText: false,
     inTable: false,
@@ -610,6 +611,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     if (fallback > 0) fallback--;
     else if (!hidden()) encoded[encodedLength++] = value;
   };
+  const nestedTablePropertiesStart = /[\r\n]*\\nesttableprops\b/y;
   for (let i = 0; i < source.length;) {
     const char = source[i++];
     if (char === "{") {
@@ -617,6 +619,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       fallback = 0;
       if (stack.length > 100) throw new PreviewError({ code: "rtf-too-deep" });
       stack.push({ ...state });
+      state.nestedTableProperties = false;
     } else if (char === "}") {
       flush();
       fallback = 0;
@@ -641,6 +644,9 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         continue;
       }
       if (next === "*") {
+        // Skip the properties themselves but keep the row terminator in this destination.
+        nestedTablePropertiesStart.lastIndex = i + 1;
+        state.nestedTableProperties = !state.skip && nestedTablePropertiesStart.test(source);
         // Shape instructions are an optional destination, but a text box keeps its text there.
         if (!/^\*[\r\n]*\\shpinst(?![a-z])/i.test(source.slice(i, i + 16))) state.skip = true;
         i++;
@@ -773,7 +779,11 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         fallback = state.uc;
       } else if (!hidden() && word === "page") finishPage();
       else if (word === "cell" || word === "nestcell") emit("\t", state.skip);
-      else if (!state.skip && word === "row") html += "<br>";
+      else if (
+        (!state.skip && word === "row") ||
+        (state.nestedTableProperties && word === "nestrow")
+      )
+        html += "<br>";
       else if (!hidden() && (word === "par" || word === "line")) html += lineBreak();
       // Writers usually end the paragraph before these breaks; a second break would add a blank line.
       else if (!hidden() && (word === "sect" || word === "column")) {
