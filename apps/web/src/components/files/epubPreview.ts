@@ -17,7 +17,7 @@ import type { EpubLocation, EpubNarrationCue, EpubPage } from "./officePreviewPr
 import { isPreviewError, PreviewError } from "./previewFailure";
 
 const htmlTags = new Set(
-  "a abbr address article aside audio b bdi bdo big blockquote canvas caption cite code col colgroup dd del details dfn div dl dt em figcaption figure footer h1 h2 h3 h4 h5 h6 header hgroup i ins kbd li main mark nav ol p pre q rp rt ruby s samp section small span strong sub summary sup table tbody td tfoot th thead time tr u ul var video".split(
+  "a abbr acronym address article aside audio b bdi bdo big blockquote canvas caption cite code col colgroup dd del details dfn div dl dt em figcaption figure footer h1 h2 h3 h4 h5 h6 header hgroup i ins kbd li main mark nav ol p pre q rp rt ruby s samp section small span strong sub summary sup table tbody td tfoot th thead time tr tt u ul var video".split(
     " ",
   ),
 );
@@ -31,7 +31,7 @@ const staticControls = new Set(["button", "input", "select", "textarea"]);
 const svgTags = new Set(
   (
     "svg g a defs desc title path rect circle ellipse line polyline polygon text tspan image use symbol switch textPath clipPath mask pattern marker linearGradient radialGradient stop " +
-    "filter feGaussianBlur feColorMatrix feSpecularLighting feDistantLight feComposite feOffset feComponentTransfer feFuncA"
+    "filter feGaussianBlur feColorMatrix feSpecularLighting feDistantLight feComposite feOffset feComponentTransfer feFuncA feFuncR feFuncG feFuncB feFlood feBlend feMerge feMergeNode feDropShadow"
   ).split(" "),
 );
 const mathTags = new Set(
@@ -114,8 +114,8 @@ const svgAttrs = (
   "gradientUnits gradientTransform spreadMethod fx fy fr offset stop-color stop-opacity clip-path " +
   "clip-rule clipPathUnits mask maskUnits maskContentUnits patternUnits patternContentUnits patternTransform startOffset " +
   "marker-start marker-mid marker-end markerWidth markerHeight markerUnits refX refY orient " +
-  "filter filterUnits primitiveUnits stdDeviation in in2 result type values color-interpolation-filters " +
-  "kernelUnitLength surfaceScale specularExponent specularConstant lighting-color azimuth elevation operator slope intercept"
+  "filter filterUnits primitiveUnits stdDeviation in in2 result type values color-interpolation-filters flood-color flood-opacity mode " +
+  "kernelUnitLength surfaceScale specularExponent specularConstant lighting-color azimuth elevation operator slope intercept tableValues amplitude exponent"
 ).split(" ");
 const mathAttrs = (
   "display displaystyle mathvariant mathsize mathcolor mathbackground accent accentunder columnalign " +
@@ -215,7 +215,8 @@ async function readChapter(archive: JSZip, path: string, mime: string): Promise<
     if (!tree.isElementNode(node)) return [];
     return [
       {
-        name: node.tagName,
+        // parse5 8.0.1 omits feDropShadow from its SVG tag-name adjustment table.
+        name: node.tagName === "fedropshadow" ? "feDropShadow" : node.tagName,
         attrs: Object.fromEntries(
           node.attrs.map(({ name, prefix, value }) => [prefix ? `${prefix}:${name}` : name, value]),
         ),
@@ -762,7 +763,10 @@ export async function openEpub(archive: JSZip) {
       if (formTag && staticControls.has(tag) && node.attrs.disabled === undefined)
         props += " disabled";
       if (tag === "svg")
-        props += ' xmlns="http://www.w3.org/2000/svg"' + attr("xml:space", node.attrs["xml:space"]);
+        props +=
+          ' xmlns="http://www.w3.org/2000/svg"' +
+          (svgDepth ? ' xmlns:epub="http://www.idpf.org/2007/ops"' : "") +
+          attr("xml:space", node.attrs["xml:space"]);
       if (tag === "math") props += ' xmlns="http://www.w3.org/1998/Math/MathML"';
       if (tag === "table" && node.children.some((child) => tagName(child) === "tr"))
         props += ' data-epub-direct-rows=""';

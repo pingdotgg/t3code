@@ -199,6 +199,7 @@ import {
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
   IssueCandidates,
+  IssueCandidatesInput,
   IssueCommentInput,
   IssueCommentsPage,
   IssueCommentsPageInput,
@@ -1491,7 +1492,7 @@ const WsIssuesTemplatesRpc = Rpc.make(WS_METHODS.issuesTemplates, {
 
 /** Read when a label or assignee picker opens, not with every issue. */
 const WsIssuesCandidatesRpc = Rpc.make(WS_METHODS.issuesCandidates, {
-  payload: IssueScopeRef,
+  payload: IssueCandidatesInput,
   success: IssueCandidates,
   error: IssueRpcError,
 });

@@ -650,6 +650,10 @@ describe("primaryRemoteUrl", () => {
       remotes(azure("upstream"), ["origin", "https://github.com/acme/repo"]),
       "https://github.com/acme/repo",
     ],
+    [
+      `origin\t${azure("origin")[1]} (fetch) [blob:none]\norigin\tpush-url (push)\n`,
+      azure("origin")[1],
+    ],
     [remotes(), null],
     [`origin\t${azure("origin")[1]} (fetch)`, null],
   ])("picks the scoping remote from %j", (output, url) => {

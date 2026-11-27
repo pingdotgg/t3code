@@ -517,7 +517,8 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     navigation: props.descriptors[visibleRoute.key]!.navigation,
     // Identify the real visible route under the stable envelope key, or useIsFocused closes media viewers.
     route: visibleRoute,
-    options: { headerShown: false },
+    // iOS takes the status bar style from this envelope screen, not from the screens inside the tabs.
+    options: { headerShown: false, statusBarStyle: primaryDescriptor.options.statusBarStyle },
     render: () => (
       <WorkspaceNativeTabs
         tabsInSidebarColumn={props.nativeColumns && !workspacePage && deviceType === "pad"}

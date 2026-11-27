@@ -308,6 +308,16 @@ describe("question answer paths", () => {
     ],
     ["hyphen symbol fallback", String.raw`{\rtf1\ansi\uc3\u945\~\_\-Z}`, "αZ"],
     ["control word", String.raw`{\rtf1\ansi A\u9\tab X}`, "A\tX"],
+    [
+      "Unicode alternate destination",
+      String.raw`{\rtf1\ansi\uc1 Price: {\upr{\{??\}\bin2 {}}{\*\ud{\u20320?{\upr{?}{\*\ud{\u22909?}}}}}} confirmed.{\*\ud Hidden}{\*\unknown{\upr{Hidden}{\*\ud Also hidden}}}}`,
+      "Price: 你好 confirmed.",
+    ],
+    [
+      "ANSI alternate with a truncated Unicode destination",
+      String.raw`{\rtf1\ansi Price: {\upr{fallback}{\*\ud{\u20320?}`,
+      "Price: fallback",
+    ],
     ["line break paragraphs", "{\\rtf1\\ansi First\\\nSecond\\\r\nThird}", "First\nSecond\nThird"],
     [
       "tracked deletion",
@@ -328,6 +338,19 @@ describe("question answer paths", () => {
       "tracked deletion table",
       String.raw`{\rtf1\ansi\trowd\cellx1000\cellx2000\intbl A\deleted\cell\deleted0 B\cell\deleted\row\deleted0 C\cell}`,
       "A\tB\t\nC",
+    ],
+    [
+      "nested table cell boundaries",
+      String.raw`{\rtf1\ansi\trowd\cellx3000\cellx5000
+\pard\intbl\itap2 One\nestcell
+\pard\intbl\itap2 Two\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}
+\pard\intbl\itap1 Tail\cell
+\pard\intbl\itap2 Three\nestcell
+\pard\intbl\itap2 Four\nestcell
+{\*\nesttableprops\trowd\cellx1000\cellx2000\nestrow}{\nonesttables\par}
+\pard\intbl\itap1 Peer\cell\row}`,
+      "One Two Tail\tThree Four\nPeer",
     ],
     [
       "hidden text",
@@ -781,6 +804,22 @@ describe("question answer paths", () => {
         {
           ext: "epub",
           parts: {
+            "META-INF/container.xml":
+              '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+            "book.opf":
+              '<package version="2.0"><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">' +
+              '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Market report</title></head><body><table>' +
+              "<caption>Revenue by region</caption><thead><tr><th>Region</th><th>Revenue</th></tr></thead>" +
+              "<tfoot><tr><th>Total</th><td>42</td></tr></tfoot>" +
+              "<tbody><tr><td>East</td><td>18</td></tr></tbody><tbody><tr><td>West</td><td>24</td></tr></tbody></table></body></html>",
+          },
+          expected: ["Revenue by region\nRegion\tRevenue\nEast\t18\nWest\t24\nTotal\t42"],
+        },
+        {
+          ext: "epub",
+          parts: {
             "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
             "book.opf":
               '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
@@ -1195,6 +1234,37 @@ describe("question answer paths", () => {
           ],
           absent: ["Discard", "[Extracted text truncated"],
         })),
+        ...[
+          "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+          "http://purl.oclc.org/ooxml/wordprocessingml/main",
+        ].map((namespace) => ({
+          ext: "docx",
+          parts: {
+            "word/document.xml":
+              `<w:document xmlns:w="${namespace}"><w:body><w:p>` +
+              "<w:r><w:t>次は</w:t></w:r>" +
+              "<w:r><w:ruby><w:rt><w:r><w:t>とうきょう</w:t></w:r></w:rt>" +
+              "<w:rubyBase><w:r><w:t>東京</w:t></w:r></w:rubyBase></w:ruby></w:r>" +
+              "<w:r><w:t>から</w:t></w:r>" +
+              "<w:r><w:ruby><w:rt><w:r><w:t/></w:r></w:rt>" +
+              "<w:rubyBase><w:r><w:t>京都</w:t></w:r></w:rubyBase></w:ruby></w:r>" +
+              "<w:r><w:t>まで。</w:t></w:r></w:p></w:body></w:document>",
+          },
+          expected: [],
+          exact: "次は東京(とうきょう)から京都まで。",
+        })),
+        {
+          ext: "odt",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>' +
+              "次は<text:ruby><text:ruby-base>東京</text:ruby-base><text:ruby-text>とうきょう</text:ruby-text></text:ruby>" +
+              "から<text:ruby><text:ruby-base>京都</text:ruby-base><text:ruby-text/></text:ruby>まで。" +
+              "</text:p></office:text></office:body></office:document-content>",
+          },
+          expected: [],
+          exact: "次は東京(とうきょう)から京都まで。",
+        },
         {
           ext: "odt",
           bounded: true,
@@ -1248,6 +1318,63 @@ describe("question answer paths", () => {
             "Annual report\tDraft",
             "Before Inner After\tNeighbor\t\u2011\n\u2011\nDemoted\nIntro. \n# Box title",
           ],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/_rels/document.xml.rels":
+              '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles-de.xml"/></Relationships>',
+            "word/styles-de.xml":
+              '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Standard"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="berschrift1"><w:name w:val="heading 1"/></w:style><w:style w:type="paragraph" w:styleId="berschrift2"><w:name w:val="heading 2"/></w:style><w:style w:type="paragraph" w:styleId="Titel"><w:name w:val="Title"/></w:style></w:styles>',
+            "word/document.xml":
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Titel"/></w:pPr><w:r><w:t>Jahresbericht</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="berschrift1"/></w:pPr><w:r><w:t>Einleitung</w:t></w:r></w:p><w:p><w:r><w:t>Text.</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="berschrift2"/></w:pPr><w:r><w:t>Ziele</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Standard"/></w:pPr><w:r><w:t>Mehr Text.</w:t></w:r></w:p></w:body></w:document>',
+          },
+          expected: [],
+          exact: "Jahresbericht\n# Einleitung\nText.\n## Ziele\nMehr Text.",
+        },
+        {
+          ext: "docx",
+          parts: {
+            "word/styles.xml": [
+              '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+              '<w:style w:type="paragraph" w:styleId="ReportSection"><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style>',
+              '<w:style w:type="paragraph" w:styleId="ReportDetail"><w:basedOn w:val="ReportSection"/></w:style>',
+              '<w:style w:type="paragraph" w:styleId="ReportLabel"><w:basedOn w:val="ReportSection"/><w:pPr><w:outlineLvl w:val="9"/></w:pPr></w:style>',
+              '<w:style w:type="paragraph" w:styleId="ReportCaption"><w:name w:val="heading 4"/><w:basedOn w:val="ReportLabel"/></w:style>',
+              '<w:style w:type="paragraph" w:styleId="LoopA"><w:basedOn w:val="LoopB"/></w:style>',
+              '<w:style w:type="paragraph" w:styleId="LoopB"><w:basedOn w:val="LoopA"/></w:style>',
+              "</w:styles>",
+            ].join(""),
+            "word/document.xml": [
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>',
+              '<w:p><w:pPr><w:pStyle w:val="ReportSection"/></w:pPr><w:r><w:t>Quarterly revenue</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="ReportDetail"/></w:pPr><w:r><w:t>Revenue by region</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="ReportLabel"/></w:pPr><w:r><w:t>For internal use</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="ReportCaption"/></w:pPr><w:r><w:t>Caption</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="ReportSection"/><w:outlineLvl w:val="2"/></w:pPr><w:r><w:t>Direct level wins</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="LoopA"/></w:pPr><w:r><w:t>Plain text</w:t></w:r></w:p>',
+              "</w:body></w:document>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "## Quarterly revenue\n## Revenue by region\nFor internal use\nCaption\n### Direct level wins\nPlain text",
+        },
+        {
+          ext: "docx",
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+              '<w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Overview</w:t></w:r></w:p>' +
+              '<w:p><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Budget</w:t></w:r></w:p>' +
+              '<w:p><w:pPr><w:outlineLvl w:val="8"/></w:pPr><w:r><w:t>Details</w:t></w:r></w:p>' +
+              '<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Override</w:t></w:r></w:p>' +
+              '<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:outlineLvl w:val="9"/><w:pPrChange w:id="0" w:author="Editor"><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:pPrChange></w:pPr><w:r><w:t>Body text</w:t></w:r></w:p>' +
+              "</w:body></w:document>",
+          },
+          expected: [],
+          exact: "# Overview\n## Budget\n###### Details\n## Override\nBody text",
         },
         {
           ext: "docx",
@@ -1335,6 +1462,45 @@ describe("question answer paths", () => {
         },
         {
           ext: "odt",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:meta="urn:example:metadata"><office:body><office:text>' +
+              "<text:p>Station timetable</text:p>" +
+              '<text:section text:name="Draft" text:display="none"><text:p>Old timetable</text:p></text:section>' +
+              '<t:section xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" t:name="Alternate" t:display="none"><t:p>Draft schedule</t:p></t:section>' +
+              '<text:section text:name="Padded" text:display=" &#x9;none&#xD;&#xA; "><text:p>Draft notes</text:p></text:section>' +
+              '<section xmlns="urn:oasis:names:tc:opendocument:xmlns:text:1.0" meta:xmlns="urn:example:metadata" text:name="Default" text:display="none"><text:p>Draft date</text:p></section>' +
+              '<text:section text:name="Published" text:display="true"><text:p>Gates open at nine.</text:p></text:section>' +
+              '<section xmlns="urn:example:metadata" meta:xmlns="urn:oasis:names:tc:opendocument:xmlns:text:1.0" text:display="none"><text:p>Visible section</text:p></section>' +
+              "</office:text></office:body></office:document-content>",
+          },
+          expected: ["Station timetable\nGates open at nine.\n\nVisible section"],
+          absent: ["Old timetable", "Draft schedule", "Draft notes", "Draft date"],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml": [
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:other="urn:example:metadata"><office:body><office:text>',
+              "<text:p>Warehouse instructions</text:p>",
+              '<text:p>Use the west entrance.<text:hidden-paragraph text:is-hidden="true"/></text:p>',
+              '<text:h text:outline-level="2">Retired schedule<text:span><t:hidden-paragraph xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" t:is-hidden=" &#x9;1 "/></text:span></text:h>',
+              "<text:p>Use the north entrance.<text:hidden-paragraph/></text:p>",
+              '<text:p><text:hidden-paragraph text:is-hidden="true"/>Deliveries welcome.<text:hidden-paragraph text:is-hidden="false"/></text:p>',
+              '<text:p><text:hidden-paragraph text:is-hidden="0"/>Bring your badge.<text:hidden-paragraph text:is-hidden="true"/></text:p>',
+              '<text:p>Loading dock.<other:hidden-paragraph text:is-hidden="true"/></text:p>',
+              '<text:p>Visitor parking.<text:hidden-paragraph other:is-hidden="true"/></text:p>',
+              '<other:p>Emergency contacts.<text:hidden-paragraph text:is-hidden="true"/></other:p>',
+              "</office:text></office:body></office:document-content>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "Warehouse instructions\nUse the north entrance.\nDeliveries welcome.\nBring your badge.\nLoading dock.\nVisitor parking.\nEmergency contacts.",
+        },
+        {
+          ext: "odt",
           bounded: true,
           parts: {
             "content.xml":
@@ -1342,6 +1508,20 @@ describe("question answer paths", () => {
           },
           expected: ["Fee $700"],
           absent: ["Reviewer", "$500"],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text>' +
+              '<t:p>The shipment left.<t:note t:id="ftn0" t:note-class="footnote"><t:note-citation>1</t:note-citation><t:note-body><t:p>Inspect the seals before departure.</t:p></t:note-body></t:note> Finance booked revenue.</t:p>' +
+              '<t:p>The ledger lists Tokyo<t:note t:id="ftn1" t:note-class="footnote"><t:note-citation>2</t:note-citation><t:note-body><t:p>Includes freight.</t:p><t:p>Duties excluded.</t:p></t:note-body></t:note> and Osaka.</t:p>' +
+              "</office:text></office:body></office:document-content>",
+          },
+          expected: [
+            "The shipment left.[1: Inspect the seals before departure.] Finance booked revenue.\nThe ledger lists Tokyo[2: Includes freight.\nDuties excluded.] and Osaka.",
+          ],
         },
         {
           ext: "odt",
@@ -1380,10 +1560,10 @@ describe("question answer paths", () => {
               '<Relationships><Relationship Id="a" Target="worksheets/a.xml"/></Relationships>',
             "xl/styles.xml": '<styleSheet><cellXfs><xf numFmtId="9"/></cellXfs></styleSheet>',
             "xl/worksheets/a.xml":
-              "<worksheet><row><c><f>SUM(11,22)</f><v/></c></row><row><c><f>SUM(33,44)</f><v> \n </v></c></row><row><c><f>SUM(55,66)</f></c></row><row><c><f>SUM(11,22)</f><v>33</v></c><c><f>SUM(0,0)</f><v>0</v></c></row></worksheet>",
+              '<worksheet><row><c><f>SUM(11,22)</f><v/></c></row><row><c><f>SUM(33,44)</f><v> \n </v></c></row><row><c><f>SUM(55,66)</f></c></row><row><c t="str"><f>CHAR(13)</f><v>_x000D_</v></c><c t="str"><f>CHAR(95)&amp;"x000D_"</f><v>_x005F_x000D_</v></c></row><row><c><f>SUM(11,22)</f><v>33</v></c><c><f>SUM(0,0)</f><v>0</v></c></row></worksheet>',
           },
           expected: [
-            "SUM(11,22)\nSUM(33,44)\nSUM(55,66)",
+            "SUM(11,22)\nSUM(33,44)\nSUM(55,66)\nCHAR(13)\t_x000D_",
             "33 [Excel numFmtId=9; date system 1900]\t0 [Excel numFmtId=9; date system 1900]",
           ],
           absent: ["SUM(0,0)", "[Extracted text truncated"],
@@ -1469,13 +1649,13 @@ describe("question answer paths", () => {
             "xl/_rels/workbook.xml.rels":
               '<Relationships><Relationship Id="a" Target="worksheets/a.xml"/></Relationships>',
             "xl/sharedStrings.xml":
-              "<sst><si><t>first_x000D_\nsecond</t></si><si><t>_x005F_x0041_</t></si><si><t>_x005F_x005F_x0041_</t></si><si><r><t>Bold_x000D_</t></r><r><t>_x005F_x000D_</t></r></si><si><t>&amp;_xnothex_ cap_X0041_ _x000d_ tail</t></si></sst>",
-            "xl/worksheets/a.xml":
-              '<worksheet><row><c t="s"><v>0</v></c><c t="s"><v>1</v></c><c t="s"><v>2</v></c><c t="s"><v>3</v></c><c t="s"><v>4</v></c></row><row><c t="inlineStr"><is><t>_x005F_x005F_</t></is></c><c t="inlineStr"><is><t>first_x000D_second</t></is></c><c t="str"><f>A1</f><v>Total_x000D_due</v></c></row></worksheet>',
+              "<sst><si><t>first_x000D_\nsecond</t></si><si><t>_x005F_x0041_</t></si><si><t>_x005F_x005F_x0041_</t></si><si><r><t>Bold_x000D_</t></r><r><t>_x005F_x000D_</t></r></si><si><t>&amp;_xnothex_ cap_X0041_ _x000d_ tail</t></si><si><t>_x000D_</t></si><si><t>_x005F_x000D_</t></si></sst>",
+            "xl/worksheets/a.xml": `<worksheet><sheetData>${'<row><c t="s"><v>5</v></c><c t="inlineStr"><is><t>_x000D_</t></is></c></row>'.repeat(10_001)}<row><c t="s"><v>0</v></c><c t="s"><v>1</v></c><c t="s"><v>2</v></c><c t="s"><v>3</v></c><c t="s"><v>4</v></c></row><row><c t="inlineStr"><is><t>_x005F_x005F_</t></is></c><c t="inlineStr"><is><t>first_x000D_second</t></is></c><c t="str"><f>A1</f><v>Total_x000D_due</v></c></row><row><c t="s"><v>6</v></c><c t="inlineStr"><is><t>_x005F_x000D_</t></is></c></row></sheetData></worksheet>`,
           },
           expected: [
-            "## Sheet: Escapes\nfirst second\t_x0041_\t_x005F_x0041_\tBold _x000D_\t&_xnothex_ cap_X0041_ tail\n_x005F_\tfirst second\tTotal due",
+            "## Sheet: Escapes\nfirst second\t_x0041_\t_x005F_x0041_\tBold _x000D_\t&_xnothex_ cap_X0041_ tail\n_x005F_\tfirst second\tTotal due\n_x000D_\t_x000D_",
           ],
+          absent: ["[Extracted text truncated"],
         },
         {
           ext: "xlsx",
@@ -1558,6 +1738,25 @@ describe("question answer paths", () => {
             "[Skipped document part",
             "[Extracted text truncated",
           ],
+        },
+        {
+          ext: "pptx",
+          parts: {
+            "ppt/presentation.xml":
+              '<presentation><sldIdLst><sldId r:id="a"/></sldIdLst></presentation>',
+            "ppt/_rels/presentation.xml.rels":
+              '<Relationships><Relationship Id="a" Target="slides/a.xml"/></Relationships>',
+            "ppt/slides/a.xml":
+              '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+              '<p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>' +
+              '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Visible" hidden="0"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:t>Harbor briefing</a:t></a:r></a:p></p:txBody></p:sp>' +
+              '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Hidden" hidden="1"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:t>Unshown draft</a:t></a:r></a:p></p:txBody></p:sp>' +
+              '<p:grpSp><p:nvGrpSpPr><p:cNvPr id="4" name="Hidden group" hidden="true"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>' +
+              '<p:sp><p:nvSpPr><p:cNvPr id="5" name="Group member"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:t>Unshown group draft</a:t></a:r></a:p></p:txBody></p:sp>' +
+              "</p:grpSp></p:spTree></p:cSld></p:sld>",
+          },
+          expected: ["## Slide 1", "Harbor briefing"],
+          absent: ["Unshown draft", "Unshown group draft", "[Skipped document part"],
         },
         {
           ext: "pptx",
@@ -1662,6 +1861,21 @@ describe("question answer paths", () => {
           },
           expected: [
             `## Orchard\n19   violet crates shipped today\tDock\nGate\u00a0B\nSecond\nA B${"\nContents\nOrchard 1".repeat(7)}`,
+          ],
+        },
+        {
+          ext: "odt",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:other="urn:example:other">' +
+              "<office:body><office:text><text:p>Inspection route</text:p>" +
+              '<text:p><draw:frame text:anchor-type="as-char"><draw:text-box><text:p>North loading dock</text:p><text:p>South loading dock</text:p></draw:text-box></draw:frame></text:p>' +
+              '<text:p>Meeting point: <draw:frame text:anchor-type="as-char"><draw:text-box><text:p>Gate 4</text:p></draw:text-box></draw:frame> at noon</text:p>' +
+              "<text:p>End <other:text-box>of <text:span>route</text:span>.</other:text-box></text:p>" +
+              "</office:text></office:body></office:document-content>",
+          },
+          expected: [
+            "Inspection route\nNorth loading dock\nSouth loading dock\nMeeting point: Gate 4 at noon\nEnd of route.",
           ],
         },
         {
@@ -1835,7 +2049,18 @@ describe("question answer paths", () => {
               '<!DOCTYPE html><html><head><title>My Novel</title><meta name="author" content="Hidden Author"/></head><body><h1>First chapter</h1><p>Larkspur</p><p>Map: <img src="map.png" alt="North &amp; south piers"/> open<img src="blank.png" alt=""/><img src="missing.png"/>.</p><div><img src="cover.png" alt="Cover art"/></div><img hidden="" src="draft.png" alt="Hidden image text"/><img src="none.png" alt="Display none image" style="width: 1em; DISPLAY: none"/><img src="invisible.png" alt="Invisible image" style="visibility:hidden !important"/><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table><dl><dt>Port</dt><dd>443</dd><dt>Timeout</dt><dd>30 seconds</dd></dl><p hidden="">Draft note</p><div hidden="hidden">Hidden block<p>Hidden nested</p></div><p hidden="UNTIL-FOUND">Findable note</p><p aria-hidden="true">Decorative note</p><p x:hidden="true">Prefixed note</p><ol><li>Before boarding<ul><li>Check passports<ol><li>Compare names</li></ol></li><li>Confirm gate</li></ul></li><li>Board promptly</li><li><p>Before landing</p><ul><li>Collect bags</li></ul></li></ol>' +
               "<ol><li>Indented\n  <ul><li>Alpha</li></ul></li></ol>" +
               '<div>Board<template><h2>Sample berth</h2><img alt="Sample map"/></template> now.</div>' +
-              "<p>Keep <template>Example sailing at dawn.</template>reading.</p></body></html>",
+              "<p>Keep <template>Example sailing at dawn.</template>reading.</p>" +
+              "<style>.published{display:block!important}</style>" +
+              '<p style="display:none!important; display:block!important">Service charge: $700.</p>' +
+              '<div style="DISPLAY: /* draft */ none ! important; display:block"><p>Cancelled surcharge: $500.</p><img alt="Hidden invoice illustration"/></div>' +
+              '<p>Review <span style="display:none!important">the retired version of </span>this invoice.</p>' +
+              '<p style="display:block !important; display:none">Total due: $700.</p>' +
+              '<p class="published" style="display:none">Bank transfer accepted.</p>' +
+              '<p style="--label: &quot;example;display:none!important;&quot;">Payment due tomorrow.</p>' +
+              '<p style="--options: {label: draft; display:none!important;};">Payment instructions.</p>' +
+              '<p style="--options:[);display:none!important">Accounts contact.</p>' +
+              '<p style="display:none!important;--label:&quot;draft&#10;;display:block!important">Visible total: $700.</p>' +
+              '<img alt="Hidden old payment instructions" style="--label:old\\ payment;display:none"/></body></html>',
             "OEBPS/c.xhtml": '<html hidden=""><body><p>Root hidden</p></body></html>',
             "OEBPS/d.xhtml":
               '<xh:html xmlns:xh="http://www.w3.org/1999/xhtml"><xh:body><xh:p>Start <template>Visible excerpt</template>' +
@@ -1860,6 +2085,8 @@ describe("question answer paths", () => {
             "Before landing\nCollect bags",
             "Indented\n  Alpha",
             "Board now.\nKeep reading.",
+            "Service charge: $700.\nReview this invoice.\nTotal due: $700.",
+            "Bank transfer accepted.\nPayment due tomorrow.\nPayment instructions.\nAccounts contact.\nVisible total: $700.",
             "## Chapter 2",
             "Last chapter",
             "Totals\nTable 1: Revenue\nQ1\tQ2\n100\t200",
@@ -1882,6 +2109,9 @@ describe("question answer paths", () => {
             "Sample berth",
             "Sample map",
             "Example sailing at dawn.",
+            "Cancelled surcharge",
+            "Hidden invoice illustration",
+            "Hidden old payment instructions",
             "Hidden excerpt",
           ],
         },

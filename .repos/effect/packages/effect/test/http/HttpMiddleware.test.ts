@@ -133,6 +133,22 @@ describe("HttpMiddleware", () => {
           assert.strictEqual(response.headers.get("vary"), "Origin")
         })
     )
+
+    it.effect("sends access-control-max-age when maxAge is 0", () =>
+      Effect.gen(function*() {
+        const handler = HttpEffect.toWebHandler(
+          Effect.succeed(HttpServerResponse.empty()).pipe(HttpMiddleware.cors({ maxAge: 0 }))
+        )
+        const response = yield* Effect.promise(() =>
+          handler(
+            new Request("http://localhost/", {
+              method: "OPTIONS",
+              headers: { Origin: "https://client.example" }
+            })
+          )
+        )
+        assert.strictEqual(response.headers.get("access-control-max-age"), "0")
+      }))
   })
 
   describe("logger", () => {

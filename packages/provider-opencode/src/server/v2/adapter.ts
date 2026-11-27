@@ -52,6 +52,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as P from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
@@ -914,6 +915,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const announced = new Map<string, EventOf<"session.created">["data"]>();
     const strays = new Map<string, ThreadState>();
     const busy = new Set<string>();
+    const commandStarts = new Map<string, Deferred.Deferred<void>>();
     const pending = new Map<RuntimeRequestId, PendingRequest>();
     const lock = yield* Semaphore.make(1);
     const clearing = new Map<string, Deferred.Deferred<void>>();
@@ -3457,6 +3459,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             else state.unsettledStarted = true;
           }
           busy.add(sessionId);
+          const commandStart = commandStarts.get(sessionId);
+          if (commandStart !== undefined) yield* Deferred.succeed(commandStart, undefined);
         } else if (event.type === "unreadable.execution.ended" || executionEnd(event.type)) {
           busy.delete(sessionId);
         }
@@ -4811,7 +4815,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             );
             return yield* finishControl;
           }
-          yield* client.session.command({ sessionID, ...command });
+          // The reply waits for the whole execution, which may wait on a question this turn must answer.
+          const commandStart = yield* Deferred.make<void>();
+          commandStarts.set(sessionId, commandStart);
+          const reply = yield* client.session.command({ sessionID, ...command }).pipe(
+            Effect.tapCause((cause) =>
+              Deferred.isDoneUnsafe(commandStart)
+                ? Effect.logWarning("OpenCode command failed after it started.", cause)
+                : Effect.void,
+            ),
+            Effect.exit,
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (commandStarts.get(sessionId) === commandStart) commandStarts.delete(sessionId);
+              }),
+            ),
+            Effect.forkIn(sessionScope),
+          );
+          const replied = yield* Effect.raceFirst(
+            Fiber.join(reply).pipe(Effect.asSome),
+            Deferred.await(commandStart).pipe(Effect.as(Option.none())),
+          );
+          // Once started, the execution's events own the turn.
+          if (Option.isNone(replied)) return;
+          yield* replied.value;
           // A command that never prompts the model starts no execution, so no event ends its turn.
           const idle = () => state.active === turn && !busy.has(sessionId);
           if (!idle()) return;
