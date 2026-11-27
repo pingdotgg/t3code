@@ -13057,5 +13057,7 @@
   "95435f0b59cb2193": "音频预览",
   "4a12506938295127": "请先输入{field}。",
   "5807c08e225c6b3d": "下载",
-  "0d50b5bfe7151ece": "无法下载文件"
+  "0d50b5bfe7151ece": "无法下载文件",
+  "fda0d29cc723370d": "Restore failed draft",
+  "aec0f1166ba54cb1": "Finish or stash your current draft before restoring."
 }

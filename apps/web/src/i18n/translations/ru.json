@@ -13042,5 +13042,7 @@
   "95435f0b59cb2193": "Прослушать аудио",
   "4a12506938295127": "Сначала введите {field}.",
   "5807c08e225c6b3d": "Скачать",
-  "0d50b5bfe7151ece": "Не удалось скачать файл"
+  "0d50b5bfe7151ece": "Не удалось скачать файл",
+  "fda0d29cc723370d": "Restore failed draft",
+  "aec0f1166ba54cb1": "Finish or stash your current draft before restoring."
 }

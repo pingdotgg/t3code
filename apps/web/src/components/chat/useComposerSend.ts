@@ -10,7 +10,6 @@ import {
   resolveBackgroundDraftWorkspaceOptions,
   shouldDockDraftHeroForSubmission,
   buildExpiredTerminalContextToastCopy,
-  cloneComposerImageForRetry,
   deriveComposerSendState,
   boundAttachmentIds,
   formatOutgoingPrompt,
@@ -111,6 +110,7 @@ import {
   referencedThreadContexts,
 } from "./composerSend.logic";
 import { useMultipleModelSend } from "./useMultipleModelSend";
+import { openExpandedImagePreview } from "./ExpandedImageDialog";
 import type { SideChatMessage } from "./useSideChat";
 import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
@@ -1698,19 +1698,41 @@ export function useComposerSend(input: ComposerSendInput) {
       });
       // A restored draft clones its images, so the sent copies are no longer used.
       optimisticBlobPreviews.release(optimisticMessage);
+      const restoreFailedSend = () => {
+        const retryComposerImages = restoreComposerDraft(composerDraftTarget, sendSnapshot);
+        if (currentRouteThreadKeyRef.current === routeThreadKey) {
+          promptRef.current = sendSnapshot.draftText;
+          composerImagesRef.current = retryComposerImages;
+          composerFilesRef.current = composerFilesSnapshot;
+          composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
+          composerRef.current?.resetCursorState({
+            cursor: collapseExpandedComposerCursor(
+              sendSnapshot.draftText,
+              sendSnapshot.draftText.length,
+            ),
+            prompt: sendSnapshot.draftText,
+            detectTrigger: true,
+          });
+        }
+      };
       if (
         composerDraftHasUserContent(
           useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
         )
       ) {
-        useComposerDraftStore
-          .getState()
-          .addImages(composerDraftTarget, sendSnapshot.images.map(cloneComposerImageForRetry));
         // A draft typed meanwhile keeps the composer, so the failed text stays reachable here.
         const failedText = sendSnapshot.draftText;
         const hasText = failedText.trim().length > 0;
-        // An image-only message has nothing to copy, but its failure still needs a notice.
-        toastManager.add(
+        const canRestore =
+          sendSnapshot.attachments.length > 0 ||
+          sendSnapshot.terminalContexts.length > 0 ||
+          sendSnapshot.previewAnnotations.length > 0 ||
+          sendSnapshot.reviewComments.length > 0 ||
+          sendSnapshot.threadContexts.length > 0 ||
+          sendSnapshot.environmentContexts.length > 0 ||
+          sendSnapshot.replyTo !== null;
+        const firstImage = sendSnapshot.images[0];
+        const failedSendToastId = toastManager.add(
           stackedThreadToast({
             type: "error",
             title: isAtomCommandInterrupted(failure)
@@ -1721,7 +1743,62 @@ export function useComposerSend(input: ComposerSendInput) {
               : m(msg("Your new draft was kept.")),
             // The toast holds the only trace of the failed message, so it stays until dismissed.
             timeout: 0,
-            data: { hideCopyButton: true },
+            data: {
+              hideCopyButton: true,
+              ...(canRestore
+                ? {
+                    onClose: () => releaseDraftAttachments(sendSnapshot.attachments),
+                    secondaryActionProps: {
+                      children: m(msg("Restore failed draft")),
+                      onClick: () => {
+                        if (
+                          sendInFlightRef.current ||
+                          countPreparingComposerImages(composerTargetKey(composerDraftTarget)) >
+                            0 ||
+                          composerDraftHasUserContent(
+                            useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+                          )
+                        ) {
+                          toastManager.add({
+                            type: "info",
+                            title: m(msg("Finish or stash your current draft before restoring.")),
+                          });
+                          return;
+                        }
+                        restoreFailedSend();
+                        toastManager.close(failedSendToastId);
+                      },
+                    },
+                  }
+                : {}),
+              ...(firstImage
+                ? {
+                    additionalActions: [
+                      {
+                        id: firstImage.id,
+                        props: {
+                          children: m(msg("Preview {name}", { name: firstImage.name })),
+                          onClick: () => {
+                            const threadKey = currentRouteThreadKeyRef.current;
+                            if (threadKey === null) return;
+                            openExpandedImagePreview(threadKey, {
+                              images: [
+                                {
+                                  src: URL.createObjectURL(firstImage.file),
+                                  name: firstImage.name,
+                                  mimeType: firstImage.mimeType,
+                                  ownsSrc: true,
+                                },
+                              ],
+                              index: 0,
+                            });
+                          },
+                        },
+                      },
+                    ],
+                  }
+                : {}),
+            },
             ...(hasText
               ? {
                   actionProps: {
@@ -1741,21 +1818,7 @@ export function useComposerSend(input: ComposerSendInput) {
           }),
         );
       } else {
-        const retryComposerImages = restoreComposerDraft(composerDraftTarget, sendSnapshot);
-        if (currentRouteThreadKeyRef.current === routeThreadKey) {
-          promptRef.current = sendSnapshot.draftText;
-          composerImagesRef.current = retryComposerImages;
-          composerFilesRef.current = composerFilesSnapshot;
-          composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
-          composerRef.current?.resetCursorState({
-            cursor: collapseExpandedComposerCursor(
-              sendSnapshot.draftText,
-              sendSnapshot.draftText.length,
-            ),
-            prompt: sendSnapshot.draftText,
-            detectTrigger: true,
-          });
-        }
+        restoreFailedSend();
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
