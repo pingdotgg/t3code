@@ -1,8 +1,20 @@
+import { stripDisplayedPlanMarkdown } from "@t3tools/shared/proposedPlanText";
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildCollapsedProposedPlanPreviewMarkdown } from "./proposedPlan";
 
 describe("buildCollapsedProposedPlanPreviewMarkdown", () => {
+  it.each(["node smoke-check.mjs", "[0]: <>"])(
+    "keeps an exact-fit preview with %s in the code example",
+    (example) => {
+      const body = Array.from({ length: 7 }, (_, index) => `Step ${index + 1}`).join("\n");
+      const plan = ["```sh", example, "```", "", "# Release plan", "", body].join("\n");
+      expect(buildCollapsedProposedPlanPreviewMarkdown(plan, { maxLines: 10 })).toBe(
+        stripDisplayedPlanMarkdown(plan),
+      );
+    },
+  );
+
   it("closes a code block the preview cuts through, so the ellipsis stays outside it", () => {
     const plan = [
       "- Step",
