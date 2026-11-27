@@ -5707,5 +5707,7 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Execuções de workflow"
+  "46d614fa7b4bf1e5": "Execuções de workflow",
+  "c7566c908e14be09": "Gastos",
+  "ae693772acb75c75": "Gastos neste ciclo de cobrança em relação ao seu limite de gastos do {provider}."
 }

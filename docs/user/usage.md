@@ -35,7 +35,7 @@ Usage aggregates history across Codex, Claude Code, Grok Build, OpenCode, Antigr
 - **Reset credits**: Click an account segment/row to inspect plan details and redeem banked Codex/Claude reset credits via **Use reset** (Claude resets unavailable on macOS Keychain logins).
 - **Provider notes**:
   - **OpenCode**: OpenCode 2 servers with usage reporting show Go allowances and Console budgets for the connected workspace. Local servers can also report Go usage from a Go API key (`OPENCODE_API_KEY`).
-  - **Cursor**: Reports monthly Auto + API quotas via `CURSOR_AUTH_TOKEN` or default-endpoint sign-in/`CURSOR_API_KEY`.
+  - **Cursor**: Reports monthly Auto + API quotas via `CURSOR_AUTH_TOKEN` or default-endpoint sign-in/`CURSOR_API_KEY`. Enterprise accounts can show a Spend bar against the reported spend limit; accounts without reported limits link to the Cursor usage dashboard.
   - **Grok**: Reports billing-period quotas for `grok login` (not `XAI_API_KEY`).
   - **Muse Code**: Reports session/weekly limits after running in a thread (not persisted across restarts).
   - Pure API-key accounts generally do not report subscription limits.

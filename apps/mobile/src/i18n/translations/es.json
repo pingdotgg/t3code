@@ -5707,5 +5707,7 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo"
+  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo",
+  "c7566c908e14be09": "Gasto",
+  "ae693772acb75c75": "Gasto de este ciclo de facturación respecto a tu límite de gasto de {provider}."
 }

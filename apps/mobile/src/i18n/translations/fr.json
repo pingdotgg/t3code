@@ -5707,5 +5707,7 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "201490988858b511": "retirée par {by}",
-  "46d614fa7b4bf1e5": "Exécutions de workflow"
+  "46d614fa7b4bf1e5": "Exécutions de workflow",
+  "c7566c908e14be09": "Dépenses",
+  "ae693772acb75c75": "Dépenses de ce cycle de facturation par rapport à votre limite de dépenses {provider}."
 }
