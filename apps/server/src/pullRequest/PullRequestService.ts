@@ -49,6 +49,7 @@ import {
   type PullRequestActor,
   type PullRequestReferenceCandidate,
   type PullRequestLabel,
+  type ProjectMergeQueuesResult,
   type PullRequestListStatsResult,
   type PullRequestProviderSummary,
   type PullRequestReactionInput,
@@ -182,6 +183,7 @@ export class PullRequestService extends Context.Service<
     readonly list: (
       input: PullRequestListInput,
     ) => Effect.Effect<PullRequestListResult, PullRequestError>;
+    readonly mergeQueues: () => Effect.Effect<ProjectMergeQueuesResult, PullRequestError>;
     readonly listStats: (
       input: PullRequestListStatsInput,
     ) => Effect.Effect<PullRequestListStatsResult, PullRequestError>;
@@ -557,6 +559,9 @@ function withRateLimitBackoff(
   const wrapped = {
     kind: api.kind,
     capabilities: api.capabilities,
+    ...(api.listMergeQueues
+      ? { listMergeQueues: wrap("listMergeQueues", api.listMergeQueues) }
+      : {}),
     ...(api.mergeMessageRewrite === undefined
       ? {}
       : { mergeMessageRewrite: api.mergeMessageRewrite }),
@@ -2006,6 +2011,10 @@ export const make = Effect.gen(function* () {
             ...(changeRequest.autoMergeMethod === undefined
               ? {}
               : { autoMergeMethod: changeRequest.autoMergeMethod }),
+            ...(changeRequest.mergeQueueEnabled === true ? { mergeQueueEnabled: true } : {}),
+            ...(changeRequest.mergeQueue === undefined
+              ? {}
+              : { mergeQueue: changeRequest.mergeQueue }),
             ...(changeRequest.maintainerCanModify === undefined
               ? {}
               : { maintainerCanModify: changeRequest.maintainerCanModify }),
@@ -4199,6 +4208,27 @@ export const make = Effect.gen(function* () {
     );
 
   return PullRequestService.of({
+    mergeQueues: Effect.fnUntraced(function* () {
+      const { supported } = yield* listWorkspaceProjects({});
+      return yield* Effect.forEach(
+        supported.filter((p) => p.api.listMergeQueues),
+        Effect.fnUntraced(function* (p) {
+          const ref = { cwd: p.project.workspaceRoot, host: p.host, repository: p.repository };
+          const read = p.api.listMergeQueues!(ref);
+          const result = yield* (
+            p.api.withVerifiedCredential ? p.api.withVerifiedCredential(ref, () => read) : read
+          ).pipe(Effect.result);
+          return {
+            projectId: p.project.id,
+            projectTitle: p.project.title,
+            repository: p.repository,
+            host: p.host,
+            queues: result._tag === "Success" ? result.success : null,
+          };
+        }),
+        { concurrency: REPOSITORY_CONCURRENCY },
+      );
+    }),
     withSharedProjectReads,
     routing,
     routingIdentity,

@@ -137,6 +137,12 @@ query PullRequestCore(
           }
         }
       }
+      isMergeQueueEnabled
+      isInMergeQueue
+      mergeQueueEntry {
+        state
+        position
+      }
       viewerCanUpdate
       viewerDidAuthor
       viewerCanUpdateBranch
@@ -634,10 +640,12 @@ query PullRequestMergeMessage(
 # What `gh pr merge` and `gh pr update-branch` read before they act.
 query PullRequestActionState($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
   repository(owner: $owner, name: $name) {
+    autoMergeAllowed
     pullRequest(number: $number) {
       id
       headRefOid
       isMergeQueueEnabled
+      isInMergeQueue
       mergeStateStatus
       baseRef {
         compare(headRef: $headRef) {
@@ -675,6 +683,50 @@ query PullRequestSourceBranch($repositoryId: ID!, $ref: String!) {
       ref(qualifiedName: $ref) {
         target {
           oid
+        }
+      }
+    }
+  }
+}
+
+query BranchMergeQueue($owner: String!, $name: String!, $branch: String!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    mergeQueue(branch: $branch) {
+      entries(first: 100, after: $cursor) {
+        nodes {
+          position
+          state
+          enqueuedAt
+          estimatedTimeToMerge
+          headCommit {
+            id
+          }
+          pullRequest {
+            number
+            title
+          }
+        }
+        pageInfo {
+          endCursor
+          hasNextPage
+        }
+      }
+    }
+  }
+}
+
+query MergeGroupChecks($id: ID!, $number: Int!, $required: Boolean!, $after: String) {
+  node(id: $id) {
+    ... on Commit {
+      statusCheckRollup {
+        contexts(first: 100, after: $after) {
+          nodes {
+            ...CheckContext
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
         }
       }
     }

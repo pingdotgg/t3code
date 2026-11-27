@@ -1819,6 +1819,19 @@ export function DiffsSettingsPanel() {
 
       <SettingsSection id="pull-requests" title={gt("Pull requests")}>
         <SettingsRow
+          {...setting("merge-queues")}
+          description={gt("Show GitHub merge queues for your projects in the sidebar.")}
+          control={
+            <Switch
+              checked={settings.mergeQueuesEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ mergeQueuesEnabled: Boolean(checked) })
+              }
+              aria-label={gt("Merge queues")}
+            />
+          }
+        />
+        <SettingsRow
           {...setting("proactive-panels")}
           description={gt(
             "Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines.",

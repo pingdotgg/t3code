@@ -40,6 +40,10 @@ import { PullRequestEditScreen } from "./features/pull-requests/PullRequestEditS
 import { PullRequestFilterSearchScreen } from "./features/pull-requests/PullRequestFilterSearchScreen";
 import { IssueAssigneesScreen } from "./features/issues/IssueAssigneesScreen";
 import { IssueEditScreen } from "./features/issues/IssueEditScreen";
+import {
+  MergeQueueEntriesScreen,
+  MergeQueuesScreen,
+} from "./features/pull-requests/MergeQueuesScreen";
 import { IssueLabelsScreen } from "./features/issues/IssueLabelsScreen";
 import { IssueFilterSearchScreen } from "./features/issues/IssueFilterSearchScreen";
 import { IssueRouteScreen } from "./features/issues/IssueRouteScreen";
@@ -584,6 +588,15 @@ const RootStackConfig = createWorkspaceStackNavigator({
         contentStyle: { backgroundColor: "transparent" },
         ...compactBrandHeaderOptions,
       },
+    }),
+    MergeQueueEntries: createNativeStackScreen({
+      screen: MergeQueueEntriesScreen,
+      options: pageRoute(),
+    }),
+    MergeQueues: createNativeStackScreen({
+      screen: MergeQueuesScreen,
+      linking: "merge-queues",
+      options: pageRoute(),
     }),
     PullRequest: createNativeStackScreen({
       screen: PullRequestRouteScreen,

@@ -86,6 +86,9 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         headRef: null,
         author: null,
         autoMergeRequest: null,
+        isMergeQueueEnabled: false,
+        isInMergeQueue: false,
+        mergeQueueEntry: null,
         headRefName: "feature",
         baseRefName: "main",
         headRefOid: "abc123",
@@ -746,6 +749,100 @@ it.effect(
 );
 
 layer("GitHubPullRequestApi.layer", (it) => {
+  it.effect("lists empty and active protected-branch queues and follows entry cursors", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) => {
+        if (call.kind === "rest") {
+          expect(call.path).toBe("repos/acme/web/branches?protected=true&per_page=100&page=1");
+          return Effect.succeed(
+            output(encodeJson([{ name: "main" }, { name: "release" }, { name: "other" }])),
+          );
+        }
+        if (call.variables?.["id"] === "merge-group-commit") {
+          expect(call.variables?.["number"]).toBe(1);
+          const first = call.variables?.["after"] === null;
+          return Effect.succeed(
+            output(
+              encodeJson({
+                data: {
+                  node: {
+                    __typename: "Commit",
+                    statusCheckRollup: {
+                      contexts: {
+                        nodes: [
+                          {
+                            __typename: "StatusContext",
+                            context: first ? "build" : "lint",
+                            state: first ? "PENDING" : "SUCCESS",
+                            targetUrl: null,
+                            description: null,
+                            createdAt: "2026-11-27T12:00:00Z",
+                            isRequired: true,
+                          },
+                        ],
+                        pageInfo: { hasNextPage: first, endCursor: first ? "second" : null },
+                      },
+                    },
+                  },
+                },
+              }),
+            ),
+          );
+        }
+        const branch = call.variables?.["branch"];
+        const more = branch === "release" && call.variables?.["cursor"] === null;
+        const position = more ? 1 : 2;
+        const mergeQueue =
+          branch === "other"
+            ? null
+            : {
+                entries: {
+                  nodes:
+                    branch === "main"
+                      ? []
+                      : [
+                          {
+                            position,
+                            headCommit: more ? { id: "merge-group-commit" } : null,
+                            enqueuedAt: "2026-11-27T12:00:00Z",
+                            estimatedTimeToMerge: more ? 60 : null,
+                            state: "AWAITING_CHECKS",
+                            pullRequest: { number: position, title: "Fix" },
+                          },
+                        ],
+                  pageInfo: { hasNextPage: more, endCursor: more ? "next" : null },
+                },
+              };
+        return Effect.succeed(output(encodeJson({ data: { repository: { mergeQueue } } })));
+      });
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      expect(
+        yield* cli.listMergeQueues({ cwd: "/w", host: "github.com", repository: "acme/web" }),
+      ).toEqual([
+        { branch: "main", entries: [] },
+        {
+          branch: "release",
+          entries: [1, 2].map((position) => ({
+            position,
+            ...(position === 1
+              ? {
+                  estimatedMergeAt: expect.any(String),
+                  checks: expect.arrayContaining([
+                    expect.objectContaining({ name: "build", status: "pending", required: true }),
+                    expect.objectContaining({ name: "lint", status: "success", required: true }),
+                  ]),
+                }
+              : {}),
+            enqueuedAt: "2026-11-27T12:00:00Z",
+            state: "awaiting-checks",
+            number: position,
+            title: "Fix",
+          })),
+        },
+      ]);
+    }),
+  );
+
   it.effect("keeps recent references when the typed number does not exist", () =>
     Effect.gen(function* () {
       const search = {
@@ -2453,13 +2550,19 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  const actionState = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
+  const actionState = (
+    pullRequest: Readonly<Record<string, unknown>> = {},
+    repository: Readonly<Record<string, unknown>> = {},
+  ) => ({
     data: {
       repository: {
+        autoMergeAllowed: true,
+        ...repository,
         pullRequest: {
           id: "PR_7",
           headRefOid: "abc123",
           isMergeQueueEnabled: false,
+          isInMergeQueue: false,
           mergeStateStatus: "BLOCKED",
           baseRef: { compare: { behindBy: 2 } },
           ...pullRequest,
@@ -2509,6 +2612,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     headRefOid: "response-head",
                     author: { __typename: "User", login: "alice", avatarUrl: "", name: null },
                     autoMergeRequest,
+                    isInMergeQueue: false,
                   },
                 },
               },
@@ -2534,6 +2638,117 @@ layer("GitHubPullRequestApi.layer", (it) => {
         });
         // The action-state read and the mutation; no re-read of the pull request.
         expect(mockedExecute).toHaveBeenCalledTimes(2);
+      }),
+  );
+
+  it.effect(
+    "adds a pull request to the merge queue via enqueuePullRequest when auto-merge is disallowed",
+    () =>
+      Effect.gen(function* () {
+        route(
+          [
+            "query PullRequestActionState",
+            actionState(
+              { isMergeQueueEnabled: true, mergeStateStatus: "CLEAN" },
+              { autoMergeAllowed: false },
+            ),
+          ],
+          [
+            "enablePullRequestAutoMerge(",
+            {
+              data: { enablePullRequestAutoMerge: null },
+              errors: [
+                {
+                  type: "UNPROCESSABLE",
+                  path: ["enablePullRequestAutoMerge"],
+                  message: "Auto merge is not allowed for this repository",
+                },
+              ],
+            },
+          ],
+          [
+            "enqueuePullRequest(",
+            {
+              data: {
+                enqueuePullRequest: {
+                  mergeQueueEntry: {
+                    pullRequest: {
+                      number: 7,
+                      title: "Pull request 7",
+                      url: "https://github.com/acme/web/pull/7",
+                      headRefName: "feat/page",
+                      baseRefName: "main",
+                      state: "OPEN",
+                      isDraft: false,
+                      updatedAt: "2026-10-27T12:00:00Z",
+                      mergedAt: null,
+                      closedAt: null,
+                      headRefOid: "response-head",
+                      author: { __typename: "User", login: "alice", avatarUrl: "", name: null },
+                      autoMergeRequest: null,
+                      isInMergeQueue: true,
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const summary = yield* cli.runPullRequestAction({
+          ...pullRequestInput,
+          action: "merge",
+          mergeMethod: "squash",
+          expectedHeadSha: "abc123",
+        });
+        expect(summary).toEqual({
+          number: 7,
+          title: "Pull request 7",
+          url: "https://github.com/acme/web/pull/7",
+          headBranch: "feat/page",
+          baseBranch: "main",
+          state: "open",
+          isDraft: false,
+          updatedAt: "2026-10-27T12:00:00Z",
+          mergedAt: null,
+          closedAt: null,
+          author: { login: "alice", name: null, avatarUrl: null },
+          headSha: "response-head",
+          autoMergeEnabled: true,
+        });
+        expect(variablesOf("enqueuePullRequest(")).toEqual([
+          { input: { pullRequestId: "PR_7", expectedHeadOid: "abc123" } },
+        ]);
+        expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
+      }),
+  );
+
+  it.effect(
+    "enqueues at once when auto-merge is asked of a ready merge-queue PR with auto-merge disallowed",
+    () =>
+      Effect.gen(function* () {
+        route(
+          [
+            "query PullRequestActionState",
+            actionState(
+              { isMergeQueueEnabled: true, mergeStateStatus: "CLEAN" },
+              { autoMergeAllowed: false },
+            ),
+          ],
+          [
+            "enqueuePullRequest(",
+            { data: { enqueuePullRequest: { mergeQueueEntry: { pullRequest: null } } } },
+          ],
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const summary = yield* cli.runPullRequestAction({
+          ...pullRequestInput,
+          action: "enable-auto-merge",
+          mergeMethod: "squash",
+        });
+        expect(summary).toBeUndefined();
+        expect(variablesOf("enqueuePullRequest(")).toEqual([{ input: { pullRequestId: "PR_7" } }]);
+        expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
       }),
   );
 
@@ -2630,6 +2845,65 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(detail.viewerPermissions.actions).toContain("delete-branch");
       expect(queryAt(0)).toContain("headRepository{nameWithOwner viewerPermission}");
     }),
+  );
+
+  it.effect("reports a queue-enabled base before a ready pull request enters the queue", () =>
+    Effect.gen(function* () {
+      const answer = coreResponse({ mergeStateStatus: "CLEAN", isMergeQueueEnabled: true });
+      mockedExecute.mockReturnValue(Effect.succeed(output(encodeJson(answer))));
+      const provider = yield* GitHubPullRequestProvider.make;
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+      expect(queryAt(0)).toContain("isMergeQueueEnabled");
+      expect(detail.mergeQueueEnabled).toBe(true);
+      expect(detail.mergeQueue).toBeUndefined();
+    }),
+  );
+
+  // `gh pr merge` and GitHub's own button enqueue a ready PR without an auto-merge request.
+  it.effect("reads a pull request that is in the merge queue as queued", () =>
+    Effect.gen(function* () {
+      const answer = coreResponse({
+        mergeStateStatus: "CLEAN",
+        autoMergeRequest: null,
+        isInMergeQueue: true,
+        mergeQueueEntry: { state: "AWAITING_CHECKS", position: 1 },
+      });
+      mockedExecute.mockReturnValue(Effect.succeed(output(encodeJson(answer))));
+      const provider = yield* GitHubPullRequestProvider.make;
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+      expect(queryAt(0)).toMatch(/isInMergeQueue|mergeQueueEntry/);
+      expect(detail).toMatchObject({
+        autoMergeEnabled: true,
+        mergeQueue: { state: "awaiting-checks", position: 1 },
+      });
+    }),
+  );
+
+  it.effect.each([
+    { isInMergeQueue: true, field: "dequeuePullRequest" },
+    { isInMergeQueue: false, field: "disablePullRequestAutoMerge" },
+  ] as const)(
+    "turns off auto-merge with $field when isInMergeQueue is $isInMergeQueue",
+    ({ isInMergeQueue, field }) =>
+      Effect.gen(function* () {
+        route(
+          ["query PullRequestActionState", actionState({ isInMergeQueue })],
+          [field + "(", { data: { [field]: null } }],
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        yield* cli.runPullRequestAction({ ...pullRequestInput, action: "disable-auto-merge" });
+        expect(queryAt(1)).toContain(`${field}(input:`);
+      }),
   );
 
   const branchToDelete = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({

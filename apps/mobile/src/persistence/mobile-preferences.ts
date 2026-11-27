@@ -138,6 +138,7 @@ export interface Preferences {
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
   /** Whether pull requests or issues last held the tab bar slot they share. */
+  readonly mergeQueuesEnabled?: boolean;
   readonly sharedSlotTab?: "pullRequests" | "issues";
   readonly pullRequestHideTestFiles?: boolean;
   /** Which hidden-by-default PR activity is shown: bot comments and resolved or dismissed ones. */
@@ -240,6 +241,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     navigationTabOrder?: readonly string[];
     hiddenNavigationTabs?: readonly string[];
+    mergeQueuesEnabled?: boolean;
     sharedSlotTab?: "pullRequests" | "issues";
     pullRequestHideTestFiles?: boolean;
     pullRequestActivityVisibility?: PullRequestActivityVisibility;
@@ -298,6 +300,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     );
   }
 
+  if (typeof parsed.mergeQueuesEnabled === "boolean")
+    preferences.mergeQueuesEnabled = parsed.mergeQueuesEnabled;
   if (parsed.sharedSlotTab === "pullRequests" || parsed.sharedSlotTab === "issues") {
     preferences.sharedSlotTab = parsed.sharedSlotTab;
   }

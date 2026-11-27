@@ -19,6 +19,7 @@ import type {
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
   PullRequestMergeQueueRemoval,
+  PullRequestMergeQueueEntry,
   PullRequestOmittedFileStat,
   PullRequestMergeability,
   PullRequestReaction,
@@ -386,6 +387,8 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
+  readonly mergeQueueEnabled?: boolean;
+  readonly mergeQueue?: PullRequestMergeQueueEntry;
 }
 
 export interface GitHubWorkflowRunApproval {
@@ -511,6 +514,19 @@ function toMergeMethod(value: string | null | undefined): PullRequestMergeMethod
   }
 }
 
+export const MERGE_QUEUE_STATES = {
+  QUEUED: "queued",
+  AWAITING_CHECKS: "awaiting-checks",
+  MERGEABLE: "mergeable",
+  UNMERGEABLE: "unmergeable",
+  LOCKED: "locked",
+} as const satisfies Record<GitHubSchema.MergeQueueEntryState, PullRequestMergeQueueEntry["state"]>;
+
+interface MergeQueueEntryFields {
+  readonly state: GitHubSchema.MergeQueueEntryState;
+  readonly position: number;
+}
+
 export function toPullRequestActionSummary(
   raw: PullRequestActionSummary | null | undefined,
 ): ProviderChangeRequestSummary | undefined {
@@ -529,7 +545,8 @@ export function toPullRequestActionSummary(
     closedAt: trimmed(raw.closedAt),
     author: toActor(raw.author),
     headSha: raw.headRefOid,
-    autoMergeEnabled: raw.autoMergeRequest !== null,
+    // `gh pr merge` and GitHub's merge button enqueue a ready pull request without a request.
+    autoMergeEnabled: raw.autoMergeRequest !== null || raw.isInMergeQueue,
     ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
   };
 }
@@ -825,10 +842,17 @@ interface DetailFields extends ListItemFields {
     | { readonly mergeMethod?: string | null | undefined }
     | null
     | undefined;
+  readonly isMergeQueueEnabled?: boolean | null | undefined;
+  readonly isInMergeQueue?: boolean | undefined;
+  readonly mergeQueueEntry?: MergeQueueEntryFields | null | undefined;
 }
 
 function toDetail(raw: DetailFields): GitHubPullRequestDetail {
   const autoMergeMethod = toMergeMethod(raw.autoMergeRequest?.mergeMethod);
+  const entry = raw.isInMergeQueue ? raw.mergeQueueEntry : null;
+  const mergeQueue: PullRequestMergeQueueEntry | undefined = entry
+    ? { state: MERGE_QUEUE_STATES[entry.state], position: entry.position }
+    : undefined;
   return {
     ...toListItem(raw),
     ...(typeof raw.isCrossRepository === "boolean"
@@ -843,8 +867,10 @@ function toDetail(raw: DetailFields): GitHubPullRequestDetail {
     checks: toChecks(raw.statusCheckRollup),
     ...(raw.autoMergeRequest === undefined
       ? {}
-      : { autoMergeEnabled: raw.autoMergeRequest !== null }),
+      : { autoMergeEnabled: raw.autoMergeRequest !== null || raw.isInMergeQueue === true }),
     ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
+    ...(raw.isMergeQueueEnabled === true ? { mergeQueueEnabled: true } : {}),
+    ...(mergeQueue === undefined ? {} : { mergeQueue }),
   };
 }
 
@@ -1291,7 +1317,9 @@ export function toPullRequestCommitStats(result: PullRequestCommitStats.Result) 
 /** A check context as the rollup reports it; opaque outside this module. */
 export type GitHubCheckContext = CheckFields;
 
-function toCheckContexts(nodes: ReadonlyArray<CheckContext>): ReadonlyArray<GitHubCheckContext> {
+export function toCheckContexts(
+  nodes: ReadonlyArray<CheckContext>,
+): ReadonlyArray<GitHubCheckContext> {
   return nodes.map((check) =>
     check.__typename === "CheckRun"
       ? {

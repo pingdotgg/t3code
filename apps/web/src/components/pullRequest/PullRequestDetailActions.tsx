@@ -205,6 +205,8 @@ export function PullRequestPrimaryAction({
   pullRequestKey,
   primaryAction,
   mergeBlockedReason,
+  mergeQueueEnabled,
+  canRemoveFromQueue,
   autoMergeArmed,
   armedAutoMergeLabel,
   pendingAutoMergeLabel,
@@ -218,6 +220,8 @@ export function PullRequestPrimaryAction({
   pullRequestKey: string;
   primaryAction: ReturnType<typeof resolvePullRequestPrimaryControl> | null;
   mergeBlockedReason: string | null;
+  mergeQueueEnabled: boolean;
+  canRemoveFromQueue: boolean;
   autoMergeArmed: boolean;
   armedAutoMergeLabel: string;
   pendingAutoMergeLabel: string;
@@ -231,6 +235,30 @@ export function PullRequestPrimaryAction({
   const gt = useGT();
   const inlineConfirm = useInlineActionConfirm(pullRequestKey);
   const actionPending = pendingAction !== null;
+  if (mergeQueueEnabled && (pendingAction === "merge" || pendingAction === "enable-auto-merge")) {
+    return (
+      <Button size="xs" variant="default" disabled>
+        {gt("Queueing…")}
+      </Button>
+    );
+  }
+  if (mergeQueueEnabled && autoMergeArmed && canRemoveFromQueue) {
+    return (
+      <>
+        <Badge size="control" variant="info">
+          {armedAutoMergeLabel}
+        </Badge>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={actionPending}
+          onClick={() => void perform("disable-auto-merge")}
+        >
+          <T>Remove from queue</T>
+        </Button>
+      </>
+    );
+  }
   return (
     <>
       {autoMergeArmed && primaryAction !== "auto-merge-armed" ? (

@@ -28,6 +28,9 @@ import { BranchNamingSettings } from "./components/BranchNamingSettings";
 import { DatabaseStorageNotice } from "./components/DatabaseStorageNotice";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
+import { useAtomValue } from "@effect/atom-react";
+import { mobileMergeQueuesEnabledAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { IssueTrackerSection } from "./components/IssueTrackerSection";
 import { SourceControlProvidersSection } from "./components/SourceControlProvidersSection";
@@ -302,6 +305,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        {props.page === "source-control" ? <MobileMergeQueuesSetting /> : null}
         {!hasConnectedSelection || reference === null ? (
           <Text className="px-2 text-base text-foreground-muted">
             {projectSelected
@@ -641,5 +645,21 @@ function ManagedPolicyNotice(props: { readonly targets: readonly ScopedMobileSet
         here.
       </T>
     </Text>
+  );
+}
+
+function MobileMergeQueuesSetting() {
+  const gt = useGT();
+  const enabled = useAtomValue(mobileMergeQueuesEnabledAtom);
+  const save = useAtomCommand(saveMobilePreferences);
+  return (
+    <SettingsSection title={gt("On this device")}>
+      <SettingsSwitchRow
+        label={gt("Merge queues")}
+        subtitle={gt("Show merge queues in the pull requests menu.")}
+        value={enabled}
+        onValueChange={(value) => void save({ mergeQueuesEnabled: value })}
+      />
+    </SettingsSection>
   );
 }

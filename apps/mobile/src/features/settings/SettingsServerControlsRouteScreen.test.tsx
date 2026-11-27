@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const { Children, mocks } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
   mocks: {
+    queuePreference: {},
+    savePreferences: vi.fn(),
     branchNaming: { onChange: (_patch: ServerSettingsPatch) => {} },
     updateSettings: vi.fn(),
     alert: vi.fn(),
@@ -37,12 +39,14 @@ vi.mock("react-native", () => ({
   ),
 }));
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => AsyncResult.success({}),
+  useAtomValue: (atom: unknown) =>
+    atom === mocks.queuePreference ? true : AsyncResult.success({}),
   useAtomSet: () => () => {},
 }));
 vi.mock("../../state/preferences", () => ({
+  mobileMergeQueuesEnabledAtom: mocks.queuePreference,
   mobilePreferencesAtom: {},
-  saveMobilePreferences: {},
+  saveMobilePreferences: mocks.savePreferences,
 }));
 vi.mock("./components/AutoSettleDaysField", () => ({ AutoSettleDaysField: () => null }));
 vi.mock("./components/IssueTrackerSection", () => ({ IssueTrackerSection: () => null }));
@@ -63,7 +67,8 @@ vi.mock("../../state/session", () => ({
 vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
 vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: () => mocks.updateSettings,
+  useAtomCommand: (cmd: unknown) =>
+    cmd === mocks.savePreferences ? mocks.savePreferences : mocks.updateSettings,
 }));
 vi.mock("../threads/thread-settings-options", () => ({
   RUNTIME_MODE_CHOICES: [],
@@ -143,6 +148,7 @@ vi.mock("./settings-environment-filter", () => ({
 }));
 
 import {
+  SettingsEnvironmentSourceControlRouteScreen,
   SettingsThreadsRouteScreen,
   SettingsWorktreesRouteScreen,
 } from "./SettingsServerControlsRouteScreen";
@@ -185,6 +191,16 @@ afterEach(() => {
 });
 
 describe("SettingsServerControlsRouteScreen", () => {
+  it("can change the device merge queue preference with no connected environment", () => {
+    mocks.targets = [];
+    act(() => root.render(<SettingsEnvironmentSourceControlRouteScreen />));
+    const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!;
+    expect(toggle.textContent).toBe("Merge queues");
+    act(() => toggle.click());
+    expect(mocks.savePreferences).toHaveBeenCalledExactlyOnceWith({ mergeQueuesEnabled: false });
+    expect(mocks.updateSettings).not.toHaveBeenCalled();
+  });
+
   it("sends a draft saved during a pending write once that write settles", async () => {
     const pending = Promise.withResolvers<AsyncResult.Success<void>>();
     mocks.updateSettings.mockReturnValueOnce(pending.promise);

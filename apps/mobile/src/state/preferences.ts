@@ -123,3 +123,9 @@ const mobilePreferencesState = createMobilePreferencesState(mobilePreferencesRun
 
 export const mobilePreferencesAtom = mobilePreferencesState.preferencesAtom;
 export const saveMobilePreferences = mobilePreferencesState.savePreferences;
+
+export const mobileMergeQueuesEnabledAtom = Atom.make(
+  (get) =>
+    AsyncResult.getOrElse(get(mobilePreferencesAtom), (): MobilePreferences.Preferences => ({}))
+      .mergeQueuesEnabled !== false,
+);

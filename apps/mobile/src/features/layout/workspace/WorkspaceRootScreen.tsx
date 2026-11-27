@@ -1,3 +1,6 @@
+import { useAtomValue } from "@effect/atom-react";
+import { queuePickerVisibleAtom } from "../../../state/mergeQueueSelection";
+import { MergeQueuePicker } from "../../pull-requests/MergeQueuesScreen";
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { isSharedSlotTab } from "./navigation-tab-order";
 import { SharedSlotTitle } from "./SharedSlotTitle";
@@ -111,6 +114,11 @@ function WorkspaceRootContent() {
   const keyboardHeight = useKeyboardState((keyboard) => keyboard.height);
   const workspace = useWorkspaceTabs()!;
   const { state } = workspace;
+  const picker =
+    useAtomValue(queuePickerVisibleAtom) &&
+    layout.usesSplitView &&
+    isSharedSlotTab(state.selectedTab) &&
+    !workspace.settingsOpen;
   // Settings is a workspace tab too; its list takes the place of the selected tab's.
   const settingsOpen = workspace.settingsOpen;
   const headerOnly = use(NativeWorkspaceTabActivityContext)?.headerOnly === true;
@@ -180,6 +188,8 @@ function WorkspaceRootContent() {
             <WorkspaceSettingsList />
           ) : enabled.length === 0 ? (
             <WorkspaceNoTabs />
+          ) : picker ? (
+            <MergeQueuePicker />
           ) : state.selectedTab === "threads" ? (
             <HomeRouteScreen />
           ) : state.selectedTab === "pullRequests" ? (
@@ -193,7 +203,7 @@ function WorkspaceRootContent() {
         {deviceType !== "pad" && deviceType !== "phone" && sidebarPicker ? (
           <WorkspaceTabDock placement="column" />
         ) : null}
-        {enabled.length === 0 && !settingsOpen ? null : settingsOpen ||
+        {picker || (enabled.length === 0 && !settingsOpen) ? null : settingsOpen ||
           workspaceUsesColumns(state.selectedTab) ? (
           <WorkspaceToolbar sidebar={sidebarNavigation} onNewTask={startNewTask} />
         ) : (

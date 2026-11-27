@@ -648,6 +648,37 @@ export const PullRequestMergeQueueRemoval = Schema.Struct({
   reason: Schema.NullOr(Schema.String),
 });
 export type PullRequestMergeQueueRemoval = typeof PullRequestMergeQueueRemoval.Type;
+export const PullRequestMergeQueueEntry = Schema.Struct({
+  state: Schema.Literals(["queued", "awaiting-checks", "mergeable", "unmergeable", "locked"]),
+  position: NonNegativeInt,
+});
+export type PullRequestMergeQueueEntry = typeof PullRequestMergeQueueEntry.Type;
+
+export const ProjectMergeQueue = Schema.Struct({
+  branch: Schema.String,
+  entries: Schema.Array(
+    Schema.Struct({
+      ...PullRequestMergeQueueEntry.fields,
+      enqueuedAt: Schema.optional(Schema.String),
+      estimatedMergeAt: Schema.optional(Schema.String),
+      checks: Schema.optional(Schema.Array(PullRequestCheck)),
+      number: PositiveInt,
+      title: Schema.String,
+    }),
+  ),
+});
+export type ProjectMergeQueue = typeof ProjectMergeQueue.Type;
+
+export const ProjectMergeQueuesResult = Schema.Array(
+  Schema.Struct({
+    projectId: ProjectId,
+    projectTitle: Schema.String,
+    repository: Schema.String,
+    host: Schema.String,
+    queues: Schema.NullOr(Schema.Array(ProjectMergeQueue)),
+  }),
+);
+export type ProjectMergeQueuesResult = typeof ProjectMergeQueuesResult.Type;
 
 export const PullRequestDetail = Schema.Struct({
   provider: SourceControlProviderKind,
@@ -690,6 +721,9 @@ export const PullRequestDetail = Schema.Struct({
   /** Absent means the host does not report auto-merge state, not that it is off. */
   autoMergeEnabled: Schema.optional(Schema.Boolean),
   autoMergeMethod: Schema.optional(PullRequestMergeMethod),
+  /** Set while the pull request waits in the host's merge queue; it also counts as auto-merge. */
+  mergeQueueEnabled: Schema.optional(Schema.Boolean),
+  mergeQueue: Schema.optional(PullRequestMergeQueueEntry),
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
   /** Absent where the host has no merge queue or does not report one. */
   mergeQueueRemoval: Schema.optional(PullRequestMergeQueueRemoval),

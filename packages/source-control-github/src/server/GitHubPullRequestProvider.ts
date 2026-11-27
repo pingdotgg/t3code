@@ -431,6 +431,8 @@ export const make = Effect.gen(function* () {
         .getViewerLogin({ cwd: input.cwd, host: input.host ?? "github.com" })
         .pipe(Effect.mapError(fail("getViewer"))),
 
+    listMergeQueues: (input) =>
+      cli.listMergeQueues(input).pipe(Effect.mapError(fail("listMergeQueues"))),
     listChangeRequests: (input) =>
       cli
         .listPullRequests({

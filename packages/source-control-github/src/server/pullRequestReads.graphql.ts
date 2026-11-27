@@ -317,6 +317,15 @@ export const PullRequestTimelineItemsConnection = Schema.Struct({
 })
 export interface PullRequestTimelineItemsConnection extends Schema.Struct.Type<typeof PullRequestTimelineItemsConnection.fields> {}
 
+/** Entries in a MergeQueue */
+export const MergeQueueEntryMergeQueueEntry = Schema.Struct({
+  /** The state of this entry in the queue */
+  state: GraphQL.enumLiterals(Shared.MergeQueueEntryState.literals),
+  /** The position of this entry in the queue */
+  position: Shared.Int
+})
+export interface MergeQueueEntryMergeQueueEntry extends Schema.Struct.Type<typeof MergeQueueEntryMergeQueueEntry.fields> {}
+
 /** Represents a comparison between two commit revisions. */
 export const Comparison = Schema.Struct({
   /** The number of commits behind the base branch. */
@@ -518,6 +527,12 @@ export const PullRequestCoreRepositoryPullRequestPullRequest = Schema.Struct({
   autoMergeRequest: Schema.NullOr(AutoMergeRequest),
   /** A list of events, comments, commits, etc. associated with the pull request. */
   mergeQueueRemovals: Schema.optionalKey(PullRequestTimelineItemsConnection),
+  /** Indicates whether the pull request's base ref has a merge queue enabled. */
+  isMergeQueueEnabled: Schema.Boolean,
+  /** Indicates whether the pull request is in a merge queue */
+  isInMergeQueue: Schema.Boolean,
+  /** The merge queue entry of the pull request in the base branch's merge queue */
+  mergeQueueEntry: Schema.NullOr(MergeQueueEntryMergeQueueEntry),
   /** Check if the current viewer can update this object. */
   viewerCanUpdate: Schema.Boolean,
   /** Did the viewer author this comment. */
@@ -568,7 +583,7 @@ export const PullRequestCore = GraphQL.query("PullRequestCore", {
       { name: "mergeQueue", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt mergeCommit{oid}mergedBy{__typename login avatarUrl...on User{name}}closedAt headRefName baseRefName headRefOid isCrossRepository maintainerCanModify headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}mergeQueueRemovals:timelineItems(last:1 itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT])@include(if:$", "mergeQueue", "){nodes{__typename...on RemovedFromMergeQueueEvent{id createdAt reason}}}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color description}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage endCursor}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt mergeCommit{oid}mergedBy{__typename login avatarUrl...on User{name}}closedAt headRefName baseRefName headRefOid isCrossRepository maintainerCanModify headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}mergeQueueRemovals:timelineItems(last:1 itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT])@include(if:$", "mergeQueue", "){nodes{__typename...on RemovedFromMergeQueueEvent{id createdAt reason}}}isMergeQueueEnabled isInMergeQueue mergeQueueEntry{state position}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color description}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage endCursor}}}}}}}}"] }
     ],
     fragments: [
       { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{event runNumber workflow{id name}}}}}"] }
@@ -1702,6 +1717,8 @@ export const PullRequestActionStateRepositoryPullRequestPullRequest = Schema.Str
   headRefOid: Shared.GitObjectID,
   /** Indicates whether the pull request's base ref has a merge queue enabled. */
   isMergeQueueEnabled: Schema.Boolean,
+  /** Indicates whether the pull request is in a merge queue */
+  isInMergeQueue: Schema.Boolean,
   /** Detailed information about the current pull request merge state status. */
   mergeStateStatus: GraphQL.enumLiterals(Shared.MergeStateStatus.literals),
   /** Identifies the base Ref associated with the pull request. */
@@ -1711,6 +1728,8 @@ export interface PullRequestActionStateRepositoryPullRequestPullRequest extends 
 
 /** A repository contains the content for a project. */
 export const PullRequestActionStateRepositoryRepository = Schema.Struct({
+  /** Whether or not Auto-merge can be enabled on pull requests in this repository. */
+  autoMergeAllowed: Schema.Boolean,
   /** Returns a single pull request from the current repository by number. */
   pullRequest: Schema.NullOr(PullRequestActionStateRepositoryPullRequestPullRequest)
 })
@@ -1726,7 +1745,7 @@ export const PullRequestActionState = GraphQL.query("PullRequestActionState", {
       { name: "headRef", body: "String!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){id headRefOid isMergeQueueEnabled mergeStateStatus baseRef{compare(headRef:$", "headRef", "){behindBy}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){autoMergeAllowed pullRequest(number:$", "number", "){id headRefOid isMergeQueueEnabled isInMergeQueue mergeStateStatus baseRef{compare(headRef:$", "headRef", "){behindBy}}}}"] }
     ],
     fragments: []
   },
@@ -1870,5 +1889,134 @@ export declare namespace PullRequestSourceBranch {
   export type Result = typeof PullRequestSourceBranch.result.Type
 }
 
+/** Represents a Git commit. */
+export const HeadCommitCommit = Schema.Struct({
+  /** The Node ID of the Commit object */
+  id: Shared.ID
+})
+export interface HeadCommitCommit extends Schema.Struct.Type<typeof HeadCommitCommit.fields> {}
+
+/** A repository pull request. */
+export const NodesPullRequestPullRequest = Schema.Struct({
+  /** Identifies the pull request number. */
+  number: Shared.Int,
+  /** Identifies the pull request title. */
+  title: Schema.String
+})
+export interface NodesPullRequestPullRequest extends Schema.Struct.Type<typeof NodesPullRequestPullRequest.fields> {}
+
+/** Entries in a MergeQueue */
+export const NodesMergeQueueEntry = Schema.Struct({
+  /** The position of this entry in the queue */
+  position: Shared.Int,
+  /** The state of this entry in the queue */
+  state: GraphQL.enumLiterals(Shared.MergeQueueEntryState.literals),
+  /** The date and time this entry was added to the merge queue */
+  enqueuedAt: Shared.DateTime,
+  /** The estimated time in seconds until this entry will be merged */
+  estimatedTimeToMerge: Schema.NullOr(Shared.Int),
+  /** The head commit for this entry */
+  headCommit: Schema.NullOr(HeadCommitCommit),
+  /** The pull request that will be added to a merge group */
+  pullRequest: Schema.NullOr(NodesPullRequestPullRequest)
+})
+export interface NodesMergeQueueEntry extends Schema.Struct.Type<typeof NodesMergeQueueEntry.fields> {}
+
+/** The connection type for MergeQueueEntry. */
+export const MergeQueueEntryConnection = Schema.Struct({
+  /** A list of nodes. */
+  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(NodesMergeQueueEntry))),
+  /** Information to aid in pagination. */
+  pageInfo: ContextsPageInfoPageInfo
+})
+export interface MergeQueueEntryConnection extends Schema.Struct.Type<typeof MergeQueueEntryConnection.fields> {}
+
+/** The queue of pull request entries to be merged into a protected branch in a repository. */
+export const MergeQueue = Schema.Struct({
+  /** The entries in the queue */
+  entries: Schema.NullOr(MergeQueueEntryConnection)
+})
+export interface MergeQueue extends Schema.Struct.Type<typeof MergeQueue.fields> {}
+
+/** A repository contains the content for a project. */
+export const BranchMergeQueueRepositoryRepository = Schema.Struct({
+  /** The merge queue for a specified branch, otherwise the default branch if not provided. */
+  mergeQueue: Schema.NullOr(MergeQueue)
+})
+export interface BranchMergeQueueRepositoryRepository extends Schema.Struct.Type<typeof BranchMergeQueueRepositoryRepository.fields> {}
+
+/** `query BranchMergeQueue` */
+export const BranchMergeQueue = GraphQL.query("BranchMergeQueue", {
+  document: {
+    variables: [
+      { name: "owner", body: "String!" },
+      { name: "name", body: "String!" },
+      { name: "branch", body: "String!" },
+      { name: "cursor", body: "String" }
+    ],
+    selections: [
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeQueue(branch:$", "branch", "){entries(first:100 after:$", "cursor", "){nodes{position state enqueuedAt estimatedTimeToMerge headCommit{id}pullRequest{number title}}pageInfo{endCursor hasNextPage}}}}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    owner: Schema.String,
+    name: Schema.String,
+    branch: Schema.String,
+    cursor: Schema.optional(Schema.NullOr(Schema.String))
+  },
+  result: Schema.Struct({
+    /** Lookup a given repository by the owner and repository name. */
+    repository: Schema.NullOr(BranchMergeQueueRepositoryRepository)
+  })
+})
+export declare namespace BranchMergeQueue {
+  export type Variables = typeof BranchMergeQueue.variables.Type
+  export type Result = typeof BranchMergeQueue.result.Type
+}
+
+/** Represents a Git commit. */
+export const NodeCommit = Schema.Struct({
+  __typename: Schema.Literal("Commit"),
+  /** Check and Status rollup information for this commit. */
+  statusCheckRollup: Schema.NullOr(StatusCheckRollup)
+})
+export interface NodeCommit extends Schema.Struct.Type<typeof NodeCommit.fields> {}
+
+/** `query MergeGroupChecks` */
+export const MergeGroupChecks = GraphQL.query("MergeGroupChecks", {
+  document: {
+    variables: [
+      { name: "id", body: "ID!" },
+      { name: "number", body: "Int!" },
+      { name: "required", body: "Boolean!" },
+      { name: "after", body: "String" }
+    ],
+    selections: [
+      { name: "node", body: ["(id:$", "id", "){__typename...on Commit{statusCheckRollup{contexts(first:100 after:$", "after", "){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage endCursor}}}}}"] }
+    ],
+    fragments: [
+      { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{event runNumber workflow{id name}}}}}"] }
+    ]
+  },
+  variables: {
+    id: Shared.ID,
+    number: Shared.Int,
+    required: Schema.Boolean,
+    after: Schema.optional(Schema.NullOr(Schema.String))
+  },
+  result: Schema.Struct({
+    /** Fetches an object given its ID. */
+    node: Schema.NullOr(Schema.Union([
+      NodeCommit,
+      PullRequestCommitStatsNodesNodeOther
+    ]))
+  })
+})
+export declare namespace MergeGroupChecks {
+  export type Variables = typeof MergeGroupChecks.variables.Type
+  export type Result = typeof MergeGroupChecks.result.Type
+}
+
 /** Every operation in pullRequestReads.graphql. */
-export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestCommitStats, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, RepositoryLabels, RepositoryReferences, RepositoryAuthors, PullRequestFilesViewed, PullRequestFileStats, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)
+export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestCommitStats, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, RepositoryLabels, RepositoryReferences, RepositoryAuthors, PullRequestFilesViewed, PullRequestFileStats, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch, BranchMergeQueue, MergeGroupChecks)

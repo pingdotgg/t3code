@@ -32,6 +32,7 @@ import {
   type PullRequestMergeability,
   type PullRequestReaction,
   type PullRequestMergeMethod,
+  type PullRequestMergeQueueEntry,
   type PullRequestRef,
   type RepositoryIdentity,
   type PullRequestConversationThread,
@@ -62,6 +63,14 @@ export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, st
   squash: msg("Squash and merge"),
   rebase: msg("Rebase and merge"),
   "fast-forward": msg("Fast-forward merge"),
+};
+
+export const MERGE_QUEUE_STATE_LABELS: Record<PullRequestMergeQueueEntry["state"], string> = {
+  queued: msg("waiting"),
+  "awaiting-checks": msg("awaiting checks"),
+  mergeable: msg("ready to merge"),
+  unmergeable: msg("cannot merge"),
+  locked: msg("locked"),
 };
 
 export function allowsSinglePullRequestMerge(input: {
