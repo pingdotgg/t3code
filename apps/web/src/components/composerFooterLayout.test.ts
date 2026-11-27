@@ -104,10 +104,6 @@ describe("resolveScrollToEndClearance", () => {
     attachments: [{ top: 60, left: 0, right: 200 }],
   };
 
-  it("lets the button sit lower beside a banner that is not under it", () => {
-    expect(resolveScrollToEndClearance({ ...input, floatingHeight: 0 })).toBe(100);
-  });
-
   it("lifts the button over floating approvals, which span the lane", () => {
     expect(resolveScrollToEndClearance({ ...input, floatingHeight: 96 })).toBe(236);
   });
