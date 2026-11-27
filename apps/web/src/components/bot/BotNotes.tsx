@@ -96,32 +96,40 @@ function PreferencesForm(props: {
       <Label htmlFor="bot-preferences">
         <T>Instructions</T>
       </Label>
-      <textarea
-        id="bot-preferences"
-        ref={textareaRef}
-        rows={3}
-        maxLength={BOT_FILE_MAX_CHARS}
-        value={text}
-        onChange={(event) => setText(event.currentTarget.value)}
-        readOnly={!props.canWrite || speech.freezesEditor}
-        placeholder={gt("How you like the Bot to work.")}
-        className="-mx-1.5 field-sizing-content block max-h-64 min-h-16 w-[calc(100%+--spacing(3))] resize-none rounded-md bg-transparent px-1.5 py-1 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:bg-accent/40 focus-visible:bg-accent/50"
-      />
-      {props.canWrite ? (
-        <div className="flex min-h-7 flex-wrap items-center justify-end gap-2">
-          <TextFieldSpeechControls speech={speech} />
-          {changed ? (
-            <Button
-              type="submit"
-              size="xs"
-              disabled={saving || speech.preparing}
-              onPointerDown={(event) => event.preventDefault()}
-            >
-              <T>Save</T>
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+      <div className="flex flex-col rounded-lg bg-muted/40 transition-colors focus-within:bg-muted/60">
+        <textarea
+          id="bot-preferences"
+          ref={textareaRef}
+          rows={3}
+          maxLength={BOT_FILE_MAX_CHARS}
+          value={text}
+          onChange={(event) => setText(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }}
+          readOnly={!props.canWrite || speech.freezesEditor}
+          placeholder={gt("How you like the Bot to work.")}
+          className="field-sizing-content block max-h-64 min-h-16 w-full resize-none bg-transparent px-2.5 pt-2 pb-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+        />
+        {props.canWrite ? (
+          <div className="flex flex-wrap items-center justify-end gap-1.5 px-1.5 pb-1.5">
+            <TextFieldSpeechControls speech={speech} />
+            {changed ? (
+              <Button
+                type="submit"
+                size="xs"
+                disabled={saving || speech.preparing}
+                onPointerDown={(event) => event.preventDefault()}
+              >
+                <T>Save</T>
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </form>
   );
 }
