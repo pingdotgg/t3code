@@ -34,6 +34,12 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("fallbackTextGenerationModelSelection", () => {
+  it("uses Vibe's default text-generation model when only Vibe is enabled", () => {
+    expect(fallbackTextGenerationModelSelection({}, (instanceId) => instanceId === "vibe")).toEqual(
+      { instanceId: "vibe", model: "mistral-medium-3.5" },
+    );
+  });
+
   it("uses Big Pickle when only OpenCode is enabled", () => {
     expect(
       fallbackTextGenerationModelSelection({}, (instanceId) => instanceId === "opencode"),
