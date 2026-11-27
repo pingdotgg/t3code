@@ -7637,7 +7637,10 @@ body {
       visibility: hidden;
     }
 
-    & [data-pane-notch=""] > [data-layout-tab-strip-slot] > [data-pane-join-foot][data-pane-join-footed] {
+    &
+      [data-pane-notch=""]
+      > [data-layout-tab-strip-slot]
+      > [data-pane-join-foot][data-pane-join-footed] {
       --foot-l: calc(var(--foot-pad) + var(--pane-join-foot-x, 0px));
       visibility: visible;
       background:
@@ -7646,9 +7649,8 @@ body {
         radial-gradient(circle var(--e) at 100% 0, var(--ear-in))
           calc(var(--foot-l) + var(--pane-join-foot-w, 0px) - var(--e)) 100% / var(--e) var(--e)
           no-repeat,
-        linear-gradient(var(--pane-join-fill), var(--pane-join-fill))
-          calc(var(--foot-l) + var(--e)) 100% /
-          max(0px, calc(var(--pane-join-foot-w, 0px) - 2 * var(--e))) 4px no-repeat;
+        linear-gradient(var(--pane-join-fill), var(--pane-join-fill)) calc(var(--foot-l) + var(--e))
+          100% / max(0px, calc(var(--pane-join-foot-w, 0px) - 2 * var(--e))) 4px no-repeat;
     }
 
     /* The body's own fill ends inside the foot (clip-path avoids layout on toggle). */

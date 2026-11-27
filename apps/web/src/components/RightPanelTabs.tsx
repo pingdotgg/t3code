@@ -1083,20 +1083,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <SortableTabList surfaces={props.surfaces} onMove={props.onMoveSurface}>
         {props.surfaces.map((surface) => {
           const previewTabId = previewTabIdOf(surface, props.previewSessions);
-          const favicon = previewFaviconOf(
-            surface,
-            props.previewSessions,
-            props.desktopByTabId,
-          );
+          const favicon = previewFaviconOf(surface, props.previewSessions, props.desktopByTabId);
           return (
             <RightPanelTab
               key={surface.id}
               surface={surface}
               // A layout tab's strip drags the whole tab instead.
               dragDisabled={
-                !props.onMoveSurface ||
-                renamingDeviceId === surface.id ||
-                layoutTabId !== null
+                !props.onMoveSurface || renamingDeviceId === surface.id || layoutTabId !== null
               }
               active={surface.id === props.activeSurfaceId}
               pending={props.pendingSurfaceIds.has(surface.id)}
@@ -1209,7 +1203,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               paneTabs
                 .filter((tab) => tab.id !== pinnedChatTab?.id)
                 .map((tab) =>
-                  tab.id === layoutTabId ? activeTabStrip : <LayoutPaneTab key={tab.id} tab={tab} />,
+                  tab.id === layoutTabId ? (
+                    activeTabStrip
+                  ) : (
+                    <LayoutPaneTab key={tab.id} tab={tab} />
+                  ),
                 )
             ) : (
               activeTabStrip
