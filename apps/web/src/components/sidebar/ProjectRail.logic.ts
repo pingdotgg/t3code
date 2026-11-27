@@ -1,4 +1,4 @@
-import type { ProjectIconOverride } from "@t3tools/contracts";
+import type { ProjectIconOverride, ThreadFolderTagChange } from "@t3tools/contracts";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
@@ -9,7 +9,6 @@ import {
 } from "../../sidebarProjectGrouping";
 import { legacyProjectCwdPreferenceKey } from "../../uiStateStore";
 import { orderItemsByPreferredIds, resolveSidebarFolderDot } from "../Sidebar.logic";
-import type { ThreadFolderTagChange } from "../threadActionMenu.logic";
 
 export type ProjectRailDot = ReturnType<typeof resolveSidebarFolderDot>;
 

@@ -6,6 +6,7 @@ import {
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
+  folderTagChanges,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
@@ -412,46 +413,83 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       }),
     ),
   ),
-  t3_thread_organize: writesThread((input) =>
-    Effect.gen(function* () {
-      const { threads, projection, caller } = yield* readThread(input.threadId);
-      const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
-      if (input.action === "settle") {
+  t3_thread_organize: McpToolAccess.either(
+    (input) => input.action === "rename_folder" || input.action === "delete_folder",
+    McpToolAccess.writesEnvironment((input) =>
+      Effect.gen(function* () {
+        const from = yield* required(input.folder, "folder");
+        const to = input.action === "delete_folder" ? null : yield* required(input.to, "to");
+        const { threads } = yield* readCaller();
         return yield* threads
-          .settleThread({ ...common, byOwnAgent: caller?.id === projection.thread.id })
-          .pipe(Effect.mapError(dispatchFailure));
-      }
-      let command: OrchestrationV2Command;
-      switch (input.action) {
-        case "snooze":
-          if (input.snoozedUntil === undefined) {
-            return yield* new OrchestratorMcpFailure({
-              code: "invalid_request",
-              message: "snooze requires snoozedUntil.",
-            });
+          .renameThreadTag({ commandId: yield* newCommandId(), from, to })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+            ),
+          );
+      }),
+    ),
+    writesThread((input) =>
+      Effect.gen(function* () {
+        const { threads, projection, caller } = yield* readThread(input.threadId);
+        if (input.action === "move_to_folder" || input.action === "remove_from_folder") {
+          const folder =
+            input.action === "remove_from_folder" ? null : yield* required(input.folder, "folder");
+          const changes = folderTagChanges(projection.thread.tags ?? [], folder);
+          for (const change of changes) {
+            yield* threads
+              .dispatch({
+                commandId: yield* newCommandId(),
+                threadId: projection.thread.id,
+                type: "thread.tag.set",
+                ...change,
+              })
+              .pipe(Effect.mapError(dispatchFailure));
           }
-          command = { ...common, type: "thread.snooze", snoozedUntil: input.snoozedUntil };
-          break;
-        case "unsnooze":
-        case "unsettle":
-          command = { ...common, type: `thread.${input.action}`, reason: "user" };
-          break;
-        case "mark_unread":
-          command = { ...common, type: "thread.mark-unread" };
-          break;
-        case "pin": {
-          // Always send a key, as the client does: the reducer ignores it for a
-          // thread that is already pinned, and a projection read before this
-          // command can be stale if an unpin commits in between.
-          const orderKey = yield* topOfPinnedRunKey(threads);
-          command = { ...common, type: "thread.pin", ...(orderKey ? { orderKey } : {}) };
-          break;
+          return { threadCount: changes.length > 0 ? 1 : 0 };
         }
-        default:
-          command = { ...common, type: `thread.${input.action}` };
-      }
-      const result = yield* threads.dispatch(command).pipe(Effect.mapError(dispatchFailure));
-      return { sequence: result.sequence };
-    }),
+        const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
+        if (input.action === "settle") {
+          return yield* threads
+            .settleThread({ ...common, byOwnAgent: caller?.id === projection.thread.id })
+            .pipe(Effect.mapError(dispatchFailure));
+        }
+        let command: OrchestrationV2Command;
+        switch (input.action) {
+          case "snooze":
+            if (input.snoozedUntil === undefined) {
+              return yield* new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: "snooze requires snoozedUntil.",
+              });
+            }
+            command = { ...common, type: "thread.snooze", snoozedUntil: input.snoozedUntil };
+            break;
+          case "unsnooze":
+          case "unsettle":
+            command = { ...common, type: `thread.${input.action}`, reason: "user" };
+            break;
+          case "mark_unread":
+            command = { ...common, type: "thread.mark-unread" };
+            break;
+          case "pin": {
+            // Always send a key, as the client does: the reducer ignores it for a
+            // thread that is already pinned, and a projection read before this
+            // command can be stale if an unpin commits in between.
+            const orderKey = yield* topOfPinnedRunKey(threads);
+            command = { ...common, type: "thread.pin", ...(orderKey ? { orderKey } : {}) };
+            break;
+          }
+          case "rename_folder":
+          case "delete_folder":
+            return yield* Effect.die("unreachable");
+          default:
+            command = { ...common, type: `thread.${input.action}` };
+        }
+        const result = yield* threads.dispatch(command).pipe(Effect.mapError(dispatchFailure));
+        return { sequence: result.sequence };
+      }),
+    ),
   ),
 });

@@ -49,6 +49,12 @@ describe("resolveT3McpToolDefinition", () => {
     expect(resolveT3McpToolDefinition("t3_thread_transfer", { action: "fork" })?.displayName).toBe(
       resolveT3McpToolDefinition("t3_thread_fork")?.displayName,
     );
+    expect(
+      resolveT3McpToolDefinition("t3_thread_organize", { action: "delete_folder" })?.labels[2],
+    ).toBe("Deleted");
+    expect(resolveT3McpToolDefinition("t3_thread_organize", { action: "pin" })?.labels[2]).toBe(
+      "Organized",
+    );
     expect(resolveT3McpToolDefinition("preview_act", { action: "unknown" })?.labels[2]).toBe(
       "Used",
     );

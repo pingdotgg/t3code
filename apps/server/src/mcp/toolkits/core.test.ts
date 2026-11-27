@@ -1778,3 +1778,114 @@ it.effect(
     );
   },
 );
+
+const folderToolkit = (options: {
+  readonly tags: ReadonlyArray<string>;
+  readonly runtimeMode?: "full-access" | "auto";
+  readonly dispatched: Array<OrchestrationV2ServerCommand>;
+  readonly renamed: Array<unknown>;
+}) =>
+  layerThreadToolkit.pipe(
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+    Layer.provide(NodeCrypto.layer),
+    Layer.provide(
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (id) =>
+          Effect.succeed({
+            ...McpToolAccessTestkit.liveThreadShell(id, {
+              runtimeMode: options.runtimeMode ?? "full-access",
+            }),
+            tags: options.tags,
+          }),
+        getProjectThreadRecords: ({ threadId: id }) => {
+          const projection = McpToolAccessTestkit.idleThreadProjection(
+            McpToolAccessTestkit.liveThreadShell(id),
+          );
+          return Effect.succeed({
+            ...projection,
+            thread: { ...projection.thread, tags: options.tags },
+          });
+        },
+        dispatch: (command) => {
+          options.dispatched.push(command);
+          return Effect.succeed({ sequence: options.dispatched.length, storedEvents: [] });
+        },
+        renameThreadTag: (input) => {
+          options.renamed.push(input);
+          return Effect.succeed({ threadCount: 3 });
+        },
+      }),
+    ),
+  );
+
+const organize = (args: Record<string, unknown>) =>
+  Effect.flatMap(McpServer.McpServer, (server) =>
+    server
+      .callTool({ name: "t3_thread_organize", arguments: args })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      ),
+  );
+
+it.effect("move_to_folder adds the new folder before dropping the old, as the sidebar does", () => {
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    const moved = yield* organize({ action: "move_to_folder", folder: "Review" });
+    expect(moved.structuredContent).toEqual({ threadCount: 1 });
+    expect(dispatched).toMatchObject([
+      { type: "thread.tag.set", threadId, tag: "Review", tagged: true },
+      { type: "thread.tag.set", threadId, tag: "Inbox", tagged: false },
+    ]);
+
+    dispatched.length = 0;
+    const home = yield* organize({ action: "remove_from_folder" });
+    expect(home.structuredContent).toEqual({ threadCount: 1 });
+    expect(dispatched).toMatchObject([{ tag: "Inbox", tagged: false }]);
+
+    dispatched.length = 0;
+    const same = yield* organize({ action: "move_to_folder", folder: "Inbox" });
+    expect(same.structuredContent).toEqual({ threadCount: 0 });
+    expect(dispatched).toEqual([]);
+
+    const missing = yield* organize({ action: "move_to_folder" });
+    expect(declaredFailure(missing)).toMatchObject({
+      code: "invalid_request",
+      message: "This action needs `folder`.",
+    });
+  }).pipe(Effect.provide(folderToolkit({ tags: ["Inbox"], dispatched, renamed: [] })));
+});
+
+it.effect("rename_folder and delete_folder change the folder environment-wide in one call", () => {
+  const renamed: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const result = yield* organize({ action: "rename_folder", folder: "Inbox", to: "Later" });
+    expect(result.structuredContent).toEqual({ threadCount: 3 });
+    const removed = yield* organize({ action: "delete_folder", folder: "Later" });
+    expect(removed.isError).toBe(false);
+    expect(renamed).toMatchObject([
+      { from: "Inbox", to: "Later" },
+      { from: "Later", to: null },
+    ]);
+
+    const missing = yield* organize({ action: "rename_folder", folder: "Inbox" });
+    expect(declaredFailure(missing)).toMatchObject({ message: "This action needs `to`." });
+    expect(renamed).toHaveLength(2);
+  }).pipe(Effect.provide(folderToolkit({ tags: [], dispatched: [], renamed })));
+});
+
+it.effect(
+  "folder renames and deletes need a full-access caller because they change other threads",
+  () => {
+    const renamed: Array<unknown> = [];
+    return Effect.gen(function* () {
+      const result = yield* organize({ action: "rename_folder", folder: "Inbox", to: "Later" });
+      expect(declaredFailure(result)).toMatchObject({ code: "capability_denied" });
+      const deleted = yield* organize({ action: "delete_folder", folder: "Inbox" });
+      expect(declaredFailure(deleted)).toMatchObject({ code: "capability_denied" });
+      expect(renamed).toEqual([]);
+    }).pipe(
+      Effect.provide(folderToolkit({ tags: [], runtimeMode: "auto", dispatched: [], renamed })),
+    );
+  },
+);
