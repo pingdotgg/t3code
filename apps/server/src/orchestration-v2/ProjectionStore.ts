@@ -26,10 +26,12 @@ import {
   isShownUserMessageItem,
 } from "./modelSwitch.ts";
 import type {
+  ModelSelection,
   OrchestrationV2AppThread,
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
   OrchestrationV2ExecutionNode,
+  OrchestrationV2FallbackOrigin,
   OrchestrationV2PlanArtifact,
   OrchestrationV2PendingRuntimeRequestSummary,
   PlanId,
@@ -209,7 +211,21 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "updatedAt"
   | "limitRecovery"
   | "snoozedUntil"
->;
+> & {
+  readonly projectId?: ProjectId | undefined;
+  /** The model selection of the failed run (not a later manual thread selection). */
+  readonly modelSelection?: ModelSelection | undefined;
+  /** The thread's current model selection, so recovery avoids overriding manual switches. */
+  readonly currentModelSelection?: ModelSelection | undefined;
+  readonly fallbackOrigin?: OrchestrationV2FallbackOrigin | null | undefined;
+};
+
+export interface ProjectionFallbackRestoreCandidate {
+  readonly id: ThreadId;
+  readonly projectId: ProjectId;
+  readonly modelSelection: ModelSelection;
+  readonly fallbackOrigin: OrchestrationV2FallbackOrigin;
+}
 
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
@@ -682,8 +698,14 @@ export interface ProjectionStoreV2Shape {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
     readonly snooze: boolean;
+    readonly fallbackOnUsageLimit?: boolean;
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
-  /** Epoch ms of the next armed reset or snooze end after `now`, when a waiting thread becomes a candidate. */
+  /** Idle threads currently switched to a fallback model whose origin usage may have recovered. */
+  readonly getFallbackRestoreCandidates: Effect.Effect<
+    ReadonlyArray<ProjectionFallbackRestoreCandidate>,
+    ProjectionStoreV2Error
+  >;
+  /** Epoch ms of the next armed reset, snooze end, or fallback restore check after `now`. */
   readonly getLimitRecoveryWakeAt: (
     now: DateTime.Utc,
   ) => Effect.Effect<number | null, ProjectionStoreV2Error>;
@@ -2048,6 +2070,7 @@ export function threadShellFromProjection(
     titleRegeneration: projection.thread.titleRegeneration ?? null,
     lastTitleRegeneration: projection.thread.lastTitleRegeneration ?? null,
     limitRecovery: projection.thread.limitRecovery ?? null,
+    fallbackOrigin: projection.thread.fallbackOrigin ?? null,
     deletedAt: projection.thread.deletedAt,
   };
 }
@@ -2353,6 +2376,7 @@ function shellFromState(input: {
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
     lastTitleRegeneration: input.state.thread.lastTitleRegeneration ?? null,
     limitRecovery: input.state.thread.limitRecovery ?? null,
+    fallbackOrigin: input.state.thread.fallbackOrigin ?? null,
     deletedAt: input.state.thread.deletedAt,
   };
 }
@@ -5024,11 +5048,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const rows = yield* sql<{
           readonly payload_json: string;
           readonly run_id: string;
+          readonly run_payload_json: string;
           readonly completed_at: string | null;
           readonly failure_payload_json: string;
           readonly last_error: string | null;
         }>`
-          SELECT t.payload_json, r.run_id, r.completed_at,
+          SELECT t.payload_json, r.run_id, r.payload_json AS run_payload_json, r.completed_at,
             item.payload_json AS failure_payload_json,
             (
               SELECT json_extract(session.payload_json, '$.lastError')
@@ -5079,29 +5104,46 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
             AND json_valid(item.payload_json)
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
-            AND json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
-            AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
             AND (
               (
-                json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
-                AND json_extract(t.payload_json, '$.limitRecovery.resetAt') IS json_extract(item.payload_json, '$.failure.resetAt')
-                AND json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
-                AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) <= julianday(${DateTime.formatIso(options.now)})
+                json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
+                AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
                 AND (
-                  json_extract(t.payload_json, '$.snoozedUntil') IS NULL
-                  OR julianday(json_extract(t.payload_json, '$.snoozedUntil')) <= julianday(${DateTime.formatIso(options.now)})
+                  (
+                    json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
+                    AND json_extract(t.payload_json, '$.limitRecovery.resetAt') IS json_extract(item.payload_json, '$.failure.resetAt')
+                    AND json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
+                    AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) <= julianday(${DateTime.formatIso(options.now)})
+                    AND (
+                      json_extract(t.payload_json, '$.snoozedUntil') IS NULL
+                      OR julianday(json_extract(t.payload_json, '$.snoozedUntil')) <= julianday(${DateTime.formatIso(options.now)})
+                    )
+                  )
+                  OR (
+                    (
+                      json_extract(t.payload_json, '$.limitRecovery.runId') IS NOT r.run_id
+                      OR json_extract(t.payload_json, '$.limitRecovery.resetAt') IS NOT json_extract(item.payload_json, '$.failure.resetAt')
+                    )
+                    AND (
+                      ${booleanInt(options.autoResume)}
+                      OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
+                    )
+                    -- A subagent of a settled, archived or deleted parent is abandoned work.
+                    AND NOT EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_threads parent
+                      WHERE json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                        AND parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+                        AND (
+                          json_extract(parent.payload_json, '$.settledOverride') = 'settled'
+                          OR json_extract(parent.payload_json, '$.archivedAt') IS NOT NULL
+                          OR parent.deleted_at IS NOT NULL
+                        )
+                    )
+                  )
                 )
               )
               OR (
-                (
-                  json_extract(t.payload_json, '$.limitRecovery.runId') IS NOT r.run_id
-                  OR json_extract(t.payload_json, '$.limitRecovery.resetAt') IS NOT json_extract(item.payload_json, '$.failure.resetAt')
-                )
-                AND (
-                  ${booleanInt(options.autoResume)}
-                  OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
-                )
-                -- A subagent of a settled, archived or deleted parent is abandoned work.
+                ${booleanInt(options.fallbackOnUsageLimit === true)}
                 AND NOT EXISTS (
                   SELECT 1 FROM orchestration_v2_projection_threads parent
                   WHERE json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
@@ -5123,6 +5165,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const candidates: Array<ProjectionLimitRecoveryCandidate> = [];
         for (const row of rows) {
           const thread = yield* decodeThreadPayload(row.payload_json);
+          const failedRun = yield* decodeRunPayload(row.run_payload_json);
           const item = yield* decodeTurnItemPayload(row.failure_payload_json);
           const summary = threadErrorSummary(
             item.type === "error" ? item.failure : null,
@@ -5131,6 +5174,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           if (summary.lastErrorClass !== "usage_limit") continue;
           candidates.push({
             id: thread.id,
+            projectId: thread.projectId,
+            modelSelection: failedRun.modelSelection,
+            currentModelSelection: thread.modelSelection,
+            fallbackOrigin: thread.fallbackOrigin ?? null,
             status: "failed",
             lastErrorClass: summary.lastErrorClass,
             usageLimitResetAt: summary.usageLimitResetAt,
@@ -5143,6 +5190,42 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             pendingRuntimeRequest: null,
             limitRecovery: thread.limitRecovery ?? null,
             snoozedUntil: thread.snoozedUntil ?? null,
+          });
+        }
+        return candidates;
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
+    const getFallbackRestoreCandidates = Effect.fn("ProjectionStore.getFallbackRestoreCandidates")(
+      function* () {
+        const rows = yield* sql<{ readonly payload_json: string }>`
+          SELECT t.payload_json
+          FROM orchestration_v2_projection_threads t
+          WHERE t.deleted_at IS NULL
+            AND t.archived_at IS NULL
+            AND json_valid(t.payload_json)
+            AND json_extract(t.payload_json, '$.fallbackOrigin') IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_runs run
+              WHERE run.thread_id = t.thread_id
+                AND run.status IN ('preparing', 'starting', 'running', 'waiting', 'queued')
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_runtime_requests request
+              WHERE request.thread_id = t.thread_id AND request.status = 'pending'
+            )
+          ORDER BY t.thread_id
+        `;
+        const candidates: Array<ProjectionFallbackRestoreCandidate> = [];
+        for (const row of rows) {
+          const thread = yield* decodeThreadPayload(row.payload_json);
+          if (thread.fallbackOrigin == null) continue;
+          candidates.push({
+            id: thread.id,
+            projectId: thread.projectId,
+            modelSelection: thread.modelSelection,
+            fallbackOrigin: thread.fallbackOrigin,
           });
         }
         return candidates;
@@ -5170,7 +5253,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND json_extract(payload_json, '$.limitRecovery.autoResume') = 1
           )
         `;
-        const wakes = [rows[0]?.reset_ms, rows[0]?.snooze_ms].filter(
+        const fallbackRows = yield* sql<{
+          readonly fallback_ms: number | null;
+        }>`
+          SELECT
+            MIN(CASE WHEN wake_jd > julianday(${nowIso})
+              THEN (wake_jd - 2440587.5) * 86400000 END) AS fallback_ms
+          FROM (
+            SELECT CASE
+              WHEN json_extract(payload_json, '$.fallbackOrigin.resetAt') IS NOT NULL
+                THEN julianday(json_extract(payload_json, '$.fallbackOrigin.resetAt'))
+              WHEN json_extract(payload_json, '$.fallbackOrigin.switchedAt') IS NOT NULL
+                THEN julianday(json_extract(payload_json, '$.fallbackOrigin.switchedAt')) + (15.0 / 1440.0)
+              END AS wake_jd
+            FROM orchestration_v2_projection_threads
+            WHERE deleted_at IS NULL
+              AND archived_at IS NULL
+              AND json_valid(payload_json)
+              AND json_extract(payload_json, '$.fallbackOrigin') IS NOT NULL
+          )
+        `;
+        const wakes = [rows[0]?.reset_ms, rows[0]?.snooze_ms, fallbackRows[0]?.fallback_ms].filter(
           (value): value is number => value != null,
         );
         return wakes.length === 0 ? null : Math.round(Math.min(...wakes));
@@ -10050,6 +10153,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getPlan: readOnReader(getPlan),
       getProviderControlContext: readOnReader(getProviderControlContext),
       getLimitRecoveryCandidates: readOnReader(getLimitRecoveryCandidates),
+      getFallbackRestoreCandidates: getFallbackRestoreCandidates().pipe(NodeSqliteClient.readOnly),
       getLimitRecoveryWakeAt: readOnReader(getLimitRecoveryWakeAt),
       getRecoveryThreadIds: readOnReader(getRecoveryThreadIds),
       getUnreadableThreadIds: readOnReader(getUnreadableThreadIds),

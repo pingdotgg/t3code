@@ -9160,7 +9160,7 @@
   "8ab693ae67cd5e86": "Réinitialiser l’espace de travail par défaut à la valeur par défaut",
   "d1d1342ccb83a14b": "Espace de travail par défaut",
   "a22721e847136f21": "Indisponible",
-  "ce48b34d9403f3f1": "Utilisé pour les nouveaux fils quand le fournisseur du modèle par défaut a épuisé son utilisation.",
+  "90c9f80db617eb3e": "Utilisé pour les nouveaux fils, ainsi que pour les fils actifs lorsque le basculement automatique en cas de limite d’utilisation est activé, quand un fournisseur n’a plus de quota.",
   "fca2f52dd63a3b08": "Réinitialiser le modèle de secours à la valeur par défaut",
   "d0eb21be71904f84": "Modèle de secours",
   "ebcfd96d4b112b4e": "Aucun",
@@ -13024,5 +13024,9 @@
       "v": "v"
     },
     " de plus dans Éléments associés"
-  ]
+  ],
+  "fe3e3df0d22ec31d": "Basculer vers le modèle de secours en cas de limite d’utilisation",
+  "fd886d0157729d0e": "Poursuivre automatiquement les fils limités avec votre modèle de secours et revenir au modèle d’origine dès la réinitialisation du quota.",
+  "73d322c7fefc4ff3": "Sélectionnez un modèle de secours ci-dessus pour activer le basculement automatique.",
+  "67da54eaad0ca73b": "utilisation quota limite de débit modèle de secours fallback basculer fournisseur agent restaurer automatiquement réinitialisation"
 }

@@ -472,6 +472,15 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 );
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
+export const OrchestrationV2FallbackOrigin = Schema.Struct({
+  originSelection: ModelSelection,
+  fallbackSelection: ModelSelection,
+  switchedFromRunId: Schema.NullOr(RunId),
+  switchedAt: IsoDateTime,
+  resetAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestrationV2FallbackOrigin = typeof OrchestrationV2FallbackOrigin.Type;
+
 /**
  * `score` is an open count that halves every two weeks, as of `openedAt`.
  * `picks` stores lowercase palette queries, newest first.
@@ -545,6 +554,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
+  fallbackOrigin: Schema.optional(Schema.NullOr(OrchestrationV2FallbackOrigin)),
   guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -843,6 +853,7 @@ export const OrchestrationV2Run = Schema.Struct({
   restartContinuationOfRunId: Schema.optional(RunId),
   manualContinuationOfRunId: Schema.optional(RunId),
   usageLimitContinuationOfRunId: Schema.optional(RunId),
+  pendingFallbackOrigin: Schema.optional(Schema.NullOr(OrchestrationV2FallbackOrigin)),
   delegatedTaskId: Schema.optional(NodeId),
   workStartedAt: Schema.optional(Schema.DateTimeUtc),
   restartCancelledBackgroundWork: Schema.optional(
@@ -2482,6 +2493,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
+  fallbackOrigin: Schema.optional(Schema.NullOr(OrchestrationV2FallbackOrigin)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -3334,6 +3346,7 @@ export const OrchestrationV2Command = Schema.Union([
     title: TrimmedNonEmptyString,
     titleRenamed: Schema.optional(Schema.Boolean),
     modelSelection: ModelSelection,
+    fallbackOrigin: Schema.optional(Schema.NullOr(OrchestrationV2FallbackOrigin)),
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(GitRefName),
@@ -3603,6 +3616,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     modelSelection: ModelSelection,
+    fallbackOrigin: Schema.optional(Schema.NullOr(OrchestrationV2FallbackOrigin)),
+    expectedFallbackSelection: Schema.optional(ModelSelection),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
@@ -3633,6 +3648,7 @@ export const OrchestrationV2Command = Schema.Union([
     attachments: Schema.Array(ChatAttachment),
     titleSeed: Schema.optional(TrimmedNonEmptyString),
     modelSelection: Schema.optional(ModelSelection),
+    fallbackOrigin: Schema.optional(Schema.NullOr(OrchestrationV2FallbackOrigin)),
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
     restartContinuationOfRunId: Schema.optional(RunId),
     usageLimitContinuationOfRunId: Schema.optional(RunId),

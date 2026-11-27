@@ -9159,7 +9159,7 @@
   "8ab693ae67cd5e86": "Redefinir o workspace padrão para o padrão",
   "d1d1342ccb83a14b": "Workspace padrão",
   "a22721e847136f21": "Indisponível",
-  "ce48b34d9403f3f1": "Usado em novas threads quando o provedor do modelo padrão atinge o limite de uso.",
+  "90c9f80db617eb3e": "Usado em novas conversas, e em conversas ativas quando a troca automática por limite de uso estiver ativada, quando um provedor ficar sem cota.",
   "fca2f52dd63a3b08": "Redefinir o modelo alternativo para o padrão",
   "d0eb21be71904f84": "Modelo alternativo",
   "ebcfd96d4b112b4e": "Nenhum",
@@ -13024,5 +13024,9 @@
       "v": "v"
     },
     " mais em Itens vinculados"
-  ]
+  ],
+  "fe3e3df0d22ec31d": "Trocar para o modelo alternativo em limites de uso",
+  "fd886d0157729d0e": "Continua automaticamente conversas limitadas no modelo alternativo e volta ao original quando o uso for redefinido.",
+  "73d322c7fefc4ff3": "Selecione um modelo alternativo acima para que a troca automática entre em vigor.",
+  "67da54eaad0ca73b": "uso cota limite de taxa modelo alternativo fallback trocar provedor agente restaurar automaticamente redefinir"
 }

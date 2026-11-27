@@ -560,6 +560,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.autoResumeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads
       ? [gt("Resume after usage limits")]
       : []),
+    ...(settings.fallbackOnUsageLimit !== DEFAULT_UNIFIED_SETTINGS.fallbackOnUsageLimit
+      ? [gt("Switch to fallback model on usage limits")]
+      : []),
     ...(settings.snoozeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads
       ? [gt("Snooze until limits reset")]
       : []),
@@ -743,6 +746,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
+      fallbackOnUsageLimit: DEFAULT_UNIFIED_SETTINGS.fallbackOnUsageLimit,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
@@ -2064,6 +2068,29 @@ export function ThreadsSettingsPanel() {
       ) : null}
 
       <SettingsSection id="usage-limits" title={gt("Usage limits")}>
+        <SettingsRow
+          serverScoped
+          {...setting("switch-to-fallback-on-usage-limits")}
+          description={gt(
+            "Automatically continue limited threads on your fallback model, and switch back once usage resets.",
+          )}
+          status={
+            settings.fallbackOnUsageLimit && settings.fallbackModelSelection === null
+              ? gt("Select a Fallback model above for automatic switching to take effect.")
+              : undefined
+          }
+          settingKeys={["fallbackOnUsageLimit"]}
+          control={
+            <ScopedSwitch
+              settingKeys={["fallbackOnUsageLimit"]}
+              checked={settings.fallbackOnUsageLimit}
+              onCheckedChange={(checked) =>
+                updateSettings({ fallbackOnUsageLimit: Boolean(checked) })
+              }
+              aria-label={gt("Switch to fallback model on usage limits")}
+            />
+          }
+        />
         <SettingsRow
           serverScoped
           {...setting("auto-resume-limited-threads")}

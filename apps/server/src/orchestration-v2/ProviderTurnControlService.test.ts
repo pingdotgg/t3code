@@ -134,6 +134,7 @@ function layerProjectionStore(
     ProjectionStore.ProjectionStoreV2.of({
       apply: () => Effect.void,
       getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
+      getFallbackRestoreCandidates: Effect.die("unused getFallbackRestoreCandidates"),
       getLimitRecoveryWakeAt: () => Effect.die("unused getLimitRecoveryWakeAt"),
       getOpenRemoteDelegatedTasks: Effect.die("unused getOpenRemoteDelegatedTasks"),
       getAgentAwarenessSnapshot: () => Effect.die("unused awareness snapshot"),

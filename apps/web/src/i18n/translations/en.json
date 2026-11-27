@@ -9167,7 +9167,7 @@
   "8ab693ae67cd5e86": "Reset default workspace to default",
   "d1d1342ccb83a14b": "Default workspace",
   "a22721e847136f21": "Unavailable",
-  "ce48b34d9403f3f1": "Used for new threads when the default model's provider is out of usage.",
+  "90c9f80db617eb3e": "Used for new threads, and for active threads when automatic usage-limit switching is enabled, when a provider is out of usage.",
   "fca2f52dd63a3b08": "Reset fallback model to default",
   "d0eb21be71904f84": "Fallback model",
   "ebcfd96d4b112b4e": "None",
@@ -13032,5 +13032,9 @@
       "v": "v"
     },
     " more in Linked items"
-  ]
+  ],
+  "fe3e3df0d22ec31d": "Switch to fallback model on usage limits",
+  "fd886d0157729d0e": "Automatically continue limited threads on your fallback model, and switch back once usage resets.",
+  "73d322c7fefc4ff3": "Select a Fallback model above for automatic switching to take effect.",
+  "67da54eaad0ca73b": "usage quota rate limit fallback switch provider agent auto restore reset"
 }

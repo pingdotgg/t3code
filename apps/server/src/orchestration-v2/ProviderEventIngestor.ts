@@ -22,6 +22,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlError from "effect/sql/SqlError";
 
@@ -33,6 +34,7 @@ import {
 } from "../telemetry/ProviderUsageAnalytics.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as UsageLimitCooldownStore from "./UsageLimitCooldownStore.ts";
 import { UsageLimitResetFallback } from "../usage/UsageLimitSources.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -258,6 +260,9 @@ export const layer: Layer.Layer<
     const agentScope = yield* AgentScope;
     const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const usageLimitResets = yield* UsageLimitResetFallback;
+    const cooldowns = Option.getOrUndefined(
+      yield* Effect.serviceOption(UsageLimitCooldownStore.UsageLimitCooldownStore),
+    );
     const scope = yield* Effect.scope;
     const completedTurnAnalytics = new Set<string>();
 
@@ -823,13 +828,67 @@ export const layer: Layer.Layer<
             effect.pipe(
               Effect.tap((storedEvents) =>
                 Effect.gen(function* () {
+                  if (storedEvents.length === 0 || input.event.type !== "turn.terminal") return;
+                  if (input.event.status === "completed") {
+                    if (cooldowns === undefined) return;
+                    const selection = yield* Effect.gen(function* () {
+                      const { runs } =
+                        input.runId === undefined
+                          ? { runs: [] }
+                          : yield* projections.getThreadRecords(input.threadId, ["runs"], {
+                              runIds: [input.runId],
+                            });
+                      return (
+                        runs[0]?.modelSelection ??
+                        (yield* projections.getThread(input.threadId)).modelSelection
+                      );
+                    }).pipe(Effect.orElseSucceed(() => null));
+                    if (selection !== null) {
+                      yield* cooldowns.clear({
+                        instanceId: selection.instanceId,
+                        model: selection.model,
+                      });
+                    }
+                    return;
+                  }
                   if (
-                    storedEvents.length === 0 ||
-                    input.event.type !== "turn.terminal" ||
                     input.event.status !== "failed" ||
                     input.event.failure.class !== "usage_limit"
                   )
                     return;
+                  if (cooldowns !== undefined) {
+                    const committedError = storedEvents.findLast(
+                      (stored) =>
+                        stored.event.type === "turn-item.updated" &&
+                        stored.event.payload.type === "error",
+                    );
+                    const resetAt =
+                      committedError?.event.type === "turn-item.updated" &&
+                      committedError.event.payload.type === "error"
+                        ? (committedError.event.payload.failure.resetAt ?? null)
+                        : (input.event.failure.resetAt ?? null);
+                    const selection = yield* Effect.gen(function* () {
+                      const { runs } =
+                        input.runId === undefined
+                          ? { runs: [] }
+                          : yield* projections.getThreadRecords(input.threadId, ["runs"], {
+                              runIds: [input.runId],
+                            });
+                      return (
+                        runs[0]?.modelSelection ??
+                        (yield* projections.getThread(input.threadId)).modelSelection
+                      );
+                    }).pipe(Effect.orElseSucceed(() => null));
+                    if (selection !== null) {
+                      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+                      yield* cooldowns.record({
+                        instanceId: selection.instanceId,
+                        model: selection.model,
+                        failedAtMs: nowMs,
+                        resetAt,
+                      });
+                    }
+                  }
                   const instance = yield* instances.getInstance(input.providerInstanceId);
                   if (!instance?.snapshot.refreshUsage) return;
                   yield* instance.snapshot.refreshUsage.pipe(

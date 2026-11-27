@@ -7,10 +7,12 @@ import {
   type UsageLimitSourceAccount,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   type LimitAccount,
+  DEFAULT_UNKNOWN_RESET_COOLDOWN_MS,
   displayLimitWindows,
   cursorUsageWindowDetails,
   collectProviderUsageLimits,
@@ -22,6 +24,8 @@ import {
   collectLimitPools,
   elapsedShare,
   exhaustedUsageWindow,
+  isFallbackOriginRestorable,
+  isModelSelectionExhausted,
   paceOf,
   paceRemainingPercent,
   usesChatGptSharing,
@@ -2078,5 +2082,145 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("cooldown fallback and origin restoration", () => {
+  const agySelection = {
+    instanceId: ProviderInstanceId.make("antigravity"),
+    model: "gemini-4-neon",
+  };
+  const claudeSelection = {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "claude-opus-5-5",
+  };
+  const agyProvider = provider({
+    instanceId: agySelection.instanceId,
+    driver: ProviderDriverKind.make("antigravity"),
+  });
+  const claudeProvider = provider({
+    instanceId: claudeSelection.instanceId,
+    driver: ProviderDriverKind.make("claudeAgent"),
+  });
+
+  it("treats providers without live usage windows as exhausted while in cooldown", () => {
+    const resetAt = "2026-09-03T12:10:00.000Z";
+    const cooldowns = [
+      {
+        instanceId: agySelection.instanceId,
+        model: agySelection.model,
+        failedAtMs: now - 60_000,
+        resetsAtMs: Date.parse(resetAt),
+        resetAt,
+      },
+    ];
+    expect(
+      isModelSelectionExhausted({
+        selection: agySelection,
+        providers: [agyProvider, claudeProvider],
+        now,
+        cooldowns,
+      })?.resetAt,
+    ).toBe(resetAt);
+    expect(
+      resolveNewThreadModelSelection({
+        defaultSelection: agySelection,
+        fallbackSelection: claudeSelection,
+        providers: [agyProvider, claudeProvider],
+        now,
+        cooldowns,
+      }).selection,
+    ).toEqual(claudeSelection);
+    // Once reset passes, Antigravity Neon is no longer exhausted.
+    expect(
+      isModelSelectionExhausted({
+        selection: agySelection,
+        providers: [agyProvider, claudeProvider],
+        now: Date.parse(resetAt),
+        cooldowns,
+      }),
+    ).toBeNull();
+  });
+
+  it("restores Antigravity Neon once resetAt passes or unknown-reset cooldown elapses", () => {
+    const resetAt = "2026-09-03T12:10:00.000Z";
+    const withReset = {
+      originSelection: agySelection,
+      fallbackSelection: claudeSelection,
+      switchedFromRunId: null,
+      switchedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+      resetAt,
+    };
+    expect(
+      isFallbackOriginRestorable({
+        fallbackOrigin: withReset,
+        providers: [agyProvider, claudeProvider],
+        now: Date.parse(resetAt) - 1,
+      }),
+    ).toBe(false);
+    expect(
+      isFallbackOriginRestorable({
+        fallbackOrigin: withReset,
+        providers: [agyProvider, claudeProvider],
+        now: Date.parse(resetAt),
+      }),
+    ).toBe(true);
+
+    const withoutReset = { ...withReset, resetAt: null };
+    expect(
+      isFallbackOriginRestorable({
+        fallbackOrigin: withoutReset,
+        providers: [agyProvider, claudeProvider],
+        now: now + DEFAULT_UNKNOWN_RESET_COOLDOWN_MS - 1,
+      }),
+    ).toBe(false);
+    expect(
+      isFallbackOriginRestorable({
+        fallbackOrigin: withoutReset,
+        providers: [agyProvider, claudeProvider],
+        now: now + DEFAULT_UNKNOWN_RESET_COOLDOWN_MS,
+      }),
+    ).toBe(true);
+  });
+
+  it("requires a fresher live usage probe when restoring a polled provider with resetAt: null", () => {
+    const switchedAt = DateTime.formatIso(DateTime.makeUnsafe(now));
+    const origin = {
+      originSelection: claudeSelection,
+      fallbackSelection: agySelection,
+      switchedFromRunId: null,
+      switchedAt,
+      resetAt: null,
+    };
+    const staleClaude = provider({
+      instanceId: claudeSelection.instanceId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      usageLimits: {
+        checkedAt: "2026-09-03T11:55:00.000Z",
+        windows: [{ ...window, usedPercent: 40 }],
+      },
+    });
+    expect(
+      isFallbackOriginRestorable({
+        fallbackOrigin: origin,
+        providers: [staleClaude, agyProvider],
+        now: now + 60_000,
+      }),
+    ).toBe(false);
+    const freshClaude = provider({
+      instanceId: claudeSelection.instanceId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      usageLimits: {
+        checkedAt: "2026-09-03T12:01:00.000Z",
+        windows: [{ ...window, usedPercent: 40 }],
+      },
+    });
+    expect(
+      isFallbackOriginRestorable({
+        fallbackOrigin: origin,
+        providers: [freshClaude, agyProvider],
+        now: now + 120_000,
+      }),
+    ).toBe(true);
   });
 });

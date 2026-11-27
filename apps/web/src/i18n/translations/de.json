@@ -9160,7 +9160,7 @@
   "8ab693ae67cd5e86": "Standard-Arbeitsbereich auf Standard zurücksetzen",
   "d1d1342ccb83a14b": "Standard-Arbeitsbereich",
   "a22721e847136f21": "Nicht verfügbar",
-  "ce48b34d9403f3f1": "Wird für neue Threads verwendet, wenn das Nutzungskontingent des Anbieters des Standardmodells aufgebraucht ist.",
+  "90c9f80db617eb3e": "Wird für neue Threads verwendet, sowie für aktive Threads, wenn der automatische Wechsel bei Nutzungslimits aktiviert ist, sobald das Nutzungskontingent eines Anbieters aufgebraucht ist.",
   "fca2f52dd63a3b08": "Ausweichmodell auf Standard zurücksetzen",
   "d0eb21be71904f84": "Ausweichmodell",
   "ebcfd96d4b112b4e": "Keins",
@@ -13024,5 +13024,9 @@
       "v": "v"
     },
     " weitere unter Verknüpfte Elemente"
-  ]
+  ],
+  "fe3e3df0d22ec31d": "Bei Nutzungslimits auf Ausweichmodell wechseln",
+  "fd886d0157729d0e": "Limitierte Threads automatisch mit dem Ausweichmodell fortsetzen und zurückwechseln, sobald das Kontingent zurückgesetzt wurde.",
+  "73d322c7fefc4ff3": "Wähle oben ein Ausweichmodell aus, damit der automatische Wechsel wirksam wird.",
+  "67da54eaad0ca73b": "nutzung kontingent nutzungslimit rate limit ausweichmodell fallback wechseln anbieter agent automatisch wiederherstellen zurücksetzen"
 }

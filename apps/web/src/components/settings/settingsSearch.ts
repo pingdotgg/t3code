@@ -501,6 +501,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("usage quota rate limit reset recover continue")],
   },
   {
+    id: "switch-to-fallback-on-usage-limits",
+    title: msg("Switch to fallback model on usage limits"),
+    to: "/settings/threads",
+    searchTerms: [msg("usage quota rate limit fallback switch provider agent auto restore reset")],
+  },
+  {
     id: "working-shelf",
     title: msg("Working section"),
     to: "/settings/general",

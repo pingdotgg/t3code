@@ -9166,7 +9166,7 @@
   "8ab693ae67cd5e86": "Återställ standardarbetsyta till standard",
   "d1d1342ccb83a14b": "Standardarbetsyta",
   "a22721e847136f21": "Inte tillgänglig",
-  "ce48b34d9403f3f1": "Används för nya trådar när standardmodellens leverantör har slut på användning.",
+  "90c9f80db617eb3e": "Används för nya trådar, samt för aktiva trådar när automatiskt byte vid användningsgränser är aktiverat, när en leverantör har slut på kvot.",
   "fca2f52dd63a3b08": "Återställ reservmodell till standard",
   "d0eb21be71904f84": "Reservmodell",
   "ebcfd96d4b112b4e": "Ingen",
@@ -13031,5 +13031,9 @@
       "v": "v"
     },
     " till i Länkade objekt"
-  ]
+  ],
+  "fe3e3df0d22ec31d": "Byt till reservmodell vid användningsgränser",
+  "fd886d0157729d0e": "Fortsätt begränsade trådar automatiskt med reservmodellen och byt tillbaka när användningen återställts.",
+  "73d322c7fefc4ff3": "Välj en reservmodell ovan för att automatiskt byte ska börja gälla.",
+  "67da54eaad0ca73b": "användning kvot hastighetsbegränsning reservmodell fallback byt leverantör agent återställ automatiskt"
 }

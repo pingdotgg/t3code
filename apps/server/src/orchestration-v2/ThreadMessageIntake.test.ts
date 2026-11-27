@@ -10,6 +10,9 @@ import {
   EventId,
   GuestMessageId,
   MessageId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -17,24 +20,30 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2StoredEvent,
+  type ServerProvider,
   type UserInputAttachments,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import {
   createAttachmentId,
   createPendingAttachmentId,
   resolveAttachmentPath,
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorDispatchError,
 } from "./Orchestrator.ts";
+import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
+import * as UsageLimitCooldownStore from "./UsageLimitCooldownStore.ts";
 
 const dispatchCommand = (command: OrchestrationV2Command, sender = { managesProviders: true }) =>
   ThreadMessageIntake.dispatchCommand(command, sender);
@@ -608,4 +617,178 @@ it.effect("a queued /logout edit without provider management must keep an attach
     expect(captured[1]).not.toHaveProperty("attachments");
     expect(captured[2]).not.toHaveProperty("attachments");
   }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect(
+  "routes sends to fallback during Antigravity cooldown and switches back after reset",
+  () =>
+    Effect.gen(function* () {
+      const startMs = Date.parse("2026-10-19T12:00:00.000Z");
+      const resetIso = "2026-10-19T12:05:00.000Z";
+      yield* TestClock.setTime(startMs);
+      const agySelection = {
+        instanceId: ProviderInstanceId.make("antigravity"),
+        model: "gemini-4-neon",
+      };
+      const claudeSelection = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-5-5",
+      };
+      const makeProvider = (
+        instanceId: ProviderInstanceId,
+        driver: ProviderDriverKind,
+      ): ServerProvider => ({
+        instanceId,
+        driver,
+        enabled: true,
+        installed: true,
+        version: "1.0.0",
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-10-19T11:59:00.000Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      });
+      const providers = [
+        makeProvider(agySelection.instanceId, ProviderDriverKind.make("antigravity")),
+        makeProvider(claudeSelection.instanceId, ProviderDriverKind.make("claudeAgent")),
+      ];
+      const captured: OrchestrationV2ServerCommand[] = [];
+      const launched: ThreadLaunchService.ThreadLaunchInput[] = [];
+      const threadId = ThreadId.make("thread-agy-fallback");
+      const projectId = ProjectId.make("project-1");
+      let currentThread: {
+        projectId: ProjectId;
+        modelSelection: typeof agySelection;
+        fallbackOrigin: {
+          originSelection: typeof agySelection;
+          fallbackSelection: typeof claudeSelection;
+          switchedFromRunId: null;
+          switchedAt: string;
+          resetAt: string | null;
+        } | null;
+      } = {
+        projectId,
+        modelSelection: agySelection,
+        fallbackOrigin: null,
+      };
+
+      const layer = Layer.mergeAll(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-fallback-intake-" }).pipe(
+          Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+        ),
+        ServerSettings.layerTest({
+          fallbackOnUsageLimit: true,
+          fallbackModelSelection: claudeSelection,
+          providerInstances: {
+            [agySelection.instanceId]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              enabled: true,
+              config: {},
+            },
+            [claudeSelection.instanceId]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              enabled: true,
+              config: {},
+            },
+          },
+        }),
+        UsageLimitCooldownStore.layer,
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed(providers),
+          streamChanges: Stream.never,
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          dispatch: layerFailingDispatchHandler(captured),
+          getThreadRecords: noPendingRuntimeRequests,
+          getThreadSnapshotWindow: () =>
+            Effect.succeed({ projection: { thread: currentThread } } as never),
+        }),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          launch: (input) => {
+            launched.push(input);
+            return Effect.succeed({
+              threadId,
+              projection: { messages: [] },
+              resumed: false,
+            } as never);
+          },
+        }),
+      );
+
+      yield* Effect.gen(function* () {
+        const cooldowns = yield* UsageLimitCooldownStore.UsageLimitCooldownStore;
+        yield* cooldowns.record({
+          instanceId: agySelection.instanceId,
+          model: agySelection.model,
+          failedAtMs: startMs - 1_000,
+          resetAt: resetIso,
+        });
+
+        // 1. Send on an Antigravity Neon thread during cooldown routes to Claude Code Opus 5.5.
+        yield* dispatchCommand({
+          type: "message.dispatch",
+          commandId: CommandId.make("send-during-cooldown"),
+          threadId,
+          messageId: MessageId.make("msg-1"),
+          text: "continue",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        }).pipe(Effect.flip);
+        expect(captured[0]?.type).toBe("message.dispatch");
+        if (captured[0]?.type === "message.dispatch") {
+          expect(captured[0].modelSelection).toEqual(claudeSelection);
+          expect(captured[0].fallbackOrigin?.originSelection).toEqual(agySelection);
+          expect(captured[0].fallbackOrigin?.resetAt).toBe(resetIso);
+        }
+
+        // 2. Launching a new Antigravity Neon thread during cooldown launches on Claude Code Opus 5.5.
+        yield* ThreadMessageIntake.launchThread({
+          commandId: CommandId.make("launch-during-cooldown"),
+          projectId,
+          title: "New thread",
+          modelSelection: agySelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        expect(launched[0]?.modelSelection).toEqual(claudeSelection);
+        expect(launched[0]?.fallbackOrigin?.originSelection).toEqual(agySelection);
+
+        // 3. Once resetAt passes, sending on the switched thread switches back to Antigravity Neon.
+        currentThread = {
+          projectId,
+          modelSelection: claudeSelection,
+          fallbackOrigin: {
+            originSelection: agySelection,
+            fallbackSelection: claudeSelection,
+            switchedFromRunId: null,
+            switchedAt: DateTime.formatIso(DateTime.makeUnsafe(startMs)),
+            resetAt: resetIso,
+          },
+        };
+        yield* TestClock.setTime(Date.parse(resetIso));
+        yield* dispatchCommand({
+          type: "message.dispatch",
+          commandId: CommandId.make("send-after-reset"),
+          threadId,
+          messageId: MessageId.make("msg-2"),
+          text: "next task",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        }).pipe(Effect.flip);
+        expect(captured[1]?.type).toBe("message.dispatch");
+        if (captured[1]?.type === "message.dispatch") {
+          expect(captured[1].modelSelection).toEqual(agySelection);
+          expect(captured[1].fallbackOrigin).toBeNull();
+        }
+      }).pipe(Effect.provide(layer));
+    }),
 );

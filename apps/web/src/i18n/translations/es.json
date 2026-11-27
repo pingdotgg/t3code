@@ -9158,7 +9158,7 @@
   "8ab693ae67cd5e86": "Restablecer el espacio de trabajo predeterminado al valor predeterminado",
   "d1d1342ccb83a14b": "Espacio de trabajo predeterminado",
   "a22721e847136f21": "No disponible",
-  "ce48b34d9403f3f1": "Se usa para los nuevos hilos cuando el proveedor del modelo predeterminado se queda sin uso.",
+  "90c9f80db617eb3e": "Se usa para hilos nuevos, y para hilos activos cuando el cambio automático por límites de uso está activado, cuando un proveedor se queda sin uso disponible.",
   "fca2f52dd63a3b08": "Restablecer el modelo alternativo al valor predeterminado",
   "d0eb21be71904f84": "Modelo de respaldo",
   "ebcfd96d4b112b4e": "Ninguno",
@@ -13019,5 +13019,9 @@
       "v": "v"
     },
     " más en Elementos vinculados"
-  ]
+  ],
+  "fe3e3df0d22ec31d": "Cambiar al modelo de respaldo ante límites de uso",
+  "fd886d0157729d0e": "Continúa automáticamente los hilos limitados con tu modelo de respaldo y vuelve al original cuando se restablezca el uso.",
+  "73d322c7fefc4ff3": "Selecciona un modelo de respaldo arriba para que el cambio automático surta efecto.",
+  "67da54eaad0ca73b": "uso cuota límite de uso respaldo fallback cambiar proveedor agente restaurar automáticamente restablecer"
 }

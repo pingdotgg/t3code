@@ -109,6 +109,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
@@ -3279,9 +3280,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const detachReason = freshContext
         ? FRESH_CONTEXT_DETACH_REASON
         : "Provider or model selection changed.";
+      const currentFallbackOrigin = projection.thread.fallbackOrigin ?? null;
+      const nextFallbackOrigin =
+        queuedRun.pendingFallbackOrigin !== undefined
+          ? queuedRun.pendingFallbackOrigin
+          : selectionChanged &&
+              currentFallbackOrigin !== null &&
+              !modelSelectionsEqual(
+                queuedRun.modelSelection,
+                currentFallbackOrigin.fallbackSelection,
+              )
+            ? null
+            : currentFallbackOrigin;
+      const fallbackOriginChanged = !Equal.equals(currentFallbackOrigin, nextFallbackOrigin);
       yield* writeSystemEvents(
         [
-          ...(selectionChanged
+          ...(selectionChanged || fallbackOriginChanged
             ? [
                 {
                   type:
@@ -3295,6 +3309,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ...projection.thread,
                     providerInstanceId: queuedRun.providerInstanceId,
                     modelSelection: queuedRun.modelSelection,
+                    fallbackOrigin: nextFallbackOrigin,
                     updatedAt: now,
                   },
                 },
@@ -4134,6 +4149,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.titleRenamed === true ? { titleRenamed: true } : {}),
       providerInstanceId: command.modelSelection.instanceId,
       modelSelection: command.modelSelection,
+      ...(command.fallbackOrigin === undefined ? {} : { fallbackOrigin: command.fallbackOrigin }),
       runtimeMode: command.runtimeMode,
       interactionMode: command.interactionMode,
       branch: command.branch,
@@ -4835,6 +4851,44 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const providerSwitchPlan =
       command.type === "thread.model-selection.set" || command.type === "provider.switch"
         ? yield* Effect.gen(function* () {
+            if (
+              command.type === "thread.model-selection.set" &&
+              command.expectedFallbackSelection !== undefined
+            ) {
+              const currentProjection = yield* loadProjectionForCommand(
+                command,
+                ["runs", "runtimeRequests"],
+                { turnItemTypes: [] },
+              );
+              const hasBusyWork =
+                currentProjection.runs.some((run) => isActiveRun(run) || run.status === "queued") ||
+                currentProjection.runtimeRequests.some((request) => request.status === "pending");
+              if (hasBusyWork) {
+                return yield* new OrchestratorProviderSelectionBusyError({
+                  commandId: command.commandId,
+                  threadId: command.threadId,
+                });
+              }
+              const activeFallback = currentProjection.thread.fallbackOrigin ?? null;
+              if (
+                activeFallback === null ||
+                !modelSelectionsEqual(
+                  currentProjection.thread.modelSelection,
+                  command.expectedFallbackSelection,
+                ) ||
+                !modelSelectionsEqual(
+                  activeFallback.fallbackSelection,
+                  command.expectedFallbackSelection,
+                )
+              ) {
+                return yield* new OrchestratorCommandRejectedError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause:
+                    "Thread model selection changed before automatic fallback restore could apply.",
+                });
+              }
+            }
             yield* providerAdapters.get(command.modelSelection.instanceId).pipe(
               Effect.mapError(
                 (cause) =>
@@ -5590,6 +5644,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             providerInstanceId: command.modelSelection.instanceId,
             modelSelection: command.modelSelection,
+            fallbackOrigin:
+              command.type === "thread.model-selection.set" && command.fallbackOrigin !== undefined
+                ? command.fallbackOrigin
+                : null,
             updatedAt: now,
           };
       }
@@ -8329,6 +8387,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.usageLimitContinuationOfRunId === undefined
           ? {}
           : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
+        ...(command.fallbackOrigin === undefined
+          ? {}
+          : { pendingFallbackOrigin: command.fallbackOrigin }),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         ...(freshContext ? { freshContext: true } : {}),
         ...output,
@@ -8525,9 +8586,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (transfer) => transfer.id !== pendingMergeBackTransfer?.id,
     );
     const now = yield* DateTime.now;
+    const currentFallbackOrigin = projection.thread.fallbackOrigin ?? null;
+    const nextFallbackOrigin =
+      command.fallbackOrigin !== undefined
+        ? command.fallbackOrigin
+        : command.modelSelection !== undefined &&
+            currentFallbackOrigin !== null &&
+            !modelSelectionsEqual(command.modelSelection, currentFallbackOrigin.fallbackSelection)
+          ? null
+          : currentFallbackOrigin;
+    const fallbackOriginChanged = !Equal.equals(currentFallbackOrigin, nextFallbackOrigin);
     if (
       !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
-      projection.thread.providerInstanceId !== modelSelection.instanceId
+      projection.thread.providerInstanceId !== modelSelection.instanceId ||
+      fallbackOriginChanged
     ) {
       yield* emit(
         events,
@@ -8544,6 +8616,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...projection.thread,
           providerInstanceId: modelSelection.instanceId,
           modelSelection,
+          fallbackOrigin: nextFallbackOrigin,
           updatedAt: now,
         },
       });
