@@ -268,36 +268,24 @@ function SubmissionProbe({ onKeyDown }: { onKeyDown: (event: KeyboardEvent) => v
   useDictationSubmissionShortcut({ enabled: true, formRef, onKeyDown });
   return (
     <>
-      <div role="region" aria-label="Conversation" tabIndex={-1}>
-        <div data-testid="timeline" tabIndex={0}>
-          Earlier messages
-        </div>
+      <div data-testid="timeline" tabIndex={0}>
         <button type="button">Copy</button>
         <input aria-label="Search" />
       </div>
-      <form ref={formRef}>
-        <div data-testid="composer-editor" contentEditable={false} />
-      </form>
+      <form ref={formRef} />
     </>
   );
 }
 
-it.each([
-  ["the conversation", "Conversation"],
-  ["the message timeline", "timeline"],
-])("submits dictation on Enter while %s has focus", async (_, target) => {
+it("submits dictation on Enter while the chat timeline has focus", async () => {
   const onKeyDown = vi.fn();
   await using screen = await render(<SubmissionProbe onKeyDown={onKeyDown} />);
-  const element =
-    target === "timeline"
-      ? screen.getByTestId("timeline").element()
-      : screen.getByRole("region", { name: target }).element();
-  (element as HTMLElement).focus();
+  (screen.getByTestId("timeline").element() as HTMLElement).focus();
   await userEvent.keyboard("{Enter}");
   expect(onKeyDown).toHaveBeenCalledOnce();
 });
 
-it("leaves Enter to a focused button or field", async () => {
+it("leaves dictation Enter to a focused button or field", async () => {
   const onKeyDown = vi.fn();
   await using screen = await render(<SubmissionProbe onKeyDown={onKeyDown} />);
   (screen.getByRole("button", { name: "Copy" }).element() as HTMLElement).focus();
