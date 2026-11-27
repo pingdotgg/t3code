@@ -43,16 +43,10 @@ export function threadSearchPullRequests(thread: {
     const newestFirst = [...visibleThreadPullRequests(thread.pullRequests)].sort(
       (left, right) => threadPullRequestUpdatedAtMs(right) - threadPullRequestUpdatedAtMs(left),
     );
-    const branchPr = thread.branchPullRequest;
-    // The synced link carries the title, so a matching branch PR would only shadow it.
-    const branchIsLinked =
-      branchPr != null &&
-      newestFirst.some(
-        (link) =>
-          link.number === branchPr.number &&
-          (link.repository.toLowerCase() === branchPr.repository.toLowerCase() ||
-            link.url === branchPr.url),
-      );
+    // The synced link carries the title, so the same PR from the branch would only shadow it.
+    // Only the URL names the host; another forge can share the repository path and number.
+    const branchUrl = thread.branchPullRequest?.url.toLowerCase();
+    const branchIsLinked = newestFirst.some((link) => link.url.toLowerCase() === branchUrl);
     return (branchIsLinked ? [] : branch).concat(
       newestFirst.map((link, index) =>
         entry(link, index < SEARCHED_PULL_REQUEST_TITLES ? (link.snapshot?.title ?? null) : null),

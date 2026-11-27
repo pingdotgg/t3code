@@ -485,6 +485,20 @@ describe("threadSearchPullRequests", () => {
     ]);
   });
 
+  it("keeps a branch PR whose repository and number match a link on another host", () => {
+    expect(
+      threadSearchPullRequests({
+        branchPullRequest,
+        pullRequests: [
+          link(42, {
+            host: "gitlab.com",
+            url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
+          }),
+        ],
+      }).flatMap((entry) => entry.references),
+    ).toContain(branchPullRequest.url);
+  });
+
   it("keeps a branch PR the links do not include", () => {
     expect(
       threadSearchPullRequests({
