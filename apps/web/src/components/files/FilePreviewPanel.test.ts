@@ -197,6 +197,41 @@ describe("document preview contents", () => {
     },
   );
 
+  it("keeps successive rows of a nested RTF table on separate lines", () => {
+    const source = String.raw`{\rtf1\ansi
+\trowd\cellx3000
+\pard\intbl\itap2 Item\nestcell\pard\intbl\itap2 Quantity\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}
+\pard\intbl\itap2 Bolts\nestcell\pard\intbl\itap2 Four\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}
+\pard\intbl\itap1\cell\row
+}`;
+    const result = openRtf(bytes(source));
+    if (result.type !== "document") throw new Error("Expected document");
+    const text = result.pages[0]!.html.replaceAll("<br>", "\n").replaceAll(/<[^>]*>/g, "");
+    expect(text).toMatch(/Item\tQuantity\t\nBolts\tFour/);
+  });
+
+  it.each([
+    ["an unknown destination", String.raw`A{\*\vendor \nesttableprops\nestrow}B`, "AB"],
+    ["an uppercase suffix", String.raw`A{\*\nesttablepropsVendor\nestrow}B`, "AB"],
+    ["a child destination", String.raw`A{\*\nesttableprops{\*\vendor\nestrow}\nestrow}B`, "A<br>B"],
+    [
+      "a compatibility paragraph",
+      String.raw`{\intbl\itap2 A\nestcell}{\*\nesttableprops\nestrow}{\nonesttables\par}{\intbl\itap2 B\nestcell}{\*\nesttableprops\nestrow}`,
+      "A\t<br>B\t<br>",
+    ],
+    [
+      "an ungrouped row marker",
+      String.raw`\intbl A\nestcell\nestrow B\nestcell\nestrow`,
+      "A\t<br>B\t<br>",
+    ],
+  ])("keeps nested row boundaries with %s", (_name, source, expected) => {
+    const result = openRtf(bytes(String.raw`{\rtf1\ansi ` + source + "}"));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(`<p data-rtf-whitespace>${expected}</p>`);
+  });
+
   it("reads EPUB chapters independently of the total rendered size", async () => {
     const archive = new JSZip()
       .file(
