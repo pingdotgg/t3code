@@ -893,7 +893,7 @@ export function ServerBrowserSurface(props: {
             </MenuPopup>
           </Menu>
         ) : null}
-        {visible && framesStalled && !pdfUrl ? (
+        {visible && framesStalled && !pdfUrl && control?.dialog?.type !== "auth" ? (
           <div className="absolute inset-0 flex items-center justify-center bg-background p-4 text-center">
             <p role="alert" className="max-w-sm text-sm text-muted-foreground">
               <T>

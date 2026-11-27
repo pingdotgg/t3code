@@ -536,7 +536,7 @@ function PreviewStreamDocumentView({
                     accessibilityLabel={gt("Username")}
                     autoCapitalize="none"
                     autoCorrect={false}
-                    className="rounded-lg border border-input-border bg-input px-3 py-2 text-foreground"
+                    className="min-h-[44px] rounded-lg border border-input-border bg-input px-3 py-2 text-foreground android:min-h-[48px]"
                     placeholder={gt("Username")}
                     placeholderTextColorClassName="accent-placeholder"
                     selectionColorClassName="accent-focus/32"
@@ -548,7 +548,7 @@ function PreviewStreamDocumentView({
                     autoCapitalize="none"
                     autoCorrect={false}
                     secureTextEntry
-                    className="rounded-lg border border-input-border bg-input px-3 py-2 text-foreground"
+                    className="min-h-[44px] rounded-lg border border-input-border bg-input px-3 py-2 text-foreground android:min-h-[48px]"
                     placeholder={gt("Password")}
                     placeholderTextColorClassName="accent-placeholder"
                     selectionColorClassName="accent-focus/32"

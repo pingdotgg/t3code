@@ -3492,16 +3492,20 @@ const make = Effect.gen(function* () {
           const url = normalizePreviewUrl(message.url);
           tab.pendingInitialRequestUrl = null;
           await leaveBusyPage(tab, session);
-          tab.control.trackUntilHandoff(tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS));
+          tab.control.trackUntilHandoff(
+            settleOnAuth(tab, () => tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS)),
+          );
         }
         return;
       case "history":
         tab.pendingInitialRequestUrl = null;
         await leaveBusyPage(tab, session);
         tab.control.trackUntilHandoff(
-          num(message.delta) < 0
-            ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
-            : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS),
+          settleOnAuth(tab, () =>
+            num(message.delta) < 0
+              ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
+              : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS),
+          ),
         );
         return;
       case "stopLoading": {
@@ -3525,7 +3529,9 @@ const make = Effect.gen(function* () {
           await session.send("Page.reload", { ignoreCache: true });
           return;
         }
-        tab.control.trackUntilHandoff(tab.page.reload(VIEWER_NAVIGATION_OPTIONS));
+        tab.control.trackUntilHandoff(
+          settleOnAuth(tab, () => tab.page.reload(VIEWER_NAVIGATION_OPTIONS)),
+        );
         return;
       case "selectMenu": {
         const offer = viewer.selectMenu;
