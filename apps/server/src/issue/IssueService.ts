@@ -17,6 +17,7 @@ import {
   type IssueTrackerAccountId,
   SourceControlProviderKind,
   type IssueCandidates,
+  type IssueCandidatesInput,
   type IssueCommentInput,
   type IssueCommentsPage,
   type IssueCommentsPageInput,
@@ -202,7 +203,9 @@ export class IssueService extends Context.Service<
       input: IssueCommentsPageInput,
     ) => Effect.Effect<IssueCommentsPage, IssueError>;
     readonly templates: (input: IssueScopeRef) => Effect.Effect<IssueTemplateList, IssueError>;
-    readonly candidates: (input: IssueScopeRef) => Effect.Effect<IssueCandidates, IssueError>;
+    readonly candidates: (
+      input: IssueCandidatesInput,
+    ) => Effect.Effect<IssueCandidates, IssueError>;
     readonly create: (input: IssueCreateInput) => Effect.Effect<IssueCreateResult, IssueError>;
     readonly comment: (input: IssueCommentInput) => Effect.Effect<void, IssueError>;
     readonly update: (input: IssueUpdateInput) => Effect.Effect<void, IssueError>;
@@ -669,6 +672,7 @@ const make = Effect.gen(function* () {
                 cwd: project.project.workspaceRoot,
                 host: project.host,
                 scope: project.scope,
+                ...(input.query?.trim() ? { query: input.query.trim() } : {}),
               })
               .pipe(Effect.mapError(toIssueError("candidates"))),
       ),
@@ -701,6 +705,9 @@ const make = Effect.gen(function* () {
             new IssueOperationError({ operation: "comment", detail: "A comment needs some text." }),
           );
         }
+        if (input.audience === "internal" && project.api.capabilities.internalComments !== true) {
+          return Effect.fail(unsupported("comment", "internal notes"));
+        }
         return project.api.comment === undefined || !project.api.capabilities.comment
           ? Effect.fail(unsupported("comment", "comments"))
           : project.api
@@ -710,6 +717,7 @@ const make = Effect.gen(function* () {
                 scope: project.scope,
                 key: input.key,
                 body: input.body,
+                audience: input.audience,
               })
               .pipe(
                 Effect.mapError(toIssueError("comment")),

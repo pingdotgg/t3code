@@ -5725,5 +5725,8 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "201490988858b511": "withdrawn by {by}",
-  "46d614fa7b4bf1e5": "Workflow runs"
+  "46d614fa7b4bf1e5": "Workflow runs",
+  "f6cf1627f4acc5ef": "Comment audience",
+  "eb1fd384ad5919dd": "Internal note",
+  "b45f0b467e9406d0": "Reply to customer"
 }
