@@ -965,6 +965,7 @@ function WorkflowTimeline({
   readonly current: string | null;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const completed = node.run.status === "completed";
   const ask = (asked: WorkflowQuestion) => (
     <div className="ms-8 mt-1 mb-2">
@@ -1018,7 +1019,7 @@ function WorkflowTimeline({
                     count: names.length - 2,
                   })
             }
-            duration={workflowStepTime(Math.max(0, row.endMs - row.startMs))}
+            duration={workflowStepTime(Math.max(0, row.endMs - row.startMs), m)}
             selected={focus === key}
             current={current === key}
             onPick={() => onPick(key)}
@@ -1079,7 +1080,7 @@ function WorkflowTimeline({
                 </span>
               ) : null}
               <span className="min-w-12 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
-                {workflowStepTime(running > 0 ? wholeSeconds(endMs - startMs) : endMs - startMs)}
+                {workflowStepTime(running > 0 ? wholeSeconds(endMs - startMs) : endMs - startMs, m)}
               </span>
               <span aria-hidden className="hidden w-3 shrink-0 @2xl/feed:block" />
             </div>
@@ -1362,7 +1363,7 @@ function WorkflowBeatRow({
       }
       aside={aside}
       {...(failed ? { asideTone: "failed" as const } : {})}
-      duration={workflowStepTime(elapsedOf(beat))}
+      duration={workflowStepTime(elapsedOf(beat), m)}
       selected={selected}
       current={current}
       onPick={onPick}

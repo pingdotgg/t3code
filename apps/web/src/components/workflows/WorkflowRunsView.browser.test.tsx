@@ -984,13 +984,16 @@ describe("WorkflowRunsView", () => {
     localStorage.removeItem(KIND_KEY);
   });
 
-  it("says how long a finished run took in the UI language", async () => {
+  it("says how long a finished run and its steps took in the UI language", async () => {
     // GTProvider leaves its locale in a cookie; this sets it back to English.
     initializeI18n(() => {});
-    setup({
-      runs: [run({ runId: "fix", title: "Fix", status: "completed", endedAt: at(2) })],
-      questions: [],
-    });
+    setup(
+      {
+        runs: [run({ runId: "fix", title: "Fix", status: "completed", endedAt: at(2) })],
+        questions: [],
+      },
+      { fix: [step({ name: "build", kind: "step", endedAt: at(2) })] },
+    );
     const translations = await getTranslationsSnapshot("ja");
     await using screen = await render(
       <GTProvider locale="ja" translations={translations}>
@@ -999,7 +1002,7 @@ describe("WorkflowRunsView", () => {
     );
 
     await expect.element(screen.getByText("所要時間 2分0秒")).toBeVisible();
-    expect(screen.getByText("所要時間 2m 0s").query()).toBeNull();
+    await expect.element(screen.getByText("2分0秒", { exact: true })).toBeVisible();
     initializeI18n(() => {});
   });
 });
