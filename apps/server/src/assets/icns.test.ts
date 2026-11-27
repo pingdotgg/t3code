@@ -30,16 +30,21 @@ const widthOf = (png: Uint8Array | null) =>
   png ? new DataView(png.buffer, png.byteOffset).getUint32(16) : null;
 
 describe("extractIcnsPng", () => {
-  it("picks the smallest PNG that covers the requested size", () => {
-    const file = icns(
-      ["TOC ", new Uint8Array(16)],
-      ["ic09", pngHeader(512)],
-      ["icp5", pngHeader(32)],
-      ["ic07", pngHeader(128)],
-      ["ic08", pngHeader(256)],
+  it("copies the smallest PNG that covers the requested size", () => {
+    const file = Buffer.from(
+      icns(
+        ["TOC ", new Uint8Array(16)],
+        ["ic09", pngHeader(512)],
+        ["icp5", pngHeader(32)],
+        ["ic07", pngHeader(128)],
+        ["ic08", pngHeader(256)],
+      ),
     );
+    const png = extractIcnsPng(file, 96);
 
-    expect(widthOf(extractIcnsPng(file, 96))).toBe(128);
+    expect(widthOf(png)).toBe(128);
+    file.fill(0);
+    expect(widthOf(png)).toBe(128);
   });
 
   it("stops at an entry whose length runs past the file", () => {

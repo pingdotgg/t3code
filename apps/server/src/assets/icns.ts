@@ -23,5 +23,5 @@ export function extractIcnsPng(bytes: Uint8Array, minSize: number): Uint8Array |
       (best.width < minSize ? width > best.width : width >= minSize && width < best.width);
     if (isBetter) best = { png: entry, width };
   }
-  return best?.png.slice() ?? null;
+  return best === null ? null : Uint8Array.from(best.png);
 }
