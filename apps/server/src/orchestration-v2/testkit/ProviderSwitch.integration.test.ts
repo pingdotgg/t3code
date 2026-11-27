@@ -1675,6 +1675,17 @@ describe("orchestration v2 provider switching", () => {
         assert.notInclude(importHandoffTargets, providerThread.id);
         assert.lengthOf(importHandoffTargets, scenario === "after-failed-switch" ? 1 : 0);
         if (scenario === "first-send") assert.deepEqual(projection.contextHandoffs, []);
+        if (scenario === "after-failed-switch") {
+          const codexRun = projection.runs[0];
+          const handoffItem = projection.turnItems.find(
+            (item) => item.type === "handoff" && item.runId === codexRun?.id,
+          );
+          assert.equal(
+            handoffItem?.type === "handoff" ? handoffItem.contextHandoffId : null,
+            codexRun?.contextHandoffId,
+          );
+          assert.equal(handoffItem?.title, "Imported context");
+        }
         assert.notInclude(claudeTurn?.text ?? "", "Remember the code word PELICAN.");
       }).pipe(
         Effect.provide(

@@ -9149,8 +9149,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT payload_json
           FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND thread_id = ${threadId}`}
-            ${options?.includeArchived === true ? sql`` : sql`AND json_extract(payload_json, '$.archivedAt') IS NULL`}
-            AND json_array_length(payload_json, '$.pullRequests') > 0
+            ${
+              options?.includeArchived === true
+                ? sql`AND json_type(payload_json, '$.pullRequests[0]') IS NOT NULL`
+                : // Keep identical to migration 098's active_shell_idx expression and WHERE so sweeps walk that index.
+                  sql`AND archived_at IS NULL
+                    AND (CASE WHEN json_valid(payload_json) THEN json_type(payload_json, '$.pullRequests[0]') END) IS NOT NULL`
+            }
           ORDER BY updated_at ASC, thread_id ASC
         `;
           return yield* Effect.forEach(rows, (row) =>
