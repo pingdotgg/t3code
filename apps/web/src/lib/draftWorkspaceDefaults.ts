@@ -14,15 +14,24 @@ interface PendingWorkspaceDefault {
 
 const pendingDefaults = new Map<DraftId, PendingWorkspaceDefault>();
 
+function isInProject(
+  draft: DraftSessionState | null,
+  projectRef: ScopedProjectRef,
+): draft is DraftSessionState {
+  return (
+    draft !== null &&
+    draft.promotedTo == null &&
+    draft.environmentId === projectRef.environmentId &&
+    draft.projectId === projectRef.projectId
+  );
+}
+
 function acceptsWorkspaceDefault(
   draft: DraftSessionState | null,
   pending: PendingWorkspaceDefault,
 ): draft is DraftSessionState {
   return (
-    draft !== null &&
-    draft.promotedTo == null &&
-    draft.environmentId === pending.projectRef.environmentId &&
-    draft.projectId === pending.projectRef.projectId &&
+    isInProject(draft, pending.projectRef) &&
     draft.envMode === pending.workspace.envMode &&
     !draft.workspaceExplicit &&
     draft.worktreePath === null &&
@@ -30,21 +39,38 @@ function acceptsWorkspaceDefault(
   );
 }
 
-const pendingCheckouts = new Map<DraftId, Promise<boolean>>();
+type CheckoutOutcome = boolean | "moved";
 
-/** A waiting send can resume only after the current checkout has been applied. */
-export function trackPendingDraftCheckout(draftId: DraftId, checkoutReady: Promise<boolean>) {
+const pendingCheckouts = new Map<DraftId, Promise<CheckoutOutcome>>();
+
+/**
+ * A waiting send can resume only after the current checkout has been applied. Moving the draft
+ * to another project drops the checkout, even if the draft moves back before it finishes.
+ */
+export function trackPendingDraftCheckout(
+  draftId: DraftId,
+  projectRef: ScopedProjectRef,
+  checkoutReady: Promise<boolean>,
+) {
+  const { promise: settled, resolve } = Promise.withResolvers<CheckoutOutcome>();
   const isCurrent = () => pendingCheckouts.get(draftId) === settled;
-  const settled: Promise<boolean> = checkoutReady
-    .catch(() => false)
-    .finally(() => {
-      if (isCurrent()) pendingCheckouts.delete(draftId);
-    });
+  const release = (outcome: CheckoutOutcome) => {
+    unsubscribe();
+    if (isCurrent()) pendingCheckouts.delete(draftId);
+    resolve(outcome);
+  };
+  const unsubscribe = useComposerDraftStore.subscribe((state) => {
+    if (!isInProject(state.getDraftSession(draftId), projectRef)) release("moved");
+  });
   pendingCheckouts.set(draftId, settled);
+  checkoutReady.then(release, () => release(false));
   return isCurrent;
 }
 
-export function readPendingWorkspaceDefault(draftId: DraftId): Promise<boolean | void> | null {
+/** "moved" means the send waited on a checkout the draft left by changing projects. */
+export function readPendingWorkspaceDefault(
+  draftId: DraftId,
+): Promise<CheckoutOutcome | void> | null {
   const checkout = pendingCheckouts.get(draftId);
   if (checkout) return checkout;
   const pending = pendingDefaults.get(draftId);
