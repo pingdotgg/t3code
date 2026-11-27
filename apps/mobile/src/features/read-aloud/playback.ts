@@ -26,7 +26,9 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentSession } from "../../state/session";
 import { createAudioPlaybackSession, disposeAudioPlayer } from "../../lib/audioSession";
 import { runSpeech } from "../voice-input/voiceDestination";
-import { throttleAudioLevels } from "./readAloudLevel";
+
+// How often the meter shows the loudness at the playing position.
+const METER_FRAMES_PER_SECOND = 15;
 
 function pauseInBackground(settings: ReadAloudSettings) {
   const shouldPause = !settings.backgroundPlayback && AppState.currentState !== "active";
@@ -196,16 +198,28 @@ export const readAloudController = createReadAloudController(
       settings.backgroundPlayback,
     );
     let timed: ReturnType<typeof createTimedWords> | null = null;
+    // The environment measures the loudness: iOS cannot tap a stream of unknown length, and
+    // Android samples only with the microphone permission.
+    const timedWords = () =>
+      (timed ??= createTimedWords({
+        text,
+        load: (after, levelsAfter, signal) =>
+          runSpeech(getSpeechSynthesisTimings(prepared, token, after, levelsAfter), signal),
+        clock: () => ({
+          seconds: player.currentTime,
+          rate: player.playbackRate,
+          playing: player.playing,
+        }),
+        levels: true,
+      }));
     const levelListeners = new Set<(level: number) => void>();
-    let sampling: { remove: () => void } | null = null;
+    let metering: ReturnType<typeof setInterval> | undefined;
     const reportLevel = (level: number) => {
       for (const listener of levelListeners) listener(level);
     };
-    const stopSampling = () => {
-      if (!sampling) return;
-      sampling.remove();
-      sampling = null;
-      player.setAudioSamplingEnabled(false);
+    const stopMetering = () => {
+      clearInterval(metering);
+      metering = undefined;
       reportLevel(0);
     };
     let done: () => void = () => {};
@@ -247,7 +261,7 @@ export const readAloudController = createReadAloudController(
       },
       stop: () => {
         timed?.stop();
-        stopSampling();
+        stopMetering();
         levelListeners.clear();
         stopWatching();
         session.stop();
@@ -255,19 +269,7 @@ export const readAloudController = createReadAloudController(
         done();
       },
       finished,
-      words: (listener) => {
-        timed ??= createTimedWords({
-          text,
-          load: (after, signal) =>
-            runSpeech(getSpeechSynthesisTimings(prepared, token, after), signal),
-          clock: () => ({
-            seconds: player.currentTime,
-            rate: player.playbackRate,
-            playing: player.playing,
-          }),
-        });
-        return timed.subscribe(listener);
-      },
+      words: (listener) => timedWords().subscribe(listener),
       seek: (at) => {
         const seconds = timed?.secondsAt(at);
         // The synthesis stream has no byte ranges, so its length stays unknown (0) and a seek can
@@ -282,16 +284,15 @@ export const readAloudController = createReadAloudController(
       // Audio a provider made at `settings.speed` plays at 1 for that speed.
       setSpeed: (speed) => player.setPlaybackRate(speedApplied ? speed / settings.speed : speed),
       levels: (listener) => {
-        if (!player.isAudioSamplingSupported) return () => {};
         levelListeners.add(listener);
-        if (!sampling) {
-          // Android samples only with the microphone permission; without it the meter stays still.
-          player.setAudioSamplingEnabled(true);
-          sampling = player.addListener("audioSampleUpdate", throttleAudioLevels(reportLevel));
-        }
+        const words = timedWords();
+        metering ??= setInterval(
+          () => reportLevel(player.playing ? words.levelAt(player.currentTime) : 0),
+          1000 / METER_FRAMES_PER_SECOND,
+        );
         return () => {
           levelListeners.delete(listener);
-          if (levelListeners.size === 0) stopSampling();
+          if (levelListeners.size === 0) stopMetering();
         };
       },
     };

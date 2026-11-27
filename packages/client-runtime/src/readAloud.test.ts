@@ -447,3 +447,38 @@ it("follows the environment's word timings on the audio clock and estimates them
     vi.useRealTimers();
   }
 });
+
+it("follows the loudness the environment measured when asked, and only then", async () => {
+  const requested: Array<number | undefined> = [];
+  const levels = [
+    { seconds: 0.5, level: 0.2 },
+    { seconds: 0.6, level: 0.8 },
+  ];
+  const timed = createTimedWords({
+    text: "one",
+    load: async (_after, levelsAfter) => {
+      requested.push(levelsAfter);
+      return { words: [], levels, done: true };
+    },
+    clock: () => ({ seconds: 0, rate: 1, playing: false }),
+    levels: true,
+  });
+  await vi.waitFor(() => expect(timed.levelAt(0.5)).toBe(0.2));
+  expect(requested).toEqual([0]);
+  // The nearest level, and none past the last one by more than their spacing.
+  expect(timed.levelAt(0.58)).toBe(0.8);
+  expect(timed.levelAt(0.7)).toBe(0.8);
+  expect(timed.levelAt(0.71)).toBe(0);
+  timed.stop();
+
+  const plain: Array<number | undefined> = [];
+  createTimedWords({
+    text: "one",
+    load: async (_after, levelsAfter) => {
+      plain.push(levelsAfter);
+      return { words: [], done: true };
+    },
+    clock: () => ({ seconds: 0, rate: 1, playing: false }),
+  }).stop();
+  await vi.waitFor(() => expect(plain).toEqual([undefined]));
+});

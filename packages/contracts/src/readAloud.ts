@@ -95,14 +95,28 @@ export const SpeechSynthesisWord = Schema.Struct({
   endSeconds: Schema.Finite,
 });
 export type SpeechSynthesisWord = typeof SpeechSynthesisWord.Type;
-/** Reads the word timings of a started synthesis after the first `after` words. */
+/** How loud the audio is around `seconds` into it, from 0 (silence) to 1. */
+export const SpeechSynthesisLevel = Schema.Struct({
+  seconds: Schema.Finite,
+  level: Schema.Finite,
+});
+export type SpeechSynthesisLevel = typeof SpeechSynthesisLevel.Type;
+/**
+ * Reads the word timings of a started synthesis after the first `after` words. `levelsAfter` also
+ * reads its loudness after that many levels, for players that cannot measure the audio they play.
+ */
 export const SpeechSynthesisTimingsRequest = Schema.Struct({
   token: Schema.String,
   after: NonNegativeInt,
+  levelsAfter: Schema.optionalKey(NonNegativeInt),
 });
-/** Answers once new words exist or synthesis ends; `durationSeconds` comes with the end. */
+/**
+ * Answers once new words, or new levels when asked for, exist or synthesis ends;
+ * `durationSeconds` comes with the end. Levels exist only for audio the environment decodes.
+ */
 export const SpeechSynthesisTimings = Schema.Struct({
   words: Schema.Array(SpeechSynthesisWord),
+  levels: Schema.optionalKey(Schema.Array(SpeechSynthesisLevel)),
   done: Schema.Boolean,
   durationSeconds: Schema.optionalKey(Schema.Finite),
 });

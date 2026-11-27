@@ -144,7 +144,7 @@ export const readAloudController = createReadAloudController(
         if (!timed) {
           timed = createTimedWords({
             text,
-            load: (after, signal) =>
+            load: (after, _levelsAfter, signal) =>
               runEnvironmentSpeech(getSpeechSynthesisTimings(prepared, token, after), { signal }),
             clock: () => ({
               seconds: audio.currentTime,

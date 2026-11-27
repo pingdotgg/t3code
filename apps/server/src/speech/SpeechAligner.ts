@@ -5,10 +5,9 @@ import * as Layer from "effect/Layer";
 
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
 import type { SpeechSpan } from "./localSynthesisWorker.ts";
+import { MP3_ENCODER_DELAY_SAMPLES } from "./synthesisTimings.ts";
 import { estimateWords, textWords } from "./wordAlignment.ts";
 
-// Players keep lame's encoder delay at the start of each MP3 stream the PCM becomes.
-const MP3_ENCODER_DELAY_SAMPLES = 1105;
 // A star before every word lets the alignment pass over speech the text does not spell, such as
 // "twenty five" for "25". The text is given already romanized, as ASCII letters.
 const ALIGNMENT_OPTIONS = { text_normalization: "pre_romanized", star_frequency: "segment" };

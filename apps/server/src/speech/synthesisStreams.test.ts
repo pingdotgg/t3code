@@ -183,6 +183,60 @@ it.effect("starts audio picked up mid-sentence at its word, keeping the lead-in 
   }),
 );
 
+it.effect("reports the loudness of PCM audio on the MP3's clock, shifted with a lead-in", () =>
+  Effect.gen(function* () {
+    const rate = 15_000;
+    // A tenth of a second of silence, then a tenth at full scale, starting one second in.
+    const pcm = Int16Array.from({ length: 3_000 }, (_, index) =>
+      index < 1_500 ? 0 : index % 2 ? 0x7fff : -0x7fff,
+    );
+    const frame = Uint8Array.from({ length: 208 }, (_, index) =>
+      index === 0 ? 0xff : index === 1 ? 0xfb : index === 2 ? 0x50 : 0,
+    );
+    const part = { pcm, rate, startSeconds: 1, span: { start: 0, end: request.text.length } };
+    const delay = 1105 / rate;
+    const reading = (from?: number) =>
+      Effect.gen(function* () {
+        const source = yield* Queue.unbounded<
+          CloudSpeech.SpeechSynthesisPart,
+          SpeechSynthesisError | Cause.Done
+        >();
+        // "this" is timed at the start of the second frame, so a lead-in is cut there.
+        const session = () =>
+          Effect.succeed({
+            push: () => Effect.succeed([]),
+            finish: Effect.succeed([
+              { start: 5, end: 9, startSeconds: 1152 / 44100, endSeconds: 1 },
+            ]),
+          });
+        return yield* Effect.gen(function* () {
+          const streams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
+          yield* Queue.offerAll(source, [part, frame, frame]);
+          yield* Queue.end(source);
+          const token = yield* streams.start("xai", {
+            ...request,
+            ...(from === undefined ? {} : { from }),
+          });
+          yield* Stream.runDrain((yield* streams.read(token))!);
+          // Word timings alone answer without levels; asking for levels after one skips it.
+          expect((yield* streams.timings(token, 0)).levels).toBeUndefined();
+          const all = (yield* streams.timings(token, 0, 0)).levels!;
+          expect((yield* streams.timings(token, 0, 1)).levels).toEqual(all.slice(1));
+          return all;
+        }).pipe(Effect.provide(withSource(Stream.fromQueue(source), { session })));
+      });
+    const levels = yield* reading();
+    expect(levels.map((level) => level.level)).toEqual([0, 1, 1]);
+    expect(levels[0]!.seconds).toBeCloseTo(1 + delay + 1 / 30, 3);
+    // From "this", the audio starts at its frame and the levels before it are dropped.
+    const cut = 1152 / 44100;
+    const shifted = yield* reading(5);
+    expect(shifted.map((level) => level.seconds)).toEqual(
+      levels.map((level) => Math.round((level.seconds - cut) * 1000) / 1000),
+    );
+  }),
+);
+
 it.effect("plays the lead-in at once when no model can time the word picked", () =>
   Effect.gen(function* () {
     const source = yield* Queue.unbounded<

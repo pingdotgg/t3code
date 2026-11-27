@@ -2,6 +2,7 @@ import {
   SPEECH_SYNTHESIS_AUDIO_PATH,
   SpeechSynthesisError,
   type ServerSettingsError,
+  type SpeechSynthesisLevel,
   type SpeechSynthesisProvider,
   type SpeechSynthesisRequest,
   type SpeechSynthesisTimings,
@@ -25,7 +26,12 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
 import * as SpeechAligner from "./SpeechAligner.ts";
-import { mp3Duration, mp3FrameAt } from "./synthesisTimings.ts";
+import {
+  MP3_ENCODER_DELAY_SAMPLES,
+  mp3Duration,
+  mp3FrameAt,
+  speechLevels,
+} from "./synthesisTimings.ts";
 
 // A started stream nobody opens is abandoned.
 const UNREAD_GRACE: Duration.Input = "30 seconds";
@@ -51,10 +57,12 @@ function joined(chunks: ReadonlyArray<Uint8Array>) {
 type Job = {
   readonly chunks: Uint8Array[];
   readonly words: SpeechSynthesisWord[];
+  readonly levels: SpeechSynthesisLevel[];
   readonly duration: ReturnType<typeof mp3Duration>;
   readonly progress: SubscriptionRef.SubscriptionRef<{
     readonly count: number;
     readonly words: number;
+    readonly levels: number;
     readonly done: boolean;
     /** Every word is timed; can trail `done` while the last audio is aligned. */
     readonly timed: boolean;
@@ -77,8 +85,15 @@ export class SpeechSynthesisStreams extends Context.Service<
     ) => Effect.Effect<string, SpeechSynthesisError | ServerSettingsError>;
     /** The audio from its start, then live as it is produced; `undefined` once expired. */
     readonly read: (token: string) => Effect.Effect<Stream.Stream<Uint8Array> | undefined>;
-    /** Words after the first `after`, once there are any or synthesis ends. */
-    readonly timings: (token: string, after: number) => Effect.Effect<SpeechSynthesisTimings>;
+    /**
+     * Words after the first `after`, once there are any or synthesis ends; with `levelsAfter`,
+     * levels after that many too, and new levels answer as well.
+     */
+    readonly timings: (
+      token: string,
+      after: number,
+      levelsAfter?: number,
+    ) => Effect.Effect<SpeechSynthesisTimings>;
   }
 >()("t3/speech/synthesisStreams/SpeechSynthesisStreams") {}
 
@@ -113,8 +128,15 @@ const make = Effect.gen(function* () {
     const job: Job = {
       chunks: [],
       words: [],
+      levels: [],
       duration: mp3Duration(),
-      progress: yield* SubscriptionRef.make({ count: 0, words: 0, done: false, timed: false }),
+      progress: yield* SubscriptionRef.make({
+        count: 0,
+        words: 0,
+        levels: 0,
+        done: false,
+        timed: false,
+      }),
       failed: false,
       readers: 0,
       everRead: false,
@@ -127,6 +149,17 @@ const make = Effect.gen(function* () {
               SubscriptionRef.update(job.progress, (progress) => ({
                 ...progress,
                 words: job.words.length,
+              })),
+            ),
+          )
+        : Effect.void;
+    const publishLevels = (levels: ReadonlyArray<SpeechSynthesisLevel>) =>
+      levels.length
+        ? Effect.sync(() => job.levels.push(...levels)).pipe(
+            Effect.andThen(
+              SubscriptionRef.update(job.progress, (progress) => ({
+                ...progress,
+                levels: job.levels.length,
               })),
             ),
           )
@@ -154,6 +187,7 @@ const make = Effect.gen(function* () {
         ? {
             held: [] as Uint8Array[],
             words: [] as SpeechSynthesisWord[],
+            levels: [] as SpeechSynthesisLevel[],
             cut: -1,
             // The whole synthesis, lead-in included, which its PCM and timings are measured on.
             total: mp3Duration(),
@@ -167,6 +201,10 @@ const make = Effect.gen(function* () {
           startSeconds: round(Math.max(0, word.startSeconds - cut)),
           endSeconds: round(Math.max(0, word.endSeconds - cut)),
         }));
+    const shiftedLevels = (levels: ReadonlyArray<SpeechSynthesisLevel>, cut: number) =>
+      levels
+        .filter((level) => level.seconds >= cut)
+        .map((level) => ({ ...level, seconds: round(level.seconds - cut) }));
     // `force` releases what is held once no more timings can come, from the start if need be.
     const release = (force: boolean) =>
       Effect.suspend(() => {
@@ -180,11 +218,14 @@ const make = Effect.gen(function* () {
         if (!frame) return Effect.void;
         lead.cut = frame.seconds;
         const words = shifted(lead.words, frame.seconds);
+        const levels = shiftedLevels(lead.levels, frame.seconds);
         lead.held = [];
         lead.words = [];
+        lead.levels = [];
         const audio = bytes.subarray(frame.offset);
         return (audio.length ? publishChunk(audio) : Effect.void).pipe(
           Effect.andThen(publishWords(words)),
+          Effect.andThen(publishLevels(levels)),
         );
       });
     const addWords = (words: ReadonlyArray<SpeechSynthesisWord>) => {
@@ -192,6 +233,18 @@ const make = Effect.gen(function* () {
       if (lead.cut >= 0) return publishWords(shifted(words, lead.cut));
       lead.words.push(...words);
       return release(false);
+    };
+    // Loudness is measured on the PCM, which is what the MP3 holds after its encoder delay.
+    const addLevels = (audio: SpeechAligner.AlignmentAudio) => {
+      const levels = speechLevels(
+        audio.pcm,
+        audio.rate,
+        audio.startSeconds + MP3_ENCODER_DELAY_SAMPLES / audio.rate,
+      );
+      if (!lead) return publishLevels(levels);
+      if (lead.cut >= 0) return publishLevels(shiftedLevels(levels, lead.cut));
+      lead.levels.push(...levels);
+      return Effect.void;
     };
     const addChunk = (chunk: Uint8Array) => {
       if (!lead) return publishChunk(chunk);
@@ -227,7 +280,7 @@ const make = Effect.gen(function* () {
     );
     job.fiber = yield* source.pipe(
       Stream.runForEach((part) => {
-        if ("pcm" in part) return Queue.offer(pcm, part);
+        if ("pcm" in part) return addLevels(part).pipe(Effect.andThen(Queue.offer(pcm, part)));
         if (!(part instanceof Uint8Array)) return addWords(part.words);
         return addChunk(part);
       }),
@@ -314,17 +367,24 @@ const make = Effect.gen(function* () {
   const timings = Effect.fn("SpeechSynthesisStreams.timings")(function* (
     token: string,
     after: number,
+    levelsAfter?: number,
   ) {
     const job = jobs.get(token);
     if (!job) return { words: [], done: true };
     yield* SubscriptionRef.changes(job.progress).pipe(
-      Stream.filter((progress) => progress.timed || progress.words > after),
+      Stream.filter(
+        (progress) =>
+          progress.timed ||
+          progress.words > after ||
+          (levelsAfter !== undefined && progress.levels > levelsAfter),
+      ),
       Stream.runHead,
       Effect.timeoutOption(TIMINGS_WAIT),
     );
     const { timed } = yield* SubscriptionRef.get(job.progress);
     return {
       words: job.words.slice(after),
+      ...(levelsAfter === undefined ? {} : { levels: job.levels.slice(levelsAfter) }),
       done: timed,
       ...(timed && !job.failed ? { durationSeconds: job.duration.seconds } : {}),
     };

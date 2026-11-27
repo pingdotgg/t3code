@@ -1,4 +1,36 @@
-import type { SpeechSynthesisWord } from "@t3tools/contracts";
+import type { SpeechSynthesisLevel, SpeechSynthesisWord } from "@t3tools/contracts";
+
+/** Players keep lame's encoder delay at the start of each MP3 stream the PCM becomes. */
+export const MP3_ENCODER_DELAY_SAMPLES = 1105;
+// The meter moves this often, and spans this loudness: quieter reads as silence, louder fills it.
+const LEVELS_PER_SECOND = 15;
+const SILENCE_DECIBELS = -50;
+const PEAK_DECIBELS = -10;
+
+/**
+ * The loudness of mono 16-bit PCM that starts `startSeconds` into its audio, as the RMS of each
+ * window on a decibel scale, for players that cannot measure the audio they play.
+ */
+export function speechLevels(
+  pcm: Int16Array,
+  rate: number,
+  startSeconds: number,
+): SpeechSynthesisLevel[] {
+  const window = Math.max(1, Math.round(rate / LEVELS_PER_SECOND));
+  const levels: SpeechSynthesisLevel[] = [];
+  for (let start = 0; start < pcm.length; start += window) {
+    const end = Math.min(pcm.length, start + window);
+    let sum = 0;
+    for (let index = start; index < end; index++) sum += (pcm[index]! / 0x8000) ** 2;
+    const decibels = 10 * Math.log10(sum / (end - start));
+    const level = (decibels - SILENCE_DECIBELS) / (PEAK_DECIBELS - SILENCE_DECIBELS);
+    levels.push({
+      seconds: Math.round((startSeconds + (start + end) / 2 / rate) * 1000) / 1000,
+      level: Math.round(Math.min(1, Math.max(0, level || 0)) * 100) / 100,
+    });
+  }
+  return levels;
+}
 
 const MPEG1_LAYER3_KBPS = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
 const MPEG2_LAYER3_KBPS = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
