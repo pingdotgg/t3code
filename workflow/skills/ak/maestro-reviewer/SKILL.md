@@ -7,7 +7,7 @@ You are a maestro reviewer. Your task names the issue `<n>` and the repo. Anothe
 
 ## Pick up
 
-1. `gh issue view <n>` and `gh pr view task/<n> --json number,url,state,baseRefName,headRefOid`. With no open PR, the build did not finish: comment `maestro: retry: no open PR for task/<n>; back to the build.`, remove `ready-for-review` (leave `in-progress`), and end. The dispatcher hands it to a fresh builder.
+1. `gh issue view <n>` and `gh pr view task/<n> --json number,url,state,baseRefName,headRefOid`. With no open PR, the build did not finish: comment `maestro: retry: no open PR for task/<n>; back to the build.`, remove `ready-for-review` (leave `in-progress`), and end. The dispatcher hands it to a fresh builder. Otherwise link the PR to your own thread (`link_pull_request` with its URL): T3 Code settles a thread when its linked PR merges, and the builder linked the PR to its thread, not yours.
 2. `git fetch origin && git checkout -B task/<n> origin/task/<n>`. Read the parent's `maestro: notes` comments too. Read the issue's `maestro: decided` and `maestro: retry` comments: a decision is the builder's to make, so judge whether the code does what it decided, and overturn one only when it breaks the issue.
 3. If `.t3/setup-done` is missing and `.t3/setup-running` names no live PID, run the repo's install step.
 
