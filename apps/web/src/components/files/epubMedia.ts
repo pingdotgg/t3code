@@ -52,8 +52,7 @@ function vttTime(seconds: number) {
 }
 
 export function ttmlCaptions(root: XmlNode) {
-  const document =
-    root.name === "ttml:tt" ? root : root.children.find((node) => node.name === "ttml:tt");
+  const document = root.children.find((node) => node.name === "ttml:tt");
   const rate = document?.attrs[ttmlParameters + "frameRate"]?.trim() ?? "30";
   const multiplier = document?.attrs[ttmlParameters + "frameRateMultiplier"]?.trim() ?? "1 1";
   const ratio = /^(\d+)\s+(\d+)$/.exec(multiplier);
