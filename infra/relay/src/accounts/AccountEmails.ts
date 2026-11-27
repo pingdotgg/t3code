@@ -26,9 +26,9 @@ export interface AccountEmailMessage {
 
 const deletionNoticeText = `Your T3 Code account has been deleted.
 
-Your data on our systems: everything associated with your account will be deleted within 30 days.
+Our systems: we've deleted your T3 Connect account, your linked environments and tunnels, and your registered phones and notification settings. Usage data and logs linked to your account, and our backups, are deleted within 30 days.
 
-On your devices: threads, projects and settings stored on your devices stay where they are. To remove them, uninstall T3 Code or delete its data folder.
+Your devices: uninstalling T3 Code doesn't remove its data from your computer. To remove your threads, projects and settings, uninstall the app and delete the .t3 folder in your home folder. On a phone, deleting the app removes its data.
 
 Didn't delete your account, or have a question? Reply to this email or write to ${ACCOUNT_EMAIL_REPLY_TO}.
 
@@ -49,7 +49,7 @@ const deletionNoticeHtml = `<!doctype html>
     <title>Your T3 Code account has been deleted</title>
   </head>
   <body style="margin:0;padding:0;background:#000000;font-family:${SANS};color:#f1f3f7;-webkit-font-smoothing:antialiased;">
-    <div style="display:none;max-height:0;overflow:hidden;">All data associated with your account will be deleted within 30 days.</div>
+    <div style="display:none;max-height:0;overflow:hidden;">Your T3 Connect account is deleted. Usage data, logs and backups follow within 30 days.</div>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#000000;">
       <tr>
         <td align="center" style="padding:0 16px;background:#000000;background-image:radial-gradient(520px 320px at 50% 0%, rgba(52,107,241,0.22), rgba(0,0,0,0) 70%);">
@@ -71,13 +71,15 @@ const deletionNoticeHtml = `<!doctype html>
                   <tr>
                     <td style="padding:22px 24px;border-bottom:1px solid #1d1d20;">
                       <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#6e9bfb;">Our systems</p>
-                      <p style="margin:0;font-size:15px;line-height:1.6;color:#f1f3f7;">Everything associated with your account will be deleted within <span style="white-space:nowrap;font-weight:650;">30 days</span>.</p>
+                      <p style="margin:0;font-size:15px;line-height:1.6;color:#f1f3f7;">We've deleted your T3 Connect account, your linked environments and tunnels, and your registered phones and notification settings.</p>
+                      <p style="margin:10px 0 0;font-size:15px;line-height:1.6;color:#a3a3a3;">Usage data and logs linked to your account, and our backups, are deleted within <span style="white-space:nowrap;font-weight:650;color:#f1f3f7;">30 days</span>.</p>
                     </td>
                   </tr>
                   <tr>
                     <td style="padding:22px 24px;">
                       <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#6e9bfb;">Your devices</p>
-                      <p style="margin:0;font-size:15px;line-height:1.6;color:#f1f3f7;">Threads, projects and settings stored on your devices stay where they are. To remove them, uninstall T3 Code or delete its data folder.</p>
+                      <p style="margin:0;font-size:15px;line-height:1.6;color:#f1f3f7;">Uninstalling T3 Code doesn't remove its data from your computer. To remove your threads, projects and settings, uninstall the app <strong style="font-weight:650;">and</strong> delete the <span style="white-space:nowrap;font-weight:650;">.t3</span> folder in your home folder.</p>
+                      <p style="margin:10px 0 0;font-size:15px;line-height:1.6;color:#a3a3a3;">On a phone, deleting the app removes its data.</p>
                     </td>
                   </tr>
                 </table>
