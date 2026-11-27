@@ -3,6 +3,7 @@ import {
   issueTrackerBindInput,
   issueTrackerBindingFor,
   issueTrackerBindings,
+  issueTrackerConnectFailure,
   issueTrackerScopeOptions,
   issueTrackerSummary,
 } from "@t3tools/client-runtime/state/issue-trackers";
@@ -191,7 +192,7 @@ export function IssueTrackerCredentialForm(props: {
       return;
     }
     const error = squashAtomCommandFailure(result);
-    setFailure(error instanceof Error ? error.message : gt("The request failed."));
+    setFailure(issueTrackerConnectFailure(error) ?? gt("The request failed."));
   };
   const helpUrl = tracker.credential.helpUrl;
   const locked = props.disabled || busy;

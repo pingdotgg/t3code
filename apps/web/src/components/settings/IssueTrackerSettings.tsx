@@ -5,6 +5,7 @@ import {
   issueTrackerBindInput,
   issueTrackerBindingFor,
   issueTrackerBindings,
+  issueTrackerConnectFailure,
   issueTrackerScopeOptions,
   issueTrackerSummary,
 } from "@t3tools/client-runtime/state/issue-trackers";
@@ -133,7 +134,11 @@ function TrackerRow({
     label: `connect ${tracker.displayName}`,
   });
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  // Which form failed, so the new account's error is not shown under the saved one too.
+  const [failure, setFailure] = useState<{
+    readonly adding: boolean;
+    readonly text: string;
+  } | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const fields = tracker.credential.fields ?? [];
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>(tracker.fields ?? {});
@@ -141,7 +146,10 @@ function TrackerRow({
   const submit = async (token: string | null, values = drafts, addAccount = false) => {
     const missing = fields.find((field) => !values[field.key]?.trim());
     if (token !== null && missing !== undefined) {
-      setFailure(gt("Enter the {field} first.", { field: missing.label.toLowerCase() }));
+      setFailure({
+        adding: addAccount,
+        text: gt("Enter the {field} first.", { field: missing.label.toLowerCase() }),
+      });
       return false;
     }
     setBusy(true);
@@ -164,7 +172,10 @@ function TrackerRow({
     setBusy(false);
     if (result._tag === "Success") return true;
     const error = squashAtomCommandFailure(result);
-    setFailure(error instanceof Error ? error.message : gt("The request failed."));
+    setFailure({
+      adding: addAccount,
+      text: issueTrackerConnectFailure(error) ?? gt("The request failed."),
+    });
     return false;
   };
 
@@ -247,7 +258,9 @@ function TrackerRow({
                         </InlineButton>
                       </>
                     ) : null}
-                    {failure ? <span className="block text-destructive">{failure}</span> : null}
+                    {failure && !failure.adding ? (
+                      <span className="block text-destructive">{failure.text}</span>
+                    ) : null}
                   </>
                 }
                 control={
@@ -288,7 +301,7 @@ function TrackerRow({
               {canAddAccount ? (
                 <AddAccountRow
                   tracker={tracker}
-                  failure={failure}
+                  failure={failure?.adding ? failure.text : null}
                   onAdd={(token, values) => submit(token, values, true)}
                 />
               ) : null}
