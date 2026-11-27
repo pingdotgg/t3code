@@ -1,3 +1,8 @@
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+
+const planParser = unified().use(remarkParse).freeze();
+
 function headingText(line: string): string | null {
   const heading = line.match(/^ {0,3}#{1,6}([ \t].*)?$/);
   if (!heading) return null;
@@ -6,40 +11,24 @@ function headingText(line: string): string | null {
 }
 
 function findPlanTitle(lines: readonly string[]) {
-  let fence = "";
-  let comment = false;
-  for (const [index, line] of lines.entries()) {
-    const [, marker = "", info = ""] = line.match(/^ {0,3}(`{3,}|~{3,})([^\r\n]*)$/) ?? [];
-    if (fence) {
-      if (marker[0] === fence[0] && marker.length >= fence.length && /^[ \t]*$/.test(info)) {
-        fence = "";
-      }
-      continue;
-    }
-    if (comment || /^ {0,3}<!--/.test(line)) {
-      comment = !line.includes("-->");
-      continue;
-    }
-    // CommonMark: a backtick fence's info string cannot contain a backtick.
-    if (marker && (marker[0] !== "`" || !info.includes("`"))) {
-      fence = marker;
-      continue;
-    }
-    const heading = headingText(line);
+  for (const node of planParser.parse(lines.join("\n")).children) {
+    if (node.type !== "heading" || !node.position) continue;
+    const index = node.position.start.line - 1;
+    const heading = headingText(lines[index] ?? "");
     if (heading) return { index, text: heading };
   }
   return null;
 }
 
 export function proposedPlanTitle(planMarkdown: string): string | null {
-  return findPlanTitle(planMarkdown.replace(/^\uFEFF/, "").split(/\r?\n/))?.text ?? null;
+  return findPlanTitle(planMarkdown.replace(/^\uFEFF/, "").split(/\r\n?|\n/))?.text ?? null;
 }
 
 export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
   const lines = planMarkdown
     .replace(/^\uFEFF/, "")
     .trimEnd()
-    .split(/\r?\n/);
+    .split(/\r\n?|\n/);
   const title = findPlanTitle(lines);
   let start = 0;
   let commentStart = -1;
@@ -57,18 +46,11 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
     start += 1;
   }
   const firstPreambleBlock = preambleBlocks[0];
-  if (title?.index === start) {
-    start += 1;
-  } else if (title && title.index > start) {
-    // Keep the blocks on either side of the title separate.
-    lines[title.index] = "";
-    return lines
-      .slice(firstPreambleBlock?.start ?? start)
-      .join("\n")
-      .trimEnd();
-  } else if (firstPreambleBlock) {
+  if (!title && firstPreambleBlock) {
     return lines.slice(firstPreambleBlock.start).join("\n");
   }
+  const contentStart = start;
+  if (title) start = title.index + 1;
   while (lines[start]?.trim().length === 0) {
     start += 1;
   }
@@ -79,6 +61,14 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
     }
   }
   const body = lines.slice(start).join("\n");
+  if (title && title.index > contentStart) {
+    const before = lines
+      .slice(firstPreambleBlock?.start ?? contentStart, title.index)
+      .join("\n")
+      .trimEnd();
+    // A blank line alone would merge some adjacent blocks, including ordered lists.
+    return body ? `${before}\n\n<!-- -->\n\n${body}` : before;
+  }
   if (!firstPreambleBlock) return body;
   const preamble = preambleBlocks
     .map(({ start, end }) => lines.slice(start, end).join("\n"))
