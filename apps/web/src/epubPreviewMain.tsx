@@ -21,7 +21,7 @@ if (root) {
           {request ? (
             <OfficeViewer {...request} kind="epub" />
           ) : (
-            <p className="p-4 text-sm">
+            <p className="p-4 text-body">
               <T>The file is unavailable.</T>
             </p>
           )}

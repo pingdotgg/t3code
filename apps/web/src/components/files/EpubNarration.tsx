@@ -121,13 +121,13 @@ export function EpubNarration(props: {
   };
 
   return (
-    <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-3 py-1">
-      <Button size="sm-touch" variant="outline" onClick={toggle}>
+    <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-2 border-b border-divider px-3 py-1">
+      <Button size="sm-touch" variant="secondary" onClick={toggle}>
         {playing ? <PauseIcon /> : <HeadphonesIcon />}
         {playing ? gt("Pause narration") : gt("Read aloud")}
       </Button>
       {failed ? (
-        <span role="status" className="text-xs">
+        <span role="status" className="text-meta">
           {gt("Could not play narration.")}
         </span>
       ) : null}
