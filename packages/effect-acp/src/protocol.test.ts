@@ -397,6 +397,55 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("hands a notification that fails to decode to its handler before the next one", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const seen: Array<unknown> = [];
+      const done = yield* Deferred.make<void>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onUndecodableNotification: (method, payload) =>
+          Effect.sync(() => {
+            seen.push({ undecodable: method, payload });
+          }).pipe(
+            // A handler that dies is isolated like any other notification handler.
+            Effect.andThen(Effect.die("handler defect")),
+          ),
+        onNotification: (notification) =>
+          Effect.sync(() => {
+            seen.push({ decoded: notification.params });
+          }).pipe(Effect.andThen(Deferred.succeed(done, undefined))),
+      });
+      const send = (params: unknown) =>
+        Queue.offer(
+          input,
+          encoder.encode(
+            `${encodeUnknownJsonString({ jsonrpc: "2.0", method: "session/update", params })}\n`,
+          ),
+        );
+      const unreadable = {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-1",
+          locations: [{ path: "/work/a.ts" }, { path: 7 }],
+        },
+      };
+      const readable = {
+        sessionId: "session-1",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "tool-1", status: "completed" },
+      };
+      yield* send(unreadable);
+      yield* send(readable);
+      yield* TestClock.withLive(Deferred.await(done).pipe(Effect.timeout("2 seconds")));
+      assert.deepEqual(seen, [
+        { undecodable: "session/update", payload: unreadable },
+        { decoded: readable },
+      ]);
+    }),
+  );
+
   // clanka once sent a usage_update without `used` and `size`. One bad update
   // must not end a session whose later updates are fine.
   it.effect("drops a session/update that fails to decode and keeps reading", () =>

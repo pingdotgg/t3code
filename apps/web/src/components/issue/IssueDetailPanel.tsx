@@ -36,13 +36,14 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { useContext, useState, type ReactNode } from "react";
+import { useContext, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { m } from "~/i18n/messages";
 import { issueEnvironment, refreshIssueLists } from "~/state/issues";
 import { useProjects } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
@@ -57,13 +58,18 @@ import {
   PAGE_ROW_HOVER_CLASS,
   PAGE_ROW_PRESS_CLASS,
 } from "../pullRequest/PullRequestRow";
+import { LRUCache } from "~/lib/lruCache";
 import { PullRequestMetaRow, PullRequestSection } from "../pullRequest/PullRequestSummaryTab";
+import { holdScrollTop } from "../pullRequest/holdLinkedNodeInView";
 import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "../pullRequest/PullRequestCandidatePicker";
 import { PullRequestCommentBody } from "../pullRequest/PullRequestCommentBody";
 import { PullRequestDetailTitleRow } from "../pullRequest/PullRequestDetailLayout";
 import { PullRequestEditButton } from "../pullRequest/PullRequestEditButton";
-import { PullRequestMarkdown } from "../pullRequest/PullRequestMarkdown";
+import {
+  PullRequestMarkdown,
+  PullRequestMarkdownPanelContext,
+} from "../pullRequest/PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "../pullRequest/PullRequestMarkdownEditor";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
 import { pullRequestLabelColor } from "../pullRequest/pullRequestList.logic";
@@ -75,6 +81,7 @@ import {
 import { IssueCommentComposer } from "./IssueCommentComposer";
 import { IssueDetailGhost } from "./IssueDetailGhost";
 import { IssueThreadLinks } from "./IssueThreadLinks";
+import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
 import { ReactionBar } from "../pullRequest/PullRequestReactions";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { issueTrackerPresentation, issueStatePresentation } from "./issuePresentation";
@@ -137,7 +144,7 @@ function IssueLabelPicker({
   );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const applied = new Set(detail.labels.map((label) => label.name));
-  const needle = query.toLowerCase();
+  const needle = query.trim().toLowerCase();
   const candidates = (candidatesQuery.data?.labels ?? []).filter(
     (label) =>
       needle.length === 0 ||
@@ -255,7 +262,7 @@ function IssueAssigneePicker({
     open ? issueEnvironment.candidates({ environmentId, input: reference }) : null,
   );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
-  const needle = query.toLowerCase();
+  const needle = query.trim().toLowerCase();
   const candidates = (candidatesQuery.data?.assignees ?? []).filter(
     (candidate) =>
       needle.length === 0 ||
@@ -419,6 +426,8 @@ function IssueEventText({
   );
 }
 
+const issueScrollPositions = new LRUCache<number>(128, 64 * 1024);
+
 export function IssueDetailPanel({
   environmentId,
   reference,
@@ -454,10 +463,36 @@ export function IssueDetailPanel({
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
+  const openLink = useOpenLink(threadRef);
   const [editing, setEditing] = useState<"title" | "body" | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [changingState, setChangingState] = useState(false);
+  const listPanelRef = useContext(PullRequestMarkdownPanelContext);
+  const panelRef = threadRef ?? listPanelRef;
+  const scrollKey =
+    detail === null
+      ? null
+      : JSON.stringify([
+          panelRef.environmentId,
+          panelRef.threadId,
+          environmentId,
+          reference.projectId,
+          detail.url,
+        ]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const restoringScroll = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the issue scroller before paint, including when detail loads after a remount
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    if (scrollKey === null || scroller === null) return;
+    const scrollTop = issueScrollPositions.get(scrollKey) ?? 0;
+    if (scrollTop === 0) return;
+    restoringScroll.current = true;
+    return holdScrollTop(scroller, scrollTop, () => {
+      restoringScroll.current = false;
+    });
+  }, [scrollKey]);
 
   if (detail === null) {
     if (detailQuery.error !== null && !detailQuery.isPending) {
@@ -610,6 +645,16 @@ export function IssueDetailPanel({
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <div
+        ref={scrollRef}
+        onScroll={(event) => {
+          if (scrollKey !== null && !restoringScroll.current) {
+            issueScrollPositions.set(
+              scrollKey,
+              event.currentTarget.scrollTop,
+              8 + scrollKey.length * 2,
+            );
+          }
+        }}
         className={cn(
           "min-h-0 flex-1 overflow-y-auto",
           // Room for the floating composer, so the last comment can scroll clear of it.
@@ -627,6 +672,10 @@ export function IssueDetailPanel({
                 provider: tracker.providerName,
               })}
               render={<a href={detail.url} target="_blank" rel="noopener noreferrer" />}
+              onClick={(event) => {
+                event.preventDefault();
+                void openLink(detail.url, { event }).catch(console.error);
+              }}
             >
               {detail.displayKey}
               <ExternalLinkIcon aria-hidden className="size-2.5" />
@@ -646,9 +695,13 @@ export function IssueDetailPanel({
               aria-label={gt("Refresh issue")}
               disabled={detailQuery.isPending}
               onClick={() =>
-                void pager.refresh(registry, () =>
-                  executeAtomQuery(registry, detailAtom, { refresh: true, reportFailure: false }),
-                )
+                void pager.refresh(registry, () => {
+                  issueEnvironment.oweDetailRefresh(registry, detailAtom);
+                  return executeAtomQuery(registry, detailAtom, {
+                    refresh: true,
+                    reportFailure: false,
+                  });
+                })
               }
             >
               <RefreshIcon size="sm" refreshing={detailQuery.isPending} />
@@ -681,7 +734,10 @@ export function IssueDetailPanel({
                 disabled={saving}
                 onChange={(event) => setTitleDraft(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Escape") setEditing(null);
+                  if (event.key !== "Escape") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setEditing(null);
                 }}
               />
               <Button type="submit" size="sm" disabled={saving}>
@@ -734,6 +790,14 @@ export function IssueDetailPanel({
               </span>
             )}
           </span>
+
+          <WorkflowRunsAbout
+            environmentId={environmentId}
+            item={{
+              subject: detail.url,
+              issue: { ...reference, host: reference.host ?? detail.host },
+            }}
+          />
 
           <div className="mt-4 space-y-2">
             <PullRequestMetaRow icon={<TagIcon className="size-3.5" />} label={gt("Labels")}>
@@ -905,6 +969,10 @@ export function IssueDetailPanel({
                           render={
                             <a href={item.comment.url} target="_blank" rel="noopener noreferrer" />
                           }
+                          onClick={(event) => {
+                            event.preventDefault();
+                            void openLink(item.comment.url!, { event }).catch(console.error);
+                          }}
                         >
                           {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
                         </InlineButton>

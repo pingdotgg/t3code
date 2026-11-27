@@ -35,7 +35,7 @@ export function UsageProviderSettings({
   const gt = useGT();
   const searchableSetting = useSearchableSetting();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<"cliproxy" | "http" | null>(null);
   const entries = Object.entries(sources);
 
   return (
@@ -44,17 +44,24 @@ export function UsageProviderSettings({
         {...searchableSetting("usage-providers")}
         headerAction={
           !readOnly ? (
-            <Button size="xs" variant="secondary" onClick={() => setAdding(true)}>
-              <PlusIcon className="size-3" aria-hidden />
-              <T>Add hub</T>
-            </Button>
+            <div className="flex gap-2">
+              <Button size="xs" variant="secondary" onClick={() => setAdding("cliproxy")}>
+                <PlusIcon className="size-3" aria-hidden />
+                <T>Add hub</T>
+              </Button>
+              <Button size="xs" variant="secondary" onClick={() => setAdding("http")}>
+                <PlusIcon className="size-3" aria-hidden />
+                <T>Add HTTP source</T>
+              </Button>
+            </div>
           ) : null
         }
       >
         {entries.length === 0 ? (
-          <SettingsRow title={gt("No hubs configured.")} />
+          <SettingsRow title={gt("No usage sources configured.")} />
         ) : (
           entries.map(([id, source]) => {
+            const kindLabel = source.kind === "http" ? gt("HTTP quota source") : CLI_PROXY_NAME;
             const label = source.label?.trim() || source.url;
             return (
               <SettingsRow
@@ -63,13 +70,13 @@ export function UsageProviderSettings({
                   <Tooltip>
                     <TooltipTrigger render={<span tabIndex={0} />}>{label}</TooltipTrigger>
                     <TooltipPopup>
-                      <span className="block">{CLI_PROXY_NAME}</span>
+                      <span className="block">{kindLabel}</span>
                       {label !== source.url ? <span className="block">{source.url}</span> : null}
                     </TooltipPopup>
                   </Tooltip>
                 }
                 description={
-                  source.enabled ? CLI_PROXY_NAME : gt("Disabled", { $context: "provider status" })
+                  source.enabled ? kindLabel : gt("Disabled", { $context: "provider status" })
                 }
                 control={
                   !readOnly ? (
@@ -87,7 +94,10 @@ export function UsageProviderSettings({
       {adding && !readOnly ? (
         <AddUsageLimitSourceDialog
           open
-          onOpenChange={setAdding}
+          kind={adding}
+          onOpenChange={(open) => {
+            if (!open) setAdding(null);
+          }}
           environmentId={environmentId}
           environmentLabel={environmentLabel}
           sources={sources}
@@ -119,11 +129,7 @@ function RemoveUsageProviderButton({
               </T>
             </AlertDialogTitle>
             <AlertDialogDescription>
-              <T>
-                The hub's management key is deleted from this server. Its accounts leave the Limits
-                view; the hub itself is untouched. Add it again with the URL and key to bring them
-                back.
-              </T>
+              <T>The saved connection and its credentials are removed from this environment.</T>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -137,7 +143,7 @@ function RemoveUsageProviderButton({
                 onConfirm();
               }}
             >
-              <T>Remove hub</T>
+              <T>Remove</T>
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

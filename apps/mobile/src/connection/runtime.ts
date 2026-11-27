@@ -42,6 +42,10 @@ const layerProvidedClientConnection = layerSnapshotLoader.pipe(
       providerCatalogsOnDemand: true,
       providerCatalogDigests: true,
       providerStatusDeltas: true,
+      // Halves idle pings. The timeout is checked on ping ticks, after an unanswered ping
+      // and 15 s with no frame: within 25 s of the last frame (20 s at the 5 s default),
+      // and a host stalled for 10 s can lose the socket (15 s at the default).
+      pingInterval: "10 seconds",
     }),
   ),
   Layer.provideMerge(

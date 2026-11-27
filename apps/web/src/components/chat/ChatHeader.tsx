@@ -37,6 +37,7 @@ import { Button } from "../ui/button";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { GuestShareIndicator } from "./GuestShareControls";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -252,66 +253,66 @@ export const ChatHeader = memo(function ChatHeader({
             />
           </div>
         ) : (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                isServerThread ? (
-                  <PaneTabButton
-                    type="button"
-                    aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
-                    aria-haspopup="menu"
-                    onClick={openMenuFromTitle}
-                    onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}
-                  />
-                ) : (
-                  <div className={PANE_TAB_CLASS} />
-                )
-              }
-            >
-              {tabIcon}
-              <h2 className="min-w-0 truncate" dir={textDirection(activeThreadTitle)}>
-                {activeThreadTitle}
-              </h2>
-            </TooltipTrigger>
-            <TooltipPopup side="bottom">{tabTooltip}</TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              isServerThread ? (
+                <PaneTabButton
+                  type="button"
+                  aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
+                  aria-haspopup="menu"
+                  onClick={openMenuFromTitle}
+                  onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}
+                />
+              ) : (
+                <div className={PANE_TAB_CLASS} />
+              )
+            }
+            label={tabTooltip}
+            side="bottom"
+          >
+            {tabIcon}
+            <h2 className="min-w-0 truncate" dir={textDirection(activeThreadTitle)}>
+              {activeThreadTitle}
+            </h2>
+          </SharedTooltipTrigger>
         )}
         {activeProject ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="bare"
-                  size="icon-xs"
-                  data-pane-notch-add=""
-                  aria-label={gt("New thread in {project}", { project: activeProjectName })}
-                  onClick={onNewThreadInProject}
-                />
-              }
-            >
-              <PlusIcon />
-            </TooltipTrigger>
-            <TooltipPopup side="bottom">
+          <SharedTooltipTrigger
+            render={
+              <Button
+                variant="bare"
+                size="icon-xs"
+                data-pane-notch-add=""
+                aria-label={gt("New thread in {project}", { project: activeProjectName })}
+                onClick={onNewThreadInProject}
+              />
+            }
+            label={
               <T>
                 New thread in <Var>{activeProjectName}</Var>
               </T>
-            </TooltipPopup>
-          </Tooltip>
+            }
+            side="bottom"
+          >
+            <PlusIcon />
+          </SharedTooltipTrigger>
         ) : null}
         {renamingTitle === null && activeThreadLinkOrigin ? (
-          <Tooltip>
-            <TooltipTrigger render={<Badge variant="info" size="sm" />}>
-              <T>
-                From <Var>{activeThreadLinkOrigin}</Var>
-              </T>
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              <T>
-                Started by an agent on <Var>{activeThreadLinkOrigin}</Var> through a linked
-                environment.
-              </T>
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={<Badge variant="info" size="sm" />}
+            label={
+              <>
+                <T>
+                  Started by an agent on <Var>{activeThreadLinkOrigin}</Var> through a linked
+                  environment.
+                </T>
+              </>
+            }
+          >
+            <T>
+              From <Var>{activeThreadLinkOrigin}</Var>
+            </T>
+          </SharedTooltipTrigger>
         ) : null}
       </PaneNotch>
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}

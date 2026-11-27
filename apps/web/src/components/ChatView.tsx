@@ -2,6 +2,10 @@ import { m } from "../i18n/messages";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useGT, useMessages } from "gt-react";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
+import {
+  draftRuntimeModeLimitsInstance,
+  draftSupportedRuntimeModes,
+} from "./chat/runtimeModeConfig";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -97,6 +101,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveLatestThreadRun,
+  presentProviderStarting,
   deriveThreadStructureRuntime,
   limitRecoveryOwnsSnooze,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -132,6 +137,7 @@ import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabelsCopy";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type SetStateAction,
   use,
@@ -192,7 +198,11 @@ import {
   ThreadPreviewMiniPlayer,
   useThreadPreviewCanvasSource,
 } from "./preview/ThreadPreviewMiniPlayer";
-import { createChatCanvasStore, resolveChatCanvasModel } from "./chat/canvasStore";
+import {
+  createChatCanvasStore,
+  resolveChatCanvasModel,
+  selectCanvasMeasurements,
+} from "./chat/canvasStore";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 
@@ -396,6 +406,7 @@ import { observeResize } from "~/lib/observeResize";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
+import type { RightPanelTabsHandle } from "./RightPanelTabs";
 import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import { branchMismatchBannerItem, extensionStatusBannerItem } from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
@@ -416,6 +427,13 @@ import {
 } from "./ChatView.logic";
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+const ACTIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
@@ -547,6 +565,7 @@ export default function ChatView(props: ChatViewProps) {
   const queuedRunEdit = useQueuedRunEdit({
     environmentId,
     routeThreadRef,
+    currentRouteThreadKeyRef,
     threadDraftTarget: baseComposerDraftTarget,
     activeThreadId: serverThread !== null || draftThread !== null ? threadId : null,
     serverProjection,
@@ -863,7 +882,14 @@ export default function ChatView(props: ChatViewProps) {
   const serverLatestRun =
     serverProjection === null ? null : deriveLatestThreadRun(serverProjection);
   const serverActivityRun =
-    serverProjection === null ? null : deriveThreadActivityRun(serverProjection);
+    serverProjection === null
+      ? null
+      : deriveThreadActivityRun(
+          serverProjection,
+          serverThread === null
+            ? undefined
+            : providersByEnvironment.get(serverThread.environmentId),
+        );
   const serverRuntime =
     serverProjection === null ? null : deriveThreadStructureRuntime(serverProjection);
   const runlessWorkStartedAt =
@@ -1589,6 +1615,18 @@ export default function ChatView(props: ChatViewProps) {
   const activeWorkStartedAt =
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
+  // Until the server has the run, a send shows the provider it is starting, not the thinking brain.
+  const providerStartingRun =
+    activeActivityRun?.providerStartingLabelMsg !== undefined
+      ? activeActivityRun
+      : isSendBusy &&
+          selectedProviderEntry !== undefined &&
+          (activeActivityRun === null || !ACTIVE_RUN_STATUSES.has(activeActivityRun.status))
+        ? presentProviderStarting({
+            instanceId: selectedProviderEntry.instanceId,
+            driver: selectedProviderEntry.driverKind,
+          })
+        : null;
   const activeRunPreparing = activeActivityRun?.status === "preparing";
   const sendQueuesBehindSetup =
     isServerThread && (activeRunPreparing || activeActivityRun?.status === "starting");
@@ -2081,7 +2119,7 @@ export default function ChatView(props: ChatViewProps) {
     chatCanvasStore,
     (state) =>
       resolveChatCanvasModel({
-        measurements: state.measurements,
+        measurements: selectCanvasMeasurements(state, rightPanelOpen),
         detailsCardMeasurement: state.detailsCardMeasurement,
         threadRef: activeThreadRef,
         preview: canvasPreview,
@@ -2155,6 +2193,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const {
     closeSurface: closeRightPanelSurface,
+    closeSelectedSurfaces: closeSelectedRightPanelSurfaces,
     closeOtherSurfaces: closeOtherRightPanelSurfacesStable,
     closeSurfacesToRight: closeRightPanelSurfacesToRightStable,
     closeAllSurfaces: closeAllRightPanelSurfacesStable,
@@ -2512,9 +2551,8 @@ export default function ChatView(props: ChatViewProps) {
     createBrowserSurface,
     createBrowserSurfaceStable,
     duplicateBrowserSurfaceStable,
-    moveRightPanelSurfaceStable,
+    moveRightPanelSurfacesStable,
     onOpenToolDiffStable,
-    onOpenTurnDiffStable,
     openChangesFromThreadPanelStable,
     openFileSurfaceStable,
     toggleRightPanelStable,
@@ -2542,7 +2580,6 @@ export default function ChatView(props: ChatViewProps) {
     gitCwd,
     activeProjectCwd,
     onDiffPanelOpen,
-    closeRightPanelSurface,
   });
   const pullRequestSurfaceAvailable = supportsPullRequests && pullRequestPanelTarget !== null;
   const {
@@ -2625,7 +2662,6 @@ export default function ChatView(props: ChatViewProps) {
     !activeProject ||
     !isServerThread ||
     !manualCompactionProviderAvailable ||
-    isWorking ||
     isRevertingCheckpoint ||
     threadDetailLoading ||
     isPreparingWorktree ||
@@ -2633,7 +2669,8 @@ export default function ChatView(props: ChatViewProps) {
     feedbackUploading ||
     pendingApprovals.length > 0 ||
     pendingUserInputs.length > 0;
-  const compactDisabled = compactThreadUnavailable;
+  // A typed /compact queues behind a running turn, so only the immediate compaction waits for idle.
+  const compactDisabled = compactThreadUnavailable || isWorking;
   const compactDisabledReason = compactDisabled
     ? !canOperateThread
       ? gt("This connection cannot change threads.")
@@ -2904,6 +2941,12 @@ export default function ChatView(props: ChatViewProps) {
     }
   });
 
+  const rightPanelTabsRef = useRef<RightPanelTabsHandle>(null);
+  const closeActiveRightPanelSurfaceStable = useStableCallback(() => {
+    if (rightPanelTabsRef.current?.closeSelectedTabs()) return;
+    if (activeRightPanelSurface) closeRightPanelSurface(activeRightPanelSurface);
+  });
+
   useChatShortcuts({
     enabled: activeThreadId !== null && !backgroundThread,
     embedded,
@@ -2922,6 +2965,10 @@ export default function ChatView(props: ChatViewProps) {
       ...terminalShortcuts,
       ...rightPanelShortcuts,
       ...threadLifecycleShortcuts,
+      "rightPanel.close": ({ event }) => {
+        if (!activeRightPanelSurface) return false;
+        if (!event.repeat) closeActiveRightPanelSurfaceStable();
+      },
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
       },
@@ -2957,10 +3004,6 @@ export default function ChatView(props: ChatViewProps) {
       const script = activeProjectScripts.find((entry) => entry.id === scriptId);
       return script ? () => void runProjectScriptStable(script) : undefined;
     },
-  });
-
-  const closeActiveRightPanelSurfaceStable = useStableCallback(() => {
-    if (activeRightPanelSurface) closeRightPanelSurface(activeRightPanelSurface);
   });
 
   // A focused desktop browser page forwards these chords as menu actions.
@@ -3514,6 +3557,11 @@ export default function ChatView(props: ChatViewProps) {
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
         data-chat-column
+        style={
+          {
+            "--chat-header-height": embedded ? "0px" : "var(--workspace-topbar-height)",
+          } as CSSProperties
+        }
         inert={rightPanelMaximized}
         onMouseUp={preventMiddleClickPasteOutsideEditable}
       >
@@ -3570,6 +3618,7 @@ export default function ChatView(props: ChatViewProps) {
               enabled: threadFindEnabled,
             }}
             store={chatCanvasStore}
+            rightPanelOpen={rightPanelOpen}
             threadRef={activeThreadRef}
             preview={canvasPreview}
             detailsCardTopInset={isThreadFindActive ? THREAD_FIND_BAR_RESERVED_HEIGHT : 0}
@@ -3640,13 +3689,13 @@ export default function ChatView(props: ChatViewProps) {
                   }
                   activeTurnStartedAt={activeWorkStartedAt}
                   providerStartingLabel={
-                    activeActivityRun?.providerStartingLabelMsg
-                      ? messages(activeActivityRun.providerStartingLabelMsg)
+                    providerStartingRun?.providerStartingLabelMsg
+                      ? messages(providerStartingRun.providerStartingLabelMsg)
                       : null
                   }
                   providerStarting={
-                    activeActivityRun?.providerStartingLabelMsg
-                      ? (activeActivityRun.providerStarting ?? null)
+                    providerStartingRun?.providerStartingLabelMsg
+                      ? (providerStartingRun.providerStarting ?? null)
                       : null
                   }
                   worktreeSetup={worktreeSetup}
@@ -3677,10 +3726,8 @@ export default function ChatView(props: ChatViewProps) {
                   displayThreadKey={displayedTimelineKey}
                   announceTurnStatus={!isProviderSubagent}
                   onOpenToolDiff={parentPanel?.openToolDiff ?? onOpenToolDiffStable}
-                  // Side chat runs keep no checkpoints to diff, and a fork would promote the side chat.
-                  {...(embedded
-                    ? {}
-                    : { onOpenTurnDiff: onOpenTurnDiffStable, onForkFromRun: onForkFromRunStable })}
+                  // A fork would promote the side chat.
+                  {...(embedded ? {} : { onForkFromRun: onForkFromRunStable })}
                   onOpenThread={onOpenRelatedThreadStable}
                   parentThreadLink={parentThreadLink}
                   workflowOpening={workflowOpening}
@@ -4027,9 +4074,16 @@ export default function ChatView(props: ChatViewProps) {
                                           <ComposerContextPermissions
                                             environmentId={environmentId}
                                             runtimeMode={runtimeMode}
-                                            supportedRuntimeModes={
-                                              activeProviderStatus?.supportedRuntimeModes
-                                            }
+                                            supportedRuntimeModes={draftSupportedRuntimeModes(
+                                              activeProviderStatus?.supportedRuntimeModes,
+                                              multipleModelSelections,
+                                              providerStatuses,
+                                            )}
+                                            instanceId={draftRuntimeModeLimitsInstance(
+                                              activeProviderStatus?.instanceId,
+                                              multipleModelSelections,
+                                            )}
+                                            cwd={gitCwd}
                                             onRuntimeModeChange={handleRuntimeModeChangeStable}
                                           />
                                         ),
@@ -4042,8 +4096,7 @@ export default function ChatView(props: ChatViewProps) {
                       </ComposerSurface.Shell>
                       {isDraftHeroState && composerBannerItems.length > 0 ? (
                         // Out of flow, like the headline, so a notice never moves the centered composer.
-                        // Short windows pin the composer to the bottom, where an out-of-flow notice
-                        // would fall off-screen, so there it takes space and lifts the composer.
+                        // Short windows keep the notice in flow so it can use the space above.
                         <div className="absolute inset-x-0 top-full flex flex-col gap-1 pt-4 [@media(max-height:34rem)]:static">
                           <ComposerBannerStack items={composerBannerItems} detached />
                         </div>
@@ -4136,9 +4189,7 @@ export default function ChatView(props: ChatViewProps) {
                     ? { onCheckoutPullRequestRequest: openPullRequestDialogStable }
                     : {})}
                   onComposerFocusRequest={scheduleComposerFocusStable}
-                  {...(isServerThread && isGitRepo
-                    ? { onOpenChanges: openChangesFromThreadPanelStable }
-                    : {})}
+                  {...(isGitRepo ? { onOpenChanges: openChangesFromThreadPanelStable } : {})}
                   onRunProjectScript={runProjectScriptStable}
                   onAddProjectScript={saveProjectScriptStable}
                   onUpdateProjectScript={updateProjectScriptStable}
@@ -4185,6 +4236,7 @@ export default function ChatView(props: ChatViewProps) {
 
       {rightPanelPresent && activeThreadRef && !embedded ? (
         <ChatRightPanel
+          ref={rightPanelTabsRef}
           sheet={shouldUsePlanSidebarSheet}
           maximized={rightPanelMaximized}
           workspaceLayoutElement={workspaceLayoutElement}
@@ -4206,6 +4258,7 @@ export default function ChatView(props: ChatViewProps) {
             ) : null
           }
           surfaces={renderedRightPanelSurfaces}
+          selectionScope={activeThreadKey}
           environmentId={activeThreadRef.environmentId}
           activeSurfaceId={renderedRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}
@@ -4215,6 +4268,7 @@ export default function ChatView(props: ChatViewProps) {
           terminalLabelsById={activeTerminalLabelsById}
           onActivate={activateRightPanelSurfaceStable}
           onCloseSurface={closeRightPanelSurfaceStable}
+          onCloseSelectedSurfaces={closeSelectedRightPanelSurfaces}
           onOpenInMainView={openSurfaceInMainView}
           onRenameDevice={(surfaceId, title) => {
             if (activeThreadRef)
@@ -4223,7 +4277,7 @@ export default function ChatView(props: ChatViewProps) {
           onCloseOtherSurfaces={closeOtherRightPanelSurfacesStable}
           onCloseSurfacesToRight={closeRightPanelSurfacesToRightStable}
           onCloseAllSurfaces={closeAllRightPanelSurfacesStable}
-          onMoveSurface={moveRightPanelSurfaceStable}
+          onMoveSurfaces={moveRightPanelSurfacesStable}
           onCopyFilePath={copyRightPanelFilePathStable}
           onAddBrowser={() => createBrowserSurface()}
           onAddBrowserInProfile={createBrowserSurfaceStable}
@@ -4237,7 +4291,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
-          diffAvailable={isServerThread && diffAvailable}
+          diffAvailable={diffAvailable}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={linkedItemsSurfaceAvailable}

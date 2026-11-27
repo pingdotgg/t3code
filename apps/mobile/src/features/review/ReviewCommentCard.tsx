@@ -19,7 +19,6 @@ import {
   reviewCommentDiffText,
 } from "./nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "./reviewModel";
-import { REVIEW_MONO_FONT_FAMILY } from "./reviewDiffRendering";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
 import { useMarkdownCodeHighlight } from "../threads/markdownCodeHighlightState";
 
@@ -211,7 +210,6 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
             className="font-mono"
             style={{
               color: props.colors.text,
-              fontFamily: REVIEW_MONO_FONT_FAMILY,
               fontSize: codeSurface.fontSize,
               lineHeight: codeSurface.rowHeight,
             }}

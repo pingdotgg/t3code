@@ -21,6 +21,7 @@ import {
 } from "./PullRequestPresentation";
 import {
   pullRequestLabelColor,
+  pullRequestListDiffStatsLabel,
   pullRequestListReviewStatus,
   pullRequestListRowsAreEqual,
   type EnvironmentPullRequestListEntry,
@@ -134,10 +135,7 @@ export const PullRequestListRow = memo(
                   })
                 : null,
               item.labels.length ? item.labels.map((label) => label.name).join(", ") : null,
-              gt("{additions} additions, {deletions} deletions", {
-                additions: item.additions,
-                deletions: item.deletions,
-              }),
+              pullRequestListDiffStatsLabel(item, m),
             ]
               .filter((part) => part !== null)
               .join(", ")}

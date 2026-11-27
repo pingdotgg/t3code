@@ -86,10 +86,13 @@ export function feedbackTraceLines(
             .filter((part) => part !== undefined)
             .join(" · ")
         : resolve(
-            msg("{speaker} · {count} characters", {
-              speaker: resolve(entry.type === "user" ? msg("You") : msg("Agent")),
-              count: entry.length ?? 0,
-            }),
+            msg(
+              "{count, plural, one {{speaker} · {count} character} other {{speaker} · {count} characters}}",
+              {
+                speaker: resolve(entry.type === "user" ? msg("You") : msg("Agent")),
+                count: entry.length ?? 0,
+              },
+            ),
           );
     return {
       key: `${index}`,

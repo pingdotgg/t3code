@@ -1,5 +1,5 @@
 import { resolveEnvironmentMachineKind, type EnvironmentId } from "@t3tools/contracts";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 import { ChevronRightIcon, LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -9,7 +9,6 @@ import { useEnvironments, type EnvironmentPresentation } from "../../state/envir
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
@@ -22,6 +21,8 @@ import {
   settingsScopeEnvironmentLabels,
   settingsScopeProjectMachines,
 } from "./settingsScopeAxis";
+import { useRenderedSettingsPathname } from "./useRenderedSettingsPathname";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ScopeChoice {
   label: string;
@@ -47,7 +48,7 @@ export function SettingsScopeNotice({
   const gt = useGT();
   const { selectScope, search, groups } = useSettingsScope();
   const navigate = useNavigate({ from: "/settings" });
-  const pathname = useLocation({ select: (location) => location.pathname });
+  const pathname = useRenderedSettingsPathname();
   const { environments } = useEnvironments();
   const environmentIcon = (environment: EnvironmentPresentation | undefined) =>
     environment ? (
@@ -154,12 +155,13 @@ export function SettingsScopeNotice({
               {choice.secondary?.length ? (
                 <span className="flex min-w-0 flex-col text-meta text-muted-foreground">
                   {choice.secondary.map((detail) => (
-                    <Tooltip key={detail}>
-                      <TooltipTrigger render={<span className="block truncate" />}>
-                        {detail}
-                      </TooltipTrigger>
-                      <TooltipPopup>{detail}</TooltipPopup>
-                    </Tooltip>
+                    <SharedTooltipTrigger
+                      key={detail}
+                      render={<span className="block truncate" />}
+                      label={detail}
+                    >
+                      {detail}
+                    </SharedTooltipTrigger>
                   ))}
                 </span>
               ) : null}

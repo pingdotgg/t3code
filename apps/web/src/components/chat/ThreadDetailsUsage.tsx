@@ -26,7 +26,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { formatContextWindowCompactionMessage } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { nextPoolReset, poolSources, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
+import {
+  nextPoolReset,
+  poolSources,
+  resolveThreadDetailsLimits,
+  resolveThreadHttpQuotas,
+} from "./ThreadDetailsUsage.logic";
 
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: msg("Ahead of pace"),
@@ -60,6 +65,7 @@ export function ThreadDetailsUsage({
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
   const resolved = resolveThreadDetailsLimits(providerInstanceId, model, providers, sources, now);
+  const quotas = resolveThreadHttpQuotas(providerInstanceId, sources);
   const limits = resolved?.kind === "instance" ? resolved.limits : null;
   const notice =
     resolved === null
@@ -67,11 +73,13 @@ export function ThreadDetailsUsage({
       : limits
         ? limitsNotice(limits, m)
         : null;
+  const showUnavailable =
+    resolved?.kind !== "pool" &&
+    quotas.length === 0 &&
+    (notice !== null || !limits?.windows.length);
   return (
     <ThreadDetailsSection title={gt("Usage limits")} variant="usage">
-      {resolved?.kind === "pool" ? (
-        resolved.windows.map((window) => <PoolRow key={window.id} window={window} now={now} />)
-      ) : notice || !limits?.windows.length ? (
+      {showUnavailable ? (
         <UsageRow
           label={gt("Limits", { $context: "usage limits row label" })}
           icon={<TimerIcon />}
@@ -82,7 +90,20 @@ export function ThreadDetailsUsage({
           opensUsage
         />
       ) : (
-        limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
+        <>
+          {resolved?.kind === "pool"
+            ? resolved.windows.map((window) => (
+                <PoolRow key={window.id} window={window} now={now} />
+              ))
+            : limits && !notice
+              ? limits.windows.map((window) => (
+                  <LimitRow key={window.id} window={window} now={now} />
+                ))
+              : null}
+          {quotas.map(({ key, accountLabel, window }) => (
+            <LimitRow key={key} window={window} now={now} accountLabel={accountLabel} />
+          ))}
+        </>
       )}
     </ThreadDetailsSection>
   );
@@ -177,9 +198,11 @@ export function ThreadDetailsContext({
 function LimitRow({
   window,
   now,
+  accountLabel,
 }: {
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
+  readonly accountLabel?: string;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -216,6 +239,7 @@ function LimitRow({
           <span className="text-foreground">
             {gt("{label}: {left}% left", { label: window.label, left })}
           </span>
+          {accountLabel ? <span className="text-muted-foreground">{accountLabel}</span> : null}
           {pace && timeLeft !== null ? (
             <span>
               <span className="block">{m(PACE_LABEL[pace])}</span>
@@ -262,6 +286,7 @@ function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly n
       icon={weekly ? <CalendarRangeIcon /> : <TimerIcon />}
       fill={left}
       tone={limitTone(left)}
+      tick={window.paceRemainingPercent}
       value={`${left}%`}
       ariaValue={gt("{left}% left", { left })}
       opensUsage
