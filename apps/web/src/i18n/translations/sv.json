@@ -8730,7 +8730,7 @@
   "a6a6dc235b108747": "Låt agenter använda den delade webbläsaren. Projekt kan åsidosätta det.",
   "ea5fed973bfc1aca": "Återställ standardåtkomst för webbläsaren till standard",
   "19e1f74805f4a1fb": "Agenters webbläsaråtkomst",
-  "b395b88284e3bca2": "Visa den flytande förhandsvisningen när en agent öppnar en webbläsare eller enhet, om inte agenten säger något annat.",
+  "d6ccca83a1676fcb": "Visa den flytande förhandsvisningen när en agent öppnar en webbläsare eller enhet, om inte agenten säger något annat, och när du stänger den högra panelen.",
   "6aadfd59cf60b4b5": "Återställ automatisk visning av flytande förhandsvisning till standard",
   "e4a7ec61190bc1f9": "Visa flytande förhandsvisning automatiskt",
   "3705c53cb3e76a28": "Kunde inte rensa data för {name}",
