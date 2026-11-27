@@ -12304,6 +12304,138 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("keeps imported Codex history when retrying a rewind to thread start", () =>
+    Effect.gen(function* () {
+      const scenario = "codex-imported-thread-start-retry";
+      const nativeThreadId = "imported-thread";
+      const nativeTurns = ["imported-turn", "first-t3-turn"];
+      const input = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      const preamble = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "first-t3-turn",
+        prompt: "unused",
+      });
+      const thread = codexReplayThreadResult({ nativeThreadId, forkedFromId: null });
+      const turn = (id: string) => ({ id, items: [], status: "completed", error: null });
+      const client = yield* CodexClient.make(
+        Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.fromQueue(input),
+          stderr: () => Sink.drain,
+          stdout: () =>
+            Sink.forEach((chunk: string | Uint8Array) =>
+              Effect.gen(function* () {
+                const { id, method, params } = JSON.parse(
+                  typeof chunk === "string" ? chunk : decoder.decode(chunk),
+                ) as {
+                  id?: number;
+                  method: string;
+                  params?: { cursor?: string; limit?: number; beforeTurnId?: string };
+                };
+                if (id === undefined) return;
+                const emit = (result: unknown) =>
+                  Queue.offer(input, encoder.encode(JSON.stringify({ id, result }) + "\n"));
+                if (method === "thread/turns/list") {
+                  const offset = Number(params?.cursor ?? 0);
+                  const end = offset + (params?.limit ?? 100);
+                  yield* emit({
+                    data: nativeTurns.toReversed().slice(offset, end).map(turn),
+                    nextCursor: end < nativeTurns.length ? String(end) : null,
+                  });
+                  return;
+                }
+                if (method === "thread/revert") {
+                  const boundary = nativeTurns.findIndex((id) => id === params?.beforeTurnId);
+                  assert.isAtLeast(boundary, 0);
+                  nativeTurns.splice(boundary);
+                }
+                if (method === "thread/read" || method === "thread/revert") {
+                  yield* emit({
+                    thread: { ...thread.thread, projectId: null, historyMode: "paginated" },
+                  });
+                  return;
+                }
+                const response = preamble.find(
+                  (entry) => entry.type === "emit_inbound" && entry.label === method,
+                );
+                if (response?.type === "emit_inbound" && Predicate.isObject(response.frame)) {
+                  yield* emit(response.frame.result);
+                } else {
+                  yield* Queue.offer(
+                    input,
+                    encoder.encode(
+                      JSON.stringify({ id, error: { code: -32601, message: method } }) + "\n",
+                    ),
+                  );
+                }
+              }),
+            ),
+        }),
+      );
+      const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
+        instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CODEX_SETTINGS,
+        environment: {},
+        clientFactory: { open: () => Effect.succeed(client) },
+        digest: yield* Digest.Digest,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ProviderReplayHarness.makeReplayServerConfig(scenario).pipe(
+          Effect.orDie,
+        ),
+      });
+      const threadId = ThreadId.make(scenario);
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(scenario),
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      const rollback = runtime.rollbackThread({
+        providerThread,
+        target: {
+          type: "thread_start",
+          checkpointId: CheckpointId.make(scenario),
+          appRunOrdinal: 0,
+        },
+        providerThreadTurns: [
+          codexReplaySourceTurn({
+            id: "first-t3-provider-turn",
+            ordinal: 1,
+            nativeId: "first-t3-turn",
+            providerThreadId: providerThread.id,
+            now: yield* DateTime.now,
+          }),
+        ],
+      });
+      const readNativeHistory = client
+        .request("thread/turns/list", { threadId: nativeThreadId })
+        .pipe(Effect.map((page) => page.data.map((turn) => turn.id)));
+      yield* rollback;
+      assert.deepEqual(yield* readNativeHistory, ["imported-turn"]);
+      // File restore failed, so the retry still has the original T3 turn records.
+      yield* rollback;
+      assert.deepEqual(yield* readNativeHistory, ["imported-turn"]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("does not revert the kept Codex turn when a rollback is retried", () =>
     Effect.gen(function* () {
       const nativeThreadId = "retried-rollback-thread";
