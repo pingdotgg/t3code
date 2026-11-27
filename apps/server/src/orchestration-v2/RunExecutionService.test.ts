@@ -4036,6 +4036,48 @@ it.effect("does not start a turn whose run settled during the app context read",
   }),
 );
 
+it.effect.each([
+  { label: "read-only", tool: null, refresh: false },
+  { label: "shell", tool: "command_execution", refresh: true },
+  { label: "dynamic tool", tool: "dynamic_tool", refresh: true },
+] as const)(
+  "refreshes PR readers when a completed $label turn may have changed the host",
+  ({ label, tool, refresh }) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const { observed } = yield* captureRootRunTermination({
+        key: `turn-pr-refresh:${label}`,
+        initialProviderTurnId: null,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.fromIterable([
+            {
+              type: "provider_turn.updated",
+              driver,
+              providerTurn: {
+                id: ids.rootProviderTurnId,
+                providerThreadId: ids.providerThreadId,
+                nodeId: ids.rootNodeId,
+                runAttemptId: ids.attemptId,
+                nativeTurnRef: null,
+                ordinal: 1,
+                status: "running",
+                startedAt: now,
+                completedAt: null,
+              },
+            },
+            ...(tool === null ? [] : [backgroundTurnItemEvent(ids, tool, "completed", 2)]),
+            rootTerminalEvent(ids, "completed"),
+          ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
+      });
+
+      assert.deepEqual(
+        observed,
+        refresh ? ["run:completed", "pull-requests-refreshed"] : ["run:completed"],
+      );
+    }),
+);
+
 it.effect("keeps completed runs completed when pull request refresh fails", () =>
   Effect.gen(function* () {
     const { observed } = yield* captureRootRunTermination({
@@ -4330,6 +4372,7 @@ function captureRootRunTermination(input: {
         } as OrchestrationV2ProviderThread,
         attempt: {
           id: ids.attemptId,
+          reason: "initial",
           providerTurnId:
             input.initialProviderTurnId === undefined
               ? ids.rootProviderTurnId

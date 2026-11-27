@@ -29,6 +29,7 @@ import {
   ProjectId,
   type PullRequestCheck,
   type PullRequestDetail,
+  type PullRequestRef,
   type PullRequestComment,
   PullRequestOperationError,
   type PullRequestWatchUntil,
@@ -6499,12 +6500,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const events = yield* Queue.unbounded<void>();
         const following = yield* Deferred.make<void>();
         const detailReads = yield* Queue.unbounded<void>();
+        let readerRefreshed = false;
+        const isTarget = (reference: PullRequestRef) =>
+          reference.projectId === projectId && reference.number === key.number;
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
           Layer.mock(PullRequestService.PullRequestService)({
-            detail: () =>
-              Queue.offer(detailReads, undefined).pipe(
+            detail: (reference) =>
+              (isTarget(reference) ? Queue.offer(detailReads, undefined) : Effect.void).pipe(
                 Effect.as({
                   ...watchedPullRequestDetail({
                     projectId,
@@ -6526,11 +6530,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             // A fresh fingerprint every time, so every pass reads the detail.
             watchFingerprint: () =>
               Effect.sync(() => ({ status: String(++fingerprints), remarks: "" })),
-            invalidate: () => Effect.void,
-            changes: () =>
-              Stream.fromEffectDrain(Deferred.succeed(following, undefined)).pipe(
-                Stream.concat(Stream.fromQueue(events)),
-              ),
+            invalidate: ({ reference }, options) =>
+              Effect.sync(() => {
+                readerRefreshed ||=
+                  options?.notifyReaders === true && reference !== undefined && isTarget(reference);
+              }),
+            changes: (reference) =>
+              isTarget(reference)
+                ? Stream.fromEffectDrain(Deferred.succeed(following, undefined)).pipe(
+                    Stream.concat(Stream.fromQueue(events)),
+                  )
+                : Stream.never,
           }),
         );
         const wakes = Effect.map(
@@ -6562,6 +6572,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const woken = yield* wakes;
         assert.lengthOf(woken, 1);
         assert.include(woken[0]!.notification?.summary ?? "", "failed");
+        assert.isTrue(readerRefreshed);
 
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",
