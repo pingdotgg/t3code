@@ -3,7 +3,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
-import { act, render } from "../../test/render";
+import { act, render, stubGlobal } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -316,6 +316,46 @@ describe.each([
     }
   });
 });
+
+it.each(["Local folder", "Git URL"])(
+  "keeps a reopened palette open after picking a folder for %s",
+  async (source) => {
+    setup();
+    const picked = Promise.withResolvers<string>();
+    const pickFolder = vi.fn(() => picked.promise);
+    using _bridge = stubGlobal("desktopBridge", {
+      getWslState: async () => null,
+      pickFolder,
+    });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    await act(() => openCommandPalette({ open: "add-project" }));
+    await page.getByText(source, { exact: true }).click();
+    const search = page.getByRole("combobox");
+    if (source === "Git URL") {
+      await search.fill("https://example.com/team/project.git");
+      await userEvent.keyboard("{Enter}");
+      await expect.element(search).toHaveValue("/workspace/project");
+    }
+    page
+      .getByRole("button", { name: /^Open in / })
+      .element<HTMLButtonElement>()
+      .focus();
+    await userEvent.keyboard("{Enter}");
+    expect(pickFolder).toHaveBeenCalledOnce();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(search).not.toBeInTheDocument();
+    await act(() => openCommandPalette());
+    await search.fill("another search");
+
+    await act(async () => {
+      picked.resolve("/workspace/picked");
+      await picked.promise;
+    });
+    expect(scopes.addProject).toHaveBeenCalledOnce();
+    expect(page.getByTestId("command-palette").element()).toHaveAttribute("data-open");
+    expect(search.element()).toHaveValue("another search");
+  },
+);
 
 it("keeps the source list visible after a dismissed repository lookup succeeds", async () => {
   setup(undefined, githubAvailable);
