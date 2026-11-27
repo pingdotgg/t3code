@@ -26,7 +26,7 @@ export interface AccountEmailMessage {
 
 const deletionNoticeText = `Your T3 Code account has been deleted.
 
-Our systems: we've deleted your T3 Connect account, your linked environments and tunnels, and your registered phones and notification settings. Usage data and logs linked to your account, and our backups, are deleted within 30 days.
+Our systems: we've deleted your T3 Connect account, linked environments and tunnels, and registered phones and notification settings. Usage data and logs linked to your account, and our backups, are deleted within 30 days.
 
 Your devices: uninstalling T3 Code doesn't remove its data from your computer. To remove your threads, projects and settings, uninstall the app and delete the .t3 folder in your home folder. On a phone, deleting the app removes its data.
 
@@ -71,7 +71,7 @@ const deletionNoticeHtml = `<!doctype html>
                   <tr>
                     <td style="padding:22px 24px;border-bottom:1px solid #1d1d20;">
                       <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#6e9bfb;">Our systems</p>
-                      <p style="margin:0;font-size:15px;line-height:1.6;color:#f1f3f7;">We've deleted your T3 Connect account, your linked environments and tunnels, and your registered phones and notification settings.</p>
+                      <p style="margin:0;font-size:15px;line-height:1.6;color:#f1f3f7;">We've deleted your T3 Connect account, linked environments and tunnels, and registered phones and notification settings.</p>
                       <p style="margin:10px 0 0;font-size:15px;line-height:1.6;color:#a3a3a3;">Usage data and logs linked to your account, and our backups, are deleted within <span style="white-space:nowrap;font-weight:650;color:#f1f3f7;">30 days</span>.</p>
                     </td>
                   </tr>
