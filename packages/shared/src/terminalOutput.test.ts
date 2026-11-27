@@ -32,9 +32,22 @@ describe("terminalOutputCollapseRedraws", () => {
 });
 
 describe("appendTerminalOutput", () => {
-  it("applies a carriage return interleaved with a color sequence", () => {
-    const output = feed(["abc\u001b[", "\r31mX"]).text;
-    expect(terminalOutputPlainText(output)).toBe("Xbc");
+  const red = "\u001b[0;31mX\u001b[0m";
+  it.each([
+    ["abc\u001b[\r31mX", red + "bc"],
+    ["abc\u001b\r[31mX", red + "bc"],
+    ["abc\u001b[\u0007\r31mX", red + "bc"],
+    ["abc\u001b\n[31mX", "abc\n" + red],
+    ["abcde\u001b\b\b[31mX", "abc" + red + "e"],
+    ["abc\u001b\r\u001b[31mX", red + "bc"],
+    ["abc\u001b\rXhidden\u001b\\Z", "Zbc"],
+  ])("applies line controls inside an escape across every split: %j", (input, expected) => {
+    for (let cut = 0; cut <= input.length; cut += 1) {
+      const state = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, input.slice(0, cut));
+      const resumed = feed([terminalOutputResumeText(state)]);
+      expect(appendTerminalOutput(state, input.slice(cut)).text).toBe(expected);
+      expect(appendTerminalOutput(resumed, input.slice(cut)).text).toBe(expected);
+    }
   });
 
   it("keeps only the latest frame of a carriage-return progress bar", () => {
