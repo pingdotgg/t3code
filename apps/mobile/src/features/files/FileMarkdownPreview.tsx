@@ -16,7 +16,7 @@ import {
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 
-import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+import { tryOpenWebLink } from "../../lib/openExternalUrl";
 import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { resolveNativeMarkdownTypography } from "../../lib/appearancePreferences";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -228,7 +228,7 @@ export function FileMarkdownPreview(props: {
     openMedia(href, true);
   };
   const onLinkPress = (href: string) => {
-    if (!openMedia(href)) void tryOpenExternalUrl(href, "markdown-link");
+    if (!openMedia(href)) void tryOpenWebLink(href, "markdown-link");
   };
 
   const refreshControl = props.onRefresh ? (

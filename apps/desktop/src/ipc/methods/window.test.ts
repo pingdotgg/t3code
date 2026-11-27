@@ -131,6 +131,37 @@ describe("getLocalEnvironmentBootstraps", () => {
     ),
   );
 
+  it.effect("includes the token only once the backend has reported ready", () =>
+    Effect.gen(function* () {
+      const result = yield* getLocalEnvironmentBootstraps.handler();
+
+      assert.deepEqual(result, [
+        {
+          id: "wsl:default",
+          label: "WSL (Ubuntu)",
+          runningDistro: "Ubuntu",
+          httpBaseUrl: "http://127.0.0.1:3774/",
+          wsBaseUrl: "ws://127.0.0.1:3774/",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        bootstrapsLayer([
+          {
+            ...defaultWslInstance,
+            snapshot: Effect.succeed({
+              desiredRunning: true,
+              ready: false,
+              activePid: Option.some(123),
+              restartAttempt: 0,
+              restartScheduled: false,
+            }),
+          },
+        ]),
+      ),
+    ),
+  );
+
   it.effect("publishes a pending bootstrap only while a transient retry is scheduled", () => {
     const retryingConfig: DesktopBackendManager.DesktopBackendStartConfig = {
       ...readyWslConfig,

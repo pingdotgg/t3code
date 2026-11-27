@@ -1,12 +1,13 @@
 import "~/index.css";
 
 import { EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import type { RightPanelSurface } from "~/rightPanelStore";
-import { render, stubGlobal } from "../../test/render";
+import { act, render, stubGlobal } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import { RightPanelTabs, type RightPanelTabsProps } from "./RightPanelTabs";
 import { subscribePreviewAction } from "./preview/previewActionBus";
@@ -68,7 +69,7 @@ const surfaces: RightPanelSurface[] = Array.from({ length: 16 }, (_, index) => (
 }));
 
 describe("RightPanelTabs", () => {
-  it("a flick that scrolls the tab strip to its left edge keeps the thread, a swipe from the edge goes back", async () => {
+  it("a flick that scrolls the tab strip to its left edge keeps the thread, and so does a swipe from the edge", async () => {
     navigateHistory.mockReset();
     const { bridge, scroll } = trackpad();
     using _bridge = stubGlobal("desktopBridge", bridge);
@@ -139,7 +140,7 @@ describe("RightPanelTabs", () => {
     viewport.scrollLeft = 0;
     scroll(viewport.querySelector("[data-active-tab]")!, [-40, -40, -40, -40, -40]);
 
-    expect(navigateHistory).toHaveBeenCalledExactlyOnceWith("back");
+    expect(navigateHistory).not.toHaveBeenCalled();
   });
 });
 
@@ -290,5 +291,62 @@ describe("device tab rename", () => {
     await userEvent.fill(input, "日本語");
     await userEvent.keyboard("{Enter}");
     expect(onRenameDevice).toHaveBeenCalledExactlyOnceWith(DEVICE_SURFACE.id, "日本語");
+  });
+});
+
+describe("add surface launcher", () => {
+  it("hides the button, closes the open menu and stops taking Mod+T and the desktop menu action once no surface can be added", async () => {
+    const menuListeners = new Set<(action: string) => void>();
+    using _bridge = stubGlobal("desktopBridge", {
+      onMenuAction: (listener: (action: string) => void) => {
+        menuListeners.add(listener);
+        return () => menuListeners.delete(listener);
+      },
+    });
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    const tabs = (sideChatAvailable: boolean) => (
+      <RightPanelTabs
+        {...(panel(DIFF_SURFACE).props as RightPanelTabsProps)}
+        open
+        keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+        browserAvailable={false}
+        terminalAvailable={false}
+        diffAvailable={false}
+        filesAvailable={false}
+        pullRequestAvailable={false}
+        pullRequestsAvailable={false}
+        deviceAvailable={false}
+        onAddSideChat={() => {}}
+        sideChatAvailable={sideChatAvailable}
+      >
+        {null}
+      </RightPanelTabs>
+    );
+    const pressModT = async () => {
+      const event = new KeyboardEvent("keydown", {
+        key: "t",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      await act(() => {
+        document.body.dispatchEvent(event);
+      });
+      return event.defaultPrevented;
+    };
+    await using screen = await render(tabs(true));
+    const addButton = screen.getByRole("button", { name: "Add panel surface" });
+
+    await expect.element(addButton).toBeInTheDocument();
+    expect(menuListeners.size).toBe(1);
+    expect(await pressModT()).toBe(true);
+    await expect.element(page.getByRole("menu")).toBeVisible();
+
+    await screen.rerender(tabs(false));
+    expect(addButton.query()).toBeNull();
+    expect(page.getByRole("menu").query()).toBeNull();
+    expect(menuListeners.size).toBe(0);
+    expect(await pressModT()).toBe(false);
+    expect(page.getByRole("menu").query()).toBeNull();
   });
 });

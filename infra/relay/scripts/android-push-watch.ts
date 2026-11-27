@@ -25,7 +25,11 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
 import * as RelayConfiguration from "../src/Config.ts";
-import { androidActivityData, fitFcmData } from "../src/agentActivity/fcmPayloads.ts";
+import {
+  androidActivityData,
+  androidRecipientData,
+  fitFcmData,
+} from "../src/agentActivity/fcmPayloads.ts";
 import * as WebCrypto from "../src/WebCrypto.ts";
 import * as FcmAssertionSigner from "../src/agentActivity/FcmAssertionSigner.ts";
 import * as FcmClient from "../src/agentActivity/FcmClient.ts";
@@ -203,8 +207,7 @@ const main = Effect.gen(function* () {
             alert: alert !== null,
             data: fitFcmData({
               t3_kind: "agent_activity",
-              device_id: device.deviceId,
-              user_id: device.userId,
+              ...androidRecipientData(device.userId, device.deviceId, null),
               updated_at: String(now),
               ...androidActivityData(aggregate),
               ...alert,
