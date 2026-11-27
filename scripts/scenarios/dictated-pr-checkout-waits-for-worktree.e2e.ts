@@ -1,7 +1,8 @@
 /// <reference lib="dom" />
-import type {
-  EnvironmentSpeechStatus,
-  GitPreparePullRequestThreadResult,
+import {
+  ORCHESTRATION_V2_WS_METHODS,
+  type EnvironmentSpeechStatus,
+  type GitPreparePullRequestThreadResult,
 } from "@t3tools/contracts";
 import { expect } from "e2e";
 
@@ -14,15 +15,30 @@ declare global {
     pendingDictatedCheckout?: {
       readonly started: Promise<string>;
       readonly finish: () => void;
+      readonly launches: {
+        checkoutReleased: boolean;
+        workspaceStrategy?:
+          | undefined
+          | {
+              type: string;
+              branch?: string;
+              worktreePath?: string;
+            };
+      }[];
     };
   }
 }
 
-for (const checkoutSucceeds of [true, false])
+for (const { checkoutSucceeds, switchThreads, transcriptFirst } of [
+  { checkoutSucceeds: true, switchThreads: true, transcriptFirst: true },
+  { checkoutSucceeds: false, switchThreads: true, transcriptFirst: false },
+  { checkoutSucceeds: false, switchThreads: false, transcriptFirst: true },
+  { checkoutSucceeds: false, switchThreads: false, transcriptFirst: false },
+])
   test(
     checkoutSucceeds
       ? "A detached dictated prompt waits for its pull request worktree"
-      : "A failed checkout keeps a detached dictated prompt in its draft",
+      : `A failed checkout keeps the dictated prompt when ${switchThreads ? "switching threads" : "staying on the draft"} and ${transcriptFirst ? "transcription finishes first" : "checkout fails first"}`,
     WEB,
     async ({ t3, app, browser, screen }) => {
       const project = await t3.project("demo", {
@@ -76,7 +92,7 @@ for (const checkoutSucceeds of [true, false])
         },
       };
       await browser.addInitScript(
-        ({ value, environmentId, checkoutSucceeds, project }) => {
+        ({ value, environmentId, checkoutSucceeds, project, launchMethod }) => {
           localStorage.setItem(
             "t3code:voice-audio-grant:v1",
             JSON.stringify({ id: "scenario", destination: { kind: "environment", environmentId } }),
@@ -109,7 +125,17 @@ for (const checkoutSucceeds of [true, false])
           } as unknown as typeof AudioWorkletNode;
           const started = Promise.withResolvers<string>();
           const complete = Promise.withResolvers<void>();
-          window.pendingDictatedCheckout = { started: started.promise, finish: complete.resolve };
+          let checkoutReleased = false;
+          let draftThreadId: string | undefined;
+          const launches: NonNullable<Window["pendingDictatedCheckout"]>["launches"] = [];
+          window.pendingDictatedCheckout = {
+            started: started.promise,
+            launches,
+            finish: () => {
+              checkoutReleased = true;
+              complete.resolve();
+            },
+          };
 
           const send = WebSocket.prototype.send;
           WebSocket.prototype.send = function (data) {
@@ -117,13 +143,27 @@ for (const checkoutSucceeds of [true, false])
               _tag: string;
               tag: string;
               id: string;
-              payload: { threadId: string };
+              payload: {
+                threadId: string;
+                workspaceStrategy?: (typeof launches)[number]["workspaceStrategy"];
+              };
             } | null = typeof data === "string" ? JSON.parse(data) : null;
+            if (
+              request?._tag === "Request" &&
+              request.tag === launchMethod &&
+              request.payload.threadId === draftThreadId
+            ) {
+              launches.push({
+                checkoutReleased,
+                workspaceStrategy: request.payload.workspaceStrategy,
+              });
+            }
             if (request?._tag !== "Request" || request.tag !== "git.preparePullRequestThread") {
               return send.call(this, data);
             }
 
-            started.resolve(request.payload.threadId);
+            draftThreadId = request.payload.threadId;
+            started.resolve(draftThreadId);
             void complete.promise.then(() => {
               this.dispatchEvent(
                 new MessageEvent("message", {
@@ -152,7 +192,13 @@ for (const checkoutSucceeds of [true, false])
             });
           };
         },
-        { value: prepared, environmentId: environment, checkoutSucceeds, project },
+        {
+          value: prepared,
+          environmentId: environment,
+          checkoutSucceeds,
+          project,
+          launchMethod: ORCHESTRATION_V2_WS_METHODS.launchThread,
+        },
       );
 
       await t3.open("/new?pr=example/demo/42");
@@ -163,14 +209,16 @@ for (const checkoutSucceeds of [true, false])
       const threadId = await browser.evaluate(async () => {
         return (await window.pendingDictatedCheckout?.started) ?? "";
       });
-      const draftPath = await browser.evaluate(() => window.location.pathname);
       await screen.getByRole("button", "Start voice input", { exact: true }).tap();
       await screen.getByRole("button", "Finish voice input", { exact: true }).waitFor();
       await screen.getByRole("button", "Submit message", { exact: true }).tap();
       await transcribing.promise;
-      await screen.getByRole("button", /^Other thread(?:,|$)/).tap();
-      await screen.getByText("An earlier conversation", { exact: true }).waitFor();
-      if (checkoutSucceeds) transcript.resolve();
+      if (switchThreads) {
+        await screen.getByRole("button", /^Other thread(?:,|$)/).tap();
+        await screen.getByText("An earlier conversation", { exact: true }).waitFor();
+      }
+      if (transcriptFirst) transcript.resolve();
+      const launches = () => browser.evaluate(() => window.pendingDictatedCheckout?.launches ?? []);
       const transcriptSaved = () =>
         expect
           .poll(() =>
@@ -182,7 +230,7 @@ for (const checkoutSucceeds of [true, false])
             ),
           )
           .toBe(true);
-      if (checkoutSucceeds) await transcriptSaved();
+      if (transcriptFirst) await transcriptSaved();
       await browser.evaluate(() => {
         window.pendingDictatedCheckout?.finish();
         return null;
@@ -191,10 +239,10 @@ for (const checkoutSucceeds of [true, false])
         await screen
           .getByText("Could not prepare the pull request checkout", { exact: true })
           .waitFor();
-        transcript.resolve();
+        if (!transcriptFirst) transcript.resolve();
         await transcriptSaved();
-        await t3.open(draftPath);
-        await expect(screen.getByRole("textbox")).toContainText("using the new branch");
+        await expect(await launches()).toEqual([]);
+        if (!switchThreads) await expect(composer).toContainText("using the new branch");
         return;
       }
       await screen.getByText("Checked out", { exact: true }).waitFor();
@@ -202,6 +250,16 @@ for (const checkoutSucceeds of [true, false])
         .locator('[data-testid="sidebar-row-card"]')
         .filter({ hasText: prompt })
         .waitFor();
+      await expect(await launches()).toEqual([
+        {
+          checkoutReleased: true,
+          workspaceStrategy: {
+            type: "existing_worktree",
+            branch: "review-42",
+            worktreePath: worktree,
+          },
+        },
+      ]);
       await t3.open({ threadId });
 
       await browser

@@ -1865,19 +1865,22 @@ export function useComposerSend(input: ComposerSendInput) {
     if (!draftReady || !sameRoute) return;
     return sendWithEnvironmentRefreshLatest(...args);
   };
-  const captureDetachedSend = useStableCallback(() => {
+  const captureDictatedSend = useStableCallback(() => {
     // Keep the outcome even if checkout finishes while transcription is still running.
     const checkoutAtSubmit = draftId ? readPendingDraftCheckout(draftId) : null;
-    return async (...args: Parameters<typeof onSend>) => {
-      if (sendInFlightRef.current) return onSend(...args);
-      const checkout = (draftId ? readPendingDraftCheckout(draftId) : null) ?? checkoutAtSubmit;
-      if (checkout !== null) {
-        const { result: applied, draftReady } = await waitBeforeSend(checkout);
-        if (!applied || !draftReady) return;
-      }
+    return {
+      afterCheckout: async (resume: () => void) => {
+        const checkout = (draftId ? readPendingDraftCheckout(draftId) : null) ?? checkoutAtSubmit;
+        if (checkout !== null) {
+          if (sendInFlightRef.current) return;
+          const { result: applied, draftReady } = await waitBeforeSend(checkout);
+          if (!applied || !draftReady) return;
+        }
+        resume();
+      },
       // Load balancing needs the displayed draft. A detached send keeps its original environment.
-      return onSend(...args);
+      sendDetached: onSend,
     };
   });
-  return { onSend: onSendWithRouting, captureDetachedSend };
+  return { onSend: onSendWithRouting, captureDictatedSend };
 }
