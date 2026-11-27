@@ -22,7 +22,7 @@ export function FilePasswordPrompt(props: {
         if (typeof password === "string" && password.length > 0) props.onSubmit(password);
       }}
     >
-      <p id={status} role={props.incorrect ? "alert" : "status"} className="text-sm">
+      <p id={status} role={props.incorrect ? "alert" : "status"} className="text-body">
         {props.incorrect
           ? gt("Incorrect password. Try again.")
           : gt("This file requires a password.")}
