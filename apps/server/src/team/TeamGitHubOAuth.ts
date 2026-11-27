@@ -933,6 +933,10 @@ export const pollDeviceAuthorizationFlow = Effect.fn("TeamGitHubOAuth.pollDevice
         }
 
         if (postResult._tag === "Failure") {
+          if (postResult.failure.code === "invalid_input") {
+            input.store.deviceFlows.delete(input.deviceFlowId);
+            return yield* postResult.failure;
+          }
           // Transient transport/timeout error: keep flow alive and retry on the next poll interval.
           flow.nextPollAllowedAtMs = nowMs + flow.intervalSeconds * 1_000;
           return {
@@ -945,18 +949,20 @@ export const pollDeviceAuthorizationFlow = Effect.fn("TeamGitHubOAuth.pollDevice
         }
 
         const { status, bodyText } = postResult.success;
+        // Classify retryable HTTP outage / rate-limit statuses BEFORE terminal OAuth error dispatch
+        // so e.g. HTTP 429 `{"error":"rate_limit_exceeded"}` or HTTP 503 JSON/HTML keeps polling alive.
+        if (status >= 500 || status === 429 || status === 408) {
+          flow.nextPollAllowedAtMs = nowMs + flow.intervalSeconds * 1_000;
+          return {
+            kind: "result",
+            result: {
+              status: "pending",
+              intervalSeconds: PositiveInt.make(flow.intervalSeconds),
+            },
+          } as const;
+        }
         const decodedOpt = decodeGitHubTokenResponse(bodyText);
         if (Option.isNone(decodedOpt)) {
-          if (status >= 500 || status === 429 || status === 408) {
-            flow.nextPollAllowedAtMs = nowMs + flow.intervalSeconds * 1_000;
-            return {
-              kind: "result",
-              result: {
-                status: "pending",
-                intervalSeconds: PositiveInt.make(flow.intervalSeconds),
-              },
-            } as const;
-          }
           return yield* new TeamOperationError({
             code: "github_oauth_failed",
             message: `GitHub device token polling failed with HTTP ${status}.`,
@@ -1039,16 +1045,6 @@ export const pollDeviceAuthorizationFlow = Effect.fn("TeamGitHubOAuth.pollDevice
           }
         }
 
-        if (status >= 500 || status === 429 || status === 408) {
-          flow.nextPollAllowedAtMs = nowMs + flow.intervalSeconds * 1_000;
-          return {
-            kind: "result",
-            result: {
-              status: "pending",
-              intervalSeconds: PositiveInt.make(flow.intervalSeconds),
-            },
-          } as const;
-        }
         if (status < 200 || status >= 300) {
           return yield* new TeamOperationError({
             code: "github_oauth_failed",

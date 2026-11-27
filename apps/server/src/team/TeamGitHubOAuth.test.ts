@@ -297,6 +297,17 @@ function startMockOAuthGitHubServer(): Promise<MockOAuthGitHubServer> {
                   res.end("<html><body>503 Service Unavailable</body></html>");
                   return;
                 }
+                if (err === "http_429_json") {
+                  entry.nextError = null;
+                  res.writeHead(429, { "content-type": "application/json" });
+                  res.end(
+                    JSON.stringify({
+                      error: "rate_limit_exceeded",
+                      error_description: "Too many requests.",
+                    }),
+                  );
+                  return;
+                }
                 if (err === "slow_down") {
                   entry.nextError = "authorization_pending";
                   res.writeHead(200, { "content-type": "application/json" });
@@ -1134,7 +1145,8 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
         expect(cancelDuringUserOutcome._tag).toBe("Failure");
         expect((yield* team.getState(bobSessionId)).myGitHubIdentity).toBeNull();
 
-        // Transient GitHub HTTP 503 HTML outage during device polling returns retryable pending, NOT fatal error.
+        // Transient GitHub HTTP 503 HTML AND HTTP 429 JSON rate-limit responses during device polling
+        // return retryable pending (never deleting the flow or raising a fatal error).
         const startedTransient = yield* team.startGitHubDeviceFlow({
           sessionId: bobSessionId,
           payload: {},
@@ -1149,6 +1161,23 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
           (yield* team.cancelGitHubDeviceFlow({
             sessionId: bobSessionId,
             payload: { deviceFlowId: startedTransient.deviceFlowId },
+          })).cancelled,
+        ).toBe(true);
+
+        const started429 = yield* team.startGitHubDeviceFlow({
+          sessionId: bobSessionId,
+          payload: {},
+        });
+        mockGitHub.setDeviceNextError(started429.userCode, "http_429_json");
+        const poll429 = yield* team.pollGitHubDeviceFlow({
+          sessionId: bobSessionId,
+          payload: { deviceFlowId: started429.deviceFlowId },
+        });
+        expect(poll429.status).toBe("pending");
+        expect(
+          (yield* team.cancelGitHubDeviceFlow({
+            sessionId: bobSessionId,
+            payload: { deviceFlowId: started429.deviceFlowId },
           })).cancelled,
         ).toBe(true);
       }).pipe(Effect.provide(makeFullTestLayer())),
@@ -1692,6 +1721,46 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
         expect(disconnectRes.disconnected).toBe(true);
         expect(Option.isNone(yield* githubRepo.getMemberCredential(init.owner.id))).toBe(true);
         expect((yield* team.getState(aliceSession.sessionId)).myGitHubIdentity).toBeNull();
+
+        // Block ServerSecretStore.set during device-flow commit and call cancelGitHubDeviceFlow:
+        // because cancellation shares the mutation lock and flow removal happens inside the lock,
+        // cancel accurately returns `{ cancelled: false }` once the commit has already entered storage.
+        const deviceStarted = yield* team.startGitHubDeviceFlow({
+          sessionId: aliceSession.sessionId,
+          payload: {},
+        });
+        mockGitHub.authorizeDeviceCode(deviceStarted.userCode, "alice-device-gated");
+        let onDeviceEntered!: () => void;
+        let releaseDevice!: () => void;
+        const deviceEntered = new Promise<void>((r) => {
+          onDeviceEntered = r;
+        });
+        const waitDeviceRelease = new Promise<void>((r) => {
+          releaseDevice = r;
+        });
+        secretSetGate = { onEntered: onDeviceEntered, waitRelease: waitDeviceRelease };
+
+        const deviceCommitFiber = yield* Effect.forkChild(
+          team.pollGitHubDeviceFlow({
+            sessionId: aliceSession.sessionId,
+            payload: { deviceFlowId: deviceStarted.deviceFlowId },
+          }),
+        );
+        yield* Effect.promise(() => deviceEntered);
+        const cancelCommitFiber = yield* Effect.forkChild(
+          team.cancelGitHubDeviceFlow({
+            sessionId: aliceSession.sessionId,
+            payload: { deviceFlowId: deviceStarted.deviceFlowId },
+          }),
+        );
+        releaseDevice();
+        const deviceCommitRes = yield* Fiber.join(deviceCommitFiber);
+        const cancelCommitRes = yield* Fiber.join(cancelCommitFiber);
+        expect(deviceCommitRes.status).toBe("completed");
+        expect(cancelCommitRes.cancelled).toBe(false);
+        expect((yield* team.getState(aliceSession.sessionId)).myGitHubIdentity?.githubLogin).toBe(
+          "alice-device-gated",
+        );
       }).pipe(
         Effect.provide(
           makeFullTestLayer({

@@ -10101,6 +10101,13 @@ const make = Effect.gen(function* () {
       team.id,
       actor.id,
       Effect.gen(function* () {
+        const latestActor = yield* requireActiveMember(input.sessionId);
+        if (latestActor.teamId !== team.id) {
+          return yield* new TeamOperationError({
+            code: "forbidden",
+            message: "This session does not belong to the active team.",
+          });
+        }
         TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, actor.id);
         const nowIso = DateTime.formatIso(yield* DateTime.now);
         const existingOpt = yield* githubRepo
@@ -10179,6 +10186,13 @@ const make = Effect.gen(function* () {
       team.id,
       actor.id,
       Effect.gen(function* () {
+        const latestActor = yield* requireActiveMember(input.sessionId);
+        if (latestActor.teamId !== team.id) {
+          return yield* new TeamOperationError({
+            code: "forbidden",
+            message: "This session does not belong to the active team.",
+          });
+        }
         TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, actor.id);
         const nowIso = DateTime.formatIso(yield* DateTime.now);
         const removedSecretKeyOpt = yield* githubRepo
@@ -10416,6 +10430,7 @@ const make = Effect.gen(function* () {
       readonly githubNameOverride: string | null;
       readonly githubEmailOverride: string | null;
       readonly verifyStillAuthorized: Effect.Effect<unknown, TeamOperationError>;
+      readonly onCommitted?: () => void;
     }) {
       const { githubRepo, secrets, httpClient } = yield* requireGitHubDeps();
       const verified = yield* TeamGitHubRepository.verifyGitHubToken({
@@ -10492,6 +10507,7 @@ const make = Effect.gen(function* () {
             ).pipe(Effect.ignore);
           }
           const identity = TeamGitHubRepository.stripMemberGitHubSecretKey(stored);
+          input.onCommitted?.();
           yield* publish({
             version: 1,
             type: "myGitHubIdentityUpdated",
@@ -10906,6 +10922,9 @@ const make = Effect.gen(function* () {
         teamGeneration: outcome.flow.teamGeneration,
         isCancelled: () => outcome.flow.cancelled,
       }),
+      onCommitted: () => {
+        githubOAuthFlowStore.deviceFlows.delete(outcome.flow.deviceFlowId);
+      },
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
@@ -10932,18 +10951,24 @@ const make = Effect.gen(function* () {
         message: "This session does not belong to the active team.",
       });
     }
-    const flow = githubOAuthFlowStore.deviceFlows.get(input.payload.deviceFlowId);
-    if (
-      flow !== undefined &&
-      flow.teamId === team.id &&
-      flow.memberId === actor.id &&
-      flow.sessionId === input.sessionId
-    ) {
-      flow.cancelled = true;
-      githubOAuthFlowStore.deviceFlows.delete(input.payload.deviceFlowId);
-      return { cancelled: true };
-    }
-    return { cancelled: false };
+    return yield* TeamGitHubOAuth.withMemberGitHubCredentialMutationLock(
+      team.id,
+      actor.id,
+      Effect.sync(() => {
+        const flow = githubOAuthFlowStore.deviceFlows.get(input.payload.deviceFlowId);
+        if (
+          flow !== undefined &&
+          flow.teamId === team.id &&
+          flow.memberId === actor.id &&
+          flow.sessionId === input.sessionId
+        ) {
+          flow.cancelled = true;
+          githubOAuthFlowStore.deviceFlows.delete(input.payload.deviceFlowId);
+          return { cancelled: true };
+        }
+        return { cancelled: false };
+      }),
+    );
   });
 
   const publishMemberGitHubIdentityUpdate = Effect.fn(
