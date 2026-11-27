@@ -27,9 +27,10 @@ const threadLinkSource = (markdown: string) =>
 // Quote markers are compared from the first `>`, so lines may indent them differently.
 // Space after the markers is matched only after a `>`: two adjacent `[ \t]*` backtrack quadratically.
 const AFTER_QUOTE = String.raw`(?:(?<=>)[ \t]*)?`;
-// Four columns of indent where no container can explain it make indented code, not a fence: at the
-// start of the text, after a list marker, or after a quote's optional space.
-const NOT_INDENTED_CODE = String.raw`(?!(?<![\s\S])(?: {0,3}\t| {4}))`;
+const TOP_LEVEL_ATX_HEADING = String.raw`#{1,6}(?:[ \t][^\r\n]*)?`;
+const HEADING_LINE = new RegExp(`^${TOP_LEVEL_ATX_HEADING}$`);
+// Four columns at document start or after a top-level heading start indented code.
+const NOT_INDENTED_CODE = String.raw`(?!(?= {0,3}\t| {4})(?:(?<![\s\S])|(?<=(?<![^\r\n])${TOP_LEVEL_ATX_HEADING}(?:\r\n?|\n))))`;
 const OPENER_LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]{1,4}(?![ \t]))*`;
 // Fence-looking lines declined by `fencedCode` may still open an indented code block.
 const INDENTED_FENCE = String.raw`(?<![^\r\n])(?<indentedFence>[ \t>*+\-\d.)]*?(?:\`{3,}[^\`\r\n]*|~{3,}[^\r\n]*))(?=[\r\n]|(?![\s\S]))`;
@@ -348,8 +349,14 @@ function findIndentedCodeEnd(markdown: string, openIndex: number, openerLength: 
       openIndex - (markdown[openIndex - 1] === "\n" && markdown[openIndex - 2] === "\r" ? 2 : 1);
     let prevStart = prevEnd;
     while (prevStart > 0 && !/[\r\n]/.test(markdown[prevStart - 1]!)) prevStart--;
-    const prev = walkContainer(markdown.slice(prevStart, prevEnd), true);
-    if (opener.list ? !prev.blank : prev.quotes > 0 || (!prev.blank && prevStart > 0)) return -1;
+    const previousLine = markdown.slice(prevStart, prevEnd);
+    const prev = walkContainer(previousLine, true);
+    if (
+      opener.list
+        ? !prev.blank
+        : prev.quotes > 0 || (!prev.blank && prevStart > 0 && !HEADING_LINE.test(previousLine))
+    )
+      return -1;
   }
   let blockEnd = openIndex + openerLength;
   NEXT_LINE.lastIndex = blockEnd;
