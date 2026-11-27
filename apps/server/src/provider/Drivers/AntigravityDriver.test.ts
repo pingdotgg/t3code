@@ -20,6 +20,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -188,6 +189,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   }> = [];
 
   const installState = yield* SubscriptionRef.make(options.installState ?? noManagedRuntime);
+  const updateChecked = yield* Deferred.make<void>();
   const installSteps = options.installSteps ?? [];
   const layerInstallation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
     managedDirectory: root,
@@ -197,7 +199,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         ? Stream.fromIterable(installSteps)
         : SubscriptionRef.changes(installState),
     start: Effect.succeed(installSteps[0] ?? noManagedRuntime),
-    checkForUpdate: Effect.void,
+    checkForUpdate: Deferred.succeed(updateChecked, undefined).pipe(Effect.asVoid),
     compatibility: (version) =>
       Effect.succeed(
         resolveProviderCompatibility(
@@ -315,6 +317,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     signedOut,
     controls,
     installState,
+    updateChecked,
     acquisitions,
     releases,
     launches,
@@ -679,6 +682,26 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       }),
   );
 
+  it.effect.skipIf(windowsHost)(
+    "checks for an update and offers it when the managed runtime cannot resolve",
+    () =>
+      Effect.gen(function* () {
+        // A pre-CLI install: the installer refuses it but keeps its version.
+        const h = yield* makeHarness({
+          installState: { ...outdatedManagedRuntime, phase: "failed", installedVersion: "1.4.5" },
+        });
+        h.controls.failResolution = true;
+        yield* h.instance.snapshot.refresh;
+        yield* Deferred.await(h.updateChecked);
+        expect((yield* h.instance.snapshot.getSnapshot).versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          currentVersion: "1.4.5",
+          latestVersion: "1.5.18",
+          canUpdate: true,
+        });
+      }),
+  );
+
   for (const finished of [
     { phase: "succeeded", message: null },
     { phase: "failed", message: "The download failed its checksum check." },
@@ -721,20 +744,6 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         }),
     );
   }
-
-  it.effect.skipIf(windowsHost)("reloads models after an update only when signed in", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      const afterUpdate = h.instance.afterUpdate ?? Effect.die("Antigravity has no update hook.");
-      yield* afterUpdate;
-      expect(h.launches).toHaveLength(0);
-      yield* h.refresh();
-      const launched = h.launches.length;
-      yield* afterUpdate;
-      expect(h.launches.length).toBeGreaterThan(launched);
-      yield* h.assertClosed;
-    }),
-  );
 
   it.effect.skipIf(windowsHost)("keeps the previous catalog when executable resolution fails", () =>
     Effect.gen(function* () {

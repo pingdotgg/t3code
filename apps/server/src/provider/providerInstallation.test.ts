@@ -8,11 +8,9 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
-import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -62,19 +60,16 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
     instance?: ProviderInstance;
     others?: ReadonlyArray<ProviderInstance>;
     settings?: Parameters<typeof ServerSettings.layerTest>[0];
+    /** The states an install passes through, whoever started it. */
+    installStates?: ReadonlyArray<ProviderInstallState>;
   } = {},
 ) {
   const calls: string[] = [];
-  const refreshed = yield* Deferred.make<void>();
-  const lastRefreshes = yield* Queue.unbounded<void>();
   const observed = yield* Deferred.make<void>();
-  const listening = yield* Deferred.make<void>();
-  const installationState = yield* SubscriptionRef.make(state);
   let protectedPaths: ReadonlyArray<string> = [];
   const configured = input.instance ?? instance();
   const all = [configured, ...(input.others ?? [])];
   const refreshedInstances: ProviderInstanceId[] = [];
-  let watches = 0;
   const dependencies = Layer.mergeAll(
     ServerSettings.layerTest(input.settings),
     Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
@@ -87,12 +82,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
           calls.push("refresh");
           refreshedInstances.push(id);
           return [];
-        }).pipe(
-          Effect.tap(() => Deferred.succeed(refreshed, undefined)),
-          Effect.tap(() =>
-            id === all.at(-1)?.instanceId ? Queue.offer(lastRefreshes, undefined) : Effect.void,
-          ),
-        ),
+        }),
     }),
     Layer.mock(CodexInstallation.CodexInstallation)({
       managedDirectory: "/unused-managed-codex",
@@ -120,24 +110,17 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
       start: Effect.sync(() => {
         calls.push("start");
         return { ...state, operationId: "install-1", phase: "downloading" as const };
-      }).pipe(Effect.tap((started) => SubscriptionRef.set(installationState, started))),
+      }),
       cancel: () =>
         Effect.sync(() => {
           calls.push("cancel");
           return state;
         }),
       state: Effect.succeed(state),
-      changes: all.some((entry) => entry.refreshModels)
-        ? SubscriptionRef.changes(installationState).pipe(
-            Stream.onStart(
-              Effect.sync(() => {
-                watches++;
-              }),
-            ),
-            Stream.tap(() => Deferred.succeed(listening, undefined)),
-            Stream.ensuring(Deferred.succeed(observed, undefined)),
-          )
-        : Stream.succeed(state),
+      // Ends after its last state is handled, so `observed` marks the end of the service's watch.
+      changes: Stream.fromIterable(input.installStates ?? [state]).pipe(
+        Stream.ensuring(Deferred.succeed(observed, undefined)),
+      ),
       remove: (paths) =>
         Effect.sync(() => {
           protectedPaths = paths ?? [];
@@ -146,23 +129,23 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
     }),
   );
   const context = yield* Layer.build(ProviderInstallation.layer.pipe(Layer.provide(dependencies)));
-  const connect = Effect.service(ProviderInstallation.ProviderInstallation).pipe(
+  const router = yield* Effect.service(ProviderInstallation.ProviderInstallation).pipe(
     Effect.provide(context),
   );
-  const router = yield* connect;
   return {
     router,
-    connect,
-    listening,
     calls,
-    refreshed,
-    lastRefreshes,
-    watches: () => watches,
     observed,
-    installationState,
     refreshedInstances,
     protectedPaths: () => protectedPaths,
   };
+});
+
+const installed = (operationId: string, phase: ProviderInstallState["phase"]) => ({
+  ...state,
+  operationId,
+  phase,
+  installedVersion: phase === "succeeded" ? "1.5.8" : null,
 });
 
 describe("provider installation routing", () => {
@@ -173,11 +156,17 @@ describe("provider installation routing", () => {
     { phase: "cancelled", enabled: true, checkFails: false, expectedChecks: 0 },
     { phase: "failed", enabled: true, checkFails: false, expectedChecks: 0 },
   ] as const)(
-    "checks account access once after installation is $phase, enabled=$enabled, checkFails=$checkFails",
+    "checks account access once after an installation is $phase, enabled=$enabled, checkFails=$checkFails",
     ({ phase, enabled, checkFails, expectedChecks }) =>
       Effect.gen(function* () {
         let checks = 0;
+        // No client starts this install: the provider update flow runs the installer itself.
         const harness = yield* makeHarness({
+          installStates: [
+            installed("install-1", "downloading"),
+            installed("install-1", phase),
+            { ...installed("install-1", phase), version: "1.5.8" },
+          ],
           instance: Object.assign(instance(), {
             enabled,
             refreshModels: () =>
@@ -198,85 +187,44 @@ describe("provider installation routing", () => {
               ),
           }),
         });
-        yield* Effect.gen(function* () {
-          const first = yield* harness.connect;
-          const second = yield* harness.connect;
-          yield* Effect.all([first.start({ instanceId }), second.start({ instanceId })], {
-            concurrency: "unbounded",
-          });
-          yield* Deferred.await(harness.listening);
-        }).pipe(Effect.scoped);
-        assert.isFalse(yield* Deferred.isDone(harness.observed));
-        assert.strictEqual(checks, 0);
-        yield* SubscriptionRef.set(harness.installationState, {
-          ...state,
-          operationId: "install-1",
-          phase,
-          installedVersion: phase === "succeeded" ? "1.5.1" : null,
-        });
         yield* Deferred.await(harness.observed);
-        if (expectedChecks > 0) yield* Deferred.await(harness.refreshed);
         assert.strictEqual(checks, expectedChecks);
-        assert.deepEqual(
-          harness.calls,
-          expectedChecks > 0 ? ["start", "start", "refresh"] : ["start", "start"],
-        );
+        assert.deepEqual(harness.calls, expectedChecks > 0 ? ["refresh"] : []);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect(
-    "checks every enabled instance on the managed runtime once, whichever instance started the install",
-    () =>
-      Effect.gen(function* () {
-        const checked: string[] = [];
-        const managed = (id: string, enabled: boolean) =>
-          Object.assign(instance(driver, ProviderInstanceId.make(id)), {
-            enabled,
-            refreshModels: () =>
-              Effect.sync(() => {
-                checked.push(id);
-              }),
-          });
-        const work = managed("antigravity_work", true);
-        const personal = managed("antigravity_personal", true);
-        const harness = yield* makeHarness({
-          // The disabled default instance is listed first, as server.getConfig lists it.
-          instance: managed("antigravity", false),
-          others: [managed("antigravity_custom", true), work, personal],
-          settings: {
-            providerInstances: {
-              [ProviderInstanceId.make("antigravity_custom")]: {
-                driver,
-                config: { binaryPath: "/external/agy" },
-              },
+  it.effect("checks every enabled instance on the managed runtime after each install", () =>
+    Effect.gen(function* () {
+      const checked: string[] = [];
+      const managed = (id: string, enabled: boolean) =>
+        Object.assign(instance(driver, ProviderInstanceId.make(id)), {
+          enabled,
+          refreshModels: () =>
+            Effect.sync(() => {
+              checked.push(id);
+            }),
+        });
+      const work = managed("antigravity_work", true);
+      const personal = managed("antigravity_personal", true);
+      const harness = yield* makeHarness({
+        installStates: [installed("install-1", "succeeded"), installed("install-2", "succeeded")],
+        // The disabled default instance is listed first, as server.getConfig lists it.
+        instance: managed("antigravity", false),
+        others: [managed("antigravity_custom", true), work, personal],
+        settings: {
+          providerInstances: {
+            [ProviderInstanceId.make("antigravity_custom")]: {
+              driver,
+              config: { binaryPath: "/external/agy" },
             },
           },
-        });
-        yield* Effect.gen(function* () {
-          const first = yield* harness.connect;
-          const second = yield* harness.connect;
-          yield* Effect.all(
-            [first.start({ instanceId }), second.start({ instanceId: personal.instanceId })],
-            { concurrency: "unbounded" },
-          );
-          yield* Deferred.await(harness.listening);
-        }).pipe(Effect.scoped);
-        yield* SubscriptionRef.set(harness.installationState, {
-          ...state,
-          operationId: "install-1",
-          phase: "succeeded",
-          installedVersion: "1.5.8",
-        });
-        yield* Deferred.await(harness.observed);
-        // Instances refresh in list order, so the last one's refresh ends a watch's pass.
-        yield* Queue.take(harness.lastRefreshes);
-        assert.deepEqual(checked, [work.instanceId, personal.instanceId]);
-        // Let every other watch of this install finish its pass; none may refresh again.
-        yield* Queue.takeN(harness.lastRefreshes, harness.watches() - 1);
-        assert.deepEqual(checked, [work.instanceId, personal.instanceId]);
-        assert.deepEqual(harness.refreshedInstances, [work.instanceId, personal.instanceId]);
-        assert.strictEqual(harness.watches(), 1);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        },
+      });
+      yield* Deferred.await(harness.observed);
+      const eachInstall = [work.instanceId, personal.instanceId];
+      assert.deepEqual(checked, [...eachInstall, ...eachInstall]);
+      assert.deepEqual(harness.refreshedInstances, [...eachInstall, ...eachInstall]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps external installs manual without hiding shared install status", () =>

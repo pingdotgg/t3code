@@ -339,7 +339,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
           .getProviderMaintenanceCapabilitiesForInstance(candidate.instanceId, candidate.driver)
           .pipe(
             Effect.map((capabilities) =>
-              updateLockKey(capabilities) === lockKey ? [candidate.instanceId] : [],
+              capabilities.update?.lockKey === lockKey ? [candidate.instanceId] : [],
             ),
           ),
       { concurrency: "unbounded" },

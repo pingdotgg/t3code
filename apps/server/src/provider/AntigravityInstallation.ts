@@ -502,6 +502,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     if (record.releaseId === releaseId && record.executable.name !== cliExecutableName) {
       return {
         _tag: "repairable" as const,
+        legacyVersion: record.version,
         error: installationError(
           "resolve",
           `Antigravity ${record.version} predates the Antigravity CLI and no longer works with this T3 Code release. Update it in Antigravity setup.`,
@@ -1474,7 +1475,16 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           }
           yield* ensureRealManagedRoot("activate");
           const active = yield* readRecord(activePath, ActiveRelease);
-          const installed = yield* completedRelease(active.releaseId);
+          const inspected = yield* inspectRelease(active.releaseId);
+          if (inspected._tag === "repairable") {
+            // A pre-CLI runtime cannot start, but its version lets the update flow offer a replacement.
+            if ("legacyVersion" in inspected) {
+              const installedVersion = inspected.legacyVersion;
+              yield* SubscriptionRef.update(state, (current) => ({ ...current, installedVersion }));
+            }
+            return yield* inspected.error;
+          }
+          const installed = inspected.executable;
           if (installed.managedVersionDirectory !== null) {
             yield* lockReleaseDirectory(
               installed.managedVersionDirectory,

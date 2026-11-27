@@ -914,12 +914,6 @@ export const AntigravityDriver: ProviderDriver<
       textGeneration,
       auth: authFlow.controller,
       refreshModels,
-      // The probe never spawns, so only a session reports the models the new runtime serves.
-      afterUpdate: provider.snapshot.getSnapshot.pipe(
-        Effect.flatMap((snapshot) =>
-          snapshot.auth.status === "authenticated" ? Effect.ignore(refreshModels()) : Effect.void,
-        ),
-      ),
     } satisfies ProviderInstance;
   }),
 };

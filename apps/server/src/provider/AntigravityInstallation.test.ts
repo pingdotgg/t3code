@@ -299,6 +299,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           operation: "resolve",
           detail: expect.stringContaining("Antigravity 1.4.5 predates the Antigravity CLI"),
         });
+        // A restart keeps the old version, so the shared update flow can offer its replacement.
+        const outdated = yield* makeHarness({ baseDir, native: true, archive, platform });
+        expect(yield* outdated.installation.state).toMatchObject({
+          phase: "failed",
+          installedVersion: "1.4.5",
+        });
         yield* installation.start;
         expect(yield* terminalState(installation)).toMatchObject({
           phase: "succeeded",
