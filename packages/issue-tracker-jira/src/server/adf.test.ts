@@ -85,6 +85,11 @@ describe("adf", () => {
         ],
       },
     ]);
+    // A quote holding only what Jira cannot nest, like a rule, is dropped: Jira refuses an empty one.
+    expect(markdownToAdf("before\n\n> ---\n\nafter").content).toEqual([
+      { type: "paragraph", content: [{ type: "text", text: "before" }] },
+      { type: "paragraph", content: [{ type: "text", text: "after" }] },
+    ]);
   });
 
   // https://github.com/pingdotgg/t3code/pull/38003#discussion_r4717362382

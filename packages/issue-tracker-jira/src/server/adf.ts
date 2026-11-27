@@ -364,7 +364,7 @@ function toBlocks(node: Mdast, nested: boolean): AdfNode[] {
       return nested ? [] : [{ type: "rule" }];
     case "blockquote": {
       const content = (node.children ?? []).flatMap((child) => toBlocks(child, true));
-      return nested ? content : [{ type: "blockquote", content }];
+      return nested || content.length === 0 ? content : [{ type: "blockquote", content }];
     }
     case "list":
       if (!nested && isChecklist(node)) {
