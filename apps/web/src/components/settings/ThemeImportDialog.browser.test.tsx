@@ -67,11 +67,17 @@ describe("ThemeImportDialog", () => {
     );
   });
 
+  // The count uses the host locale, not the UI language.
+  const compact = (count: number) =>
+    new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(
+      count,
+    );
   it.each([
     ["en", 1, "acme · 1 download"],
-    ["en", 1500, "acme · 1.5K downloads"],
+    ["en", 1500, `acme · ${compact(1500)} downloads`],
     ["de", 1, "acme · 1 Download"],
     ["de", 10, "acme · 10 Downloads"],
+    ["ru", 475_001, `acme · Скачиваний: ${compact(475_001)}`],
   ])("counts %s theme downloads (%d)", async (locale, downloadCount, line) => {
     searchOpenVsxThemes.mockReset();
     searchOpenVsxThemes.mockResolvedValue([{ ...extension, downloadCount }]);
@@ -95,7 +101,7 @@ describe("ThemeImportDialog", () => {
 
     await userEvent.fill(page.getByRole("searchbox"), "night");
 
-    await expect.element(page.getByText(/^acme · /)).toHaveTextContent(line);
+    await expect.element(page.getByText(line, { exact: true })).toBeVisible();
   });
 
   it("clears the search on Escape before closing the dialog", async () => {
