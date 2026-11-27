@@ -1474,6 +1474,52 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       };
     });
 
+  it.effect("thread delete cancels a turn start that would otherwise hold its effect lane", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("runtime-thread-delete-pending-start");
+      const messageCommandId = CommandId.make("runtime-thread-delete-pending-start-message");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-thread-delete-pending-start-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-thread-delete-pending-start-project"),
+        title: "Pending start",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/t3-runtime-thread-delete-pending-start",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: messageCommandId,
+        threadId,
+        messageId: MessageId.make("runtime-thread-delete-pending-start-message"),
+        text: "Start a turn.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+      });
+      const [start] = (yield* outbox.listByCommandId(messageCommandId)).filter(
+        (effect) => effect.request.type === "provider-turn.start",
+      );
+      assert.equal(start?.status, "pending");
+
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("runtime-thread-delete-pending-start-delete"),
+        threadId,
+      });
+
+      assert.equal(Option.getOrUndefined(yield* outbox.get(start!.id))?.status, "cancelled");
+    }),
+  );
+
   it.effect("projects a rollback that fails every attempt and clears it on the next one", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
