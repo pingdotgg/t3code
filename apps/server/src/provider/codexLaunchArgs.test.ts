@@ -10,6 +10,20 @@ import {
 } from "./codexLaunchArgs.ts";
 
 describe("codexAppServerArgs", () => {
+  it("keeps the SQLite state in the dedicated home even with environment launch arguments", () => {
+    const home = String.raw`C:\T3 Code\codex home`;
+    const launchArgs = resolveCodexLaunchArgs(
+      { launchArgs: "", dedicatedHome: true, homePath: home },
+      { T3CODE_CODEX_LAUNCH_ARGS: "-c sqlite_home=shared" },
+    );
+    NodeAssert.deepStrictEqual(codexAppServerArgs(launchArgs).slice(-4), [
+      "-c",
+      "sqlite_home=shared",
+      "-c",
+      `sqlite_home=${JSON.stringify(home)}`,
+    ]);
+  });
+
   it.each([
     {
       name: "preserves escaped TOML quotes in config values",
@@ -36,7 +50,10 @@ describe("codexAppServerArgs", () => {
       expected: ["--strict-config"],
     },
   ])("asks Codex to unload unsubscribed threads immediately and $name", (row) => {
-    const launchArgs = resolveCodexLaunchArgs(row.launchArgs, row.environment ?? {});
+    const launchArgs = resolveCodexLaunchArgs(
+      { launchArgs: row.launchArgs, dedicatedHome: false, homePath: "" },
+      row.environment ?? {},
+    );
     NodeAssert.deepStrictEqual(codexAppServerArgs(launchArgs, row.version), [
       "app-server",
       "-c",

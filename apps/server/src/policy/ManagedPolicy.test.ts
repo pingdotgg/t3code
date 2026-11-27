@@ -319,7 +319,6 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
           homeLocked.summary?.limits?.providers?.lockedInstanceFields?.[claude] ?? [],
           "config.homePath",
         );
-        // Codex has a second home setting, which a locked CODEX_HOME owns too.
         const codexHome = yield* ManagedPolicy.fromDocument("/test/policy.json", {
           schemaVersion: 1,
           organization: "Example Corp",
@@ -336,7 +335,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
         });
         assert.includeMembers(
           [...(codexHome.summary?.limits?.providers?.lockedInstanceFields?.[codex] ?? [])],
-          ["config.homePath", "config.shadowHomePath"],
+          ["config.dedicatedHome", "config.homePath", "config.shadowHomePath"],
         );
         // A server URL makes OpenCode skip the local launch a pin sets, so the pin owns it too.
         const opencode = ProviderDriverKind.make("opencode");

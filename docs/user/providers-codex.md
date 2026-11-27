@@ -37,6 +37,12 @@ CODEX_HOME=~/.codex_personal codex login
 
 To switch accounts mid-thread, pick another compatible Codex instance sharing the same **CODEX_HOME path** from the model picker.
 
+## Keep T3 Code sessions separate
+
+In **Settings → Providers**, select a Codex instance and turn on **Runtime → Dedicated Codex Home**. T3 Code stores that instance's new sessions and configuration in its own folder on the selected environment. The switch is off by default. In the manual CLI settings, the custom home and shadow home fields are hidden while the switch is on. Turn it off to restore your previous paths.
+
+Existing sessions stay in the home where they started. Switch back to that home to resume them, or keep a Codex instance for each home. For a CLI instance, choose **Sign in** under **Account**. T3 Code starts Codex sign-in in the dedicated home and opens the login page in your browser. For a remote environment, enter the device code shown in T3 Code on the login page.
+
 ## Features and options
 
 - **Image generation**: Supported when your Codex version, model, and account allow it. If disabled in Codex config, add `-c features.image_generation=true` to the instance's **Launch arguments** (applies to new sessions).

@@ -741,6 +741,15 @@ export const CodexSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "codex", clearWhenEmpty: "omit" },
       }),
     ),
+    dedicatedHome: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Dedicated Codex Home",
+        description:
+          "Store new sessions and settings separately from your regular Codex. Existing sessions stay in their original home. If you use the Codex CLI, you may need to sign in again.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
     homePath: TrimmedString.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
@@ -777,7 +786,7 @@ export const CodexSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
+    order: ["dedicatedHome", "binaryPath", "homePath", "shadowHomePath", "launchArgs"],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;

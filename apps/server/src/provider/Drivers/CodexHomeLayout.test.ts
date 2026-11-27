@@ -5,12 +5,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { CodexSettings } from "@t3tools/contracts";
+import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
 import {
   CodexShadowHomeEntryConflictError,
   CodexShadowHomePathConflictError,
-  materializeCodexShadowHome,
+  materializeCodexHomeLayout,
   resolveCodexHomeLayout,
+  resolveCodexProviderHomeLayout,
 } from "./CodexHomeLayout.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 const decodeCodexSettingsValue = Schema.decodeSync(CodexSettings);
@@ -40,6 +41,58 @@ const writeTextFile = Effect.fn("CodexHomeLayout.test.writeTextFile")(function* 
 
 it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
   describe("resolveCodexHomeLayout", () => {
+    it.effect("isolates and restores the provider's home without migrating state", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stateDir = yield* makeTempDir("t3-codex-home-");
+        const instanceId = ProviderInstanceId.make("codex");
+        const sharedHome = path.join(stateDir, "shared");
+        const shadowHome = path.join(stateDir, "shadow");
+        const previousConfig = decodeCodexSettings({
+          homePath: sharedHome,
+          shadowHomePath: shadowHome,
+        });
+        yield* writeTextFile(path.join(sharedHome, "sessions", "previous.jsonl"), "previous");
+
+        const previous = yield* resolveCodexProviderHomeLayout(
+          previousConfig,
+          stateDir,
+          instanceId,
+        );
+        expect(previous.effectiveHomePath).toBe(shadowHome);
+
+        const enabled = { ...previousConfig, dedicatedHome: true };
+        const dedicated = yield* resolveCodexProviderHomeLayout(enabled, stateDir, instanceId);
+        const homePath = path.join(stateDir, "providers", "codex", instanceId, "home");
+        expect(dedicated).toMatchObject({
+          mode: "dedicated",
+          sharedHomePath: homePath,
+          effectiveHomePath: homePath,
+          continuationKey: `codex:home:${homePath}`,
+        });
+        yield* materializeCodexHomeLayout(dedicated);
+        expect(yield* fs.readDirectory(homePath)).toEqual([]);
+        expect(yield* fs.exists(shadowHome)).toBe(false);
+        expect(yield* fs.readFileString(path.join(sharedHome, "sessions", "previous.jsonl"))).toBe(
+          "previous",
+        );
+        const another = yield* resolveCodexProviderHomeLayout(
+          enabled,
+          stateDir,
+          ProviderInstanceId.make("another"),
+        );
+        expect(another.continuationKey).not.toBe(dedicated.continuationKey);
+        expect(
+          yield* resolveCodexProviderHomeLayout(
+            { ...enabled, dedicatedHome: false },
+            stateDir,
+            instanceId,
+          ),
+        ).toEqual(previous);
+      }),
+    );
+
     it.effect("uses the shared home for continuation and the shadow home for runtime", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -64,7 +117,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     );
   });
 
-  describe("materializeCodexShadowHome", () => {
+  describe("materializeCodexHomeLayout", () => {
     it.effect.skipIf(!symlinksSupported)(
       "keeps Finder metadata local across repeated shadow home setup",
       () =>
@@ -83,15 +136,15 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
           );
 
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexHomeLayout(layout);
           expect(yield* fileSystem.readFileString(shadowMetadata)).toBe("shadow Finder metadata");
           yield* fileSystem.remove(shadowMetadata);
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexHomeLayout(layout);
           expect(yield* fileSystem.exists(shadowMetadata)).toBe(false);
 
           yield* writeTextFile(shadowMetadata, "shadow Finder metadata");
-          yield* materializeCodexShadowHome(layout);
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexHomeLayout(layout);
+          yield* materializeCodexHomeLayout(layout);
 
           expect(yield* fileSystem.readFileString(sharedMetadata)).toBe("shared Finder metadata");
           expect(yield* fileSystem.readFileString(shadowMetadata)).toBe("shadow Finder metadata");
@@ -137,7 +190,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             }),
           );
 
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexHomeLayout(layout);
 
           const sessionsTarget = yield* fileSystem.readLink(path.join(shadowHome, "sessions"));
           const configTarget = yield* fileSystem.readLink(path.join(shadowHome, "config.toml"));
@@ -187,7 +240,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             }),
           );
 
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexHomeLayout(layout);
 
           expect(yield* fileSystem.readLink(shadowLock)).toBe(sharedLock);
         }),
@@ -215,7 +268,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             }),
           );
 
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexHomeLayout(layout);
 
           const locksTarget = yield* fileSystem.readLink(shadowLocks);
           const sharedLockExists = yield* fileSystem.exists(
@@ -250,11 +303,11 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             }),
           );
 
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexHomeLayout(layout);
           expect(yield* fileSystem.exists(threadLock)).toBe(true);
 
           yield* fileSystem.remove(threadLock);
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexHomeLayout(layout);
           expect(yield* fileSystem.readLink(shadowLocks)).toBe(
             path.join(sharedHome, "thread-writer-locks"),
           );
@@ -287,7 +340,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             }),
           );
 
-          yield* materializeCodexShadowHome(layout);
+          yield* materializeCodexHomeLayout(layout);
 
           const configTarget = yield* fileSystem.readLink(path.join(shadowHome, "config.toml"));
           const logLinkResult = yield* fileSystem
@@ -317,7 +370,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           }),
         );
 
-        const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+        const error = yield* materializeCodexHomeLayout(layout).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(CodexShadowHomePathConflictError);
         expect(error).toMatchObject({
@@ -348,7 +401,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             }),
           );
 
-          const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+          const error = yield* materializeCodexHomeLayout(layout).pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(CodexShadowHomeEntryConflictError);
           expect(error).toMatchObject({

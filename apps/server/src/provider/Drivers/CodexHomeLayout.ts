@@ -1,4 +1,8 @@
-import { ProviderDriverKind, type CodexSettings } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type CodexSettings,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -9,7 +13,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export interface CodexHomeLayout {
-  readonly mode: "direct" | "authOverlay";
+  readonly mode: "direct" | "authOverlay" | "dedicated";
   readonly sharedHomePath: string;
   readonly effectiveHomePath: string | undefined;
   readonly continuationKey: string;
@@ -70,6 +74,24 @@ export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(functi
     continuationKey: `codex:home:${sharedHomePath}`,
   };
 });
+
+export const resolveCodexProviderHomeLayout = Effect.fn("resolveCodexProviderHomeLayout")(
+  function* (
+    config: CodexSettings,
+    stateDir: string,
+    instanceId: ProviderInstanceId,
+  ): Effect.fn.Return<CodexHomeLayout, never, Path.Path> {
+    if (!config.dedicatedHome) return yield* resolveCodexHomeLayout(config);
+    const path = yield* Path.Path;
+    const homePath = path.resolve(stateDir, "providers", "codex", instanceId, "home");
+    return {
+      mode: "dedicated",
+      sharedHomePath: homePath,
+      effectiveHomePath: homePath,
+      continuationKey: `codex:home:${homePath}`,
+    };
+  },
+);
 
 // Codex accepts bundled plugins only from this path under CODEX_HOME. The shared
 // config names the original home, so shadow homes must override it through their .tmp link.
@@ -363,9 +385,14 @@ const ensureShadowAuthIsPrivate = Effect.fn("CodexHomeLayout.ensureShadowAuthIsP
   },
 );
 
-export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome")(function* (
+export const materializeCodexHomeLayout = Effect.fn("materializeCodexHomeLayout")(function* (
   layout: CodexHomeLayout,
 ) {
+  if (layout.mode === "dedicated") {
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* fileSystem.makeDirectory(layout.sharedHomePath, { recursive: true, mode: 0o700 });
+    return;
+  }
   if (layout.mode !== "authOverlay") return;
   const effectiveHomePath = layout.effectiveHomePath;
   if (!effectiveHomePath) return;

@@ -1159,7 +1159,7 @@ export function CodexManagedRuntimeFields({
       />
       <SettingsRow
         title={gt("CODEX_HOME path")}
-        description={gt("Shared Codex config, sessions, and state.")}
+        description={gt("Location of this provider's Codex settings and sessions.")}
         control={
           <div className="w-full sm:w-80">
             <Input

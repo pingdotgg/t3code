@@ -5,15 +5,18 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import type {
-  EnvironmentId,
-  ProviderAuthRespondInput,
-  ProviderAuthResponse,
-  ProviderInstanceId,
-  ServerProvider,
+import {
+  AuthProvidersManageScope,
+  type ProviderAuthState,
+  type EnvironmentId,
+  type ProviderAuthRespondInput,
+  type ProviderAuthResponse,
+  type ProviderInstanceId,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { lazy, Suspense, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { isLoopbackHost } from "@t3tools/shared/preview";
 import { CopyIcon } from "lucide-react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
@@ -25,6 +28,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { readPreparedConnection, useEnvironmentScope } from "../../state/session";
+import { waitForQuerySettled } from "../../state/waitForQuerySettled";
+import { settleAuthorizationPage } from "./CodexSetupSection.logic";
 import { SettingsRow } from "./settingsLayout";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
@@ -46,7 +53,13 @@ export function ProviderAuthenticationSection({
 }) {
   const gt = useGT();
   const target = { environmentId, input: { instanceId } };
-  const query = useEnvironmentQuery(serverEnvironment.providerAuthState(target), useMessages());
+  const authQuery = serverEnvironment.providerAuthState(target);
+  const query = useEnvironmentQuery(authQuery, useMessages());
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  const codexCli = provider.driver === "codex";
+  const browserAttempt = useRef<AbortController | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stop waiting for the login URL and release the reserved tab on unmount
+  useEffect(() => () => browserAttempt.current?.abort(), []);
   const commands = { reportFailure: false, reportDefect: false };
   const start = useAtomCommand(serverEnvironment.startProviderAuth, commands);
   const respond = useAtomCommand(serverEnvironment.respondProviderAuth, commands);
@@ -103,7 +116,12 @@ export function ProviderAuthenticationSection({
             ? gt("Connect on {environment} to load models.", { environment: environmentLabel })
             : gt("Sign in on {environment}.", { environment: environmentLabel });
   const statusMessage = auth?.phase === "failed" ? auth.message : null;
-  const disabled = readOnly || pending || query.error !== null || isDiscovering;
+  const disabled =
+    readOnly ||
+    (codexCli && !canManageProviders) ||
+    pending ||
+    query.error !== null ||
+    isDiscovering;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
   const url =
@@ -111,7 +129,10 @@ export function ProviderAuthenticationSection({
       ? interaction.url
       : auth?.authorizationUrl;
 
-  async function run(command: () => Promise<AtomCommandResult<unknown, unknown>>) {
+  async function run<A>(
+    command: () => Promise<AtomCommandResult<A, unknown>>,
+    onSuccess?: (value: A) => void,
+  ) {
     if (pendingRef.current) return false;
     pendingRef.current = true;
     setPending(true);
@@ -119,8 +140,10 @@ export function ProviderAuthenticationSection({
     let succeeded = false;
     try {
       const result = await command();
-      if (result._tag === "Success") succeeded = true;
-      else if (!isAtomCommandInterrupted(result)) {
+      if (result._tag === "Success") {
+        succeeded = true;
+        onSuccess?.(result.value);
+      } else if (!isAtomCommandInterrupted(result)) {
         const failure = squashAtomCommandFailure(result);
         setError(
           failure instanceof Error
@@ -170,6 +193,79 @@ export function ProviderAuthenticationSection({
     }
   }
 
+  async function openCodexSignIn(
+    started: ProviderAuthState,
+    tab: Window | null,
+    signal: AbortSignal,
+  ) {
+    let opened = false;
+    try {
+      if (started.flowId === null) return;
+      const flowId = started.flowId;
+      const page = settleAuthorizationPage(started, flowId);
+      const url =
+        page === undefined
+          ? await waitForQuerySettled({
+              registry: appAtomRegistry,
+              atom: authQuery,
+              settle: (state) => settleAuthorizationPage(state, flowId),
+              signal,
+            })
+          : page;
+      if (!url || signal.aborted || !isWebUrl(url)) return;
+      if (tab && !tab.closed) {
+        tab.location.href = url;
+        opened = true;
+      } else if (window.desktopBridge) {
+        await ensureLocalApi().shell.openExternal(url);
+      }
+    } catch {
+      setError(gt("Could not open the sign-in page. Copy the link and open it in your browser."));
+    } finally {
+      if (!opened) tab?.close();
+    }
+  }
+
+  async function startSignIn() {
+    if (disabled || pendingRef.current) return;
+    if (!codexCli) {
+      await run(() =>
+        start({
+          environmentId,
+          input: {
+            instanceId,
+            ...(methodId && auth?.methods?.some((method) => method.id === methodId)
+              ? { methodId }
+              : {}),
+          },
+        }),
+      );
+      return;
+    }
+    const baseUrl = readPreparedConnection(environmentId)?.httpBaseUrl;
+    const local = baseUrl !== undefined && isLoopbackHost(new URL(baseUrl).hostname);
+    const tab = window.desktopBridge ? null : window.open("", "_blank");
+    if (tab) tab.opener = null;
+    browserAttempt.current?.abort();
+    const attempt = new AbortController();
+    browserAttempt.current = attempt;
+    const started = await run(
+      () =>
+        start({
+          environmentId,
+          input: { instanceId, methodId: local ? "chatgpt-browser" : "chatgpt-device-code" },
+        }),
+      (state) => {
+        void openCodexSignIn(
+          state,
+          tab,
+          AbortSignal.any([attempt.signal, AbortSignal.timeout(300_000)]),
+        );
+      },
+    );
+    if (!started) tab?.close();
+  }
+
   function updateDraft(name: string, value: string) {
     setDraft({ id: draftId, values: { ...values, [name]: value } });
   }
@@ -205,7 +301,7 @@ export function ProviderAuthenticationSection({
       }
       control={
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          {!active && (auth?.methods?.length ?? 0) > 1 ? (
+          {!codexCli && !active && (auth?.methods?.length ?? 0) > 1 ? (
             <Select
               value={auth?.methods?.some((method) => method.id === methodId) ? methodId : ""}
               disabled={disabled}
@@ -306,19 +402,7 @@ export function ProviderAuthenticationSection({
                 size="sm"
                 variant="outline"
                 disabled={disabled || !provider.enabled || !provider.installed || !auth}
-                onClick={() =>
-                  void run(() =>
-                    start({
-                      environmentId,
-                      input: {
-                        instanceId,
-                        ...(methodId && auth?.methods?.some((method) => method.id === methodId)
-                          ? { methodId }
-                          : {}),
-                      },
-                    }),
-                  )
-                }
+                onClick={() => void startSignIn()}
               >
                 {signedIn
                   ? gt("Change account")

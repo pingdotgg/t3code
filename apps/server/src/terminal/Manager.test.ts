@@ -3149,6 +3149,17 @@ it.layer(
       expectedHome: "/configured/codex-shadow",
     },
     {
+      name: "dedicated Codex home",
+      driver: "codex",
+      variable: "CODEX_HOME",
+      config: {
+        dedicatedHome: true,
+        homePath: "/configured/codex",
+        shadowHomePath: "/configured/codex-shadow",
+      },
+      expectedHome: "/t3/state/providers/codex/configured_home/home",
+    },
+    {
       name: "Claude home",
       driver: "claudeAgent",
       variable: "CLAUDE_CONFIG_DIR",
@@ -3164,6 +3175,7 @@ it.layer(
         serverSettings,
         path,
         rawProviderInstanceId: "configured_home",
+        stateDir: "/t3/state",
         env: undefined,
       });
 

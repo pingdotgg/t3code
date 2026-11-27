@@ -40,7 +40,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { resolveCodexProviderHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { piHome, resolvePiSessionsDir } from "@t3tools/provider-pi/server/usage";
@@ -1991,9 +1991,11 @@ export const make = Effect.gen(function* () {
             codexHome?.trim()
               ? { ...config.value, homePath: codexHome }
               : config.value;
-          const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
-            Effect.provideService(Path.Path, path),
-          );
+          const layout = yield* resolveCodexProviderHomeLayout(
+            codexSettings,
+            serverConfig.stateDir,
+            instanceId,
+          ).pipe(Effect.provideService(Path.Path, path));
           homePath = layout.sharedHomePath;
         }
 

@@ -1,14 +1,19 @@
+import type { CodexSettings } from "@t3tools/contracts";
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 
 const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
 
 export const resolveCodexLaunchArgs = (
-  launchArgs?: string,
+  settings: Pick<CodexSettings, "launchArgs" | "dedicatedHome" | "homePath">,
   environment: NodeJS.ProcessEnv = process.env,
 ) => {
   const override = environment[T3CODE_CODEX_LAUNCH_ARGS_ENV];
-  return override?.trim() ? override : launchArgs?.trim() || "";
+  const args = override?.trim() ? override : settings.launchArgs.trim();
+  if (!settings.dedicatedHome || !settings.homePath) return args;
+  // Codex can store SQLite state outside CODEX_HOME through config or an environment override.
+  const sqliteHome = `sqlite_home=${JSON.stringify(settings.homePath)}`;
+  return `${args} -c ${JSON.stringify(sqliteHome)}`.trimStart();
 };
 
 const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);

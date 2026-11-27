@@ -13,7 +13,8 @@ import {
 import type { UsageTokenTotals } from "@t3tools/contracts";
 
 import * as CodexUsageHistory from "../../usage/CodexUsageHistory.ts";
-import { resolveCodexHomeLayout } from "./CodexHomeLayout.ts";
+import * as ServerConfig from "../../config.ts";
+import { resolveCodexProviderHomeLayout } from "./CodexHomeLayout.ts";
 
 const TokenCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const CodexTokenUsage = Schema.Struct({
@@ -525,7 +526,7 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
 
 export const codexUsageReader: ProviderUsageReader<
   CodexSettings,
-  Path.Path | CodexUsageHistory.CodexUsageHistory
+  Path.Path | CodexUsageHistory.CodexUsageHistory | ServerConfig.ServerConfig
 > = {
   kind: "transcripts",
   provider: "codex",
@@ -557,14 +558,21 @@ export const codexUsageReader: ProviderUsageReader<
     }
     return speeds;
   }),
-  directories: Effect.fn("codexUsageReader.directories")(function* ({ config, environment }) {
+  directories: Effect.fn("codexUsageReader.directories")(function* ({
+    instanceId,
+    config,
+    environment,
+  }) {
     if (config === undefined) return [];
     const path = yield* Path.Path;
     const environmentHome = environment.CODEX_HOME?.trim();
-    const layout = yield* resolveCodexHomeLayout(
+    const { stateDir } = yield* ServerConfig.ServerConfig;
+    const layout = yield* resolveCodexProviderHomeLayout(
       config.setupMode !== "managed" && !config.homePath.trim() && environmentHome
         ? { ...config, homePath: environmentHome }
         : config,
+      stateDir,
+      instanceId,
     );
     return [{ dir: path.resolve(layout.sharedHomePath, "sessions") }];
   }),

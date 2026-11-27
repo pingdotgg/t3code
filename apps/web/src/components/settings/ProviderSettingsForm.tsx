@@ -105,6 +105,7 @@ function fieldAcceptsString(
 const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
   ["Binary path", msg("Binary path")],
   ["CODEX_HOME path", msg("CODEX_HOME path")],
+  ["Dedicated Codex Home", msg("Dedicated Codex Home")],
   ["Shadow home path", msg("Shadow home path")],
   ["Launch arguments", msg("Launch arguments")],
   ["CLAUDE_CONFIG_DIR path", msg("CLAUDE_CONFIG_DIR path")],
@@ -129,6 +130,12 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
     msg("Path to the Codex binary used by this instance."),
   ],
   ["Custom Codex home and config directory.", msg("Custom Codex home and config directory.")],
+  [
+    "Store new sessions and settings separately from your regular Codex. Existing sessions stay in their original home. If you use the Codex CLI, you may need to sign in again.",
+    msg(
+      "Store new sessions and settings separately from your regular Codex. Existing sessions stay in their original home. If you use the Codex CLI, you may need to sign in again.",
+    ),
+  ],
   [
     "Account-specific Codex home. Keeps auth.json separate while sharing state from CODEX_HOME.",
     msg(
@@ -288,6 +295,8 @@ export function deriveProviderSettingsFields(
   const isLocalAcp =
     definition.driverKind === "acpRegistry" &&
     readProviderConfigString(value, "source") === "local";
+  const usesDedicatedCodexHome =
+    definition.driverKind === "codex" && readProviderConfigBoolean(value, "dedicatedHome");
   const schemaAnnotation = readProviderSettingsFormSchemaAnnotation(definition);
   const orderedKeys = new Map(
     (schemaAnnotation.order ?? []).map((key, index) => [key, index] as const),
@@ -303,6 +312,7 @@ export function deriveProviderSettingsFields(
       );
     })
     .flatMap(({ key }) => {
+      if (usesDedicatedCodexHome && (key === "homePath" || key === "shadowHomePath")) return [];
       const fieldSchema = definition.settingsSchema.fields[key]!;
       const formAnnotation = readProviderSettingsFormAnnotation(fieldSchema);
       if (formAnnotation.hidden) return [];
@@ -548,6 +558,7 @@ export function nextProviderConfigWithFieldValue(
 
 interface ProviderSettingsFormProps {
   readonly definition: SettingsFormDefinition;
+  readonly onlyFields?: readonly string[];
   readonly value: unknown;
   readonly idPrefix: string;
   readonly variant: "card" | "dialog" | "settings";
@@ -931,6 +942,7 @@ function ProviderSettingsFieldRow({
 
 export function ProviderSettingsForm({
   definition,
+  onlyFields,
   value,
   idPrefix,
   variant,
@@ -939,7 +951,9 @@ export function ProviderSettingsForm({
   environmentId,
 }: ProviderSettingsFormProps) {
   const resolve = useMessages();
-  const fields = deriveProviderSettingsFields(definition, value ?? {}, resolve);
+  const fields = deriveProviderSettingsFields(definition, value ?? {}, resolve).filter(
+    (field) => onlyFields === undefined || onlyFields.includes(field.key),
+  );
   const isLocalAcp =
     definition.driverKind === "acpRegistry" &&
     readProviderConfigString(value, "source") === "local";

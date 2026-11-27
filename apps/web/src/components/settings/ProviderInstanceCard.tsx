@@ -1389,9 +1389,12 @@ export function ProviderInstanceCard({
     </>
   );
 
+  const managedCodex =
+    instance.driver === "codex" && readCodexSetupMode(instance.config) === "managed";
   const runtimeFields = driverOption ? (
     <ProviderSettingsForm
       definition={driverOption}
+      {...(managedCodex ? { onlyFields: ["dedicatedHome"] } : {})}
       value={instance.config}
       idPrefix={`provider-instance-${instanceId}`}
       variant="settings"
@@ -1498,7 +1501,7 @@ export function ProviderInstanceCard({
         </SettingsSection>
       ) : null}
 
-      {instance.driver === "codex" && readCodexSetupMode(instance.config) === "managed" ? (
+      {managedCodex ? (
         <div
           inert={readOnly}
           aria-disabled={readOnly || undefined}
@@ -1510,7 +1513,8 @@ export function ProviderInstanceCard({
             title={gt("Runtime")}
             headerPlacement="outside"
           >
-            {runtime ?? runtimeFields}
+            {runtimeFields}
+            {runtime}
           </FoldedSettingsSection>
         </div>
       ) : !driverOption || deriveProviderSettingsFields(driverOption, undefined, m).length > 0 ? (

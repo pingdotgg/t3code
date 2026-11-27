@@ -1,8 +1,11 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
@@ -11,6 +14,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { makeCodexCliAuth } from "./CodexCliAuth.ts";
 import {
   applyPreferredCodexDefaultModel,
   codexCustomEndpoint,
@@ -19,11 +23,14 @@ import {
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
 
-function makeFakeCodexAppServers() {
+function makeFakeCodexAppServers(options?: {
+  readonly loginType: "chatgpt" | "chatgptDeviceCode";
+}) {
   const helpers: Array<{
     readonly codexHome: unknown;
     readonly crash: Effect.Effect<void>;
     readonly requests: Array<unknown>;
+    readonly completeSignIn: Effect.Effect<void>;
     closed: boolean;
   }> = [];
   const spawner = ChildProcessSpawner.make((command) =>
@@ -34,9 +41,19 @@ function makeFakeCodexAppServers() {
         Effect.andThen(Queue.end(output)),
         Effect.asVoid,
       );
+      const completeSignIn = Queue.offer(
+        output,
+        new TextEncoder().encode(
+          JSON.stringify({
+            method: "account/login/completed",
+            params: { loginId: "login", success: true },
+          }) + "\n",
+        ),
+      ).pipe(Effect.asVoid);
       const helper = {
         codexHome: command._tag === "StandardCommand" ? command.options.env?.CODEX_HOME : undefined,
         crash,
+        completeSignIn,
         requests: [] as Array<unknown>,
         closed: false,
       };
@@ -71,6 +88,20 @@ function makeFakeCodexAppServers() {
                 });
               }
               helper.requests.push(frame.params);
+              if (frame.method === "account/login/start" && options) {
+                const type = options.loginType;
+                return respond(
+                  frame.id,
+                  type === "chatgpt"
+                    ? { type, loginId: "login", authUrl: "https://auth.example.test/browser" }
+                    : {
+                        type,
+                        loginId: "login",
+                        verificationUrl: "https://auth.example.test/device",
+                        userCode: "ABCD-1234",
+                      },
+                );
+              }
               return respond(frame.id, {
                 data: (frame.params?.cwds ?? []).map((cwd) => ({
                   cwd,
@@ -100,6 +131,44 @@ function makeFakeCodexAppServers() {
   );
   return { helpers, spawner };
 }
+
+it.effect.each([
+  { methodId: "chatgpt-browser", loginType: "chatgpt", interactionType: "browser" },
+  {
+    methodId: "chatgpt-device-code",
+    loginType: "chatgptDeviceCode",
+    interactionType: "deviceCode",
+  },
+] as const)("signs in to the dedicated home via $interactionType", (test) =>
+  Effect.gen(function* () {
+    const { helpers, spawner } = makeFakeCodexAppServers(test);
+    let refreshed = false;
+    const auth = yield* makeCodexCliAuth({
+      instanceId: ProviderInstanceId.make("dedicated"),
+      launch: { binaryPath: "codex", homePath: "/dedicated", cwd: "/workspace" },
+      refresh: Effect.sync(() => {
+        refreshed = true;
+      }),
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+    const started = yield* auth.start("owner", Effect.void, test.methodId);
+    assert.strictEqual(started.phase, "starting");
+    const waiting = yield* auth.subscribe("owner").pipe(
+      Stream.filter((state) => state.phase === "waiting"),
+      Stream.runHead,
+    );
+    assert.strictEqual(Option.getOrUndefined(waiting)?.interaction?.type, test.interactionType);
+    assert.strictEqual(helpers[0]?.codexHome, "/dedicated");
+    assert.deepStrictEqual(helpers[0]?.requests, [{ type: test.loginType }]);
+    assert.strictEqual(helpers[0]?.closed, false);
+    yield* helpers[0]!.completeSignIn;
+    yield* auth.subscribe("owner").pipe(
+      Stream.filter((state) => state.phase === "succeeded"),
+      Stream.runHead,
+    );
+    assert.strictEqual(refreshed, true);
+    assert.strictEqual(helpers[0]?.closed, true);
+  }).pipe(Effect.provide(NodeCrypto.layer)),
+);
 
 it.effect("reuses one Codex skills helper per launch until it idles out", () =>
   Effect.gen(function* () {

@@ -131,8 +131,8 @@ import {
 } from "../../provider/CodexMcpElicitation.ts";
 import {
   codexHomeLaunchArgs,
-  materializeCodexShadowHome,
-  resolveCodexHomeLayout,
+  materializeCodexHomeLayout,
+  resolveCodexProviderHomeLayout,
 } from "../../provider/Drivers/CodexHomeLayout.ts";
 import {
   boundProviderEventForLogging,
@@ -2004,7 +2004,7 @@ export const layerAppServerClientFactory: Layer.Layer<
         const binaryPath = input.settings.binaryPath || "codex";
         const args = yield* resolveCodexAppServerArgs({
           binaryPath,
-          launchArgs: resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+          launchArgs: resolveCodexLaunchArgs(input.settings, input.environment),
           cwd: yield* HostProcess.WorkingDirectory,
           environment,
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
@@ -2075,15 +2075,19 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const serverConfig = yield* ServerConfig;
-  const homeLayout = yield* resolveCodexHomeLayout(config);
+  const homeLayout = yield* resolveCodexProviderHomeLayout(
+    config,
+    serverConfig.stateDir,
+    instanceId,
+  );
 
-  yield* materializeCodexShadowHome(homeLayout).pipe(
+  yield* materializeCodexHomeLayout(homeLayout).pipe(
     Effect.mapError(
       (cause) =>
         new ProviderAdapterDriverCreateError({
           driver: CODEX_DRIVER_KIND,
           instanceId,
-          detail: "Failed to materialize the Codex shadow home.",
+          detail: "Failed to prepare the Codex home.",
           cause,
         }),
     ),
