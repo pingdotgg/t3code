@@ -81,7 +81,9 @@ const ICON_SOURCE_FILES = [
 
 // A quote opens a value only right after `=`; the lookahead+backreference keeps it atomic so
 // backtracking cannot re-read the value as plain text.
-const HTML_LINK_RE = /<link\b(?:[^<>=]|=(?=([\t\n\f\r ]*(?:"[^"]*"|'[^']*')|))\1)*>/gi;
+// A comment (to `-->`, `--!>` or the end) hides the links inside it, as in a browser.
+const HTML_LINK_RE =
+  /<!--(?:-?>|[\s\S]*?--!?>|[\s\S]*)|<link\b(?:[^<>=]|=(?=([\t\n\f\r ]*(?:"[^"]*"|'[^']*')|))\1)*>/gi;
 // `rel` is an unordered, whitespace-separated token list; any `icon` token marks an icon link.
 const ICON_REL_VALUE = String.raw`(?:"(?:[^"]*[\t\n\f\r ])?icon(?=[\t\n\f\r "])|'(?:[^']*[\t\n\f\r ])?icon(?=[\t\n\f\r ']))`;
 // HTML attribute syntax: a name, then an optional double-quoted, single-quoted, or unquoted value.
@@ -180,6 +182,7 @@ function decodeHtmlHref(href: string, html: boolean): string {
 
 function* extractIconHrefs(source: string, html: boolean): Generator<string> {
   for (const [tag] of source.matchAll(HTML_LINK_RE)) {
+    if (tag.startsWith("<!--")) continue;
     const attributes = new Map<string, { value: string; quoted: boolean }>();
     for (const [, name, doubleQuoted, singleQuoted, unquoted] of tag
       .slice("<link".length)
