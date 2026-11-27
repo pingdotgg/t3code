@@ -52,6 +52,7 @@ export function ReadAloudButton({
   if (settings.provider === "off") return null;
   const active = state.id === id;
   const stoppable = active && (state.status === "playing" || state.status === "loading");
+  const reading = stoppable || (active && state.status === "paused");
   const label = stoppable
     ? gt("Stop reading")
     : active && state.status === "paused"
@@ -61,6 +62,7 @@ export function ReadAloudButton({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{ selected: reading }}
       className="items-center justify-center"
       style={{ width: buttonSize, height: buttonSize }}
       onPress={async () => {
@@ -70,10 +72,11 @@ export function ReadAloudButton({
         alertReadAloudError(id, gt("Could not read aloud"));
       }}
     >
+      {/* The same speaker as web; the player above the composer shows what is being read. */}
       <SymbolView
-        name={stoppable ? "stop.fill" : "play"}
+        name="speaker.wave.2"
         size={iconSize}
-        tintColorClassName="accent-foreground-secondary"
+        tintColorClassName={reading ? "accent-foreground" : "accent-foreground-secondary"}
       />
     </Pressable>
   );
