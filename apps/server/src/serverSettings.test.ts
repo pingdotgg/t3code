@@ -6,7 +6,6 @@ import {
   globalIdleCompaction,
   type ManagedPolicyDocument,
   ModelSelection,
-  ProjectActionSettingsSnapshot,
   ProjectId,
   ProjectScript,
   ProviderDriverKind,
@@ -21,7 +20,6 @@ import {
   type SettingsSecretValue,
   type SimlockDeviceHostConfig,
 } from "@t3tools/contracts";
-import { projectActionSettingsSnapshot } from "@t3tools/shared/projectScripts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -48,8 +46,6 @@ import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
-const encodeProjectActionSettingsSnapshot = Schema.encodeSync(ProjectActionSettingsSnapshot);
-const decodeProjectActionSettingsSnapshot = Schema.decodeUnknownSync(ProjectActionSettingsSnapshot);
 // Clients from before HTTP sources decode only "cliproxy" and reject the whole settings payload.
 const decodePreHttpUsageLimitSources = Schema.decodeUnknownSync(
   Schema.Record(
@@ -154,43 +150,6 @@ function strictSecretReferencePaths(
 }
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings", (it) => {
-  it.effect("rejects a stale action write and preserves the newer action", () =>
-    Effect.gen(function* () {
-      const service = yield* ServerSettingsModule.ServerSettingsService;
-      const expected = projectActionSettingsSnapshot(yield* service.getSettings);
-      const projectId = ProjectId.make("project");
-      const action = {
-        id: "new",
-        name: "New action",
-        command: "echo new",
-        icon: "play",
-        runOnWorktreeCreate: false,
-      } as const;
-      const patch = {
-        projectSettingsOverrides: { [projectId]: { defaultProjectScripts: [action] } },
-      };
-      yield* service.updateSettings(patch, expected);
-      const stale = yield* service
-        .updateSettings(
-          {
-            projectSettingsOverrides: { [projectId]: { defaultProjectScripts: [] } },
-          },
-          expected,
-        )
-        .pipe(Effect.flip);
-      assert.strictEqual(stale.operation, "check-project-actions");
-      const settings = yield* service.getSettings;
-      assert.deepEqual(
-        settings.projectSettingsOverrides[projectId]?.defaultProjectScripts?.map(({ id }) => id),
-        [action.id],
-      );
-      const snapshot = projectActionSettingsSnapshot(settings);
-      const encoded = encodeProjectActionSettingsSnapshot(snapshot);
-      const decoded = decodeProjectActionSettingsSnapshot(encoded);
-      yield* service.updateSettings(patch, decoded);
-    }).pipe(Effect.provide(layerServerSettings())),
-  );
-
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

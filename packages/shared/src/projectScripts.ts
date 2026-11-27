@@ -1,9 +1,4 @@
-import type {
-  ProjectActionSettingsSnapshot,
-  ProjectId,
-  ProjectScript,
-  ServerSettings,
-} from "@t3tools/contracts";
+import type { ProjectId, ProjectScript, ServerSettings } from "@t3tools/contracts";
 
 type ProjectScriptSettings = Pick<
   ServerSettings,
@@ -23,21 +18,6 @@ export function resolveProjectScripts(
   const legacy = settings.projectScriptOverrides[project.id];
   if (legacy === null) return settings.defaultProjectScripts;
   return legacy ?? (project.scripts.length > 0 ? project.scripts : settings.defaultProjectScripts);
-}
-
-export function projectActionSettingsSnapshot(
-  settings: ProjectScriptSettings,
-): ProjectActionSettingsSnapshot {
-  return {
-    defaultProjectScripts: settings.defaultProjectScripts,
-    projectScriptOverrides: settings.projectScriptOverrides,
-    projectActionsById: Object.fromEntries(
-      Object.entries(settings.projectSettingsOverrides).flatMap(([id, entry]) =>
-        entry.defaultProjectScripts === undefined ? [] : [[id, entry.defaultProjectScripts]],
-      ),
-    ),
-    projectSettingsFolded: settings.projectSettingsFolded,
-  };
 }
 
 interface ProjectScriptRuntimeEnvInput {

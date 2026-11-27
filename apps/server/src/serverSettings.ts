@@ -5,7 +5,6 @@ import {
   ProjectScript,
   keepUnknownOverrideKeys,
   ProjectSettingsOverrides,
-  type ProjectActionSettingsSnapshot,
   type ProviderInstanceConfig,
   type ProviderInstanceMutation,
   defaultInstanceIdForDriver,
@@ -44,7 +43,6 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
-import { projectActionSettingsSnapshot } from "@t3tools/shared/projectScripts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
@@ -284,7 +282,6 @@ export class ServerSettingsService extends Context.Service<
 
     readonly updateSettings: (
       patch: ServerSettingsPatch,
-      expectedProjectActions?: ProjectActionSettingsSnapshot,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
     readonly updateProviderInstance: (
@@ -306,16 +303,6 @@ export class ServerSettingsService extends Context.Service<
     overrides: DeepPartial<ServerSettings> = {},
     managedPolicy?: ManagedPolicySummary,
   ) => layerTest(overrides, managedPolicy);
-}
-
-function checkProjectActions(
-  current: ServerSettings,
-  expected: ProjectActionSettingsSnapshot | undefined,
-  settingsPath: string,
-): Effect.Effect<void, ServerSettingsError> {
-  return expected === undefined || Equal.equals(projectActionSettingsSnapshot(current), expected)
-    ? Effect.void
-    : Effect.fail(new ServerSettingsError({ settingsPath, operation: "check-project-actions" }));
 }
 
 const makeTest = Effect.fn("serverSettings.makeTest")(function* (
@@ -355,12 +342,9 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     start: Effect.void,
     ready: Effect.void,
     getSettings,
-    updateSettings: (patch, expectedProjectActions) =>
+    updateSettings: (patch) =>
       updateTestSettings((currentSettings) =>
-        Effect.gen(function* () {
-          yield* checkProjectActions(currentSettings, expectedProjectActions, "test settings");
-          return applyServerSettingsPatch(currentSettings, patch);
-        }),
+        Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
       updateTestSettings((currentSettings) =>
@@ -1466,15 +1450,11 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getMaterializedSettings,
-    updateSettings: (patch, expectedProjectActions) =>
+    updateSettings: (patch) =>
       updateAndPersistSettings(patch, (current) =>
-        Effect.gen(function* () {
-          if (expectedProjectActions !== undefined) {
-            yield* checkProjectActions(toEffective(current), expectedProjectActions, settingsPath);
-          }
-          yield* ensureSecretProviderWritesAllowed(patch, settingsPath);
-          return applyServerSettingsPatch(current, patch);
-        }),
+        ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
+          Effect.as(applyServerSettingsPatch(current, patch)),
+        ),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
       updateAndPersistSettings(patch, (current) =>

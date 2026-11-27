@@ -1,5 +1,3 @@
-import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
-import type { ServerSettingsPatch } from "@t3tools/contracts/settings";
 import { act, render } from "../../../test/render";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -12,7 +10,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import type { NewProjectScriptInput, ProjectScriptCreation } from "../projectScriptEditor";
+import type { NewProjectScriptInput } from "../projectScriptEditor";
 
 const commands = vi.hoisted(() => ({
   updateSettings: vi.fn(),
@@ -137,118 +135,52 @@ function setup() {
 }
 
 describe("useProjectScriptSettings", () => {
-  it.each([
-    "shortcut",
-    "import",
-    "collision",
-    "unselected collision",
-    "default collision",
-  ] as const)(
-    "retries a partial %s save without overwriting another checkout's action",
-    async (failure) => {
-      setup();
-      let saved = DEFAULT_SERVER_SETTINGS;
-      commands.updateSettings.mockImplementation(
-        ({ input }: { input: { patch: ServerSettingsPatch } }) => {
-          saved = applyServerSettingsPatch(saved, input.patch);
-          return Promise.resolve(AsyncResult.success(saved));
-        },
-      );
-      const failureResult = AsyncResult.failure(Cause.fail(new Error("Temporary save failure")));
-      if (failure === "import") {
-        commands.updateSettings
-          .mockResolvedValueOnce(AsyncResult.success(DEFAULT_SERVER_SETTINGS))
-          .mockResolvedValueOnce(failureResult);
-      } else {
-        commands.upsertKeybinding.mockResolvedValueOnce(failureResult);
-      }
-      const projects = [ProjectId.make("first"), ProjectId.make("second")];
-      const collision = { ...lint, command: "another command" };
-      const collides = failure.endsWith("collision");
-      let settings: ProjectScriptSettings | undefined;
-      const renderTargets = (firstScripts: readonly ProjectScript[]) => (
-        <Probe
-          targets={projects.map((id, index) => ({
-            environmentId,
-            settings:
-              firstScripts.length && failure === "unselected collision"
-                ? {
-                    ...DEFAULT_SERVER_SETTINGS,
-                    projectSettingsOverrides: {
-                      unselected: { defaultProjectScripts: [collision] },
-                    },
-                  }
-                : firstScripts.length && failure === "default collision"
-                  ? {
-                      ...DEFAULT_SERVER_SETTINGS,
-                      defaultProjectScripts: [collision],
-                      projectSettingsOverrides: { [id]: { defaultProjectScripts: [] } },
-                    }
-                  : DEFAULT_SERVER_SETTINGS,
-            keybindings: [],
-            project: {
-              id,
-              scripts:
-                index === 0
-                  ? firstScripts
-                  : firstScripts.length && failure === "collision"
-                    ? [collision]
-                    : [],
-            },
-          }))}
-          onResult={(next) => (settings = next)}
-        />
-      );
-      await using screen = await render(renderTargets([]));
-      const draft = { ...input, keybinding: failure === "import" ? null : "mod+shift+k" };
-      const onActionCreated = vi.fn<(creation: ProjectScriptCreation) => void>();
-
-      await act(async () => {
-        expect((await settings!.submit(null, draft, onActionCreated))._tag).toBe("Failure");
-      });
-      expect(onActionCreated).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ id: lint.id }),
-      );
-      const [creation] = onActionCreated.mock.calls[0]!;
-      expect(commands.updateSettings).toHaveBeenCalledTimes(failure === "import" ? 2 : 1);
-
-      await screen.rerender(renderTargets([lint]));
-      const editedDraft = { ...draft, name: "Lint and fix" };
-      await act(async () => {
-        expect(
-          (await settings!.submit(creation.id, editedDraft, onActionCreated, creation))._tag,
-        ).toBe(collides ? "Failure" : "Success");
-      });
-      if (collides) {
-        expect(commands.updateSettings).toHaveBeenCalledTimes(1);
-        expect(commands.upsertKeybinding).toHaveBeenCalledTimes(1);
-        return;
-      }
-
-      const initialWrites = failure === "import" ? 2 : 1;
-      expect(commands.updateSettings).toHaveBeenCalledTimes(initialWrites + 2);
-      for (const [index, id] of projects.entries()) {
-        expect(commands.updateSettings).toHaveBeenNthCalledWith(initialWrites + index + 1, {
+  it("retries a creation whose shortcut failed without duplicating the action", async () => {
+    setup();
+    commands.upsertKeybinding.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Temporary shortcut failure"))),
+    );
+    const projects = [ProjectId.make("first"), ProjectId.make("second")];
+    let settings: ProjectScriptSettings | undefined;
+    const renderTargets = (firstScripts: readonly ProjectScript[]) => (
+      <Probe
+        targets={projects.map((id, index) => ({
           environmentId,
-          input: expect.objectContaining({
-            patch: {
-              projectSettingsOverrides: {
-                [id]: {
-                  defaultProjectScripts: [
-                    expect.objectContaining({ id: lint.id, name: editedDraft.name }),
-                  ],
-                },
-              },
+          settings: DEFAULT_SERVER_SETTINGS,
+          keybindings: [],
+          project: { id, scripts: index === 0 ? firstScripts : [] },
+        }))}
+        onResult={(next) => (settings = next)}
+      />
+    );
+    await using screen = await render(renderTargets([]));
+    const draft = { ...input, keybinding: "mod+shift+k" };
+    const onActionCreated = vi.fn<(scriptId: string) => void>();
+
+    await act(async () => {
+      expect((await settings!.submit(null, draft, onActionCreated))._tag).toBe("Failure");
+    });
+    expect(onActionCreated).toHaveBeenCalledExactlyOnceWith(lint.id);
+    expect(commands.updateSettings).toHaveBeenCalledTimes(1);
+
+    // The first project now has the action; the second was never written.
+    await screen.rerender(renderTargets([lint]));
+    await act(async () => {
+      expect((await settings!.submit(lint.id, draft, onActionCreated, true))._tag).toBe("Success");
+    });
+    for (const [index, id] of projects.entries()) {
+      expect(commands.updateSettings).toHaveBeenNthCalledWith(index + 2, {
+        environmentId,
+        input: {
+          patch: {
+            projectSettingsOverrides: {
+              [id]: { defaultProjectScripts: [expect.objectContaining({ id: lint.id })] },
             },
-          }),
-        });
-      }
-      expect(commands.upsertKeybinding).toHaveBeenCalledTimes(failure === "import" ? 0 : 3);
-      for (const [request] of commands.upsertKeybinding.mock.calls) {
-        expect(request).toMatchObject({ environmentId, input: { command: "script.lint.run" } });
-      }
-    },
-  );
+          },
+        },
+      });
+    }
+  });
 
   it.each(["project", "environment"] as const)(
     "preserves the shortcut for %s action name and command edits",
