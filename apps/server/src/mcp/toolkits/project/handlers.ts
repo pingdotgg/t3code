@@ -570,7 +570,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             input.scripts !== undefined ||
             input.trackedFolders !== undefined ||
             input.createWorkspaceRootIfMissing !== undefined ||
-            input.defaultModelSelection !== undefined
+            (input.defaultModelSelection !== undefined && input.defaultModelSelection !== null)
           )
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",

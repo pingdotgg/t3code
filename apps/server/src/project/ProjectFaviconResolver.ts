@@ -1,5 +1,6 @@
 import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
 import { characterEntities } from "character-entities";
+import { characterEntitiesLegacy } from "character-entities-legacy";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -156,12 +157,17 @@ export class ProjectFaviconResolver extends Context.Service<
   }
 >()("t3/project/ProjectFaviconResolver") {}
 
-function decodeHtmlHref(href: string): string {
+function decodeHtmlHref(href: string, html: boolean): string {
   return href.replace(
-    /&(?:([a-z][a-z\d]*);|#(?:(\d+)|x([a-f\d]+));?)/gi,
-    (reference, name: string | undefined, decimal: string | undefined, hex: string | undefined) => {
+    /&(?:([a-z][a-z\d]*)([;=]?)|#(?:(\d+)|x([a-f\d]+));?)/gi,
+    (reference, name?: string, terminator?: string, decimal?: string, hex?: string) => {
       if (name !== undefined) {
-        return Object.hasOwn(characterEntities, name) ? characterEntities[name]! : reference;
+        // HTML attributes, unlike JSX, decode legacy names without `;` unless `=` or an alphanumeric follows.
+        const decoded =
+          terminator === ";"
+            ? Object.hasOwn(characterEntities, name)
+            : terminator === "" && html && characterEntitiesLegacy.includes(name);
+        return decoded ? characterEntities[name]! : reference;
       }
       const codePoint = hex === undefined ? Number(decimal) : Number.parseInt(hex, 16);
       if (codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
@@ -172,7 +178,7 @@ function decodeHtmlHref(href: string): string {
   );
 }
 
-function* extractIconHrefs(source: string): Generator<string> {
+function* extractIconHrefs(source: string, html: boolean): Generator<string> {
   for (const [tag] of source.matchAll(HTML_LINK_RE)) {
     const attributes = new Map<string, { value: string; quoted: boolean }>();
     for (const [, name, doubleQuoted, singleQuoted, unquoted] of tag
@@ -194,7 +200,7 @@ function* extractIconHrefs(source: string): Generator<string> {
     const href = attributes.get("href");
     // An unquoted `{...}` is a JSX expression, not a path.
     if (!href || (!href.quoted && href.value.startsWith("{"))) continue;
-    const path = decodeHtmlHref(href.value).split(/[?#]/, 1)[0];
+    const path = decodeHtmlHref(href.value, html).split(/[?#]/, 1)[0];
     if (path) yield path;
   }
   for (const run of source.split("}")) {
@@ -347,7 +353,9 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(source) || Option.isNone(source.value)) {
       return null;
     }
-    const hrefs = Array.from(extractIconHrefs(new TextDecoder().decode(source.value.value)));
+    const hrefs = Array.from(
+      extractIconHrefs(new TextDecoder().decode(source.value.value), sourceFile.endsWith(".html")),
+    );
     const candidates = hrefs.flatMap((href) => resolveIconHref(href, sourceFile));
     return yield* findExistingFile(projectCwd, candidates, "workspace");
   });

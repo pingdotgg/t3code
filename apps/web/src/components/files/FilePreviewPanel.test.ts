@@ -177,6 +177,11 @@ describe("document preview contents", () => {
       String.raw`{\rtf1 A{\deleted\uc1\u945\deleted0 old}B}`,
       "AB",
     ],
+    [
+      "nested table cells",
+      String.raw`{\rtf1\ansi\trowd\cellx3000\pard\intbl\itap2 Inner A\nestcell\pard\intbl\itap2 Inner B\nestcell{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}\pard\intbl\itap1\cell\row}`,
+      "Inner A\tInner B\t\t",
+    ],
   ])("keeps the text of %s", (_name, source, expected) => {
     const result = openRtf(bytes(source));
     if (result.type !== "document") throw new Error("Expected document");
@@ -280,6 +285,15 @@ describe("document preview contents", () => {
     if (escapedBreak.type !== "document") throw new Error("Expected document");
     expect(escapedBreak.pages[0]!.html).toBe(
       "<p data-rtf-whitespace><strong>ABC</strong><br><strong>D</strong></p>",
+    );
+    const underlines = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi{\ul single} {\uldb double\uldb0  plain} {\ulw words} {\uld dotted} {\ulwave wave} {\ulc1 color}}`,
+      ),
+    );
+    if (underlines.type !== "document") throw new Error("Expected document");
+    expect(underlines.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace><u>single</u> <u>double</u> plain <u>words</u> <u>dotted</u> <u>wave</u> color</p>",
     );
   });
 
@@ -489,6 +503,16 @@ Third}`;
     for (const name of ["", "Питон"]) {
       const blank = { nbformat: 4, metadata: { language_info: { name } }, cells: [] };
       expect(openNotebook(bytes(JSON.stringify(blank)))).toMatchObject({ language: "text" });
+    }
+    const kernelspec = { name: "python3", display_name: "Python 3", language: "python" };
+    for (const [metadata, language] of [
+      [{ kernelspec }, "python"],
+      [{ language_info: { name: "" }, kernelspec }, "python"],
+      [{ language_info: { name: "python" }, kernelspec: { language: "r" } }, "python"],
+    ] as const) {
+      expect(
+        openNotebook(bytes(JSON.stringify({ nbformat: 4, metadata, cells: [] }))),
+      ).toMatchObject({ language });
     }
     // IPython traceback frames can omit trailing newlines or place ANSI resets after them.
     const failed = openNotebook(
@@ -716,6 +740,30 @@ Third}`;
     );
   });
 
+  it("maps ODT numbered list styles to ordered lists and preserves nested levels", async () => {
+    const ns =
+      'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"';
+    const content =
+      `<office:document-content ${ns}>` +
+      '<office:automatic-styles><text:list-style style:name="L1"><text:list-level-style-number text:level="1" style:num-format="1"/><text:list-level-style-bullet text:level="2"/></text:list-style><text:list-style style:name="L2"><text:list-level-style-bullet text:level="1"/></text:list-style><text:list-style style:name="L3"><text:list-level-style-number text:level="1" style:num-format=""/><text:list-level-style-number text:level="2"/></text:list-style><text:list-style><text:list-level-style-number text:level="1" style:num-format="1"/></text:list-style></office:automatic-styles>' +
+      '<office:body><office:text><text:list text:style-name="L1"><text:list-item><text:p>One</text:p><text:list><text:list-item><text:p>Sub</text:p></text:list-item></text:list></text:list-item><text:list-item><text:p><draw:frame><draw:text-box><text:list text:style-name="L1"><text:list-item><text:p>Boxed</text:p></text:list-item></text:list></draw:text-box></draw:frame></text:p></text:list-item></text:list><text:list text:style-name="L2"><text:list-item><text:p>Bullet</text:p></text:list-item></text:list><text:list text:style-name="M1"><text:list-item><text:p>Header style</text:p></text:list-item></text:list><text:list text:style-name="Numbering_20_123"><text:list-item><text:p>First</text:p><text:list><text:list-item><text:p>Nested</text:p></text:list-item></text:list></text:list-item></text:list><text:list text:style-name="Numbering_20_123"><text:list-header><text:list><text:list-item><text:p>Under header</text:p></text:list-item></text:list></text:list-header></text:list><text:list text:style-name="L3"><text:list-item><text:p>No number</text:p><text:list><text:list-item><text:p>No format</text:p></text:list-item></text:list></text:list-item></text:list><text:list><text:list-item><text:p>Plain</text:p></text:list-item></text:list></office:text></office:body></office:document-content>';
+    const styles = `<office:document-styles ${ns}><office:styles><text:list-style style:name="L2"><text:list-level-style-number text:level="1" style:num-format="1"/></text:list-style><text:list-style style:name="Numbering_20_123"><text:list-level-style-number text:level="1" style:num-format="1"/><text:list-level-style-number text:level="2" style:num-format="1"/></text:list-style></office:styles><office:automatic-styles><text:list-style style:name="M1"><text:list-level-style-number text:level="1" style:num-format="1"/></text:list-style></office:automatic-styles></office:document-styles>`;
+    const html = async (styles: string) => {
+      const result = await openDocument(
+        new JSZip().file("content.xml", content).file("styles.xml", styles),
+        "odt",
+      );
+      if (result.type !== "document") throw new Error("Expected document");
+      return result.pages[0]!.html;
+    };
+    expect(await html(styles)).toBe(
+      "<ol><li><p>One</p><ul><li><p>Sub</p></li></ul></li><li><p><ol><li><p>Boxed</p></li></ol></p></li></ol><ul><li><p>Bullet</p></li></ul><ul><li><p>Header style</p></li></ul><ol><li><p>First</p><ol><li><p>Nested</p></li></ol></li></ol><ol><ol><li><p>Under header</p></li></ol></ol><ul><li><p>No number</p><ul><li><p>No format</p></li></ul></li></ul><ul><li><p>Plain</p></li></ul>",
+    );
+    expect(await html("<office:document-styles>")).toBe(
+      "<ol><li><p>One</p><ul><li><p>Sub</p></li></ul></li><li><p><ol><li><p>Boxed</p></li></ol></p></li></ol><ul><li><p>Bullet</p></li></ul><ul><li><p>Header style</p></li></ul><ul><li><p>First</p><ul><li><p>Nested</p></li></ul></li></ul><ul><ul><li><p>Under header</p></li></ul></ul><ul><li><p>No number</p><ul><li><p>No format</p></li></ul></li></ul><ul><li><p>Plain</p></li></ul>",
+    );
+  });
+
   // LibreOffice writes every index as the templates it was built from, then the built index.
   const indexes = [
     "table-of-content",
@@ -802,7 +850,7 @@ Third}`;
       )
       .file(
         "Book/two&&&.xhtml",
-        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
+        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
       )
       .file(
         "Book/cover.png",
@@ -816,6 +864,9 @@ Third}`;
     const second = await book.page(1);
     expect([first.title, second.title]).toEqual(["Second", "a".repeat(119)]);
     expect(first.html).toContain("A\u00a0B © — ≂̸ &amp;lt;");
+    expect(first.html).toContain(
+      '<p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p>',
+    );
     expect(first.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
     expect(first.html).toContain(
       "<pre>&lt;!DOCTYPE html&gt;&lt;!ENTITY author &quot;Ada&quot;&gt;</pre>",
@@ -936,7 +987,7 @@ Third}`;
       )
       .file(
         "book.opf",
-        '<package><manifest><item id="a" href="poster.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+        '<package><manifest><item id="a" href="poster.svg" media-type="image/svg+xml"/><item id="b" href="fallback.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/><itemref idref="b"/></spine></package>',
       )
       .file(
         "poster.svg",
@@ -945,18 +996,62 @@ Third}`;
           <filter id="shadow">
             <feOffset dx="4" dy="4"/>
             <feComponentTransfer><feFuncA type="linear" slope="0.5"/></feComponentTransfer>
+            <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
           </filter>
+          <filter id="drop"><feDropShadow dx="2" dy="2" flood-color="gray" flood-opacity="0.5"/></filter>
+          <filter id="tone"><feFlood flood-color="red"/><feBlend mode="multiply" in="SourceGraphic"/><feImage href="art.png"/></filter>
           <rect width="80" height="80" fill="orange" filter="url(#tint)"/>
         </svg>`,
+      )
+      .file(
+        "fallback.xhtml",
+        '<html><body><p><br></p><svg><filter id="d"><feDropShadow dx="2"/></filter></svg></body></html>',
       );
-    const { html } = await (await openEpub(archive)).page(0);
+    const book = await openEpub(archive);
+    const { html } = await book.page(0);
     expect(html).toContain("<feColorMatrix ");
     expect(html).toContain('color-interpolation-filters="sRGB"');
     expect(html).toContain('values="0.5"');
     expect(html).toContain('<feOffset dx="4" dy="4">');
     expect(html).toContain("<feComponentTransfer><feFuncA ");
     expect(html).toContain('slope="0.5"');
+    expect(html).toContain('<feMerge><feMergeNode></feMergeNode><feMergeNode in="SourceGraphic">');
+    expect(html).toContain('<feDropShadow dx="2" dy="2" flood-color="gray" flood-opacity="0.5">');
+    expect(html).toContain('<feFlood flood-color="red">');
+    expect(html).toContain('<feBlend in="SourceGraphic" mode="multiply">');
+    expect(html).not.toContain("feImage");
     expect(html).toContain('filter="url(#tint)"');
+    expect((await book.page(1)).html).toContain('<feDropShadow dx="2">');
+  });
+
+  it("keeps the RGB channel adjustments in EPUB SVG artwork", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="poster" href="poster.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="poster"/></spine></package>',
+      )
+      .file(
+        "poster.svg",
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <filter id="tint"><feComponentTransfer>
+            <feFuncR type="linear" slope="0.5"/>
+            <feFuncG type="discrete" tableValues="0 0.5 1"/>
+            <feFuncB type="gamma" amplitude="2" exponent="3"/>
+          </feComponentTransfer></filter>
+          <rect width="80" height="80" fill="orange" filter="url(#tint)"/>
+        </svg>`,
+      );
+    const book = await openEpub(archive);
+    const { html } = await book.page(0);
+    expect(html.match(/<feFunc[RGB][^>]*>/g) ?? []).toEqual([
+      '<feFuncR type="linear" slope="0.5">',
+      '<feFuncG type="discrete" tableValues="0 0.5 1">',
+      '<feFuncB type="gamma" amplitude="2" exponent="3">',
+    ]);
   });
 
   it("keeps embedded raster images in EPUB SVG artwork", async () => {

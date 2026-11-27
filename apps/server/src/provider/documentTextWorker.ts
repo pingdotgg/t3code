@@ -14,8 +14,25 @@ const CELL_START = Symbol("cell-start");
 const CELL_END = Symbol("cell-end");
 const LINE_START = Symbol("line-start");
 const THEMATIC_BREAK = Symbol("thematic-break");
+const PRESENTATIONML_NAMESPACES = new Set([
+  "http://schemas.openxmlformats.org/presentationml/2006/main",
+  "http://purl.oclc.org/ooxml/presentationml/main",
+]);
+const WORDPROCESSINGML_NAMESPACES = new Set([
+  "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+  "http://purl.oclc.org/ooxml/wordprocessingml/main",
+]);
+const PPTX_DRAWING_PROPERTIES = new Map([
+  ["sp", "nvSpPr"],
+  ["grpSp", "nvGrpSpPr"],
+  ["pic", "nvPicPr"],
+  ["graphicFrame", "nvGraphicFramePr"],
+  ["cxnSp", "nvCxnSpPr"],
+]);
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
+const ODF_DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+const ODF_TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
 type TextPart =
   | string
   | typeof CELL_START
@@ -70,6 +87,7 @@ interface XmlNode {
   attrs: Record<string, string>;
   children: Array<XmlNode | string>;
   imageDescription?: string;
+  pptxHidden?: boolean;
   spaceCount?: number;
   wordOutlineHeadingLevel?: number;
   hasText?: boolean;
@@ -79,6 +97,8 @@ interface XmlNode {
   epubTable?: boolean;
   mathmlFirstChildSeen?: boolean;
   epubBlock?: boolean;
+  odfInlineParagraphs?: boolean;
+  odfParagraphHidden?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -133,6 +153,22 @@ function namespaceOf(tagName: string, scope: readonly XmlNode[]) {
   return scope.findLast((node) => Object.hasOwn(node.attrs, binding))?.attrs[binding];
 }
 
+function isHiddenOdfSection(
+  tagName: string,
+  attributes: Record<string, string>,
+  scope: readonly XmlNode[],
+) {
+  return (
+    namespaceOf(tagName, scope) === ODF_TEXT_NS &&
+    Object.entries(attributes).some(
+      ([name, value]) =>
+        name.endsWith(":display") &&
+        /^[\t\n\r ]*none[\t\n\r ]*$/u.test(value) &&
+        namespaceOf(name, scope) === ODF_TEXT_NS,
+    )
+  );
+}
+
 function isXhtmlElement(
   tagName: string,
   scope: readonly XmlNode[],
@@ -143,6 +179,36 @@ function isXhtmlElement(
     namespace === "http://www.w3.org/1999/xhtml" ||
     (namespace === undefined && !tagName.includes(":") && rootTagName === "html")
   );
+}
+
+function hasImportantDisplayNone(style: string): boolean {
+  // Stylesheet rules can override non-important inline display.
+  if (!style || style.includes("\\") || !/display/i.test(style) || !/important/i.test(style))
+    return false;
+  let badString = false;
+  const declarations = style.replaceAll(
+    /\/\*[\s\S]*?(?:\*\/|$)|"[^"]*(?:"|$)|'[^']*(?:'|$)/g,
+    (token) => {
+      if (token.startsWith("/")) return " ";
+      // CSS ends a string at a newline, so later declarations can still apply.
+      if (/[\n\r\f]/.test(token)) badString = true;
+      return '""';
+    },
+  );
+  // Semicolons in blocks can be part of a declaration's value.
+  if (badString || /[()[\]{}]/.test(declarations)) return false;
+  let hidden = false;
+  for (const [declaration] of declarations.matchAll(/[^;]+/g)) {
+    const match =
+      /^[\t\n\f\r ]*(display|all)[\t\n\f\r ]*:([^!]+)![\t\n\f\r ]*important[\t\n\f\r ]*$/i.exec(
+        declaration,
+      );
+    if (!match) continue;
+    const [, property, value] = match;
+    if (!value?.trim()) continue;
+    hidden = property?.toLowerCase() === "display" && /^[\t\n\f\r ]*none[\t\n\f\r ]*$/i.test(value);
+  }
+  return hidden;
 }
 
 function xml(source: string, extension: string): XmlNode {
@@ -162,8 +228,9 @@ function xml(source: string, extension: string): XmlNode {
         Object.entries(tag.attributes).flatMap(([key, value]) => {
           const local = key.split(":").at(-1)!;
           // A foreign attribute must not shadow an XHTML table span or a namespace declaration.
-          return extension === ".epub" &&
-            (local === "colspan" || local === "rowspan" || local === "xmlns")
+          return (extension === ".epub" &&
+            (local === "colspan" || local === "rowspan" || local === "xmlns")) ||
+            (extension === ".odt" && local === "xmlns")
             ? [[key, String(value)]]
             : [
                 [key, String(value)],
@@ -177,6 +244,24 @@ function xml(source: string, extension: string): XmlNode {
     if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
     stack.at(-1)!.children.push(node);
     stack.push(node);
+    if (odf && node.name === "text-box" && namespaceOf(tag.name, stack) === ODF_DRAW_NS)
+      node.odfInlineParagraphs = true;
+    if (
+      extension === ".odt" &&
+      node.name === "hidden-paragraph" &&
+      namespaceOf(tag.name, stack) === ODF_TEXT_NS
+    ) {
+      const paragraph = stack.findLast(
+        (ancestor) => ancestor.name === "p" || ancestor.name === "h",
+      );
+      // A visible field keeps the paragraph visible even if another field hides it.
+      if (paragraph && paragraph.odfParagraphHidden !== false) {
+        const visibility = Object.entries(tag.attributes).find(
+          ([name]) => name.endsWith(":is-hidden") && namespaceOf(name, stack) === ODF_TEXT_NS,
+        )?.[1];
+        paragraph.odfParagraphHidden = /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u.test(visibility ?? "");
+      }
+    }
     if (
       extension === ".epub" &&
       node.name === "semantics" &&
@@ -198,6 +283,18 @@ function xml(source: string, extension: string): XmlNode {
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (extension === ".pptx" && node.name === "cNvPr") {
+      const hidden = tag.attributes.hidden?.trim();
+      const drawing = stack.at(-2);
+      if (
+        drawing &&
+        (hidden === "true" || hidden === "1") &&
+        PPTX_DRAWING_PROPERTIES.get(drawing.name) === parent.name &&
+        PRESENTATIONML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+      ) {
+        drawing.pptxHidden = true;
+      }
+    }
     if (extension === ".docx" && node.name === "outlineLvl" && parent.name === "pPr") {
       const owner = stack.at(-2);
       const outline = Number(node.attrs.val?.match(/^\s*[+-]?\d+\s*$/u)?.[0]);
@@ -216,14 +313,17 @@ function xml(source: string, extension: string): XmlNode {
       parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
+      node.pptxHidden ||
+      (node.odfParagraphHidden && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) ||
       isMathmlAlternative ||
       (extension === ".epub" &&
         node.name === "template" &&
         isXhtmlElement(tag.name, [...stack, node], rootTagName)) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
-        Object.hasOwn(tag.attributes, "hidden") &&
-        !/^until-found$/i.test(String(tag.attributes.hidden))) ||
+        ((Object.hasOwn(tag.attributes, "hidden") &&
+          !/^until-found$/i.test(String(tag.attributes.hidden))) ||
+          hasImportantDisplayNone(tag.attributes.style ?? ""))) ||
       (extension === ".docx" && node.name === "del") ||
       (extension === ".docx" &&
         node.name === "r" &&
@@ -233,6 +333,9 @@ function xml(source: string, extension: string): XmlNode {
             (prop) => prop.name === "vanish" && ["true", "1", "on"].includes(prop.attrs.val ?? "1"),
           )) ||
       (odf && node.name === "annotation" && parent.name !== "semantics") ||
+      (extension === ".odt" &&
+        node.name === "section" &&
+        isHiddenOdfSection(tag.name, tag.attributes, [...stack, node])) ||
       (extension === ".pptx" &&
         node.name === "timing" &&
         stack.every((ancestor) =>
@@ -245,6 +348,34 @@ function xml(source: string, extension: string): XmlNode {
     ) {
       parent.children.pop();
       return;
+    }
+    if (
+      extension === ".docx" &&
+      node.name === "ruby" &&
+      WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+    ) {
+      const base = children(node).find((child) => child.name === "rubyBase");
+      const reading = children(node).find((child) => child.name === "rt");
+      // Word stores the guide first even though the base is the text on the line.
+      if (base?.hasText && reading?.hasText) node.children = [base, "(", reading, ")"];
+    }
+    if (
+      extension === ".odt" &&
+      node.name === "note" &&
+      namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS
+    ) {
+      const parts = children(node);
+      const citation = parts.find((child) => child.name === "note-citation");
+      const body = parts.find((child) => child.name === "note-body");
+      if (citation?.hasText && body?.hasText) {
+        body.odfInlineParagraphs = true;
+        node.children = ["[", citation, ": ", body, "]"];
+      }
+    }
+    if (odf && node.name === "ruby" && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) {
+      const base = children(node).find((child) => child.name === "ruby-base");
+      const reading = children(node).find((child) => child.name === "ruby-text");
+      if (base?.hasText && reading?.hasText) node.children = [base, "(", reading, ")"];
     }
     if (extension === ".epub" && node.name === "ruby" && stack[1]?.name === "html")
       separateRubyReadings(node);
@@ -343,7 +474,21 @@ function* text(node: XmlNode): Generator<TextPart, void> {
   }
   // Word text boxes hold their own paragraphs inside the anchoring paragraph.
   if (node.name === "txbxContent") yield* paragraphs(node);
-  else if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
+  else if (node.odfInlineParagraphs) {
+    // ODF boxes and notes can sit inline, so only add breaks between their own paragraphs.
+    let seenParagraph = false;
+    for (const child of node.children) {
+      if (typeof child === "string") {
+        yield child;
+        continue;
+      }
+      if (child.name === "p" || child.name === "h") {
+        if (seenParagraph) yield "\n";
+        seenParagraph = true;
+      }
+      yield* text(child);
+    }
+  } else if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
   else if (["br", "line-break", "cr"].includes(node.name)) yield "\n";
   else if (node.name === "noBreakHyphen") yield "\u2011";
   else if (node.spaceCount !== undefined) {
@@ -514,11 +659,22 @@ function epubSpan(value: string | undefined) {
   return digits === undefined ? 1 : Number(digits);
 }
 
+function* epubTableParts(node: XmlNode) {
+  // Legacy XHTML places footers before the body. The table model reads them after the other rows.
+  const footers: XmlNode[] = [];
+  for (const part of node.children) {
+    if (typeof part === "string") continue;
+    if (part.name === "tfoot") footers.push(part);
+    else yield part;
+  }
+  yield* footers;
+}
+
 function* epubTable(node: XmlNode): Generator<TextPart, void> {
   const occupiedUntil = new Uint32Array(512);
   let rowIndex = 0;
   let rowCount = 0;
-  for (const part of children(node)) {
+  for (const part of epubTableParts(node)) {
     const rowGroup = ["thead", "tbody", "tfoot"].includes(part.name);
     if (!rowGroup && part.name !== "tr") continue;
     if (rowGroup) occupiedUntil.fill(0);
@@ -840,7 +996,28 @@ function rtfUnicodeDestination(
   if (end !== undefined) return { body, end };
 }
 
+const RTF_NESTED_CELL_END = Symbol("rtf-nested-cell-end");
+
 function* rtf(source: string): Generator<string, void> {
+  // \nestcell ends a nested cell without a delimiter; space it only from adjacent text.
+  let last = "";
+  let afterNestedCell = false;
+  for (const part of rtfParts(source)) {
+    if (part === RTF_NESTED_CELL_END) {
+      afterNestedCell = true;
+      continue;
+    }
+    const text = part.replaceAll("\0", "");
+    if (text) {
+      if (afterNestedCell && /\S/u.test(last) && /\S/u.test(text[0]!)) yield " ";
+      afterNestedCell = false;
+      last = text.at(-1)!;
+    }
+    yield part;
+  }
+}
+
+function* rtfParts(source: string): Generator<string | typeof RTF_NESTED_CELL_END, void> {
   if (!source.startsWith("{\\rtf")) throw new Error("Invalid RTF document");
   let state = {
     skip: false,
@@ -1003,6 +1180,7 @@ function* rtf(source: string): Generator<string, void> {
         // Table structure survives tracked deletions; only the deleted cell text is dropped.
         else if (!state.skip && control === "row") yield "\n";
         else if (!state.skip && control === "cell") yield "\t";
+        else if (!state.skip && control === "nestcell") yield RTF_NESTED_CELL_END;
         else if (!hidden() && symbols.has(control)) yield symbols.get(control)!;
       } else {
         i++;
@@ -1185,7 +1363,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             return !!raw && !!populatedStrings[Number(raw)];
           }
           if (cell.attrs.t === "inlineStr") return hasXstringText(cell);
-          if (value && hasCellText(value)) return true;
+          if (value && hasXstringText(value)) return true;
           for (const formula of all(cell, "f")) if (hasCellText(formula)) return true;
           return false;
         };
@@ -1221,7 +1399,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             else if (cell.attrs.t === "b" && (raw.trim() === "0" || raw.trim() === "1"))
               yield* inCell([raw.trim() === "1" ? "true" : "false"]);
             else {
-              if (value && hasCellText(value)) yield* inCell(xstringText(value));
+              if (value && hasXstringText(value)) yield* inCell(xstringText(value));
               else for (const formula of all(cell, "f")) yield* inCell(text(formula));
               const formatId = formats[Number(cell.attrs.s ?? 0)]?.attrs.numFmtId;
               const format = formatId ? customFormats.get(formatId) : undefined;

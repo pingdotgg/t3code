@@ -11258,6 +11258,145 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
   };
+  it.effect.each(["reopened", "new runtime", "no anchor", "fresh", "per-process"] as const)(
+    "a resumed process's first result charges only its own growth (%s)",
+    (scenario) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+        const now = yield* DateTime.now;
+        const turn = (name: string) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(name),
+            text: "Continue.",
+            attachments: [],
+          });
+        const modelUsage = (inputTokens: number, outputTokens: number) => ({
+          inputTokens,
+          outputTokens,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          webSearchRequests: 0,
+          costUSD: 0,
+          contextWindow: 200_000,
+          maxOutputTokens: 32_000,
+        });
+        const main = CLAUDE_TEST_MODEL_SELECTION.model;
+        const helper = "claude-haiku-4-5";
+        const reopen =
+          scenario === "reopened" || scenario === "new runtime" || scenario === "per-process";
+        if (reopen) {
+          yield* harness.runtime.startTurn(turn("earlier-ledger"));
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({
+              uuid: "result-earlier-ledger",
+              result: "OK",
+              usage: { ...zeroUsage, input_tokens: 1700, output_tokens: 50 },
+              modelUsage: { [main]: modelUsage(1700, 50) },
+            }),
+          );
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        }
+        const input = turn("current-ledger");
+        const runtime =
+          scenario === "new runtime"
+            ? yield* harness.adapter.openSession({
+                threadId: harness.threadId,
+                providerSessionId: ProviderSessionId.make("new-runtime-ledger"),
+                modelSelection: input.modelSelection,
+                runtimePolicy: input.runtimePolicy,
+              })
+            : harness.runtime;
+        const completedInNewRuntime =
+          yield* Queue.unbounded<
+            Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { readonly type: "provider_turn.updated" }
+            >
+          >();
+        if (runtime !== harness.runtime) {
+          yield* runtime.events.pipe(
+            Stream.runForEach((event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "completed"
+                ? Queue.offer(completedInNewRuntime, event)
+                : Effect.void,
+            ),
+            Effect.forkScoped,
+          );
+        }
+        yield* runtime.startTurn({
+          ...input,
+          ...(reopen ? { resume: true } : {}),
+          nativeThreadHasTurns: scenario !== "fresh",
+        });
+        assert.equal(
+          harness.getOpenedOptions()?.resume,
+          scenario === "fresh" ? undefined : WAKE_NATIVE_SESSION,
+        );
+        const messages = harness.processQueues[reopen ? 1 : 0]!;
+        yield* Queue.offer(
+          messages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "init-current-ledger",
+            session_id: WAKE_NATIVE_SESSION,
+            claude_code_version: scenario === "per-process" ? "2.1.111" : "2.1.332",
+          }),
+        );
+        // Claude Code restores a resumed session's model totals, so its first result includes them.
+        // 2.1.111 restarts them, and here its own main usage outgrows the earlier process's ledger.
+        const [historicalInput, historicalOutput] =
+          scenario === "fresh" || scenario === "per-process" ? [0, 0] : [1700, 50];
+        const [ownInput, ownOutput] = scenario === "per-process" ? [2000, 60] : [110, 2];
+        yield* Queue.offer(
+          messages,
+          makeResultFrame({
+            uuid: "result-current-ledger",
+            result: "OK",
+            usage: { ...zeroUsage, input_tokens: ownInput, output_tokens: ownOutput },
+            modelUsage: {
+              [main]: modelUsage(historicalInput + ownInput, historicalOutput + ownOutput),
+              [helper]: modelUsage(90_000, 3000),
+            },
+          }),
+        );
+        const completed = yield* Effect.gen(function* () {
+          if (runtime !== harness.runtime) return yield* Queue.take(completedInNewRuntime);
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+          return harness.events.findLast((event) => event.type === "provider_turn.updated");
+        });
+        assert.include(completed?.providerTurn.turnTokenUsage ?? {}, {
+          inputTokens: ownInput,
+          outputTokens: ownOutput,
+        });
+        assert.deepEqual(
+          completed?.providerTurn.turnTokenUsage?.otherUsage,
+          {
+            reopened: { inputTokens: 90_000, outputTokens: 3000 },
+            "new runtime": { inputTokens: 90_000, outputTokens: 3000 },
+            // Without a saved anchor the totals may hold earlier turns, so only the result counts.
+            "no anchor": undefined,
+            fresh: { inputTokens: 90_000, outputTokens: 3000 },
+            // Older Claude Code restarts a resumed process's ledger, so it counts from zero.
+            "per-process": { inputTokens: 90_000, outputTokens: 3000 },
+          }[scenario],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   const reportedContextTokens = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
     events.flatMap((event) =>
       event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
