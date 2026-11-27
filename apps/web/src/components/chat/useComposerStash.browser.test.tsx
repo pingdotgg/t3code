@@ -3,6 +3,8 @@ import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
+import { useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
+import { toastManager } from "../ui/toast";
 import { removeLocalStorageItem } from "../../hooks/useLocalStorage";
 import { isMacPlatform } from "../../lib/utils";
 import {
@@ -25,7 +27,7 @@ function Harness({ input }: { input: StashInput }) {
   return null;
 }
 
-it("keeps the draft when stashing while a pasted image is still compressing", async () => {
+it.each(["compressing", "failed", "uploading"] as const)("blocks stash for %s", async (status) => {
   const target = DraftId.make("stash-preparing-image");
   using _draft = {
     [Symbol.dispose]: () => useComposerDraftStore.getState().clearComposerContent(target),
@@ -36,24 +38,48 @@ it("keeps the draft when stashing while a pasted image is still compressing", as
       removeLocalStorageItem(PROMPT_STASH_STORAGE_KEY);
     },
   };
-  addPreparingComposerImages(target, [
-    {
-      id: "pasted",
-      name: "shot.png",
-      file: new File(["png"], "shot.png", { type: "image/png" }),
-      hidden: false,
-    },
-  ]);
+  if (status === "compressing")
+    addPreparingComposerImages(target, [
+      {
+        id: "pasted",
+        name: "shot.png",
+        file: new File(["png"], "shot.png", { type: "image/png" }),
+        hidden: false,
+      },
+    ]);
   using _preparing = {
     [Symbol.dispose]: () => removePreparingComposerImages(target, new Set(["pasted"])),
   };
   const environmentId = EnvironmentId.make("stash-env");
+  const file = {
+    id: "stash-file",
+    type: "file" as const,
+    name: "notes.txt",
+    mimeType: "text/plain",
+    sizeBytes: 5,
+    file: new File(["notes"], "notes.txt", { type: "text/plain" }),
+  };
+  const previousUploads = useAttachmentUploadStore.getState().uploadsByImageId;
+  using _uploads = {
+    [Symbol.dispose]: () =>
+      useAttachmentUploadStore.setState({ uploadsByImageId: previousUploads }),
+  };
+  if (status !== "compressing") {
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [file.id]:
+          status === "failed"
+            ? { status, environmentId, reason: "Upload failed" }
+            : { status, environmentId, progress: 0.5 },
+      },
+    });
+  }
   const promptRef = { current: "Describe this screenshot" };
   const input = {
     environmentId,
     composerDraftTarget: target,
     promptRef,
-    readAttachmentDraft: () => ({ images: [], files: [] }),
+    readAttachmentDraft: () => ({ images: [], files: status === "compressing" ? [] : [file] }),
     readTerminalContexts: () => [],
     routeThreadRef: { environmentId, threadId: ThreadId.make("stash-thread") },
     projectSelectionRequired: false,
@@ -76,6 +102,7 @@ it("keeps the draft when stashing while a pasted image is still compressing", as
     expandMobileComposer: vi.fn(),
   } satisfies StashInput;
   await using _screen = await render(<Harness input={input} />);
+  using toast = vi.spyOn(toastManager, "add").mockImplementation(() => "stash-toast");
 
   const mod = isMacPlatform(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
   await act(() => {
@@ -86,7 +113,17 @@ it("keeps the draft when stashing while a pasted image is still compressing", as
 
   expect(usePromptStashStore.getState().entries).toEqual([]);
   expect(promptRef.current).toBe("Describe this screenshot");
-  expect(countPreparingComposerImages(target)).toBe(1);
+  expect(countPreparingComposerImages(target)).toBe(status === "compressing" ? 1 : 0);
+  if (status !== "compressing") {
+    expect(toast).toHaveBeenCalledWith({
+      type: "error",
+      title:
+        status === "failed"
+          ? "Retry or remove failed file uploads before stashing this prompt"
+          : "Wait for file uploads before stashing this prompt",
+    });
+    expect(useAttachmentUploadStore.getState().uploadsByImageId[file.id]?.status).toBe(status);
+  }
 });
 
 it("stashes a side chat's prompt when Mod+S is pressed inside its pane", async () => {

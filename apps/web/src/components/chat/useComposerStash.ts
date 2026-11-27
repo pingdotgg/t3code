@@ -569,6 +569,13 @@ export function useComposerStash(input: {
         return;
       }
       const upload = readAttachmentUpload(file.id);
+      if (upload?.status === "failed" && upload.environmentId === environmentId) {
+        toastManager.add({
+          type: "error",
+          title: m(msg("Retry or remove failed file uploads before stashing this prompt")),
+        });
+        return;
+      }
       if (upload?.status !== "ready" || upload.environmentId !== environmentId) {
         toastManager.add({
           type: "error",
