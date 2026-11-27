@@ -19,7 +19,6 @@ const PATH_LINE_TEXT = /^(\S.*?):(\d+):(.*)$/;
 const COLON_HEADING = /^(\S.*):$/;
 const OPENCODE_NUMBERED_LINE = /^\s+Line \d+:/;
 const RIPGREP_NUMBERED_LINE = /^\d+:/;
-const RIPGREP_NUMERIC_INLINE_PATH = /^\d+:\d+:/;
 
 /**
  * Grep tool text as one result per matched line, from ripgrep's `path:line:text` and `--heading`
@@ -63,14 +62,9 @@ export function parseGrepOutput(
     const colonHeading = COLON_HEADING.exec(line.trimEnd());
     const inline =
       colonHeading && OPENCODE_NUMBERED_LINE.test(nextLine) ? null : PATH_LINE_TEXT.exec(line);
-    // At the start of the output, two inline rows can look like a heading and a numbered match.
-    // Prefer inline when the second row can be a match on an all-digit filename.
-    if (
-      ripgrepFormat !== "inline" &&
-      /^\S/.test(line) &&
-      RIPGREP_NUMBERED_LINE.test(nextLine) &&
-      (ripgrepFormat === "heading" || !inline || !RIPGREP_NUMERIC_INLINE_PATH.test(nextLine))
-    ) {
+    if (ripgrepFormat !== "inline" && /^\S/.test(line) && RIPGREP_NUMBERED_LINE.test(nextLine)) {
+      // Two inline rows can also look like a bare heading and its numbered match.
+      if (ripgrepFormat === undefined && inline && PATH_LINE_TEXT.test(nextLine)) return undefined;
       file = line.trimEnd();
       ripgrepFormat = "heading";
       continue;
