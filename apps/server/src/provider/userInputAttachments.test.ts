@@ -1463,6 +1463,20 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text>' +
+              '<t:p>The shipment left.<t:note t:id="ftn0" t:note-class="footnote"><t:note-citation>1</t:note-citation><t:note-body><t:p>Inspect the seals before departure.</t:p></t:note-body></t:note> Finance booked revenue.</t:p>' +
+              '<t:p>The ledger lists Tokyo<t:note t:id="ftn1" t:note-class="footnote"><t:note-citation>2</t:note-citation><t:note-body><t:p>Includes freight.</t:p><t:p>Duties excluded.</t:p></t:note-body></t:note> and Osaka.</t:p>' +
+              "</office:text></office:body></office:document-content>",
+          },
+          expected: [
+            "The shipment left.[1: Inspect the seals before departure.] Finance booked revenue.\nThe ledger lists Tokyo[2: Includes freight.\nDuties excluded.] and Osaka.",
+          ],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml":
               '<document><text><p>Fee <office:annotation><dc:creator>Reviewer</dc:creator><dc:date>2026-01-01T00:00:00</dc:date><initials>JR</initials><p>Check</p></office:annotation>$700</p><table><table-row><table-cell office:value-type="float" office:value="150"><office:annotation><p>was 120</p></office:annotation></table-cell></table-row></table><p>Formula <math:math><math:semantics><math:mrow>x+y</math:mrow><math:annotation encoding="application/x-tex">x+y</math:annotation></math:semantics></math:math></p></text></document>',
           },
           expected: ["Fee $700\n150\nFormula x+yx+y"],
