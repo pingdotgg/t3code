@@ -301,6 +301,10 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
           ["/brand/design&amp;dev.svg&#x3f;v=2", "design&dev.svg"],
           ["/brand/logo%23mark.svg&quest;v=2", "logo#mark.svg"],
           ["/brand/&#128;.svg", "\u20ac.svg"],
+          ["/brand/design&amp-dev.svg", "design&-dev.svg"],
+          ["/brand/a&copy=b.svg", "a&copy=b.svg"],
+          ["/brand/&ampdev.svg", "&ampdev.svg"],
+          ["/brand/&apos.svg", "&apos.svg"],
         ] as const) {
           const entityCwd = yield* makeTempDir;
           yield* writeTextFile(entityCwd, "index.html", `<link rel="icon" href="${href}">`);
@@ -309,6 +313,17 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
             (yield* Path.Path).join(entityCwd, "public", "brand", filename),
           );
         }
+
+        const jsxCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          jsxCwd,
+          "app/root.tsx",
+          '<link rel="icon" href="/brand/a&amp-b.svg" />',
+        );
+        yield* writeTextFile(jsxCwd, "public/brand/a&amp-b.svg", "<svg>brand</svg>");
+        expect(yield* resolver.resolvePath(jsxCwd)).toBe(
+          (yield* Path.Path).join(jsxCwd, "public", "brand", "a&amp-b.svg"),
+        );
 
         const malformedCwd = yield* makeTempDir;
         yield* writeTextFile(malformedCwd, "index.html", '<link rel="icon" href="/100%.svg">');

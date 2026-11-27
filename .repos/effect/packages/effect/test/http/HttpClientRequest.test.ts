@@ -267,6 +267,17 @@ describe("HttpClientRequest", () => {
     })
   })
 
+  describe("appendHeader", () => {
+    it("joins onto an existing header", () => {
+      const request = HttpClientRequest.get("/").pipe(
+        HttpClientRequest.setHeader("Accept", "text/html"),
+        HttpClientRequest.appendHeader("accept", "application/json")
+      )
+
+      strictEqual(request.headers.accept, "text/html, application/json")
+    })
+  })
+
   describe("removeHeader", () => {
     it("removes an existing header", () => {
       const request = HttpClientRequest.get("/").pipe(
