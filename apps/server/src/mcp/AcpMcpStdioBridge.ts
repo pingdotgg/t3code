@@ -1,25 +1,41 @@
 // Relay JSON-RPC verbatim; schema decoding would reject foreign payloads.
-// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off
-import * as NodeReadline from "node:readline";
-
+// @effect-diagnostics globalJsonInEffect:off
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as Result from "effect/Result";
+import * as Option from "effect/Option";
 import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpResponsePayloads";
 
 /** ACP mandates stdio MCP support; HTTP/SSE support varies. */
 
-export class AcpMcpBridgeError extends Error {
-  readonly _tag = "AcpMcpBridgeError";
-}
+const JsonRpcError = Schema.Struct({ code: Schema.Number, message: Schema.String });
+
+export class AcpMcpBridgeError extends Schema.TaggedError<AcpMcpBridgeError>()(
+  "AcpMcpBridgeError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    /** The JSON-RPC error the server answered with, when it answered. */
+    rpcError: Schema.optional(JsonRpcError),
+  },
+) {}
+
+const decodeRpcError = Schema.decodeUnknownOption(JsonRpcError);
+
+const isAcpMcpBridgeError = Schema.is(AcpMcpBridgeError);
 
 const bridgeError = (cause: unknown): AcpMcpBridgeError =>
-  cause instanceof AcpMcpBridgeError
+  isAcpMcpBridgeError(cause)
     ? cause
-    : new AcpMcpBridgeError(cause instanceof Error ? cause.message : String(cause), { cause });
+    : new AcpMcpBridgeError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      });
+
+const decodeJsonLine = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 interface JsonRpcEnvelope {
   readonly id?: unknown;
@@ -49,6 +65,12 @@ function protocolVersionOf(entry: unknown): string | null {
       ? (result as { readonly protocolVersion?: unknown }).protocolVersion
       : undefined;
   return typeof version === "string" && version.length > 0 ? version : null;
+}
+
+function replyToServerRequest(envelope: JsonRpcEnvelope): unknown {
+  return envelope.method === "ping"
+    ? { jsonrpc: "2.0", id: envelope.id, result: {} }
+    : { jsonrpc: "2.0", id: envelope.id, error: { code: -32601, message: "Method not found" } };
 }
 
 export interface McpToolSessionOptions {
@@ -101,14 +123,20 @@ export const mcpToolSession = (
     sessionId = response.headers.get("mcp-session-id") ?? sessionId;
     if (!response.ok) {
       yield* discardResponseBody(response);
-      return yield* Effect.fail(
-        new AcpMcpBridgeError(`T3 Code MCP endpoint responded with HTTP ${response.status}.`),
-      );
+      return yield* new AcpMcpBridgeError({
+        message: `T3 Code MCP endpoint responded with HTTP ${response.status}.`,
+      });
     }
-    const payloads = yield* Stream.runCollect(responsePayloads(response, bridgeError));
-    for (const payload of payloads) {
+    const payloads: Array<unknown> = [];
+    yield* Stream.runForEach(responsePayloads(response, bridgeError), (payload) => {
       protocolVersion = protocolVersionOf(payload) ?? protocolVersion;
-    }
+      const envelope = asEnvelope(payload);
+      if (envelope?.id !== undefined && typeof envelope.method === "string") {
+        return send(replyToServerRequest(envelope)).pipe(Effect.asVoid);
+      }
+      payloads.push(payload);
+      return Effect.void;
+    });
     return payloads;
   });
 
@@ -120,11 +148,11 @@ export const mcpToolSession = (
     const responses = yield* send({ jsonrpc: "2.0", id, method, params });
     const envelope = asEnvelope(responses.find((entry) => asEnvelope(entry)?.id === id));
     if (envelope === null || envelope.error !== undefined) {
-      return yield* Effect.fail(
-        new AcpMcpBridgeError(
-          `T3 Code MCP ${method} failed${envelope?.error === undefined ? "." : `: ${JSON.stringify(envelope.error)}`}`,
-        ),
-      );
+      const rpcError = Option.getOrUndefined(decodeRpcError(envelope?.error));
+      return yield* new AcpMcpBridgeError({
+        message: `T3 Code MCP ${method} failed${envelope?.error === undefined ? "." : `: ${JSON.stringify(envelope.error)}`}`,
+        ...(rpcError === undefined ? {} : { rpcError }),
+      });
     }
     return envelope;
   });
@@ -132,9 +160,11 @@ export const mcpToolSession = (
   const terminate = Effect.suspend(() =>
     sessionId === null
       ? Effect.void
-      : Effect.tryPromise(() =>
-          fetchImplementation(options.endpoint, { method: "DELETE", headers: headers() }),
-        ).pipe(Effect.flatMap(discardResponseBody), Effect.ignore),
+      : Effect.tryPromise({
+          try: () =>
+            fetchImplementation(options.endpoint, { method: "DELETE", headers: headers() }),
+          catch: bridgeError,
+        }).pipe(Effect.flatMap(discardResponseBody), Effect.ignore),
   );
 
   // Registered before the handshake so a session the server opened is ended
@@ -274,11 +304,11 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
       line: string,
     ): Effect.fn.Return<void> {
       if (line.trim().length === 0) return;
-      const parsed = yield* Effect.try((): unknown => JSON.parse(line)).pipe(Effect.result);
-      if (Result.isFailure(parsed)) {
+      const parsed = decodeJsonLine(line);
+      if (Option.isNone(parsed)) {
         return yield* respondWithError(null, "Parse error", -32700);
       }
-      const envelope = asEnvelope(parsed.success);
+      const envelope = asEnvelope(parsed.value);
       if (envelope === null) return;
       const isResponse = envelope.id !== undefined && ("result" in envelope || "error" in envelope);
       const isSessionHandshake =
@@ -311,12 +341,24 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
       return yield* launch(task);
     });
 
-    const reader = NodeReadline.createInterface({ input: options.input });
-    yield* Stream.runForEach(Stream.fromAsyncIterable(reader, bridgeError), dispatch).pipe(
+    // node:readline also splits on U+2028/U+2029, which JSON.stringify leaves raw inside strings.
+    yield* Stream.fromAsyncIterable(options.input, bridgeError).pipe(
+      Stream.map((chunk) => (typeof chunk === "string" ? Buffer.from(chunk) : chunk)),
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.runForEach(dispatch),
       Effect.ignoreCause,
     );
     yield* Fiber.awaitAll(running);
   });
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Array<Buffer> = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 /** Avoid heavy imports on the ACP first-message path. */
@@ -342,12 +384,16 @@ export async function runAcpMcpCliFastPath(
     );
     return;
   }
-  const [tool, argumentsJson] = args;
-  if (tool === undefined || argumentsJson === undefined) {
-    process.stderr.write("acp-mcp-call requires <tool> and <arguments-json>.\n");
+  const [tool, argumentsArg] = args;
+  if (tool === undefined || argumentsArg === undefined) {
+    process.stderr.write(
+      "acp-mcp-call requires <tool> and <arguments-json>, or - to read it from stdin.\n",
+    );
     process.exitCode = 2;
     return;
   }
+  // Windows PowerShell 5.1 strips the quotes from JSON passed as an argument; stdin keeps them.
+  const argumentsJson = argumentsArg === "-" ? await readStdin() : argumentsArg;
   let parsed: unknown;
   try {
     parsed = JSON.parse(argumentsJson);

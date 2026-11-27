@@ -1,3 +1,8 @@
+import { expect, it } from "@alchemy.run/test";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+import { AuthError } from "@/Auth/AuthProvider.ts";
 import {
   getEnv,
   getEnvRedacted,
@@ -5,18 +10,10 @@ import {
   getEnvRequired,
   mapPromptCancellation,
 } from "@/Auth/Env.ts";
-import { AuthError } from "@/Auth/AuthProvider.ts";
-import { TerminalCancelled } from "@/Cli/CliKit/index.ts";
-import { expect, it } from "alchemy-test";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Effect from "effect/Effect";
-import * as Redacted from "effect/Redacted";
+import { TerminalCancelled } from "@/Interaction.ts";
 
 const provideConfig = (values: Record<string, unknown>) =>
-  Effect.provideService(
-    ConfigProvider.ConfigProvider,
-    ConfigProvider.fromUnknown(values),
-  );
+  Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(values));
 
 it.effect(
   "reads optional environment configuration",

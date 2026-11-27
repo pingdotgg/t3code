@@ -19,6 +19,9 @@ class T3TerminalModule : Module() {
         view.writeOutput(data, reset)
       }
 
+      // The Android input field already clears after every change.
+      AsyncFunction("resetInput") { _: T3TerminalView -> }
+
       Prop("terminalKey") { view: T3TerminalView, terminalKey: String ->
         view.terminalKey = terminalKey
       }
@@ -29,6 +32,10 @@ class T3TerminalModule : Module() {
 
       Prop("fontSize") { view: T3TerminalView, fontSize: Double ->
         view.fontSize = fontSize.toFloat()
+      }
+
+      Prop("fontFamily") { view: T3TerminalView, fontFamily: String ->
+        view.fontFamily = fontFamily
       }
 
       Prop("focusRequest") { view: T3TerminalView, focusRequest: Double ->

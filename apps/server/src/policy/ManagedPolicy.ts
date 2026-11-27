@@ -9,7 +9,7 @@ import * as NodeModule from "node:module";
 import { ManagedPolicyDocument, type ManagedPolicySummary } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
@@ -53,9 +53,10 @@ export const loadedPolicy = Effect.fn("ManagedPolicy.loadedPolicy")(function* (
 ) {
   if (policy.document === undefined) return null;
   const json = yield* encodeDocumentJson(policy.document).pipe(Effect.orDie);
-  const digest = yield* (yield* Crypto.Crypto)
-    .digest("SHA-256", new TextEncoder().encode(json))
-    .pipe(Effect.orDie);
+  const digest = yield* (yield* Digest.Digest).digest(
+    Digest.sha256,
+    new TextEncoder().encode(json),
+  );
   return {
     source: policy.path,
     organization: policy.document.organization,
@@ -69,7 +70,7 @@ export const loadedPolicy = Effect.fn("ManagedPolicy.loadedPolicy")(function* (
  */
 export function deniedBy(
   policy: Pick<ManagedPolicy["Service"], "document">,
-  capability: "webhookTasks" | "telemetry",
+  capability: "webhookTasks" | "telemetry" | "previewTunnel" | "worktreeLayoutCommands",
 ): string | undefined {
   return policy.document?.limits?.[capability] === false ? policy.document.organization : undefined;
 }
@@ -134,6 +135,8 @@ function summarizeLimits(
     webhookTasks,
     telemetry,
     browserCookieImport,
+    previewTunnel,
+    worktreeLayoutCommands,
     providers,
     updates,
   } = document.limits ?? {};
@@ -145,6 +148,8 @@ function summarizeLimits(
     ...(webhookTasks === undefined ? {} : { webhookTasks }),
     ...(telemetry === undefined ? {} : { telemetry }),
     ...(browserCookieImport === undefined ? {} : { browserCookieImport }),
+    ...(previewTunnel === undefined ? {} : { previewTunnel }),
+    ...(worktreeLayoutCommands === undefined ? {} : { worktreeLayoutCommands }),
     ...(providers?.allowedDrivers === undefined && Object.keys(lockedInstanceFields).length === 0
       ? {}
       : {
@@ -184,7 +189,10 @@ const make = Effect.gen(function* () {
   const policy = yield* Option.match(devPath, {
     onSome: load,
     onNone: () =>
-      readManagedPolicy(platform).pipe(
+      readManagedPolicy(
+        platform,
+        ManagedProviders.knownDriverLabels().map(({ driver }) => driver),
+      ).pipe(
         Effect.flatMap((found) =>
           fromDocument(found?.source ?? managedPolicyPath(platform), found?.document),
         ),

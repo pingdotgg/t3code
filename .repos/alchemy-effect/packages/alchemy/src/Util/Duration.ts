@@ -11,9 +11,7 @@ import * as Duration from "effect/Duration";
  * `"Infinity"` literal). Any already-valid input (a number, a `"20 seconds"`
  * string, or a live `Duration`) is returned unchanged.
  */
-export const normalizeDurationInput = (
-  input: Duration.Input,
-): Duration.Input => {
+export const normalizeDurationInput = (input: Duration.Input): Duration.Input => {
   const json = input as {
     _id?: unknown;
     _tag?: "Millis" | "Nanos" | "Infinity" | "NegativeInfinity";
@@ -32,9 +30,7 @@ export const normalizeDurationInput = (
 const wire =
   (to: (input: Duration.Input) => number) =>
   (input: Duration.Input | undefined): number | undefined =>
-    input === undefined
-      ? undefined
-      : Math.round(to(normalizeDurationInput(input)));
+    input === undefined ? undefined : Math.round(to(normalizeDurationInput(input)));
 
 /**
  * Convert a {@link Duration.Input} to whole seconds for a wire/API field,

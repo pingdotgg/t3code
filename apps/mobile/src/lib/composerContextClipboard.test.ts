@@ -29,13 +29,22 @@ vi.mock("expo-file-system", () => ({
 }));
 vi.mock("../state/atom-registry", () => ({
   appAtomRegistry: {
-    get: () => ({ _tag: "Some", value: { httpBaseUrl: "https://source.example" } }),
+    get: (atom: unknown) =>
+      atom === "environments"
+        ? []
+        : { _tag: "Some", value: { httpBaseUrl: "https://source.example" } },
   },
+}));
+vi.mock("../state/workspace", () => ({
+  workspaceConnections: { environmentsAtom: "environments" },
 }));
 vi.mock("../state/session", () => ({
   environmentSession: { preparedConnectionValueAtom: vi.fn() },
 }));
 vi.mock("../state/assets", () => ({ assetEnvironment: { createUrl: (value: unknown) => value } }));
+vi.mock("../state/threads", () => ({
+  environmentThreadShells: { threadShellAtom: (value: unknown) => value },
+}));
 vi.mock("../state/use-composer-drafts", () => ({
   waitForComposerDraftsLoaded: async () => {},
   findLocalComposerClipboardAttachment: mocks.local,
@@ -64,6 +73,13 @@ const image = {
   mimeType: "image/png",
   sizeBytes: 7,
   attachmentId: "source-file",
+  source: {
+    kind: "snap-shot" as const,
+    capturedAt: "2026-01-01T00:00:00.000Z",
+    appName: "Finder",
+    windowTitle: "Downloads",
+    accessibleText: "Downloads",
+  },
 };
 const terminal = {
   version: 1 as const,
@@ -137,7 +153,11 @@ describe("mobile context clipboard imports", () => {
     const signal = { aborted: false } as AbortSignal;
     const result = await importComposerContextClipboard(clipboard, 0, signal);
     expect(result?.failures).toEqual([]);
-    expect(result?.attachments[0]).toMatchObject({ fileUri: "file:///owned.png", sizeBytes: 42 });
+    expect(result?.attachments[0]).toMatchObject({
+      fileUri: "file:///owned.png",
+      sizeBytes: 42,
+      source: image.source,
+    });
     expect(result?.context.records[0]).toMatchObject({
       contextId: "import-1",
       attachmentId: result?.attachments[0]?.id,
@@ -329,5 +349,35 @@ describe("mobile context clipboard imports", () => {
     expect(
       collectComposerContextReferences(result!.text).map((reference) => reference.contextId),
     ).toEqual(result!.context.records.map((record) => record.contextId));
+  });
+
+  it("pastes a thread link as a chip only where the destination's agent reads its machine", async () => {
+    const text = [
+      "https://app.t3.codes/threads/destination/local-thread",
+      "<t3-thread://v2/source/foreign-thread>",
+    ].join(" ");
+    const result = await importComposerContextClipboard(
+      { text, fragment: "", html: "" },
+      0,
+      new AbortController().signal,
+      0,
+      EnvironmentId.make("destination"),
+    );
+    const [record] = result!.context.records;
+    expect(record).toMatchObject({
+      kind: "thread",
+      environmentId: "destination",
+      threadId: "local-thread",
+    });
+    expect(result!.text).toBe(
+      `[Thread](t3-context://v1/thread/${record!.contextId}) <t3-thread://v2/source/foreign-thread>`,
+    );
+    expect(
+      await importComposerContextClipboard(
+        { text: "plain text", fragment: "", html: "" },
+        0,
+        new AbortController().signal,
+      ),
+    ).toBeNull();
   });
 });

@@ -1,16 +1,20 @@
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { ProviderCredentialError } from "@t3tools/provider-core/server/errors";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
+import * as ServerLifecycleEvents from "../serverLifecycleEvents.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DocumentText from "./DocumentText.ts";
+import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 
 export const layer = Layer.effect(
@@ -20,9 +24,24 @@ export const layer = Layer.effect(
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
     const secrets = yield* ServerSecretStore.ServerSecretStore;
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
     const fileSystem = yield* FileSystem.FileSystem;
+    // Optional so standalone provider layers in tests probe at once.
+    const lifecycleEvents = yield* Effect.serviceOption(
+      ServerLifecycleEvents.ServerLifecycleEvents,
+    );
+    // Optional so hosts built without the preview layer still construct.
+    const portDiscovery = yield* Effect.serviceOption(PortScanner.PortDiscovery);
+    // Optional like the services above; without it the bundled policy still applies.
+    const manifest = yield* Effect.serviceOption(ModelManifest.ModelManifest);
+    const currentManifest = Option.match(manifest, {
+      onNone: () => Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      onSome: (service) => service.current,
+    });
     return ProviderHost.ProviderHost.of({
+      compatibility: Effect.fn("ProviderHost.compatibility")(function* (driver, version) {
+        return ModelManifest.providerCompatibility(yield* currentManifest, driver, version);
+      }),
       paths: {
         cwd: config.cwd,
         baseDir: config.baseDir,
@@ -37,6 +56,14 @@ export const layer = Layer.effect(
         subscribe: serverSettings.subscribeChanges,
       },
       shouldRunBackgroundWork: backgroundPolicy.shouldRunScopeWork,
+      ...Option.match(lifecycleEvents, {
+        onNone: () => ({}),
+        onSome: (events) => ({ awaitServerReady: events.awaitReady }),
+      }),
+      ...Option.match(portDiscovery, {
+        onNone: () => ({}),
+        onSome: (discovery) => ({ trackAgent: discovery.trackAgent }),
+      }),
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),
       // DocumentText owns the path-resolution span.
@@ -68,7 +95,7 @@ export const layer = Layer.effect(
             ),
           })),
           Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
-          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(Digest.Digest, digest),
         );
       }),
     });

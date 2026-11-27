@@ -1,0 +1,38 @@
+import type * as guardduty from "@distilled.cloud/aws/guardduty";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { Detector } from "./Detector.ts";
+
+/**
+ * Runtime binding for `guardduty:DisassociateMembers`.
+ *
+ * Disassociates member accounts from this administrator detector without deleting them.
+ * The detector id is injected from the bound {@link Detector}.
+ * Provide the implementation with
+ * `Effect.provide(AWS.GuardDuty.DisassociateMembersHttp)`.
+ * ### Member Administration
+ * **Example:** Disassociate Members
+ * ```typescript
+ * // init
+ * const disassociateMembers = yield* AWS.GuardDuty.DisassociateMembers(detector);
+ *
+ * // runtime
+ * yield* disassociateMembers({ AccountIds: ["111122223333"] });
+ * ```
+ *
+ * @binding
+ */
+export interface DisassociateMembers extends Binding.Service<
+  DisassociateMembers,
+  "AWS.GuardDuty.DisassociateMembers",
+  (
+    detector: Detector,
+  ) => Effect.Effect<
+    (
+      request?: Omit<guardduty.DisassociateMembersRequest, "DetectorId">,
+    ) => Effect.Effect<guardduty.DisassociateMembersResponse, guardduty.DisassociateMembersError>
+  >
+> {}
+export const DisassociateMembers = Binding.Service<DisassociateMembers>(
+  "AWS.GuardDuty.DisassociateMembers",
+);

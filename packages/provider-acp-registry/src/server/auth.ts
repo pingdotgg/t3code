@@ -4,7 +4,9 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import type { AcpRegistrySettings } from "../settings.ts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as NodeUtil from "node:util";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -13,7 +15,9 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Schema from "effect/Schema";
 import type * as AcpSchema from "effect-acp/compat";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
@@ -21,6 +25,42 @@ import { normalizeAcpRegistryAuthMethods, normalizeAcpRegistryWebUrl } from "./p
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
+const MAX_ERROR_MESSAGE_LENGTH = 500;
+
+const appendDetail = (detail: string, reason: string): string => {
+  let message = reason.trim();
+  if (message.length > MAX_ERROR_MESSAGE_LENGTH) {
+    message = `${message.slice(0, MAX_ERROR_MESSAGE_LENGTH).trimEnd()}…`;
+  }
+  if (message.length === 0) return detail;
+  const trimmed = detail.trimEnd();
+  const prefix = trimmed.endsWith(".") ? `${trimmed} ` : `${trimmed}. `;
+  return `${prefix}${message}`;
+};
+
+export const formatFailureDetail = (detail: string, cause?: unknown): string => {
+  const unwrapped = Cause.isCause(cause) ? Cause.squash(cause) : cause;
+  return isAcpRequestError(unwrapped) ? appendDetail(detail, unwrapped.errorMessage) : detail;
+};
+
+const MAX_LOGIN_OUTPUT_LINES = 5;
+
+const lastPrintedLines = (output: string): string => {
+  const lines = NodeUtil.stripVTControlCharacters(output)
+    .split("\n")
+    .map((line) => line.trimEnd())
+    // A carriage return inside a line redraws it, so only the text after the last one is visible.
+    .map((line) => line.slice(line.lastIndexOf("\r") + 1).trim())
+    .filter((line) => line.length > 0)
+    .slice(-MAX_LOGIN_OUTPUT_LINES)
+    .join(" ");
+  return lines.length > MAX_ERROR_MESSAGE_LENGTH
+    ? `…${lines.slice(-MAX_ERROR_MESSAGE_LENGTH).trimStart()}`
+    : lines;
+};
 
 type Runtime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -39,7 +79,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
 }) {
   const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
   const coordinator = yield* Effect.serviceOption(
     AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
@@ -47,7 +87,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   const agentKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : options.settings.agentId;
   const failure = (operation: string, detail: string, cause?: unknown) =>
-    new ProviderSetupError({ instanceId: options.instanceId, operation, detail, cause });
+    new ProviderSetupError({
+      instanceId: options.instanceId,
+      operation,
+      detail: formatFailureDetail(detail, cause),
+      cause,
+    });
   const resolve = catalog
     .resolve(options.settings, options.cwd, options.environment)
     .pipe(
@@ -75,7 +120,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             Layer.provide(
               Layer.mergeAll(
                 Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-                Layer.succeed(Crypto.Crypto, crypto),
+                Layer.succeed(SecureRandom.SecureRandom, random),
               ),
             ),
           ),
@@ -178,7 +223,10 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
           failure("start", "Could not open the provider sign-in terminal.", cause),
         ),
       );
+    // Kept in the callback so output that arrives just before exit is not lost to the reader.
+    let printed = "";
     const detachData = process.onData((data) => {
+      printed = (printed + data).slice(-4_096);
       Queue.offerUnsafe(output, data.slice(-16_384));
     });
     const detachExit = process.onExit(({ exitCode }) => {
@@ -203,7 +251,8 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             ? Effect.try({
                 try: () => {
                   if (response.size) process.resize(response.size.cols, response.size.rows);
-                  if (response.data) process.write(response.data);
+                  if (response.data)
+                    process.write(PtyAdapter.ptyInput(response.data, response.binary));
                 },
                 catch: () =>
                   failure("respond", "The provider sign-in terminal is no longer available."),
@@ -221,7 +270,14 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       Effect.forkScoped,
     );
     if ((yield* Deferred.await(exited)) !== 0)
-      return yield* failure("start", "The provider login command did not finish successfully.");
+      return yield* new ProviderSetupError({
+        instanceId: options.instanceId,
+        operation: "start",
+        detail: appendDetail(
+          "The provider login command did not finish successfully.",
+          lastPrintedLines(printed),
+        ),
+      });
   });
 
   const authenticate = Effect.fn("AcpRegistryAuth.authenticate")(function* (

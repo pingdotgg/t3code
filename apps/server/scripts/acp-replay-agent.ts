@@ -50,10 +50,32 @@ const transcript = JSON.parse(
     ? Buffer.from(encodedTranscript ?? "", "base64").toString("utf8")
     : NodeFS.readFileSync(transcriptPath, "utf8"),
 ) as ReplayTranscript;
-let cursor = 0;
+/**
+ * A recording can span processes: a `runtime_exit` mid-transcript marks where
+ * one agent process ended, and a respawned replay agent continues from the
+ * cursor the previous one left in the status file.
+ */
+function resumedCursor(): number {
+  try {
+    const previous = JSON.parse(NodeFS.readFileSync(statusPath ?? "", "utf8")) as {
+      readonly cursor?: unknown;
+      readonly failure?: unknown;
+    };
+    const resumeAt = typeof previous.cursor === "number" ? previous.cursor : 0;
+    return previous.failure === undefined &&
+      transcript.entries[resumeAt - 1]?.type === "runtime_exit"
+      ? resumeAt
+      : 0;
+  } catch {
+    return 0;
+  }
+}
+let cursor = resumedCursor();
 let stopped = false;
 let nextAgentRequestId = 1;
-const pendingClientRequestIds = new Map<string, string | number>();
+// Several requests of one method can be open at once (a prompt steer is a second
+// session/prompt while the first runs), so responses pair first-in-first-out per method.
+const pendingClientRequestIds = new Map<string, Array<string | number>>();
 const pendingAgentRequestMethods = new Map<string, string>();
 
 // The test reads status while this agent may still be running; rename makes each
@@ -147,7 +169,10 @@ function send(message: JsonRpcMessage): void {
 }
 
 function pendingClientRequestId(method: string): string | number | undefined {
-  return pendingClientRequestIds.get(method);
+  const ids = pendingClientRequestIds.get(method);
+  const id = ids?.shift();
+  if (ids !== undefined && ids.length === 0) pendingClientRequestIds.delete(method);
+  return id;
 }
 
 function logicalIncoming(message: JsonRpcMessage): LogicalFrame | undefined {
@@ -208,7 +233,6 @@ function inboundMessage(recorded: LogicalFrame): JsonRpcMessage | undefined {
         stopWithFailure(`No pending client request for ${frame.method}`, frame);
         return undefined;
       }
-      pendingClientRequestIds.delete(frame.method);
       return {
         jsonrpc: "2.0",
         id,
@@ -232,6 +256,8 @@ function flushInbound(): void {
         break;
       }
       cursor += 1;
+      // Frames after a mid-transcript exit belong to the next process.
+      if (cursor < transcript.entries.length) break;
       continue;
     }
     const frame = entry.frame as LogicalFrame;
@@ -273,7 +299,9 @@ function handleMessage(message: JsonRpcMessage): void {
     return;
   }
   if (actual.kind === "request" && message.id !== undefined && message.id !== null) {
-    pendingClientRequestIds.set(actual.method, message.id);
+    const pending = pendingClientRequestIds.get(actual.method) ?? [];
+    pending.push(message.id);
+    pendingClientRequestIds.set(actual.method, pending);
   } else if (actual.kind === "response" && message.id !== undefined && message.id !== null) {
     pendingAgentRequestMethods.delete(String(message.id));
   }
@@ -294,7 +322,8 @@ input.on("line", (line) => {
 });
 
 input.on("close", () => {
-  if (!stopped && cursor !== transcript.entries.length) {
+  const processEnded = transcript.entries[cursor - 1]?.type === "runtime_exit";
+  if (!stopped && cursor !== transcript.entries.length && !processEnded) {
     stopWithFailure("ACP replay input closed before transcript completion");
   }
 });

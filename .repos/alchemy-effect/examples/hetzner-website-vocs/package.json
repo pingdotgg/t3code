@@ -2,6 +2,11 @@
   "name": "hetzner-website-vocs",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/hetzner-website-vocs"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -10,6 +15,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/hetzner": "workspace:*",
     "alchemy": "workspace:*",
     "effect": "catalog:",
     "react": "catalog:react-rsc",
@@ -20,6 +26,7 @@
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/hetzner": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@types/node": "catalog:node24",
@@ -29,10 +36,5 @@
     "@vitejs/plugin-rsc": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/hetzner-website-vocs"
   }
 }

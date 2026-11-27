@@ -25,10 +25,7 @@ interface Env {
   [BINDING_SECRETS_STORE_STORE]: Fetcher;
 }
 
-export class SecretsStoreSecret extends WorkerEntrypoint<
-  Env,
-  SecretsStoreSecretServiceProps
-> {
+export class SecretsStoreSecret extends WorkerEntrypoint<Env, SecretsStoreSecretServiceProps> {
   async get(): Promise<string> {
     const { storeId, secretName } = this.ctx.props;
     const response = await this.env[BINDING_SECRETS_STORE_STORE].fetch(
@@ -43,9 +40,7 @@ export class SecretsStoreSecret extends WorkerEntrypoint<
       throw new Error(`Secret "${secretName}" not found`);
     }
     if (!response.ok) {
-      throw new Error(
-        `Secrets Store request failed: ${response.status} ${await response.text()}`,
-      );
+      throw new Error(`Secrets Store request failed: ${response.status} ${await response.text()}`);
     }
     return await response.text();
   }

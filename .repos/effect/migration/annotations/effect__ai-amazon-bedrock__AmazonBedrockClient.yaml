@@ -1,0 +1,21 @@
+"@effect/ai-amazon-bedrock/AmazonBedrockClient":
+  replacement: "AmazonBedrockClient"
+  note: "The client remains available. Its constructors now require HttpClient, Digest and Mac services; provide effect/http and effect/crypto implementations or a platform crypto layer."
+"@effect/ai-amazon-bedrock/AmazonBedrockClient#Client":
+  replacement: "AmazonBedrockClient.Service[\"client\"]"
+  note: "The old generated client interface is removed. service.client is now the authenticated HttpClient, not an object with converse methods. Use service.converse and service.converseStream for modeled operations, or execute HTTP requests with service.client."
+"@effect/ai-amazon-bedrock/AmazonBedrockClient#Service":
+  replacement: "AmazonBedrockClient.Service"
+  note: "Pass the ConverseRequest directly to converse and converseStream instead of wrapping it in { payload, params }. streamRequest is removed; use converseStream for Bedrock streams. Both operations report effect/ai/AiError, and service.client is the authenticated HttpClient."
+"@effect/ai-amazon-bedrock/AmazonBedrockClient#make":
+  include: true
+  replacement: "AmazonBedrockClient.make"
+  note: "Provide HttpClient, Digest and Mac services from effect/http and effect/crypto (or platform layers). SigV4 signing now uses these crypto services rather than an internal signer; the client no longer requires Scope just to construct it."
+"@effect/ai-amazon-bedrock/AmazonBedrockClient#layer":
+  include: true
+  replacement: "AmazonBedrockClient.layer"
+  note: "Provide HttpClient, Digest and Mac services from effect/http and effect/crypto (or platform layers). SigV4 signing now uses these crypto services rather than an internal signer; the client no longer requires Scope just to construct it."
+"@effect/ai-amazon-bedrock/AmazonBedrockClient#layerConfig":
+  include: true
+  replacement: "AmazonBedrockClient.layerConfig"
+  note: "Provide HttpClient, Digest and Mac services from effect/http and effect/crypto (or platform layers). SigV4 signing now uses these crypto services rather than an internal signer; the client no longer requires Scope just to construct it."

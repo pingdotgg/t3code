@@ -1,0 +1,3 @@
+"@effect/ai-amazon-bedrock/index":
+  replacement: "@effect/ai-amazon-bedrock"
+  note: "Import AmazonBedrockClient, AmazonBedrockConfig, AmazonBedrockLanguageModel and AmazonBedrockSchema from the package root or their package subpaths. AmazonBedrockTool and EventStreamEncoding are no longer public modules."

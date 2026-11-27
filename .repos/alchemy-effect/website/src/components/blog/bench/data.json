@@ -1,0 +1,2087 @@
+{
+  "branch": "perf/sdk-footprint",
+  "bundle": {
+    "points": [
+      {
+        "value": 54818,
+        "label": "71455a8",
+        "branch": false,
+        "cls": "",
+        "title": "#1 71455a8c2 fix(aws): support S3 version selection and metadata headers (#627)"
+      },
+      {
+        "value": 55763,
+        "label": "5358d66",
+        "branch": false,
+        "cls": "bad",
+        "title": "#2 5358d6602 fix: upgrade Effect to 4.0.0-rc.117 (#637)"
+      },
+      {
+        "value": 55763,
+        "label": "bf909ba",
+        "branch": false,
+        "cls": "flat",
+        "title": "#3 bf909babc fix(cloudflare): correct Workers-for-Platforms upload metadata (#649)"
+      },
+      {
+        "value": 56065,
+        "label": "14d9302",
+        "branch": false,
+        "cls": "bad",
+        "title": "#4 14d9302b7 fix(gcp): type HTTP 501 on Agent Engine sandboxes and workerPools.list (#656)"
+      },
+      {
+        "value": 56065,
+        "label": "6b83c96",
+        "branch": false,
+        "cls": "flat",
+        "title": "#5 6b83c9643 fix(gcp): no environment variables for the default region (#669)"
+      },
+      {
+        "value": 56146,
+        "label": "751b30b",
+        "branch": false,
+        "cls": "flat",
+        "title": "#6 751b30b7f feat(celld): add generated v0.6.0 SDK (#621)"
+      },
+      {
+        "value": 56592.5,
+        "label": "1f4a629",
+        "branch": false,
+        "cls": "bad",
+        "title": "#7 1f4a62973 fix(aws,cloudflare): type Workers preview conflict and Deadline UpdateQueue conflict (#683)"
+      },
+      {
+        "value": 56777.5,
+        "label": "e02e9d4",
+        "branch": false,
+        "cls": "bad",
+        "title": "#8 e02e9d405 chore(release): 1.0.0-rc.13"
+      },
+      {
+        "value": 56840,
+        "label": "f6fee7d",
+        "branch": false,
+        "cls": "flat",
+        "title": "#9 f6fee7db2 chore: align oxfmt/oxlint with alchemy (#622)"
+      },
+      {
+        "value": 56978,
+        "label": "d6ae0c8",
+        "branch": false,
+        "cls": "flat",
+        "title": "#10 d6ae0c898 feat(aws/auto-scaling): type InvalidIamInstanceProfile on create/updateAutoScalingGroup (#764)"
+      },
+      {
+        "value": 56978,
+        "label": "56741e3",
+        "branch": false,
+        "cls": "",
+        "title": "#11 56741e3f0 feat(core): apply Smithy patches before the verbNoun rename (#818)"
+      },
+      {
+        "value": 57041,
+        "label": "cced62a",
+        "branch": false,
+        "cls": "",
+        "title": "#12 cced62a87 feat(codegen): stamp distilled.specUpdatedAt next to generatedAt (#846)"
+      },
+      {
+        "value": 57078,
+        "label": "40a9500",
+        "branch": false,
+        "cls": "flat",
+        "title": "#13 40a9500a7 feat(notion): add the Notion SDK (#855)"
+      },
+      {
+        "value": 57078,
+        "label": "be83014",
+        "branch": true,
+        "cls": "flat",
+        "title": "#14 be83014bb perf(core): build pagination streams without Stream.flatMap"
+      },
+      {
+        "value": 55582,
+        "label": "f7bf885",
+        "branch": true,
+        "cls": "good",
+        "title": "#15 f7bf885c1 perf(core): read the retry hint cap without effect/Config"
+      },
+      {
+        "value": 55582,
+        "label": "2298266",
+        "branch": true,
+        "cls": "flat",
+        "title": "#16 22982661f perf(core): import effect modules directly in error-category"
+      },
+      {
+        "value": 56138,
+        "label": "9e60009",
+        "branch": true,
+        "cls": "bad",
+        "title": "#17 9e6000975 perf(core): share operation methods through one prototype"
+      },
+      {
+        "value": 55623.5,
+        "label": "be75448",
+        "branch": true,
+        "cls": "good",
+        "title": "#18 be75448c1 chore: apply the nested PURE markers to every generated service"
+      },
+      {
+        "value": 55867,
+        "label": "0083c76",
+        "branch": true,
+        "cls": "bad",
+        "title": "#19 0083c76af perf(core): build suspended schema ASTs on first use"
+      },
+      {
+        "value": 55952,
+        "label": "b2297ea",
+        "branch": true,
+        "cls": "flat",
+        "title": "#20 b2297ea0a perf(core): build Array and Record schemas lazily too"
+      },
+      {
+        "value": 55952,
+        "label": "b5b1c83",
+        "branch": true,
+        "cls": "flat",
+        "title": "#21 b5b1c83e8 chore: apply the Latin-1 pass to every generated service"
+      },
+      {
+        "value": 55952,
+        "label": "c5ca2e9",
+        "branch": true,
+        "cls": "flat",
+        "title": "#22 c5ca2e97c perf: keep hand-written shipped sources Latin-1 only"
+      },
+      {
+        "value": 56365.5,
+        "label": "589790e",
+        "branch": true,
+        "cls": "bad",
+        "title": "#23 589790ecb perf(core): build generated error classes on first use"
+      },
+      {
+        "value": 56392.5,
+        "label": "bf8b544",
+        "branch": true,
+        "cls": "flat",
+        "title": "#24 bf8b544f7 perf(core): find the error base on first use"
+      },
+      {
+        "value": 56395,
+        "label": "59c5565",
+        "branch": true,
+        "cls": "flat",
+        "title": "#25 59c556594 chore: apply schema dedupe to every generated service"
+      },
+      {
+        "value": 56395,
+        "label": "954ca6b",
+        "branch": true,
+        "cls": "flat",
+        "title": "#26 954ca6b3f perf(aws): sign with synchronous node:crypto where available"
+      },
+      {
+        "value": 56415,
+        "label": "3290349",
+        "branch": true,
+        "cls": "flat",
+        "title": "#27 329034941 perf: strip JSDoc from compiled JavaScript"
+      },
+      {
+        "value": 56415,
+        "label": "1bc7899",
+        "branch": true,
+        "cls": "flat",
+        "title": "#28 1bc789950 chore: privatize schemas in every generated service"
+      },
+      {
+        "value": 60599.5,
+        "label": "d77bcaf",
+        "branch": true,
+        "cls": "bad",
+        "title": "#29 d77bcaf0e chore: chunk schema builders in every generated service"
+      },
+      {
+        "value": 66330,
+        "label": "d2d5f33",
+        "branch": true,
+        "cls": "bad",
+        "title": "#30 d2d5f33cd chore: table private schemas in every generated service"
+      },
+      {
+        "value": 60282.5,
+        "label": "cd90cb2",
+        "branch": true,
+        "cls": "good",
+        "title": "#31 cd90cb29e bench: add the Notion SDK target"
+      },
+      {
+        "value": 54094,
+        "label": "c0e8b9d",
+        "branch": true,
+        "cls": "good",
+        "title": "#32 c0e8b9d81 perf: mark top-level calls in hand-written sources PURE"
+      },
+      {
+        "value": 54094,
+        "label": "bf15d2f",
+        "branch": true,
+        "cls": "flat",
+        "title": "#33 bf15d2f3a bench: imports suite and object counts; strict variant of every program"
+      },
+      {
+        "value": 52645,
+        "label": "1eae38c",
+        "branch": true,
+        "cls": "good",
+        "title": "#34 1eae38c6d chore: regenerate every SDK with the full codegen pipeline"
+      },
+      {
+        "value": 52766.5,
+        "label": "d9d2738",
+        "branch": true,
+        "cls": "flat",
+        "title": "#35 d9d273817 perf: Stripe and Cloudflare encode/decode without generators"
+      },
+      {
+        "value": 52766.5,
+        "label": "3a43095",
+        "branch": true,
+        "cls": "flat",
+        "title": "#36 3a430953b bench: pin AWS SDK internals past the minimum release age"
+      },
+      {
+        "value": 52766.5,
+        "label": "42e9e3a",
+        "branch": true,
+        "cls": "flat",
+        "title": "#37 42e9e3a33 bench: measure import time and first call in a sequential cold-start pass"
+      },
+      {
+        "value": 37190,
+        "label": "03057c5",
+        "branch": true,
+        "cls": "good",
+        "title": "#38 03057c503 perf: patch effect so bundlers can drop HttpClientErrorSchema"
+      },
+      {
+        "value": 36990.5,
+        "label": "ffb8908",
+        "branch": true,
+        "cls": "good",
+        "title": "#39 ffb890825 build: rolldown 1.2.8; drop the effect HttpClientErrorSchema patch"
+      },
+      {
+        "value": 38343,
+        "label": "f966856",
+        "branch": true,
+        "cls": "bad",
+        "title": "#40 f96685623 Merge branch 'exp/data-tables' into perf/sdk-footprint"
+      },
+      {
+        "value": 38343,
+        "label": "565b4b0",
+        "branch": true,
+        "cls": "flat",
+        "title": "#41 565b4b0e2 chore: remove scratch bundle output committed by mistake"
+      },
+      {
+        "value": 38343,
+        "label": "1247e05",
+        "branch": true,
+        "cls": "flat",
+        "title": "#42 1247e053d bench: warm undici before measuring distilled cold start, like the official probe"
+      },
+      {
+        "value": 38343,
+        "label": "7d7a259",
+        "branch": true,
+        "cls": "flat",
+        "title": "#43 7d7a259b2 perf(core): build the strict checker's compiler on first use"
+      },
+      {
+        "value": 38343,
+        "label": "54eedde",
+        "branch": true,
+        "cls": "flat",
+        "title": "#44 54eedde38 Merge branch 'exp/lazy-errors' into perf/sdk-footprint"
+      },
+      {
+        "value": 38343,
+        "label": "97e9f0c",
+        "branch": true,
+        "cls": "flat",
+        "title": "#45 97e9f0c5b perf(core): data operation state descriptors are not kept after the prototypes are made"
+      },
+      {
+        "value": 38343,
+        "label": "f6019b3",
+        "branch": true,
+        "cls": "flat",
+        "title": "#46 f6019b376 perf(build): lazy stubs write each export name once and import one package helper"
+      }
+    ],
+    "second": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      57097,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      54121,
+      54569,
+      54677,
+      54677,
+      54677,
+      52877.5,
+      52696,
+      54096.5,
+      54096.5,
+      54096.5,
+      39858,
+      39858,
+      39858,
+      39858
+    ],
+    "refs": [
+      {
+        "value": 143055.5,
+        "short": "AWS SDK v3",
+        "label": "AWS SDK v3 · 6 calls",
+        "color": "#ff9900",
+        "kind": "official"
+      },
+      {
+        "value": 124466,
+        "short": "cloudflare (npm)",
+        "label": "cloudflare (npm) · 1 calls",
+        "color": "#d4b106",
+        "kind": "official"
+      },
+      {
+        "value": 239117,
+        "short": "@google-cloud/storage",
+        "label": "@google-cloud/storage · 1 calls",
+        "color": "#34a853",
+        "kind": "official"
+      }
+    ]
+  },
+  "speed": {
+    "points": [
+      {
+        "value": 26.064,
+        "label": "71455a8",
+        "branch": false,
+        "cls": "",
+        "title": "#1 71455a8c2 fix(aws): support S3 version selection and metadata headers (#627)"
+      },
+      {
+        "value": 26.411,
+        "label": "5358d66",
+        "branch": false,
+        "cls": "flat",
+        "title": "#2 5358d6602 fix: upgrade Effect to 4.0.0-rc.117 (#637)"
+      },
+      {
+        "value": 26.59,
+        "label": "bf909ba",
+        "branch": false,
+        "cls": "flat",
+        "title": "#3 bf909babc fix(cloudflare): correct Workers-for-Platforms upload metadata (#649)"
+      },
+      {
+        "value": 29.221000000000004,
+        "label": "14d9302",
+        "branch": false,
+        "cls": "bad",
+        "title": "#4 14d9302b7 fix(gcp): type HTTP 501 on Agent Engine sandboxes and workerPools.list (#656)"
+      },
+      {
+        "value": 17.716,
+        "label": "6b83c96",
+        "branch": false,
+        "cls": "good",
+        "title": "#5 6b83c9643 fix(gcp): no environment variables for the default region (#669)"
+      },
+      {
+        "value": 17.4325,
+        "label": "751b30b",
+        "branch": false,
+        "cls": "flat",
+        "title": "#6 751b30b7f feat(celld): add generated v0.6.0 SDK (#621)"
+      },
+      {
+        "value": 19.08,
+        "label": "1f4a629",
+        "branch": false,
+        "cls": "bad",
+        "title": "#7 1f4a62973 fix(aws,cloudflare): type Workers preview conflict and Deadline UpdateQueue conflict (#683)"
+      },
+      {
+        "value": 18.28,
+        "label": "e02e9d4",
+        "branch": false,
+        "cls": "good",
+        "title": "#8 e02e9d405 chore(release): 1.0.0-rc.13"
+      },
+      {
+        "value": 18.235,
+        "label": "f6fee7d",
+        "branch": false,
+        "cls": "flat",
+        "title": "#9 f6fee7db2 chore: align oxfmt/oxlint with alchemy (#622)"
+      },
+      {
+        "value": 17.387999999999998,
+        "label": "d6ae0c8",
+        "branch": false,
+        "cls": "good",
+        "title": "#10 d6ae0c898 feat(aws/auto-scaling): type InvalidIamInstanceProfile on create/updateAutoScalingGroup (#764)"
+      },
+      {
+        "value": 17.299999999999997,
+        "label": "56741e3",
+        "branch": false,
+        "cls": "",
+        "title": "#11 56741e3f0 feat(core): apply Smithy patches before the verbNoun rename (#818)"
+      },
+      {
+        "value": 18.493000000000002,
+        "label": "cced62a",
+        "branch": false,
+        "cls": "",
+        "title": "#12 cced62a87 feat(codegen): stamp distilled.specUpdatedAt next to generatedAt (#846)"
+      },
+      {
+        "value": 19.4685,
+        "label": "40a9500",
+        "branch": false,
+        "cls": "bad",
+        "title": "#13 40a9500a7 feat(notion): add the Notion SDK (#855)"
+      },
+      {
+        "value": 17.5675,
+        "label": "be83014",
+        "branch": true,
+        "cls": "good",
+        "title": "#14 be83014bb perf(core): build pagination streams without Stream.flatMap"
+      },
+      {
+        "value": 17.518,
+        "label": "f7bf885",
+        "branch": true,
+        "cls": "flat",
+        "title": "#15 f7bf885c1 perf(core): read the retry hint cap without effect/Config"
+      },
+      {
+        "value": 17.8015,
+        "label": "2298266",
+        "branch": true,
+        "cls": "flat",
+        "title": "#16 22982661f perf(core): import effect modules directly in error-category"
+      },
+      {
+        "value": 17.726,
+        "label": "9e60009",
+        "branch": true,
+        "cls": "flat",
+        "title": "#17 9e6000975 perf(core): share operation methods through one prototype"
+      },
+      {
+        "value": 17.607,
+        "label": "be75448",
+        "branch": true,
+        "cls": "flat",
+        "title": "#18 be75448c1 chore: apply the nested PURE markers to every generated service"
+      },
+      {
+        "value": 17.490499999999997,
+        "label": "0083c76",
+        "branch": true,
+        "cls": "flat",
+        "title": "#19 0083c76af perf(core): build suspended schema ASTs on first use"
+      },
+      {
+        "value": 16.99,
+        "label": "b2297ea",
+        "branch": true,
+        "cls": "flat",
+        "title": "#20 b2297ea0a perf(core): build Array and Record schemas lazily too"
+      },
+      {
+        "value": 16.955000000000002,
+        "label": "b5b1c83",
+        "branch": true,
+        "cls": "flat",
+        "title": "#21 b5b1c83e8 chore: apply the Latin-1 pass to every generated service"
+      },
+      {
+        "value": 25.107,
+        "label": "c5ca2e9",
+        "branch": true,
+        "cls": "bad",
+        "title": "#22 c5ca2e97c perf: keep hand-written shipped sources Latin-1 only"
+      },
+      {
+        "value": 25.389,
+        "label": "589790e",
+        "branch": true,
+        "cls": "flat",
+        "title": "#23 589790ecb perf(core): build generated error classes on first use"
+      },
+      {
+        "value": 25.938499999999998,
+        "label": "bf8b544",
+        "branch": true,
+        "cls": "flat",
+        "title": "#24 bf8b544f7 perf(core): find the error base on first use"
+      },
+      {
+        "value": 17.212,
+        "label": "59c5565",
+        "branch": true,
+        "cls": "good",
+        "title": "#25 59c556594 chore: apply schema dedupe to every generated service"
+      },
+      {
+        "value": 18.005000000000003,
+        "label": "954ca6b",
+        "branch": true,
+        "cls": "bad",
+        "title": "#26 954ca6b3f perf(aws): sign with synchronous node:crypto where available"
+      },
+      {
+        "value": 10.509,
+        "label": "3290349",
+        "branch": true,
+        "cls": "good",
+        "title": "#27 329034941 perf: strip JSDoc from compiled JavaScript"
+      },
+      {
+        "value": 10.5585,
+        "label": "1bc7899",
+        "branch": true,
+        "cls": "flat",
+        "title": "#28 1bc789950 chore: privatize schemas in every generated service"
+      },
+      {
+        "value": 10.2055,
+        "label": "d77bcaf",
+        "branch": true,
+        "cls": "flat",
+        "title": "#29 d77bcaf0e chore: chunk schema builders in every generated service"
+      },
+      {
+        "value": 10.173000000000002,
+        "label": "d2d5f33",
+        "branch": true,
+        "cls": "flat",
+        "title": "#30 d2d5f33cd chore: table private schemas in every generated service"
+      },
+      {
+        "value": 10.1765,
+        "label": "cd90cb2",
+        "branch": true,
+        "cls": "flat",
+        "title": "#31 cd90cb29e bench: add the Notion SDK target"
+      },
+      {
+        "value": 10.692499999999999,
+        "label": "c0e8b9d",
+        "branch": true,
+        "cls": "bad",
+        "title": "#32 c0e8b9d81 perf: mark top-level calls in hand-written sources PURE"
+      },
+      {
+        "value": 9.491999999999999,
+        "label": "bf15d2f",
+        "branch": true,
+        "cls": "good",
+        "title": "#33 bf15d2f3a bench: imports suite and object counts; strict variant of every program"
+      },
+      {
+        "value": 10.1785,
+        "label": "1eae38c",
+        "branch": true,
+        "cls": "bad",
+        "title": "#34 1eae38c6d chore: regenerate every SDK with the full codegen pipeline"
+      },
+      {
+        "value": 6.905999999999999,
+        "label": "d9d2738",
+        "branch": true,
+        "cls": "good",
+        "title": "#35 d9d273817 perf: Stripe and Cloudflare encode/decode without generators"
+      },
+      {
+        "value": 8.733,
+        "label": "3a43095",
+        "branch": true,
+        "cls": "bad",
+        "title": "#36 3a430953b bench: pin AWS SDK internals past the minimum release age"
+      },
+      {
+        "value": 7.6000000000000005,
+        "label": "42e9e3a",
+        "branch": true,
+        "cls": "good",
+        "title": "#37 42e9e3a33 bench: measure import time and first call in a sequential cold-start pass"
+      },
+      {
+        "value": 7.278,
+        "label": "03057c5",
+        "branch": true,
+        "cls": "flat",
+        "title": "#38 03057c503 perf: patch effect so bundlers can drop HttpClientErrorSchema"
+      },
+      {
+        "value": 7.5965,
+        "label": "ffb8908",
+        "branch": true,
+        "cls": "flat",
+        "title": "#39 ffb890825 build: rolldown 1.2.8; drop the effect HttpClientErrorSchema patch"
+      },
+      {
+        "value": 4.2035,
+        "label": "f966856",
+        "branch": true,
+        "cls": "good",
+        "title": "#40 f96685623 Merge branch 'exp/data-tables' into perf/sdk-footprint"
+      },
+      {
+        "value": 4.07,
+        "label": "565b4b0",
+        "branch": true,
+        "cls": "flat",
+        "title": "#41 565b4b0e2 chore: remove scratch bundle output committed by mistake"
+      },
+      {
+        "value": 4.034999999999999,
+        "label": "1247e05",
+        "branch": true,
+        "cls": "flat",
+        "title": "#42 1247e053d bench: warm undici before measuring distilled cold start, like the official probe"
+      },
+      {
+        "value": 4.035000000000001,
+        "label": "7d7a259",
+        "branch": true,
+        "cls": "flat",
+        "title": "#43 7d7a259b2 perf(core): build the strict checker's compiler on first use"
+      },
+      {
+        "value": 3.7394999999999996,
+        "label": "54eedde",
+        "branch": true,
+        "cls": "flat",
+        "title": "#44 54eedde38 Merge branch 'exp/lazy-errors' into perf/sdk-footprint"
+      },
+      {
+        "value": 3.9640000000000004,
+        "label": "97e9f0c",
+        "branch": true,
+        "cls": "flat",
+        "title": "#45 97e9f0c5b perf(core): data operation state descriptors are not kept after the prototypes are made"
+      },
+      {
+        "value": 4.017499999999999,
+        "label": "f6019b3",
+        "branch": true,
+        "cls": "flat",
+        "title": "#46 f6019b376 perf(build): lazy stubs write each export name once and import one package helper"
+      }
+    ],
+    "second": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      24.094500000000004,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      13.384500000000001,
+      17.0005,
+      12.966999999999999,
+      15.497499999999999,
+      14.054000000000002,
+      13.474999999999998,
+      13.5385,
+      5.9295,
+      5.715,
+      5.4695,
+      5.299,
+      5.1825,
+      5.128,
+      5.320499999999999
+    ],
+    "refs": [
+      {
+        "value": 90.24350000000001,
+        "short": "AWS SDK v3",
+        "label": "AWS SDK v3 · 6 calls",
+        "color": "#ff9900",
+        "kind": "official"
+      },
+      {
+        "value": 15.51,
+        "short": "cloudflare (npm)",
+        "label": "cloudflare (npm) · 1 calls",
+        "color": "#d4b106",
+        "kind": "official"
+      },
+      {
+        "value": 673.887,
+        "short": "@google-cloud/storage",
+        "label": "@google-cloud/storage · 1 calls",
+        "color": "#34a853",
+        "kind": "official"
+      }
+    ]
+  },
+  "memory": {
+    "points": [
+      {
+        "value": 2655992,
+        "label": "71455a8",
+        "branch": false,
+        "cls": "",
+        "title": "#1 71455a8c2 fix(aws): support S3 version selection and metadata headers (#627)"
+      },
+      {
+        "value": 2701964,
+        "label": "5358d66",
+        "branch": false,
+        "cls": "flat",
+        "title": "#2 5358d6602 fix: upgrade Effect to 4.0.0-rc.117 (#637)"
+      },
+      {
+        "value": 2745728,
+        "label": "bf909ba",
+        "branch": false,
+        "cls": "flat",
+        "title": "#3 bf909babc fix(cloudflare): correct Workers-for-Platforms upload metadata (#649)"
+      },
+      {
+        "value": 2745528,
+        "label": "14d9302",
+        "branch": false,
+        "cls": "flat",
+        "title": "#4 14d9302b7 fix(gcp): type HTTP 501 on Agent Engine sandboxes and workerPools.list (#656)"
+      },
+      {
+        "value": 2745528,
+        "label": "6b83c96",
+        "branch": false,
+        "cls": "flat",
+        "title": "#5 6b83c9643 fix(gcp): no environment variables for the default region (#669)"
+      },
+      {
+        "value": 2561616,
+        "label": "751b30b",
+        "branch": false,
+        "cls": "good",
+        "title": "#6 751b30b7f feat(celld): add generated v0.6.0 SDK (#621)"
+      },
+      {
+        "value": 2163852,
+        "label": "1f4a629",
+        "branch": false,
+        "cls": "good",
+        "title": "#7 1f4a62973 fix(aws,cloudflare): type Workers preview conflict and Deadline UpdateQueue conflict (#683)"
+      },
+      {
+        "value": 2101204,
+        "label": "e02e9d4",
+        "branch": false,
+        "cls": "flat",
+        "title": "#8 e02e9d405 chore(release): 1.0.0-rc.13"
+      },
+      {
+        "value": 2142488,
+        "label": "f6fee7d",
+        "branch": false,
+        "cls": "flat",
+        "title": "#9 f6fee7db2 chore: align oxfmt/oxlint with alchemy (#622)"
+      },
+      {
+        "value": 2082416,
+        "label": "d6ae0c8",
+        "branch": false,
+        "cls": "flat",
+        "title": "#10 d6ae0c898 feat(aws/auto-scaling): type InvalidIamInstanceProfile on create/updateAutoScalingGroup (#764)"
+      },
+      {
+        "value": 2096264,
+        "label": "56741e3",
+        "branch": false,
+        "cls": "",
+        "title": "#11 56741e3f0 feat(core): apply Smithy patches before the verbNoun rename (#818)"
+      },
+      {
+        "value": 2164496,
+        "label": "cced62a",
+        "branch": false,
+        "cls": "",
+        "title": "#12 cced62a87 feat(codegen): stamp distilled.specUpdatedAt next to generatedAt (#846)"
+      },
+      {
+        "value": 2152108,
+        "label": "40a9500",
+        "branch": false,
+        "cls": "flat",
+        "title": "#13 40a9500a7 feat(notion): add the Notion SDK (#855)"
+      },
+      {
+        "value": 2156152,
+        "label": "be83014",
+        "branch": true,
+        "cls": "flat",
+        "title": "#14 be83014bb perf(core): build pagination streams without Stream.flatMap"
+      },
+      {
+        "value": 1954300,
+        "label": "f7bf885",
+        "branch": true,
+        "cls": "good",
+        "title": "#15 f7bf885c1 perf(core): read the retry hint cap without effect/Config"
+      },
+      {
+        "value": 1939544,
+        "label": "2298266",
+        "branch": true,
+        "cls": "flat",
+        "title": "#16 22982661f perf(core): import effect modules directly in error-category"
+      },
+      {
+        "value": 1854180,
+        "label": "9e60009",
+        "branch": true,
+        "cls": "good",
+        "title": "#17 9e6000975 perf(core): share operation methods through one prototype"
+      },
+      {
+        "value": 1774836,
+        "label": "be75448",
+        "branch": true,
+        "cls": "good",
+        "title": "#18 be75448c1 chore: apply the nested PURE markers to every generated service"
+      },
+      {
+        "value": 1766916,
+        "label": "0083c76",
+        "branch": true,
+        "cls": "flat",
+        "title": "#19 0083c76af perf(core): build suspended schema ASTs on first use"
+      },
+      {
+        "value": 1711396,
+        "label": "b2297ea",
+        "branch": true,
+        "cls": "good",
+        "title": "#20 b2297ea0a perf(core): build Array and Record schemas lazily too"
+      },
+      {
+        "value": 1551216,
+        "label": "b5b1c83",
+        "branch": true,
+        "cls": "good",
+        "title": "#21 b5b1c83e8 chore: apply the Latin-1 pass to every generated service"
+      },
+      {
+        "value": 1426704,
+        "label": "c5ca2e9",
+        "branch": true,
+        "cls": "good",
+        "title": "#22 c5ca2e97c perf: keep hand-written shipped sources Latin-1 only"
+      },
+      {
+        "value": 1431420,
+        "label": "589790e",
+        "branch": true,
+        "cls": "flat",
+        "title": "#23 589790ecb perf(core): build generated error classes on first use"
+      },
+      {
+        "value": 1433672,
+        "label": "bf8b544",
+        "branch": true,
+        "cls": "flat",
+        "title": "#24 bf8b544f7 perf(core): find the error base on first use"
+      },
+      {
+        "value": 1394556,
+        "label": "59c5565",
+        "branch": true,
+        "cls": "flat",
+        "title": "#25 59c556594 chore: apply schema dedupe to every generated service"
+      },
+      {
+        "value": 1387196,
+        "label": "954ca6b",
+        "branch": true,
+        "cls": "flat",
+        "title": "#26 954ca6b3f perf(aws): sign with synchronous node:crypto where available"
+      },
+      {
+        "value": 1334068,
+        "label": "3290349",
+        "branch": true,
+        "cls": "good",
+        "title": "#27 329034941 perf: strip JSDoc from compiled JavaScript"
+      },
+      {
+        "value": 1150960,
+        "label": "1bc7899",
+        "branch": true,
+        "cls": "good",
+        "title": "#28 1bc789950 chore: privatize schemas in every generated service"
+      },
+      {
+        "value": 1122272,
+        "label": "d77bcaf",
+        "branch": true,
+        "cls": "flat",
+        "title": "#29 d77bcaf0e chore: chunk schema builders in every generated service"
+      },
+      {
+        "value": 935968,
+        "label": "d2d5f33",
+        "branch": true,
+        "cls": "good",
+        "title": "#30 d2d5f33cd chore: table private schemas in every generated service"
+      },
+      {
+        "value": 943732,
+        "label": "cd90cb2",
+        "branch": true,
+        "cls": "flat",
+        "title": "#31 cd90cb29e bench: add the Notion SDK target"
+      },
+      {
+        "value": 816668,
+        "label": "c0e8b9d",
+        "branch": true,
+        "cls": "good",
+        "title": "#32 c0e8b9d81 perf: mark top-level calls in hand-written sources PURE"
+      },
+      {
+        "value": 801720,
+        "label": "bf15d2f",
+        "branch": true,
+        "cls": "flat",
+        "title": "#33 bf15d2f3a bench: imports suite and object counts; strict variant of every program"
+      },
+      {
+        "value": 829920,
+        "label": "1eae38c",
+        "branch": true,
+        "cls": "bad",
+        "title": "#34 1eae38c6d chore: regenerate every SDK with the full codegen pipeline"
+      },
+      {
+        "value": 810208,
+        "label": "d9d2738",
+        "branch": true,
+        "cls": "flat",
+        "title": "#35 d9d273817 perf: Stripe and Cloudflare encode/decode without generators"
+      },
+      {
+        "value": 814108,
+        "label": "3a43095",
+        "branch": true,
+        "cls": "flat",
+        "title": "#36 3a430953b bench: pin AWS SDK internals past the minimum release age"
+      },
+      {
+        "value": 840328,
+        "label": "42e9e3a",
+        "branch": true,
+        "cls": "bad",
+        "title": "#37 42e9e3a33 bench: measure import time and first call in a sequential cold-start pass"
+      },
+      {
+        "value": 813636,
+        "label": "03057c5",
+        "branch": true,
+        "cls": "good",
+        "title": "#38 03057c503 perf: patch effect so bundlers can drop HttpClientErrorSchema"
+      },
+      {
+        "value": 862584,
+        "label": "ffb8908",
+        "branch": true,
+        "cls": "bad",
+        "title": "#39 ffb890825 build: rolldown 1.2.8; drop the effect HttpClientErrorSchema patch"
+      },
+      {
+        "value": 727936,
+        "label": "f966856",
+        "branch": true,
+        "cls": "good",
+        "title": "#40 f96685623 Merge branch 'exp/data-tables' into perf/sdk-footprint"
+      },
+      {
+        "value": 631872,
+        "label": "565b4b0",
+        "branch": true,
+        "cls": "good",
+        "title": "#41 565b4b0e2 chore: remove scratch bundle output committed by mistake"
+      },
+      {
+        "value": 627712,
+        "label": "1247e05",
+        "branch": true,
+        "cls": "flat",
+        "title": "#42 1247e053d bench: warm undici before measuring distilled cold start, like the official probe"
+      },
+      {
+        "value": 640716,
+        "label": "7d7a259",
+        "branch": true,
+        "cls": "flat",
+        "title": "#43 7d7a259b2 perf(core): build the strict checker's compiler on first use"
+      },
+      {
+        "value": 633136,
+        "label": "54eedde",
+        "branch": true,
+        "cls": "flat",
+        "title": "#44 54eedde38 Merge branch 'exp/lazy-errors' into perf/sdk-footprint"
+      },
+      {
+        "value": 622216,
+        "label": "97e9f0c",
+        "branch": true,
+        "cls": "flat",
+        "title": "#45 97e9f0c5b perf(core): data operation state descriptors are not kept after the prototypes are made"
+      },
+      {
+        "value": 567292,
+        "label": "f6019b3",
+        "branch": true,
+        "cls": "good",
+        "title": "#46 f6019b376 perf(build): lazy stubs write each export name once and import one package helper"
+      }
+    ],
+    "second": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      2166948,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      856456,
+      874124,
+      820660,
+      820504,
+      846936,
+      877184,
+      821264,
+      725916,
+      634292,
+      634920,
+      639672,
+      631116,
+      629600,
+      575284
+    ],
+    "refs": [
+      {
+        "value": 3412520,
+        "short": "AWS SDK v3",
+        "label": "AWS SDK v3 · 6 calls",
+        "color": "#ff9900",
+        "kind": "official"
+      },
+      {
+        "value": 15314936,
+        "short": "cloudflare (npm)",
+        "label": "cloudflare (npm) · 1 calls",
+        "color": "#d4b106",
+        "kind": "official"
+      },
+      {
+        "value": 5142216,
+        "short": "@google-cloud/storage",
+        "label": "@google-cloud/storage · 1 calls",
+        "color": "#34a853",
+        "kind": "official"
+      }
+    ]
+  },
+  "providerHeap": {
+    "points": [
+      {
+        "value": null,
+        "label": "71455a8",
+        "branch": false,
+        "cls": "",
+        "title": "#1 fix(aws): support S3 version selection and metadata headers (#627)"
+      },
+      {
+        "value": null,
+        "label": "5358d66",
+        "branch": false,
+        "cls": "",
+        "title": "#2 fix: upgrade Effect to 4.0.0-rc.117 (#637)"
+      },
+      {
+        "value": null,
+        "label": "bf909ba",
+        "branch": false,
+        "cls": "",
+        "title": "#3 fix(cloudflare): correct Workers-for-Platforms upload metadata (#649)"
+      },
+      {
+        "value": null,
+        "label": "14d9302",
+        "branch": false,
+        "cls": "",
+        "title": "#4 fix(gcp): type HTTP 501 on Agent Engine sandboxes and workerPools.list (#656)"
+      },
+      {
+        "value": null,
+        "label": "6b83c96",
+        "branch": false,
+        "cls": "",
+        "title": "#5 fix(gcp): no environment variables for the default region (#669)"
+      },
+      {
+        "value": null,
+        "label": "751b30b",
+        "branch": false,
+        "cls": "",
+        "title": "#6 feat(celld): add generated v0.6.0 SDK (#621)"
+      },
+      {
+        "value": null,
+        "label": "1f4a629",
+        "branch": false,
+        "cls": "",
+        "title": "#7 fix(aws,cloudflare): type Workers preview conflict and Deadline UpdateQueue conflict (#683)"
+      },
+      {
+        "value": null,
+        "label": "e02e9d4",
+        "branch": false,
+        "cls": "",
+        "title": "#8 chore(release): 1.0.0-rc.13"
+      },
+      {
+        "value": null,
+        "label": "f6fee7d",
+        "branch": false,
+        "cls": "",
+        "title": "#9 chore: align oxfmt/oxlint with alchemy (#622)"
+      },
+      {
+        "value": null,
+        "label": "d6ae0c8",
+        "branch": false,
+        "cls": "",
+        "title": "#10 feat(aws/auto-scaling): type InvalidIamInstanceProfile on create/updateAutoScalingGroup (#764)"
+      },
+      {
+        "value": null,
+        "label": "56741e3",
+        "branch": false,
+        "cls": "",
+        "title": "#11 feat(core): apply Smithy patches before the verbNoun rename (#818)"
+      },
+      {
+        "value": null,
+        "label": "cced62a",
+        "branch": false,
+        "cls": "",
+        "title": "#12 feat(codegen): stamp distilled.specUpdatedAt next to generatedAt (#846)"
+      },
+      {
+        "value": 924051048,
+        "label": "40a9500",
+        "branch": false,
+        "cls": "",
+        "title": "#13 feat(notion): add the Notion SDK (#855)"
+      },
+      {
+        "value": null,
+        "label": "be83014",
+        "branch": true,
+        "cls": "",
+        "title": "#14 perf(core): build pagination streams without Stream.flatMap"
+      },
+      {
+        "value": null,
+        "label": "f7bf885",
+        "branch": true,
+        "cls": "",
+        "title": "#15 perf(core): read the retry hint cap without effect/Config"
+      },
+      {
+        "value": null,
+        "label": "2298266",
+        "branch": true,
+        "cls": "",
+        "title": "#16 perf(core): import effect modules directly in error-category"
+      },
+      {
+        "value": null,
+        "label": "9e60009",
+        "branch": true,
+        "cls": "",
+        "title": "#17 perf(core): share operation methods through one prototype"
+      },
+      {
+        "value": null,
+        "label": "be75448",
+        "branch": true,
+        "cls": "",
+        "title": "#18 chore: apply the nested PURE markers to every generated service"
+      },
+      {
+        "value": null,
+        "label": "0083c76",
+        "branch": true,
+        "cls": "",
+        "title": "#19 perf(core): build suspended schema ASTs on first use"
+      },
+      {
+        "value": null,
+        "label": "b2297ea",
+        "branch": true,
+        "cls": "",
+        "title": "#20 perf(core): build Array and Record schemas lazily too"
+      },
+      {
+        "value": null,
+        "label": "b5b1c83",
+        "branch": true,
+        "cls": "",
+        "title": "#21 chore: apply the Latin-1 pass to every generated service"
+      },
+      {
+        "value": null,
+        "label": "c5ca2e9",
+        "branch": true,
+        "cls": "",
+        "title": "#22 perf: keep hand-written shipped sources Latin-1 only"
+      },
+      {
+        "value": null,
+        "label": "589790e",
+        "branch": true,
+        "cls": "",
+        "title": "#23 perf(core): build generated error classes on first use"
+      },
+      {
+        "value": null,
+        "label": "bf8b544",
+        "branch": true,
+        "cls": "",
+        "title": "#24 perf(core): find the error base on first use"
+      },
+      {
+        "value": null,
+        "label": "59c5565",
+        "branch": true,
+        "cls": "",
+        "title": "#25 chore: apply schema dedupe to every generated service"
+      },
+      {
+        "value": null,
+        "label": "954ca6b",
+        "branch": true,
+        "cls": "",
+        "title": "#26 perf(aws): sign with synchronous node:crypto where available"
+      },
+      {
+        "value": null,
+        "label": "3290349",
+        "branch": true,
+        "cls": "",
+        "title": "#27 perf: strip JSDoc from compiled JavaScript"
+      },
+      {
+        "value": null,
+        "label": "1bc7899",
+        "branch": true,
+        "cls": "",
+        "title": "#28 chore: privatize schemas in every generated service"
+      },
+      {
+        "value": null,
+        "label": "d77bcaf",
+        "branch": true,
+        "cls": "",
+        "title": "#29 chore: chunk schema builders in every generated service"
+      },
+      {
+        "value": null,
+        "label": "d2d5f33",
+        "branch": true,
+        "cls": "",
+        "title": "#30 chore: table private schemas in every generated service"
+      },
+      {
+        "value": null,
+        "label": "cd90cb2",
+        "branch": true,
+        "cls": "",
+        "title": "#31 bench: add the Notion SDK target"
+      },
+      {
+        "value": null,
+        "label": "c0e8b9d",
+        "branch": true,
+        "cls": "",
+        "title": "#32 perf: mark top-level calls in hand-written sources PURE"
+      },
+      {
+        "value": 303941280,
+        "label": "bf15d2f",
+        "branch": true,
+        "cls": "",
+        "title": "#33 bench: imports suite and object counts; strict variant of every program"
+      },
+      {
+        "value": 296772360,
+        "label": "1eae38c",
+        "branch": true,
+        "cls": "flat",
+        "title": "#34 chore: regenerate every SDK with the full codegen pipeline"
+      },
+      {
+        "value": 292888256,
+        "label": "d9d2738",
+        "branch": true,
+        "cls": "flat",
+        "title": "#35 perf: Stripe and Cloudflare encode/decode without generators"
+      },
+      {
+        "value": 294249728,
+        "label": "3a43095",
+        "branch": true,
+        "cls": "flat",
+        "title": "#36 bench: pin AWS SDK internals past the minimum release age"
+      },
+      {
+        "value": 294109592,
+        "label": "42e9e3a",
+        "branch": true,
+        "cls": "flat",
+        "title": "#37 bench: measure import time and first call in a sequential cold-start pass"
+      },
+      {
+        "value": 294228264,
+        "label": "03057c5",
+        "branch": true,
+        "cls": "flat",
+        "title": "#38 perf: patch effect so bundlers can drop HttpClientErrorSchema"
+      },
+      {
+        "value": 293743808,
+        "label": "ffb8908",
+        "branch": true,
+        "cls": "flat",
+        "title": "#39 build: rolldown 1.2.8; drop the effect HttpClientErrorSchema patch"
+      },
+      {
+        "value": 219618736,
+        "label": "f966856",
+        "branch": true,
+        "cls": "good",
+        "title": "#40 Merge branch 'exp/data-tables' into perf/sdk-footprint"
+      },
+      {
+        "value": 191981400,
+        "label": "565b4b0",
+        "branch": true,
+        "cls": "good",
+        "title": "#41 chore: remove scratch bundle output committed by mistake"
+      },
+      {
+        "value": 193683648,
+        "label": "1247e05",
+        "branch": true,
+        "cls": "flat",
+        "title": "#42 bench: warm undici before measuring distilled cold start, like the official probe"
+      },
+      {
+        "value": 194016088,
+        "label": "7d7a259",
+        "branch": true,
+        "cls": "flat",
+        "title": "#43 perf(core): build the strict checker's compiler on first use"
+      },
+      {
+        "value": 165889856,
+        "label": "54eedde",
+        "branch": true,
+        "cls": "good",
+        "title": "#44 Merge branch 'exp/lazy-errors' into perf/sdk-footprint"
+      },
+      {
+        "value": 162963272,
+        "label": "97e9f0c",
+        "branch": true,
+        "cls": "flat",
+        "title": "#45 perf(core): data operation state descriptors are not kept after the prototypes are made"
+      },
+      {
+        "value": 94414432,
+        "label": "f6019b3",
+        "branch": true,
+        "cls": "good",
+        "title": "#46 perf(build): lazy stubs write each export name once and import one package helper"
+      }
+    ]
+  },
+  "experiments": {
+    "programs": 96,
+    "bundle": {
+      "points": [
+        {
+          "value": 54818,
+          "label": "71455a8",
+          "branch": false,
+          "cls": "",
+          "title": "#1 71455a8c2 fix(aws): support S3 version selection and metadata headers (#627)"
+        },
+        {
+          "value": 55763,
+          "label": "5358d66",
+          "branch": false,
+          "cls": "bad",
+          "title": "#2 5358d6602 fix: upgrade Effect to 4.0.0-rc.117 (#637)"
+        },
+        {
+          "value": 55763,
+          "label": "bf909ba",
+          "branch": false,
+          "cls": "flat",
+          "title": "#3 bf909babc fix(cloudflare): correct Workers-for-Platforms upload metadata (#649)"
+        },
+        {
+          "value": 56065,
+          "label": "14d9302",
+          "branch": false,
+          "cls": "bad",
+          "title": "#4 14d9302b7 fix(gcp): type HTTP 501 on Agent Engine sandboxes and workerPools.list (#656)"
+        },
+        {
+          "value": 56065,
+          "label": "6b83c96",
+          "branch": false,
+          "cls": "flat",
+          "title": "#5 6b83c9643 fix(gcp): no environment variables for the default region (#669)"
+        },
+        {
+          "value": 56146,
+          "label": "751b30b",
+          "branch": false,
+          "cls": "flat",
+          "title": "#6 751b30b7f feat(celld): add generated v0.6.0 SDK (#621)"
+        },
+        {
+          "value": 56592.5,
+          "label": "1f4a629",
+          "branch": false,
+          "cls": "bad",
+          "title": "#7 1f4a62973 fix(aws,cloudflare): type Workers preview conflict and Deadline UpdateQueue conflict (#683)"
+        },
+        {
+          "value": 56777.5,
+          "label": "e02e9d4",
+          "branch": false,
+          "cls": "bad",
+          "title": "#8 e02e9d405 chore(release): 1.0.0-rc.13"
+        },
+        {
+          "value": 56840,
+          "label": "f6fee7d",
+          "branch": false,
+          "cls": "flat",
+          "title": "#9 f6fee7db2 chore: align oxfmt/oxlint with alchemy (#622)"
+        },
+        {
+          "value": 56976,
+          "label": "d6ae0c8",
+          "branch": false,
+          "cls": "flat",
+          "title": "#10 d6ae0c898 feat(aws/auto-scaling): type InvalidIamInstanceProfile on create/updateAutoScalingGroup (#764)"
+        },
+        {
+          "value": null,
+          "label": "56741e3",
+          "branch": false,
+          "cls": "",
+          "title": "#11 56741e3f0 feat(core): apply Smithy patches before the verbNoun rename (#818)"
+        },
+        {
+          "value": 57034.5,
+          "label": "cced62a",
+          "branch": false,
+          "cls": "",
+          "title": "#12 cced62a87 feat(codegen): stamp distilled.specUpdatedAt next to generatedAt (#846)"
+        },
+        {
+          "value": 57034.5,
+          "label": "40a9500",
+          "branch": false,
+          "cls": "flat",
+          "title": "#13 40a9500a7 feat(notion): add the Notion SDK (#855)"
+        },
+        {
+          "value": 57034.5,
+          "label": "be83014",
+          "branch": true,
+          "cls": "flat",
+          "title": "#14 be83014bb perf(core): build pagination streams without Stream.flatMap"
+        },
+        {
+          "value": 55417,
+          "label": "f7bf885",
+          "branch": true,
+          "cls": "good",
+          "title": "#15 f7bf885c1 perf(core): read the retry hint cap without effect/Config"
+        },
+        {
+          "value": 55417,
+          "label": "2298266",
+          "branch": true,
+          "cls": "flat",
+          "title": "#16 22982661f perf(core): import effect modules directly in error-category"
+        },
+        {
+          "value": 56018,
+          "label": "9e60009",
+          "branch": true,
+          "cls": "bad",
+          "title": "#17 9e6000975 perf(core): share operation methods through one prototype"
+        },
+        {
+          "value": 55590.5,
+          "label": "be75448",
+          "branch": true,
+          "cls": "good",
+          "title": "#18 be75448c1 chore: apply the nested PURE markers to every generated service"
+        },
+        {
+          "value": 55830.5,
+          "label": "0083c76",
+          "branch": true,
+          "cls": "bad",
+          "title": "#19 0083c76af perf(core): build suspended schema ASTs on first use"
+        },
+        {
+          "value": 55917.5,
+          "label": "b2297ea",
+          "branch": true,
+          "cls": "flat",
+          "title": "#20 b2297ea0a perf(core): build Array and Record schemas lazily too"
+        },
+        {
+          "value": 55917.5,
+          "label": "b5b1c83",
+          "branch": true,
+          "cls": "flat",
+          "title": "#21 b5b1c83e8 chore: apply the Latin-1 pass to every generated service"
+        },
+        {
+          "value": 55917.5,
+          "label": "c5ca2e9",
+          "branch": true,
+          "cls": "flat",
+          "title": "#22 c5ca2e97c perf: keep hand-written shipped sources Latin-1 only"
+        },
+        {
+          "value": 56335,
+          "label": "589790e",
+          "branch": true,
+          "cls": "bad",
+          "title": "#23 589790ecb perf(core): build generated error classes on first use"
+        },
+        {
+          "value": 56364,
+          "label": "bf8b544",
+          "branch": true,
+          "cls": "flat",
+          "title": "#24 bf8b544f7 perf(core): find the error base on first use"
+        },
+        {
+          "value": 56373.5,
+          "label": "59c5565",
+          "branch": true,
+          "cls": "flat",
+          "title": "#25 59c556594 chore: apply schema dedupe to every generated service"
+        },
+        {
+          "value": 56373.5,
+          "label": "954ca6b",
+          "branch": true,
+          "cls": "flat",
+          "title": "#26 954ca6b3f perf(aws): sign with synchronous node:crypto where available"
+        },
+        {
+          "value": 56397,
+          "label": "3290349",
+          "branch": true,
+          "cls": "flat",
+          "title": "#27 329034941 perf: strip JSDoc from compiled JavaScript"
+        },
+        {
+          "value": 56397,
+          "label": "1bc7899",
+          "branch": true,
+          "cls": "flat",
+          "title": "#28 1bc789950 chore: privatize schemas in every generated service"
+        },
+        {
+          "value": 60599.5,
+          "label": "d77bcaf",
+          "branch": true,
+          "cls": "bad",
+          "title": "#29 d77bcaf0e chore: chunk schema builders in every generated service"
+        },
+        {
+          "value": 66927,
+          "label": "d2d5f33",
+          "branch": true,
+          "cls": "bad",
+          "title": "#30 d2d5f33cd chore: table private schemas in every generated service"
+        },
+        {
+          "value": 60282.5,
+          "label": "cd90cb2",
+          "branch": true,
+          "cls": "good",
+          "title": "#31 cd90cb29e bench: add the Notion SDK target"
+        },
+        {
+          "value": 54077.5,
+          "label": "c0e8b9d",
+          "branch": true,
+          "cls": "good",
+          "title": "#32 c0e8b9d81 perf: mark top-level calls in hand-written sources PURE"
+        },
+        {
+          "value": 54077.5,
+          "label": "bf15d2f",
+          "branch": true,
+          "cls": "flat",
+          "title": "#33 bf15d2f3a bench: imports suite and object counts; strict variant of every program"
+        },
+        {
+          "value": 52628.5,
+          "label": "1eae38c",
+          "branch": true,
+          "cls": "good",
+          "title": "#34 1eae38c6d chore: regenerate every SDK with the full codegen pipeline"
+        },
+        {
+          "value": 52763.5,
+          "label": "d9d2738",
+          "branch": true,
+          "cls": "flat",
+          "title": "#35 d9d273817 perf: Stripe and Cloudflare encode/decode without generators"
+        },
+        {
+          "value": 52763.5,
+          "label": "3a43095",
+          "branch": true,
+          "cls": "flat",
+          "title": "#36 3a430953b bench: pin AWS SDK internals past the minimum release age"
+        },
+        {
+          "value": 52763.5,
+          "label": "42e9e3a",
+          "branch": true,
+          "cls": "flat",
+          "title": "#37 42e9e3a33 bench: measure import time and first call in a sequential cold-start pass"
+        },
+        {
+          "value": 37152,
+          "label": "03057c5",
+          "branch": true,
+          "cls": "good",
+          "title": "#38 03057c503 perf: patch effect so bundlers can drop HttpClientErrorSchema"
+        },
+        {
+          "value": 36950.5,
+          "label": "ffb8908",
+          "branch": true,
+          "cls": "good",
+          "title": "#39 ffb890825 build: rolldown 1.2.8; drop the effect HttpClientErrorSchema patch"
+        },
+        {
+          "value": 38321.5,
+          "label": "f966856",
+          "branch": true,
+          "cls": "bad",
+          "title": "#40 f96685623 Merge branch 'exp/data-tables' into perf/sdk-footprint"
+        },
+        {
+          "value": 38321.5,
+          "label": "565b4b0",
+          "branch": true,
+          "cls": "flat",
+          "title": "#41 565b4b0e2 chore: remove scratch bundle output committed by mistake"
+        },
+        {
+          "value": 38321.5,
+          "label": "1247e05",
+          "branch": true,
+          "cls": "flat",
+          "title": "#42 1247e053d bench: warm undici before measuring distilled cold start, like the official probe"
+        },
+        {
+          "value": 38321.5,
+          "label": "7d7a259",
+          "branch": true,
+          "cls": "flat",
+          "title": "#43 7d7a259b2 perf(core): build the strict checker's compiler on first use"
+        },
+        {
+          "value": 38321.5,
+          "label": "54eedde",
+          "branch": true,
+          "cls": "flat",
+          "title": "#44 54eedde38 Merge branch 'exp/lazy-errors' into perf/sdk-footprint"
+        },
+        {
+          "value": 38321.5,
+          "label": "97e9f0c",
+          "branch": true,
+          "cls": "flat",
+          "title": "#45 97e9f0c5b perf(core): data operation state descriptors are not kept after the prototypes are made"
+        },
+        {
+          "value": 38321.5,
+          "label": "f6019b3",
+          "branch": true,
+          "cls": "flat",
+          "title": "#46 f6019b376 perf(build): lazy stubs write each export name once and import one package helper"
+        }
+      ],
+      "second": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        57054,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        54099.5,
+        54551,
+        54664,
+        54664,
+        54664,
+        52859.5,
+        52673,
+        54073.5,
+        54073.5,
+        54073.5,
+        39824.5,
+        39824.5,
+        39824.5,
+        39824.5
+      ],
+      "refs": [
+        {
+          "value": 56260,
+          "short": "E2",
+          "label": "E2 PR #671 (schema-free descriptors)",
+          "color": "#e070d0",
+          "kind": "exp"
+        },
+        {
+          "value": 52628.5,
+          "short": "E3",
+          "label": "E3 schema-free generated code (lite)",
+          "color": "#5fd3c2",
+          "kind": "exp"
+        },
+        {
+          "value": 37019,
+          "short": "E4",
+          "label": "E4 schema-free generated code (lite) + Effect patch",
+          "color": "#ff7a9e",
+          "kind": "exp"
+        }
+      ]
+    },
+    "rows": [
+      {
+        "number": 2,
+        "name": "PR #671 (schema-free descriptors)",
+        "color": "#e070d0",
+        "sha": "f69c20028",
+        "baseline": 32,
+        "latest": 46,
+        "cells": {
+          "bundle": {
+            "value": 56260,
+            "vsBase": {
+              "from": 54077.5,
+              "to": 56260,
+              "pct": 4.0358744394618835,
+              "noise": false
+            },
+            "vsLatest": {
+              "from": 38321.5,
+              "to": 56260,
+              "pct": 46.810537165820755,
+              "noise": false
+            }
+          },
+          "speed": {
+            "value": 17.726000000000003,
+            "vsBase": {
+              "from": 10.679,
+              "to": 17.726000000000003,
+              "pct": 65.98932484315013,
+              "noise": false
+            },
+            "vsLatest": {
+              "from": 4.0055,
+              "to": 17.726000000000003,
+              "pct": 342.5415054300338,
+              "noise": false
+            }
+          },
+          "memory": {
+            "value": 2367792,
+            "vsBase": {
+              "from": 839160,
+              "to": 2367792,
+              "pct": 182.16216216216216,
+              "noise": false
+            },
+            "vsLatest": {
+              "from": 568568,
+              "to": 2367792,
+              "pct": 316.44834039200236,
+              "noise": false
+            }
+          }
+        }
+      },
+      {
+        "number": 3,
+        "name": "schema-free generated code (lite)",
+        "color": "#5fd3c2",
+        "sha": "1b817bb29",
+        "baseline": 32,
+        "latest": 46,
+        "cells": {
+          "bundle": {
+            "value": 52628.5,
+            "vsBase": {
+              "from": 54077.5,
+              "to": 52628.5,
+              "pct": -2.6794877721788177,
+              "noise": false
+            },
+            "vsLatest": {
+              "from": 38321.5,
+              "to": 52628.5,
+              "pct": 37.334133580366114,
+              "noise": false
+            }
+          },
+          "speed": {
+            "value": 9.931000000000001,
+            "vsBase": {
+              "from": 10.679,
+              "to": 9.931000000000001,
+              "pct": -7.004401161157406,
+              "noise": false
+            },
+            "vsLatest": {
+              "from": 4.0055,
+              "to": 9.931000000000001,
+              "pct": 147.93409062539013,
+              "noise": false
+            }
+          },
+          "memory": {
+            "value": 858832,
+            "vsBase": {
+              "from": 839160,
+              "to": 858832,
+              "pct": 2.3442490109156777,
+              "noise": true
+            },
+            "vsLatest": {
+              "from": 568568,
+              "to": 858832,
+              "pct": 51.051765136272174,
+              "noise": false
+            }
+          }
+        }
+      },
+      {
+        "number": 4,
+        "name": "schema-free generated code (lite) + Effect patch",
+        "color": "#ff7a9e",
+        "sha": "1b817bb29",
+        "baseline": 32,
+        "latest": 46,
+        "cells": {
+          "bundle": {
+            "value": 37019,
+            "vsBase": {
+              "from": 54077.5,
+              "to": 37019,
+              "pct": -31.544542554666915,
+              "noise": false
+            },
+            "vsLatest": {
+              "from": 38321.5,
+              "to": 37019,
+              "pct": -3.398875304985452,
+              "noise": false
+            }
+          },
+          "speed": {
+            "value": 10.0155,
+            "vsBase": {
+              "from": 10.679,
+              "to": 10.0155,
+              "pct": -6.2131285700908405,
+              "noise": false
+            },
+            "vsLatest": {
+              "from": 4.0055,
+              "to": 10.0155,
+              "pct": 150.04368992635128,
+              "noise": false
+            }
+          },
+          "memory": {
+            "value": 884392,
+            "vsBase": {
+              "from": 839160,
+              "to": 884392,
+              "pct": 5.390152056818724,
+              "noise": false
+            },
+            "vsLatest": {
+              "from": 568568,
+              "to": 884392,
+              "pct": 55.54726963177667,
+              "noise": false
+            }
+          }
+        }
+      }
+    ]
+  }
+}

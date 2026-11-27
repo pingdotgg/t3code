@@ -19,6 +19,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "../../previewMiniPlayerStore";
 import {
+  previewNavStatus,
   previewStateAtom,
   previewThreadRefsAtom,
   type ThreadPreviewState,
@@ -49,7 +50,7 @@ export function revealServerTabs(
         (surface) => surface.kind === "preview" && surface.resourceId === session.tabId,
       );
     if (surface && force) {
-      useRightPanelStore.getState().activateSurface(threadRef, surface.id);
+      useRightPanelStore.getState().revealSurface(threadRef, surface.id);
     } else if (!surface) {
       usePreviewMiniPlayerStore.getState().open(threadRef, browserMiniPlayerSource(session.tabId));
     }
@@ -211,6 +212,17 @@ export function floatDeviceSurface(
 ): void {
   if (state !== null && !hasLiveSession(state, threadRef.threadId, source)) return;
   usePreviewMiniPlayerStore.getState().open(threadRef, source);
+}
+
+/** Floats a browser panel tab over chat, unless it never navigated. */
+export function floatBrowserSurface(
+  threadRef: ScopedThreadRef,
+  tabId: string,
+  state: ThreadPreviewState,
+): void {
+  const snapshot = state.sessions[tabId] ?? null;
+  if (previewNavStatus(snapshot, state.desktopByTabId[tabId] ?? null)._tag === "Idle") return;
+  usePreviewMiniPlayerStore.getState().open(threadRef, browserMiniPlayerSource(tabId));
 }
 
 export function resetDeviceSessionBaselinesForTests(): void {

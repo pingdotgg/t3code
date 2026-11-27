@@ -49,7 +49,7 @@ and retain the AWS resource ownership information for later cleanup.
 Inside your stack, register an endpoint that you created in AWS:
 
 ```typescript
-import * as Neon from "alchemy/Neon";
+import * as Neon from "@alchemy.run/neon";
 
 const network = yield* Neon.OrganizationVPCEndpoint("PrivateNetwork", {
   orgId: "org-example",

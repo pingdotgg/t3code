@@ -8,34 +8,17 @@ describe("readWorkerModules", () => {
   let directory: string;
 
   beforeAll(async () => {
-    directory = await NodeFs.mkdtemp(
-      NodePath.join(NodeOs.tmpdir(), "distilled-modules-"),
-    );
+    directory = await NodeFs.mkdtemp(NodePath.join(NodeOs.tmpdir(), "distilled-modules-"));
     await NodeFs.mkdir(NodePath.join(directory, "assets"), { recursive: true });
     await NodeFs.mkdir(NodePath.join(directory, "ssr"), { recursive: true });
-    await NodeFs.writeFile(
-      NodePath.join(directory, "entry.js"),
-      "export default {};",
-    );
+    await NodeFs.writeFile(NodePath.join(directory, "entry.js"), "export default {};");
     await NodeFs.writeFile(NodePath.join(directory, "entry.js.map"), "{}");
-    await NodeFs.writeFile(
-      NodePath.join(directory, "assets", "chunk.js"),
-      "export const a = 1;",
-    );
-    await NodeFs.writeFile(
-      NodePath.join(directory, "ssr", "index.js"),
-      "export const s = 1;",
-    );
+    await NodeFs.writeFile(NodePath.join(directory, "assets", "chunk.js"), "export const a = 1;");
+    await NodeFs.writeFile(NodePath.join(directory, "ssr", "index.js"), "export const s = 1;");
     await NodeFs.writeFile(NodePath.join(directory, "manifest.json"), "{}");
     await NodeFs.writeFile(NodePath.join(directory, "notes.txt"), "text");
-    await NodeFs.writeFile(
-      NodePath.join(directory, "blob.bin"),
-      new Uint8Array([1, 2, 3]),
-    );
-    await NodeFs.writeFile(
-      NodePath.join(directory, "lib.wasm"),
-      new Uint8Array([0, 97, 115, 109]),
-    );
+    await NodeFs.writeFile(NodePath.join(directory, "blob.bin"), new Uint8Array([1, 2, 3]));
+    await NodeFs.writeFile(NodePath.join(directory, "lib.wasm"), new Uint8Array([0, 97, 115, 109]));
   });
 
   afterAll(async () => {
@@ -60,8 +43,8 @@ describe("readWorkerModules", () => {
   });
 
   it("fails when the entry module is not in the output", async () => {
-    await expect(
-      readWorkerModules({ directory, entryModule: "nope.js" }),
-    ).rejects.toThrow(/nope\.js/);
+    await expect(readWorkerModules({ directory, entryModule: "nope.js" })).rejects.toThrow(
+      /nope\.js/,
+    );
   });
 });

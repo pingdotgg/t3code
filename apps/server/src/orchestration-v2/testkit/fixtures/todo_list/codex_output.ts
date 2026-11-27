@@ -36,4 +36,12 @@ export function assertTodoListOutput(
     todoLists.at(-1)?.steps.map((step) => step.status),
     ["completed", "completed", "completed"],
   );
+  // A completed run must not leave its plan snapshot items running.
+  assert.deepEqual(
+    projection.turnItems
+      .filter((item) => item.type === "todo_list")
+      .map((item) => item.status)
+      .filter((status) => status !== "completed"),
+    [],
+  );
 }

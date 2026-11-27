@@ -140,6 +140,7 @@ function harness(input?: {
       }),
     create: () => Effect.die("unused"),
     putConfiguration: () => Effect.die("unused"),
+    getConfiguration: () => Effect.die("unused"),
     getToken: () => Effect.die("unused"),
     delete: (tunnelId) =>
       input?.failAllDeletes === true ||
@@ -172,6 +173,7 @@ function harness(input?: {
               remaining.splice(index, 1);
             }
           }),
+    disconnect: () => Effect.die("the reaper never force-disconnects"),
   });
   const allocationService = ManagedEndpointAllocations.ManagedEndpointAllocations.of({
     getByTunnelName: () => Effect.die("unused"),

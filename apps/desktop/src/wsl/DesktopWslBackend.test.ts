@@ -77,6 +77,7 @@ const layerBackendConfiguration = Layer.succeed(
 
 const layerNet = Layer.succeed(NetService.NetService, {
   canListenOnHost: () => Effect.succeed(true),
+  probeListenOnHost: () => Effect.succeed(true),
   isPortAvailableOnLoopback: () => Effect.succeed(true),
   hasListenerOnHost: () => Effect.succeed(false),
   reserveLoopbackPort: () => Effect.succeed(41773),
@@ -154,7 +155,7 @@ describe("DesktopWslBackend", () => {
       assert.equal(startCount, 1);
       assert.deepEqual(yield* backend.lastPreflightError, refusal);
 
-      yield* clearFailure(new URL("http://127.0.0.1:41773"));
+      yield* clearFailure(new URL("http://127.0.0.1:41773"), 123);
       assert.deepEqual(yield* backend.lastPreflightError, Option.none());
       yield* recordOwnershipFailure();
       const settings = yield* DesktopAppSettings.DesktopAppSettings;

@@ -27,6 +27,7 @@ import {
   setActivePreviewTab,
 } from "~/previewStateStore";
 
+import { addBrowserSurface } from "./addBrowserSurface";
 import { openPreviewSession } from "./openPreviewSession";
 
 const threadRef = {
@@ -58,6 +59,61 @@ afterEach(() => {
 });
 
 describe("openPreviewSession", () => {
+  it("duplicates a browser beside its source using its URL, profile, viewport and runtime", async () => {
+    const source: PreviewSessionSnapshot = {
+      ...snapshot,
+      profileId: "work",
+      viewport: { _tag: "freeform", width: 800, height: 600 },
+      runtime: "server",
+    };
+    const panels = useRightPanelStore.getState();
+    panels.openBrowser(threadRef, source.tabId);
+    panels.openBrowser(threadRef, "other-tab");
+    const openPreview = vi.fn(async () =>
+      AsyncResult.success({ ...source, tabId: "duplicate-tab" }),
+    );
+
+    await addBrowserSurface({ threadRef, openPreview, duplicateFrom: source });
+
+    expect(openPreview).toHaveBeenCalledWith({
+      environmentId: threadRef.environmentId,
+      input: {
+        threadId: threadRef.threadId,
+        url: "https://t3.chat/",
+        profileId: "work",
+        viewport: source.viewport,
+        runtime: "server",
+        zoomFactor: 1,
+        colorScheme: "system",
+      },
+    });
+    const state = useRightPanelStore.getState();
+    expect(Object.values(state.byThreadKey)[0]?.surfaces.map((surface) => surface.id)).toEqual([
+      `browser:${source.tabId}`,
+      "browser:duplicate-tab",
+      "browser:other-tab",
+    ]);
+    expect(selectActiveRightPanelSurface(state.byThreadKey, threadRef)?.id).toBe(
+      "browser:duplicate-tab",
+    );
+
+    const failed = await addBrowserSurface({
+      threadRef,
+      duplicateFrom: source,
+      openPreview: async () => AsyncResult.failure(Cause.fail(new Error("offline"))),
+    });
+    expect(failed._tag).toBe("Failure");
+    expect(useRightPanelStore.getState().byThreadKey).toBe(state.byThreadKey);
+
+    vi.spyOn(previewRuntime, "previewRuntimeFor").mockReturnValue("server");
+    const clientRendered = { ...source, runtime: undefined };
+    await addBrowserSurface({ threadRef, openPreview, duplicateFrom: clientRendered });
+    expect(openPreview).toHaveBeenLastCalledWith({
+      environmentId: threadRef.environmentId,
+      input: expect.not.objectContaining({ runtime: expect.anything() }),
+    });
+  });
+
   it.each(["session", "link"] as const)(
     "does not open a %s with unread settings and uses the saved profile on retry",
     async (entryPoint) => {
@@ -94,6 +150,30 @@ describe("openPreviewSession", () => {
           viewport,
           profileId: "work",
         },
+      });
+    },
+  );
+
+  it.each(["new tab", "link"] as const)(
+    "opens a server tab from a %s with the default zoom and appearance",
+    async (entryPoint) => {
+      __setClientSettingsForTests({
+        ...DEFAULT_CLIENT_SETTINGS,
+        browserDefaultZoomFactor: 0.8,
+        browserDefaultAppearance: "dark",
+      });
+      const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+
+      if (entryPoint === "link") {
+        vi.spyOn(previewRuntime, "previewRuntimeFor").mockReturnValue("server");
+        await openUrlInPreview({ openPreview, threadRef, url: "https://t3.chat/" });
+      } else {
+        await openPreviewSession({ openPreview, threadRef, runtime: "server" });
+      }
+
+      expect(openPreview).toHaveBeenCalledExactlyOnceWith({
+        environmentId: threadRef.environmentId,
+        input: expect.objectContaining({ runtime: "server", zoomFactor: 0.8, colorScheme: "dark" }),
       });
     },
   );

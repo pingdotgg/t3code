@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { parseDelimitedPreview } from "./delimitedPreview.ts";
+import { filePreviewDelimiter, parseDelimitedPreview } from "./delimitedPreview.ts";
 
 describe("delimited file previews", () => {
+  it("falls back to the file name under generic MIME types", () => {
+    expect(filePreviewDelimiter({ name: "a.csv", mimeType: "binary/octet-stream" })).toBe(",");
+    expect(filePreviewDelimiter({ name: "a.tsv", mimeType: "application/unknown" })).toBe("\t");
+  });
   it("preserves quoted separators, escaped quotes, blank cells and line breaks", () => {
     expect(
       parseDelimitedPreview('\ufeffname,notes,empty\r\n"A, B","say ""hi""\nagain",\r\n', ","),
@@ -16,6 +20,39 @@ describe("delimited file previews", () => {
       ["one", "two"],
       ["", "three"],
     ]);
+  });
+  it("detects semicolon-separated CSV from its first records outside quotes", () => {
+    expect(parseDelimitedPreview("a;b\r\n1;2,5", ",").rows).toEqual([
+      ["a", "b"],
+      ["1", "2,5"],
+    ]);
+    expect(parseDelimitedPreview('name,notes\nAlice,"a;b;c"', ",").rows).toEqual([
+      ["name", "notes"],
+      ["Alice", "a;b;c"],
+    ]);
+    expect(parseDelimitedPreview('"a, b";notes\nAlice;"say ""hi""\nagain"', ",").rows).toEqual([
+      ["a, b", "notes"],
+      ["Alice", 'say "hi"\nagain'],
+    ]);
+    expect(parseDelimitedPreview("a,b;c", ",").rows).toEqual([["a", "b;c"]]);
+    expect(parseDelimitedPreview("id,notes;more;extra\n1,plain\n2,ordinary", ",").rows).toEqual([
+      ["id", "notes;more;extra"],
+      ["1", "plain"],
+      ["2", "ordinary"],
+    ]);
+    expect(
+      parseDelimitedPreview("id,notes;more;extra\n1,plain;other;last\n2,ordinary;next;end", ",")
+        .rows,
+    ).toEqual([
+      ["id", "notes;more;extra"],
+      ["1", "plain;other;last"],
+      ["2", "ordinary;next;end"],
+    ]);
+    expect(parseDelimitedPreview('12",name\n24",a;b;c', ",").rows).toEqual([
+      ['12"', "name"],
+      ['24"', "a;b;c"],
+    ]);
+    expect(parseDelimitedPreview("a;b\tvalue", "\t").rows).toEqual([["a;b", "value"]]);
   });
   describe.each([",", "\t"] as const)("with delimiter %j", (delimiter) => {
     it("preserves a final quoted empty record without requiring a line ending", () => {

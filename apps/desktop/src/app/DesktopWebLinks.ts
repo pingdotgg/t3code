@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
 
@@ -24,9 +25,11 @@ export class DesktopWebLinks extends Context.Service<
 
 const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const pending: Array<string> = [];
   let listening: Electron.WebContents | null = null;
   let detachListening: (() => void) | null = null;
+  let rendererHasListened = false;
 
   const stopListening = () => {
     detachListening?.();
@@ -43,7 +46,7 @@ const make = Effect.gen(function* () {
       return;
     }
     for (const url of pending.splice(0)) listening.send(WEB_LINK_OPEN_CHANNEL, url);
-    yield* electronWindow.reveal(window.value);
+    yield* desktopWindow.activate.pipe(Effect.ignore);
   });
 
   const startListening = Effect.gen(function* () {
@@ -53,6 +56,7 @@ const make = Effect.gen(function* () {
     if (listening === webContents) return;
     stopListening();
     listening = webContents;
+    rendererHasListened = true;
     const onNavigation = (
       event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
     ) => {
@@ -69,11 +73,12 @@ const make = Effect.gen(function* () {
   });
 
   return DesktopWebLinks.of({
-    receive: Effect.fn("DesktopWebLinks.receive")(function (url) {
-      return Effect.suspend(() => {
-        pending.push(url);
-        return flush;
-      });
+    receive: Effect.fn("DesktopWebLinks.receive")(function* (url) {
+      pending.push(url);
+      yield* flush;
+      if (!rendererHasListened || Option.isSome(yield* electronWindow.main)) return;
+      // macOS fires `activate` only on reopen, not when a link opens the app.
+      yield* desktopWindow.activate.pipe(Effect.ignore);
     }),
     setRendererReady: Effect.fn("DesktopWebLinks.setRendererReady")(function (ready) {
       return ready ? startListening : Effect.sync(stopListening);

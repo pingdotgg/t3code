@@ -25,8 +25,7 @@ import type { ProviderMode } from "../ProviderMode.ts";
  */
 
 /** The display label for a mode-stamped row (`"live"` renders as `remote`). */
-export const modeLabel = (mode: ProviderMode): string =>
-  mode === "live" ? "remote" : "local";
+export const modeLabel = (mode: ProviderMode): string => (mode === "live" ? "remote" : "local");
 
 /**
  * The mode note for a resource row, or `undefined` when nothing should be

@@ -394,9 +394,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         ...PREPARED,
         environmentId: target.environmentId,
         label: target.label,
-        httpAuthorization: Option.isSome(credential)
-          ? { _tag: "Bearer", token: credential.value.token }
-          : null,
+        httpAuthorization:
+          Option.isSome(credential) && credential.value._tag === "BearerConnectionCredential"
+            ? { _tag: "Bearer", token: credential.value.token }
+            : null,
         target,
       };
       if (options?.prepareError) return yield* options.prepareError;
@@ -418,7 +419,13 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
               ? Effect.die(new Error("Config is not used by registry tests."))
               : Effect.succeed({ directEndpoints: options.directEndpoints } as ServerConfig),
           subscribeServerConfig: () =>
-            Stream.die(new Error("Config is not used by registry tests.")),
+            options?.directEndpoints === undefined
+              ? Stream.never
+              : Stream.make({
+                  version: 1 as const,
+                  type: "snapshot" as const,
+                  config: { directEndpoints: options.directEndpoints } as ServerConfig,
+                }),
           ready: Effect.void,
           probe: Effect.void,
           inboundFrames: Effect.succeed(0),
@@ -519,10 +526,7 @@ function registrySpanNames<A, E, R>(effect: Effect.Effect<A, E, R>) {
       return new Tracer.NativeSpan(options);
     },
   });
-  return effect.pipe(
-    Effect.withTracer(tracer),
-    Effect.map(() => names),
-  );
+  return effect.pipe(Effect.withTracer(tracer), Effect.as(names));
 }
 
 function awaitConnectionState(
@@ -1416,14 +1420,15 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([], [], [], {
         beforePrepareRoute: (target) =>
           target._tag !== "BearerConnectionTarget" || storedCredentials === undefined
-            ? // @effect-diagnostics-next-line effectSucceedWithVoid:off - Admission checks return an optional blocker, so absence must be undefined.
-              Effect.succeed(undefined)
+            ? Effect.undefined
             : Ref.get(storedCredentials).pipe(
-                Effect.map((current) =>
-                  current.get(target.connectionId)?.token === "old-bearer"
+                Effect.map((current) => {
+                  const stored = current.get(target.connectionId);
+                  return stored?._tag === "BearerConnectionCredential" &&
+                    stored.token === "old-bearer"
                     ? new ConnectionBlockedError({ reason: "authentication", detail: "revoked" })
-                    : undefined,
-                ),
+                    : undefined;
+                }),
               ),
       });
       storedCredentials = harness.storedCredentials;
@@ -1517,8 +1522,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([], [], [], {
         beforePrepareRoute: (target) =>
           target._tag !== "BearerConnectionTarget"
-            ? // @effect-diagnostics-next-line effectSucceedWithVoid:off - Admission checks return an optional blocker, so absence must be undefined.
-              Effect.succeed(undefined)
+            ? Effect.undefined
             : Ref.updateAndGet(attempts, (count) => count + 1).pipe(
                 Effect.flatMap((count) =>
                   count === 1
@@ -1531,8 +1535,7 @@ describe("EnvironmentRegistry", () => {
                           }),
                         ),
                       )
-                    : // @effect-diagnostics-next-line effectSucceedWithVoid:off - Admission checks return an optional blocker, so absence must be undefined.
-                      Effect.succeed(undefined),
+                    : Effect.undefined,
                 ),
               ),
       });

@@ -24,6 +24,15 @@ export class NodePtyModuleLoadError extends Schema.TaggedError<NodePtyModuleLoad
   }
 }
 
+class NodePtyCancelError extends Schema.TaggedError<NodePtyCancelError>()("NodePtyCancelError", {
+  terminalPid: Schema.Number,
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return `Failed to cancel Windows terminal startup for ${this.terminalPid}.`;
+  }
+}
+
 type NodePtyModuleLoader = () => Promise<typeof import("node-pty")>;
 
 // node-pty's native addon stays external; single-executables need require to resolve disk modules and spawn helpers.
@@ -68,14 +77,11 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
   if (didEnsureSpawnHelperExecutable) return;
 
   const helperPath = yield* resolveNodePtySpawnHelperPath;
-  if (!helperPath) return;
-  didEnsureSpawnHelperExecutable = true;
-
-  if (!(yield* fs.exists(helperPath))) {
-    return;
+  if (helperPath && (yield* fs.exists(helperPath))) {
+    yield* fs.chmod(helperPath, 0o755).pipe(Effect.orElseSucceed(() => undefined));
   }
-
-  yield* fs.chmod(helperPath, 0o755).pipe(Effect.orElseSucceed(() => undefined));
+  // Set only after the repair finishes, so a check cut off by the spawn deadline runs again.
+  didEnsureSpawnHelperExecutable = true;
 });
 
 // node-pty has no public readiness event; ready_datapipe sets pid before our listener.
@@ -134,18 +140,21 @@ const waitForWindowsPid = (
 
 // The private agent cancels pending connections before a child exists; public kill waits for first output.
 const killStartingWindowsPty = (process: import("node-pty").IPty) =>
-  Effect.try(() => {
-    if (
-      "_agent" in process &&
-      typeof process._agent === "object" &&
-      process._agent !== null &&
-      "kill" in process._agent &&
-      typeof process._agent.kill === "function"
-    ) {
-      process._agent.kill();
-    } else {
-      process.kill();
-    }
+  Effect.try({
+    try: () => {
+      if (
+        "_agent" in process &&
+        typeof process._agent === "object" &&
+        process._agent !== null &&
+        "kill" in process._agent &&
+        typeof process._agent.kill === "function"
+      ) {
+        process._agent.kill();
+      } else {
+        process.kill();
+      }
+    },
+    catch: (cause) => new NodePtyCancelError({ terminalPid: process.pid, cause }),
   }).pipe(
     Effect.catch((error) =>
       Effect.logWarning("failed to cancel Windows terminal startup", {
@@ -178,7 +187,7 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
     return this.process.pid;
   }
 
-  write(data: string): void {
+  write(data: string | Buffer): void {
     this.process.write(data);
   }
 
@@ -232,19 +241,20 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
       }),
   }).pipe(Effect.orDie);
 
-  const ensureNodePtySpawnHelperExecutableCached = yield* Effect.cached(
-    ensureNodePtySpawnHelperExecutable().pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-      Effect.provideService(HostProcess.Platform, platform),
-      Effect.provideService(HostProcess.Architecture, architecture),
-      Effect.orElseSucceed(() => undefined),
-    ),
+  const ensureSpawnHelperExecutable = ensureNodePtySpawnHelperExecutable().pipe(
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.provideService(HostProcess.Platform, platform),
+    Effect.provideService(HostProcess.Architecture, architecture),
+    Effect.orElseSucceed(() => undefined),
+    // Terminal startup runs uninterruptibly; a stalled helper check must not hold its locks.
+    Effect.interruptible,
+    Effect.timeoutOrElse({ duration: "5 seconds", orElse: () => Effect.void }),
   );
 
   return PtyAdapter.PtyAdapter.of({
     spawn: Effect.fn("NodePtyAdapter.spawn")(function* (input) {
-      yield* ensureNodePtySpawnHelperExecutableCached;
+      yield* ensureSpawnHelperExecutable;
       // ConPTY ignores node-pty's name option for TERM; set it explicitly to avoid missing/16-color values.
       const env =
         platform === "win32" && input.env["TERM"] === undefined

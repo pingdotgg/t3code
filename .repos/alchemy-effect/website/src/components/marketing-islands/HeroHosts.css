@@ -1,0 +1,140 @@
+/* Hero host reel (HeroHosts.tsx). */
+
+.hh-reel {
+  --hh-green: #7ee787;
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+}
+/* Phones: one line that scrolls sideways (the active host is scrolled into
+   view, see HeroHosts.tsx), with the edges faded. */
+@media (max-width: 760px) {
+  .hh-reel {
+    position: relative;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-inline: 12px;
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 18px,
+      #000 calc(100% - 18px),
+      transparent
+    );
+  }
+  .hh-reel::-webkit-scrollbar {
+    display: none;
+  }
+  .hh-reel li {
+    flex: none;
+  }
+}
+
+/* The deck's reel: muted labels, the current one lit and underlined. */
+.hh-reel__item {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 1px 5px;
+  border-bottom: 2px solid transparent;
+  font-family: var(--alc-font-mono);
+  font-size: 11px;
+  color: var(--alc-fg-3);
+  cursor: pointer;
+  transition:
+    color 450ms cubic-bezier(0.3, 0, 0.1, 1),
+    opacity 450ms cubic-bezier(0.3, 0, 0.1, 1),
+    border-color 450ms cubic-bezier(0.3, 0, 0.1, 1);
+}
+.hh-reel__item:hover {
+  color: var(--alc-fg-1);
+}
+.hh-reel__item:focus-visible {
+  outline: 2px solid var(--alc-accent);
+  outline-offset: 2px;
+}
+.hh-reel__item.is-active {
+  color: var(--alc-fg-1);
+  font-weight: 600;
+  border-bottom-color: var(--hh-green);
+}
+
+/* A slot holds one value. When it changes, the old value slides up and out,
+   the new one slides up into place, and the width eases between the two
+   (Roll.tsx in the talk deck). Changed values stay tinted and underlined. */
+.hh-slot {
+  display: inline-block;
+  vertical-align: top;
+  height: 1.65em;
+  overflow: hidden;
+  border-radius: 3px;
+}
+.hh-slot__strip {
+  display: block;
+  transform: translateY(-1.65em);
+}
+.hh-slot__strip > span {
+  display: block;
+  height: 1.65em;
+  white-space: pre;
+}
+.hh-slot.is-active {
+  background: rgba(126, 231, 135, 0.07);
+  box-shadow: inset 0 -2px 0 #7ee787;
+}
+.hh-slot.is-rolling {
+  animation:
+    hh-width 450ms cubic-bezier(0.3, 0, 0.1, 1) both,
+    hh-glow 450ms ease both;
+}
+.hh-slot.is-rolling .hh-slot__strip {
+  animation: hh-roll 450ms cubic-bezier(0.3, 0, 0.1, 1) both;
+}
+@keyframes hh-roll {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-1.65em);
+  }
+}
+@keyframes hh-width {
+  from {
+    width: var(--from);
+  }
+  to {
+    width: var(--to);
+  }
+}
+@keyframes hh-glow {
+  50% {
+    background: rgba(126, 231, 135, 0.16);
+  }
+}
+
+/* Narrow screens show the compact program (see HOST_TEMPLATE_COMPACT). */
+.hh-pre--compact {
+  display: none;
+}
+@media (max-width: 760px) {
+  .hh-pre--full {
+    display: none;
+  }
+  .hh-pre--compact {
+    display: block;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hh-reel__item {
+    transition: none;
+  }
+  .hh-slot.is-rolling,
+  .hh-slot.is-rolling .hh-slot__strip {
+    animation: none;
+  }
+}

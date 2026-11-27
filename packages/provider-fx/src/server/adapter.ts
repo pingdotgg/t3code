@@ -2,7 +2,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { type OrchestrationV2ProviderCapabilities } from "@t3tools/contracts";
 import { FxSettings } from "../settings.ts";
-import type * as Crypto from "effect/Crypto";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -19,7 +19,11 @@ import {
   applyFxEffortDefault,
   applyFxModelSelection,
   FX_DRIVER_KIND,
+  FX_SESSION_META,
   fxPermissionDisposition,
+  type FxModelChoice,
+  FX_MODE_CONFIG_ID,
+  fxToolCallWasCancelled,
   fxSessionModeForPolicy,
   makeFxAcpRuntime,
   withFxSessionMode,
@@ -97,19 +101,33 @@ const decodeFxSubagentResult = Schema.decodeUnknownOption(
   ),
 );
 const decodeJsonString = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.String));
+const decodeFxToolError = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      error: Schema.Struct({
+        message: Schema.optional(Schema.String),
+        code: Schema.optional(Schema.String),
+        details: Schema.optional(Schema.Struct({ error: Schema.optional(Schema.String) })),
+      }),
+    }),
+  ),
+);
 
 /**
  * fx clips every tool result to 199 bytes, so a long sub-agent reply arrives
  * as cut-off `{"ok":…,"result":"…` JSON. Keeps the readable prefix and marks the cut.
  */
-function fxSubagentOutcome(
+export function fxSubagentOutcome(
   text: string,
 ): { readonly ok: boolean; readonly result: string | null } | undefined {
   const whole = decodeFxSubagentResult(text);
   if (Option.isSome(whole)) return whole.value;
   const clipped = /^\{"ok":(true|false),"result":"((?:[^"\\]|\\.)*)/.exec(text);
   if (clipped === null) return undefined;
-  const prefix = decodeJsonString(`"${(clipped[2] ?? "").replace(/\\u[0-9a-fA-F]{0,3}$/, "")}"`);
+  const fragment = clipped[2] ?? "";
+  const prefix = decodeJsonString(`"${fragment}"`).pipe(
+    Option.orElse(() => decodeJsonString(`"${fragment.replace(/\\u[0-9a-fA-F]{0,3}$/, "")}"`)),
+  );
   const cut = text[clipped[0].length] !== '"';
   return {
     ok: clipped[1] === "true",
@@ -125,6 +143,10 @@ function extractFxSubagentUpdate(tool: AcpToolCallState): AcpAdapterV2SubagentUp
   const request = "request" in input.value ? input.value.request : input.value;
   const text = Option.getOrUndefined(decodeFxToolContent(tool.data.content))?.[0]?.content.text;
   const outcome = text === undefined ? undefined : fxSubagentOutcome(text);
+  // A failed call carries fx's error envelope, e.g. `Cancelled` after Stop.
+  const failure = Option.getOrUndefined(
+    text === undefined ? Option.none() : decodeFxToolError(text),
+  )?.error;
   const status =
     tool.status === "completed"
       ? outcome?.ok === false
@@ -140,7 +162,15 @@ function extractFxSubagentUpdate(tool: AcpToolCallState): AcpAdapterV2SubagentUp
     title: request.action === "message" ? request.agent : null,
     model: request.model ?? null,
     status,
-    result: status === "running" ? null : (outcome?.result ?? text ?? null),
+    result:
+      status === "running"
+        ? null
+        : (outcome?.result ??
+          failure?.details?.error ??
+          failure?.message ??
+          failure?.code ??
+          text ??
+          null),
   };
 }
 
@@ -149,8 +179,8 @@ export interface FxAdapterV2Options {
   readonly settings: FxSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly selfInvocation: SelfInvocation;
-  /** fx's id for "Default", the model the provider snapshot read from `fx status`. */
-  readonly defaultModel?: Effect.Effect<string | undefined>;
+  /** The backend and model "Default" runs in a folder, which `fx status` reports there. */
+  readonly defaultChoice?: (cwd: string) => Effect.Effect<FxModelChoice | undefined>;
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly testHooks?: Parameters<typeof makeAcpAdapterV2>[0]["testHooks"];
   /** Replaces the `fx acp` launch (replay tests). fx's session setup still applies. */
@@ -159,7 +189,7 @@ export interface FxAdapterV2Options {
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
-    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope
   >;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
@@ -173,18 +203,31 @@ function makeFxAcpAdapterFlavor(options: FxAdapterV2Options): AcpAdapterV2Flavor
         fxSettings: options.settings,
         environment: { ...options.environment, ...processEnvironment },
       }));
+  // A runtime serves one folder; "Default" resolves there.
+  const runtimeCwds = new WeakMap<AcpSessionRuntime.AcpSessionRuntime["Service"], string>();
   return {
     driver: FX_DRIVER_KIND,
     runtimeHarness: "fx",
     capabilities: FxProviderCapabilitiesV2,
-    makeRuntime: (input) => makeRuntime(input).pipe(Effect.map(withFxSessionMode)),
-    applyModelSelection: ({ runtime, modelSelection }) =>
-      applyFxModelSelection(runtime, modelSelection, options.defaultModel).pipe(
-        Effect.tap(() => applyFxEffortDefault(runtime, modelSelection)),
+    makeRuntime: (input) =>
+      makeRuntime({ ...input, sessionMeta: () => FX_SESSION_META }).pipe(
+        Effect.map(withFxSessionMode),
+        Effect.tap((runtime) => Effect.sync(() => runtimeCwds.set(runtime, input.cwd))),
       ),
+    applyModelSelection: ({ runtime, modelSelection }) => {
+      const cwd = runtimeCwds.get(runtime);
+      return applyFxModelSelection(
+        runtime,
+        modelSelection,
+        cwd === undefined ? undefined : options.defaultChoice?.(cwd),
+      ).pipe(Effect.tap(() => applyFxEffortDefault(runtime, modelSelection)));
+    },
+    ownedModelOptionIds: [FX_MODE_CONFIG_ID],
+    lockSessionModeToPolicy: true,
     sessionModeForPolicy: fxSessionModeForPolicy,
     permissionDisposition: fxPermissionDisposition,
     extractSubagentUpdate: extractFxSubagentUpdate,
+    isCancelledToolCall: fxToolCallWasCancelled,
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
   };
 }
@@ -203,7 +246,7 @@ export const makeFxAdapterV2 = Effect.fn("makeFxAdapterV2")(function* (
 
 export type FxAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | Path.Path
@@ -211,9 +254,8 @@ export type FxAdapterV2DriverEnv =
   | ProviderEventLoggers.ProviderEventLoggers
   | ProviderHost.ProviderHost;
 
-/** `defaultModel` reads fx's id for "Default" from the provider snapshot. */
 export const makeFxAdapterV2Driver = (
-  defaultModel: Effect.Effect<string | undefined>,
+  defaultChoice: (cwd: string) => Effect.Effect<FxModelChoice | undefined>,
 ): ProviderAdapterDriver<FxSettings, FxAdapterV2DriverEnv> => ({
   driverKind: FX_DRIVER_KIND,
   configSchema: FxSettings,
@@ -229,7 +271,7 @@ export const makeFxAdapterV2Driver = (
         settings: { ...input.config, enabled: input.enabled },
         environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         selfInvocation,
-        defaultModel,
+        defaultChoice,
         nativeLogging: (threadId) =>
           makeNativeLogger({
             nativeEventLogger: providerEventLoggers.native,

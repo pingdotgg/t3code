@@ -7,6 +7,7 @@ import {
   extractAntigravityUserInputQuestion,
   antigravityApprovalOptions,
   antigravitySubagentOutput,
+  antigravityToolOutlivesPrompt,
   classifyAntigravitySubagentToolCall,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
@@ -19,6 +20,8 @@ import {
   mergeToolCallState,
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
+import { acpToolCallDiffPatch } from "@t3tools/provider-acp/server/adapter";
+import { acpChangedPathsOfToolCall } from "@t3tools/provider-acp/server/clientPolicy";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 
@@ -71,6 +74,68 @@ describe("native Antigravity subagent tools", () => {
     expect(
       antigravitySubagentOutput({ toolCallId: "trajectory:4", data: { rawOutput: {} } }),
     ).toBeUndefined();
+  });
+
+  it("classifies swarm worker launches and formats legacy swarm board tools cleanly", () => {
+    const addCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-add-1",
+      title: "Run swarm",
+      kind: "other",
+      status: "completed",
+      data: {
+        rawInput: { action: "add", name: "parser", brief: "Audit parser module" },
+        rawOutput: { status: "added", name: "parser", conversation_id: "child-1" },
+      },
+    });
+    expect(addCall.title).toBe("Add swarm worker @parser");
+    expect(classifyAntigravitySubagentToolCall(addCall, {})).toBe("subagent");
+    expect(
+      classifyAntigravitySubagentToolCall(
+        {
+          toolCallId: "swarm-mcp",
+          title: "Run swarm",
+          kind: "other",
+          data: { rawInput: { action: "add", name: "parser" } },
+        },
+        { update: { _meta: { is_mcp_tool_call: true } } },
+      ),
+    ).toBe("mcp");
+
+    const killCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-kill-1",
+      title: "Run swarm",
+      kind: "other",
+      data: { rawInput: { action: "kill", name: "parser" } },
+    });
+    expect(killCall.title).toBe("Stop swarm worker @parser");
+    expect(classifyAntigravitySubagentToolCall(killCall, {})).toBeUndefined();
+
+    const postCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-post-1",
+      title: "Run post_message",
+      kind: "other",
+      data: { rawInput: { channel: "backend", text: "@coordinator done" } },
+    });
+    expect(postCall.title).toBe("Post to #backend");
+    expect(classifyAntigravitySubagentToolCall(postCall, {})).toBeUndefined();
+
+    const readCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-read-1",
+      title: "Run read_board",
+      kind: "other",
+      data: { rawInput: { since: 1 } },
+    });
+    expect(readCall.title).toBe("Read swarm board");
+    expect(readCall.kind).toBe("other");
+
+    const waitCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-wait-1",
+      title: "Run swarm_wait",
+      kind: "other",
+      data: { rawInput: { since: 2, wake_on: "mentions" } },
+    });
+    expect(waitCall.title).toBe("Wait for swarm board");
+    expect(waitCall.kind).toBe("think");
   });
 });
 
@@ -251,17 +316,23 @@ describe("Antigravity permissions and questions", () => {
   });
 
   it("bounds question text without changing choice IDs", () => {
+    const title = "Q".repeat(7_994) + "🧪";
+    const label = "O".repeat(506) + "🧪";
     const request = {
       ...questionRequest,
-      toolCall: { ...questionRequest.toolCall, title: "Question ".repeat(2_000) },
+      toolCall: { ...questionRequest.toolCall, title: title + "🚀 continued" },
       options: [
-        { optionId: "stable-choice", name: "Choice ".repeat(2_000), kind: "allow_once" as const },
+        { optionId: "stable-choice", name: label + "🚀 continued", kind: "allow_once" as const },
       ],
     };
     const question = extractAntigravityUserInputQuestion(request);
-    expect(question?.question.length).toBeLessThanOrEqual(8_000);
-    expect(question?.options[0]?.label.length).toBeLessThanOrEqual(512);
-    expect(question?.options[0]?.value).toBe("stable-choice");
+    expect(question?.question).toBe(title + "...");
+    expect(question?.options).toEqual([
+      { value: "stable-choice", label: label + "...", description: label + "..." },
+    ]);
+    expect(
+      makeAntigravityUserInputResponse(request, { interaction_9960062f: label + "..." }),
+    ).toEqual({ outcome: { outcome: "selected", optionId: "stable-choice" } });
   });
 });
 
@@ -289,6 +360,135 @@ describe("Antigravity tool results", () => {
     });
     expect(toolCall.data.rawOutput).not.toHaveProperty("formatted_output");
     expect(commandCompleted.update.rawOutput.formatted_output).toBe("after\n");
+  });
+
+  it("keeps the captured edit location through approval and completion", () => {
+    const path = "/workspace/app.ts";
+    const replace = {
+      TargetContent: "const target = 10;",
+      ReplacementContent: "const target = 100;",
+      TargetFile: path,
+    };
+    const frame = (rawInput: Record<string, unknown>, line?: number) =>
+      ({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "edit-1",
+          title: "Run edit_file?",
+          kind: "edit",
+          status: "pending",
+          content: [
+            {
+              type: "diff",
+              path,
+              oldText: replace.TargetContent,
+              newText: replace.ReplacementContent,
+            },
+          ],
+          locations: [line === undefined ? { path } : { path, line }],
+          rawInput,
+        },
+      }) satisfies EffectAcpSchema.SessionNotification;
+    const running = parseToolUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-1",
+        kind: "edit",
+        status: "in_progress",
+        title: "Running edit_file",
+        locations: [{ path }],
+        rawInput: { file_path: path },
+      },
+    }).toolCall;
+    const completed = parseToolUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-1",
+        status: "completed",
+        rawOutput: "Tool execution",
+      },
+    }).toolCall;
+    const preEdit = Array.from({ length: 12 }, (_, i) =>
+      i === 9 ? replace.TargetContent : `line ${i + 1}`,
+    ).join("\n");
+    const postEdit = preEdit.replace(replace.TargetContent, replace.ReplacementContent);
+    for (const [pending, readFile] of [
+      [frame({ ...replace, StartLine: 5, EndLine: 12 }, 5), () => preEdit],
+      [frame(replace), () => preEdit],
+    ] as const) {
+      let toolCall = normalizeAntigravityToolCall(parseToolUpdate(pending).toolCall, readFile);
+      for (const next of [running, completed]) {
+        toolCall = normalizeAntigravityToolCall(mergeToolCallState(toolCall, next), () => postEdit);
+      }
+      expect(toolCall.status).toBe("completed");
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toBe(
+        `--- ${path}\n+++ ${path}\n@@ -10,1 +10,1 @@\n-const target = 10;\n+const target = 100;\n`,
+      );
+    }
+    // Full-access edits arrive path-only; no hunk is offered instead of the tool's status text.
+    let pathOnly = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "edit-2",
+          kind: "edit",
+          status: "in_progress",
+          title: "Running edit_file",
+          locations: [{ path }],
+          rawInput: { file_path: path },
+        },
+      }).toolCall,
+    );
+    pathOnly = normalizeAntigravityToolCall(mergeToolCallState(pathOnly, completed));
+    expect(pathOnly.data.content).toEqual([{ type: "diff", patch: { format: "omitted" } }]);
+    expect(acpToolCallDiffPatch(pathOnly.data.content)).toBeUndefined();
+    // A captured patch that a later update's shared text budget cut or dropped is omitted.
+    for (const patch of [{ text: "[Earlier output truncated]\n\n@@ -80,1 +80,1 @@" }, {}]) {
+      const kept = normalizeAntigravityToolCall({
+        toolCallId: "edit-cut",
+        kind: "edit",
+        status: "completed",
+        data: { content: [{ type: "diff", path, patch }] },
+      });
+      expect(kept.data.content).toEqual([{ type: "diff", path, patch: { format: "omitted" } }]);
+    }
+    // A whole-file write whose old text was cut to its tail must not show the cut as deletions.
+    const overwrite = normalizeAntigravityToolCall({
+      toolCallId: "edit-overwrite",
+      kind: "edit",
+      status: "completed",
+      data: {
+        rawInput: { TargetFile: path, CodeContent: "one line\n" },
+        content: [
+          {
+            type: "diff",
+            path,
+            oldText: "[Earlier output truncated]\n\nrow 999\n",
+            newText: "one line\n",
+          },
+        ],
+      },
+    });
+    expect(acpToolCallDiffPatch(overwrite.data.content)).toBeUndefined();
+    // A patch too long to keep, or input cut to its tail, must not fall back to line-1 snippets.
+    for (const width of [60, 120]) {
+      const block = (value: string) =>
+        Array.from({ length: 120 }, (_, i) => `${value} ${i} `.padEnd(width, "x")).join("\n");
+      const long = {
+        TargetContent: block("old"),
+        ReplacementContent: block("new"),
+        TargetFile: path,
+      };
+      const toolCall = normalizeAntigravityToolCall(
+        parseToolUpdate(frame({ ...long, StartLine: 80, EndLine: 199 }, 80)).toolCall,
+      );
+      expect(toolCall.data.content).toMatchObject([{ patch: { format: "omitted" } }]);
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toBeUndefined();
+    }
   });
 
   it.each([
@@ -330,27 +530,119 @@ describe("Antigravity tool results", () => {
     });
   });
 
-  it("bounds both canonical output and retained raw output", () => {
-    const output = `${"output line\n".repeat(20_000)}last line\n`;
+  it.each([
+    { name: "ASCII", boundary: "x", kept: "x", field: "combinedOutput" },
+    { name: "split emoji", boundary: "🚀", kept: "", field: "combinedOutput" },
+    { name: "split emoji (snake case)", boundary: "🚀", kept: "", field: "combined_output" },
+  ])("bounds both canonical and retained raw output at $name", ({ boundary, kept, field }) => {
+    const tail = `${"x".repeat(7_989)}last line\n`;
+    const output = `${"output line\n".repeat(20_000)}${boundary}${tail}`;
+    const expected = `[Earlier output truncated]\n\n${kept}${tail}`;
+    const { combinedOutput: _combinedOutput, ...rawOutput } = commandCompleted.update.rawOutput;
     const event = parseToolUpdate({
       ...commandCompleted,
       update: {
         ...commandCompleted.update,
         rawOutput: {
-          ...commandCompleted.update.rawOutput,
-          combinedOutput: output,
+          ...rawOutput,
+          [field]: output,
           formatted_output: output,
         },
       },
     });
     const toolCall = normalizeAntigravityToolCall(event.toolCall);
     expect(toolCall.data).toMatchObject({
-      item: { aggregatedOutput: expect.stringContaining("last line\n") },
-      rawOutput: { combinedOutput: expect.stringContaining("last line\n") },
+      item: { aggregatedOutput: expected },
+      rawOutput: { [field]: expected },
     });
+    expect(event.toolCall.data.rawOutput).toMatchObject({ [field]: expected });
     expect(JSON.stringify(toolCall).length).toBeLessThan(20_000);
     expect(JSON.stringify(event.rawPayload).length).toBeLessThan(10_000);
     expect(JSON.stringify(event.rawPayload)).not.toContain("formatted_output");
+  });
+
+  it.each([
+    { name: "a command", update: commandStarted.update, outlives: true },
+    {
+      name: "a daemon",
+      update: { ...commandStarted.update, rawInput: { CommandLine: "serve", IsDaemon: true } },
+      outlives: false,
+    },
+    // agy 1.5.13 keeps this call in progress until the wake fires.
+    {
+      name: "a scheduled wake",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_4902666363527503248",
+        status: "in_progress",
+        kind: "other",
+        title: "Run schedule",
+        rawInput: { DurationSeconds: 30, Prompt: "Reply only with the word DONE." },
+      },
+      outlives: true,
+    },
+    {
+      name: "another native tool",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_other",
+        status: "in_progress",
+        kind: "other",
+        title: "Run list_dir",
+        rawInput: { DirectoryPath: "/workspace" },
+      },
+      outlives: false,
+    },
+  ] satisfies ReadonlyArray<{
+    name: string;
+    update: EffectAcpSchema.SessionNotification["update"];
+    outlives: boolean;
+  }>)("knows whether $name outlives the prompt", ({ update, outlives }) => {
+    const event = parseToolUpdate({ sessionId: "session-1", update });
+    expect(antigravityToolOutlivesPrompt(normalizeAntigravityToolCall(event.toolCall))).toBe(
+      outlives,
+    );
+  });
+
+  it("keeps the start of a long command line, where the program and target are", () => {
+    const head = "cat > notes.md <<'EOF'";
+    const commandLine = `${head}\n${"note line\n".repeat(1_000)}EOF`;
+    const toolCall = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        ...commandStarted,
+        update: { ...commandStarted.update, rawInput: { CommandLine: commandLine } },
+      }).toolCall,
+    );
+    expect(toolCall.command?.startsWith(head)).toBe(true);
+    expect(toolCall.command).not.toContain("[Earlier output truncated]");
+    expect((toolCall.data.rawInput as { CommandLine: string }).CommandLine.startsWith(head)).toBe(
+      true,
+    );
+  });
+
+  it("keeps 1.5 command input and output valid Unicode when cut", () => {
+    const tail = `${"x".repeat(7_982)}build completed\r\n`;
+    const output = `Command output:\nprefix\r\n🚀${tail}`;
+    const expected = `[Earlier output truncated]\n\n${tail}`;
+    const head = "x".repeat(7_999);
+    const expectedCommand = `${head}\n\n[Command truncated]`;
+    const toolCall = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        ...commandCompleted,
+        update: {
+          ...commandCompleted.update,
+          rawInput: { CommandLine: `${head}🚀 --flag` },
+          rawOutput: { output, exit_code: 0 },
+          content: [{ type: "content", content: { type: "text", text: output } }],
+        },
+      }).toolCall,
+    );
+    expect(toolCall.command).toBe(expectedCommand);
+    expect(toolCall.data).toMatchObject({
+      rawInput: { CommandLine: expectedCommand },
+      rawOutput: { output: expected },
+      content: [{ content: { text: expected.trimEnd() } }],
+    });
   });
 
   it("removes inline images while preserving valid tool content and the local image path", () => {
@@ -383,6 +675,69 @@ describe("Antigravity tool results", () => {
     );
   });
 
+  const changesBeyondSizeLimits: ReadonlyArray<{
+    readonly part: string;
+    readonly update: Pick<EffectAcpSchema.ToolCallUpdate, "content" | "rawInput">;
+  }> = [
+    {
+      part: "a diff after others whose text uses up the size limit",
+      update: {
+        content: [
+          ...Array.from({ length: 5 }, (_, index) => ({
+            type: "diff" as const,
+            path: `/workspace/a${index}.ts`,
+            newText: "a".repeat(9_000),
+          })),
+          { type: "diff", path: "/elsewhere/b.ts", newText: "b" },
+        ],
+      },
+    },
+    {
+      part: "a diff whose path is longer than the size limit",
+      update: {
+        content: [{ type: "diff", path: `/elsewhere/${"d".repeat(9_000)}/b.ts`, newText: "b" }],
+      },
+    },
+    {
+      part: "a raw input path after text that uses up the size limit",
+      update: {
+        rawInput: {
+          first: "a".repeat(8_000),
+          parts: Array.from({ length: 8 }, () => "a".repeat(8_000)),
+          file_path: "/elsewhere/b.ts",
+        },
+      },
+    },
+    {
+      part: "a raw input path longer than the size limit",
+      update: { rawInput: { path: `/elsewhere/${"d".repeat(9_000)}/b.ts` } },
+    },
+  ];
+  it.each(changesBeyondSizeLimits)(
+    "keeps every path a file change names, or none: $part",
+    ({ update }) => {
+      const notification: EffectAcpSchema.SessionNotification = {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "edit-1",
+          title: "Edit files",
+          kind: "edit",
+          status: "pending",
+          ...update,
+        },
+      };
+      const sent = acpChangedPathsOfToolCall(update);
+      const normalized = normalizeAntigravitySessionUpdate(notification).update;
+      if (normalized.sessionUpdate !== "tool_call_update") {
+        return expect.unreachable("a tool call update stays one");
+      }
+      const kept = acpChangedPathsOfToolCall(normalized);
+      expect(sent).not.toBe("unknown");
+      if (kept !== "unknown") expect(kept).toEqual(sent);
+    },
+  );
+
   it.each([
     ["/workspace/result.png", "/workspace/result.png"],
     ["C:\\work\\result.png", "C:\\work\\result.png"],
@@ -412,6 +767,17 @@ describe("Antigravity tool results", () => {
     expect(serialized).not.toContain("image-blob");
     expect(serialized).not.toContain("inline-image");
     expect(serialized).not.toContain("inline-data-url");
+
+    // Leave three UTF-16 units for the retained output.
+    const padding = Object.fromEntries(
+      Array.from({ length: 7 }, (_, index) => [index, "x".repeat(8_000)]),
+    );
+    expect(
+      sanitizeAntigravityToolPayload({
+        rawOutput: { ...padding, tail: "x".repeat(7_997) },
+        item: { aggregatedOutput: "🚀ok" },
+      }),
+    ).toMatchObject({ item: { aggregatedOutput: "[Earlier output truncated]\n\nok" } });
   });
 });
 
@@ -491,5 +857,39 @@ describe("Antigravity served reads", () => {
       toolCallId: "call_current",
       status: "completed",
     });
+  });
+
+  it("drops agy's toolSummary from T3 MCP call arguments only", () => {
+    const t3Call = normalizeAntigravityToolCall(
+      parseToolUpdate(
+        normalizeAntigravitySessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_t3_send",
+            title: "Run mcp_t3-code_send_to_user",
+            kind: "other",
+            status: "in_progress",
+            rawInput: { message: "Hello", toolSummary: "Send greeting" },
+          },
+        }),
+      ).toolCall,
+    );
+    expect(t3Call.data.rawInput).toEqual({ message: "Hello" });
+
+    const foreignCall = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call_other",
+          title: "Run mcp_other_send_to_user",
+          kind: "other",
+          status: "in_progress",
+          rawInput: { message: "Hello", toolSummary: "Send greeting" },
+        },
+      }).toolCall,
+    );
+    expect(foreignCall.data.rawInput).toEqual({ message: "Hello", toolSummary: "Send greeting" });
   });
 });

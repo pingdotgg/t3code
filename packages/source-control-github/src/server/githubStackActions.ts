@@ -124,7 +124,11 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     number: input.number,
     stackNumber: input.stackNumber,
   };
-  if (input.action !== "merge" && input.action !== "update-branch")
+  if (
+    input.action !== "merge" &&
+    input.action !== "update-branch" &&
+    input.action !== "enable-auto-merge"
+  )
     return yield* new GitHubStackUnsupportedError({ ...identity });
   const endpoint = `repos/${input.repository}`;
   const read = yield* api.rest({
@@ -146,9 +150,9 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     return yield* new GitHubStackChangedError({ ...identity, number: input.number, completed: 0 });
   }
   const affectedLayers =
-    input.action === "merge" ? stack.layers.slice(0, targetIndex + 1) : stack.layers;
+    input.action === "update-branch" ? stack.layers : stack.layers.slice(0, targetIndex + 1);
   const open = affectedLayers.filter((layer) => layer.state !== "merged");
-  if (input.action === "merge" && target.state !== "open")
+  if (input.action !== "update-branch" && target.state !== "open")
     return yield* new GitHubStackUnsupportedError({ ...identity });
   if (
     !input.expectedStackHeads ||
@@ -201,6 +205,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
       })
     )
       return yield* new GitHubStackPermissionError({ ...identity });
+    const mergedHeadSha = stack.layers[stack.layers.indexOf(open[0]!) - 1]?.headSha;
     // GitHub has no stack-rebase API; per-PR updates replay lower layers' old commits.
     yield* cascadeRebaseStack({
       host: input.host,
@@ -211,6 +216,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
         headBranch: layer.headBranch,
         headSha: layer.headSha!,
       })),
+      ...(mergedHeadSha === undefined ? {} : { mergedHeadSha }),
     }).pipe(
       Effect.mapError((cause) =>
         cause._tag === "GitHubStackRebaseConflictError" ||
@@ -228,6 +234,8 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
   }
   if (open.some((layer) => layer.isDraft))
     return yield* new GitHubStackUnsupportedError({ ...identity });
+  // Auto-merge is armed by the caller's GraphQL mutation once the layers are pinned here.
+  if (input.action === "enable-auto-merge") return;
   const decode = (raw: string) =>
     decodeMergeResponse(raw).pipe(
       Effect.mapError((cause) => new GitHubStackResponseInvalidError({ ...identity, cause })),

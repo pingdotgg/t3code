@@ -1,26 +1,24 @@
 {
   "name": "@alchemy.run/node-utils",
-  "version": "2.0.0-beta.80",
+  "version": "2.0.0-beta.85",
   "description": "Runtime utilities for Alchemy packages.",
-  "homepage": "https://alchemy.run",
-  "author": "Sam Goodwin <sam@alchemy.run>",
   "keywords": [
     "alchemy",
     "gitignore",
     "node",
     "utilities"
   ],
+  "homepage": "https://alchemy.run",
   "bugs": {
     "url": "https://github.com/alchemy-run/alchemy/issues"
   },
   "license": "Apache-2.0",
+  "author": "Sam Goodwin <sam@alchemy.run>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/alchemy-run/alchemy.git",
     "directory": "packages/node-utils"
   },
-  "type": "module",
-  "sideEffects": false,
   "files": [
     "src",
     "lib",
@@ -28,38 +26,47 @@
     "NOTICE",
     "THIRD_PARTY_LICENSES.md"
   ],
-  "scripts": {
-    "build": "tsc -b && bun ../../scripts/copy-package-files.ts node-utils",
-    "test": "bun test ./test"
-  },
+  "type": "module",
+  "sideEffects": false,
   "exports": {
-    "./ignore": {
-      "types": "./lib/ignore.d.ts",
-      "bun": "./src/ignore.ts",
-      "import": "./lib/ignore.js"
+    "./ignore": "./src/ignore.ts",
+    "./register-oxc": "./src/loader/register.ts",
+    "./watch-import": "./src/watch/import-watcher.ts",
+    "./watch-import-bun": "./src/watch/bun-import-tracker.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      "./ignore": {
+        "types": "./lib/ignore.d.ts",
+        "bun": "./src/ignore.ts",
+        "default": "./lib/ignore.js"
+      },
+      "./register-oxc": {
+        "types": "./lib/loader/register.d.ts",
+        "bun": "./src/loader/register.ts",
+        "default": "./lib/loader/register.js"
+      },
+      "./watch-import": {
+        "types": "./lib/watch/import-watcher.d.ts",
+        "bun": "./src/watch/import-watcher.ts",
+        "default": "./lib/watch/import-watcher.js"
+      },
+      "./watch-import-bun": {
+        "types": "./lib/watch/bun-import-tracker.d.ts",
+        "bun": "./src/watch/bun-import-tracker.ts",
+        "default": "./lib/watch/bun-import-tracker.js"
+      }
     },
-    "./register-oxc": {
-      "types": "./lib/register-oxc.d.ts",
-      "bun": "./src/register-oxc.ts",
-      "import": "./lib/register-oxc.js"
-    },
-    "./watch-import": {
-      "types": "./lib/watch-import.d.ts",
-      "bun": "./src/watch-import.ts",
-      "import": "./lib/watch-import.js"
-    },
-    "./watch-import-bun": {
-      "types": "./lib/watch-import-bun.d.ts",
-      "bun": "./src/watch-import-bun.ts",
-      "import": "./lib/watch-import-bun.js"
-    }
+    "access": "public"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"{.}...\" run build:package",
+    "build:package": "node scripts/build.ts",
+    "test": "bun test ./test"
   },
   "dependencies": {
     "chokidar": "catalog:",
     "rolldown": "catalog:"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "devDependencies": {
     "@types/bun": "catalog:",
