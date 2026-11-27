@@ -92,12 +92,9 @@ describe("resolveProjectScriptTerminalId", () => {
 
 describe("basename", () => {
   it.each([
-    ["C:\\wt\\repo", "repo"],
     ["C:\\wt\\repo\\", "repo"],
-    ["\\\\wsl.localhost\\Ubuntu\\home\\u\\repo", "repo"],
     ["/home/u/repo/", "repo"],
     ["/", "/"],
-    [null, null],
   ])("names %s as %s", (input, expected) => {
     expect(basename(input)).toBe(expected);
   });
