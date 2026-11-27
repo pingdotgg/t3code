@@ -1,7 +1,11 @@
 import { pipe } from "effect/Function";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { brokenRuntimeError } from "../../provider/providerCompatibility.ts";
-import { revertCodexThread, revertCodexThreadAfterTurn } from "../../provider/CodexThreadRevert.ts";
+import {
+  revertCodexThread,
+  revertCodexThreadAfterTurn,
+  revertCodexThreadFromKnownTurns,
+} from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
@@ -9608,9 +9612,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const keptNativeTurnId = nativeConversationHeadRef?.nativeId ?? null;
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
-                  keptNativeTurnId === null
-                    ? revertCodexThread(client, threadId, numTurns)
-                    : revertCodexThreadAfterTurn(client, threadId, keptNativeTurnId, numTurns),
+                  threadInput.target.type === "thread_start"
+                    ? revertCodexThreadFromKnownTurns(
+                        client,
+                        threadId,
+                        threadInput.providerThreadTurns
+                          .filter(isTerminalProviderTurn)
+                          .flatMap((turn) => {
+                            const nativeId = turn.nativeTurnRef?.nativeId;
+                            return nativeId == null ? [] : [nativeId];
+                          }),
+                      )
+                    : keptNativeTurnId === null
+                      ? revertCodexThread(client, threadId, numTurns)
+                      : revertCodexThreadAfterTurn(client, threadId, keptNativeTurnId, numTurns),
                 ),
               );
               turnTokenUsageByThread.delete(threadId);
