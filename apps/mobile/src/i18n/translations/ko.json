@@ -918,7 +918,7 @@
   "1c7254ae11bf7cdc": "{days}일",
   "352655bb7a196642": "{kind, select, sideChat {{need, select, input {사이드 채팅에 입력이 필요합니다} approval {사이드 채팅에 승인이 필요합니다} other {사이드 채팅이 응답을 기다립니다}}} other {{need, select, input {서브에이전트에 입력이 필요합니다} approval {서브에이전트에 승인이 필요합니다} other {서브에이전트가 응답을 기다립니다}}}}",
   "e931fd397ade526b": "{kind, select, sideChat {{need, select, input {사이드 채팅 {count}개에 입력이 필요합니다} approval {사이드 채팅 {count}개에 승인이 필요합니다} other {사이드 채팅 {count}개가 응답을 기다립니다}}} subagent {{need, select, input {서브에이전트 {count}개에 입력이 필요합니다} approval {서브에이전트 {count}개에 승인이 필요합니다} other {서브에이전트 {count}개가 응답을 기다립니다}}} other {{need, select, input {스레드 {count}개에 입력이 필요합니다} approval {스레드 {count}개에 승인이 필요합니다} other {스레드 {count}개가 응답을 기다립니다}}}}",
-  "4bed196a655ab14f": "에이전트 {total}개 중 {live}개 작업 중",
+  "f7b40089dae502b6": "에이전트 {total}개 중 {live}개 작업 중",
   "ba1727ddc7a0a0b6": "{count, plural, other {에이전트 {count}개 완료}}",
   "4dd09c829329a994": "대기 메시지",
   "3f0b962160edbe6d": "스레드를 동기화할 수 없습니다.",

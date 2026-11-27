@@ -140,6 +140,7 @@ vi.mock("./SourceFileSurface", () => ({
   SourceFileSurface: (props: { readonly contents: string }) => <pre>{props.contents}</pre>,
 }));
 vi.mock("./AudioFilePreview", () => ({ AudioFilePreview: () => null }));
+vi.mock("./EpubFilePreview", () => ({ EpubFilePreview: () => null }));
 vi.mock("./FileMarkdownPreview", () => ({ FileMarkdownPreview: () => null }));
 vi.mock("./WorkspaceFileWebPreview", () => ({ WorkspaceFileWebPreview: () => null }));
 vi.mock("../threads/HtmlRenderWebView", () => ({ HtmlRenderWebView: () => null }));
