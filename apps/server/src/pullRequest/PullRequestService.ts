@@ -489,7 +489,7 @@ function toPullRequestErrorWith(
     }
     return new PullRequestOperationError({
       operation,
-      detail: error.detail,
+      detail: error.accessHint === undefined ? error.detail : `${error.detail} ${error.accessHint}`,
       ...(error.reason === "not-found" ? { reason: "not-found" as const } : {}),
       cause: error,
     });

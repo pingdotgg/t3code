@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Hash from "effect/Hash";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import type {
   PullRequestActor,
@@ -125,6 +126,7 @@ export function gitHubViewerPermissions(
 
 function gitHubProviderFailure(
   error: GitHubPullRequestApi.GitHubPullRequestApiError,
+  viewer?: string,
 ): PullRequestProviderFailure {
   switch (error._tag) {
     case "GitHubCliMissingError":
@@ -153,18 +155,26 @@ function gitHubProviderFailure(
     case "GitHubApiNotFoundError":
       return error.credential === undefined || error.credential === "app"
         ? { reason: "not-found" }
-        : { reason: "not-found", accessHint: REPOSITORY_ACCESS_HINTS[error.credential] };
+        : { reason: "not-found", accessHint: repositoryAccessHint(error.credential, viewer) };
     default:
       return { reason: "failed" };
   }
 }
 
-const REPOSITORY_ACCESS_HINTS: Record<Exclude<GitHubCredentialSource, "app">, string> = {
-  settings:
-    "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source control & issues.",
-  env: "The server's environment token can't see it. Give it access, or unset it.",
-  gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source control & issues.",
-};
+function repositoryAccessHint(
+  source: Exclude<GitHubCredentialSource, "app">,
+  viewer: string | undefined,
+): string {
+  const account = viewer === undefined ? "" : ` (GitHub account ${viewer})`;
+  switch (source) {
+    case "settings":
+      return `Your saved GitHub token${account} can't see it. Give it access, or change it in Settings → Source control & issues.`;
+    case "env":
+      return `The server's environment token${account} can't see it. Give it access, or unset it.`;
+    case "gh":
+      return `Your gh login${account} can't see it. Give it access, or save a token in Settings → Source control & issues.`;
+  }
+}
 
 function withAvatar(
   actor: PullRequestActor | null,
@@ -339,14 +349,33 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const fail = (operation: string) => (error: GitHubPullRequestApi.GitHubPullRequestApiError) =>
-    new PullRequestProviderError({
-      provider: SourceControlProviderKind.make("github"),
-      operation,
-      ...gitHubProviderFailure(error),
-      detail: error.message,
-      cause: error,
-    });
+  const fail =
+    (operation: string, viewer?: string) =>
+    (error: GitHubPullRequestApi.GitHubPullRequestApiError) =>
+      new PullRequestProviderError({
+        provider: SourceControlProviderKind.make("github"),
+        operation,
+        ...gitHubProviderFailure(error, viewer),
+        detail: error.message,
+        cause: error,
+      });
+
+  /** A repository the user's own credential cannot see names that credential's account. */
+  const failRead =
+    (input: ProviderRepositoryRef, operation: string) =>
+    (error: GitHubPullRequestApi.GitHubPullRequestApiError) =>
+      error._tag === "GitHubApiNotFoundError" &&
+      error.credential !== undefined &&
+      error.credential !== "app"
+        ? cli
+            .getRoutingIdentity({ cwd: input.cwd, host: input.host, repository: input.repository })
+            .pipe(
+              Effect.option,
+              Effect.flatMap((identity) =>
+                Effect.fail(fail(operation, Option.getOrUndefined(identity)?.viewer)(error)),
+              ),
+            )
+        : Effect.fail(fail(operation)(error));
 
   const readChecks = (input: ProviderRepositoryRef & { readonly number: number }) =>
     cli.getPullRequestDetail(input).pipe(
@@ -524,7 +553,7 @@ export const make = Effect.gen(function* () {
           checks,
           ...(workflowApprovalsRequired === undefined ? {} : { workflowApprovalsRequired }),
         })),
-        Effect.mapError(fail("getChangeRequestChecks")),
+        Effect.catch(failRead(input, "getChangeRequestChecks")),
       ),
 
     getChangeRequest: (input) =>
@@ -558,7 +587,7 @@ export const make = Effect.gen(function* () {
             ? {}
             : { behindBy: pullRequest.comparison.behindBy }),
         })),
-        Effect.mapError(fail("getChangeRequest")),
+        Effect.catch(failRead(input, "getChangeRequest")),
       ),
 
     getChangeRequestActivity: (input) => {
@@ -589,7 +618,7 @@ export const make = Effect.gen(function* () {
       return Effect.all([cli.getPullRequestActivity(input), threadRead], {
         concurrency: 2,
       }).pipe(
-        Effect.mapError(fail("getChangeRequestActivity")),
+        Effect.catch(failRead(input, "getChangeRequestActivity")),
         Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => {
           const commitStats = new Map(
             pullRequest.commits.map(({ oid, additions, deletions, changedFiles }) => [
