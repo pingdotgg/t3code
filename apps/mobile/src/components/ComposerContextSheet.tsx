@@ -25,6 +25,7 @@ import {
   type DraftComposerAttachment,
 } from "../lib/composerImages";
 import { contextImageGallery } from "../lib/contextImageGallery";
+import { m } from "../i18n/messages";
 import { FilePreviewModal } from "./ui/FilePreviewModal";
 import { VideoPreviewModal } from "./ui/VideoPreviewModal";
 import { ComposerContextAttachment } from "./ComposerContextAttachment";
@@ -358,7 +359,7 @@ export function ComposerContextSheet(props: {
             {record.kind === "image" ? (
               <ContextField
                 label={gt("File", { $context: "noun" })}
-                value={`${record.mimeType} · ${formatAttachmentSize(record.sizeBytes)}`}
+                value={`${record.mimeType} · ${formatAttachmentSize(record.sizeBytes, m)}`}
               />
             ) : null}
             {record.kind === "mention" ? (

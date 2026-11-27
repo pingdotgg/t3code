@@ -218,8 +218,8 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
   const subtitle =
     sizeBytes > 0
       ? draftKey
-        ? gt("Draft attachment · {size}", { size: formatAttachmentSize(sizeBytes) })
-        : gt("Attachment · {size}", { size: formatAttachmentSize(sizeBytes) })
+        ? gt("Draft attachment · {size}", { size: formatAttachmentSize(sizeBytes, m) })
+        : gt("Attachment · {size}", { size: formatAttachmentSize(sizeBytes, m) })
       : draftKey
         ? gt("Draft attachment")
         : gt("Attachment");

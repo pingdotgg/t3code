@@ -2,6 +2,8 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 
+import { m } from "../i18n/messages";
+
 import type { CONTEXT_CHIP_ICON_SOURCES } from "./contextChipIcons.generated";
 import { resolveMarkdownFileIcon, type MarkdownFileIcon } from "./markdownLinks";
 import {
@@ -95,7 +97,7 @@ export function composerChipSizeSuffix(record?: {
   readonly sizeBytes?: number;
 }): string {
   if (record?.kind !== "file" && record?.kind !== "image") return "";
-  return typeof record.sizeBytes === "number" ? formatAttachmentSize(record.sizeBytes) : "";
+  return typeof record.sizeBytes === "number" ? formatAttachmentSize(record.sizeBytes, m) : "";
 }
 
 const PULL_REQUEST_CHIP_PRESENTATIONS = {
