@@ -789,6 +789,12 @@ describe("fix findings handoff", () => {
       checks: [],
     });
     expect(emojiAtCut.reviewComments[1]?.text).toBe(`reviewer: ${"x".repeat(986)}...`);
+    const spaceAtCut = buildFixFindingsHandoff({
+      ...base,
+      reviewThreads: [thread(`${"x".repeat(986)} and more of the review.${"y".repeat(100)}`)],
+      checks: [],
+    });
+    expect(spaceAtCut.reviewComments[1]?.text).toBe(`reviewer: ${"x".repeat(986)}...`);
   });
 
   it("keeps the newest threads and the failing checks when it has to cut", () => {
@@ -999,6 +1005,9 @@ describe("what to say when an action fails", () => {
     expect(checkoutFailureDescription(diagnostic(reason))).toBe(reason);
     expect(checkoutFailureDescription(diagnostic("x".repeat(900)))).toBe(`${"x".repeat(319)}…`);
     expect(checkoutFailureDescription(diagnostic(`${"x".repeat(318)}😀 tail`))).toBe(
+      `${"x".repeat(318)}…`,
+    );
+    expect(checkoutFailureDescription(diagnostic(`${"x".repeat(318)} tail`))).toBe(
       `${"x".repeat(318)}…`,
     );
     for (const failure of [undefined, diagnostic(""), diagnostic("exited with code 1")]) {

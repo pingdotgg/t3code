@@ -6720,6 +6720,98 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
+  it.effect("resends a stopped request the provider dropped once its session closed", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("stopped-request-dropped");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: { 1: "hello", 2: "", 3: "Answer." },
+          capturedTurns,
+          interruptedRunOrdinals: new Set([2]),
+          // Stopped before its first checkpoint: the provider never kept run 2.
+          nativeTurnKept: (nativeTurnId) => !nativeTurnId.endsWith(":2"),
+        }),
+      ]);
+
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const testThreadId = ThreadId.make("thread:stopped-request-dropped");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:stopped-request-dropped:create"),
+          threadId: testThreadId,
+          projectId,
+          title: "Stopped request dropped",
+          modelSelection: CODEX_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        let step = 0;
+        const send = (text: string) =>
+          Effect.gen(function* () {
+            step += 1;
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:stopped-request-dropped:msg-${step}`),
+              threadId: testThreadId,
+              messageId: MessageId.make(`message:stopped-request-dropped:${step}`),
+              text,
+              attachments: [],
+              modelSelection: CODEX_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            yield* waitForIdle(testThreadId);
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(testThreadId);
+          });
+
+        yield* send("Say hello");
+        const afterStop = yield* send("List every prime number below 300");
+        const stopped = afterStop.runs.find((run) => run.ordinal === 2)!;
+        assert.equal(stopped.status, "interrupted");
+
+        const afterNext = yield* send("Did I ask you anything about math?");
+        const nextTurn = (yield* Ref.get(capturedTurns)).at(-1)!;
+        assert.include(nextTurn.text, "List every prime number below 300");
+        const stoppedTurn = afterNext.providerTurns.find(
+          (turn) => turn.runAttemptId === stopped.activeAttemptId,
+        );
+        assert.equal(stoppedTurn?.promptDropped, true);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "stopped-request-dropped",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
+
   it.effect("restores a handoff that a turn cut by a restart carried from an earlier run", () =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("carried-handoff-cut-by-restart");

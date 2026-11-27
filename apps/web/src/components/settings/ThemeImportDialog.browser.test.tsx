@@ -1,8 +1,11 @@
+import { getTranslationsSnapshot, GTProvider } from "gt-react";
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
+import { initializeI18n } from "../../i18n/initializeI18n";
+import { setActiveLocale } from "../../i18n/messages";
 import {
   CUSTOM_THEMES_STORAGE_KEY,
   getCustomThemes,
@@ -185,6 +188,41 @@ it("sizes an oversized theme file just under 1 MB as 1.00 MB", async () => {
     .element(page.getByText(/^That file is/))
     .toHaveTextContent(
       "That file is 1.00 MB. Theme files are only a few KB, so this one was not read (limit 256 KB).",
+    );
+});
+
+it("names an oversized file in a batch import in the UI language", async () => {
+  using _themes = isolateThemes();
+  const translations = await getTranslationsSnapshot("de");
+  // Mirrors the runtime: `m()` reads the active locale once its catalog is loaded.
+  setActiveLocale("de");
+  using _locale = {
+    [Symbol.dispose]() {
+      setActiveLocale("en");
+      // GTProvider leaves its locale in a cookie; this sets it back to English.
+      initializeI18n(() => {});
+    },
+  };
+  await using _screen = await render(
+    <GTProvider locale="de" translations={translations}>
+      <ThemeImportDialog
+        open
+        onOpenChange={() => {}}
+        onImported={() => true}
+        onImportedMany={() => {}}
+      />
+    </GTProvider>,
+  );
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  await userEvent.upload(input, [
+    themeFile("Dawn"),
+    new File(["x".repeat(1_048_100)], "huge.json", { type: "application/json" }),
+  ]);
+
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent(
+      "huge.json: Diese Datei ist 1.00 MB groß. Design-Dateien haben nur wenige KB, daher wurde sie nicht gelesen (Limit 256 KB).",
     );
 });
 
