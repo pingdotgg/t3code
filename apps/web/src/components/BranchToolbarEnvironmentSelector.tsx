@@ -1,7 +1,6 @@
 import { Kbd } from "./ui/kbd";
 import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
-import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -22,6 +21,7 @@ import {
   SelectPopup,
   SelectValue,
 } from "./ui/select";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 interface BranchToolbarEnvironmentSelectorProps {
   autoEnvironmentLabel?: string | undefined;
@@ -88,10 +88,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
       </span>
     );
     return (
-      <Tooltip>
-        <TooltipTrigger render={lockedRow} />
-        <TooltipPopup>{activeEnvironment?.label ?? gt("Run on")}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger render={lockedRow} label={activeEnvironment?.label ?? gt("Run on")} />
     );
   }
 
@@ -110,48 +107,46 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
       }}
       items={environmentItems}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <ComposerSelectControl
-              size="xs"
-              className="min-w-0 max-w-full"
-              aria-label={gt("Run on")}
-              data-composer-shortcut="composer.host"
-              data-composer-context-control
-            />
-          }
-        >
-          {/* The trigger owns its color, so the offline tone lives on its content. */}
-          <span className={cn("contents", unavailableTone && "text-warning-foreground")}>
-            {autoEnvironmentLabel ? (
-              <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
-            ) : (
-              <EnvironmentMachineIcon
-                kind={activeEnvironment?.machine ?? "server"}
-                className="size-3 shrink-0"
-              />
-            )}
-            <ComposerContextLabel>
-              <SelectValue />
-            </ComposerContextLabel>
-          </span>
-          <ChevronDownIcon
-            aria-hidden
-            data-composer-chevron
-            className={cn(
-              "size-2.5 shrink-0 group-data-[compact]/composer-context:hidden",
-              unavailableTone ? "text-warning-foreground" : "text-muted-foreground",
-            )}
+      <SharedTooltipTrigger
+        render={
+          <ComposerSelectControl
+            size="xs"
+            className="min-w-0 max-w-full"
+            aria-label={gt("Run on")}
+            data-composer-shortcut="composer.host"
+            data-composer-context-control
           />
-        </TooltipTrigger>
-        <TooltipPopup>
+        }
+        label={
           <span className="flex items-center gap-2">
             <span>{autoEnvironmentLabel ?? activeEnvironment?.label ?? gt("Run on")}</span>
             {shortcutLabel ? <Kbd>{shortcutLabel}</Kbd> : null}
           </span>
-        </TooltipPopup>
-      </Tooltip>
+        }
+      >
+        {/* The trigger owns its color, so the offline tone lives on its content. */}
+        <span className={cn("contents", unavailableTone && "text-warning-foreground")}>
+          {autoEnvironmentLabel ? (
+            <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
+          ) : (
+            <EnvironmentMachineIcon
+              kind={activeEnvironment?.machine ?? "server"}
+              className="size-3 shrink-0"
+            />
+          )}
+          <ComposerContextLabel>
+            <SelectValue />
+          </ComposerContextLabel>
+        </span>
+        <ChevronDownIcon
+          aria-hidden
+          data-composer-chevron
+          className={cn(
+            "size-2.5 shrink-0 group-data-[compact]/composer-context:hidden",
+            unavailableTone ? "text-warning-foreground" : "text-muted-foreground",
+          )}
+        />
+      </SharedTooltipTrigger>
       <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
         <SelectGroup>
           <SelectGroupLabel>

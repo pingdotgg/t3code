@@ -3,6 +3,8 @@ import {
   injectHtmlRenderBootstrap,
   readFilePreviewScroll,
 } from "@t3tools/shared/htmlRender";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
@@ -10,6 +12,17 @@ import "~/index.css";
 import { render } from "../../../test/render";
 
 import { BrowserDocumentFrame, HtmlRenderDocument } from "./BrowserDocumentFrame";
+
+const links = vi.hoisted(() => ({
+  openLink: vi.fn(async () => undefined),
+  openChangeRequestLink: vi.fn(() => false),
+  openIssueLink: vi.fn(() => true),
+}));
+vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => links.openLink }));
+vi.mock("~/lib/openPullRequestLink", () => ({
+  useOpenChangeRequestLink: () => links.openChangeRequestLink,
+}));
+vi.mock("~/lib/openIssueLink", () => ({ useOpenIssueLink: () => links.openIssueLink }));
 
 const sizeChanged = (height: number) => ({
   jsonrpc: "2.0",
@@ -61,6 +74,30 @@ describe("HtmlRenderDocument", () => {
     await expect
       .element(viewer.getByRole("option", { selected: true }))
       .toHaveAccessibleName(/\(2\/3\)$/u);
+  });
+
+  it("opens a clicked issue link beside the thread, as chat Markdown does", async () => {
+    const issueUrl = "https://github.com/pingdotgg/t3code/issues/41939";
+    const html = injectHtmlRenderBootstrap(
+      `<!doctype html><html><body><a href="${issueUrl}">Issue #41939</a></body></html>`,
+    );
+    const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+    const threadRef = scopeThreadRef(EnvironmentId.make("local"), ThreadId.make("thread"));
+    await using screen = await render(
+      <HtmlRenderDocument src={src} title="Links" threadRef={threadRef} />,
+    );
+
+    await page.frameLocator(screen.getByTitle("Links")).getByRole("link").click();
+
+    // The frame tries the pull request handler first, then settles the click in the same call.
+    await vi.waitFor(() => expect(links.openChangeRequestLink).toHaveBeenCalled());
+    expect(links.openLink).not.toHaveBeenCalled();
+    expect(links.openIssueLink).toHaveBeenCalledWith(
+      expect.anything(),
+      issueUrl,
+      threadRef.environmentId,
+    );
   });
 });
 

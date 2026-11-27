@@ -12,13 +12,14 @@ import {
   type SharePayload,
 } from "expo-sharing";
 import { msg } from "gt-react-native";
+import { Atom } from "effect/reactivity";
 import { useSyncExternalStore } from "react";
 import { Platform } from "react-native";
 import { CommonActions } from "@react-navigation/native";
 
 import {
   buildIncomingShareDraft,
-  isShareFileUriUnderOwnedRoots,
+  isOwnedShareFileUri,
   selectIncomingShareAttachmentsForServer,
   type IncomingShareDestination,
   type IncomingShareDraft,
@@ -32,7 +33,7 @@ import { rootNavigationRef } from "../../lib/rootNavigation";
 import { selectWorkspaceDetail } from "../layout/workspace/workspace-detail-selection";
 import { isDraftThreadRoute } from "../threads/thread-route-state";
 import { makeIncomingShareImports } from "../threads/incomingShareImport";
-import { liveNewTaskFlowKeys } from "../threads/new-task-flow-state";
+import { liveNewTaskFlowKeys, newTaskFlowKey } from "../threads/new-task-flow-state";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
 import {
@@ -98,19 +99,25 @@ async function readFileSize(uri: string): Promise<number | null> {
   return new File(uri).size ?? null;
 }
 
-async function removeOwnedFile(uri: string): Promise<void> {
+/** `persisted` marks a copy this app saved itself, which needs no ownership check. */
+async function removeOwnedFile(uri: string, persisted = false): Promise<void> {
   if (!uri.startsWith("file:")) {
     return;
   }
   try {
     const { File, Paths } = await import("expo-file-system");
     // Delete only app-owned files; iOS open-in-place shares can reference the sender's original.
-    const ownedRootUris = [
-      Paths.document.uri,
-      Paths.cache.uri,
-      ...Object.values(Paths.appleSharedContainers ?? {}).map((directory) => directory.uri),
-    ];
-    if (!isShareFileUriUnderOwnedRoots(uri, ownedRootUris)) {
+    const owned =
+      persisted ||
+      isOwnedShareFileUri(uri, {
+        platform: Platform.OS,
+        cacheUri: Paths.cache.uri,
+        otherRootUris: [
+          Paths.document.uri,
+          ...Object.values(Paths.appleSharedContainers ?? {}).map((directory) => directory.uri),
+        ],
+      });
+    if (!owned) {
       return;
     }
     const file = new File(uri);
@@ -142,7 +149,7 @@ async function removeReplayedPayloadFiles(payloads: ReadonlyArray<SharePayload>)
       uris.add(payload.contentUri);
     }
   }
-  await Promise.all([...uris].map(removeOwnedFile));
+  await Promise.all([...uris].map((uri) => removeOwnedFile(uri)));
 }
 
 // Share the queue across remounts so lifecycle notifications cannot ingest one handoff twice.
@@ -187,10 +194,12 @@ const incomingShareInbox = new IncomingShareInbox({
     return {
       draft,
       cleanup: async () => {
-        await Promise.all([...cleanupUris].map(removeOwnedFile));
+        await Promise.all(
+          [...cleanupUris].map((uri) => removeOwnedFile(uri, persistedUris.has(uri))),
+        );
       },
       rollback: async () => {
-        await Promise.all([...persistedUris].map(removeOwnedFile));
+        await Promise.all([...persistedUris].map((uri) => removeOwnedFile(uri, true)));
       },
     };
   },
@@ -213,6 +222,42 @@ interface IncomingShareSnapshot {
 let snapshot: IncomingShareSnapshot = { drafts: [], isLoading: true };
 const snapshotListeners = new Set<() => void>();
 let presentation = EMPTY_INCOMING_SHARE_PRESENTATION_STATE;
+
+// A share that arrives while a new-task draft is on screen goes into that draft, by its flow key.
+const handedSharesAtom = Atom.make<Readonly<Record<string, string>>>({}).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("mobile:incoming-share-handed"),
+);
+
+/** The share handed to the open draft of `flowKey`, if any. */
+export const handedShareIdAtom = Atom.family((flowKey: string) =>
+  Atom.make((get) => get(handedSharesAtom)[flowKey] ?? null).pipe(
+    Atom.withLabel("mobile:incoming-share-handed:flow"),
+  ),
+);
+
+export const noHandedShareIdAtom = Atom.make<string | null>(null).pipe(
+  Atom.withLabel("mobile:incoming-share-handed:none"),
+);
+
+function isPendingShare(shareId: string | undefined): boolean {
+  return shareId !== undefined && snapshot.drafts.some((draft) => draft.id === shareId);
+}
+
+/** Hands the oldest pending share to the draft on screen once that draft's own imports finished. */
+function handPendingShareToOpenDraft(route: { readonly key: string; readonly params?: object }) {
+  const pendingShareId = snapshot.drafts[0]?.id;
+  const flowKey = newTaskFlowKey(route);
+  if (pendingShareId === undefined || flowKey === undefined) return;
+  const draft = (route.params as { draft?: { incomingShareId?: string | string[] } }).draft;
+  const routeShareId = Array.isArray(draft?.incomingShareId)
+    ? draft.incomingShareId[0]
+    : draft?.incomingShareId;
+  const handed = appAtomRegistry.get(handedSharesAtom);
+  if (isPendingShare(routeShareId) || isPendingShare(handed[flowKey])) return;
+  if (Object.values(handed).includes(pendingShareId)) return;
+  appAtomRegistry.set(handedSharesAtom, { ...handed, [flowKey]: pendingShareId });
+}
 
 function publish(drafts: ReadonlyArray<IncomingShareDraft>) {
   snapshot = { drafts, isLoading: false };
@@ -266,6 +311,8 @@ export function presentPendingIncomingShare(): void {
   if (!rootNavigationRef.isReady()) return;
   const state = rootNavigationRef.getRootState();
   if (!state) return;
+  const route = state.routes[state.index];
+  if (route && isDraftThreadRoute(route)) handPendingShareToOpenDraft(route);
   const transition = transitionIncomingSharePresentation(presentation, {
     isShareSheetPresented: isDraftThreadRoute(state.routes[state.index]),
     pendingShareId: snapshot.drafts[0]?.id ?? null,
@@ -365,7 +412,15 @@ export const incomingShareImports = makeIncomingShareImports({
 
 /** Abandons the share imports of draft routes that left the stack. */
 export function pruneIncomingShareImports(state: Parameters<typeof liveNewTaskFlowKeys>[0]) {
-  void incomingShareImports.prune(liveNewTaskFlowKeys(state));
+  const live = liveNewTaskFlowKeys(state);
+  void incomingShareImports.prune(live);
+  const handed = appAtomRegistry.get(handedSharesAtom);
+  if (Object.keys(handed).some((flowKey) => !live.has(flowKey))) {
+    appAtomRegistry.set(
+      handedSharesAtom,
+      Object.fromEntries(Object.entries(handed).filter(([flowKey]) => live.has(flowKey))),
+    );
+  }
 }
 
 export function useIncomingShare() {

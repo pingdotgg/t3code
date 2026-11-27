@@ -899,7 +899,13 @@ export const NodesCommit = Schema.Struct({
   /** The number of additions in this commit. */
   additions: Shared.Int,
   /** The number of deletions in this commit. */
-  deletions: Shared.Int
+  deletions: Shared.Int,
+  /**
+   * The number of changed files in this commit. If GitHub is unable to calculate
+   * the number of changed files (for example due to a timeout), this will return
+   * `null`. We recommend using this field instead of `changedFiles`.
+   */
+  changedFilesIfAvailable: Schema.NullOr(Shared.Int)
 })
 export interface NodesCommit extends Schema.Struct.Type<typeof NodesCommit.fields> {}
 
@@ -916,7 +922,7 @@ export const PullRequestCommitStats = GraphQL.query("PullRequestCommitStats", {
       { name: "ids", body: "[ID!]!" }
     ],
     selections: [
-      { name: "nodes", body: ["(ids:$", "ids", "){__typename...on Commit{oid additions deletions}}"] }
+      { name: "nodes", body: ["(ids:$", "ids", "){__typename...on Commit{oid additions deletions changedFilesIfAvailable}}"] }
     ],
     fragments: []
   },
@@ -1070,9 +1076,19 @@ export const NodePullRequestReview = Schema.Struct({
 })
 export interface NodePullRequestReview extends Schema.Struct.Type<typeof NodePullRequestReview.fields> {}
 
+/** A threaded list of comments for a given pull request. */
+export const PullRequestReviewThread = Schema.Struct({
+  __typename: Schema.Literal("PullRequestReviewThread"),
+  /** The Node ID of the PullRequestReviewThread object */
+  id: Shared.ID,
+  /** Identifies the pull request associated with this thread. */
+  threadPullRequest: PullRequestNodeIdRepositoryPullRequestPullRequest
+})
+export interface PullRequestReviewThread extends Schema.Struct.Type<typeof PullRequestReviewThread.fields> {}
+
 /** An object with an ID. */
 export const PullRequestSubjectNodeNodeOther = Schema.Struct({
-  __typename: GraphQL.otherTypename<Shared.Typename.Node>()(["IssueComment", "PullRequestReviewComment", "PullRequestReview"]),
+  __typename: GraphQL.otherTypename<Shared.Typename.Node>()(["IssueComment", "PullRequestReviewComment", "PullRequestReview", "PullRequestReviewThread"]),
   /** ID of the object. */
   id: Shared.ID
 })
@@ -1089,7 +1105,7 @@ export const PullRequestSubject = GraphQL.query("PullRequestSubject", {
     ],
     selections: [
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){id}}"] },
-      { name: "node", body: ["(id:$", "subjectId", "){__typename id...on IssueComment{pullRequest{id}}...on PullRequestReviewComment{reviewCommentPullRequest:pullRequest{id}}...on PullRequestReview{reviewPullRequest:pullRequest{id}}}"] }
+      { name: "node", body: ["(id:$", "subjectId", "){__typename id...on IssueComment{pullRequest{id}}...on PullRequestReviewComment{reviewCommentPullRequest:pullRequest{id}}...on PullRequestReview{reviewPullRequest:pullRequest{id}}...on PullRequestReviewThread{threadPullRequest:pullRequest{id}}}"] }
     ],
     fragments: []
   },
@@ -1107,6 +1123,7 @@ export const PullRequestSubject = GraphQL.query("PullRequestSubject", {
       NodeIssueComment,
       PullRequestReviewComment,
       NodePullRequestReview,
+      PullRequestReviewThread,
       PullRequestSubjectNodeNodeOther
     ]))
   })

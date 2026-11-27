@@ -1,4 +1,5 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { type PullRequestListSort } from "../components/pullRequest/pullRequestListPreferences";
@@ -7,6 +8,10 @@ import { type PullRequestsSearch } from "../components/pullRequest/usePullReques
 import { PullRequestsPage } from "../components/pullRequest/PullRequestsPage";
 
 const MAX_SEARCH_LABEL_CANDIDATES = 100;
+
+function sliceSearchText(value: string) {
+  return value.slice(0, splitsSurrogatePair(value, 200) ? 199 : 200);
+}
 
 function pullRequestSearchLabels(raw: unknown): PullRequestsSearch["labels"] {
   const values = (Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : []).slice(
@@ -17,7 +22,7 @@ function pullRequestSearchLabels(raw: unknown): PullRequestsSearch["labels"] {
   const seen = new Set<string>();
   for (const rawValue of values) {
     if (typeof rawValue !== "string") continue;
-    const value = rawValue.trim().slice(0, 200);
+    const value = sliceSearchText(rawValue.trim());
     const key = value.toLowerCase();
     if (value.length === 0 || seen.has(key)) continue;
     labels.push(value);
@@ -59,10 +64,10 @@ export const Route = createFileRoute("/_chat/pull-requests")({
     ...(typeof raw.selectedEnvironmentId === "string" && raw.selectedEnvironmentId
       ? { selectedEnvironmentId: raw.selectedEnvironmentId as EnvironmentId }
       : {}),
-    // Keep every query as text and always own the key so an unvalidated parent value cannot leak.
+    // Keep every query as text and always own the free-text keys so an unvalidated parent value cannot leak.
     q:
       raw.q !== undefined && raw.q !== null && raw.q !== ""
-        ? (typeof raw.q === "string" ? raw.q : JSON.stringify(raw.q)).slice(0, 200)
+        ? sliceSearchText(typeof raw.q === "string" ? raw.q : JSON.stringify(raw.q))
         : undefined,
     ...(raw.draft === "only" || raw.draft === "hide" ? { draft: raw.draft } : {}),
     ...(raw.review === "approved" ||
@@ -73,9 +78,7 @@ export const Route = createFileRoute("/_chat/pull-requests")({
       : {}),
     ...(raw.checks === "passing" || raw.checks === "failing" ? { checks: raw.checks } : {}),
     author:
-      typeof raw.author === "string" && raw.author.trim()
-        ? raw.author.trim().slice(0, 200)
-        : undefined,
+      typeof raw.author === "string" ? sliceSearchText(raw.author.trim()) || undefined : undefined,
     labels: pullRequestSearchLabels(raw.labels),
   }),
   component: PullRequestsPage,

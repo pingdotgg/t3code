@@ -2,9 +2,8 @@ import type { ManagedPolicySummary } from "@t3tools/contracts";
 import { T, Var } from "gt-react";
 import { BuildingIcon } from "lucide-react";
 import type { ReactNode } from "react";
-
 import { InlineButton } from "./ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 /**
  * A control an administrator's policy turns off: shown inert, with the policy's reason on hover
@@ -19,24 +18,22 @@ export function ManagedControl({
 }) {
   if (reason === undefined) return children;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            tabIndex={0}
-            role="group"
-            aria-disabled="true"
-            aria-label={reason}
-            className="inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          />
-        }
-      >
-        <span inert className="inline-flex opacity-50">
-          {children}
-        </span>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{reason}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <span
+          tabIndex={0}
+          role="group"
+          aria-disabled="true"
+          aria-label={reason}
+          className="inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        />
+      }
+      label={reason}
+    >
+      <span inert className="inline-flex opacity-50">
+        {children}
+      </span>
+    </SharedTooltipTrigger>
   );
 }
 

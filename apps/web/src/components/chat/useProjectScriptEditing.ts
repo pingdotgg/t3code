@@ -29,6 +29,7 @@ import {
   commandForProjectScript,
   nextProjectScriptId,
   projectScriptIdFromCommand,
+  projectScriptIdsInEnvironment,
   releaseClaimedRoles,
 } from "../../projectScripts";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -196,10 +197,13 @@ export function useProjectScriptEditing(input: {
     if (!project) {
       return AsyncResult.success(undefined);
     }
-    const nextId = nextProjectScriptId(
-      input.name,
-      scripts.map((script) => script.id),
-    );
+    const nextId = nextProjectScriptId(input.name, [
+      ...scripts.map((script) => script.id),
+      ...projectScriptIdsInEnvironment(
+        settings,
+        allProjects.filter((other) => other.environmentId === environmentId),
+      ),
+    ]);
     const nextScript = buildProjectScript(nextId, input);
     const nextScripts = [
       ...scripts.map((script) => releaseClaimedRoles(script, input)),

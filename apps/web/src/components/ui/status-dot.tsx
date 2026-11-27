@@ -1,6 +1,6 @@
 import { cva, type VariantProps } from "class-variance-authority";
 
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 // Tones are the status hues; `neutral` is an idle or unknown state and
 // `foreground` is the text color (an update in progress beside its label).
@@ -75,23 +75,20 @@ function StatusDot({
 
   if (label) {
     return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-label={label}
-              className="relative flex size-3 shrink-0 cursor-help items-center justify-center rounded-full outline-hidden"
-            />
-          }
-        >
-          {halo}
-          {dot}
-        </TooltipTrigger>
-        <TooltipPopup side="top" className="whitespace-pre-wrap">
-          {label}
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            className="relative flex size-3 shrink-0 cursor-help items-center justify-center rounded-full outline-hidden"
+          />
+        }
+        label={label}
+        className="whitespace-pre-wrap"
+      >
+        {halo}
+        {dot}
+      </SharedTooltipTrigger>
     );
   }
   if (framed) {

@@ -271,6 +271,11 @@ export function AttachmentFilePreview(props: {
     });
   };
 
+  const basename = props.name.split(/[\\/]/).at(-1) ?? "";
+  const dotIndex = basename.lastIndexOf(".");
+  const extension =
+    dotIndex > 0 && dotIndex < basename.length - 1 ? basename.slice(dotIndex + 1) : null;
+
   const body = failure ? (
     <FileSurfaceFailure
       message={failure}
@@ -382,11 +387,11 @@ export function AttachmentFilePreview(props: {
       icon={<FileQuestion />}
       title={gt("No preview for this file")}
       description={
-        props.name.split(".").at(-1)
+        extension
           ? gt("Save it to open in an app that supports {extension} files.", {
-              extension: props.name.split(".").at(-1),
+              extension,
             })
-          : gt("Save it to open in an app that supports this format files.")
+          : gt("Save it to open in an app that supports this format.")
       }
     />
   );

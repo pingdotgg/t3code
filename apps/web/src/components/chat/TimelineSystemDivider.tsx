@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 export function TimelineSystemDivider(props: {
   readonly label: string;
@@ -44,21 +44,19 @@ export function TimelineSystemDivider(props: {
     >
       <span aria-hidden="true" className="h-px flex-1 bg-border" />
       {props.onAction ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label={props.actionLabel}
-                onClick={props.onAction}
-                className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-full border border-transparent surface-timeline-divider px-2.5 py-1 transition-colors hover:surface-ghost-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-              />
-            }
-          >
-            {content}
-          </TooltipTrigger>
-          <TooltipPopup side="top">{props.actionLabel}</TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={props.actionLabel}
+              onClick={props.onAction}
+              className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-full border border-transparent surface-timeline-divider px-2.5 py-1 transition-colors hover:surface-ghost-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+            />
+          }
+          label={props.actionLabel}
+        >
+          {content}
+        </SharedTooltipTrigger>
       ) : (
         <span className="flex min-w-0 flex-wrap items-center justify-center gap-1.5 rounded-full surface-timeline-divider px-2 py-1">
           {content}

@@ -5,7 +5,7 @@ import { XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { changeRequestTermKind } from "./changeRequestTerm";
 import { MenuGroupLabel } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export function PullRequestStackHeader({
   number,
@@ -42,12 +42,12 @@ export function PullRequestStackHeader({
           </span>
         </span>
         {notice ? (
-          <Tooltip>
-            <TooltipTrigger render={<span role="status" className="text-meta" />}>
-              {stale ? gt("May be stale") : gt("Refreshing…")}
-            </TooltipTrigger>
-            <TooltipPopup>{notice}</TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={<span role="status" className="text-meta" />}
+            label={notice}
+          >
+            {stale ? gt("May be stale") : gt("Refreshing…")}
+          </SharedTooltipTrigger>
         ) : null}
         {onClose ? (
           <Button variant="bare" size="icon-xs" aria-label={gt("Close stack")} onClick={onClose}>

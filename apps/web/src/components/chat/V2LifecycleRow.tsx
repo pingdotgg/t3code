@@ -52,7 +52,8 @@ import {
   MessageSquareIcon,
 } from "lucide-react";
 
-import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import {
   applyProviderInstanceSettings,
   brandProviderInstanceEntries,
@@ -779,37 +780,37 @@ function HandoffEndpoint(props: {
     entry?.driverKind ?? ProviderDriverKind.make(props.instanceId),
   );
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
+    <SharedTooltipTrigger
+      render={
+        <span
+          tabIndex={0}
+          className="inline-flex min-w-0 items-center gap-1.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
+          <ProviderInstanceIcon
+            driverKind={entry?.driverKind ?? ProviderDriverKind.make(props.instanceId)}
+            displayName={entry?.displayName ?? props.instanceId}
+            accentColor={entry?.accentColor}
+            acpRegistryAgentId={entry?.acpRegistryAgentId}
+            acpRegistryIconUrl={entry?.acpRegistryIconUrl}
+            showBadge={showBadge}
+            size="compact"
+            iconClassName={cn(showBadge && "opacity-60")}
+            indicatorBackground="var(--background)"
+          />
           <span
-            tabIndex={0}
-            className="inline-flex min-w-0 items-center gap-1.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            className={cn("truncate text-label", labelColor.className)}
+            style={labelColor.style}
           >
-            <ProviderInstanceIcon
-              driverKind={entry?.driverKind ?? ProviderDriverKind.make(props.instanceId)}
-              displayName={entry?.displayName ?? props.instanceId}
-              accentColor={entry?.accentColor}
-              acpRegistryAgentId={entry?.acpRegistryAgentId}
-              acpRegistryIconUrl={entry?.acpRegistryIconUrl}
-              showBadge={showBadge}
-              size="compact"
-              iconClassName={cn(showBadge && "opacity-60")}
-              indicatorBackground="var(--background)"
-            />
-            <span
-              className={cn("truncate text-label", labelColor.className)}
-              style={labelColor.style}
-            >
-              {label}
-            </span>
+            {label}
           </span>
-        }
-      />
-      <TooltipPopup>
-        <span className="block">{entry?.displayName ?? props.instanceId}</span>
-        <span className="block">{label}</span>
-      </TooltipPopup>
-    </Tooltip>
+        </span>
+      }
+      label={
+        <>
+          <span className="block">{entry?.displayName ?? props.instanceId}</span>
+          <span className="block">{label}</span>
+        </>
+      }
+    />
   );
 }

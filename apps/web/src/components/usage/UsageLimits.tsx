@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
+import { resetCreditFailureText } from "@t3tools/client-runtime/state/usage";
 import {
   type LimitPace,
   paceOf,
@@ -39,10 +40,10 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Text } from "../ui/text";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { formatResetsIn, resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
   ahead: {
@@ -67,20 +68,18 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
   const Icon = PACE[pace].icon;
   const m = useMessages();
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            role="img"
-            aria-label={m(PACE[pace].label)}
-            className="inline-flex text-muted-foreground"
-          />
-        }
-      >
-        <Icon className="size-3.5" aria-hidden />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{m(PACE[pace].label)}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <span
+          role="img"
+          aria-label={m(PACE[pace].label)}
+          className="inline-flex text-muted-foreground"
+        />
+      }
+      label={m(PACE[pace].label)}
+    >
+      <Icon className="size-3.5" aria-hidden />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -162,37 +161,17 @@ function WindowBar({
           });
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <div
-            ref={barRef}
-            role="img"
-            aria-label={summary}
-            tabIndex={0}
-            className="relative h-6 cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          />
-        }
-      >
-        {/* Clip both layers so the gap exposes even a translucent composer surface. */}
-        <div className="absolute inset-0" style={paceMark?.gap}>
-          <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
-          {remaining > 0 ? (
-            <div
-              className="absolute inset-y-1.5 left-0 rounded-full"
-              style={{ width: `${remaining}%`, backgroundColor: color }}
-            />
-          ) : null}
-        </div>
-        {paceMark ? (
-          <span
-            aria-hidden
-            className="absolute inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
-            style={paceMark.tick}
-          />
-        ) : null}
-      </TooltipTrigger>
-      <TooltipPopup side="top">
+    <SharedTooltipTrigger
+      render={
+        <div
+          ref={barRef}
+          role="img"
+          aria-label={summary}
+          tabIndex={0}
+          className="relative h-6 cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        />
+      }
+      label={
         <div className="flex flex-col gap-0.5">
           <span className="text-foreground">{gt("{remaining}% left", { remaining })}</span>
           {timeLeft !== null ? (
@@ -209,8 +188,26 @@ function WindowBar({
           ) : null}
           {resetsIn ? <span className="text-muted-foreground">{resetsIn}</span> : null}
         </div>
-      </TooltipPopup>
-    </Tooltip>
+      }
+    >
+      {/* Clip both layers so the gap exposes even a translucent composer surface. */}
+      <div className="absolute inset-0" style={paceMark?.gap}>
+        <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
+        {remaining > 0 ? (
+          <div
+            className="absolute inset-y-1.5 left-0 rounded-full"
+            style={{ width: `${remaining}%`, backgroundColor: color }}
+          />
+        ) : null}
+      </div>
+      {paceMark ? (
+        <span
+          aria-hidden
+          className="absolute inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
+          style={paceMark.tick}
+        />
+      ) : null}
+    </SharedTooltipTrigger>
   );
 }
 
@@ -290,11 +287,7 @@ export function useResetCredit(environmentId: EnvironmentId) {
       setStatus(result.value.warning ?? m(OUTCOME_TEXT[result.value.outcome]));
       return;
     }
-    setStatus(
-      "error" in result.cause && result.cause.error instanceof Error
-        ? result.cause.error.message
-        : m(msg("Could not use the reset credit.")),
-    );
+    setStatus(resetCreditFailureText(result, m));
   };
 
   const confirm = (next: ResetCreditChoice) => {

@@ -8,7 +8,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 interface BaseFreshness {
@@ -150,22 +150,18 @@ export function PullRequestBaseBranch({
     );
   }
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            className={cn(
-              "inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1",
-              compact && "@max-sm/pr-header:hidden",
-            )}
-          >
-            {label}
-          </span>
-        }
-      />
-      <TooltipPopup side="top">
-        {stacked ? gt("Stacked on {baseBranch}", { baseBranch }) : baseBranch}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <span
+          className={cn(
+            "inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1",
+            compact && "@max-sm/pr-header:hidden",
+          )}
+        >
+          {label}
+        </span>
+      }
+      label={stacked ? gt("Stacked on {baseBranch}", { baseBranch }) : baseBranch}
+    />
   );
 }
