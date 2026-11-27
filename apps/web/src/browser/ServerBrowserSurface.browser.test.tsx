@@ -72,6 +72,30 @@ async function renderSurface(controller: PreviewStreamControl["controller"]) {
 
 const keys = () => mocks.sent.filter((input) => input.type === "key");
 
+it("moves browser keyboard focus to the HTTP sign-in prompt", async () => {
+  setup();
+  const { screen, input } = await renderSurface("you");
+  await using _screen = screen;
+  input.focus();
+  const handlers = mocks.createClient.mock.calls.at(-1)![1];
+  await act(() =>
+    handlers.onControl?.({
+      canOperate: true,
+      controller: "you",
+      generation: 1,
+      dialog: {
+        type: "auth",
+        message: "Sign in to the preview",
+        defaultValue: "",
+        authChallengeId: "test-challenge",
+      },
+    }),
+  );
+  await expect.element(screen.getByRole("textbox", { name: "Username" })).toHaveFocus();
+  await userEvent.keyboard("tester");
+  expect(mocks.sent).toEqual([]);
+});
+
 describe("ServerBrowserSurface clipboard commands", () => {
   it("sends a native Copy or Cut menu command to the page once", async () => {
     setup();
