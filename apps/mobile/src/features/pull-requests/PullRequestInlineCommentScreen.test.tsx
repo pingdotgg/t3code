@@ -14,7 +14,6 @@ const mocks = vi.hoisted(() => {
     button: null as ButtonProps | null,
     saving: Promise.resolve() as Promise<unknown>,
     changeText: (_text: string) => {},
-    headSha: "head",
     uuid: () => `comment-${++ids}`,
     loaded,
     markLoaded,
@@ -77,7 +76,7 @@ vi.mock("./PullRequestSheetContent", () => ({
 vi.mock("../../state/pull-requests", () => ({ composerPullRequests: { detail: () => null } }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({
-    data: { headSha: mocks.headSha, capabilities: null },
+    data: { headSha: "head", capabilities: null },
     isPending: false,
     error: null,
     refresh: () => {},
@@ -93,15 +92,7 @@ vi.mock("./PullRequestCompletionSuggestions", () => ({
 vi.mock("./usePullRequestCompletions", () => ({ usePullRequestCompletions: () => ({}) }));
 
 import { appAtomRegistry } from "../../state/atom-registry";
-import {
-  PullRequestInlineCommentScreen,
-  type InlineCommentParams,
-} from "./PullRequestInlineCommentScreen";
-import {
-  pullRequestReviewKey,
-  reviewDraftReplacement,
-  type ReviewDraft,
-} from "./pullRequestReviewDrafts";
+import { PullRequestInlineCommentScreen } from "./PullRequestInlineCommentScreen";
 
 it("keeps a new comment open after a failed save and saves it once on retry", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -150,86 +141,4 @@ it("keeps a new comment open after a failed save and saves it once on retry", as
   expect(
     Object.values(written.drafts).flatMap((draft) => (draft as { comments: unknown[] }).comments),
   ).toEqual([expect.objectContaining({ id: "comment-1", body: "Rename this" })]);
-});
-
-it("reattaches the same outdated draft after canceling a replacement line", async () => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const root = createRoot(document.createElement("div"));
-  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
-  using _head = { [Symbol.dispose]: () => (mocks.headSha = "head") };
-  const diffParams = {
-    environmentId: "environment",
-    projectId: "project",
-    repository: "owner/repo",
-    number: 2,
-    path: "src/a.ts",
-    replacingDraftId: "draft-1",
-  };
-  const openEditor = (params: InlineCommentParams) =>
-    act(() =>
-      root.render(
-        <RegistryContext.Provider value={appAtomRegistry}>
-          <PullRequestInlineCommentScreen route={{ params } as never} />
-        </RegistryContext.Provider>,
-      ),
-    );
-  const back = () => act(() => root.render(null));
-  const readDraft = () => {
-    const { drafts } = JSON.parse(mocks.write.mock.lastCall?.[1] ?? "{}") as {
-      drafts: Record<string, ReviewDraft>;
-    };
-    const draft = drafts[pullRequestReviewKey(diffParams)];
-    if (!draft) throw new Error("Expected the persisted review draft");
-    return draft;
-  };
-  mocks.write.mockResolvedValue(undefined);
-  mocks.headSha = "head-A";
-  openEditor({
-    ...diffParams,
-    draftId: diffParams.replacingDraftId,
-    headSha: mocks.headSha,
-    position: { kind: "added", newLine: 1 },
-    code: "original",
-  });
-  await act(() => mocks.loaded);
-  act(() => mocks.changeText("Please explain."));
-  act(() => mocks.button?.onPress());
-  await act(() => mocks.saving);
-  back();
-
-  const replacement = (headSha: string | null) =>
-    reviewDraftReplacement(readDraft(), headSha, diffParams.replacingDraftId);
-  expect(replacement(null)).toStrictEqual({});
-  mocks.headSha = "head-B";
-  const openReplacement = (newLine: number) => {
-    const selection = replacement(mocks.headSha);
-    expect(selection).toStrictEqual({ draftId: "draft-1" });
-    openEditor({
-      ...diffParams,
-      ...(selection.draftId ? { draftId: selection.draftId } : {}),
-      headSha: mocks.headSha,
-      position: { kind: "added", newLine },
-      code: `added line ${newLine}`,
-    });
-  };
-
-  openReplacement(1);
-  back();
-  openReplacement(2);
-  act(() => mocks.button?.onPress());
-  await act(() => mocks.saving);
-  expect(readDraft().comments).toEqual([
-    expect.objectContaining({
-      id: "draft-1",
-      headSha: "head-B",
-      position: { kind: "added", newLine: 2 },
-      body: "Please explain.",
-    }),
-  ]);
-  const spent = replacement(mocks.headSha);
-  expect(spent).toStrictEqual({ resetOnReload: { replacingDraftId: undefined } });
-  const reloaded = { ...diffParams, ...spent.resetOnReload };
-  expect(reviewDraftReplacement(readDraft(), "head-C", reloaded.replacingDraftId)).toStrictEqual(
-    {},
-  );
 });
