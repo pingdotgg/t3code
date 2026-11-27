@@ -26,6 +26,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
@@ -162,6 +163,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   const gt = useGT();
   const m = useMessages();
   const nowMs = useNowSecond();
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const expiresAtMs = new Date(pairingLink.expiresAt).getTime();
   const [isRevealDialogOpen, setIsRevealDialogOpen] = useState(false);
   const [isQrPanelOpen, setIsQrPanelOpen] = useState(defaultShareOpen);
@@ -259,7 +261,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     if (credential) copyPairingValue(credential, "code");
   };
 
-  const expiresAbsolute = formatAccessTimestamp(pairingLink.expiresAt);
+  const expiresAbsolute = formatAccessTimestamp(pairingLink.expiresAt, timestampFormat);
 
   const primaryLabel = pairingLink.label ?? gt("Pairing link");
   const selectedQrOption = selectQrEndpointOption(
@@ -280,7 +282,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           <div className="flex min-h-5 items-center gap-1.5">
             <ConnectionStatusDot
               tooltipText={gt("Link created at {time}", {
-                time: formatAccessTimestamp(pairingLink.createdAt),
+                time: formatAccessTimestamp(pairingLink.createdAt, timestampFormat),
               })}
               dotClassName="bg-warning"
             />
@@ -513,6 +515,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
   const gt = useGT();
   const m = useMessages();
   const nowMs = useNowSecond();
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const isLive = clientSession.current || clientSession.connected;
   const lastConnectedAt = clientSession.lastConnectedAt;
   const statusTooltip = isLive
@@ -522,7 +525,9 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
         })
       : gt("Connected")
     : lastConnectedAt
-      ? gt("Last connected at {time}", { time: formatAccessTimestamp(lastConnectedAt) })
+      ? gt("Last connected at {time}", {
+          time: formatAccessTimestamp(lastConnectedAt, timestampFormat),
+        })
       : gt("Not connected yet.");
   const deviceInfoBits = [
     clientSession.client.deviceType !== "unknown"

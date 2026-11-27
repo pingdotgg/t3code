@@ -2,6 +2,7 @@ import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  formatAccessTimestamp,
   isServerNetworkAccessible,
   parseManualDesktopSshTarget,
   resolveAccessEnvironmentId,
@@ -235,5 +236,23 @@ describe("isServerNetworkAccessible", () => {
     { authPolicy: null, directEndpoints: served, expected: false },
   ] as const)("$authPolicy with $directEndpoints.length endpoints", (row) => {
     expect(isServerNetworkAccessible(row)).toBe(row.expected);
+  });
+});
+
+describe("formatAccessTimestamp", () => {
+  it("follows the Time format setting", () => {
+    const afternoon = new Date(2026, 9, 20, 17, 30);
+    const expected = (options: Intl.DateTimeFormatOptions = {}) =>
+      new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+        ...options,
+      }).format(afternoon);
+
+    expect(
+      (["12-hour", "24-hour", "locale"] as const).map((timestampFormat) =>
+        formatAccessTimestamp(afternoon.toISOString(), timestampFormat),
+      ),
+    ).toEqual([expected({ hour12: true }), expected({ hour12: false }), expected()]);
   });
 });

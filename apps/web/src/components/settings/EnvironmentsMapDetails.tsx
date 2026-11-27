@@ -13,6 +13,7 @@ import { LegendList } from "@legendapp/list/react";
 import { type ReactNode, useRef, useState } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
+import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { peerLinkEnvironment } from "~/state/peerLinks";
@@ -289,6 +290,7 @@ function LinkButton({
 }) {
   const gt = useGT();
   const m = useMessages();
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const attention = linkNeedsAttention(edge.health);
   return (
     <li>
@@ -315,7 +317,10 @@ function LinkButton({
           {attention
             ? healthLabel(edge.health, gt)
             : gt("Expires {date}", {
-                date: formatAccessTimestamp(DateTime.formatIso(edge.link.expiresAt)),
+                date: formatAccessTimestamp(
+                  DateTime.formatIso(edge.link.expiresAt),
+                  timestampFormat,
+                ),
                 $context: "the date a link between two machines stops working",
               })}
         </span>
@@ -796,7 +801,9 @@ function LinkDetails({
   );
   const { busy, forget } = useForgetPeerLink(edge.sourceEnvironmentId, link);
   const access = accessConfig[link.access];
-  const when = (value: DateTime.Utc) => formatAccessTimestamp(DateTime.formatIso(value));
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const when = (value: DateTime.Utc) =>
+    formatAccessTimestamp(DateTime.formatIso(value), timestampFormat);
   const term = "text-muted-foreground";
   const endpoint =
     "cursor-pointer rounded-sm font-medium text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset";

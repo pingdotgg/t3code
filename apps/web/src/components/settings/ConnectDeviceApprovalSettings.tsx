@@ -9,6 +9,7 @@ import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useState } from "react";
 
 import type { ServerPairingLinkRecord } from "~/environments/primary";
+import { useClientSettings } from "~/hooks/useSettings";
 import { authEnvironment } from "~/state/auth";
 import { m } from "~/i18n/messages";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -53,6 +54,7 @@ export function ConnectDeviceApprovalSettings({
 }) {
   const gt = useGT();
   const resolve = useMessages();
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const approve = useAtomCommand(authEnvironment.approveConnectDevice, { reportFailure: false });
   const deny = useAtomCommand(authEnvironment.revokePairingLink, { reportFailure: false });
   const revoke = useAtomCommand(authEnvironment.revokeConnectDevice, { reportFailure: false });
@@ -138,7 +140,12 @@ export function ConnectDeviceApprovalSettings({
                   <span aria-hidden> · </span>
                   <T>
                     Trusted since{" "}
-                    <Var>{formatAccessTimestamp(DateTime.formatIso(device.approvedAt))}</Var>
+                    <Var>
+                      {formatAccessTimestamp(
+                        DateTime.formatIso(device.approvedAt),
+                        timestampFormat,
+                      )}
+                    </Var>
                   </T>
                 </p>
               </div>

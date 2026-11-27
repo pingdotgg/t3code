@@ -28,6 +28,7 @@ import {
   type ServerAuthPolicy,
   type ServerDirectEndpoint,
 } from "@t3tools/contracts";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   getDesktopUpdateDownloadedVersion,
   resolveDesktopUpdateButtonAction,
@@ -172,17 +173,16 @@ export async function applyWslEnableSelection(input: {
   return await bridge.setWslBackendEnabled(true);
 }
 
-const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-export function formatAccessTimestamp(value: string): string {
+export function formatAccessTimestamp(value: string, timestampFormat: TimestampFormat): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return value;
   }
-  return accessTimestampFormatter.format(parsed);
+  return parsed.toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
+  });
 }
 
 export function parseManualDesktopSshTarget(
