@@ -32,7 +32,7 @@ export function applyCommandOutputFrame(
       ? restoreTerminalOutput(frame.text)
       : appendTerminalOutput(view.output, frame.text);
   return {
-    output: frame.truncated && !output.truncated ? { ...output, truncated: true } : output,
+    output: { ...output, truncated: output.truncated || frame.truncated },
     running: frame.running,
   };
 }
