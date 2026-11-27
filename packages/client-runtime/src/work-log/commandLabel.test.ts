@@ -225,6 +225,29 @@ describe("commandDisplayText with ANSI-C and locale quoting", () => {
   });
 });
 
+describe("commandDisplayText with line continuations", () => {
+  it.each([
+    ['bash \\\n-lc "git status"', "git status"],
+    ['bash -lc "git status \\\n--short"', "git status --short"],
+  ])("removes them as bash does: %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+
+  it.each([
+    ["bash -lc 'git status \\\n--short'", "git status \\\n--short"],
+    ["bash -c $'git status \\\n--short'", "git status \\\n--short"],
+    ['bash \\\n-lc "git status \\\r\n--short"', "git status \\\r\n--short"],
+  ])("keeps them where bash does: %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+
+  it("keeps Windows shell scripts on separate lines", () => {
+    expect(commandDisplayText('cmd.exe /c "dir C:\\\necho done"')).toMatch(
+      /^dir C:\\?\necho done$/u,
+    );
+  });
+});
+
 describe("commandDisplayText control characters", () => {
   it.each([
     ["printf '\u001b[31mred\u001b[0m'", "printf '␛[31mred␛[0m'"],
