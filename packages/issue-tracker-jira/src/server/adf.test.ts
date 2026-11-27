@@ -8,13 +8,26 @@ const MARKDOWN = [
   "- first\n- second\n  1. nested",
   "```ts\nconst a = 1;\n```",
   "> quoted",
+  "- [x] shipped\n- [ ] review",
   "| a | b |\n| --- | --- |\n| 1 | 2 |",
   "---",
+  // Jira text that only looks like markdown stays literal.
+  String.raw`Typed \*stars\*, \_under\_ but snake_case, \~\~gone\~\~, \[box\] \<b> \& a \\ \`tick\``,
+  "\\# heading\n\\> quote\n\\- list\n\\+ list\n1\\. list\n2\\) list\n\\=== setext",
+  // Code holding backticks gets a longer fence.
+  "Run ``a ` b`` or `` `edge` `` or `  padded  `.",
+  "````md\n```\nnested\n```\n````",
 ].join("\n\n");
 
 describe("adf", () => {
   it("writes markdown as a Jira document and reads it back unchanged", () => {
-    expect(adfToMarkdown(markdownToAdf(MARKDOWN))).toBe(MARKDOWN);
+    const document = markdownToAdf(MARKDOWN);
+    expect(adfToMarkdown(document)).toBe(MARKDOWN);
+    // https://github.com/pingdotgg/t3code/pull/38003#issuecomment-7101618257
+    expect(document.content?.find((node) => node.type === "taskList")?.content).toMatchObject([
+      { type: "taskItem", attrs: { state: "DONE" }, content: [{ text: "shipped" }] },
+      { type: "taskItem", attrs: { state: "TODO" }, content: [{ text: "review" }] },
+    ]);
   });
 
   it("writes only nodes Jira's schema accepts where markdown put them", () => {
@@ -47,25 +60,107 @@ describe("adf", () => {
         ],
       },
     ]);
+    // Nested bold is one strong mark, and a list from 1 states no start, as Jira's editor does.
+    const strong = [{ type: "strong" }];
+    expect(markdownToAdf("1. **a **b** c**").content).toEqual([
+      {
+        type: "orderedList",
+        content: [
+          {
+            type: "listItem",
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  { type: "text", text: "a ", marks: strong },
+                  { type: "text", text: "b", marks: strong },
+                  { type: "text", text: " c", marks: strong },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("writes a reference link as the inline link its first definition names", () => {
+    const markdown = [
+      "See [the log][log] and ![shot][img].",
+      "[log]: https://logs.test/1\n[Log]: https://logs.test/2\n[img]: https://img.test/a.png",
+    ].join("\n\n");
+    expect(adfToMarkdown(markdownToAdf(markdown))).toBe(
+      "See [the log](https://logs.test/1) and [shot](https://img.test/a.png).",
+    );
   });
 
   it("reads what markdown cannot say as text and reports it as unwritable", () => {
+    const text = (value: string) => ({ type: "text", text: value });
+    const paragraph = (value: string) => ({ type: "paragraph", content: [text(value)] });
+    const mention = { type: "mention", attrs: { id: "1", text: "@Theo" } };
+    const card = { type: "inlineCard", attrs: { url: "https://acme.atlassian.net/browse/ENG-1" } };
+    const status = { type: "status", attrs: { text: "In Progress", color: "blue" } };
+    const emoji = { type: "emoji", attrs: { shortName: ":tada:", text: "🎉" } };
+    const underlined = { ...text(" today"), marks: [{ type: "underline" }] };
+    const mergedHeader = {
+      type: "tableHeader",
+      attrs: { colspan: 2 },
+      content: [paragraph("Both")],
+    };
     const document = {
       type: "doc",
       content: [
         {
           type: "paragraph",
           content: [
-            { type: "mention", attrs: { id: "1", text: "@Theo" } },
-            { type: "text", text: " see " },
-            { type: "inlineCard", attrs: { url: "https://acme.atlassian.net/browse/ENG-1" } },
+            mention,
+            text(" see "),
+            card,
+            text(" is "),
+            status,
+            text(" "),
+            emoji,
+            underlined,
+          ],
+        },
+        {
+          type: "table",
+          content: [
+            { type: "tableRow", content: [mergedHeader] },
+            {
+              type: "tableRow",
+              content: [
+                { type: "tableCell", content: [paragraph("1")] },
+                { type: "tableCell", content: [paragraph("2")] },
+              ],
+            },
           ],
         },
         { type: "mediaSingle", content: [{ type: "media", attrs: { id: "m" } }] },
       ],
     };
     expect(adfToMarkdown(document)).toBe(
-      "@Theo see https://acme.atlassian.net/browse/ENG-1\n\n_(attachment)_",
+      [
+        "@Theo see https://acme.atlassian.net/browse/ENG-1 is In Progress 🎉 today",
+        "| Both |  |\n| --- | --- |\n| 1 | 2 |",
+        "_(attachment, open in Jira to view)_",
+      ].join("\n\n"),
+    );
+    // Each of these alone is something a rewrite from markdown would drop or flatten.
+    const lossy = [
+      mention,
+      card,
+      status,
+      emoji,
+      underlined,
+      { ...text("red"), marks: [{ type: "textColor", attrs: { color: "#ff0000" } }] },
+      { ...text("2"), marks: [{ type: "subsup", attrs: { type: "sup" } }] },
+      { ...paragraph("centred"), marks: [{ type: "alignment", attrs: { align: "center" } }] },
+      mergedHeader,
+      { type: "tableCell", attrs: { rowspan: 2 }, content: [paragraph("tall")] },
+    ];
+    expect(lossy.filter((node) => !hasUnwritableContent({ type: "doc", content: [node] }))).toEqual(
+      [],
     );
     expect(hasUnwritableContent(document)).toBe(true);
     expect(hasUnwritableContent(markdownToAdf(MARKDOWN))).toBe(false);

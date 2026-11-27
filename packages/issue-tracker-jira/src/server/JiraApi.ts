@@ -56,13 +56,18 @@ const History = Schema.Struct({
 });
 export type JiraHistory = typeof History.Type;
 
+const IssueProject = Schema.Struct({
+  key: Schema.String,
+  projectTypeKey: Schema.optional(Schema.String),
+});
+
 const Issue = Schema.Struct({
   id: Schema.String,
   key: Schema.String,
   fields: Schema.Struct({
     summary: Schema.String,
     status: Status,
-    project: Schema.optional(Schema.Struct({ key: Schema.String })),
+    project: Schema.optional(IssueProject),
     reporter: Schema.optional(Schema.NullOr(User)),
     assignee: Schema.optional(Schema.NullOr(User)),
     labels: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
@@ -461,12 +466,28 @@ export const make = Effect.gen(function* () {
       body: { transition: { id } },
     });
 
-  const addComment: JiraApi["Service"]["addComment"] = (key, body) =>
-    send("addComment", Schema.Unknown, {
-      method: "POST",
-      path: `/rest/api/3/issue/${encodeURIComponent(key)}/comment`,
-      body: { body },
-    }).pipe(Effect.asVoid);
+  const addComment: JiraApi["Service"]["addComment"] = Effect.fn("JiraApi.addComment")(
+    function* (key, body) {
+      const issue = yield* send(
+        "addComment",
+        Schema.Struct({ fields: Schema.Struct({ project: Schema.optional(IssueProject) }) }),
+        {
+          method: "GET",
+          path: `/rest/api/3/issue/${encodeURIComponent(key)}`,
+          query: { fields: "project" },
+        },
+      );
+      // A service desk comment is a reply the customer sees unless marked internal.
+      const internal = issue.fields.project?.projectTypeKey === "service_desk";
+      yield* send("addComment", Schema.Unknown, {
+        method: "POST",
+        path: `/rest/api/3/issue/${encodeURIComponent(key)}/comment`,
+        body: internal
+          ? { body, properties: [{ key: "sd.public.comment", value: { internal: true } }] }
+          : { body },
+      });
+    },
+  );
 
   const labels: JiraApi["Service"]["labels"] = paged((startAt) =>
     send("labels", Schema.Struct({ values: Schema.Array(Schema.String) }), {

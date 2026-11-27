@@ -483,7 +483,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
             return yield* JiraApi.fail(
               "update",
               "failed",
-              "This description holds attachments, mentions or panels that would be lost. Edit it in Jira.",
+              "This description holds formatting Markdown cannot keep, such as attachments, mentions, panels or colored text. Edit it in Jira.",
             );
           }
         }
@@ -505,9 +505,18 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
         const key = yield* requireProjectKey("setState", input);
         const issue = yield* jira.getIssue(key);
         if (issue.fields.status.name === input.state) return;
-        const wanted = (issue.transitions ?? []).find(
-          (transition) => transition.to.name === input.state,
-        );
+        const transitions = issue.transitions ?? [];
+        // A move's own name picks one of several that reach the same status (Resolve, Cancel).
+        const named = transitions.find((transition) => transition.name === input.state);
+        const reaching = transitions.filter((transition) => transition.to.name === input.state);
+        if (named === undefined && reaching.length > 1) {
+          return yield* JiraApi.fail(
+            "setState",
+            "failed",
+            `Several moves reach "${input.state}": ${reaching.map((transition) => `"${transition.name}"`).join(", ")}. Name the move to make.`,
+          );
+        }
+        const wanted = named ?? reaching[0];
         if (wanted === undefined) {
           return yield* JiraApi.fail(
             "setState",

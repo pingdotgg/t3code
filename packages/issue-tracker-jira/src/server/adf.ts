@@ -32,12 +32,34 @@ const attr = (node: AdfNode, key: string): string | null => {
   return typeof value === "string" && value.length > 0 ? value : null;
 };
 
+/** Jira's literal characters that markdown would read as syntax; `_` inside a word is inert. */
+const escape = (text: string) =>
+  text.replace(/[\\`*~[\]<&]|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/gu, "\\$&");
+
+/** Line openers that would make a paragraph a heading, quote, list or setext underline. */
+const escapeLineStarts = (text: string) =>
+  text.replace(/^([ \t]*)([#>+=-])/gm, "$1\\$2").replace(/^([ \t]*\d+)([.)])/gm, "$1\\$2");
+
+/** A backtick run longer than any inside `code`, so the code cannot close its own fence. */
+const fence = (code: string, least: number) =>
+  "`".repeat(Math.max(least, ...(code.match(/`+/g) ?? []).map((run) => run.length + 1)));
+
+function codeSpan(code: string): string {
+  // A space keeps an edge backtick off the fence; markdown strips one from each end.
+  const pad = /^`|`$|^ .*[^ ].* $/s.test(code) ? " " : "";
+  const ticks = fence(code, 1);
+  return `${ticks}${pad}${code}${pad}${ticks}`;
+}
+
+const ATTACHMENT = "_(attachment, open in Jira to view)_";
+
 function inline(node: AdfNode): string {
   switch (node.type) {
     case "text": {
-      let text = node.text ?? "";
       const marks = node.marks ?? [];
-      if (marks.some((mark) => mark.type === "code")) text = `\`${text}\``;
+      let text = marks.some((mark) => mark.type === "code")
+        ? codeSpan(node.text ?? "")
+        : escape(node.text ?? "");
       for (const mark of marks) {
         if (mark.type === "strong") text = `**${text}**`;
         else if (mark.type === "em") text = `*${text}*`;
@@ -55,7 +77,7 @@ function inline(node: AdfNode): string {
     case "inlineCard":
       return attr(node, "url") ?? "";
     case "status":
-      return `[${attr(node, "text") ?? "status"}]`;
+      return attr(node, "text") ?? "";
     case "date": {
       const at = Number(node.attrs?.["timestamp"]);
       return Option.match(DateTime.make(at), {
@@ -64,7 +86,7 @@ function inline(node: AdfNode): string {
       });
     }
     case "mediaInline":
-      return "_(attachment)_";
+      return ATTACHMENT;
     default:
       return children(node).map(inline).join("");
   }
@@ -94,16 +116,19 @@ function table(node: AdfNode): string {
       blocks(children(cell), " ").replaceAll("\n", " ").replaceAll("|", "\\|"),
     ),
   );
+  // Merged cells leave rows of different lengths; the widest row sets the column count.
+  const width = Math.max(0, ...rows.map((row) => row.length));
   const [head, ...rest] = rows;
-  if (head === undefined) return "";
-  const line = (cells: ReadonlyArray<string>) => `| ${cells.join(" | ")} |`;
-  return [line(head), line(head.map(() => "---")), ...rest.map(line)].join("\n");
+  if (head === undefined || width === 0) return "";
+  const line = (cells: ReadonlyArray<string>) =>
+    `| ${[...cells, ...Array<string>(width - cells.length).fill("")].join(" | ")} |`;
+  return [line(head), line(Array<string>(width).fill("---")), ...rest.map(line)].join("\n");
 }
 
 function block(node: AdfNode): string {
   switch (node.type) {
     case "paragraph":
-      return inlines(node);
+      return escapeLineStarts(inlines(node));
     case "heading": {
       const level = Math.min(6, Math.max(1, Number(node.attrs?.["level"]) || 1));
       return `${"#".repeat(level)} ${inlines(node)}`;
@@ -118,10 +143,13 @@ function block(node: AdfNode): string {
       return children(node)
         .map((item) => `- [${item.attrs?.["state"] === "DONE" ? "x" : " "}] ${inlines(item)}`)
         .join("\n");
-    case "codeBlock":
-      return `\`\`\`${attr(node, "language") ?? ""}\n${children(node)
+    case "codeBlock": {
+      const code = children(node)
         .map((child) => child.text ?? "")
-        .join("")}\n\`\`\``;
+        .join("");
+      const ticks = fence(code, 3);
+      return `${ticks}${attr(node, "language") ?? ""}\n${code}\n${ticks}`;
+    }
     case "blockquote":
     case "panel":
       return indent(blocks(children(node)), "> ");
@@ -136,7 +164,7 @@ function block(node: AdfNode): string {
       return table(node);
     case "mediaSingle":
     case "mediaGroup":
-      return "_(attachment)_";
+      return ATTACHMENT;
     case "blockCard":
     case "embedCard":
       return attr(node, "url") ?? "";
@@ -169,18 +197,33 @@ const UNWRITABLE = new Set([
   "layoutSection",
   "decisionList",
   "mention",
+  "emoji",
   "status",
   "date",
   "expand",
   "nestedExpand",
   "panel",
+  "inlineCard",
   "blockCard",
   "embedCard",
 ]);
 
+const WRITABLE_MARKS = new Set(["link", "code", "strong", "em", "strike"]);
+
+const merged = (node: AdfNode) =>
+  Number(node.attrs?.["colspan"] ?? 1) > 1 || Number(node.attrs?.["rowspan"] ?? 1) > 1;
+
 export function hasUnwritableContent(document: unknown): boolean {
   if (!isNode(document)) return false;
-  return UNWRITABLE.has(document.type) || children(document).some(hasUnwritableContent);
+  return (
+    UNWRITABLE.has(document.type) ||
+    merged(document) ||
+    // A checklist is written back flat, so one nested in another would be lost.
+    (document.type === "taskList" &&
+      children(document).some((child) => child.type === "taskList")) ||
+    (document.marks ?? []).some((mark) => !WRITABLE_MARKS.has(mark.type)) ||
+    children(document).some(hasUnwritableContent)
+  );
 }
 
 interface Mdast {
@@ -190,18 +233,27 @@ interface Mdast {
   readonly ordered?: boolean | null;
   readonly start?: number | null;
   readonly checked?: boolean | null;
+  readonly position?: { readonly start: { readonly offset?: number } };
   readonly lang?: string | null;
   readonly url?: string;
   readonly alt?: string | null;
+  readonly identifier?: string;
   readonly children?: ReadonlyArray<Mdast>;
 }
 
 type Mark = NonNullable<AdfNode["marks"]>[number];
 
-const text = (value: string, marks: ReadonlyArray<Mark>): AdfNode[] =>
-  value.length === 0
-    ? []
-    : [{ type: "text", text: value, ...(marks.length === 0 ? {} : { marks }) }];
+/** Jira takes one mark of each type, and code beside nothing but a link; the outer mark wins. */
+function text(value: string, marks: ReadonlyArray<Mark>): AdfNode[] {
+  if (value.length === 0) return [];
+  const code = marks.some((mark) => mark.type === "code");
+  const kept = marks.filter(
+    (mark, index) =>
+      marks.findIndex((other) => other.type === mark.type) === index &&
+      (!code || mark.type === "code" || mark.type === "link"),
+  );
+  return [{ type: "text", text: value, ...(kept.length === 0 ? {} : { marks: kept }) }];
+}
 
 function toInline(node: Mdast, marks: ReadonlyArray<Mark>): AdfNode[] {
   const within = (mark: Mark) =>
@@ -211,11 +263,7 @@ function toInline(node: Mdast, marks: ReadonlyArray<Mark>): AdfNode[] {
     case "html":
       return text(node.value ?? "", marks);
     case "inlineCode":
-      // Jira allows a code mark beside a link and nothing else.
-      return text(node.value ?? "", [
-        ...marks.filter((mark) => mark.type === "link"),
-        { type: "code" },
-      ]);
+      return text(node.value ?? "", [...marks, { type: "code" }]);
     case "strong":
       return within({ type: "strong" });
     case "emphasis":
@@ -241,6 +289,24 @@ const paragraph = (node: Mdast, lead = ""): AdfNode => ({
   content: [...text(lead, []), ...(node.children ?? []).flatMap((child) => toInline(child, []))],
 });
 
+/** Where the node starts in the markdown: unique within the document, as Jira asks of task ids. */
+const localId = (node: Mdast) => `task-${node.position?.start.offset ?? 0}`;
+
+/** Every item a box with a single line of text: what a Jira task list holds. */
+function isChecklist(node: Mdast): boolean {
+  const items = node.children ?? [];
+  return (
+    !node.ordered &&
+    items.length > 0 &&
+    items.every(
+      (item) =>
+        item.checked != null &&
+        item.children?.length === 1 &&
+        item.children[0]!.type === "paragraph",
+    )
+  );
+}
+
 /** `nested` is inside a list item or quote, where Jira takes only text, lists and code. */
 function toBlocks(node: Mdast, nested: boolean): AdfNode[] {
   switch (node.type) {
@@ -265,12 +331,27 @@ function toBlocks(node: Mdast, nested: boolean): AdfNode[] {
       return nested ? content : [{ type: "blockquote", content }];
     }
     case "list":
+      if (!nested && isChecklist(node)) {
+        return [
+          {
+            type: "taskList",
+            attrs: { localId: localId(node) },
+            content: (node.children ?? []).map((item): AdfNode => ({
+              type: "taskItem",
+              attrs: { localId: localId(item), state: item.checked ? "DONE" : "TODO" },
+              content: paragraph(item.children![0]!).content ?? [],
+            })),
+          },
+        ];
+      }
       return [
         {
           type: node.ordered ? "orderedList" : "bulletList",
-          ...(node.ordered && node.start != null ? { attrs: { order: node.start } } : {}),
+          ...(node.ordered && node.start != null && node.start !== 1
+            ? { attrs: { order: node.start } }
+            : {}),
           content: (node.children ?? []).map((item) => {
-            // A task's box stays as text: Jira's task nodes hold no nested content.
+            // A box Jira's task nodes cannot hold (nested content, a mixed list) stays as text.
             const lead = item.checked == null ? "" : item.checked ? "[x] " : "[ ] ";
             const [first, ...rest] = item.children ?? [];
             const body =
@@ -303,10 +384,32 @@ function toBlocks(node: Mdast, nested: boolean): AdfNode[] {
   }
 }
 
+/** ADF has no link definitions, so a reference becomes the link it names; the first one wins. */
+function inlineReferences(root: Mdast): Mdast {
+  const urls = new Map<string, string>();
+  const collect = (node: Mdast): void => {
+    if (node.type === "definition" && node.identifier !== undefined && !urls.has(node.identifier))
+      urls.set(node.identifier, node.url ?? "");
+    node.children?.forEach(collect);
+  };
+  const resolve = (node: Mdast): Mdast => {
+    const url = node.identifier === undefined ? undefined : urls.get(node.identifier);
+    const type =
+      node.type === "linkReference" ? "link" : node.type === "imageReference" ? "image" : null;
+    return {
+      ...node,
+      ...(type !== null && url !== undefined ? { type, url } : {}),
+      ...(node.children === undefined ? {} : { children: node.children.map(resolve) }),
+    };
+  };
+  collect(root);
+  return resolve(root);
+}
+
 const parser = unified().use(remarkParse).use(remarkGfm);
 
 export function markdownToAdf(markdown: string): AdfNode & { readonly version: 1 } {
-  const root = parser.parse(markdown) as Mdast;
+  const root = inlineReferences(parser.parse(markdown) as Mdast);
   return {
     version: 1,
     type: "doc",

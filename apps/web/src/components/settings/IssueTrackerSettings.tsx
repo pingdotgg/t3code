@@ -92,11 +92,7 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
       {trackers.flatMap((tracker) => {
         const added = accounts.filter((account) => account.tracker === tracker.tracker);
         // Another account is added from the first one's row, which stays while any is connected.
-        // Another account only asks for a key, so a tracker that needs more fields keeps one.
-        const canAddAccount =
-          canAddAccounts &&
-          (tracker.credential.fields ?? []).length === 0 &&
-          (tracker.connected || added.length > 0);
+        const canAddAccount = canAddAccounts && (tracker.connected || added.length > 0);
         return [tracker, ...added].map((account) => (
           <TrackerRow
             // Drafts belong to one environment; switching must not carry them over.
@@ -142,8 +138,8 @@ function TrackerRow({
   const fields = tracker.credential.fields ?? [];
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>(tracker.fields ?? {});
 
-  const submit = async (token: string | null, addAccount = false) => {
-    const missing = fields.find((field) => !drafts[field.key]?.trim());
+  const submit = async (token: string | null, values = drafts, addAccount = false) => {
+    const missing = fields.find((field) => !values[field.key]?.trim());
     if (token !== null && missing !== undefined) {
       setFailure(gt("Enter the {field} first.", { field: missing.label.toLowerCase() }));
       return false;
@@ -160,7 +156,7 @@ function TrackerRow({
           ? {}
           : {
               fields: Object.fromEntries(
-                fields.map((field) => [field.key, drafts[field.key]!.trim()]),
+                fields.map((field) => [field.key, values[field.key]!.trim()]),
               ),
             }),
       },
@@ -223,27 +219,12 @@ function TrackerRow({
           {/* Locked while saving, so an edit made mid-request is not overwritten by the saved value. */}
           <fieldset disabled={!canEdit || busy} className="contents">
             <div className="px-3 pb-4 pt-1 sm:px-4">
-              {fields.map((field) => (
-                <SettingsRow
-                  key={field.key}
-                  title={<label htmlFor={`${inputId}-${field.key}`}>{field.label}</label>}
-                  control={
-                    <div className="w-full min-w-0 @min-[32rem]/settings-row:w-56">
-                      <Input
-                        id={`${inputId}-${field.key}`}
-                        size="sm"
-                        autoComplete="off"
-                        spellCheck={false}
-                        placeholder={field.placeholder ?? undefined}
-                        value={drafts[field.key] ?? ""}
-                        onChange={(event) =>
-                          setDrafts({ ...drafts, [field.key]: event.target.value })
-                        }
-                      />
-                    </div>
-                  }
-                />
-              ))}
+              <CredentialFieldRows
+                tracker={tracker}
+                inputId={inputId}
+                values={drafts}
+                onChange={setDrafts}
+              />
               <SettingsRow
                 title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
                 description={
@@ -305,7 +286,11 @@ function TrackerRow({
                 />
               ) : null}
               {canAddAccount ? (
-                <AddAccountRow tracker={tracker} onAdd={(token) => submit(token, true)} />
+                <AddAccountRow
+                  tracker={tracker}
+                  failure={failure}
+                  onAdd={(token, values) => submit(token, values, true)}
+                />
               ) : null}
             </div>
           </fieldset>
@@ -429,15 +414,51 @@ function ProjectBindings({
 }
 
 /** A credential for another account of the tracker, kept beside this one. */
+/** What a tracker needs beside its secret, such as a Jira site and email. */
+function CredentialFieldRows({
+  tracker,
+  inputId,
+  values,
+  onChange,
+}: {
+  readonly tracker: IssueTrackerConnection;
+  readonly inputId: string;
+  readonly values: Readonly<Record<string, string>>;
+  readonly onChange: (values: Readonly<Record<string, string>>) => void;
+}) {
+  return (tracker.credential.fields ?? []).map((field) => (
+    <SettingsRow
+      key={field.key}
+      title={<label htmlFor={`${inputId}-${field.key}`}>{field.label}</label>}
+      control={
+        <div className="w-full min-w-0 @min-[32rem]/settings-row:w-56">
+          <Input
+            id={`${inputId}-${field.key}`}
+            size="sm"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={field.placeholder ?? undefined}
+            value={values[field.key] ?? ""}
+            onChange={(event) => onChange({ ...values, [field.key]: event.target.value })}
+          />
+        </div>
+      }
+    />
+  ));
+}
+
 function AddAccountRow({
   tracker,
+  failure,
   onAdd,
 }: {
   readonly tracker: IssueTrackerConnection;
-  readonly onAdd: (token: string) => Promise<boolean>;
+  readonly failure: string | null;
+  readonly onAdd: (token: string, values: Readonly<Record<string, string>>) => Promise<boolean>;
 }) {
   const gt = useGT();
   const [adding, setAdding] = useState(false);
+  const [values, setValues] = useState<Readonly<Record<string, string>>>({});
   const inputId = `issue-tracker-${tracker.tracker}-add-account`;
   if (!adding) {
     return (
@@ -456,20 +477,38 @@ function AddAccountRow({
     );
   }
   return (
-    <SettingsRow
-      title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
-      description={gt("For the new {tracker} account.", { tracker: tracker.displayName })}
-      control={
-        <SecretInput
-          id={inputId}
-          size="sm"
-          className="w-full min-w-0 @min-[32rem]/settings-row:w-56"
-          value=""
-          onCommit={(next) => {
-            if (next.trim()) void onAdd(next.trim()).then((added) => added && setAdding(false));
-          }}
-        />
-      }
-    />
+    <>
+      <CredentialFieldRows
+        tracker={tracker}
+        inputId={inputId}
+        values={values}
+        onChange={setValues}
+      />
+      <SettingsRow
+        title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
+        description={
+          <>
+            {gt("For the new {tracker} account.", { tracker: tracker.displayName })}
+            {failure ? <span className="block text-destructive">{failure}</span> : null}
+          </>
+        }
+        control={
+          <SecretInput
+            id={inputId}
+            size="sm"
+            className="w-full min-w-0 @min-[32rem]/settings-row:w-56"
+            value=""
+            onCommit={(next) => {
+              if (!next.trim()) return;
+              void onAdd(next.trim(), values).then((added) => {
+                if (!added) return;
+                setAdding(false);
+                setValues({});
+              });
+            }}
+          />
+        }
+      />
+    </>
   );
 }

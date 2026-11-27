@@ -344,11 +344,25 @@ describe("JiraIssueTracker", () => {
     Effect.gen(function* () {
       const { tracker, requests } = fakeJira({
         "GET /rest/api/3/issue/ENG-7": () =>
-          issue("ENG-7", {}, { transitions: [{ id: "31", name: "Finish", to: DONE }] }),
+          issue(
+            "ENG-7",
+            {},
+            {
+              transitions: [
+                { id: "31", name: "Finish", to: DONE },
+                { id: "41", name: "Cancel", to: DONE },
+              ],
+            },
+          ),
         "POST /rest/api/3/issue/ENG-7/transitions": () => undefined,
       });
       const api = yield* tracker;
-      yield* api.setState({ ...target, key: "ENG-7", state: "Done" });
+      // Two moves reach Done, so the status alone does not say which runs.
+      const ambiguous = yield* api
+        .setState({ ...target, key: "ENG-7", state: "Done" })
+        .pipe(Effect.flip);
+      expect(ambiguous.detail).toContain('"Finish", "Cancel"');
+      yield* api.setState({ ...target, key: "ENG-7", state: "Finish" });
       expect(requests.at(-1)?.body).toEqual({ transition: { id: "31" } });
 
       const refused = yield* api
@@ -431,9 +445,26 @@ describe("JiraIssueTracker", () => {
     }),
   );
 
+  // https://github.com/pingdotgg/t3code/pull/38003#issuecomment-7101618257
+  it.effect("posts a service desk comment as an internal note", () =>
+    Effect.gen(function* () {
+      const { tracker, requests } = fakeJira({
+        "GET /rest/api/3/issue/HELP-3": () =>
+          issue("HELP-3", { project: { key: "HELP", projectTypeKey: "service_desk" } }),
+        "POST /rest/api/3/issue/HELP-3/comment": () => ({}),
+      });
+      const api = yield* tracker;
+      yield* api.comment({ ...target, scope: "HELP", key: "HELP-3", body: "Looking" });
+      expect(requests.at(-1)?.body).toMatchObject({
+        properties: [{ key: "sd.public.comment", value: { internal: true } }],
+      });
+    }),
+  );
+
   it.effect("reports Jira's own words for a refusal, and a rate limit with its wait", () =>
     Effect.gen(function* () {
       const { tracker } = fakeJira({
+        "GET /rest/api/3/issue/ENG-7": () => issue("ENG-7"),
         "POST /rest/api/3/issue/ENG-7/comment": () =>
           Response.json({ errors: { comment: "Comment body can not be empty!" } }, { status: 400 }),
         "POST /rest/api/3/search/jql": () =>

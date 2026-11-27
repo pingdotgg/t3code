@@ -186,8 +186,6 @@ export function SettingsIssueTrackerRouteScreen({
   const canAddAccount =
     tracker !== undefined &&
     route.params.accountId === undefined &&
-    // Another account only asks for a key, so a tracker that needs more fields keeps one.
-    (tracker.credential.fields ?? []).length === 0 &&
     (tracker.connected ||
       (query.data?.accounts ?? []).some((account) => account.tracker === tracker.tracker)) &&
     environment?.serverConfig.environment.capabilities.issueTrackerAccounts === true;

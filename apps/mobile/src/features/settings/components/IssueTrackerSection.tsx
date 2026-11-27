@@ -159,7 +159,9 @@ export function IssueTrackerCredentialForm(props: {
   const connect = useAtomCommand(issueTrackerEnvironment.connect, { reportFailure: false });
   const [draft, setDraft] = useState("");
   const fields = tracker.credential.fields ?? [];
-  const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>(tracker.fields ?? {});
+  const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>(
+    props.addAccount ? {} : (tracker.fields ?? {}),
+  );
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const complete = fields.every((field) => drafts[field.key]?.trim());
@@ -185,6 +187,7 @@ export function IssueTrackerCredentialForm(props: {
     setBusy(false);
     if (!AsyncResult.isFailure(result)) {
       setDraft("");
+      if (props.addAccount) setDrafts({});
       return;
     }
     const error = squashAtomCommandFailure(result);
