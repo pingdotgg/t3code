@@ -312,7 +312,7 @@ function checkProjectActions(
   current: ServerSettings,
   expected: ProjectActionSettingsSnapshot | undefined,
   settingsPath: string,
-) {
+): Effect.Effect<void, ServerSettingsError> {
   return expected === undefined || Equal.equals(projectActionSettingsSnapshot(current), expected)
     ? Effect.void
     : Effect.fail(new ServerSettingsError({ settingsPath, operation: "check-project-actions" }));
@@ -357,9 +357,10 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     getSettings,
     updateSettings: (patch, expectedProjectActions) =>
       updateTestSettings((currentSettings) =>
-        checkProjectActions(currentSettings, expectedProjectActions, "test settings").pipe(
-          Effect.map(() => applyServerSettingsPatch(currentSettings, patch)),
-        ),
+        Effect.gen(function* () {
+          yield* checkProjectActions(currentSettings, expectedProjectActions, "test settings");
+          return applyServerSettingsPatch(currentSettings, patch);
+        }),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
       updateTestSettings((currentSettings) =>
