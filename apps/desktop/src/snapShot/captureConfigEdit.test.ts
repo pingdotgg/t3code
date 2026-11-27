@@ -101,8 +101,14 @@ describe("Hyprland capture config edits", () => {
     ["hyprland", "bind = SHIFT CTRL, 2, exec, kitty\n"],
     ["hyprland-lua", 'hl.bind("SHIFT + CTRL + 2", hl.dsp.exec("kitty"))\n'],
     ["hyprland-lua", 'hl.bind("CTRL + SHIFT + 2", hl.dsp.global("other.app:action"))\n'],
+    ["hyprland-lua", 'hl.bind ("SHIFT + CTRL + 2", hl.dsp.exec("kitty"))\n'],
   ] as const)("does not steal an existing %s shortcut: %s", (format, source) => {
     expect(() => editCaptureConfig(source, format, app, "install")).toThrow("already used");
+  });
+  it("recognizes its own Lua binding with a space before each call's parenthesis", () => {
+    const before = `hl.bind ("CTRL + SHIFT + 2", hl.dsp.global ("${app}:capture-window"))\n`;
+    expect(editCaptureConfig(before, "hyprland-lua", app, "install").after).toBe(before);
+    expect(editCaptureConfig(before, "hyprland-lua", app, "remove").after.trim()).toBe("");
   });
   it.each([
     "return {}",

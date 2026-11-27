@@ -77,10 +77,10 @@ function hyprlandBinds(source: string, lua: boolean) {
       /^\s*bind[a-z]*\s*=\s*([^,]*),\s*([^,]*),\s*([^,]*),\s*(.*?)\s*(?:#.*)?$/.exec(
         line.trimEnd(),
       );
-    const modern = lua && /^\s*hl\.bind\(\s*(["'])(.*?)\1\s*,(.*)$/.exec(line.trimEnd());
+    const modern = lua && /^\s*hl\.bind\s*\(\s*(["'])(.*?)\1\s*,(.*)$/.exec(line.trimEnd());
     const global =
       modern &&
-      /^\s*hl\.dsp\.global\(\s*(["'])(.*?)\1\s*\)\s*\)\s*;?\s*(?:--.*)?$/.exec(modern[3]!);
+      /^\s*hl\.dsp\.global\s*\(\s*(["'])(.*?)\1\s*\)\s*\)\s*;?\s*(?:--.*)?$/.exec(modern[3]!);
     if (legacy)
       bindings.push({
         start,
