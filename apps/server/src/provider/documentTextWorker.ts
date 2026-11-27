@@ -908,7 +908,28 @@ function rtfUnicodeDestination(
   if (end !== undefined) return { body, end };
 }
 
+const RTF_NESTED_CELL_END = Symbol("rtf-nested-cell-end");
+
 function* rtf(source: string): Generator<string, void> {
+  // \nestcell ends a nested cell without a delimiter; space it only from adjacent text.
+  let last = "";
+  let afterNestedCell = false;
+  for (const part of rtfParts(source)) {
+    if (part === RTF_NESTED_CELL_END) {
+      afterNestedCell = true;
+      continue;
+    }
+    const text = part.replaceAll("\0", "");
+    if (text) {
+      if (afterNestedCell && /\S/u.test(last) && /\S/u.test(text[0]!)) yield " ";
+      afterNestedCell = false;
+      last = text.at(-1)!;
+    }
+    yield part;
+  }
+}
+
+function* rtfParts(source: string): Generator<string | typeof RTF_NESTED_CELL_END, void> {
   if (!source.startsWith("{\\rtf")) throw new Error("Invalid RTF document");
   let state = {
     skip: false,
@@ -1071,6 +1092,7 @@ function* rtf(source: string): Generator<string, void> {
         // Table structure survives tracked deletions; only the deleted cell text is dropped.
         else if (!state.skip && control === "row") yield "\n";
         else if (!state.skip && control === "cell") yield "\t";
+        else if (!state.skip && control === "nestcell") yield RTF_NESTED_CELL_END;
         else if (!hidden() && symbols.has(control)) yield symbols.get(control)!;
       } else {
         i++;

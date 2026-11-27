@@ -340,6 +340,19 @@ describe("question answer paths", () => {
       "A\tB\t\nC",
     ],
     [
+      "nested table cell boundaries",
+      String.raw`{\rtf1\ansi\trowd\cellx3000\cellx5000
+\pard\intbl\itap2 One\nestcell
+\pard\intbl\itap2 Two\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}
+\pard\intbl\itap1 Tail\cell
+\pard\intbl\itap2 Three\nestcell
+\pard\intbl\itap2 Four\nestcell
+{\*\nesttableprops\trowd\cellx1000\cellx2000\nestrow}{\nonesttables\par}
+\pard\intbl\itap1 Peer\cell\row}`,
+      "One Two Tail\tThree Four\nPeer",
+    ],
+    [
       "hidden text",
       String.raw`{\rtf1\ansi A {\v B{\v0 C}D} E\v F\v0  G\v1 H\plain  I}`,
       "A C E G I",
