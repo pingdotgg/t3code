@@ -46,6 +46,8 @@ import {
   compactT3McpToolOutput,
   htmlRenderFromToolItem,
   mcpToolResultOutput,
+  omitToolOutputImageData,
+  toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
@@ -1349,6 +1351,25 @@ function appendToolContentText(content: unknown, text: string): unknown[] {
   return next;
 }
 
+// Claims live until the turn ends; past this, recovered screenshots keep their details only.
+const MAX_RECOVERED_IMAGE_CHARS_PER_TURN = 32 * 1024 * 1024;
+
+function withinRecoveredImageBudget(
+  context: Pick<ActiveAcpTurn, "recoveredImageChars">,
+  output: unknown,
+): unknown {
+  const chars = toolOutputImages(output).reduce(
+    (total, image) => total + (image.data?.length ?? 0),
+    0,
+  );
+  if (chars === 0) return output;
+  if (context.recoveredImageChars + chars > MAX_RECOVERED_IMAGE_CHARS_PER_TURN) {
+    return omitToolOutputImageData(output);
+  }
+  context.recoveredImageChars += chars;
+  return output;
+}
+
 function acpMcpToolCallOutput(rawOutput: unknown): unknown {
   const record = unknownRecord(rawOutput);
   if (record === undefined) return rawOutput;
@@ -1824,6 +1845,8 @@ interface ActiveAcpTurn {
   readonly tools: Map<string, AcpToolCallState & { readonly backgroundCommandTaskId?: string }>;
   /** Confirmed T3 MCP tool outputs keyed by `${toolCallId}\0${tool}\0${inputHash}`. */
   readonly claimedToolResults: Map<string, unknown>;
+  /** Image characters recovered into `claimedToolResults` this turn. */
+  recoveredImageChars: number;
   /** `${toolCallId}\0${tool}\0${inputHash}` keys that already drained a recorded MCP result. */
   readonly drainedToolResultKeys: Set<string>;
   /** `${toolCallId}\0${tool}\0${inputHash}` keys that reached terminal failure and must never do input-only recovery. */
@@ -2421,6 +2444,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  yield* mcpSessions.recoversToolResultImages(options.instanceId);
   const { flavor, selfInvocation: self } = options;
   const callLauncher = yield* writeAcpMcpCallLauncher(host.paths.stateDir);
   const readMcpContext = (threadId: ThreadId | null) =>
@@ -5844,6 +5868,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   );
                   if (recoveredOutput !== undefined) {
                     context.drainedToolResultKeys.add(callInputKey);
+                    recoveredOutput = withinRecoveredImageBudget(context, recoveredOutput);
                   }
                 }
                 if (recoveredOutput !== undefined) {
@@ -10603,6 +10628,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
               claimedToolResults: new Map(),
+              recoveredImageChars: 0,
               drainedToolResultKeys: new Set(),
               blockedInputRecoveryKeys: new Set(),
               attemptedInputRecoveryKeys: new Set(),

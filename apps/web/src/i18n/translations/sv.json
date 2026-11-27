@@ -5716,6 +5716,7 @@
   "76ebb03de52c92d6": "Textvisaren stoppades.",
   "f48162e8e8c12af7": "Kunde inte läsa in textvisaren. Stäng filen och försök igen.",
   "bc4c5b13d38a5da7": "Förhandsvisningen stängdes.",
+  "0e573160f73e19bc": "Filen är inte tillgänglig.",
   "6ad6c8fbb630657d": "Filen är inte tillgänglig.",
   "9450d1827ef336a1": "En annan kopiering pågår.",
   "8f48999eb6d9e2e3": "{count, plural, one {{formatted} rad} other {{formatted} rader}}",
@@ -13038,5 +13039,9 @@
       "v": "v"
     },
     " till i Länkade objekt"
-  ]
+  ],
+  "717c1c47a852a1a5": "Pausa uppläsningen",
+  "0eceb5780908eb6c": "Läs upp",
+  "3ee98da81538c6de": "Det gick inte att spela upp uppläsningen.",
+  "95435f0b59cb2193": "Ljudförhandsvisning"
 }
