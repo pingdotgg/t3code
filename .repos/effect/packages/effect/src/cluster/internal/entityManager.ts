@@ -39,7 +39,7 @@ import type { Sharding } from "../Sharding.ts"
 import { ShardingConfig } from "../ShardingConfig.ts"
 import * as Snowflake from "../Snowflake.ts"
 import * as ClusterAbandon from "./clusterAbandon.ts"
-import { CurrentActivationScope } from "./entityActivation.ts"
+import { CurrentActivationScope, CurrentRetirementLatch } from "./entityActivation.ts"
 import { EntityReaper } from "./entityReaper.ts"
 import { acquireEntity, releaseEntity } from "./interruptors.ts"
 import { ResourceMap } from "./resourceMap.ts"
@@ -343,6 +343,7 @@ export const make = Effect.fnUntraced(function*<
           Context.add(CurrentRunnerAddress, options.runnerAddress),
           Context.add(KeepAliveLatch, keepAliveLatch),
           Context.add(CurrentActivationScope, scope),
+          Context.add(CurrentRetirementLatch, retired),
           Context.add(Scope.Scope, handlerScope),
           Context.add(CurrentLogAnnotations, {})
         )
@@ -643,9 +644,9 @@ export const make = Effect.fnUntraced(function*<
       scope,
       Effect.suspend(() => {
         activeServers.delete(address.entityId)
-        retired.openUnsafe()
         closeLatches.closing = true
         acquireEntity(address)
+        retired.openUnsafe()
         drainingServers.set(address.entityId, state)
         return Effect.raceFirst(
           Effect.gen(function*() {
@@ -801,10 +802,13 @@ export const make = Effect.fnUntraced(function*<
                 if (server.keepAliveRequestId === message.envelope.requestId) return Effect.void
                 if (server.keepAliveRequestId !== undefined) return reply
                 server.keepAliveRequestId = message.envelope.requestId
-                return server.keepAliveLatch.whenOpen(Effect.suspend(() => {
+                // Re-check: the latch may close again before this fiber runs.
+                const release: Effect.Effect<void> = server.keepAliveLatch.whenOpen(Effect.suspend(() => {
+                  if (!server.keepAliveLatch.isOpen()) return release
                   server.keepAliveRequestId = undefined
                   return reply
-                })).pipe(
+                }))
+                return release.pipe(
                   Effect.forkIn(server.scope, { startImmediately: true }),
                   Effect.asVoid
                 )
