@@ -216,7 +216,9 @@ it.effect.each([
     expect({
       thread,
       host,
-      printed: input.expected.printed.filter((url) => errors.includes(url)),
+      printed: [...errors.matchAll(/^Open this URL in a browser: (.*)$/gm)].map(
+        (match) => match[1],
+      ),
     }).toEqual(input.expected);
   }).pipe(Effect.provide(Layer.fresh(TestConsole.layer))),
 );

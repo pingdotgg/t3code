@@ -11,7 +11,7 @@ const quoteShell = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
 /**
  * Writes the script integrated terminals get as BROWSER: it runs `t3 browser open` against this
  * server. None on Windows, where a `.cmd` script re-parses the `&` in the URLs it passes on, or
- * when the path has whitespace, since tools split BROWSER on it.
+ * when the path has whitespace or quotes, since tools shell-split BROWSER.
  */
 export const writeTerminalBrowserCommand = Effect.fn("terminal.writeBrowserCommand")(function* (
   config: Pick<ServerConfig.ServerConfig["Service"], "baseDir" | "stateDir" | "devUrl">,
@@ -20,7 +20,7 @@ export const writeTerminalBrowserCommand = Effect.fn("terminal.writeBrowserComma
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const scriptPath = path.join(config.stateDir, "bin", "t3-browser");
-  if (/\s/.test(scriptPath)) return undefined;
+  if (/[\s'"\\`$]/.test(scriptPath)) return undefined;
   // `--base-dir` always resolves to userdata, so a dev server's state is found by its dev URL.
   const location =
     config.stateDir === path.join(config.baseDir, "userdata")

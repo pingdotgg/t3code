@@ -42,5 +42,6 @@ it.effect("writes a BROWSER script that reaches this server's own state", () =>
 
     expect(yield* write({ stateDir: "userdata", platform: "win32" })).toBeUndefined();
     expect(yield* write({ stateDir: "user data" })).toBeUndefined();
+    expect(yield* write({ stateDir: "o'connor" })).toBeUndefined();
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

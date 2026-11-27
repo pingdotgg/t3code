@@ -18,7 +18,7 @@ Example for Git Bash on Windows (PowerShell, then fully quit and reopen T3 Code)
 
 When a command in a terminal opens a web page, such as `gh auth login --web` or a dev server's `--open`, the page opens as a new tab in the thread's built-in browser, so it works from the web and mobile apps and with remote environments too. Pages that aren't `http` or `https`, such as local files, open in the host's default browser as before.
 
-If T3 Code can't open the page, it opens in the host's default browser instead, and if the host has none, the terminal prints the URL to copy. To keep your own browser, set `BROWSER` in your shell profile or in the environment that launches T3 Code. Not available on Windows.
+If T3 Code can't open the page, it opens in the host's default browser instead, and if no browser can be started, the terminal prints the URL to copy. To keep your own browser, set `BROWSER` in your shell profile or in the environment that launches T3 Code. Not available on Windows.
 
 ## Scrollback and navigation
 
