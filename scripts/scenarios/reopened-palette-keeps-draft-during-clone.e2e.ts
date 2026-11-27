@@ -31,9 +31,8 @@ test(
               stack.includes("at submitAddProjectCloneFlow (")
             ) {
               holdProjectWait = false;
-              const id: number = Reflect.apply(target, receiver, [handler, 60_000, ...args]);
               document.documentElement.dataset.cloneProjectWait = "pending";
-              return id;
+              return Reflect.apply(target, receiver, [handler, 60_000, ...args]);
             }
             return Reflect.apply(target, receiver, [handler, delay, ...args]);
           },
