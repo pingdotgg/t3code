@@ -274,7 +274,25 @@ function toBase64(bytes: Uint8Array) {
   return btoa(binary);
 }
 
+const idpfObfuscation = "http://www.idpf.org/2008/embedding";
+const adobeObfuscation = "http://ns.adobe.com/pdf/enc#RC";
+
 export async function openEpub(archive: JSZip) {
+  if (archive.file("META-INF/license.lcpl")) throw new PreviewError({ code: "epub-drm" });
+  const algorithms = new Map<string, string>();
+  const encryption = await optionalXml("META-INF/encryption.xml");
+  if (encryption) {
+    const ns = "{http://www.w3.org/2001/04/xmlenc#}";
+    for (const node of find(encryption, ns + "EncryptedData")) {
+      const algorithm = find(node, ns + "EncryptionMethod")[0]?.attrs.Algorithm;
+      if (!algorithm) continue;
+      if (algorithm !== idpfObfuscation && algorithm !== adobeObfuscation)
+        throw new PreviewError({ code: "epub-drm" });
+      const uri = find(node, ns + "CipherReference")[0]?.attrs.URI;
+      const path = uri && localPath(archive, "", uri);
+      if (path) algorithms.set(path, algorithm);
+    }
+  }
   if (!archive.file("META-INF/container.xml")) throw new PreviewError({ code: "epub-no-package" });
   const container = parseXml(await readXmlText(archive, "META-INF/container.xml"));
   const fullPath = find(container, "rootfile")[0]?.attrs["full-path"] ?? "";
@@ -427,17 +445,6 @@ export async function openEpub(archive: JSZip) {
   const adobeKey = uuid
     ? Uint8Array.from(uuid.replaceAll("-", "").match(/../g)!, (byte) => parseInt(byte, 16))
     : undefined;
-  const encryption = await optionalXml("META-INF/encryption.xml");
-  const algorithms = new Map<string, string>();
-  if (encryption) {
-    const ns = "{http://www.w3.org/2001/04/xmlenc#}";
-    for (const node of find(encryption, ns + "EncryptedData")) {
-      const uri = find(node, ns + "CipherReference")[0]?.attrs.URI;
-      const algorithm = find(node, ns + "EncryptionMethod")[0]?.attrs.Algorithm;
-      const path = uri && localPath(archive, "", uri);
-      if (path && algorithm) algorithms.set(path, algorithm);
-    }
-  }
 
   async function page(index: number): Promise<EpubPage & { assets: string[] }> {
     const chapter = chapters[index];
@@ -558,9 +565,9 @@ export async function openEpub(archive: JSZip) {
       const algorithm = algorithms.get(target);
       if (algorithm) {
         const key =
-          algorithm === "http://www.idpf.org/2008/embedding"
+          algorithm === idpfObfuscation
             ? idpfKey
-            : algorithm === "http://ns.adobe.com/pdf/enc#RC"
+            : algorithm === adobeObfuscation
               ? adobeKey
               : undefined;
         if (!font || !key) return "";
