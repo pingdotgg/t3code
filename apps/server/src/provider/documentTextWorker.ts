@@ -14,6 +14,17 @@ const CELL_START = Symbol("cell-start");
 const CELL_END = Symbol("cell-end");
 const LINE_START = Symbol("line-start");
 const THEMATIC_BREAK = Symbol("thematic-break");
+const PRESENTATIONML_NAMESPACES = new Set([
+  "http://schemas.openxmlformats.org/presentationml/2006/main",
+  "http://purl.oclc.org/ooxml/presentationml/main",
+]);
+const PPTX_DRAWING_PROPERTIES = new Map([
+  ["sp", "nvSpPr"],
+  ["grpSp", "nvGrpSpPr"],
+  ["pic", "nvPicPr"],
+  ["graphicFrame", "nvGraphicFramePr"],
+  ["cxnSp", "nvCxnSpPr"],
+]);
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 const ODF_DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
@@ -71,6 +82,7 @@ interface XmlNode {
   attrs: Record<string, string>;
   children: Array<XmlNode | string>;
   imageDescription?: string;
+  pptxHidden?: boolean;
   spaceCount?: number;
   wordOutlineHeadingLevel?: number;
   hasText?: boolean;
@@ -202,6 +214,18 @@ function xml(source: string, extension: string): XmlNode {
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (extension === ".pptx" && node.name === "cNvPr") {
+      const hidden = tag.attributes.hidden?.trim();
+      const drawing = stack.at(-2);
+      if (
+        drawing &&
+        (hidden === "true" || hidden === "1") &&
+        PPTX_DRAWING_PROPERTIES.get(drawing.name) === parent.name &&
+        PRESENTATIONML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+      ) {
+        drawing.pptxHidden = true;
+      }
+    }
     if (extension === ".docx" && node.name === "outlineLvl" && parent.name === "pPr") {
       const owner = stack.at(-2);
       const outline = Number(node.attrs.val?.match(/^\s*[+-]?\d+\s*$/u)?.[0]);
@@ -220,6 +244,7 @@ function xml(source: string, extension: string): XmlNode {
       parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
+      node.pptxHidden ||
       isMathmlAlternative ||
       (extension === ".epub" &&
         node.name === "template" &&

@@ -1628,6 +1628,25 @@ describe("question answer paths", () => {
         },
         {
           ext: "pptx",
+          parts: {
+            "ppt/presentation.xml":
+              '<presentation><sldIdLst><sldId r:id="a"/></sldIdLst></presentation>',
+            "ppt/_rels/presentation.xml.rels":
+              '<Relationships><Relationship Id="a" Target="slides/a.xml"/></Relationships>',
+            "ppt/slides/a.xml":
+              '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+              '<p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>' +
+              '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Visible" hidden="0"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:t>Harbor briefing</a:t></a:r></a:p></p:txBody></p:sp>' +
+              '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Hidden" hidden="1"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:t>Unshown draft</a:t></a:r></a:p></p:txBody></p:sp>' +
+              '<p:grpSp><p:nvGrpSpPr><p:cNvPr id="4" name="Hidden group" hidden="true"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>' +
+              '<p:sp><p:nvSpPr><p:cNvPr id="5" name="Group member"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:t>Unshown group draft</a:t></a:r></a:p></p:txBody></p:sp>' +
+              "</p:grpSp></p:spTree></p:cSld></p:sld>",
+          },
+          expected: ["## Slide 1", "Harbor briefing"],
+          absent: ["Unshown draft", "Unshown group draft", "[Skipped document part"],
+        },
+        {
+          ext: "pptx",
           bounded: true,
           parts: {
             "ppt/presentation.xml":
