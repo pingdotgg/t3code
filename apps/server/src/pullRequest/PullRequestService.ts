@@ -2948,7 +2948,14 @@ export const make = Effect.gen(function* () {
     "PullRequestService.listStatsUncached",
   )(function* (input) {
     if (input.refs.length === 0) return { stats: [] };
-    const { supported } = yield* listWorkspaceProjects({});
+    // Read per project: a workspace-wide read keeps one project per repository, which would
+    // leave another project with the same repository without counts.
+    const supported = (yield* Effect.forEach(
+      new Set(input.refs.map((ref) => ref.projectId)),
+      (projectId) =>
+        listWorkspaceProjects({ projectId }).pipe(Effect.map((read) => read.supported)),
+      { concurrency: REPOSITORY_CONCURRENCY },
+    )).flat();
     // A multi-repository project supports several repositories under one id.
     const repositoryKey = (projectId: string, repository: string) =>
       `${projectId} ${repository.trim().toLowerCase()}`;

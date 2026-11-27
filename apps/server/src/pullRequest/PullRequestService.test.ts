@@ -398,6 +398,7 @@ it.effect(
               { name: "notes", path: "/ws/notes" },
             ],
           },
+          project({ id: "p2", title: "api", workspaceRoot: "/api", repository: "acme/api" }),
         ],
         providers: [
           fakePullRequestProvider(SourceControlProviderKind.make("github"), {
@@ -425,7 +426,7 @@ it.effect(
         ],
         resolveRepositoryIdentity: (cwd) => Effect.succeed(identities[cwd] ?? null),
       });
-      const result = yield* service.list({ state: "open" });
+      const result = yield* service.list({ state: "open", projectIds: ["p1" as ProjectId] });
       assert.deepStrictEqual(
         result.entries
           .map(({ projectId, repository, number }) => `${projectId} ${repository}#${number}`)
@@ -436,13 +437,15 @@ it.effect(
         refs: [
           { projectId: "p1" as ProjectId, repository: "acme/web", number: 7 },
           { projectId: "p1" as ProjectId, repository: "acme/api", number: 7 },
+          // The same repository as its own project, listed after the workspace that tracks it.
+          { projectId: "p2" as ProjectId, repository: "acme/api", number: 8 },
         ],
       });
       assert.deepStrictEqual(
         stats
           .map(({ repository, number, additions }) => `${repository}#${number} +${additions}`)
           .toSorted(),
-        ["acme/api#7 +20", "acme/web#7 +10"],
+        ["acme/api#7 +20", "acme/api#8 +20", "acme/web#7 +10"],
       );
       yield* service.detail({ projectId: "p1" as ProjectId, repository: "acme/api", number: 2 });
       assert.deepStrictEqual(detailCwds, ["/ws/api"]);
