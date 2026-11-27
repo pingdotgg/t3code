@@ -265,8 +265,8 @@ it("restores an enclosing shared tooltip when moving off a nested trigger back o
         render={<div className="flex w-60 items-center justify-between p-2" />}
       >
         <span>Thread title</span>
-        <SharedTooltipTrigger label="Snooze thread" render={<button type="button" />}>
-          Snooze
+        <SharedTooltipTrigger label="Settle thread" render={<button type="button" />}>
+          Settle
         </SharedTooltipTrigger>
       </SharedTooltipTrigger>
     </SharedTooltipProvider>,
@@ -275,8 +275,8 @@ it("restores an enclosing shared tooltip when moving off a nested trigger back o
   await userEvent.hover(screen.getByText("Thread title"));
   await expect.element(page.getByText("Thread details")).toBeVisible();
 
-  await userEvent.hover(screen.getByRole("button", { name: "Snooze" }));
-  await expect.element(page.getByText("Snooze thread")).toBeVisible();
+  await userEvent.hover(screen.getByRole("button", { name: "Settle" }));
+  await expect.element(page.getByText("Settle thread")).toBeVisible();
 
   const title = screen.getByText("Thread title");
   await userEvent.hover(title);
