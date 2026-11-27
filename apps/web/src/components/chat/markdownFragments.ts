@@ -21,6 +21,11 @@ function normalizeSanitizedFragmentId(id: string): string {
   return normalizedId;
 }
 
+export function normalizeMarkdownFragmentId(hrefOrId: string): string {
+  const raw = hrefOrId.startsWith("#") ? decodeMarkdownFragmentId(hrefOrId) : hrefOrId;
+  return normalizeSanitizedFragmentId(raw);
+}
+
 function findMarkdownFragmentTarget(anchor: HTMLAnchorElement, href: string): HTMLElement | null {
   const decodedId = decodeMarkdownFragmentId(href);
   const normalizedId = normalizeSanitizedFragmentId(decodedId);
@@ -68,11 +73,12 @@ type HeadingHastNode = {
   children?: HeadingHastNode[];
 };
 
+// GitHub keeps Ruby's \p{Word} (UTS #18 \w), spaces and hyphens.
 export function githubHeadingSlug(text: string): string {
   return text
     .trim()
     .toLowerCase()
-    .replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, "")
+    .replace(/[^\p{Alphabetic}\p{M}\p{Nd}\p{Pc}\p{Join_Control} -]/gu, "")
     .replace(/ /g, "-");
 }
 

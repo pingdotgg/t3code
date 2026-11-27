@@ -316,8 +316,8 @@ function parseReviewInlineComment(
   const attributes = readReviewCommentAttributes(rawAttributes);
   const startIndex = readNonNegativeInteger(attributes.startIndex);
   const endIndex = readNonNegativeInteger(attributes.endIndex);
-  const filePath = attributes.filePath?.trim();
-  const sectionId = attributes.sectionId?.trim();
+  const filePath = attributes.filePath;
+  const sectionId = attributes.sectionId;
   if (!filePath || !sectionId || startIndex === null || endIndex === null) {
     return null;
   }
