@@ -273,6 +273,17 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
       return key;
     });
 
+    const assignableBeyondPages = Effect.fn("JiraIssueTracker.assignableBeyondPages")(function* (
+      project: string,
+      named: string,
+    ) {
+      const byName = (yield* jira.findUsers(named)).find((user) => matchesUser(user, named));
+      // A picker search past the pages read sends an account id, which user search does not match.
+      if (byName !== undefined || /[\s@]/u.test(named)) return byName;
+      const { users } = yield* jira.assignable(project, { accountId: named });
+      return users.find((user) => user.accountId === named);
+    });
+
     /** The account a client named by display name, email or id, among those the project assigns. */
     const accountId = Effect.fn("JiraIssueTracker.accountId")(function* (
       operation: string,
@@ -284,11 +295,12 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
       if (rest.length > 0) {
         return yield* JiraApi.fail(operation, "failed", "A Jira issue has one assignee at most.");
       }
-      const { users } = yield* jira.assignable(projectKey(scope));
+      const project = projectKey(scope);
+      const { users } = yield* jira.assignable(project);
       // Jira hides users after paging, so the pages read never prove someone is missing.
       const found =
         users.find((user) => matchesUser(user, first)) ??
-        (yield* jira.findUsers(first)).find((user) => matchesUser(user, first));
+        (yield* assignableBeyondPages(project, first));
       if (found === undefined) {
         return yield* JiraApi.fail(
           operation,
@@ -533,7 +545,10 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
             input.query === undefined
               ? jira.labels
               : Effect.succeed({ names: [], truncated: false }),
-            jira.assignable(projectKey(input.scope), input.query),
+            jira.assignable(
+              projectKey(input.scope),
+              input.query === undefined ? undefined : { query: input.query },
+            ),
           ],
           { concurrency: 2 },
         ).pipe(

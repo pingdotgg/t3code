@@ -9,7 +9,7 @@ type Assigned = Pick<IssueDetail, "assignees">;
  * The loaded people a query matches by name or by the tracker's own search, which also reads
  * emails, then the people only that search found.
  */
-export function mergeIssueAssigneeCandidates(
+function mergeIssueAssigneeCandidates(
   loaded: ReadonlyArray<IssueAssigneeCandidate>,
   searched: ReadonlyArray<IssueAssigneeCandidate>,
   query: string,

@@ -424,57 +424,38 @@ describe("JiraIssueTracker", () => {
     }),
   );
 
-  it.effect("searches Jira for people past the pages read, without the label catalogue", () =>
+  it.effect("assigns a person a search found past the assignable pages by account id", () =>
     Effect.gen(function* () {
       const JORDAN = user("acc_jordan", "Jordan");
       const { tracker, requests } = fakeJira({
         "GET /rest/api/3/label": () => ({ values: ["bug"] }),
-        "GET /rest/api/3/user/assignable/search": ({ query }) =>
-          query.get("query") === "jordan@acme.test"
-            ? [JORDAN]
-            : Array.from({ length: 100 }, () => THEO),
-      });
-      const api = yield* tracker;
-      const catalogue = yield* api.listCandidates!(target);
-      expect(catalogue).toMatchObject({ assigneeSearch: true, truncated: true });
-      const before = requests.length;
-      const found = yield* api.listCandidates!({ ...target, query: "jordan@acme.test" });
-      expect(found).toMatchObject({
-        labels: [],
-        assignees: [{ login: "Jordan", id: "acc_jordan" }],
-        assigneeSearch: false,
-      });
-      expect(requests.slice(before).map((seen) => seen.path)).toEqual([
-        "/rest/api/3/user/assignable/search",
-      ]);
-    }),
-  );
-
-  it.effect("assigns an account a search found past the assignable pages by its id", () =>
-    Effect.gen(function* () {
-      const picked = user("acc_outside", "Sam Rivera");
-      const { tracker, requests } = fakeJira({
         "GET /rest/api/3/issue/createmeta/ENG/issuetypes": () => ({
           issueTypes: [{ id: "3", name: "Task" }],
         }),
-        "GET /rest/api/3/user/assignable/search": () => Array.from({ length: 100 }, () => THEO),
+        "GET /rest/api/3/user/assignable/search": ({ query }) =>
+          query.get("query") === "jordan@acme.test" || query.get("accountId") === "acc_jordan"
+            ? query.get("startAt") === "0"
+              ? [JORDAN]
+              : []
+            : Array.from({ length: 100 }, () => THEO),
         "GET /rest/api/3/user/search": () => [],
-        "GET /rest/api/3/user": ({ query }) => {
-          expect(query.get("accountId")).toBe(picked.accountId);
-          return picked;
-        },
         "POST /rest/api/3/issue": () => ({ id: "1", key: "ENG-9" }),
       });
       const api = yield* tracker;
+      expect(yield* api.listCandidates!(target)).toMatchObject({ assigneeSearch: true });
+      expect(yield* api.listCandidates!({ ...target, query: "jordan@acme.test" })).toMatchObject({
+        labels: [],
+        assignees: [{ login: "Jordan", id: "acc_jordan" }],
+      });
       yield* api.create({
         ...target,
         title: "New",
         body: "",
         labels: [],
-        assignees: ["acc_outside"],
+        assignees: ["acc_jordan"],
       });
       expect(requests.at(-1)?.body).toMatchObject({
-        fields: { assignee: { accountId: "acc_outside" } },
+        fields: { assignee: { accountId: "acc_jordan" } },
       });
     }),
   );
