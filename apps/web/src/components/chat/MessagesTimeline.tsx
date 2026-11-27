@@ -238,7 +238,13 @@ function TimelineListFooter({
         setHeight();
       }
       if (held > 0) {
-        rowsChanged.observe(viewport, { subtree: true, childList: true, attributes: true });
+        rowsChanged.observe(viewport, {
+          subtree: true,
+          childList: true,
+          attributes: true,
+          // Streaming text grows a row by changing a text node in place.
+          characterData: true,
+        });
       } else {
         rowsChanged.disconnect();
       }
