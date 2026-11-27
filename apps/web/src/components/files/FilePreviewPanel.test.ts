@@ -473,6 +473,12 @@ Third}`;
                 { data: { "text/html": ["<b>Results</b>"], "text/plain": ["Results"] } },
                 { output_type: "display_data", data: { "text/markdown": ["| a |\n", "|---|"] } },
                 { data: { "text/plain": "plain wins", "text/markdown": "**markdown**" } },
+                { output_type: "stream", name: "stdout", text: "Status: 10%" },
+                { output_type: "stream", name: "stdout", text: ["\r", "Status: Done\n"] },
+                { output_type: "stream", name: "stderr", text: "\rDiagnostic" },
+                { output_type: "stream", name: "stdout", text: "Keep this" },
+                { output_type: "display_data", data: { "text/plain": "Saved result" } },
+                { output_type: "stream", name: "stdout", text: "\rNext" },
               ],
             },
           ],
@@ -496,6 +502,11 @@ Third}`;
             { kind: "html", text: "<b>Results</b>" },
             { kind: "text", text: "| a |\n|---|" },
             { kind: "text", text: "plain wins" },
+            { kind: "text", text: "Status: Done\n" },
+            { kind: "text", text: "Diagnostic" },
+            { kind: "text", text: "Keep this" },
+            { kind: "text", text: "Saved result" },
+            { kind: "text", text: "Next" },
           ],
         },
       ],
@@ -730,6 +741,16 @@ Third}`;
     );
   });
 
+  it("omits hidden ODT sections", async () => {
+    const xml =
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>Visible intro.</text:p><text:section text:style-name="Sect1" text:name="Internal" text:display="none"><text:p>Internal margin 42%.</text:p></text:section><text:section text:name="Shown" text:display="true"><text:p>Shown section.</text:p></text:section><text:p>Visible end.</text:p></office:text></office:body></office:document-content>';
+    const result = await openDocument(new JSZip().file("content.xml", xml), "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p>Visible intro.</p><p>Shown section.</p><p>Visible end.</p>",
+    );
+  });
+
   it("maps ODT heading outline levels to HTML heading tags", async () => {
     const xml =
       '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:h text:outline-level="1">1</text:h><text:h text:outline-level="2">2</text:h><text:h text:outline-level="3">3</text:h><text:h text:outline-level="6">6</text:h><text:h text:outline-level="10">10</text:h><text:h text:outline-level="0">0</text:h><text:h text:outline-level="1.5">1.5</text:h><text:h text:outline-level="abc">abc</text:h><text:h>none</text:h></office:text></office:body></office:document-content>';
@@ -763,6 +784,24 @@ Third}`;
       "<ol><li><p>One</p><ul><li><p>Sub</p></li></ul></li><li><p><ol><li><p>Boxed</p></li></ol></p></li></ol><ul><li><p>Bullet</p></li></ul><ul><li><p>Header style</p></li></ul><ul><li><p>First</p><ul><li><p>Nested</p></li></ul></li></ul><ul><ul><li><p>Under header</p></li></ul></ul><ul><li><p>No number</p><ul><li><p>No format</p></li></ul></li></ul><ul><li><p>Plain</p></li></ul>",
     );
   });
+
+  it.each([
+    { styleStart: "5", itemStart: undefined, expected: '<ol start="5"><li>' },
+    { styleStart: "0", itemStart: "4", expected: '<ol start="0"><li value="4">' },
+    { styleStart: "7", itemStart: "1.5", expected: '<ol start="7"><li>' },
+  ])(
+    "keeps ODT list numbers for style start $styleStart and item start $itemStart",
+    async ({ styleStart, itemStart, expected }) => {
+      const item = itemStart === undefined ? "" : ` text:start-value="${itemStart}"`;
+      const content =
+        '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">' +
+        `<office:automatic-styles><text:list-style style:name="Steps"><text:list-level-style-number text:level="1" style:num-format="1" text:start-value="${styleStart}"/></text:list-style></office:automatic-styles>` +
+        `<office:body><office:text><text:list text:style-name="Steps"><text:list-item${item}><text:p>Review</text:p></text:list-item><text:list-item><text:p>Send</text:p></text:list-item></text:list></office:text></office:body></office:document-content>`;
+      const result = await openDocument(new JSZip().file("content.xml", content), "odt");
+      if (result.type !== "document") throw new Error("Expected document");
+      expect(result.pages[0]!.html).toBe(`${expected}<p>Review</p></li><li><p>Send</p></li></ol>`);
+    },
+  );
 
   // LibreOffice writes every index as the templates it was built from, then the built index.
   const indexes = [
@@ -1052,6 +1091,42 @@ Third}`;
       '<feFuncG type="discrete" tableValues="0 0.5 1">',
       '<feFuncB type="gamma" amplitude="2" exponent="3">',
     ]);
+  });
+
+  it("keeps the lighting and arithmetic composite of EPUB SVG bevels", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="badge" href="badge.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="badge"/></spine></package>',
+      )
+      .file(
+        "badge.svg",
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <filter id="bevel">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="2" result="blur"/>
+            <feSpecularLighting in="blur" surfaceScale="5" specularConstant="0.75" specularExponent="20" result="shine">
+              <fePointLight x="-5000" y="-10000" z="20000"/>
+            </feSpecularLighting>
+            <feDiffuseLighting in="blur" diffuseConstant="1" result="light">
+              <feSpotLight x="10" y="10" z="50" pointsAtX="50" pointsAtY="50" pointsAtZ="0" limitingConeAngle="30"/>
+            </feDiffuseLighting>
+            <feComposite in="SourceGraphic" in2="shine" operator="arithmetic" k1="0" k2="1" k3="1" k4="0"/>
+          </filter>
+          <rect width="80" height="80" fill="orange" filter="url(#bevel)"/>
+        </svg>`,
+      );
+    const book = await openEpub(archive);
+    const { html } = await book.page(0);
+    expect(html).toContain('<fePointLight x="-5000" y="-10000" z="20000">');
+    expect(html).toContain("<feDiffuseLighting ");
+    expect(html).toContain('diffuseConstant="1"');
+    expect(html).toContain("<feSpotLight ");
+    expect(html).toContain('pointsAtX="50" pointsAtY="50" pointsAtZ="0" limitingConeAngle="30"');
+    expect(html).toContain('operator="arithmetic" k1="0" k2="1" k3="1" k4="0"');
   });
 
   it("keeps embedded raster images in EPUB SVG artwork", async () => {
