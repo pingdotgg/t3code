@@ -2,7 +2,7 @@ import * as DateTime from "effect/DateTime";
 import { msg } from "gt-react";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { changedFileTotals } from "@t3tools/client-runtime/state/thread-repositories";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
@@ -1321,7 +1321,7 @@ function sumTimelineFileChangeLineStat(entries: ReadonlyArray<TimelineEntry>): D
 }
 
 function sumCheckpointLineStat(summary: TurnDiffSummary): DiffLineStat | null {
-  const { count, additions, deletions } = checkpointFileTotals(summary);
+  const { count, additions, deletions } = changedFileTotals(summary);
   return count === 0 ? null : { additions, deletions };
 }
 
