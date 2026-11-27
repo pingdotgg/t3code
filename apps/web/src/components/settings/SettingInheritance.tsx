@@ -341,7 +341,12 @@ export function SettingInheritance({
                             : "text-muted-foreground/60",
                       )}
                     >
-                      <span className="max-w-32 truncate">{layer.value}</span>
+                      <SharedTooltipTrigger
+                        render={<span className="max-w-32 truncate" />}
+                        label={layer.value}
+                      >
+                        {layer.value}
+                      </SharedTooltipTrigger>
                       {layer.effective ? (
                         <CheckIcon aria-hidden className="size-3.5 shrink-0 text-primary" />
                       ) : (
@@ -377,9 +382,15 @@ export function SettingInheritance({
                     >
                       <span className="flex w-full min-w-0 flex-col">
                         <span className="flex min-w-0 items-center gap-2">
-                          <span className="min-w-0 flex-1 truncate text-sm text-foreground tabular-nums">
+                          <SharedTooltipTrigger
+                            render={
+                              <span className="min-w-0 flex-1 truncate text-sm text-foreground tabular-nums" />
+                            }
+                            label={winningLayer?.value}
+                            disabled={!winningLayer}
+                          >
                             {winningLayer?.value}
-                          </span>
+                          </SharedTooltipTrigger>
                           <span className="text-xs text-muted-foreground">
                             {winningLayer?.key === "environment"
                               ? gt("Environment")
