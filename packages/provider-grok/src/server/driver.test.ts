@@ -342,7 +342,7 @@ it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
           ].join("\n"),
         });
         // Each billing request takes the next answer: a used percent, or 401 for a rejected key.
-        const billing: Array<number | 401> = [97, 9, 401, 401, 401, 12, 401, 30, 401, 40];
+        const billing: Array<number | 401> = [97, 9, 401, 401, 401, 12, 401, 30, 401, 40, 401, 50];
         const served = yield* Queue.unbounded<void>();
         const httpClient = HttpClient.make((request) => {
           // Only Grok's billing endpoint answers; version advisories see an unknown latest version.
@@ -410,7 +410,12 @@ it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
         // rejection after a full check that read successfully.
         const renewedAgain = yield* readingAfter(nextInterval, 2, 30);
         expect(renewedAgain).toBeGreaterThan(renewed);
-        expect(yield* readingAfter(nextInterval, 2, 40)).toBeGreaterThan(renewedAgain);
+        const renewedThird = yield* readingAfter(nextInterval, 2, 40);
+        expect(renewedThird).toBeGreaterThan(renewedAgain);
+
+        // A manual refresh that meets the first rejection renews the key the same way.
+        const refreshUsage = Effect.orDie(instance.snapshot.refreshUsage ?? Effect.void);
+        expect(yield* readingAfter(refreshUsage, 2, 50)).toBeGreaterThan(renewedThird);
         expect(billing).toEqual([]);
       }),
   );

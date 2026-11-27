@@ -85,6 +85,11 @@ function unpackUsageLimitsProbe(result: UsageLimitsProbeResult) {
   return { usageLimits: result, auth: undefined };
 }
 
+type UsageProbeUpdate = readonly [
+  { readonly accepted: boolean; readonly next: ServerProvider | null },
+  ProviderSnapshotState,
+];
+
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
 >(input: {
@@ -297,7 +302,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         return [
           { snapshot, generation },
           { snapshot, enrichmentGeneration: generation, usageAuthLabel, checked: true },
-        ] as const;
+        ];
       },
     );
     yield* Ref.set(settingsRef, nextSettings);
@@ -373,17 +378,17 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     );
     if (probed === undefined) return false;
     const failed = probed.unavailable?.reason === "probeFailed";
-    const failedBefore = yield* Ref.getAndSet(lastUsageReadFailed, failed);
-    const next = yield* Ref.modify(snapshotStateRef, (state) => {
+    const { accepted, next } = yield* Ref.modify(snapshotStateRef, (state): UsageProbeUpdate => {
+      const rejected = { accepted: false, next: null };
       if (!state.snapshot.enabled || state.snapshot.auth.status === "unauthenticated") {
-        return [null, state] as const;
+        return [rejected, state];
       }
       const differs = (a: string | undefined, b: string | undefined) =>
         a !== undefined && b !== undefined && a !== b;
       const concurrentSwitch =
         differs(state.snapshot.auth.email?.toLowerCase(), before.auth.email?.toLowerCase()) ||
         differs(state.snapshot.auth.workspaceId, before.auth.workspaceId);
-      if (concurrentSwitch) return [null, state] as const;
+      if (concurrentSwitch) return [rejected, state];
       const probedSwitched =
         probedAuth !== undefined &&
         (differs(probedAuth.email?.toLowerCase(), state.snapshot.auth.email?.toLowerCase()) ||
@@ -429,15 +434,21 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         ? undefined
         : (probedAuth?.label ?? state.usageAuthLabel);
       if (Equal.equals(state.snapshot, snapshot) && usageAuthLabel === state.usageAuthLabel) {
-        return [null, state] as const;
+        return [{ accepted: true, next: null }, state];
       }
       // Enrichment still running for the previous account must not republish its auth.
       const enrichmentGeneration = state.enrichmentGeneration + (probedSwitched ? 1 : 0);
-      return [snapshot, { ...state, snapshot, usageAuthLabel, enrichmentGeneration }] as const;
+      return [
+        { accepted: true, next: snapshot },
+        { ...state, snapshot, usageAuthLabel, enrichmentGeneration },
+      ];
     });
     if (next !== null) {
       yield* PubSub.publish(changesPubSub, next);
     }
+    // A result dropped for a concurrent account change says nothing about the current account.
+    if (!accepted) return false;
+    const failedBefore = yield* Ref.getAndSet(lastUsageReadFailed, failed);
     return failed && !failedBefore;
   });
 
@@ -455,11 +466,26 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             ? Effect.void
             : restore(
                 checkUsageLimits
-                  ? usageRefreshSemaphore.withPermits(1)(
-                      release.pipe(
-                        Effect.andThen(Effect.asVoid(applyUsageLimitsProbe(checkUsageLimits))),
-                      ),
-                    )
+                  ? usageRefreshSemaphore
+                      .withPermits(1)(
+                        release.pipe(Effect.andThen(applyUsageLimitsProbe(checkUsageLimits))),
+                      )
+                      .pipe(
+                        // Reads that just started failing may mean an expired session, which
+                        // only the full check renews, as on the interval.
+                        Effect.flatMap((startedFailing) =>
+                          startedFailing && input.pollUsageLimits === true
+                            ? refreshSemaphore.withPermits(1)(
+                                input.getSettings.pipe(
+                                  Effect.flatMap((settings) =>
+                                    applySnapshotBase(settings, { forceRefresh: true }),
+                                  ),
+                                  Effect.asVoid,
+                                ),
+                              )
+                            : Effect.void,
+                        ),
+                      )
                   : refreshSemaphore.withPermits(1)(
                       release.pipe(
                         Effect.andThen(input.invalidateUsageCache ?? Effect.void),
