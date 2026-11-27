@@ -597,6 +597,12 @@ class Terminal {
     }
   }
 
+  private control(code: number): void {
+    if (code === 0x0a) this.newline();
+    else if (code === 0x0d) this.col = 0;
+    else if (code === 0x08) this.col = Math.max(0, this.col - 1);
+  }
+
   /** Applies `input`; returns the unfinished escape left at its end. */
   feed(input: string): string {
     let printable = 0;
@@ -610,23 +616,29 @@ class Terminal {
       }
       flush(index);
       printable = index + 1;
-      if (code === 0x0a) this.newline();
-      else if (code === 0x0d) this.col = 0;
-      else if (code === 0x08) this.col = Math.max(0, this.col - 1);
-      else if (code === 0x1b) {
+      if (code === 0x1b) {
         const length = escapeLength(input, index);
+        let sequence = input.slice(index, length === -1 ? input.length : index + length);
+        if (sequence[1] === "[") {
+          // Apply line controls now and leave them out of the CSI, including any pending fragment.
+          sequence = sequence.replace(/[\b\n\r]/gu, (control) => {
+            this.control(control.charCodeAt(0));
+            return "";
+          });
+        }
         if (length === -1) {
-          const fragment = input.slice(index);
-          if (fragment.length <= MAX_PENDING_ESCAPE) return fragment;
+          if (sequence.length <= MAX_PENDING_ESCAPE) return sequence;
           // Retain the introducer and possible ST prefix so long string payloads stay hidden until termination.
-          if (STRING_SEQUENCE_INTRODUCERS.has(fragment[1]!)) {
-            return fragment.slice(0, 2) + (fragment.endsWith(ESC) ? ESC : "");
+          if (STRING_SEQUENCE_INTRODUCERS.has(sequence[1]!)) {
+            return sequence.slice(0, 2) + (sequence.endsWith(ESC) ? ESC : "");
           }
           return "";
         }
-        this.escape(input.slice(index, index + length));
+        this.escape(sequence);
         index += length - 1;
         printable = index + 1;
+      } else {
+        this.control(code);
       }
     }
     const last = input.charCodeAt(input.length - 1);
