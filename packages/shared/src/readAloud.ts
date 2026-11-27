@@ -575,3 +575,24 @@ export function readAloudSourceAtShown(markdown: string, shown: string, offset: 
 export function readAloudBlockFrom(speech: ReadAloudSpeech, from: number) {
   return speech.blocks.find((block) => block.sourceEnd > from);
 }
+
+// As often as dictation's meter and with its smoothing. Speech audio is mastered quieter than a
+// close microphone, so it is scaled up more to fill the same waveform.
+/** How often the read-aloud meter moves, wherever the loudness is measured. */
+export const READ_ALOUD_LEVEL_INTERVAL_MS = 50;
+const READ_ALOUD_LEVEL_GAIN = 8;
+const READ_ALOUD_LEVEL_ATTACK = Math.exp(-READ_ALOUD_LEVEL_INTERVAL_MS / 75);
+const READ_ALOUD_LEVEL_RELEASE = Math.exp(-READ_ALOUD_LEVEL_INTERVAL_MS / 200);
+
+/** The meter's level, from 0 to 1, for audio whose samples (-1 to 1) average `meanSquare`. */
+export function readAloudLevel(meanSquare: number) {
+  return Math.min(1, Math.sqrt(meanSquare) * READ_ALOUD_LEVEL_GAIN) || 0;
+}
+
+/** Eases the meter from `previous` toward `target`: quick to rise, slower to fall. */
+export function smoothReadAloudLevel(previous: number, target: number) {
+  return (
+    target +
+    (previous - target) * (target > previous ? READ_ALOUD_LEVEL_ATTACK : READ_ALOUD_LEVEL_RELEASE)
+  );
+}

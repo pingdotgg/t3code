@@ -449,36 +449,55 @@ it("follows the environment's word timings on the audio clock and estimates them
 });
 
 it("follows the loudness the environment measured when asked, and only then", async () => {
-  const requested: Array<number | undefined> = [];
-  const levels = [
-    { seconds: 0.5, level: 0.2 },
-    { seconds: 0.6, level: 0.8 },
-  ];
-  const timed = createTimedWords({
-    text: "one",
-    load: async (_after, levelsAfter) => {
-      requested.push(levelsAfter);
-      return { words: [], levels, done: true };
-    },
-    clock: () => ({ seconds: 0, rate: 1, playing: false }),
-    levels: true,
-  });
-  await vi.waitFor(() => expect(timed.levelAt(0.5)).toBe(0.2));
-  expect(requested).toEqual([0]);
-  // The nearest level, and none past the last one by more than their spacing.
-  expect(timed.levelAt(0.58)).toBe(0.8);
-  expect(timed.levelAt(0.7)).toBe(0.8);
-  expect(timed.levelAt(0.71)).toBe(0);
-  timed.stop();
+  vi.useFakeTimers();
+  try {
+    const requested: Array<number | undefined> = [];
+    const clock = { seconds: 0.6, rate: 1, playing: true };
+    const timed = createTimedWords({
+      text: "one",
+      load: async (_after, levelsAfter) => {
+        requested.push(levelsAfter);
+        return {
+          words: [],
+          levels: [
+            { seconds: 0.5, level: 0.2 },
+            { seconds: 0.6, level: 0.8 },
+          ],
+          done: true,
+        };
+      },
+      clock: () => clock,
+      levels: true,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requested).toEqual([0]);
+    const heard: number[] = [];
+    const stop = timed.followLevels((level) => heard.push(level));
+    // It eases toward the level at the playing position, as a player's own meter does.
+    await vi.advanceTimersByTimeAsync(50);
+    expect(heard[0]).toBeGreaterThan(0);
+    expect(heard[0]).toBeLessThan(0.8);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(heard.at(-1)).toBeCloseTo(0.8, 2);
+    // Past the last level by more than their spacing, the audio is not measured yet.
+    clock.seconds = 0.71;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(heard.at(-1)).toBeLessThan(0.01);
+    stop();
+    expect(heard.at(-1)).toBe(0);
+    timed.stop();
 
-  const plain: Array<number | undefined> = [];
-  createTimedWords({
-    text: "one",
-    load: async (_after, levelsAfter) => {
-      plain.push(levelsAfter);
-      return { words: [], done: true };
-    },
-    clock: () => ({ seconds: 0, rate: 1, playing: false }),
-  }).stop();
-  await vi.waitFor(() => expect(plain).toEqual([undefined]));
+    const plain: Array<number | undefined> = [];
+    createTimedWords({
+      text: "one",
+      load: async (_after, levelsAfter) => {
+        plain.push(levelsAfter);
+        return { words: [], done: true };
+      },
+      clock: () => clock,
+    }).stop();
+    expect(plain).toEqual([undefined]);
+  } finally {
+    vi.useRealTimers();
+  }
 });

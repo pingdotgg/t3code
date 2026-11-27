@@ -7,10 +7,12 @@ import {
   type SpeechSynthesisWord,
 } from "@t3tools/contracts";
 import {
+  READ_ALOUD_LEVEL_INTERVAL_MS,
   readAloudBlockFrom,
   readAloudPosition,
   readAloudSentenceStart,
   readAloudSpeech,
+  smoothReadAloudLevel,
   splitReadAloudSpans,
   spokenWordAt,
   type ReadAloudSpeech,
@@ -204,8 +206,26 @@ export function createTimedWords(input: {
       };
     },
     refresh,
-    /** How loud the audio is at `seconds`, from 0 to 1, once its level has arrived. */
-    levelAt: (seconds: number) => levelAt(levels, seconds),
+    /**
+     * Reports the measured loudness at the playing position each meter interval, smoothed as a
+     * player measuring its own audio would; returns the way to stop.
+     */
+    followLevels: (listener: (level: number) => void) => {
+      let level = 0;
+      // @effect-diagnostics-next-line globalTimers:off - Players call this outside an Effect runtime.
+      const timer = setInterval(() => {
+        const clock = input.clock();
+        const next = smoothReadAloudLevel(
+          level,
+          clock.playing ? levelAt(levels, clock.seconds) : 0,
+        );
+        if (next !== level) listener((level = next));
+      }, READ_ALOUD_LEVEL_INTERVAL_MS);
+      return () => {
+        clearInterval(timer);
+        listener(0);
+      };
+    },
     /** When the word holding offset `at` starts, once its timing has arrived. */
     secondsAt: (at: number) => {
       // An estimate can land words early or late, so seeking to one skips or repeats speech.

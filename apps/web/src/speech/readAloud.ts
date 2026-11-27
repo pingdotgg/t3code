@@ -16,7 +16,7 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 import { spokenWordAt } from "@t3tools/shared/read-aloud";
 import { readPreparedConnection } from "../state/session";
-import { playbackLevels } from "./playbackLevels";
+import { canCapturePlayback, playbackLevels } from "./playbackLevels";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 
 function systemPlayback(
@@ -128,6 +128,27 @@ export const readAloudController = createReadAloudController(
       audio.onerror = () => reject(new Error("Could not play the generated speech."));
     });
     let timed: ReturnType<typeof createTimedWords> | null = null;
+    // Safari cannot capture the audio element's output, so the meter follows the loudness the
+    // environment measured instead.
+    const measured = !canCapturePlayback(audio);
+    const timedWords = () => {
+      if (timed) return timed;
+      const created = createTimedWords({
+        text,
+        load: (after, levelsAfter, signal) =>
+          runEnvironmentSpeech(getSpeechSynthesisTimings(prepared, token, after, levelsAfter), {
+            signal,
+          }),
+        clock: () => ({
+          seconds: audio.currentTime,
+          rate: audio.playbackRate,
+          playing: !audio.paused,
+        }),
+        levels: measured,
+      });
+      for (const type of CLOCK_EVENTS) audio.addEventListener(type, created.refresh);
+      return (timed = created);
+    };
     return {
       play: () => audio.play(),
       pause: () => audio.pause(),
@@ -140,22 +161,7 @@ export const readAloudController = createReadAloudController(
         done();
       },
       finished,
-      words: (listener) => {
-        if (!timed) {
-          timed = createTimedWords({
-            text,
-            load: (after, _levelsAfter, signal) =>
-              runEnvironmentSpeech(getSpeechSynthesisTimings(prepared, token, after), { signal }),
-            clock: () => ({
-              seconds: audio.currentTime,
-              rate: audio.playbackRate,
-              playing: !audio.paused,
-            }),
-          });
-          for (const type of CLOCK_EVENTS) audio.addEventListener(type, timed.refresh);
-        }
-        return timed.subscribe(listener);
-      },
+      words: (listener) => timedWords().subscribe(listener),
       seek: (at) => {
         const seconds = timed?.secondsAt(at);
         // A live stream ignores seeks beyond what the browser can seek, so those read again instead.
@@ -168,7 +174,8 @@ export const readAloudController = createReadAloudController(
         audio.playbackRate = speed / synthesizedSpeed;
         timed?.refresh();
       },
-      levels: (listener) => playbackLevels(audio, listener),
+      levels: (listener) =>
+        measured ? timedWords().followLevels(listener) : playbackLevels(audio, listener),
     };
   },
   m,

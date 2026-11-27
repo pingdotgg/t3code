@@ -2,9 +2,18 @@ import { useAtomValue } from "@effect/atom-react";
 import { DEFAULT_READ_ALOUD_SETTINGS, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useGT } from "gt-react-native";
-import { useEffect, useSyncExternalStore } from "react";
+import { memo, useEffect, useSyncExternalStore } from "react";
 import { Pressable, View } from "react-native";
-import Animated, { FadeInDown, FadeOut, useSharedValue } from "react-native-reanimated";
+import Animated, {
+  Easing,
+  FadeInDown,
+  FadeOut,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+  type SharedValue,
+} from "react-native-reanimated";
 
 import { ComposerSurface } from "../../components/ComposerSurface";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -13,15 +22,19 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { VoiceWaveform } from "../voice-input/ComposerDictationControl";
-import { VOICE_WAVEFORM_SAMPLE_COUNT } from "../voice-input/voiceInputMetering";
 import { alertReadAloudError } from "./ReadAloudButton";
 import { readAloudController } from "./playback";
 import { getReadAloudAway, scrollToReadAloud, subscribeReadAloudAway } from "./readAloudFollow";
 
 /** The settings schema caps read-aloud speed at 1.5. */
 const SPEEDS = [0.75, 1, 1.25, 1.5] as const;
-const SILENT_LEVELS: ReadonlyArray<number> = Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0);
+// The same meter as web's player: newest level on the right, bars resting at a fifth.
+const WAVEFORM_BAR_COUNT = 24;
+const WAVEFORM_HEIGHT = 16;
+const WAVEFORM_REST_SCALE = 0.2;
+const WAVEFORM_TIMING = { duration: 100, easing: Easing.out(Easing.quad) };
+const WAVEFORM_BAR_IDS = Array.from({ length: WAVEFORM_BAR_COUNT }, (_, index) => String(index));
+const SILENT_LEVELS: ReadonlyArray<number> = Array<number>(WAVEFORM_BAR_COUNT).fill(0);
 const BAR_SHAPE = { borderRadius: 22, borderCurve: "circular", overflow: "hidden" } as const;
 
 /**
@@ -145,9 +158,7 @@ function ReadAloudBarControls(props: {
             </Text>
           )}
         </View>
-        <View className="h-11 w-20 flex-row items-center">
-          <VoiceWaveform audioLevels={status === "playing" ? levels : silent} />
-        </View>
+        <ReadAloudWaveform levels={status === "playing" ? levels : silent} />
         <Menu
           accessible
           accessibilityRole="button"
@@ -200,3 +211,46 @@ function BarButton(props: {
     </Pressable>
   );
 }
+
+const ReadAloudWaveform = memo(function ReadAloudWaveform(props: {
+  readonly levels: SharedValue<ReadonlyArray<number>>;
+}) {
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      className="h-11 flex-row items-center justify-end gap-0.5"
+    >
+      {WAVEFORM_BAR_IDS.map((id, index) => (
+        <WaveformBar key={id} levels={props.levels} index={index} />
+      ))}
+    </View>
+  );
+});
+
+const WaveformBar = memo(function WaveformBar(props: {
+  readonly levels: SharedValue<ReadonlyArray<number>>;
+  readonly index: number;
+}) {
+  const { levels, index } = props;
+  const reducedMotion = useReducedMotion();
+  const style = useAnimatedStyle(() => {
+    const level = levels.value[index] ?? 0;
+    return {
+      opacity: withTiming(0.3 + level * 0.55, WAVEFORM_TIMING),
+      transform: [
+        {
+          scaleY: reducedMotion
+            ? 0.4
+            : withTiming(Math.max(WAVEFORM_REST_SCALE, level), WAVEFORM_TIMING),
+        },
+      ],
+    };
+  });
+  return (
+    <Animated.View
+      className="w-0.5 rounded-full bg-foreground"
+      style={[{ height: WAVEFORM_HEIGHT }, style]}
+    />
+  );
+});

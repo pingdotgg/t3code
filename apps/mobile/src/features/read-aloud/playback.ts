@@ -27,9 +27,6 @@ import { environmentSession } from "../../state/session";
 import { createAudioPlaybackSession, disposeAudioPlayer } from "../../lib/audioSession";
 import { runSpeech } from "../voice-input/voiceDestination";
 
-// How often the meter shows the loudness at the playing position.
-const METER_FRAMES_PER_SECOND = 15;
-
 function pauseInBackground(settings: ReadAloudSettings) {
   const shouldPause = !settings.backgroundPlayback && AppState.currentState !== "active";
   if (shouldPause) readAloudController.pause();
@@ -212,16 +209,6 @@ export const readAloudController = createReadAloudController(
         }),
         levels: true,
       }));
-    const levelListeners = new Set<(level: number) => void>();
-    let metering: ReturnType<typeof setInterval> | undefined;
-    const reportLevel = (level: number) => {
-      for (const listener of levelListeners) listener(level);
-    };
-    const stopMetering = () => {
-      clearInterval(metering);
-      metering = undefined;
-      reportLevel(0);
-    };
     let done: () => void = () => {};
     const finished = new Promise<void>((resolve, reject) => {
       done = resolve;
@@ -255,14 +242,9 @@ export const readAloudController = createReadAloudController(
           player.setActiveForLockScreen(true, { title: "T3 Code", artist: "Read aloud" });
         if (!(await session.play())) throw new Error("Finish recording before reading aloud.");
       },
-      pause: () => {
-        session.pause();
-        reportLevel(0);
-      },
+      pause: () => session.pause(),
       stop: () => {
         timed?.stop();
-        stopMetering();
-        levelListeners.clear();
         stopWatching();
         session.stop();
         disposeAudioPlayer(player);
@@ -283,18 +265,7 @@ export const readAloudController = createReadAloudController(
       },
       // Audio a provider made at `settings.speed` plays at 1 for that speed.
       setSpeed: (speed) => player.setPlaybackRate(speedApplied ? speed / settings.speed : speed),
-      levels: (listener) => {
-        levelListeners.add(listener);
-        const words = timedWords();
-        metering ??= setInterval(
-          () => reportLevel(player.playing ? words.levelAt(player.currentTime) : 0),
-          1000 / METER_FRAMES_PER_SECOND,
-        );
-        return () => {
-          levelListeners.delete(listener);
-          if (levelListeners.size === 0) stopMetering();
-        };
-      },
+      levels: (listener) => timedWords().followLevels(listener),
     };
   },
   m,

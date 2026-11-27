@@ -226,8 +226,8 @@ it.effect("reports the loudness of PCM audio on the MP3's clock, shifted with a 
         }).pipe(Effect.provide(withSource(Stream.fromQueue(source), { session })));
       });
     const levels = yield* reading();
-    expect(levels.map((level) => level.level)).toEqual([0, 1, 1]);
-    expect(levels[0]!.seconds).toBeCloseTo(1 + delay + 1 / 30, 3);
+    expect(levels.map((level) => level.level)).toEqual([0, 0, 1, 1]);
+    expect(levels[0]!.seconds).toBeCloseTo(1 + delay + 0.025, 3);
     // From "this", the audio starts at its frame and the levels before it are dropped.
     const cut = 1152 / 44100;
     const shifted = yield* reading(5);

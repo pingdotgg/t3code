@@ -1,12 +1,16 @@
-// As often as dictation's meter and with its smoothing. Speech audio is mastered quieter than a
-// close microphone, so it is scaled up more to fill the same waveform.
-const LEVEL_INTERVAL_MS = 50;
-const GAIN = 8;
+import {
+  READ_ALOUD_LEVEL_INTERVAL_MS,
+  readAloudLevel,
+  smoothReadAloudLevel,
+} from "@t3tools/shared/read-aloud";
+
 const SAMPLES = 1024;
-const ATTACK = Math.exp(-LEVEL_INTERVAL_MS / 75);
-const RELEASE = Math.exp(-LEVEL_INTERVAL_MS / 200);
 
 type CapturableAudio = HTMLAudioElement & { captureStream?: () => MediaStream };
+
+/** Whether `audio`'s output can be captured to measure; Safari's cannot. */
+export const canCapturePlayback = (audio: HTMLAudioElement) =>
+  typeof (audio as CapturableAudio).captureStream === "function";
 
 /**
  * How loud `audio` plays, read from a captured copy of its output so playback never depends on
@@ -38,11 +42,10 @@ export function playbackLevels(audio: HTMLAudioElement, listener: (level: number
     analyser.getFloatTimeDomainData(samples);
     let energy = 0;
     for (const sample of samples) energy += sample * sample;
-    const target = Math.min(1, Math.sqrt(energy / samples.length) * GAIN);
-    level = target + (level - target) * (target > level ? ATTACK : RELEASE);
+    level = smoothReadAloudLevel(level, readAloudLevel(energy / samples.length));
     listener(level);
   };
-  const timer = setInterval(tick, LEVEL_INTERVAL_MS);
+  const timer = setInterval(tick, READ_ALOUD_LEVEL_INTERVAL_MS);
   return () => {
     clearInterval(timer);
     source?.disconnect();
