@@ -73,6 +73,13 @@ export function relayProtectedErrorText(error: RelayProtectedError): MarkedText 
           ),
         ];
       }
+      if (error.reason === "manual_endpoint_not_allowed") {
+        return [
+          msg(
+            "The relay may not contact the address this environment published. Use an HTTPS address the relay can reach that is not localhost. Private network addresses work only on a relay that allows them.",
+          ),
+        ];
+      }
       return error.reason
         ? [
             msg("Relay rejected the environment connection request ({reason}).", {

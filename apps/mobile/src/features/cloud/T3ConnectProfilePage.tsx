@@ -40,7 +40,9 @@ function endpointLabel(
 ): string {
   return environment.endpoint.providerKind === "cloudflare_tunnel"
     ? resolve(msg("Managed tunnel"))
-    : resolve(msg("Activity publishing only"));
+    : environment.endpoint.providerKind === "t3_relay"
+      ? resolve(msg("Carried by the relay"))
+      : resolve(msg("Activity publishing only"));
 }
 
 function confirmDeregister(environment: RelayClientEnvironmentRecord, onConfirm: () => void) {

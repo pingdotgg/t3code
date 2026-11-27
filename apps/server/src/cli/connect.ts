@@ -13,6 +13,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -228,7 +229,7 @@ function formatCloudStatus(
       : publishOnly
         ? [
             "",
-            "This link only publishes agent activity. Remote access through T3 Connect is off, so other devices need their own route to this machine, such as LAN or Tailscale.",
+            "This link publishes agent activity without a managed tunnel. Remote access requires a self-hosted relay channel, a published HTTPS address, or another route such as LAN or Tailscale.",
           ]
         : status.reachability === null
           ? [
@@ -524,6 +525,7 @@ export const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function
     | EnvironmentAuth.EnvironmentAuth
     | BootService.BootService
     | SecureRandom.SecureRandom
+    | Digest.Digest
     | FileSystem.FileSystem
     | Path.Path
     | HttpClient.HttpClient
@@ -635,7 +637,7 @@ const connectLinkCommand = Command.make("link", {
   headless: headlessFlag,
   publishOnly: Flag.Boolean("publish-only").pipe(
     Flag.withDescription(
-      "Link to publish agent activity only, with no managed tunnel. Reach this environment out of band (e.g. Tailscale).",
+      "Link without a managed tunnel. A self-hosted relay with channels enabled carries remote access. Otherwise set T3CODE_PUBLIC_URL to publish an HTTPS address, or use another route such as Tailscale.",
     ),
     Flag.withDefault(false),
   ),

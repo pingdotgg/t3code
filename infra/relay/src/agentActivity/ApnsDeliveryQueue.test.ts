@@ -1,7 +1,5 @@
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -29,18 +27,15 @@ const config: RelayConfiguration.RelayConfiguration["Service"] = {
 };
 
 describe("ApnsDeliveryQueue", () => {
-  it.effect("does not require the deployment RuntimeContext when building the Worker layer", () => {
+  it.effect("builds from an injected sender without any host runtime", () => {
     const sent: unknown[] = [];
-    const sender: Cloudflare.Queues.WriteQueueClient = {
-      raw: Effect.die("raw queue binding is not used"),
-      send: (body) =>
+    const sender = {
+      send: (body: unknown) =>
         Effect.sync(() => {
           sent.push(body);
         }),
-      sendBatch: () => Effect.die("batch queue binding is not used"),
     };
-    const runtimeContext = {} as Alchemy.BaseRuntimeContext;
-    const layer = ApnsDeliveryQueue.layerCloudflareQueues(sender, runtimeContext).pipe(
+    const layer = ApnsDeliveryQueue.layerWithSender(sender).pipe(
       Layer.provide(NodeCryptoLayer.layer),
       Layer.provide(RelayConfiguration.layer(config)),
     );

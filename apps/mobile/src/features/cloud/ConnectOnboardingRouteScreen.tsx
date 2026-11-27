@@ -3,7 +3,6 @@ import { AppBar } from "../../components/ui/AppBar";
 import { Button } from "../../components/ui/Button";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 
-import { useAuth } from "@clerk/expo";
 import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
 import { View } from "react-native";
@@ -21,6 +20,7 @@ import {
   connectionTracesAvailable,
 } from "../observability/ConnectionTracesSwitch";
 import { optOutOfConnectOnboarding } from "./connectOnboardingOptOut";
+import { useCloudAuth } from "./cloudAuth";
 import { hasCloudPublicConfig } from "./publicConfig";
 
 // Only reachable with cloud config: onboarding is requested after a T3 Connect
@@ -33,7 +33,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
   const gt = useGT();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
+  const { isSignedIn, userId } = useCloudAuth();
   const { connectedEnvironments, onSetEnvironmentEnabled, onRemoveEnvironmentPress } =
     useRemoteConnections();
   const { refreshRelayEnvironments } = useConnectionController();

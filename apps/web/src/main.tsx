@@ -5,7 +5,7 @@ import "@fontsource-variable/inter";
 import "./index.css";
 
 import { trackKeyboardLayout } from "./keyboardLayout";
-import { hasCloudPublicConfig } from "./cloud/publicConfig";
+import { cloudAuthProvider } from "./cloud/publicConfig";
 import { isElectron } from "./env";
 import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
@@ -21,30 +21,33 @@ const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string
 
 const app = <AppRoot router={router} />;
 
-// Split by runtime to keep Clerk out of local startup and clerk-js out of browser builds.
-const managedAuthShellModule =
-  clerkPublishableKey && hasCloudPublicConfig()
-    ? isElectron
-      ? import("./components/clerk/ElectronManagedAuthShell")
-      : import("./components/clerk/BrowserManagedAuthShell")
-    : null;
+// Split by provider and runtime to keep sign-in code out of local startup, and clerk-js out of
+// browser builds. An OpenID Connect provider, when configured, replaces Clerk entirely.
+const authProvider = cloudAuthProvider();
+const managedAuthShell: Promise<(app: React.ReactNode) => React.ReactNode> | null =
+  authProvider === "oidc"
+    ? import("./components/oidc/OidcManagedAuthShell").then(({ default: Shell }) => (child) => (
+        <Shell>{child}</Shell>
+      ))
+    : authProvider === "clerk" && clerkPublishableKey
+      ? (isElectron
+          ? import("./components/clerk/ElectronManagedAuthShell")
+          : import("./components/clerk/BrowserManagedAuthShell")
+        ).then(({ default: Shell }) => (child) => (
+          <Shell publishableKey={clerkPublishableKey}>{child}</Shell>
+        ))
+      : null;
 
 export const startup = Promise.all([
-  managedAuthShellModule?.then((module) => module.default) ?? null,
+  managedAuthShell,
   // Chained so settings have usually hydrated; English resolves without a chunk load.
   router.load().then(whenLocaleReady),
 ])
-  .then(([ManagedAuthShell]) => {
+  .then(([wrapWithManagedAuth]) => {
     // Route chunk failures resolve router.load() and surface later through the error boundary.
     if (chunkLoadState.reloadScheduled) return;
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-      <React.StrictMode>
-        {ManagedAuthShell && clerkPublishableKey ? (
-          <ManagedAuthShell publishableKey={clerkPublishableKey}>{app}</ManagedAuthShell>
-        ) : (
-          app
-        )}
-      </React.StrictMode>,
+      <React.StrictMode>{wrapWithManagedAuth ? wrapWithManagedAuth(app) : app}</React.StrictMode>,
     );
   })
   .catch((error: unknown) => {

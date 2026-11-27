@@ -17,6 +17,7 @@ vi.mock("expo-constants", () => ({
     },
   },
 }));
+vi.mock("expo-secure-store", () => ({ getItem: () => null }));
 
 const layerTracingTo = (fetchFn: typeof fetch) =>
   Tracing.layerFromConfig(

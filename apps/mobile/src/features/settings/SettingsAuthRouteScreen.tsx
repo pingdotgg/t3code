@@ -5,11 +5,21 @@ import {
   UserProfileView,
 } from "@clerk/expo/native-components";
 import { useNavigation } from "@react-navigation/native";
+import { useGT } from "gt-react-native";
 import { useEffect, useState } from "react";
 import { View } from "react-native";
 
-import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { ScrollView } from "react-native";
+
+import * as Dialog from "../../components/ui/Dialog";
+import { useCloudAuth } from "../cloud/cloudAuth";
+import { getMobileOidcController, signInWithBrowser } from "../cloud/oidc/mobileOidc";
+import { cloudAuthProvider, hasCloudPublicConfig } from "../cloud/publicConfig";
 import { T3ConnectProfilePage } from "../cloud/T3ConnectProfilePage";
+import { SettingsRow } from "./components/SettingsRow";
+import { SettingsScreen } from "./components/SettingsScreen";
+import { SettingsSection } from "./components/SettingsSection";
 
 const USER_PROFILE_CUSTOM_PAGES = [
   {
@@ -22,7 +32,65 @@ const USER_PROFILE_CUSTOM_PAGES = [
 
 // Without cloud config the app has no entry point here and appLinking drops the deep link.
 export function SettingsAuthRouteScreen() {
-  return hasCloudPublicConfig() ? <ConfiguredSettingsAuthRouteScreen /> : null;
+  if (!hasCloudPublicConfig()) return null;
+  return cloudAuthProvider() === "oidc" ? (
+    <OidcSettingsAuthRouteScreen />
+  ) : (
+    <ConfiguredSettingsAuthRouteScreen />
+  );
+}
+
+/** An OpenID Connect provider hosts no profile view, so this screen signs in and out and lists linked environments. */
+function OidcSettingsAuthRouteScreen() {
+  const { isSignedIn, accountLabel, signOut } = useCloudAuth();
+  const gt = useGT();
+  const [busy, setBusy] = useState(false);
+
+  const signIn = async () => {
+    const controller = getMobileOidcController();
+    if (controller === null || busy) return;
+    setBusy(true);
+    const result = await settlePromise(() => signInWithBrowser(controller));
+    setBusy(false);
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      Dialog.alert(
+        gt("Could not sign in"),
+        error instanceof Error ? error.message : gt("The identity provider did not respond."),
+      );
+    }
+  };
+
+  return (
+    <SettingsScreen title={gt("T3 Account")}>
+      {isSignedIn ? (
+        <View className="flex-1">
+          <View className="px-5 pt-4">
+            <SettingsSection>
+              <SettingsRow
+                icon="arrow.right.circle"
+                label={gt("Sign out")}
+                value={accountLabel ?? undefined}
+                onPress={() => void signOut()}
+              />
+            </SettingsSection>
+          </View>
+          <T3ConnectProfilePage />
+        </View>
+      ) : (
+        <ScrollView contentContainerClassName="gap-6 px-5 pt-4">
+          <SettingsSection>
+            <SettingsRow
+              icon="person.crop.circle"
+              label={busy ? gt("Opening sign-in…") : gt("Sign in")}
+              disabled={busy}
+              onPress={() => void signIn()}
+            />
+          </SettingsSection>
+        </ScrollView>
+      )}
+    </SettingsScreen>
+  );
 }
 
 function ConfiguredSettingsAuthRouteScreen() {

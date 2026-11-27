@@ -13,7 +13,6 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -239,6 +238,21 @@ function layerFor(input: {
     ),
   );
 }
+
+const queueMessages = (bodies: ReadonlyArray<unknown>) => {
+  const outcomes: Array<string> = [];
+  const messages = bodies.map((body, index) => ({
+    body,
+    ack: Effect.sync(() => {
+      outcomes.push(`${index}:ack`);
+    }),
+    retry: (error: { readonly _tag: string }) =>
+      Effect.sync(() => {
+        outcomes.push(`${index}:retry:${error._tag}`);
+      }),
+  }));
+  return { messages, outcomes };
+};
 
 describe("ApnsDeliveries", () => {
   it.effect("queues bounded Live Activity aggregate payloads", () => {
@@ -804,8 +818,9 @@ describe("ApnsDeliveries", () => {
           }),
         }),
       );
+      const queued = queueMessages(jobs);
       const batch = yield* Effect.flatMap(ApnsDeliveries.ApnsDeliveries, (deliveries) =>
-        deliveries.processBatch(Stream.fromIterable(jobs.map((body) => ({ body })))),
+        deliveries.processBatch(queued.messages),
       ).pipe(
         Effect.provide(
           layerFor({
@@ -843,6 +858,7 @@ describe("ApnsDeliveries", () => {
           .map((attempt) => attempt.sourceJobId),
       ).toEqual(["job-0", "job-1"]);
       expect(attempts.every((attempt) => attempt.apnsStatus === 200)).toBe(true);
+      expect(queued.outcomes.toSorted()).toEqual(["0:ack", "1:ack", "2:ack"]);
     }).pipe(Effect.provide(NodeCryptoLayer.layerMac)),
   );
 
@@ -1072,14 +1088,15 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* Effect.exit(
-        deliveries.processBatch(Stream.fromIterable((yield* signed).map((body) => ({ body })))),
-      );
+      const queued = queueMessages(yield* signed);
+      yield* deliveries.processBatch(queued.messages);
 
-      expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure") {
-        expect(result.cause.toString()).toContain("ApnsDeliveryJobClaimInFlight");
-      }
+      // The job behind the in-flight one is redelivered unsent, so the device keeps its order.
+      expect(queued.outcomes.toSorted()).toEqual([
+        "0:retry:ApnsDeliveryJobClaimInFlight",
+        "1:retry:ApnsDeliveryJobClaimInFlight",
+        "2:ack",
+      ]);
       expect(executeCount).toBe(1);
       expect(attempts).toMatchObject([{ sourceJobId: "job-push-other-device", apnsStatus: 200 }]);
     }).pipe(
