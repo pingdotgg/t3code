@@ -5954,12 +5954,14 @@ it.effect(
         yield* TestClock.adjust("1 second");
         assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-idle-detach"]);
 
+        // The pump persists a session update before it publishes it to subscribers.
+        const updates = yield* runtime.subscribeEvents!;
         yield* Queue.offer(adapterQueue, {
           type: "provider_session.updated",
           driver: CODEX_DRIVER,
           providerSession: { ...runtime.providerSession, startupPhase: "mcp", updatedAt: now },
         });
-        yield* subscription.events.pipe(Stream.runHead);
+        yield* updates.events.pipe(Stream.runHead);
 
         const count = (threadId: ThreadId, eventType: OrchestrationV2DomainEvent["type"]) =>
           eventStore.read({ threadId, eventType }).pipe(
