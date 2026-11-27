@@ -2474,7 +2474,7 @@ const make = Effect.gen(function* () {
       const modelSelection =
         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
       // Never end on a lone high surrogate, which renders as a broken character.
-      const derivedTitle = (input.prompt.split("\n")[0]?.trim() ?? "")
+      const derivedTitle = (input.prompt.split(/[\r\n\u2028\u2029]/, 1)[0]?.trim() ?? "")
         .slice(0, 80)
         .replace(/[\uD800-\uDBFF]$/, "");
       const title = input.title ?? (derivedTitle.length > 0 ? derivedTitle : "Scheduled task");
