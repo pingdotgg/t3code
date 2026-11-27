@@ -114,6 +114,9 @@ function makeSession(
       Promise.all(events.listeners(name).map((listener) => listener(...args))),
     detach: vi.fn(async () => {}),
     send: vi.fn(async (method: string, input?: unknown): Promise<Record<string, unknown>> => {
+      if (method === "Fetch.enable" && initialAuthChallenge) {
+        events.emit("Fetch.authRequired", initialAuthChallenge);
+      }
       if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{}] };
       if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0 } };
       if (method === "Page.captureScreenshot") {
@@ -402,6 +405,7 @@ let focusedFrame: ReturnType<typeof makeFrame> | null = null;
 let contextFailure: Error | null = null;
 let pageSetupFailure: Error | null = null;
 let initialNavigation: (() => Promise<void>) | null = null;
+let initialAuthChallenge: typeof basicChallenge | null = null;
 let desktopRendersNext = false;
 let desktopPageUrl = "about:blank";
 let desktopConnectionGate: PromiseWithResolvers<void> | null = null;
@@ -604,6 +608,7 @@ beforeEach(() => {
   contextFailure = null;
   pageSetupFailure = null;
   initialNavigation = null;
+  initialAuthChallenge = null;
   pageCopy = "";
   keyCopy = "";
   focusedFrame = null;
@@ -1918,12 +1923,12 @@ it.effect("an HTTP Basic challenge asks for credentials and sends them to Chromi
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect("dismissing an HTTP Basic challenge cancels it", () =>
+it.effect("an HTTP Basic challenge received during tab setup can be dismissed", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      initialAuthChallenge = basicChallenge;
       const { broker, tabId } = yield* ready;
       const session = contexts[0]!.sessions[0]!;
-      session.emit("Fetch.authRequired", basicChallenge);
       const pending = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         tabId,
@@ -1931,6 +1936,7 @@ it.effect("dismissing an HTTP Basic challenge cancels it", () =>
         input: {},
       });
       const authChallengeId = pending.dialog?.authChallengeId;
+      expect(authChallengeId).toBeTypeOf("string");
       const accept = yield* broker
         .invoke<PreviewAutomationStatus>({
           scope,

@@ -1329,12 +1329,6 @@ const make = Effect.gen(function* () {
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     if (!desktop) opened.push(() => page.close());
     const cdp = await context.newCDPSession(page);
-    // Desktop tabs keep the desktop shell's own handling of HTTP auth.
-    await installPdfDocumentNavigation(cdp, { handleAuthRequests: !desktop });
-    // The desktop's page is already a normal browser. A popup's first request
-    // precedes this override, so its Sec-CH-UA brands still name HeadlessChrome.
-    if (!desktop) await presentAsChrome(cdp, host);
-    if (!desktop) await recordCopies(cdp);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     const control = new SessionControl(snapshot.automationOwner ?? null, () =>
@@ -1407,6 +1401,16 @@ const make = Effect.gen(function* () {
       captureLock: Promise.resolve(),
       capturing: 0,
     };
+    if (!desktop)
+      cdp.on("Fetch.authRequired", (event) =>
+        requestAuth(tab, event.requestId, event.authChallenge),
+      );
+    // Desktop tabs keep the desktop shell's own handling of HTTP auth.
+    await installPdfDocumentNavigation(cdp, { handleAuthRequests: !desktop });
+    // The desktop's page is already a normal browser. A popup's first request
+    // precedes this override, so its Sec-CH-UA brands still name HeadlessChrome.
+    if (!desktop) await presentAsChrome(cdp, host);
+    if (!desktop) await recordCopies(cdp);
     if (!desktop) {
       await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
     }
@@ -1583,10 +1587,6 @@ const make = Effect.gen(function* () {
       };
       broadcastControl(tab);
     });
-    if (!desktop)
-      cdp.on("Fetch.authRequired", (event) =>
-        requestAuth(tab, event.requestId, event.authChallenge),
-      );
     page.on("download", (download) => void saveDownload(tab, download));
     updateFileChooserInterception(tab);
     // Popups become tabs and keep `window.opener`, so sign-in popups can report back.
