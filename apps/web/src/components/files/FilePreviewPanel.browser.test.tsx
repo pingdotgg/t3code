@@ -1187,21 +1187,17 @@ describe("large text scroll position", () => {
       await using _screen = await render(opened("other.log", log(5000)));
       await vi.waitFor(() => expect(firstVisibleRow(), "another file opens at the top").toBe(0));
     }
-    await using screen = await render(opened("app.log", log(100, true)));
+    await using screen = await render(opened("app.log", log(100)));
     await vi.waitFor(() => expect(firstVisibleRow()).toBe(0));
     await screen.rerender(opened("app.log", log(5000)));
     await vi.waitFor(() => expect(firstVisibleRow()).toBe(saved));
   });
 
-  it.each([
-    { count: 1505, input: "layout" },
-    { count: 66000, input: "none" },
-    { count: 1505, input: "page down" },
-  ])(
-    "keeps the reading row with $count rows available on return (input: $input)",
-    async ({ count, input }) => {
+  it.each([{ indexing: true }, { indexing: false }])(
+    "keeps the reading row past a cited line on return (indexing: $indexing)",
+    async ({ indexing }) => {
       using _style = withPreviewAppCss();
-      const key = `cited-log-${count}-${input}`;
+      const key = `cited-log-${indexing}`;
       {
         await using _screen = await render(opened(key, log(66000, false, 1000), 608));
         await vi.waitFor(() => expect(firstVisibleRow()).toBe(999));
@@ -1209,23 +1205,15 @@ describe("large text scroll position", () => {
         scroller().dispatchEvent(new Event("scroll"));
         await vi.waitFor(() => expect(firstVisibleRow()).toBe(1499));
       }
+      // While indexing, the viewer has no line request yet.
       await using screen = await render(
-        opened(key, log(count, count < 66000, count === 66000 ? 1000 : undefined), 608),
+        opened(key, indexing ? log(2000, true) : log(66000, false, 1000), 608),
       );
-      let readingRow = 1499;
-      if (count < 66000) {
-        expect(firstVisibleRow()).toBe(0);
-        scroller().focus();
-        if (input === "page down") {
-          await userEvent.keyboard("{PageDown}");
-          await vi.waitFor(() => expect(firstVisibleRow()).toBeGreaterThan(0));
-          readingRow = firstVisibleRow();
-        } else {
-          scroller().dispatchEvent(new Event("scroll"));
-        }
+      if (indexing) {
+        await vi.waitFor(() => expect(firstVisibleRow()).toBe(1499));
         await screen.rerender(opened(key, log(66000, false, 1000), 608));
       }
-      await vi.waitFor(() => expect(firstVisibleRow()).toBe(readingRow));
+      await vi.waitFor(() => expect(firstVisibleRow()).toBe(1499));
     },
   );
 });

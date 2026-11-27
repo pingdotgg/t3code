@@ -313,13 +313,7 @@ function ScaledRows(
       : [];
     scrollModel.current = { scale, maxFirst, heights };
     const node = ref.current;
-    if (!node) return;
-    // A pending restore starts at the top and has no scroll position to rebase.
-    if (pendingRestore.current !== undefined) {
-      if (node.scrollTop === 0) return;
-      pendingRestore.current = undefined;
-    }
-    if (previous.scale === scale && previous.maxFirst === maxFirst) return;
+    if (!node || (previous.scale === scale && previous.maxFirst === maxFirst)) return;
     const previousEnd = previous.maxFirst * 29 * previous.scale;
     let logicalTop = Math.min(previous.maxFirst * 29, node.scrollTop / previous.scale);
     let remaining = Math.max(0, node.scrollTop - previousEnd);
@@ -357,18 +351,17 @@ function ScaledRows(
     pendingReveal.current = { row, attempts: 0 };
     handledReveal.current = key;
   }, [props.indexing, props.revealLine, props.revealRequestId, props.count, headerRows, scale]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the saved row after the complete scroll track has committed.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Return a reopened file to its saved row once that row has streamed in.
   useLayoutEffect(() => {
     const row = pendingRestore.current;
     const node = ref.current;
-    if (row === undefined || !node || props.indexing) return;
+    if (row === undefined || !node || row >= props.count) return;
     pendingRestore.current = undefined;
-    if (row >= props.count) return;
     // Rounding down can leave the previous row at the top of the virtual track.
     node.scrollTop = Math.ceil(Math.max(0, (row - headerRows) * 29) * scale);
     setTop(node.scrollTop);
     pendingReveal.current = { row, attempts: 0 };
-  }, [props.indexing, props.count, headerRows, scale]);
+  }, [props.count, headerRows, scale]);
   const atStart = position.top === 0;
   const rowHeight = () =>
     contentRef.current?.querySelector<HTMLElement>(`[data-preview-row="${first}"]`)?.offsetHeight ||
@@ -591,7 +584,6 @@ function ScaledRows(
       onScroll={(event) => {
         const scrolled = event.currentTarget.scrollTop;
         setTop(scrolled);
-        if (pendingRestore.current !== undefined && scrolled === 0) return;
         pendingRestore.current = undefined;
         savedFirstRows.set(positionKey, {
           row: Math.min(maxFirst, Math.floor(scrolled / scale / 29)) + headerRows,
