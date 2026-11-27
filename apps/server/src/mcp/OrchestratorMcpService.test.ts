@@ -2535,6 +2535,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
   it.effect.each([
     { scenario: "usable fallback", active: true, usesFallback: true, refreshes: false },
+    { scenario: "child still preparing", active: true, usesFallback: true, refreshes: false },
     { scenario: "explicit target", active: true, usesFallback: false, refreshes: false },
     { scenario: "invalid requested options", active: true, usesFallback: false, refreshes: false },
     { scenario: "healthy inherited model", active: false, usesFallback: false, refreshes: false },
@@ -2578,6 +2579,8 @@ describe("OrchestratorMcpService provider resolution", () => {
         : { instanceId: codexInstanceId, model: "gpt-5.4" };
       const refreshed: Array<ProviderInstanceId> = [];
       const commands: Array<unknown> = [];
+      const childRunId = derive.run({ threadId: childThreadId, ordinal: 1 });
+      const preparations: Array<ThreadLaunchService.ThreadLaunchPreparationInput> = [];
       const tasks: Array<ReturnType<typeof taskFor>> = [];
       function taskFor(commandId: CommandId) {
         return {
@@ -2597,7 +2600,22 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           hasReceipt: () => Effect.succeed(tasks.length > 0),
           getThreadRecords: (threadId) =>
-            Effect.succeed(threadId === parentThreadId ? parentProjection(tasks) : childProjection),
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection(tasks)
+                : scenario === "child still preparing"
+                  ? {
+                      ...childProjection,
+                      runs: [
+                        {
+                          id: childRunId,
+                          status: preparations.length === 0 ? "preparing" : "starting",
+                          workspacePreparation: { type: "worktree", baseRef: "HEAD" },
+                        },
+                      ] as unknown as typeof childProjection.runs,
+                    }
+                  : childProjection,
+            ),
           dispatch: (command) =>
             Effect.sync(() => {
               commands.push(command);
@@ -2609,6 +2627,13 @@ describe("OrchestratorMcpService provider resolution", () => {
               } as never;
             }),
         }),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          prepareRun: (input) =>
+            Effect.sync(() => {
+              preparations.push(input);
+            }),
+        }),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         ServerSettings.layerTest({
           fallbackModelSelection: fallback,
           ...(scenario === "project-disabled fallback"
@@ -2675,7 +2700,21 @@ describe("OrchestratorMcpService provider resolution", () => {
         const retry = yield* service.delegateTask(scope, request);
         assert.equal(retry.taskId, first.taskId);
         assert.lengthOf(commands, 1);
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+        if (scenario === "child still preparing") {
+          assert.deepEqual(preparations, [
+            {
+              commandId: (commands[0] as { commandId: CommandId }).commandId,
+              threadId: childThreadId,
+              runId: childRunId,
+            },
+          ]);
+          yield* service.delegateTask(scope, request);
+          assert.lengthOf(preparations, 1);
+          assert.lengthOf(commands, 1);
+        } else {
+          assert.deepEqual(preparations, []);
+        }
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
     }),
   );
 

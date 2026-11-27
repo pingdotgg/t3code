@@ -3009,6 +3009,21 @@ const make = Effect.gen(function* () {
         // A receipt can also record a rejected command, which has no task to replay.
         const [task] = yield* loadTasks(scope.thread.threadId, [taskId]);
         if (task?.id === taskId) {
+          if (task.childThreadId !== null) {
+            const childThreadId = task.childThreadId;
+            const runId = derive.run({ threadId: childThreadId, ordinal: 1 });
+            const { runs } = yield* loadThreadRecords(childThreadId, ["runs"], { runIds: [runId] });
+            const run = runs.find((candidate) => candidate.id === runId);
+            if (run?.status === "preparing" && run.workspacePreparation !== undefined) {
+              yield* Effect.uninterruptible(
+                threadLaunch.prepareRun({
+                  commandId,
+                  threadId: childThreadId,
+                  runId,
+                }),
+              );
+            }
+          }
           return yield* input.mode === "wait"
             ? awaitTask(scope, taskId, key, input.timeoutMs)
             : readTask(scope, taskId, false, true);
