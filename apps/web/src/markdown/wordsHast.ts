@@ -14,6 +14,7 @@ import { expandGithubEmojiAliases } from "@t3tools/client-runtime/pull-request-m
 import { resolveChangeRequestMediaUrl } from "@t3tools/client-runtime/pull-request-references";
 import { expandIndentedCodeTabs } from "@t3tools/shared/markdownListIndentation";
 import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
+import { isAssistantFieldBlock } from "@t3tools/shared/markdownFieldBlock";
 import { absoluteFilePathMatches } from "@t3tools/shared/markdownLinks";
 import {
   rehypeNormalizeLocalFileLinks,
@@ -59,6 +60,7 @@ export interface WordsHastOptions {
   readonly math: boolean;
   /** Soft line breaks render as `<br>`, as remark-breaks does. */
   readonly breaks: boolean;
+  readonly fieldLines?: boolean;
   /** Raw HTML shows as the text it was written as. */
   readonly escapeHtml: boolean;
   /** `★ Insight ───` blocks render as insight callouts. */
@@ -425,12 +427,12 @@ function utf16Offsets(source: string): (byte: number) => number {
 const sourceOf = (node: Element, source: string) =>
   node.position ? source.slice(node.position.start.offset, node.position.end.offset) : "";
 
-const textOf = (node: ElementContent): string =>
-  node.type === "text"
-    ? node.value
-    : node.type === "element"
-      ? node.children.map(textOf).join("")
-      : "";
+function textOf(node: ElementContent, imageText = ""): string {
+  if (node.type === "text") return node.value;
+  if (node.type !== "element") return "";
+  if (imageText && isMarkdownImage(node)) return imageText;
+  return node.children.map((child) => textOf(child, imageText)).join("");
+}
 
 /** A directive's attributes, as strings; anything else Words would never write reads as none. */
 function directiveAttributes(node: Element): Record<string, string> {
@@ -470,7 +472,7 @@ function codexDirective(node: Element, walk: Walk, inLink: boolean): ElementCont
     };
   }
   if (name === "codex-followup") {
-    if (!attributes.prompt?.trim() || !node.children.map(textOf).join("").trim()) return asText();
+    if (!attributes.prompt?.trim() || !textOf(node).trim()) return asText();
     return { type: "element", tagName: "span", properties: {}, children: node.children };
   }
   const template = resolveCodexArtifactTemplate(attributes);
@@ -733,7 +735,13 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
     } else if (tagName === "p" && Object.keys(child.properties).length === 0) {
       // Words writes a Markdown paragraph bare; one with attributes is raw HTML, which keeps its
       // lines as written, as remark-breaks never touched raw HTML.
-      breakLines(child, walk.options.breaks);
+      breakLines(
+        child,
+        walk.options.breaks ||
+          (walk.options.fieldLines === true &&
+            node.type === "root" &&
+            isAssistantFieldBlock(textOf(child, "![image]"))),
+      );
     } else if (tagName === "blockquote") {
       // remarkGithubAlerts
       const paragraph = child.children.find((item) => item.type === "element");

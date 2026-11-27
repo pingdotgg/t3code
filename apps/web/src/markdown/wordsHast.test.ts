@@ -229,6 +229,20 @@ describe("wordsHast", () => {
     );
   });
 
+  it("breaks indented assistant field lines and leaves prose and code intact", () => {
+    const markdown =
+      "Name: Acme\n  **Bank:** Example\n\nWrapped prose\nstill wraps.\n\n```\nName: Acme\nBank: Example\n```";
+    expect(wordsHtml(markdown, { fieldLines: true })).toBe(
+      '<p dir="ltr">Name: Acme<br>\n<strong>Bank:</strong> Example</p>\n<p dir="ltr">Wrapped prose\nstill wraps.</p>\n<pre><code>Name: Acme\nBank: Example\n</code></pre>',
+    );
+  });
+
+  it("counts an image with empty alt text as an assistant field value", () => {
+    expect(wordsHtml("Logo: ![](logo.png)\nBank: Example", { fieldLines: true })).toBe(
+      '<p dir="ltr">Logo: <img src="logo.png" alt=""><br>\nBank: Example</p>',
+    );
+  });
+
   it("keeps the composer's tildes and list numbers in user messages", () => {
     const markdown = "Install as ~/a/x, then (~/b.md). ~one~ ~~two~~\n\n3. three\n5. five";
     expect(wordsHtml(markdown, { extensions: { userMessage: true } })).toBe(

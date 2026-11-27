@@ -34,6 +34,7 @@ import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import {
   remarkAssistantInsights,
+  remarkAssistantFieldLines,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
@@ -50,6 +51,7 @@ function assistantTextProcessor(lineBreaks = false, renderInsights = false) {
     .use(remarkParse)
     .use(renderInsights ? [remarkAssistantInsights] : [])
     .use(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(renderInsights && !lineBreaks ? [remarkAssistantFieldLines] : [])
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
 }
