@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
+import { markdownTree } from "../../markdown/wordsHast";
+import { isClosedCodeFence } from "./MarkdownCodeBlock.logic";
 import { createMarkdownRenderer } from "./markdownRenderer";
 
 // Visible in the markup, so every URL attribute must pass through it.
@@ -37,5 +39,26 @@ describe("createMarkdownRenderer", () => {
     const element = renderAndRemember("Kept *message*");
     renderAndRemember("x".repeat(600_000));
     expect(render("Kept *message*")).toBe(element);
+  });
+});
+
+describe("isClosedCodeFence", () => {
+  it.each([
+    { name: "LF", separator: "\n" },
+    { name: "CRLF", separator: "\r\n" },
+    { name: "CR", separator: "\r" },
+  ])("recognizes a closing fence with $name line endings", ({ separator }) => {
+    const lines = ["```sh", "echo hi", "```"];
+    for (const closed of [false, true]) {
+      const source = (closed ? lines : lines.slice(0, -1)).join(separator);
+      const [pre] = markdownTree(source).children;
+      const code = pre?.type === "element" ? pre.children[0] : undefined;
+      const content = code?.type === "element" ? code.children[0] : undefined;
+      if (pre?.type !== "element" || content?.type !== "text") {
+        throw new Error("Expected a parsed code block");
+      }
+      expect(content.value).toBe("echo hi\n");
+      expect(isClosedCodeFence(pre, source, content.value)).toBe(closed);
+    }
   });
 });
