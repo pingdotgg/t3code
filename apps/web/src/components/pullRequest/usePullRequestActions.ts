@@ -12,6 +12,7 @@ import type {
   PullRequestMergeMethod,
   PullRequestRef,
   PullRequestSummary,
+  ScopedProjectRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { msg } from "gt-react";
@@ -351,6 +352,7 @@ type DraftCheckoutResult = PreparedCheckout | { readonly _tag: "Cancelled" };
  */
 export function prepareDraftCheckout(
   draftId: DraftId,
+  projectRef: ScopedProjectRef,
   checkout: Promise<PreparedCheckout>,
   isCancelled: () => boolean = () => false,
 ): Promise<DraftCheckoutResult> {
@@ -373,6 +375,7 @@ export function prepareDraftCheckout(
   });
   const isCurrent = trackPendingDraftCheckout(
     draftId,
+    projectRef,
     result.then((prepared) => prepared._tag === "Success"),
   );
   return result;
@@ -497,6 +500,7 @@ export function usePullRequestHandoffs({
     }
     const prepared = await prepareDraftCheckout(
       opened.draftId,
+      projectRef,
       prepareThread.run({
         reference: detail.url,
         mode,

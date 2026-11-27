@@ -395,7 +395,7 @@ export function unbindDraftFromThread(draft: DraftState): DraftState {
 
 export function changeDraftProject(draft: DraftState, projectId: string): DraftState {
   if (projectId === draft.projectId) return draft;
-  return { ...unbindDraftFromThread(draft), projectId };
+  return { ...unbindDraftFromThread(draft), projectId, baseRef: "", existingWorktreePath: "" };
 }
 
 /** Threads a task can move to. The current one is left out; the picker always shows it. */

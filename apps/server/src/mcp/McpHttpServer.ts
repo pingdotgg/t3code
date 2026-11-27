@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -61,7 +62,10 @@ import * as McpWebhookTransport from "./McpWebhookTransport.ts";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { compactT3McpToolOutput } from "@t3tools/shared/toolOutput";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
+import {
+  MCP_TOOL_EXPOSURE_HEADER,
+  parseMcpToolExposureMode,
+} from "@t3tools/provider-core/server/mcpSession";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
@@ -384,6 +388,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       limited.thread === undefined
         ? undefined
         : yield* Cache.get(forgeOfThread, limited.thread.threadId);
+    const toolExposure = parseMcpToolExposureMode(request.headers[MCP_TOOL_EXPOSURE_HEADER]);
     return {
       ...limited,
       linkedEnvironments,
@@ -391,6 +396,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       workflows,
       origin,
       ...(forge === undefined ? {} : { forge }),
+      ...(toolExposure === undefined ? {} : { toolExposure }),
     };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
@@ -1563,30 +1569,177 @@ export const layerTools = Layer.mergeAll(
   layerMessageToolkit,
 );
 
+const enabledWhenFallbackClient = {
+  protocolVersion: "2025-06-18",
+  capabilities: {},
+  clientInfo: { name: "t3-code", version: packageJson.version },
+} as const;
+
+const isToolRegistrationEnabled = (
+  annotations: Context.Context<never>,
+  initializePayload?: (typeof McpSchema.Initialize.payloadSchema)["Type"],
+): boolean => {
+  const enabledWhen = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);
+  if (enabledWhen === undefined) return true;
+  if (initializePayload !== undefined) return enabledWhen(initializePayload);
+  const fiber = Fiber.getCurrent();
+  const client = fiber
+    ? Context.getOrUndefined(fiber.context, McpSchema.McpServerClient)
+    : undefined;
+  return enabledWhen(client?.initializePayload ?? enabledWhenFallbackClient);
+};
+
 const layerToolExposure = Layer.effect(
   McpToolExposure.McpToolExposure,
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     return McpToolExposure.make(
       () =>
-        server.tools
-          // Search finds only what this caller could list; these predicates read the request's scope.
-          .filter(({ annotations }) => {
-            const enabledWhen = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);
-            return (
-              enabledWhen === undefined || enabledWhen({ protocolVersion: "", capabilities: {} })
-            );
-          })
-          .map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
+        server.tools.map(({ tool, annotations }) => ({
+          name: tool.name,
+          description: tool.description ?? "",
+          inputSchema: tool.inputSchema,
+          isEnabled: () => isToolRegistrationEnabled(annotations),
+        })),
       () => server.notifications["notifications/tools/list_changed"]({}),
     );
   }),
 );
 
+const isMcpInvalidParams = Schema.is(McpSchema.InvalidParams);
+const isMcpInternalError = Schema.is(McpSchema.InternalError);
+
 /**
- * A provider session that sends `MCP_TOOL_EXPOSURE_HEADER: deferred` lists only
- * the direct tools and what its `tool_search` calls loaded. Calls are never
- * gated, and every other client lists everything but `tool_search`.
+ * Runs a deferred T3 MCP tool by name for ACP harnesses that freeze their tool list
+ * per turn. Registered directly on `McpServer` so image results pass through intact.
+ */
+const registerToolCall = Effect.fn("McpHttpServer.registerToolCall")(function* () {
+  const server = yield* McpServer.McpServer;
+  const annotations = Context.make(
+    McpSchema.EnabledWhen,
+    McpInvocationContext.hiddenFromOutsideClients,
+  );
+  yield* server.addTool({
+    tool: new McpSchema.Tool({
+      name: McpToolExposure.TOOL_CALL,
+      description:
+        "Invoke any T3 Code MCP tool by exact name (find schemas with tool_search first).",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Exact T3 MCP tool name." },
+          arguments: { type: "object", description: "Arguments object for that tool." },
+        },
+        required: ["name"],
+      },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: false,
+      },
+    }),
+    annotations,
+    handle: (payload) =>
+      Effect.withFiber((fiber) => {
+        const invocation = Context.getOrUndefined(
+          fiber.context,
+          McpInvocationContext.McpInvocationContext,
+        );
+        if (invocation?.thread === undefined) {
+          return Effect.fail(
+            new McpSchema.InvalidParams({
+              message: "tool_call requires an active T3 thread session.",
+            }),
+          );
+        }
+        const record =
+          typeof payload === "object" && payload !== null && !Array.isArray(payload)
+            ? (payload as Record<string, unknown>)
+            : undefined;
+        const name = typeof record?.name === "string" ? record.name.trim() : "";
+        if (name.length === 0) {
+          return Effect.fail(new McpSchema.InvalidParams({ message: "name is required." }));
+        }
+        if (name === McpToolExposure.TOOL_CALL || name === McpToolExposure.TOOL_SEARCH) {
+          return Effect.fail(
+            new McpSchema.InvalidParams({ message: `Cannot invoke '${name}' via tool_call.` }),
+          );
+        }
+        const rawArgs = record?.arguments;
+        if (
+          rawArgs !== undefined &&
+          (typeof rawArgs !== "object" || rawArgs === null || Array.isArray(rawArgs))
+        ) {
+          return Effect.fail(
+            new McpSchema.InvalidParams({ message: "arguments must be a JSON object." }),
+          );
+        }
+        const requestContext = Context.getOrUndefined(fiber.context, McpSchema.McpRequestContext);
+        const client =
+          Context.getOrUndefined(fiber.context, McpSchema.McpServerClient) ??
+          McpSchema.McpServerClient.of({
+            clientId: 0,
+            clientCapabilities: requestContext?.clientCapabilities ?? {},
+            clientInfo: requestContext?.clientInfo ?? enabledWhenFallbackClient.clientInfo,
+            protocolVersion: enabledWhenFallbackClient.protocolVersion,
+            initializePayload: {
+              protocolVersion: enabledWhenFallbackClient.protocolVersion,
+              capabilities: requestContext?.clientCapabilities ?? {},
+              clientInfo: requestContext?.clientInfo ?? enabledWhenFallbackClient.clientInfo,
+            },
+            getClient: Effect.die("Stateless MCP requests do not expose a client RPC handle."),
+          });
+        return server
+          .callTool({
+            name,
+            arguments: (rawArgs as Record<string, unknown> | undefined) ?? {},
+          })
+          .pipe(
+            Effect.provideService(McpSchema.McpServerClient, client),
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.catch(
+              (
+                error,
+              ): Effect.Effect<
+                McpSchema.CallToolResult,
+                McpSchema.InternalError | McpSchema.InvalidParams
+              > => {
+                if (isMcpInvalidParams(error)) {
+                  const entry = server.tools.find(
+                    (candidate) =>
+                      candidate.tool.name === name &&
+                      isToolRegistrationEnabled(candidate.annotations, client.initializePayload),
+                  );
+                  if (entry !== undefined) {
+                    return Effect.succeed(
+                      new McpSchema.CallToolResult({
+                        isError: true,
+                        content: [
+                          {
+                            type: "text",
+                            text: `${error.message}\nExpected inputSchema: ${encodeJsonText(entry.tool.inputSchema)}`,
+                          },
+                        ],
+                      }),
+                    );
+                  }
+                  return Effect.fail(error);
+                }
+                return Effect.fail(
+                  isMcpInternalError(error)
+                    ? error
+                    : new McpSchema.InternalError({ message: error.message }),
+                );
+              },
+            ),
+          );
+      }),
+  });
+});
+
+/**
+ * A provider session sending `MCP_TOOL_EXPOSURE_HEADER` (`deferred` or `deferred-proxy`)
+ * lists only its core set (plus any tools dynamically loaded in `deferred` mode).
+ * Calls are never gated, and every other client lists everything except `tool_search`/`tool_call`.
  */
 const layerDeferredListing = McpServer.visibility(
   Effect.gen(function* () {
@@ -1596,18 +1749,20 @@ const layerDeferredListing = McpServer.visibility(
       if (method !== "tools/list") return true;
       const scope = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
       const providerSessionId = Option.getOrUndefined(scope)?.thread?.providerSessionId;
-      if (headers[MCP_TOOL_EXPOSURE_HEADER] !== "deferred" || providerSessionId === undefined) {
-        return target !== McpToolExposure.TOOL_SEARCH;
+      const mode = parseMcpToolExposureMode(headers[MCP_TOOL_EXPOSURE_HEADER]);
+      if (mode === undefined || providerSessionId === undefined) {
+        return target !== McpToolExposure.TOOL_SEARCH && target !== McpToolExposure.TOOL_CALL;
       }
-      return exposure.isListed(providerSessionId, target);
+      return exposure.isListed(providerSessionId, target, mode);
     });
   }),
   { global: true },
 );
 
-/** Outside layerTools: the clients its budget measures never list `tool_search`. */
+/** Outside layerTools: the clients its budget measures never list `tool_search` or `tool_call`. */
 export const layerToolSearch = Layer.mergeAll(
   toolkitRegistration(ToolSearchToolkit, ToolSearchHandlers.layer),
+  Layer.effectDiscard(registerToolCall()),
   layerDeferredListing,
 ).pipe(Layer.provide(layerToolExposure));
 

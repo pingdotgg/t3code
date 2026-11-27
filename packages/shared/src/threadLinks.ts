@@ -27,11 +27,15 @@ const threadLinkSource = (markdown: string) =>
 // Quote markers are compared from the first `>`, so lines may indent them differently.
 // Space after the markers is matched only after a `>`: two adjacent `[ \t]*` backtrack quadratically.
 const AFTER_QUOTE = String.raw`(?:(?<=>)[ \t]*)?`;
+// Four columns of indent where no container can explain it make indented code, not a fence: at the
+// start of the text, after a list marker, or after a quote's optional space.
+const NOT_INDENTED_CODE = String.raw`(?!(?<![\s\S])(?: {0,3}\t| {4}))`;
+const OPENER_LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]{1,4}(?![ \t]))*`;
 const fencedCode = (char: "`" | "~", name: string) => {
   const bq = `${name}Bq`;
   const info = char === "`" ? "[^`\\r\\n]*" : "[^\\r\\n]*";
   const closer = String.raw`[ \t]*\k<${bq}>${AFTER_QUOTE}\k<${name}>${char}*(?!${char})[ \t]*\r?$`;
-  return String.raw`^[ \t]*${LIST_MARKERS}(?<${bq}>(?:>(?:[ \t]*>)*)?)(?:(?<=>)[ \t]*${LIST_MARKERS})?(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:(?:\r\n?|\n)(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:(?:\r\n?|\n)${closer})?`;
+  return String.raw`^${NOT_INDENTED_CODE}[ \t]*${OPENER_LIST_MARKERS}(?<${bq}>(?:>(?:[ \t]*>)*)?)(?:(?<=>)[ \t]{0,4}(?![ \t])${OPENER_LIST_MARKERS})?(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:(?:\r\n?|\n)(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:(?:\r\n?|\n)${closer})?`;
 };
 // A code span may wrap lines until its paragraph ends: a blank line, heading, list item, fence, rule,
 // setext underline, or deeper blockquote.
@@ -292,6 +296,9 @@ export function replaceThreadLinks(
   replace: (link: ThreadLink, label: string | undefined) => string | undefined,
 ): string {
   if (!hasThreadLinks(markdown)) return markdown;
+  // A leading BOM is not content: Markdown blocks such as fences start after it.
+  if (markdown.startsWith("\uFEFF"))
+    return `\uFEFF${replaceThreadLinks(markdown.slice(1), replace)}`;
   // Hermes' matchAll yields matches without `groups`; exec keeps them.
   const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
   const source = threadLinkSource(markdown);

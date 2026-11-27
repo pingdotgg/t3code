@@ -157,6 +157,28 @@ describe("CodexAdapterV2 assistant message streaming", () => {
 });
 
 describe("CodexAdapterV2 runtime policy", () => {
+  it.effect("routes subscription-sharing subagents through T3 delegation", () =>
+    Effect.gen(function* () {
+      const build = (subscriptionSharing: boolean) =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-delegation",
+          codexInput: [{ type: "text", text: "Ask a subagent to review this change." }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          hasT3Mcp: true,
+          subscriptionSharing,
+        });
+
+      const sharing = yield* build(true);
+      const sharingInstructions = sharing.additionalContext?.["t3_code_orchestration_01"]?.value;
+      assert.include(sharingInstructions, "Use `delegate_task` for subagents");
+      assert.notInclude(sharingInstructions, "spawn_agent");
+
+      const local = yield* build(false);
+      assert.include(local.additionalContext?.["t3_code_orchestration_01"]?.value, "spawn_agent");
+    }),
+  );
+
   it.effect.each([undefined, false, true])(
     "selects native collaboration modes without prompt overrides with hasT3Mcp=%s",
     (hasT3Mcp) =>

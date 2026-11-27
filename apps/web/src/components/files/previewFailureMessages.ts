@@ -46,7 +46,7 @@ const PREVIEW_FAILURE_MESSAGES = {
   "odf-page-count": msg("This document has no pages or too many pages to preview."),
   "epub-no-package": msg("This EPUB has no readable package."),
   "epub-chapter-count": msg("This EPUB has no chapters or too many chapters to preview."),
-  "epub-no-chapters": msg("This EPUB has no readable XHTML chapters."),
+  "epub-no-chapters": msg("This EPUB has no readable chapters or image pages."),
   "notebook-cell-too-large": msg("A notebook cell is too large to preview."),
   "notebook-too-large": msg("Notebook preview limited to files under 8 MB."),
   "notebook-unsupported": msg("Preview supports version 4 notebooks with up to 500 cells."),

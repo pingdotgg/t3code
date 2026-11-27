@@ -554,4 +554,56 @@ describe("wordsHast", () => {
     expect(anchor.children).toEqual([{ type: "text", value: basename }]);
     expect(isMarkdownFileLinkLabel(basename, String(anchor.properties.href))).toBe(true);
   });
+
+  it("supports chunked footnote modes (omit, omit-seeded, only)", () => {
+    const chunk0 = toHtml(
+      wordsHast("[^a]: .\n[^b]: .\n\nFirst[^a].", {
+        ...ASSISTANT,
+        extensions: { footnotes: "omit" },
+      }),
+    );
+    expect(chunk0).toContain('href="#user-content-fn-1"');
+    expect(chunk0).toContain('id="user-content-user-content-fnref-1"');
+    expect(chunk0).not.toContain("data-footnotes");
+
+    const chunk1 = toHtml(
+      wordsHast("[^a]: .\n[^b]: .\n\n[^a]\n\nSecond[^b] and repeat[^a].", {
+        ...ASSISTANT,
+        extensions: { footnotes: "omit-seeded" },
+      }),
+    );
+    expect(chunk1).toContain('href="#user-content-fn-2"');
+    expect(chunk1).toContain('id="user-content-user-content-fnref-2"');
+    expect(chunk1).toContain('href="#user-content-fn-1"');
+    expect(chunk1).toContain('id="user-content-user-content-fnref-1-2"');
+    expect(chunk1).not.toContain("data-footnotes");
+    expect(chunk1.match(/<p /g)).toHaveLength(1);
+
+    const section = toHtml(
+      wordsHast(
+        "[^a] [^b] [^a]\n\n[^a]: First note with [^c].\n\n[^b]: Second note.\n\n[^c]: Nested note.",
+        {
+          ...ASSISTANT,
+          extensions: { footnotes: "only" },
+        },
+      ),
+    );
+    expect(section).toMatch(/^<section data-footnotes=""/);
+    expect(section).toContain("First note with");
+    expect(section).toContain("Second note.");
+    expect(section).toContain("Nested note.");
+    expect(section).toContain('href="#user-content-fnref-1-2"');
+    expect(section).toContain('id="user-content-user-content-fn-3"');
+
+    // Only drops a synthetic footnote-only seed paragraph, never an earlier non-seed paragraph.
+    const preserved = toHtml(
+      wordsHast("[^a]: .\n\n[ ]: pending\n\n[^a]\n\nBody[^a].", {
+        ...ASSISTANT,
+        extensions: { footnotes: "omit-seeded" },
+      }),
+    );
+    expect(preserved).toContain("[ ]: pending");
+    expect(preserved).toContain('id="user-content-user-content-fnref-1-2"');
+    expect(preserved).not.toContain('id="user-content-user-content-fnref-1"');
+  });
 });

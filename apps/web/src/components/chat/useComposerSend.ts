@@ -1793,6 +1793,13 @@ export function useComposerSend(input: ComposerSendInput) {
   };
 
   const onSendLatest = useStableCallback(onSend);
+  const reportDraftChangedBeforeSend = () => {
+    if (currentRouteThreadKeyRef.current !== routeThreadKey || !activeThread) return;
+    setThreadError(
+      activeThread.id,
+      m(msg("Draft changed while preparing this message. Review it and send again.")),
+    );
+  };
   const waitBeforeSend = async <T>(pending: Promise<T>) => {
     const finishWatching = watchComposerSendEdits(composerDraftTarget);
     const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
@@ -1813,12 +1820,7 @@ export function useComposerSend(input: ComposerSendInput) {
         ? "edited"
         : watchedStatus;
     const sameRoute = currentRouteThreadKeyRef.current === routeThreadKey;
-    if (draftStatus === "edited" && sameRoute && activeThread) {
-      setThreadError(
-        activeThread.id,
-        m(msg("Draft changed while preparing this message. Review it and send again.")),
-      );
-    }
+    if (draftStatus === "edited") reportDraftChangedBeforeSend();
     return { result, draftReady: draftStatus === "ready", sameRoute };
   };
   const sendWithEnvironmentRefresh = async (...args: Parameters<typeof onSend>) => {
@@ -1837,7 +1839,8 @@ export function useComposerSend(input: ComposerSendInput) {
       draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
     if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
     const { result, draftReady, sameRoute } = await waitBeforeSend(workspaceDefault);
-    if (result === false || !draftReady || !sameRoute) return;
+    if (result === "moved") reportDraftChangedBeforeSend();
+    if (result === false || result === "moved" || !draftReady || !sameRoute) return;
     return sendWithEnvironmentRefreshLatest(...args);
   };
   // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
