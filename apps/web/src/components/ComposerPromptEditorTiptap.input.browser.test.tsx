@@ -685,6 +685,25 @@ it("keeps the destination of a link dropped from a web page", async () => {
   );
 });
 
+it("pastes a linked word into inline code as plain code text", async () => {
+  await using screen = await mountEditor("`sumBy` after");
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection("su".length + 1);
+  });
+  expect(editor.state.doc.textContent).toBe("`sumBy` after");
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "Guide");
+    clipboardData.setData("text/html", '<a href="https://example.com/guide">Guide</a>');
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  await act(async () => {
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("`suGuidemBy` after");
+});
+
 it("keeps a pasted web link beside an imported thread chip", async () => {
   await using screen = await render(
     <Composer
