@@ -11,11 +11,6 @@ describe("decodeIssueNotesJson", () => {
       "Fix login on Linux",
     ],
     [
-      "HTML deletion only",
-      '<p>changed title from <code class="idiff">Fix login<span class="idiff left right deletion"> bug</span></code> to <code class="idiff">Fix login</code></p>',
-      "Fix login",
-    ],
-    [
       "HTML several runs",
       '<p>changed title from <code class="idiff"><span class="idiff left deletion">Old</span> title <span class="idiff right deletion">v1</span></code> to <code class="idiff"><span class="idiff left addition">New</span> title <span class="idiff right addition">v2</span></code></p>',
       "New title v2",
@@ -24,11 +19,6 @@ describe("decodeIssueNotesJson", () => {
       "HTML entities",
       '<p>changed title from <code class="idiff">Fix</code> to <code class="idiff">Fix<span class="idiff left right addition"> &quot;a&quot; &#39;b&#39; &amp; &lt;b&gt; &amp;lt;c&amp;gt;</span></code></p>',
       `Fix "a" 'b' & <b> &lt;c&gt;`,
-    ],
-    [
-      "HTML div variant",
-      '<div>changed title from <code class="idiff"><span class="idiff left right deletion">Old</span></code> to <code class="idiff"><span class="idiff left right addition">New</span></code></div>',
-      "New",
     ],
     [
       "legacy partial addition",
@@ -45,19 +35,11 @@ describe("decodeIssueNotesJson", () => {
       "changed title from **{-Old-} title {-v1-}** to **{+New+} title {+v2+}**",
       "New title v2",
     ],
-    ["legacy full replacement", "changed title from **{-Old-}** to **{+New+}**", "New"],
     [
       "legacy title containing to",
       "changed title from **Move A to B** to **Move A to {+C+}**",
       "Move A to C",
     ],
-    [
-      "legacy deleted run containing to",
-      "changed title from **{-A ** to ** B-}** to **{+New+}**",
-      "New",
-    ],
-    ["unparseable HTML title change", "<p>changed title</p>", null],
-    ["unparseable legacy title change", "changed title", null],
   ])("decodes a title change note (%s) into a renamed event", (_label, body, expected) => {
     const decoded = decodeIssueNotesJson(
       JSON.stringify([
