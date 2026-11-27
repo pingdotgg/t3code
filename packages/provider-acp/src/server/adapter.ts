@@ -215,17 +215,24 @@ function sendPromptWhenIdle<A>(
   turn: { readonly interrupted: boolean; readonly finalized: boolean },
   prompt: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
   superseded: () => boolean = () => false,
+  stoppedValue?: A,
 ): Effect.Effect<A, EffectAcpErrors.AcpError> {
   // A Stop or a prompt-steer can land during the wait, so both are rechecked before each resend.
   const stopped = () => turn.interrupted || turn.finalized || superseded();
-  return prompt().pipe(
+  return Effect.suspend(() =>
+    stopped() && stoppedValue !== undefined ? Effect.succeed(stoppedValue) : prompt(),
+  ).pipe(
     Effect.catchIf(
       (error) => isAgentBusyPromptError(error) && !stopped(),
       (error) =>
         Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
           Effect.andThen(
             Effect.suspend(() =>
-              stopped() ? Effect.fail(error) : sendPromptWhenIdle(turn, prompt, superseded),
+              stopped()
+                ? stoppedValue !== undefined
+                  ? Effect.succeed(stoppedValue)
+                  : Effect.fail(error)
+                : sendPromptWhenIdle(turn, prompt, superseded, stoppedValue),
             ),
           ),
         ),
@@ -10474,7 +10481,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const context = yield* Ref.get(activeTurn);
           if (context === null || context.finalized) return;
           context.interrupted = true;
-          if (context.promptForked || (yield* Deferred.isDone(context.promptDispatched))) {
+          if (
+            (context.promptForked || (yield* Deferred.isDone(context.promptDispatched))) &&
+            (yield* promptStillRunsAfterHold(context))
+          ) {
             yield* runtime.cancel.pipe(Effect.ignore);
           }
           yield* finalizeTurn(context, "interrupted");
@@ -10872,8 +10882,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 compactSession === undefined
                   ? sendPromptWhenIdle(
                       context,
-                      () => runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
+                      () =>
+                        runtime.prompt(
+                          { prompt: promptParts!.prompt },
+                          {
+                            ...promptOptions,
+                            stopped: () => context.interrupted || context.finalized || superseded(),
+                          },
+                        ),
                       superseded,
+                      { stopReason: "cancelled" } satisfies EffectAcpSchema.PromptResponse,
                     )
                   : Deferred.succeed(context.promptDispatched, undefined).pipe(
                       Effect.andThen(compactSession.compact(runtime, requestedSessionId)),
@@ -11025,9 +11043,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         () =>
                           runtime.prompt(
                             { prompt: steerPrompt },
-                            { dispatched, released: releasedForSteer },
+                            {
+                              dispatched,
+                              released: releasedForSteer,
+                              stopped: () =>
+                                context.interrupted || context.finalized || superseded(),
+                            },
                           ),
                         superseded,
+                        { stopReason: "cancelled" } satisfies EffectAcpSchema.PromptResponse,
                       ),
                     {
                       generation,

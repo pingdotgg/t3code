@@ -1191,12 +1191,15 @@ export class AcpSessionRuntime extends Context.Service<
     /**
      * options.dispatched settles when cancel can target this prompt. options.released lets the
      * next prompt go out while this one's response is still held; it still resolves this call.
+     * options.stopped, rechecked under the dispatch permit right before registration, keeps a
+     * prompt whose turn was interrupted from reaching the agent at all.
      */
     readonly prompt: (
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
       options?: {
         readonly dispatched?: Deferred.Deferred<void>;
         readonly released?: Deferred.Deferred<void>;
+        readonly stopped?: () => boolean;
       },
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
@@ -2880,6 +2883,27 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           Effect.acquireUseRelease(
             promptDispatchSemaphore.withPermit(
               Effect.gen(function* () {
+                // Checked under the dispatch permit: a cancel that waits for the
+                // same permit can no longer slip between this check and the
+                // registration below. A stopped prompt never reaches the agent,
+                // so it cannot strand the serialization permit either.
+                if (promptOptions?.stopped?.()) {
+                  const cancelledFiber = yield* Effect.succeed({
+                    stopReason: "cancelled",
+                  } satisfies EffectAcpSchema.PromptResponse).pipe(Effect.forkIn(runtimeScope));
+                  const cancelledCompleted = yield* Deferred.make<void>();
+                  const cancelledQueued = yield* Deferred.make<void>();
+                  // The steer path awaits `dispatched` unconditionally, so the
+                  // bail settles it too, even though nothing reached the agent.
+                  if (promptOptions.dispatched !== undefined) {
+                    yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                  }
+                  return {
+                    fiber: cancelledFiber,
+                    completed: cancelledCompleted,
+                    queued: cancelledQueued,
+                  } satisfies AcpActivePrompt;
+                }
                 const started = yield* getStartedState;
                 yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
                 yield* Ref.set(assistantUpdatesOpenRef, true);
@@ -2956,12 +2980,10 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
               : joinPrompt(outcome.fiber),
           ),
         ),
-    // A cancel that waits for its prompt holds the dispatch permit, so a next prompt cannot reach
-    // the agent ahead of it and take the cancel meant for the prompt before.
-    cancel:
-      options.cancelBehavior === "wait-for-prompt" || options.interruptPromptOnCancel === false
-        ? promptDispatchSemaphore.withPermit(cancel)
-        : cancel,
+    // The dispatch permit keeps a cancel from slipping between a stopped
+    // prompt's check and its registration, and a next prompt from reaching
+    // the agent ahead of a cancel that waits for its prompt.
+    cancel: promptDispatchSemaphore.withPermit(cancel),
     ...(options.ownDetachedProcessGroup === true ? { terminateProcessGroup } : {}),
     // A session's mode is its `category: "mode"` config option. ACP v1 agents
     // that only advertise `modes` (gemini-cli) take `session/set_mode`
