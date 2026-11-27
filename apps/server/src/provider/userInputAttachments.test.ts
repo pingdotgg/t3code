@@ -791,6 +791,22 @@ describe("question answer paths", () => {
         {
           ext: "epub",
           parts: {
+            "META-INF/container.xml":
+              '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+            "book.opf":
+              '<package version="2.0"><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">' +
+              '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Market report</title></head><body><table>' +
+              "<caption>Revenue by region</caption><thead><tr><th>Region</th><th>Revenue</th></tr></thead>" +
+              "<tfoot><tr><th>Total</th><td>42</td></tr></tfoot>" +
+              "<tbody><tr><td>East</td><td>18</td></tr></tbody><tbody><tr><td>West</td><td>24</td></tr></tbody></table></body></html>",
+          },
+          expected: ["Revenue by region\nRegion\tRevenue\nEast\t18\nWest\t24\nTotal\t42"],
+        },
+        {
+          ext: "epub",
+          parts: {
             "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
             "book.opf":
               '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
@@ -1204,6 +1220,25 @@ describe("question answer paths", () => {
             `[Skipped document part: ${ext === "pptx" ? "ppt" : "xl"}/bad.xml (missing or invalid XML).]`,
           ],
           absent: ["Discard", "[Extracted text truncated"],
+        })),
+        ...[
+          "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+          "http://purl.oclc.org/ooxml/wordprocessingml/main",
+        ].map((namespace) => ({
+          ext: "docx",
+          parts: {
+            "word/document.xml":
+              `<w:document xmlns:w="${namespace}"><w:body><w:p>` +
+              "<w:r><w:t>次は</w:t></w:r>" +
+              "<w:r><w:ruby><w:rt><w:r><w:t>とうきょう</w:t></w:r></w:rt>" +
+              "<w:rubyBase><w:r><w:t>東京</w:t></w:r></w:rubyBase></w:ruby></w:r>" +
+              "<w:r><w:t>から</w:t></w:r>" +
+              "<w:r><w:ruby><w:rt><w:r><w:t/></w:r></w:rt>" +
+              "<w:rubyBase><w:r><w:t>京都</w:t></w:r></w:rubyBase></w:ruby></w:r>" +
+              "<w:r><w:t>まで。</w:t></w:r></w:p></w:body></w:document>",
+          },
+          expected: [],
+          exact: "次は東京(とうきょう)から京都まで。",
         })),
         {
           ext: "odt",
@@ -1625,6 +1660,25 @@ describe("question answer paths", () => {
             "[Skipped document part",
             "[Extracted text truncated",
           ],
+        },
+        {
+          ext: "pptx",
+          parts: {
+            "ppt/presentation.xml":
+              '<presentation><sldIdLst><sldId r:id="a"/></sldIdLst></presentation>',
+            "ppt/_rels/presentation.xml.rels":
+              '<Relationships><Relationship Id="a" Target="slides/a.xml"/></Relationships>',
+            "ppt/slides/a.xml":
+              '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+              '<p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>' +
+              '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Visible" hidden="0"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:t>Harbor briefing</a:t></a:r></a:p></p:txBody></p:sp>' +
+              '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Hidden" hidden="1"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:t>Unshown draft</a:t></a:r></a:p></p:txBody></p:sp>' +
+              '<p:grpSp><p:nvGrpSpPr><p:cNvPr id="4" name="Hidden group" hidden="true"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>' +
+              '<p:sp><p:nvSpPr><p:cNvPr id="5" name="Group member"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:t>Unshown group draft</a:t></a:r></a:p></p:txBody></p:sp>' +
+              "</p:grpSp></p:spTree></p:cSld></p:sld>",
+          },
+          expected: ["## Slide 1", "Harbor briefing"],
+          absent: ["Unshown draft", "Unshown group draft", "[Skipped document part"],
         },
         {
           ext: "pptx",

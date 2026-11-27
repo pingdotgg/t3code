@@ -14,6 +14,21 @@ const CELL_START = Symbol("cell-start");
 const CELL_END = Symbol("cell-end");
 const LINE_START = Symbol("line-start");
 const THEMATIC_BREAK = Symbol("thematic-break");
+const PRESENTATIONML_NAMESPACES = new Set([
+  "http://schemas.openxmlformats.org/presentationml/2006/main",
+  "http://purl.oclc.org/ooxml/presentationml/main",
+]);
+const WORDPROCESSINGML_NAMESPACES = new Set([
+  "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+  "http://purl.oclc.org/ooxml/wordprocessingml/main",
+]);
+const PPTX_DRAWING_PROPERTIES = new Map([
+  ["sp", "nvSpPr"],
+  ["grpSp", "nvGrpSpPr"],
+  ["pic", "nvPicPr"],
+  ["graphicFrame", "nvGraphicFramePr"],
+  ["cxnSp", "nvCxnSpPr"],
+]);
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 const ODF_DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
@@ -71,6 +86,7 @@ interface XmlNode {
   attrs: Record<string, string>;
   children: Array<XmlNode | string>;
   imageDescription?: string;
+  pptxHidden?: boolean;
   spaceCount?: number;
   wordOutlineHeadingLevel?: number;
   hasText?: boolean;
@@ -202,6 +218,18 @@ function xml(source: string, extension: string): XmlNode {
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (extension === ".pptx" && node.name === "cNvPr") {
+      const hidden = tag.attributes.hidden?.trim();
+      const drawing = stack.at(-2);
+      if (
+        drawing &&
+        (hidden === "true" || hidden === "1") &&
+        PPTX_DRAWING_PROPERTIES.get(drawing.name) === parent.name &&
+        PRESENTATIONML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+      ) {
+        drawing.pptxHidden = true;
+      }
+    }
     if (extension === ".docx" && node.name === "outlineLvl" && parent.name === "pPr") {
       const owner = stack.at(-2);
       const outline = Number(node.attrs.val?.match(/^\s*[+-]?\d+\s*$/u)?.[0]);
@@ -220,6 +248,7 @@ function xml(source: string, extension: string): XmlNode {
       parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
+      node.pptxHidden ||
       isMathmlAlternative ||
       (extension === ".epub" &&
         node.name === "template" &&
@@ -249,6 +278,16 @@ function xml(source: string, extension: string): XmlNode {
     ) {
       parent.children.pop();
       return;
+    }
+    if (
+      extension === ".docx" &&
+      node.name === "ruby" &&
+      WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+    ) {
+      const base = children(node).find((child) => child.name === "rubyBase");
+      const reading = children(node).find((child) => child.name === "rt");
+      // Word stores the guide first even though the base is the text on the line.
+      if (base?.hasText && reading?.hasText) node.children = [base, "(", reading, ")"];
     }
     if (extension === ".epub" && node.name === "ruby" && stack[1]?.name === "html")
       separateRubyReadings(node);
@@ -532,11 +571,22 @@ function epubSpan(value: string | undefined) {
   return digits === undefined ? 1 : Number(digits);
 }
 
+function* epubTableParts(node: XmlNode) {
+  // Legacy XHTML places footers before the body. The table model reads them after the other rows.
+  const footers: XmlNode[] = [];
+  for (const part of node.children) {
+    if (typeof part === "string") continue;
+    if (part.name === "tfoot") footers.push(part);
+    else yield part;
+  }
+  yield* footers;
+}
+
 function* epubTable(node: XmlNode): Generator<TextPart, void> {
   const occupiedUntil = new Uint32Array(512);
   let rowIndex = 0;
   let rowCount = 0;
-  for (const part of children(node)) {
+  for (const part of epubTableParts(node)) {
     const rowGroup = ["thead", "tbody", "tfoot"].includes(part.name);
     if (!rowGroup && part.name !== "tr") continue;
     if (rowGroup) occupiedUntil.fill(0);
