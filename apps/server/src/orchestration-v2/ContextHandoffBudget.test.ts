@@ -141,6 +141,16 @@ describe("handoff budget", () => {
     assert.equal(
       historicalMessage({
         ...base,
+        type: "command_execution",
+        input: "printf",
+        output: "x\u007f\u0019y\tz\n",
+        exitCode: 0,
+      })?.text,
+      "Command: printf\nExit code: 0\nxy\tz\n",
+    );
+    assert.equal(
+      historicalMessage({
+        ...base,
         type: "file_change",
         fileName: "src/a.ts",
         changes: [

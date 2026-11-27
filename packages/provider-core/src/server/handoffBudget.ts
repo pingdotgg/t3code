@@ -9,6 +9,7 @@ import type {
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { withMessageSenderNote } from "@t3tools/contracts";
+import { withoutControlCharacters } from "@t3tools/shared/controlCharacters";
 
 import * as Config from "effect/Config";
 
@@ -166,7 +167,7 @@ export function historicalMessage(
   }
   return {
     role: item.type === "user_message" ? "user" : "assistant",
-    text,
+    text: withoutControlCharacters(text),
     threadId: item.threadId,
     runId: item.runId,
     itemId: item.id,
