@@ -984,7 +984,12 @@ export function workflowOneLine(text: string): string {
           fenceQuoteDepth = quoteDepth;
           return false;
         }
-        if (/^\s*$/.test(content) || /^[ \t]*[#|]/.test(candidate)) return false;
+        if (
+          /^\s*$/.test(content) ||
+          /^ {0,3}#{1,6}(?:[ \t]|\r?$)/.test(content) ||
+          /^[ \t]*\|/.test(candidate)
+        )
+          return false;
         if (!/^(?: {4}| {0,3}\t)/.test(content)) return true;
         indented ??= candidate;
         return false;
