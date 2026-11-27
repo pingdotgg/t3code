@@ -7948,6 +7948,7 @@
   "0a9e4d44c145cd07": "Toute personne ayant accès à la dictée sur {environment} peut facturer cette clé.",
   "55803224ee096dc0": "Supprimer la clé {company} ?",
   "0a7813c7df04ffe9": "Gérer la dictée OpenRouter",
+  "532ba611f4afacb8": "Saisissez à nouveau la clé pour la nouvelle URL.",
   "5ffb239a74670f75": "Supprimer la dictée personnalisée ?",
   "60dcc46f4e796a5b": "Supprime l’URL du point de terminaison et la clé sur {environment}. Toutes les personnes qui l’utilisent pour la dictée perdent l’accès.",
   "e12429ce0cec3dc3": "URL de base d’un serveur compatible OpenAI, y compris le chemin de version. L’audio est envoyé à sa route /audio/transcriptions. Utilisez https sauf si le point de terminaison se trouve sur un réseau de confiance.",

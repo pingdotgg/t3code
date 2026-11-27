@@ -317,8 +317,9 @@ it.effect.each([
   }),
 );
 
-it.effect.each([{ baseUrl: "" }])("refuses an empty custom base URL: $baseUrl", ({ baseUrl }) =>
+it.effect("refuses an empty custom base URL", () =>
   Effect.gen(function* () {
+    const baseUrl = "";
     const upstream = vi.fn<typeof fetch>(async () => Response.json({ text: "hello" }));
     const service = yield* CloudSpeech.CloudSpeech.pipe(
       Effect.provide(yield* Layer.build(customStack(baseUrl))),
@@ -333,6 +334,30 @@ it.effect.each([{ baseUrl: "" }])("refuses an empty custom base URL: $baseUrl", 
             DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
             "whisper-1",
             baseUrl,
+          )
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
+      ),
+    ).toMatchObject({ provider: "custom", reason: "model-unavailable" });
+    expect(upstream).not.toHaveBeenCalled();
+  }),
+);
+
+it.effect("a grant for a URL the environment no longer has is void", () =>
+  Effect.gen(function* () {
+    const upstream = vi.fn<typeof fetch>(async () => Response.json({ text: "unexpected" }));
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(yield* Layer.build(customStack(""))),
+    );
+    yield* service.setKey("custom", Redacted.make("custom-key"));
+    expect(
+      yield* Effect.flip(
+        service
+          .transcribe(
+            "custom",
+            customPcm(),
+            DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+            "whisper-1",
+            "http://localhost:8080/v1",
           )
           .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
       ),
@@ -377,7 +402,7 @@ it.effect("a URL change while the key is being read prevents the upload", () =>
       provider: SecretProviderId.make("work"),
       reference: "op://Work/Voice/key",
     });
-    const exit = yield* Effect.exit(
+    const error = yield* Effect.flip(
       service
         .transcribe(
           "custom",
@@ -388,7 +413,7 @@ it.effect("a URL change while the key is being read prevents the upload", () =>
         )
         .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
     );
+    expect(error).toMatchObject({ provider: "custom", reason: "model-unavailable" });
     expect(uploads).toEqual([]);
-    expect(exit._tag).toBe("Failure");
   }),
 );

@@ -7947,6 +7947,7 @@
   "0a9e4d44c145cd07": "Cualquiera con acceso al dictado en {environment} puede cargar costes a esta clave.",
   "55803224ee096dc0": "¿Quitar la clave de {company}?",
   "0a7813c7df04ffe9": "Gestionar el dictado con OpenRouter",
+  "532ba611f4afacb8": "Introduce la clave de nuevo para la nueva URL.",
   "5ffb239a74670f75": "¿Eliminar el dictado personalizado?",
   "60dcc46f4e796a5b": "Elimina la URL del endpoint y la clave en {environment}. Todos los que lo usan para dictado pierden el acceso.",
   "e12429ce0cec3dc3": "URL base de un servidor compatible con OpenAI, incluida la ruta de versión. El audio se envía a su ruta /audio/transcriptions. Usa https salvo que el endpoint esté en una red de confianza.",

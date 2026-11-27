@@ -7953,6 +7953,7 @@
   "0a9e4d44c145cd07": "Alla med dikteringsåtkomst till {environment} kan debitera den här nyckeln.",
   "55803224ee096dc0": "Ta bort nyckeln för {company}?",
   "0a7813c7df04ffe9": "Hantera diktering med OpenRouter",
+  "532ba611f4afacb8": "Ange nyckeln igen för den nya URL:en.",
   "5ffb239a74670f75": "Ta bort anpassad diktering?",
   "60dcc46f4e796a5b": "Tar bort slutpunktens URL och nyckeln på {environment}. Alla som använder den för diktering förlorar åtkomsten.",
   "e12429ce0cec3dc3": "Bas-URL för en OpenAI-kompatibel server, inklusive versionssökvägen. Ljud skickas till dess /audio/transcriptions-rutt. Använd https om inte slutpunkten finns i ett nätverk du litar på.",

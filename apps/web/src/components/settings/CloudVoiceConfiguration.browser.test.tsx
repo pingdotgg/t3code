@@ -450,3 +450,74 @@ it("a grant for another endpoint asks for approval and writes no settings", asyn
     },
   );
 });
+
+it("changing a saved endpoint asks for the key again", async () => {
+  setup();
+  configuredEndpoint = "https://stt.example.com/v1";
+  chooseAudioDestination(null);
+  const id = EnvironmentId.make("voice-host");
+  const target = new PrimaryConnectionTarget({
+    environmentId: id,
+    label: "Laptop",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = Option.some({
+    ...target,
+    target,
+    socketUrl: target.wsBaseUrl,
+    httpAuthorization: null,
+  });
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => chooseAudioDestination(null));
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((request, init) => {
+    const url = new URL(request instanceof Request ? request.url : request, window.location.href);
+    if (url.pathname === "/api/voice/cloud/keys")
+      return Promise.resolve(Response.json({ openai: true, xai: true, custom: true }));
+    return fetch(request, init);
+  });
+  await vi.mocked(useEnvironmentScope).withImplementation(
+    () => true,
+    async () => {
+      await vi.mocked(usePreparedConnection).withImplementation(
+        () => prepared,
+        async () => {
+          await using screen = await render(
+            <SettingsScopeProvider search={{}} onChange={() => {}}>
+              <VoiceSettingsPanel />
+            </SettingsScopeProvider>,
+          );
+          const destination = screen.getByRole("combobox", { name: "Transcribe with" });
+          await destination.click();
+          await page.getByRole("option", { name: "Custom endpoint via Laptop" }).click();
+          const dialog = page.getByRole("dialog");
+          await dialog.getByLabelText("Model").fill("whisper-1");
+          const save = dialog.getByRole("button", { name: "Save and enable" });
+          await expect.element(save).toBeEnabled();
+          await dialog.getByLabelText("Endpoint URL").fill("https://other.example.com/v1");
+          // The saved key does not follow a new URL, so the key is required again.
+          await expect
+            .element(dialog.getByText("Enter the key again for the new URL."))
+            .toBeVisible();
+          await expect.element(save).toBeDisabled();
+          await dialog.getByLabelText("Custom endpoint API key", { exact: true }).fill("new-key");
+          await expect.element(save).toBeEnabled();
+          await save.click();
+          await expect.element(dialog).not.toBeInTheDocument();
+          expect(persistedSettings).toEqual([
+            {
+              environmentId: id,
+              input: {
+                patch: {
+                  cloudSpeechCustomBaseUrl: "https://other.example.com/v1",
+                  cloudSpeechCredentials: { custom: "new-key" },
+                },
+              },
+            },
+          ]);
+        },
+      );
+    },
+  );
+});

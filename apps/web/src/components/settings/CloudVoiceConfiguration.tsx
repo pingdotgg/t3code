@@ -91,6 +91,17 @@ const isApiKey = Schema.is(CloudSpeechApiKey);
 const isModelId = Schema.is(CloudSpeechModelId);
 const isCustomModelId = Schema.is(SpeechModelId);
 const isCustomBaseUrl = Schema.is(CloudSpeechCustomBaseUrl);
+/** The server ignores trailing slashes when it compares the saved URL with the current one. */
+function normalizeEndpoint(value: string) {
+  const trimmed = value.trim();
+  try {
+    const url = new URL(trimmed);
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    return url.href;
+  } catch {
+    return trimmed;
+  }
+}
 type CloudDestination = Extract<VoiceTranscriptionDestination, { kind: "cloud" }>;
 
 function ModelPicker({
@@ -206,7 +217,8 @@ export function CloudVoiceConfiguration({
   // Null until edited, so a URL saved elsewhere shows up instead of being overwritten by a draft.
   const [endpointDraft, setEndpointDraft] = useState<string | null>(null);
   const endpoint = endpointDraft ?? savedEndpoint;
-  const endpointChanged = custom && endpoint.trim() !== savedEndpoint;
+  const endpointChanged =
+    custom && normalizeEndpoint(endpoint) !== normalizeEndpoint(savedEndpoint);
   // A custom grant bound to another URL is void, so it must be approved again.
   const active =
     selected &&
@@ -269,10 +281,13 @@ export function CloudVoiceConfiguration({
         ? { kind: "cloud", provider: "openrouter", environmentId: id, model }
         : { kind: "cloud", provider: provider as "openai" | "xai", environmentId: id };
   const enable = () => chooseAudioDestination(destination());
+  // A changed URL clears the saved key on the server, so the user must enter it again.
+  const endpointNeedsKey = endpointChanged && credential === undefined;
   const canSubmit = routed
     ? modelChosen &&
       endpointReady &&
       keyReady &&
+      !endpointNeedsKey &&
       (!active || modelChanged || keyChanged || endpointChanged)
     : credential !== undefined;
 
@@ -404,7 +419,9 @@ export function CloudVoiceConfiguration({
           : active && !routed
             ? gt("Updating the key keeps dictation enabled.")
             : routed && saved
-              ? gt("Leave blank to keep the saved key.")
+              ? endpointChanged
+                ? gt("Enter the key again for the new URL.")
+                : gt("Leave blank to keep the saved key.")
               : gt("Anyone with dictation access to {environment} can bill this key.", {
                   environment: environment.label,
                 })}
@@ -611,19 +628,23 @@ export function CloudVoiceConfiguration({
           </p>
         )}
         <DialogFooter>
-          {connected && canManage && saved && (active || routed) && !remove && (
-            <div className="sm:mr-auto">
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                disabled={busy}
-                onClick={() => setRemove(true)}
-              >
-                <T>Remove key…</T>
-              </Button>
-            </div>
-          )}
+          {connected &&
+            canManage &&
+            (saved || (custom && savedEndpoint)) &&
+            (active || routed) &&
+            !remove && (
+              <div className="sm:mr-auto">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => setRemove(true)}
+                >
+                  <T>Remove key…</T>
+                </Button>
+              </div>
+            )}
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={close}>
             <T>Cancel</T>
           </Button>

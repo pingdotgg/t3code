@@ -7948,6 +7948,7 @@
   "0a9e4d44c145cd07": "Alle mit Diktat-Zugriff auf {environment} können über diesen Schlüssel abrechnen.",
   "55803224ee096dc0": "{company}-Schlüssel entfernen?",
   "0a7813c7df04ffe9": "OpenRouter-Diktat verwalten",
+  "532ba611f4afacb8": "Gib den Schlüssel für die neue URL erneut ein.",
   "5ffb239a74670f75": "Benutzerdefiniertes Diktat entfernen?",
   "60dcc46f4e796a5b": "Entfernt die Endpunkt-URL und den Schlüssel auf {environment}. Alle, die es für Diktat nutzen, verlieren den Zugriff.",
   "e12429ce0cec3dc3": "Basis-URL eines OpenAI-kompatiblen Servers einschließlich Versionspfad. Audio wird an seine Route /audio/transcriptions gesendet. Verwende https, außer der Endpunkt befindet sich in einem Netzwerk, dem du vertraust.",

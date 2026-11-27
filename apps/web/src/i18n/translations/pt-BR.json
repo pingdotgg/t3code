@@ -7947,6 +7947,7 @@
   "0a9e4d44c145cd07": "Qualquer pessoa com acesso ao ditado em {environment} pode gerar cobranças nesta chave.",
   "55803224ee096dc0": "Remover a chave da {company}?",
   "0a7813c7df04ffe9": "Gerenciar o ditado do OpenRouter",
+  "532ba611f4afacb8": "Insira a chave novamente para a nova URL.",
   "5ffb239a74670f75": "Remover o ditado personalizado?",
   "60dcc46f4e796a5b": "Remove a URL do endpoint e a chave em {environment}. Todos que o usam para ditado perdem o acesso.",
   "e12429ce0cec3dc3": "URL base de um servidor compatível com OpenAI, incluindo o caminho da versão. O áudio é enviado para a rota /audio/transcriptions. Use https, a menos que o endpoint esteja em uma rede confiável.",

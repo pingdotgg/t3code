@@ -2173,6 +2173,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         cloudSpeechCustomBaseUrl: "https://three.example/v1",
       });
       assert.equal(unchanged.cloudSpeechCredentials.custom, "second-key");
+      // A trailing slash is the same destination, so the key stays.
+      const slashed = yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://three.example/v1/",
+      });
+      assert.equal(slashed.cloudSpeechCredentials.custom, "second-key");
+      // Older clients and generic settings forms echo the redacted marker for a saved key.
+      const echoed = yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://four.example/v1",
+        cloudSpeechCredentials: { custom: SECRET_REDACTED },
+      });
+      assert.equal(echoed.cloudSpeechCredentials.custom, "");
+      // Echoing the same reference is still a kept key, not a new one.
+      const reference = {
+        provider: SecretProviderId.make("work"),
+        reference: "op://Work/Voice/key",
+      };
+      yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://five.example/v1",
+        cloudSpeechCredentials: { custom: reference },
+      });
+      const sameReference = yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://six.example/v1",
+        cloudSpeechCredentials: { custom: reference },
+      });
+      assert.equal(sameReference.cloudSpeechCredentials.custom, "");
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
