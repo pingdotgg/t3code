@@ -217,6 +217,30 @@ export async function writeTextToClipboard(
   }
 }
 
+/** Takes a factory so the write starts inside the click while the PNG is still being made. */
+export async function writePngToClipboard(
+  png: () => Promise<Blob>,
+  target?: ClipboardTarget,
+): Promise<boolean> {
+  if (
+    typeof navigator === "undefined" ||
+    !navigator.clipboard?.write ||
+    typeof ClipboardItem === "undefined"
+  ) {
+    throw new ClipboardApiUnavailableError(clipboardTargetFields(target, "unavailable"));
+  }
+  try {
+    const image = png();
+    // The clipboard can refuse before it reads the image; its rejection then reports the copy.
+    void image.catch(() => undefined);
+    // Safari rejects a clipboard write that starts after an await, so hand it the promise.
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": image })]);
+    return true;
+  } catch (cause) {
+    throw new ClipboardWriteError({ ...clipboardTargetFields(target, "failure"), cause });
+  }
+}
+
 export async function readTextFromClipboard(target?: ClipboardTarget): Promise<string> {
   if (
     typeof window === "undefined" ||
@@ -252,10 +276,35 @@ export function useCopyToClipboard<TContext = void>({
     flavors?: Readonly<Record<string, string>>,
     options?: { requireHtml?: boolean },
   ) => void;
+  copyPngToClipboard: (png: () => Promise<Blob>, ctx: TContext) => void;
   isCopied: boolean;
 } {
   const [isCopied, setIsCopied] = React.useState(false);
   const timeoutIdRef = React.useRef<NodeJS.Timeout | null>(null);
+  const settleCopy = (write: Promise<boolean>, ctx: TContext): void => {
+    void write.then(
+      (didCopy) => {
+        if (!didCopy) return;
+        if (timeoutIdRef.current) {
+          clearTimeout(timeoutIdRef.current);
+        }
+        setIsCopied(true);
+
+        onCopy?.(ctx);
+
+        if (timeout !== 0) {
+          timeoutIdRef.current = setTimeout(() => {
+            setIsCopied(false);
+            timeoutIdRef.current = null;
+          }, timeout);
+        }
+      },
+      (error) => {
+        console.error(error);
+        onError?.(error, ctx);
+      },
+    );
+  };
   const copyToClipboard = useStableCallback(
     (
       value: string,
@@ -263,30 +312,12 @@ export function useCopyToClipboard<TContext = void>({
       flavors: Readonly<Record<string, string>> | undefined = extraFlavors,
       options?: { requireHtml?: boolean },
     ): void => {
-      void writeTextToClipboard(value, target, flavors, options).then(
-        (didCopy) => {
-          if (!didCopy) return;
-          if (timeoutIdRef.current) {
-            clearTimeout(timeoutIdRef.current);
-          }
-          setIsCopied(true);
-
-          onCopy?.(ctx);
-
-          if (timeout !== 0) {
-            timeoutIdRef.current = setTimeout(() => {
-              setIsCopied(false);
-              timeoutIdRef.current = null;
-            }, timeout);
-          }
-        },
-        (error) => {
-          console.error(error);
-          onError?.(error, ctx);
-        },
-      );
+      settleCopy(writeTextToClipboard(value, target, flavors, options), ctx);
     },
   );
+  const copyPngToClipboard = useStableCallback((png: () => Promise<Blob>, ctx: TContext): void => {
+    settleCopy(writePngToClipboard(png, target), ctx);
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the copied-state reset timer on unmount
   React.useEffect(() => {
@@ -297,5 +328,5 @@ export function useCopyToClipboard<TContext = void>({
     };
   }, []);
 
-  return { copyToClipboard, isCopied };
+  return { copyToClipboard, copyPngToClipboard, isCopied };
 }

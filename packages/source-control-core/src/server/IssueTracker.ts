@@ -204,6 +204,12 @@ export interface IssueTrackerApi {
   ) => Effect.Effect<IssueCandidates, IssueTrackerError>;
 }
 
+/** What a user saved to reach a standalone tracker: the secret, and the descriptor's fields. */
+export interface IssueTrackerCredential {
+  readonly token: string;
+  readonly fields: Readonly<Record<string, string>>;
+}
+
 /**
  * A tracker reached with its own credential rather than a checkout's: Linear, Jira. The server
  * stores one credential per kind and offers the connect flow from `standalone`; a project reads
@@ -218,7 +224,7 @@ export interface StandaloneIssueTrackerApi extends IssueTrackerApi {
    * Who a credential signs in as and which scopes it reaches, asked of the tracker itself. Run on
    * a credential before it is stored, and on the stored one to report connection status.
    */
-  readonly probeCredential: (token: string) => Effect.Effect<
+  readonly probeCredential: (credential: IssueTrackerCredential) => Effect.Effect<
     {
       readonly account: string;
       /** What the tracker's issue URLs name the credential's workspace by, where they name one. */
