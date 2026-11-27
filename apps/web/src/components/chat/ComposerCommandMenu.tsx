@@ -542,7 +542,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             render={
               <span
                 ref={descriptionRef}
-                className="min-w-0 flex-1 truncate text-left font-normal text-dim-foreground text-meta"
+                className="min-w-0 max-w-full flex-1 truncate text-left font-normal text-dim-foreground text-meta"
               />
             }
           >
