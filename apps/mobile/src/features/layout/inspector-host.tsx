@@ -64,8 +64,9 @@ function PaneScreenContent(props: {
 }
 
 /**
- * The inspector column's panes, each a screen of the column like the detail column's routes.
+ * The inspector column's panes, each a screen of its stack like the detail column's routes.
  * Only the active one is attached, so UIKit sees one bar, one toolbar and one scroll view.
+ * The inspector stays mounted without panes: Split.Host recreates its columns when it appears.
  */
 export function InspectorColumnScreens(props: {
   readonly content: InspectorContent | undefined;
@@ -74,23 +75,29 @@ export function InspectorColumnScreens(props: {
   readonly overlay?: ReactNode;
 }) {
   const panes = useMountedInspectorPanes(props.content);
-  return panes.map((pane) => {
-    const active = pane.key === props.content?.active;
-    return (
-      <Split.Inspector
-        key={pane.key}
-        screenKey={`inspector:${pane.key}`}
-        activityMode={active ? "attached" : "detached"}
-      >
-        <PaneScreenContent
-          pane={pane}
-          resetKeys={props.content?.resetKeys}
-          onClose={props.onClose}
-        />
-        {active ? props.overlay : null}
-      </Split.Inspector>
-    );
-  });
+  return (
+    <Split.Inspector>
+      <Stack.Host>
+        {panes.map((pane) => {
+          const active = pane.key === props.content?.active;
+          return (
+            <Stack.Screen
+              key={pane.key}
+              screenKey={`inspector:${pane.key}`}
+              activityMode={active ? "attached" : "detached"}
+            >
+              <PaneScreenContent
+                pane={pane}
+                resetKeys={props.content?.resetKeys}
+                onClose={props.onClose}
+              />
+              {active ? props.overlay : null}
+            </Stack.Screen>
+          );
+        })}
+      </Stack.Host>
+    </Split.Inspector>
+  );
 }
 
 /** The inspector's panes where it has no column: a native stack with the active one attached. */

@@ -2,6 +2,7 @@ import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contract
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../test/render";
+import { useClosedViewStore } from "../closedViewStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useRightPanelSurfaceClose } from "./useRightPanelSurfaceClose";
@@ -11,6 +12,7 @@ const fixture = vi.hoisted(() => ({
   allowed: new Set<string>(),
   sessions: new Map<string, string>(),
   failClose: false,
+  previewSessions: {} as Record<string, unknown>,
 }));
 vi.mock("../lib/terminalCloseConfirm", () => ({
   confirmTerminalClose: (labels: readonly string[]) => fixture.confirm(labels),
@@ -19,7 +21,7 @@ vi.mock("../components/ChatView.logic", () => ({
   agentControlledBrowserCloseConfirmation: () => null,
 }));
 vi.mock("../previewStateStore", () => ({
-  useThreadPreviewState: () => ({ sessions: {}, desktopByTabId: {} }),
+  useThreadPreviewState: () => ({ sessions: fixture.previewSessions, desktopByTabId: {} }),
   setActivePreviewTab: () => {},
   beginPreviewSessionClose: () => {},
   cancelPreviewSessionClose: () => {},
@@ -156,3 +158,34 @@ it.each([
     ).toHaveLength(1);
   },
 );
+
+it("reopens the active browser first after closing every browser tab", async () => {
+  fixture.allowed = new Set(["environment-a"]);
+  const ref: ScopedThreadRef = {
+    environmentId: EnvironmentId.make("environment-a"),
+    threadId: ThreadId.make("thread-browsers"),
+  };
+  fixture.previewSessions = Object.fromEntries(
+    ["tab-a", "tab-b"].map((tabId) => [tabId, { tabId, navStatus: { _tag: "Idle" } }]),
+  );
+  useRightPanelStore.setState({ byThreadKey: {} });
+  useClosedViewStore.setState({ entries: [] });
+  useRightPanelStore.getState().openBrowser(ref, "tab-a");
+  useRightPanelStore.getState().openBrowser(ref, "tab-b");
+  useRightPanelStore.getState().activateSurface(ref, "browser:tab-a");
+  function Harness() {
+    const { closeAllSurfaces } = useRightPanelSurfaceClose({
+      threadRef: ref,
+      terminalLabelsById: new Map(),
+    });
+    return <button onClick={() => closeAllSurfaces()}>Close all</button>;
+  }
+  await using screen = await render(<Harness />);
+  await screen.getByRole("button").click();
+  await vi.waitFor(() => expect(useClosedViewStore.getState().entries).toHaveLength(2));
+  expect(
+    useClosedViewStore
+      .getState()
+      .entries.map((entry) => (entry.kind === "browser" ? entry.snapshot.tabId : null)),
+  ).toEqual(["tab-a", "tab-b"]);
+});

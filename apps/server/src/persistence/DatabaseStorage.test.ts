@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -78,6 +79,7 @@ const compactionLayer = (
     Layer.provide(
       Layer.succeed(ProjectionMaintenance.ProjectionMaintenanceV2, {
         pruneEventStore,
+        purgeDeletedThread: () => Effect.succeed(0),
       }),
     ),
     Layer.provide(Sqlite.layerMemory),
@@ -85,7 +87,12 @@ const compactionLayer = (
 
 const minute = 60_000;
 const startupTime = Date.UTC(2026, 9, 19);
-const emptyCompaction = { deletedEventCount: 0, deletedReceiptCount: 0, reclaimableBytes: 0 };
+const emptyCompaction = {
+  deletedEventCount: 0,
+  deletedReceiptCount: 0,
+  purgedRowCount: 0,
+  reclaimableBytes: 0,
+};
 
 it.effect("remembers completion only after the paced pass finishes", () =>
   Effect.gen(function* () {
@@ -93,7 +100,7 @@ it.effect("remembers completion only after the paced pass finishes", () =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const config = yield* ServerConfig.ServerConfig;
-    const timestampPath = path.join(path.dirname(config.dbPath), "compacted-at");
+    const timestampPath = path.join(path.dirname(config.dbPath), "compacted-at-v2");
     const betweenPagesReached = yield* Deferred.make<void>();
     const completed = yield* Deferred.make<void>();
     const timestampWritten = yield* Deferred.make<void>();
@@ -197,5 +204,64 @@ it.effect(
       assert.isFalse(yield* Deferred.isDone(restarted), "the reply must go out before the restart");
       yield* TestClock.adjust(500);
       yield* Deferred.await(restarted);
+    }).pipe(Effect.provide(testConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect(
+  "purges threads deleted before upgrading without waiting for the next six-hour pass",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(startupTime);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      yield* fs.makeDirectory(path.dirname(config.dbPath), { recursive: true });
+      // The previous version compacted a minute ago, but never purged deleted threads.
+      yield* fs.writeFileString(
+        path.join(path.dirname(config.dbPath), "compacted-at"),
+        String(startupTime - minute),
+      );
+      const contentRows = Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) => sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM orchestration_v2_projection_messages
+        WHERE thread_id = 'thread:deleted-before-upgrade'
+      `,
+      ).pipe(Effect.map((rows) => rows[0]?.count ?? 0));
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const at = DateTime.formatIso(DateTime.makeUnsafe(startupTime - 2 * minute));
+        yield* sql`
+        INSERT INTO orchestration_v2_projection_threads (
+          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+          created_at, updated_at, deleted_at, payload_json
+        ) VALUES (
+          'thread:deleted-before-upgrade', 'project:upgrade', 'private title', 'codex',
+          'full-access', 'default', ${at}, ${at}, ${at}, '{"title":"private title"}'
+        )
+      `;
+        yield* sql`
+        INSERT INTO orchestration_v2_projection_messages (
+          message_id, thread_id, role, streaming, created_at, updated_at, payload_json
+        ) VALUES (
+          'message:deleted-before-upgrade', 'thread:deleted-before-upgrade', 'user', 0,
+          ${at}, ${at}, '{"text":"private message"}'
+        )
+      `;
+        assert.equal(yield* contentRows, 1);
+        yield* DatabaseStorage.DatabaseStorage;
+
+        yield* TestClock.adjust(5 * minute);
+
+        assert.equal(yield* contentRows, 0);
+      }).pipe(
+        Effect.provide(
+          DatabaseStorage.layer.pipe(
+            Layer.provide(ProjectionMaintenance.layer),
+            Layer.provideMerge(Sqlite.layerMemory),
+          ),
+        ),
+      );
     }).pipe(Effect.provide(testConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );

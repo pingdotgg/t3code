@@ -592,10 +592,12 @@ describe("ProcessRunner.layer", () => {
     () =>
       Effect.gen(function* () {
         const runner = yield* ProcessRunner.ProcessRunner;
+        const launcher = yield* ProcessLauncher.ProcessLauncher;
         const parentPid = runner
           .run({ command: "sh", args: ["-c", "echo $PPID"] })
           .pipe(Effect.map((result) => expectHelperPid(result.stdout)));
         const helper = yield* parentPid;
+        expect(yield* launcher.currentPid).toBe(helper);
         process.kill(helper, "SIGSTOP");
         const error = yield* runner.run({ command: "true", args: [] }).pipe(Effect.flip);
         const replacement = yield* parentPid;
@@ -603,15 +605,11 @@ describe("ProcessRunner.layer", () => {
         expect(error._tag).toBe("ProcessSpawnError");
         expect(replacement).not.toBe(helper);
         expect(replacement).not.toBe(process.pid);
+        expect(yield* launcher.currentPid).toBe(replacement);
       }).pipe(
         Effect.provide(
           ProcessRunner.layer.pipe(
-            Layer.provide(
-              Layer.effect(
-                ChildProcessSpawner.ChildProcessSpawner,
-                ProcessLauncher.make("1 second"),
-              ),
-            ),
+            Layer.provideMerge(Layer.effectContext(ProcessLauncher.make("1 second"))),
             Layer.provide(NodeServices.layer),
           ),
         ),
@@ -651,12 +649,7 @@ describe("ProcessRunner.layer", () => {
         const runner = Context.get(
           yield* Layer.build(
             ProcessRunner.layer.pipe(
-              Layer.provide(
-                Layer.effect(
-                  ChildProcessSpawner.ChildProcessSpawner,
-                  ProcessLauncher.make("1 second"),
-                ),
-              ),
+              Layer.provide(Layer.effectContext(ProcessLauncher.make("1 second"))),
             ),
           ),
           ProcessRunner.ProcessRunner,

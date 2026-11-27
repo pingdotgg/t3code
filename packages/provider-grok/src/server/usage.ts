@@ -27,6 +27,7 @@ interface GrokUsageTotals {
   readonly cachedReadTokens: number;
   readonly cacheCreationTokens: number;
   readonly reasoningTokens: number;
+  readonly modelCalls: number;
   readonly costUsdTicks: number | null;
 }
 
@@ -39,6 +40,7 @@ function readGrokUsageTotals(value: unknown): GrokUsageTotals | null {
     cachedReadTokens: tokenCount(record["cachedReadTokens"]),
     cacheCreationTokens: tokenCount(record["cacheCreationTokens"]),
     reasoningTokens: tokenCount(record["reasoningTokens"]),
+    modelCalls: tokenCount(record["modelCalls"]),
     costUsdTicks:
       typeof record["costUsdTicks"] === "number" && Number.isFinite(record["costUsdTicks"])
         ? record["costUsdTicks"]
@@ -136,6 +138,7 @@ function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
         totals: grokTotalsToUsage(topLevel),
         reportedCostUsd: grokCostTicksToUsd(topLevel.costUsdTicks),
         speed: "standard",
+        ...(topLevel.modelCalls > 1 ? { modelCalls: topLevel.modelCalls } : {}),
         // No prompt id means we cannot tell two same-second updates apart.
         dedupeKey: promptId === null ? null : `${sessionId}:${promptId}:${timestampMs}:grok`,
       },
@@ -166,6 +169,12 @@ function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
     if (reportedCostUsd === null && remainingCostUsd !== null && untickedTokenDenominator > 0) {
       reportedCostUsd = remainingCostUsd * (totalTokens(totals) / untickedTokenDenominator);
     }
+    const calls =
+      entry.totals.modelCalls > 0
+        ? entry.totals.modelCalls
+        : modelEntries.length === 1
+          ? topLevel.modelCalls
+          : 1;
 
     results.push({
       provider: "grok",
@@ -175,6 +184,7 @@ function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
       totals,
       reportedCostUsd,
       speed: "standard",
+      ...(calls > 1 ? { modelCalls: calls } : {}),
       dedupeKey:
         promptId === null ? null : `${sessionId}:${promptId}:${timestampMs}:${entry.model}`,
     });

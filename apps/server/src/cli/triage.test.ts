@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeStream from "node:stream";
 import * as NodeURL from "node:url";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -21,6 +22,7 @@ import { expect, vi } from "vite-plus/test";
 
 import { cli } from "../binCli.ts";
 import { buildTriageLaunchPrompt } from "../triage/triagePrompt.ts";
+import { matchAgentAnswer, pickAgent } from "./triage.ts";
 
 const cliPath = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
 
@@ -106,6 +108,63 @@ it.live.each([
         await NodeFSP.readFile(NodePath.join(launch.cwd, "triage-playbook.md"), "utf8"),
       ).toContain("context.md");
     }),
+);
+
+it.each([
+  { answer: "2", picked: "codex" },
+  { answer: " 1 ", picked: "claude" },
+  { answer: "CLAUDE", picked: "claude" },
+  { answer: "1.5", picked: undefined },
+  { answer: "1x", picked: undefined },
+  { answer: "2codex", picked: undefined },
+  { answer: "3", picked: undefined },
+])("the agent picker reads $answer as $picked", ({ answer, picked }) => {
+  expect(matchAgentAnswer([{ id: "claude" }, { id: "codex" }], answer)?.id).toBe(picked);
+});
+
+it.effect.each([
+  { label: "Ctrl+C", key: "\x03" },
+  { label: "Ctrl+D", key: "\x04" },
+  { label: "an invalid choice and Ctrl+C", key: "9\r\x03" },
+  { label: "an invalid choice and Ctrl+D", key: "9\r\x04" },
+])("returns undefined when the agent picker is cancelled with $label", ({ key }) =>
+  Effect.gen(function* () {
+    const input = new NodeStream.PassThrough();
+    const output = Object.assign(new NodeStream.PassThrough(), { isTTY: true });
+    output.once("data", () => input.write(key));
+
+    const picked = yield* pickAgent(
+      [
+        { id: "claude", label: "Claude Code" },
+        { id: "codex", label: "Codex" },
+      ],
+      input,
+      output,
+    );
+
+    assert.isUndefined(picked);
+  }),
+);
+
+it.effect.each([
+  { label: "no answer", lines: [], picked: undefined },
+  { label: "an invalid answer", lines: ["99\n"], picked: undefined },
+  { label: "an invalid answer and then a valid one", lines: ["9\n", "2\n"], picked: "codex" },
+])("the agent picker returns $picked when input ends after $label", ({ lines, picked }) =>
+  Effect.gen(function* () {
+    const input = NodeStream.Readable.from(lines.map((line) => Promise.resolve(line)));
+
+    const agent = yield* pickAgent(
+      [
+        { id: "claude", label: "Claude Code" },
+        { id: "codex", label: "Codex" },
+      ],
+      input,
+      new NodeStream.PassThrough(),
+    );
+
+    assert.strictEqual(agent?.id, picked);
+  }),
 );
 
 it.live(

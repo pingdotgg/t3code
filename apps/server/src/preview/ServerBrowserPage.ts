@@ -1283,6 +1283,7 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
   let ring = null;
   const AGENT_CURSOR_PATH = new Path2D("M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z");
   let ringTimer = null;
+  let idleTimer = null;
   let scale = 1;
   let offsetX = 0;
   let offsetY = 0;
@@ -1353,6 +1354,7 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
             tooLarge = true;
             chunks.length = 0;
             clearInterval(ringTimer);
+            clearInterval(idleTimer);
             frame?.close();
             frame = null;
             if (recorder.state !== "inactive") recorder.stop();
@@ -1362,6 +1364,8 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
           chunks.push(event.data);
         };
         recorder.start(1000);
+        // captureStream only emits on a paint; repainting an idle frame lets the encoder sharpen it.
+        idleTimer = setInterval(paint, 1000 / ${frameRate});
       }
       // Frame px per page CSS px, before fitting into the canvas.
       bitmap.cssScale = bitmap.width / cssWidth;
@@ -1409,6 +1413,7 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
         video.srcObject = null;
         if (recorder.state !== "inactive") recorder.stop();
       }
+      clearInterval(idleTimer);
       await stopped;
       return { mimeType: recorder.mimeType, count: chunks.length, bytes: sizeBytes };
     },
