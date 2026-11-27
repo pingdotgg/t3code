@@ -596,6 +596,34 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
+  it("distinguishes finished cards with the same display text but different conversations", () => {
+    const hero = { ...state, phase: "completed" as const, updatedAt: "1970-01-01T00:00:02.000Z" };
+    const other = {
+      ...hero,
+      threadId: ThreadId.make("second"),
+      deepLink: "/threads/env/second",
+      updatedAt: "1970-01-01T00:00:01.000Z",
+    };
+    const aggregate = aggregateFor([hero, other]);
+    const previous = androidActivityData(aggregate);
+    const current = androidActivityData(
+      aggregateFor([
+        hero,
+        { ...other, threadId: ThreadId.make("third"), deepLink: "/threads/env/third" },
+      ]),
+    );
+
+    const row = { activity_line_1: "Done\tFix notifications\tProject" };
+    expect(previous).toMatchObject(row);
+    expect(current).toMatchObject(row);
+    expect(current.activity_path).toBe(previous.activity_path);
+    expect(current.activity_expires_at).toBe(previous.activity_expires_at);
+    expect(previous.activity_terminal_id).toEqual(expect.any(String));
+    expect(androidActivityData(aggregate)).toEqual(previous);
+    expect(current.activity_terminal_id).toEqual(expect.any(String));
+    expect(current.activity_terminal_id).not.toBe(previous.activity_terminal_id);
+  });
+
   it("fits five Unicode rows and a grouped alert in the FCM budget without corrupting text or routes", () => {
     const longTitle = '🤖漢字"\\'.repeat(30);
     const aggregate = aggregateFor(

@@ -49,6 +49,14 @@ export function androidActivityData(aggregate: RelayAgentActivityAggregateState 
         : agentActivityExpiresAt(row),
     ),
   );
+  const terminalId =
+    activeCount === 0 && rows.length > 1
+      ? hashTelemetryId(
+          JSON.stringify(
+            rows.map((row) => [row.environmentId, row.threadId, row.phase, row.updatedAt]),
+          ),
+        )
+      : undefined;
   return {
     active: String(activeCount > 0),
     activity_chip: activeCount > 0 ? (attentionCount > 0 ? "Review" : "Active") : "",
@@ -62,6 +70,7 @@ export function androidActivityData(aggregate: RelayAgentActivityAggregateState 
     ...Object.fromEntries(lines.map((line, index) => [`activity_line_${index}`, line])),
     activity_path: rows[0]?.deepLink ?? "/",
     activity_expires_at: String(expiresAt),
+    ...(terminalId === undefined ? {} : { activity_terminal_id: terminalId }),
   };
 }
 

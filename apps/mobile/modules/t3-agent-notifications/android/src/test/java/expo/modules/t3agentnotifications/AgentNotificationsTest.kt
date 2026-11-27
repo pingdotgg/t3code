@@ -906,4 +906,23 @@ class AgentNotificationsCompletionTest : AgentNotificationsFixture() {
     AgentNotifications.receive(context, differentRows)
     assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
   }
+
+  @Test
+  fun groupedAlertDoesNotHideDifferentConversationsWithIdenticalTitles() {
+    val covered = finished("grouped-done", System.currentTimeMillis() + 900000) + mapOf(
+      "activity_line_1" to "Done\tSecond thread\tOther project",
+      "activity_terminal_id" to "first-pair",
+      "alert_path" to "/",
+      "alert_covers_activity" to "true",
+    )
+    AgentNotifications.receive(context, covered)
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
+
+    val replay = covered.filterKeys { !it.startsWith("alert_") }
+    AgentNotifications.receive(context, replay)
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
+
+    AgentNotifications.receive(context, replay + ("activity_terminal_id" to "second-pair"))
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+  }
 }

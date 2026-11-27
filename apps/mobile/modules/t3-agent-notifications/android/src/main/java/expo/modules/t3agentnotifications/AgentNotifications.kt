@@ -317,7 +317,11 @@ object AgentNotifications {
       .filterNotNull()
       .toList()
     val expiresAt = data["activity_expires_at"]
-    val scope = if (rows.size == 1) "true" else "false\n${rows.joinToString("\n")}"
+    val scope = if (rows.size == 1) {
+      "true"
+    } else {
+      "false\n${data["activity_terminal_id"] ?: rows.joinToString("\n")}"
+    }
     return "${data["activity_path"]}\n$phase\n$expiresAt\n$scope"
       .takeIf { finished && rows.isNotEmpty() && expiresAt != null }
   }
