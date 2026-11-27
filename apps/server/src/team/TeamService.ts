@@ -441,7 +441,12 @@ export class TeamService extends Context.Service<
     }) => Effect.Effect<TeamInitializeResult, TeamOperationError>;
     readonly leaveTeam: (input: {
       readonly sessionId: AuthSessionId;
-      readonly deferCallerSessionRevocation?: boolean;
+      readonly deferCallerSessionRevocation?:
+        | boolean
+        | {
+            readonly awaitDisconnect?: Effect.Effect<void>;
+            readonly fallbackDelay?: Duration.Duration;
+          };
       readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
       readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     }) => Effect.Effect<TeamLeaveResult, TeamOperationError>;
@@ -629,6 +634,9 @@ export class TeamService extends Context.Service<
     readonly persistScheduledTaskMeta: (
       input: AuthorizedTeamScheduledTaskUpsert & { readonly taskId: ScheduledTaskId },
     ) => Effect.Effect<TeamScheduledTaskMeta, TeamRepository.TeamRepositoryError>;
+    readonly withScheduledTaskWorkspaceGate: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
     readonly publishScheduledTaskMeta: (meta: TeamScheduledTaskMeta) => Effect.Effect<void>;
     readonly saveScheduledTaskMeta: (
       input: AuthorizedTeamScheduledTaskUpsert & { readonly taskId: ScheduledTaskId },
@@ -1403,9 +1411,10 @@ const make = Effect.gen(function* () {
       unlinkAfterRevoke = false,
     } = input;
     if (!peerClientPairing || environmentIds.length === 0 || subjectPrefixes.length === 0) {
-      return { allSucceeded: true };
+      return { allSucceeded: true, enqueueFailed: false };
     }
     let allSucceeded = true;
+    let enqueueFailed = false;
     const nowIso = DateTime.formatIso(yield* DateTime.now);
     const uniqueEnvIds = Array.from(new Set(environmentIds));
     for (const environmentId of uniqueEnvIds) {
@@ -1423,7 +1432,7 @@ const make = Effect.gen(function* () {
                     .getEnvironmentByEnvironmentId({ teamId, environmentId })
                     .pipe(Effect.orElseSucceed(() => Option.none<TeamEnvironment>()))
                 : Option.none<TeamEnvironment>();
-              yield* repository
+              const enqueued = yield* repository
                 .enqueuePendingRemoteRevocation({
                   id: pendingId,
                   teamId,
@@ -1432,13 +1441,24 @@ const make = Effect.gen(function* () {
                   unlinkAfterRevoke: unlinkAfterRevoke && Option.isNone(attachedEnv),
                   createdAt: nowIso,
                 })
-                .pipe(Effect.ignore);
+                .pipe(
+                  Effect.as(true),
+                  Effect.catch((cause) =>
+                    Effect.logWarning(
+                      "TeamService.revokeRemoteMemberGrantsForEnvironments failed to persist pending revocation",
+                      { teamId, environmentId, subjectPrefix, cause },
+                    ).pipe(Effect.as(false)),
+                  ),
+                );
+              if (!enqueued) {
+                enqueueFailed = true;
+              }
             }),
           );
         }
       }
     }
-    return { allSucceeded };
+    return { allSucceeded, enqueueFailed };
   });
 
   const resolveLocalEnvironmentIdentity = Effect.fn("TeamService.resolveLocalEnvironmentIdentity")(
@@ -2510,7 +2530,12 @@ const make = Effect.gen(function* () {
 
   const leaveTeam = Effect.fn("TeamService.leaveTeam")(function* (input: {
     readonly sessionId: AuthSessionId;
-    readonly deferCallerSessionRevocation?: boolean;
+    readonly deferCallerSessionRevocation?:
+      | boolean
+      | {
+          readonly awaitDisconnect?: Effect.Effect<void>;
+          readonly fallbackDelay?: Duration.Duration;
+        };
     readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
     readonly peerLinks?: PeerLinks.PeerLinks["Service"];
   }) {
@@ -2566,9 +2591,20 @@ const make = Effect.gen(function* () {
 
         const updatedMember = leftResult.member;
 
+        // Publish removal and view/environment updates immediately so live streamState
+        // subscribers flip currentMember.status to "removed" before async cleanup runs.
+        yield* publish({ version: 1, type: "memberUpserted", payload: updatedMember });
+        for (const updatedView of leftResult.updatedViews) {
+          yield* publish({ version: 1, type: "viewUpserted", payload: updatedView });
+        }
+        for (const updatedEnvironment of leftResult.updatedEnvironments) {
+          yield* publish({ version: 1, type: "environmentUpserted", payload: updatedEnvironment });
+        }
+        yield* publishAccessChange({ type: "member", memberId: updatedMember.id });
+
         // Revoke all other sessions belonging to the leaving member immediately; revoke the
-        // caller's own session last (or after flushing the WS reply) so socket invalidation
-        // never interrupts cleanup or drops the completion response.
+        // caller's own session last (or after the client disconnects / reply flush window) so
+        // socket invalidation never interrupts cleanup or drops the completion response.
         const callerJkt = yield* sessionStore
           .proofKeyThumbprintOf(input.sessionId)
           .pipe(Effect.orElseSucceed(() => Option.none<string>()));
@@ -2643,14 +2679,6 @@ const make = Effect.gen(function* () {
             );
           }
         }
-        yield* publish({ version: 1, type: "memberUpserted", payload: updatedMember });
-        for (const updatedView of leftResult.updatedViews) {
-          yield* publish({ version: 1, type: "viewUpserted", payload: updatedView });
-        }
-        for (const updatedEnvironment of leftResult.updatedEnvironments) {
-          yield* publish({ version: 1, type: "environmentUpserted", payload: updatedEnvironment });
-        }
-        yield* publishAccessChange({ type: "member", memberId: updatedMember.id });
 
         const revokeCallerSession = Effect.gen(function* () {
           if (Option.isSome(callerJkt)) {
@@ -2658,12 +2686,22 @@ const make = Effect.gen(function* () {
           }
           yield* sessionStore.revoke(input.sessionId).pipe(Effect.ignore);
         });
-        if (input.deferCallerSessionRevocation === true) {
-          // Member is already marked removed in SQLite (so every team guard fails closed);
-          // deferring socket invalidation briefly lets the WS RPC reply flush to the client.
-          yield* Effect.forkDetach(
-            Effect.sleep(Duration.millis(75)).pipe(Effect.andThen(revokeCallerSession)),
-          );
+        const deferSpec = input.deferCallerSessionRevocation;
+        if (deferSpec === true || (deferSpec !== undefined && deferSpec !== false)) {
+          // Member is already marked removed in SQLite and live streams (every team guard fails
+          // closed); wait for the client to disconnect after reading the RPC reply, bounded by a
+          // short fallback timeout so non-disconnecting clients are still forcibly invalidated.
+          const fallbackDelay =
+            typeof deferSpec === "object" && deferSpec.fallbackDelay !== undefined
+              ? deferSpec.fallbackDelay
+              : Duration.millis(500);
+          const awaitDisconnect =
+            typeof deferSpec === "object" ? deferSpec.awaitDisconnect : undefined;
+          const waitForFlush =
+            awaitDisconnect !== undefined
+              ? Effect.race(awaitDisconnect, Effect.sleep(fallbackDelay))
+              : Effect.sleep(fallbackDelay);
+          yield* Effect.forkDetach(waitForFlush.pipe(Effect.andThen(revokeCallerSession)));
         } else {
           yield* revokeCallerSession;
         }
@@ -2728,7 +2766,14 @@ const make = Effect.gen(function* () {
 
             // 1. Delete team scheduled tasks (and revoke their webhooks) BEFORE removing
             //    team_workspaces so no team schedule can survive into personal mode.
-            if (targets.scheduledTaskIds.length > 0 && input.scheduledTaskService) {
+            if (targets.scheduledTaskIds.length > 0) {
+              if (!input.scheduledTaskService) {
+                return yield* new TeamOperationError({
+                  code: "internal",
+                  message:
+                    "Scheduled task service is unavailable; cannot safely delete team scheduled tasks.",
+                });
+              }
               for (const taskId of targets.scheduledTaskIds) {
                 yield* input.scheduledTaskService.delete({ id: taskId }).pipe(
                   Effect.mapError(
@@ -2773,28 +2818,57 @@ const make = Effect.gen(function* () {
             // 3. Revoke every other team-bound session and proof key BEFORE deleting workspace rows;
             //    keep the owner's current session so the server returns cleanly to personal mode.
             const proofKeysToRevoke = new Set<string>();
-            const callerJkt = yield* sessionStore
-              .proofKeyThumbprintOf(input.sessionId)
-              .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+            const callerJkt = yield* sessionStore.proofKeyThumbprintOf(input.sessionId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new TeamOperationError({
+                    code: "internal",
+                    message: `Failed to inspect caller session before deleting team: ${String(cause)}`,
+                  }),
+              ),
+            );
             for (const boundSessionId of targets.sessionIds) {
               if (boundSessionId === input.sessionId) continue;
-              const maybeJkt = yield* sessionStore
-                .proofKeyThumbprintOf(boundSessionId)
-                .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+              const maybeJkt = yield* sessionStore.proofKeyThumbprintOf(boundSessionId).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new TeamOperationError({
+                      code: "internal",
+                      message: `Failed to inspect team session before deleting team: ${String(cause)}`,
+                    }),
+                ),
+              );
               if (
                 Option.isSome(maybeJkt) &&
                 (Option.isNone(callerJkt) || maybeJkt.value !== callerJkt.value)
               ) {
                 proofKeysToRevoke.add(maybeJkt.value);
               }
-              yield* sessionStore.revoke(boundSessionId).pipe(Effect.ignore);
+              yield* sessionStore.revoke(boundSessionId).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new TeamOperationError({
+                      code: "internal",
+                      message: `Failed to revoke team session before deleting team: ${String(cause)}`,
+                    }),
+                ),
+              );
             }
             for (const proofKeyThumbprint of proofKeysToRevoke) {
-              yield* sessionStore.revokeByProofKey(proofKeyThumbprint).pipe(Effect.ignore);
+              yield* sessionStore.revokeByProofKey(proofKeyThumbprint).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new TeamOperationError({
+                      code: "internal",
+                      message: `Failed to revoke team proof key before deleting team: ${String(cause)}`,
+                    }),
+                ),
+              );
             }
 
             // 4. Revoke remote peer grants across both attached team environments and any
-            //    still-linked peers BEFORE deleting team_workspaces.
+            //    still-linked peers BEFORE deleting team_workspaces. Fail closed if an offline
+            //    peer's retry record could not be persisted.
             if (input.peerClientPairing) {
               const remoteEnvIds = currentEnvs
                 .filter((env) => !env.isDefault)
@@ -2807,7 +2881,7 @@ const make = Effect.gen(function* () {
               }
               const uniqueRemoteEnvIds = [...new Set(remoteEnvIds)];
               if (uniqueRemoteEnvIds.length > 0) {
-                yield* withRemoteRevocationBarrier(
+                const remoteOutcome = yield* withRemoteRevocationBarrier(
                   revokeRemoteMemberGrantsForEnvironments({
                     teamId: activeTeam.id,
                     peerClientPairing: input.peerClientPairing,
@@ -2815,6 +2889,13 @@ const make = Effect.gen(function* () {
                     subjectPrefixes: [remoteSubjectPrefixForTeam(activeTeam.id)],
                   }),
                 );
+                if (remoteOutcome.enqueueFailed) {
+                  return yield* new TeamOperationError({
+                    code: "internal",
+                    message:
+                      "Failed to persist pending remote peer revocations before deleting team.",
+                  });
+                }
               }
             }
 
@@ -9547,7 +9628,7 @@ const make = Effect.gen(function* () {
         stateDir: serverConfigOption.value.stateDir,
         driver: input.payload.driver,
         linkedServerInstanceId: effectiveLinkedServerInstanceId,
-        ...(resolvedSettings !== null ? { serverSettings: resolvedSettings } : {}),
+        ...(Option.isSome(serverSettingsOption) ? { serverSettings: resolvedSettings } : {}),
       });
       if (profileDir === null) {
         return yield* new TeamOperationError({
@@ -11542,6 +11623,7 @@ const make = Effect.gen(function* () {
     authorizeScheduledTaskUpsertForActor,
     authorizeScheduledTaskUpsert,
     persistScheduledTaskMeta,
+    withScheduledTaskWorkspaceGate: withMembershipMutationGate,
     publishScheduledTaskMeta,
     saveScheduledTaskMeta,
     deleteScheduledTaskMeta,

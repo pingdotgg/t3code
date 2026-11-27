@@ -677,6 +677,12 @@ export function TeamsSettings() {
                     setDisplayNameDraft(null);
                     setMyPseudoDraft(null);
                     setShowInviteForm(false);
+                    setInviteRole("regular");
+                    setInvitePseudo("");
+                    setInviteMaxUsesInput("1");
+                    setInviteExpiryHours(168);
+                    setJoinLinkInput("");
+                    setJoinLinkError(null);
                     setDeleteDialogOpen(false);
                     setDeleteConfirmNameInput("");
                   }
@@ -822,7 +828,7 @@ export function TeamsSettings() {
                   role="tab"
                   tabIndex={isSelected ? 0 : -1}
                   aria-selected={isSelected}
-                  aria-controls={`teams-tabpanel-${tab.id}`}
+                  aria-controls={isSelected ? `teams-tabpanel-${tab.id}` : undefined}
                   data-testid={`teams-tab-${tab.id}`}
                   onClick={() => setActiveTab(tab.id)}
                   onKeyDown={(event) => {

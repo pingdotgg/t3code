@@ -607,7 +607,7 @@ const handleProviderLease = Effect.fn("TeamProviderProxyHttp.lease")(function* (
           stateDir: serverConfigOpt.value.stateDir,
           driver: provider.driver,
           linkedServerInstanceId,
-          ...(resolvedServerSettings !== null ? { serverSettings: resolvedServerSettings } : {}),
+          ...(Option.isSome(serverSettingsOpt) ? { serverSettings: resolvedServerSettings } : {}),
         })
       : null;
   if (

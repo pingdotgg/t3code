@@ -133,4 +133,70 @@ describe("waitForCloneAndAssignProject", () => {
     expect(await pending).toBe(false);
     expect(assign).not.toHaveBeenCalled();
   });
+
+  it("skips team assignment when a running clone is discarded and its project is removed", async () => {
+    let cloneState: ProjectCloneSnapshot | null = makeClone("running");
+    let projectState: EnvironmentProject | null = {
+      id: projectId,
+      environmentId: envId,
+      repositoryIdentity: null,
+    } as unknown as EnvironmentProject;
+    const cloneListeners = new Set<(clone: ProjectCloneSnapshot | null) => void>();
+    const assign = vi.fn(async () => {});
+
+    const deps: WaitForCloneAndAssignDeps = {
+      readClone: () => cloneState,
+      subscribeClone: (_e, _p, listener) => {
+        cloneListeners.add(listener);
+        return () => cloneListeners.delete(listener);
+      },
+      readProject: () => projectState,
+      subscribeProject: () => () => {},
+      cloneTimeoutMs: 5_000,
+      identityTimeoutMs: 5_000,
+    };
+
+    const pending = waitForCloneAndAssignProject({
+      environmentId: envId,
+      projectId,
+      assign,
+      deps,
+    });
+
+    // Simulate ProjectCloneTracker.discard coalescing directly to clone === null + deleted project.
+    projectState = null;
+    cloneState = null;
+    for (const listener of cloneListeners) listener(cloneState);
+
+    expect(await pending).toBe(false);
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("skips team assignment when repositoryIdentity never populates before timeout", async () => {
+    const projectState = {
+      id: projectId,
+      environmentId: envId,
+      repositoryIdentity: null,
+    } as unknown as EnvironmentProject;
+    const assign = vi.fn(async () => {});
+
+    const deps: WaitForCloneAndAssignDeps = {
+      readClone: () => makeClone("done"),
+      subscribeClone: () => () => {},
+      readProject: () => projectState,
+      subscribeProject: () => () => {},
+      cloneTimeoutMs: 5_000,
+      identityTimeoutMs: 25,
+    };
+
+    expect(
+      await waitForCloneAndAssignProject({
+        environmentId: envId,
+        projectId,
+        assign,
+        deps,
+      }),
+    ).toBe(false);
+    expect(assign).not.toHaveBeenCalled();
+  });
 });

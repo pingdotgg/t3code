@@ -5,11 +5,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  defaultInstanceIdForDriver,
   IsoDateTime,
   isTeamProviderInstanceId,
   NonNegativeInt,
+  ProviderDriverKind,
   TeamOperationError,
-  type ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
   type ServerSettings,
@@ -110,12 +111,15 @@ function expandLeadingTilde(rawPath: string): string {
   return trimmed;
 }
 
-function readInstanceHomePathFromConfig(instance: ProviderInstanceConfig): string | null {
+function readInstanceConfigPath(
+  instance: ProviderInstanceConfig,
+  key: "homePath" | "shadowHomePath",
+): string | null {
   const cfg = instance.config;
-  if (cfg !== null && typeof cfg === "object" && "homePath" in cfg) {
-    const raw = (cfg as { readonly homePath?: unknown }).homePath;
+  if (cfg !== null && typeof cfg === "object" && key in cfg) {
+    const raw = (cfg as Readonly<Record<string, unknown>>)[key];
     if (typeof raw === "string" && raw.trim().length > 0) {
-      return expandLeadingTilde(raw);
+      return NodePath.resolve(expandLeadingTilde(raw));
     }
   }
   return null;
@@ -134,17 +138,26 @@ function readInstanceEnvValue(instance: ProviderInstanceConfig, envVarName: stri
     ) {
       const value = (entry as { readonly value?: unknown }).value;
       if (typeof value === "string" && value.trim().length > 0) {
-        return expandLeadingTilde(value);
+        return NodePath.resolve(expandLeadingTilde(value));
       }
     }
   }
   return null;
 }
 
+function isBuiltInDefaultInstanceForDriver(
+  driver: ProviderDriverKind | string,
+  instanceId: string,
+): boolean {
+  if (driver !== "antigravity" && driver !== "claudeAgent" && driver !== "codex") {
+    return false;
+  }
+  return instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make(driver));
+}
+
 /**
- * Resolves the on-disk profile directory for a signed-in Team Server provider instance
- * referenced by `config.linkedServerInstanceId`.
- * Rejects virtual `team:` provider instance IDs and validates driver/instance settings when provided.
+ * Resolves the on-disk profile directory for a linked Team Server provider instance.
+ * Rejects `team:` IDs, fails closed when `serverSettings` is `null`, and follows Codex shadow homes.
  */
 export function resolveLinkedServerProviderProfileDir(input: {
   readonly stateDir: string;
@@ -156,15 +169,26 @@ export function resolveLinkedServerProviderProfileDir(input: {
   if (trimmedId.length === 0 || isTeamProviderInstanceId(trimmedId)) {
     return null;
   }
+  // Explicit `null` signals that ServerSettingsService failed to read settings; fail closed
+  // rather than silently falling back to host defaults.
+  if (input.serverSettings === null) {
+    return null;
+  }
   let matchedInstance: ProviderInstanceConfig | null = null;
-  if (input.serverSettings !== undefined && input.serverSettings !== null) {
+  if (input.serverSettings !== undefined) {
     const candidate = (
       input.serverSettings.providerInstances as Readonly<Record<string, ProviderInstanceConfig>>
     )[trimmedId];
-    if (candidate === undefined || candidate.driver !== input.driver) {
+    if (candidate !== undefined) {
+      if (candidate.driver !== input.driver) {
+        return null;
+      }
+      matchedInstance = candidate;
+    } else if (isBuiltInDefaultInstanceForDriver(input.driver, trimmedId)) {
+      matchedInstance = { driver: input.driver as ProviderDriverKind };
+    } else {
       return null;
     }
-    matchedInstance = candidate;
   }
 
   if (input.driver === "antigravity") {
@@ -172,7 +196,9 @@ export function resolveLinkedServerProviderProfileDir(input: {
     return NodePath.join(input.stateDir, "providers", "antigravity", hash);
   }
   if (input.driver === "claudeAgent") {
-    const instanceHome = matchedInstance ? readInstanceHomePathFromConfig(matchedInstance) : null;
+    const instanceHome = matchedInstance
+      ? readInstanceConfigPath(matchedInstance, "homePath")
+      : null;
     if (instanceHome) return instanceHome;
     const instanceEnvDir = matchedInstance
       ? readInstanceEnvValue(matchedInstance, "CLAUDE_CONFIG_DIR")
@@ -180,11 +206,18 @@ export function resolveLinkedServerProviderProfileDir(input: {
     if (instanceEnvDir) return instanceEnvDir;
     const envDir = process.env.CLAUDE_CONFIG_DIR?.trim();
     return envDir && envDir.length > 0
-      ? expandLeadingTilde(envDir)
+      ? NodePath.resolve(expandLeadingTilde(envDir))
       : NodePath.join(NodeOS.homedir(), ".claude");
   }
   if (input.driver === "codex") {
-    const instanceHome = matchedInstance ? readInstanceHomePathFromConfig(matchedInstance) : null;
+    // Codex authOverlay keeps its private auth.json in shadowHomePath when configured.
+    const shadowHome = matchedInstance
+      ? readInstanceConfigPath(matchedInstance, "shadowHomePath")
+      : null;
+    if (shadowHome) return shadowHome;
+    const instanceHome = matchedInstance
+      ? readInstanceConfigPath(matchedInstance, "homePath")
+      : null;
     if (instanceHome) return instanceHome;
     const instanceEnvDir = matchedInstance
       ? readInstanceEnvValue(matchedInstance, "CODEX_HOME")
@@ -192,7 +225,7 @@ export function resolveLinkedServerProviderProfileDir(input: {
     if (instanceEnvDir) return instanceEnvDir;
     const envDir = process.env.CODEX_HOME?.trim();
     return envDir && envDir.length > 0
-      ? expandLeadingTilde(envDir)
+      ? NodePath.resolve(expandLeadingTilde(envDir))
       : NodePath.join(NodeOS.homedir(), ".codex");
   }
   return null;

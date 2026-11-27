@@ -557,7 +557,7 @@ const make = Effect.gen(function* () {
               stateDir: config.stateDir,
               driver: serverProviderOpt.value.driver,
               linkedServerInstanceId,
-              ...(resolvedServerSettings !== null
+              ...(Option.isSome(serverSettingsOpt)
                 ? { serverSettings: resolvedServerSettings }
                 : {}),
             })
@@ -575,8 +575,11 @@ const make = Effect.gen(function* () {
         });
       }
       const serverProvider = serverProviderOpt.value;
+      // Linked server providers always check the live on-disk profile so CLI token rotations
+      // propagate immediately instead of serving a cached pre-rotation token.
       if (
         options?.forceRefresh !== true &&
+        fallbackProfileDir === null &&
         cached !== undefined &&
         cached.expiresAtMs - nowMs >= TEAM_PRE_TURN_LEASE_RENEWAL_THRESHOLD_MS
       ) {

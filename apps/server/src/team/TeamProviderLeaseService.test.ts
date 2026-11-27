@@ -6,7 +6,11 @@ import * as NodePath from "node:path";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -230,6 +234,13 @@ describe("TeamProviderLeaseService", () => {
           driver: ProviderDriverKind.make("codex"),
           environment: [{ name: "CODEX_HOME", value: "/custom/codex-work", sensitive: false }],
         },
+        "codex-shadow": {
+          driver: ProviderDriverKind.make("codex"),
+          config: {
+            homePath: "/custom/codex-base",
+            shadowHomePath: "/custom/codex-shadow",
+          },
+        },
       },
     } as never;
 
@@ -249,6 +260,49 @@ describe("TeamProviderLeaseService", () => {
         serverSettings,
       }),
     ).toBe("/custom/codex-work");
+    // Codex authOverlay keeps its private auth.json in shadowHomePath, which must win over homePath.
+    expect(
+      resolveLinkedServerProviderProfileDir({
+        stateDir: "/state",
+        driver: "codex",
+        linkedServerInstanceId: "codex-shadow",
+        serverSettings,
+      }),
+    ).toBe("/custom/codex-shadow");
+    // Stock built-in default instances (synthesized when providerInstances is empty) must resolve cleanly.
+    expect(
+      resolveLinkedServerProviderProfileDir({
+        stateDir: "/state",
+        driver: "claudeAgent",
+        linkedServerInstanceId: "claudeAgent",
+        serverSettings: DEFAULT_SERVER_SETTINGS,
+      }),
+    ).not.toBeNull();
+    expect(
+      resolveLinkedServerProviderProfileDir({
+        stateDir: "/state",
+        driver: "codex",
+        linkedServerInstanceId: "codex",
+        serverSettings: DEFAULT_SERVER_SETTINGS,
+      }),
+    ).not.toBeNull();
+    expect(
+      resolveLinkedServerProviderProfileDir({
+        stateDir: "/state",
+        driver: "antigravity",
+        linkedServerInstanceId: "antigravity",
+        serverSettings: DEFAULT_SERVER_SETTINGS,
+      }),
+    ).toContain(NodePath.join("/state", "providers", "antigravity"));
+    // Explicit null serverSettings (read failure) must fail closed rather than falling back to host defaults.
+    expect(
+      resolveLinkedServerProviderProfileDir({
+        stateDir: "/state",
+        driver: "codex",
+        linkedServerInstanceId: "codex",
+        serverSettings: null,
+      }),
+    ).toBeNull();
     // Driver mismatch or unknown instance ID must return null.
     expect(
       resolveLinkedServerProviderProfileDir({
@@ -263,7 +317,7 @@ describe("TeamProviderLeaseService", () => {
         stateDir: "/state",
         driver: "claudeAgent",
         linkedServerInstanceId: "non-existent",
-        serverSettings,
+        serverSettings: DEFAULT_SERVER_SETTINGS,
       }),
     ).toBeNull();
   });

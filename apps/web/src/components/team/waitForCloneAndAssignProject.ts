@@ -67,8 +67,11 @@ function waitForCloneDone(
     const unsubscribe = deps.subscribeClone(environmentId, projectId, (clone) => {
       if (clone === null) {
         if (sawRunning) {
-          // Completed clones may be pruned from the active tracker shortly after finishing.
-          finish(true);
+          // A pruned tracker entry counts as success only if the cloned project still exists
+          // (discarded/cancelled clones remove the project as well as the tracker entry).
+          const projectStillExists =
+            deps.readProject(scopeProjectRef(environmentId, projectId)) !== null;
+          finish(projectStillExists);
         }
         return;
       }
@@ -87,7 +90,10 @@ function waitForRepositoryIdentity(
   deps: WaitForCloneAndAssignDeps,
 ): Promise<EnvironmentProject | null> {
   const current = deps.readProject(projectRef);
-  if (current?.repositoryIdentity != null) {
+  if (current === null) {
+    return Promise.resolve(null);
+  }
+  if (current.repositoryIdentity != null) {
     return Promise.resolve(current);
   }
   const timeoutMs = deps.identityTimeoutMs ?? 10_000;
@@ -103,17 +109,25 @@ function waitForRepositoryIdentity(
     };
     const unsubscribe = deps.subscribeProject(projectRef, (project) => {
       latest = project;
-      if (project?.repositoryIdentity != null) {
+      if (project === null) {
+        finish(null);
+        return;
+      }
+      if (project.repositoryIdentity != null) {
         finish(project);
       }
     });
-    const timer = setTimeout(() => finish(latest), timeoutMs);
+    const timer = setTimeout(
+      () => finish(latest?.repositoryIdentity != null ? latest : null),
+      timeoutMs,
+    );
   });
 }
 
 /**
  * Waits for an in-flight repository clone to succeed and resolve its repository identity
- * before assigning the cloned project to a team. Skips assignment if the clone fails or cancels.
+ * before assigning the cloned project to a team. Skips assignment if the clone fails, cancels,
+ * or never resolves a repository identity.
  */
 export async function waitForCloneAndAssignProject(input: {
   readonly environmentId: EnvironmentId;
@@ -132,6 +146,9 @@ export async function waitForCloneAndAssignProject(input: {
   }
   const projectRef = scopeProjectRef(input.environmentId, input.projectId);
   const project = await waitForRepositoryIdentity(projectRef, deps);
+  if (project === null || project.repositoryIdentity == null) {
+    return false;
+  }
   await input.assign(input.environmentId, input.projectId, project);
   return true;
 }

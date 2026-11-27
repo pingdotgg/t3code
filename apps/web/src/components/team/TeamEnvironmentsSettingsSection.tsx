@@ -636,6 +636,8 @@ export function TeamEnvironmentsSettingsSection({
                   setAttachUrl("");
                   setAttachCode("");
                   setShowAttachCode(false);
+                  setAttachRoles([...ALL_TEAM_ROLES]);
+                  setAttachMemberIds([]);
                   setSelectedExistingPeerId(NEW_PEER_SENTINEL);
                 }}
               >

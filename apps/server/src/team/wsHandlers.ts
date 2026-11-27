@@ -20,6 +20,7 @@ import {
   type TerminalMetadataStreamEvent,
 } from "@t3tools/contracts";
 import { derive as deriveOrchestrationId } from "@t3tools/provider-core/server/IdAllocator";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
@@ -52,6 +53,7 @@ export interface TeamWsHandlerDeps {
   readonly projectionStore?: ProjectionStore.ProjectionStoreV2["Service"];
   readonly teamProviderManager?: TeamProviderManager.TeamProviderManager["Service"];
   readonly scheduledTaskService?: ScheduledTasks.ScheduledTaskService["Service"];
+  readonly awaitSocketDisconnect?: Effect.Effect<void>;
 }
 
 export function makeTeamWsRpcHandlers(
@@ -68,7 +70,13 @@ export function makeTeamWsRpcHandlers(
     [TEAM_WS_METHODS.teamLeave]: () =>
       teamService.leaveTeam({
         sessionId,
-        deferCallerSessionRevocation: true,
+        deferCallerSessionRevocation:
+          deps?.awaitSocketDisconnect !== undefined
+            ? {
+                awaitDisconnect: deps.awaitSocketDisconnect,
+                fallbackDelay: Duration.millis(500),
+              }
+            : true,
         ...(deps?.peerClientPairing !== undefined
           ? { peerClientPairing: deps.peerClientPairing }
           : {}),

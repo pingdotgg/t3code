@@ -4427,10 +4427,15 @@ describe("TeamService", () => {
 
         // With Carol as a second active owner, Carol can leave while Alice remains owner.
         // Verify deferred caller session revocation (used by WS handler) marks Carol removed
-        // immediately, returns cleanly before socket close, and revokes the session after flush.
+        // immediately, preserves the socket until disconnect (so the RPC reply flushes cleanly),
+        // and revokes Carol's session immediately once disconnect signals.
+        const carolDisconnected = yield* Deferred.make<void>();
         const carolLeft = yield* team.leaveTeam({
           sessionId: carolSession.sessionId,
-          deferCallerSessionRevocation: true,
+          deferCallerSessionRevocation: {
+            awaitDisconnect: Deferred.await(carolDisconnected),
+            fallbackDelay: Duration.millis(500),
+          },
         });
         expect(carolLeft).toEqual({
           left: true,
@@ -4441,7 +4446,9 @@ describe("TeamService", () => {
         expect(
           stateRightAfterCarolLeft.members.find((m) => m.id === carolJoined.member.id)?.status,
         ).toBe("removed");
-        yield* TestClock.adjust(Duration.millis(100));
+        expect((yield* Effect.exit(sessions.verify(carolJoined.accessToken)))._tag).toBe("Success");
+        yield* Deferred.succeed(carolDisconnected, undefined);
+        yield* TestClock.adjust(Duration.millis(1));
         expect((yield* Effect.exit(sessions.verify(carolJoined.accessToken)))._tag).toBe("Failure");
 
         // Invite Dana so we can verify deleteTeam revokes other active members' sessions & emits teamDeleted.
@@ -4567,6 +4574,15 @@ describe("TeamService", () => {
         const fakePeerLinks = {
           list: Effect.succeed([{ environmentId: offlinePeerEnvId }]),
         } as never;
+
+        // Fail closed when team scheduled tasks exist and scheduledTaskService is omitted.
+        const missingSchedulerExit = yield* Effect.exit(
+          team.deleteTeam({
+            sessionId: aliceSession.sessionId,
+            payload: { confirmTeamName: "Acme Engineering" },
+          }),
+        );
+        expect(missingSchedulerExit._tag).toBe("Failure");
 
         // Subscribe Alice's stream to verify `teamDeleted` event broadcast.
         const aliceStreamFiber = yield* team
