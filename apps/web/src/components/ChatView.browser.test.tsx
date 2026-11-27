@@ -1180,6 +1180,8 @@ it("a new thread on a branch with changes opens them from thread details", async
     .getState()
     .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
       threadId: ThreadId.make("thread-43905"),
+      // Its own checkout, so the status subscription is this test's and not an earlier one's.
+      worktreePath: "/workspace/render-43905",
     });
 
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
@@ -1192,7 +1194,11 @@ it("a new thread on a branch with changes opens them from thread details", async
     [...document.querySelectorAll("button")].find((button) =>
       button.textContent?.startsWith("Changesvs main+150"),
     );
-  await expect.poll(changesRow).toBeDefined();
+  await expect.poll(changesRow, { timeout: 5_000 }).toBeDefined();
   // The row already shows the branch's totals, so it has to open them.
   expect(changesRow()?.disabled).toBe(false);
+
+  changesRow()?.click();
+  // The panel reads the draft's checkout; without one it asks for a thread instead.
+  await expect.element(page.getByText("Loading changes..."), { timeout: 5_000 }).toBeVisible();
 });
