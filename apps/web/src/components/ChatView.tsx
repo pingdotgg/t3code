@@ -2665,7 +2665,6 @@ export default function ChatView(props: ChatViewProps) {
     !activeProject ||
     !isServerThread ||
     !manualCompactionProviderAvailable ||
-    isWorking ||
     isRevertingCheckpoint ||
     threadDetailLoading ||
     isPreparingWorktree ||
@@ -2673,7 +2672,8 @@ export default function ChatView(props: ChatViewProps) {
     feedbackUploading ||
     pendingApprovals.length > 0 ||
     pendingUserInputs.length > 0;
-  const compactDisabled = compactThreadUnavailable;
+  // A typed /compact queues behind a running turn, so only the immediate compaction waits for idle.
+  const compactDisabled = compactThreadUnavailable || isWorking;
   const freshSessionAvailable =
     activeMessageCount > 0 && serverConfig?.environment.capabilities.freshContext === true;
   const freshSessionArmed = useFreshSessionArmed(routeThreadKey);
@@ -3790,7 +3790,7 @@ export default function ChatView(props: ChatViewProps) {
               data-chat-composer-overlay="true"
               className={
                 isDraftHeroState
-                  ? "pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"
+                  ? "pointer-events-none absolute inset-0 z-20 flex flex-col before:basis-[max(0px,calc(50%-5rem))] *:shrink-0 [@media(max-height:34rem)]:before:basis-[max(0px,calc(100%-12rem))]"
                   : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
               }
             >
@@ -4099,8 +4099,7 @@ export default function ChatView(props: ChatViewProps) {
                       </ComposerSurface.Shell>
                       {isDraftHeroState && composerBannerItems.length > 0 ? (
                         // Out of flow, like the headline, so a notice never moves the centered composer.
-                        // Short windows pin the composer to the bottom, where an out-of-flow notice
-                        // would fall off-screen, so there it takes space and lifts the composer.
+                        // Short windows keep the notice in flow so it can use the space above.
                         <div className="absolute inset-x-0 top-full flex flex-col gap-1 pt-4 [@media(max-height:34rem)]:static">
                           <ComposerBannerStack items={composerBannerItems} detached />
                         </div>

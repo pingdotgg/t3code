@@ -53,11 +53,12 @@ const fakeAppImage = (canMount = true, app = REPORTER) => {
       `if [ "$1" = --appimage-extract ]; then cp -R '${image}' squashfs-root; exit 0; fi`,
       '[ "$1" = --appimage-mount ] || exit 9',
       '[ -n "$APPIMAGE_EXTRACT_AND_RUN" ] && exit 8',
-      `echo $$ >'${root}/mounter.pid'`,
-      canMount ? `echo '${image}'` : 'echo "Cannot mount AppImage"; exit 1',
       // Like the FUSE runtime, any of these unmounts. fd 3 reports to the test when it is open.
+      // Trapped before the mount is announced, or the test's probe can arrive first and be lost.
       "trap 'echo unmounted >&3 2>/dev/null; exit 0' TERM HUP INT",
       "trap 'echo mounted >&3 2>/dev/null' WINCH",
+      `echo $$ >'${root}/mounter.pid'`,
+      canMount ? `echo '${image}'` : 'echo "Cannot mount AppImage"; exit 1',
       "while :; do sleep 0.05; done",
       "",
     ].join("\n"),

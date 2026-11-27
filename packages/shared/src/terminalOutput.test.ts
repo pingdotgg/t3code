@@ -4,6 +4,7 @@ import {
   appendTerminalOutput,
   EMPTY_TERMINAL_OUTPUT,
   normalizeTerminalOutput,
+  TERMINAL_OUTPUT_TAIL_CHARS,
   TERMINAL_PALETTES,
   terminalOutputPlainText,
   terminalOutputResumeText,
@@ -72,6 +73,18 @@ describe("appendTerminalOutput", () => {
       terminalOutputSpans(feed(["\u001b[38:2::12:", "34:56mR"]).text, TERMINAL_PALETTES.dark),
     ).toEqual([{ text: "R", style: { color: "rgb(12,34,56)" } }]);
   });
+
+  it.each(["\u001b[3", "\u001b]0;title"])(
+    "keeps output after CAN or SUB cancels %j, wherever the chunk splits",
+    (sequence) => {
+      for (const cancel of ["\u0018", "\u001a"]) {
+        const input = `before${sequence}${cancel}Ready`;
+        for (let cut = 0; cut <= input.length; cut += 1) {
+          expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("beforeReady");
+        }
+      }
+    },
+  );
 
   it("keeps a bounded tail that starts on a fresh line", () => {
     const lines = Array.from({ length: 2_000 }, (_, index) => `line ${index}`).join("\n");
@@ -300,6 +313,29 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
     expect(viewer.text).toBe("界e\u0301Xef");
   });
 
+  it("restores a cursor saved on a row erased before the resync", () => {
+    for (const [prefix, next, expected] of [
+      ["\n\u001b7\u001b[A\u001b[J", "A\nB\u001b8Z", "A\nZ"],
+      [
+        "hello\n\n  \u001b7\u001b[2A\u001b[6G\u001b[J\u001b[2G",
+        "X\n\n1234\u001b8Z",
+        "hXllo\n\n12Z4",
+      ],
+      ["\u0301\n\u001b7\u001b[A\u001b[2G\u001b[J", "\nB\u001b8Z", "\u0301\nZ"],
+      [
+        `Build started\n${"working\n".repeat(63)}\u001b7\u001b[63A\u001b[J`,
+        `A${"\n".repeat(63)}B\u001b8Z`,
+        `Build started\nA${"\n".repeat(63)}Z`,
+      ],
+    ] as const) {
+      const source = feed([prefix]);
+      const viewer = feed([terminalOutputResumeText(source)]);
+      expect(viewer.text).toBe(source.text);
+      expect(appendTerminalOutput(viewer, next).text).toBe(appendTerminalOutput(source, next).text);
+      expect(appendTerminalOutput(viewer, next).text).toBe(expected);
+    }
+  });
+
   it("stays on the right line when early output was trimmed away", () => {
     const lines = Array.from({ length: 40 }, (_, index) => `line ${index}`).join("\n");
     const source = feed([lines, "\u001b[1A\rLINE"], 120);
@@ -309,6 +345,23 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
       120,
     );
     expect(viewer.text).toBe(appendTerminalOutput(source, " edited", 120).text);
+  });
+
+  it("keeps scrollback when a redraw after a cleared screen moves above the live window", () => {
+    const history = "Build started\n";
+    const source = feed([history + "working\n".repeat(63), "\u001b[2J", "Progress: 10%"]);
+    const redraw = "\u001b[1A\r\u001b[2KProgress: 20%";
+    expect(feed([terminalOutputResumeText(source), redraw]).text).toBe(history + "Progress: 20%");
+  });
+
+  it("recovers scrollback hidden by a full output tail once a redraw shortens it", () => {
+    const history = "Build started\n";
+    const progress = "x".repeat(TERMINAL_OUTPUT_TAIL_CHARS);
+    const source = feed([history + "working\n".repeat(63) + "\u001b[2J" + progress]);
+    const viewer = feed([terminalOutputResumeText(source)]);
+    expect(viewer.text).toBe(progress);
+    const redraw = "\r\u001b[2KProgress: done";
+    expect(appendTerminalOutput(viewer, redraw).text).toBe(history + "Progress: done");
   });
 });
 
