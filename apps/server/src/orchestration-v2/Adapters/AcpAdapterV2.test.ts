@@ -1650,6 +1650,344 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live(
+    "settles Stop as interrupted instead of timing out during a resumable outcome failure",
+    () =>
+      Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const instanceId = ProviderInstanceId.make("acp-test-stop-during-outcome-resume");
+        const threadId = ThreadId.make("thread-acp-stop-during-outcome-resume");
+        const notFound = {
+          class: "provider_error",
+          message: "Requested entity was not found.",
+          code: "NOT_FOUND",
+          retryable: true,
+        } as const;
+        const checking = yield* Deferred.make<void>();
+        const releaseCheck = yield* Deferred.make<void>();
+        const resumeForked = yield* Deferred.make<void>();
+        const releaseResume = yield* Deferred.make<void>();
+        const cancelled = yield* Deferred.make<void>();
+        let cancelCalls = 0;
+        const watchedSessions: Array<string> = [];
+        const promptTexts: Array<string> = [];
+        const promptRuntimes: Array<number> = [];
+        let runtimeGeneration = 0;
+        let turnIndex = 0;
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          testHooks: {
+            beforeOutcomeResume: () =>
+              Deferred.succeed(resumeForked, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseResume)),
+              ),
+          },
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            steersWithPrompt: () => true,
+            watchPromptOutcome: (sessionId) =>
+              Effect.sync(() => {
+                watchedSessions.push(sessionId);
+                turnIndex += 1;
+                const currentTurn = turnIndex;
+                const outcome =
+                  currentTurn <= 2
+                    ? {
+                        failure: notFound,
+                        threadDisposition: "reusable" as const,
+                        resumeWith: "continue",
+                      }
+                    : undefined;
+                return () =>
+                  currentTurn === 1
+                    ? Deferred.succeed(checking, undefined).pipe(
+                        Effect.andThen(Deferred.await(releaseCheck)),
+                        Effect.as(outcome),
+                      )
+                    : Effect.succeed(outcome);
+              }),
+            makeRuntime: (runtimeInput) =>
+              Effect.gen(function* () {
+                const generation = ++runtimeGeneration;
+                return yield* makeMockRuntime({
+                  childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+                  mockAgentPath: yield* bundledMockAgentPath,
+                  wrapRuntime: (runtime) => ({
+                    ...runtime,
+                    cancel: Effect.sync(() => {
+                      cancelCalls += 1;
+                    }).pipe(Effect.andThen(Deferred.succeed(cancelled, undefined)), Effect.asVoid),
+                    prompt: (payload, promptOptions) =>
+                      Effect.gen(function* () {
+                        if (promptOptions?.dispatched) {
+                          yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                        }
+                        promptRuntimes.push(generation);
+                        promptTexts.push(
+                          payload.prompt
+                            .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                            .join("\n"),
+                        );
+                        return { stopReason: "end_turn" as const };
+                      }),
+                  }),
+                })(runtimeInput);
+              }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-acp-stop-during-outcome-resume",
+          ),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const runTurn = (ordinal: number) =>
+          Effect.gen(function* () {
+            yield* runtime.startTurn(
+              makeTurnInput({
+                threadId,
+                providerThread,
+                instanceId,
+                runtimePolicy,
+                now: yield* DateTime.now,
+                ordinal,
+              }),
+            );
+            return Array.from(
+              yield* runtime.events.pipe(
+                Stream.takeUntil((event) => event.type === "turn.terminal"),
+                Stream.runCollect,
+              ),
+            );
+          });
+
+        // Turn 1: Stop lands while watchPromptOutcome is running for a resumable failure.
+        const turn1 = yield* Effect.forkChild(runTurn(1));
+        yield* Deferred.await(checking);
+        const stop1 = yield* Effect.forkChild(
+          runtime.interruptTurn({
+            providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ACP_TEST_DRIVER,
+              nativeTurnId: acpScopedNativeId(instanceId, `${watchedSessions[0]}:turn:1`),
+            }),
+          }),
+        );
+        yield* Deferred.await(cancelled);
+        yield* Deferred.succeed(releaseCheck, undefined);
+        yield* Fiber.join(stop1);
+        const turn1Events = yield* Fiber.join(turn1);
+        const turn1Terminal = turn1Events.at(-1);
+        assert.equal(
+          turn1Terminal?.type === "turn.terminal" ? turn1Terminal.status : null,
+          "interrupted",
+        );
+        assert.equal(
+          promptTexts.length,
+          1,
+          "Stop during outcome check must not send resume prompt",
+        );
+
+        // Turn 2: Stop lands after the resume fiber is forked and before it sends "continue".
+        const turn2 = yield* Effect.forkChild(runTurn(2));
+        yield* Deferred.await(resumeForked);
+        const cancelCallsBeforeTurn2Stop = cancelCalls;
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ACP_TEST_DRIVER,
+            nativeTurnId: acpScopedNativeId(instanceId, `${watchedSessions[1]}:turn:2`),
+          }),
+        });
+        yield* Deferred.succeed(releaseResume, undefined);
+        const turn2Events = yield* Fiber.join(turn2);
+        const turn2Terminal = turn2Events.at(-1);
+        assert.equal(
+          turn2Terminal?.type === "turn.terminal" ? turn2Terminal.status : null,
+          "interrupted",
+        );
+        assert.equal(
+          turn2Terminal?.type === "turn.terminal" ? turn2Terminal.threadDisposition : null,
+          "reusable",
+        );
+        assert.deepEqual(
+          turn2Events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "error" &&
+            event.turnItem.retry !== undefined
+              ? [event.turnItem.status]
+              : [],
+          ),
+          ["running", "interrupted"],
+        );
+        assert.equal(cancelCalls, cancelCallsBeforeTurn2Stop, "no in-flight prompt to cancel");
+        assert.equal(
+          promptTexts.length,
+          2,
+          "Stop before resume dispatch must not send resume prompt",
+        );
+
+        // Turn 3: Next turn runs on a restarted runtime and completes cleanly.
+        const turn3Events = yield* runTurn(3);
+        const turn3Terminal = turn3Events.at(-1);
+        assert.equal(
+          turn3Terminal?.type === "turn.terminal" ? turn3Terminal.status : null,
+          "completed",
+        );
+        assert.deepEqual(promptRuntimes, [1, 2, 3]);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("delivers consecutive prompt-steers without dropping a superseded steer", () =>
+    Effect.gen(function* () {
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const instanceId = ProviderInstanceId.make("acp-test-consecutive-steers");
+      const threadId = ThreadId.make("thread-acp-consecutive-steers");
+      const initialStarted = yield* Deferred.make<void>();
+      const releaseInitial = yield* Deferred.make<void>();
+      const steer1Busy = yield* Deferred.make<void>();
+      const steer1Delivered = yield* Deferred.make<void>();
+      const steer2Sent = yield* Deferred.make<void>();
+      const releaseSteer2 = yield* Deferred.make<void>();
+      const watchedSessions: Array<string> = [];
+      const promptTexts: Array<string> = [];
+      let steer1Attempts = 0;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          steersWithPrompt: () => true,
+          watchPromptOutcome: (sessionId) =>
+            Effect.sync(() => {
+              watchedSessions.push(sessionId);
+              return () => Effect.undefined;
+            }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: (payload, promptOptions) =>
+                Effect.gen(function* () {
+                  const text = payload.prompt
+                    .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                    .join("\n");
+                  if (promptOptions?.dispatched) {
+                    yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                  }
+                  if (text === "first steer") {
+                    steer1Attempts += 1;
+                    if (steer1Attempts === 1) {
+                      yield* Deferred.succeed(steer1Busy, undefined);
+                      return yield* EffectAcpErrors.AcpRequestError.internalError(
+                        "Agent is already processing another request",
+                      );
+                    }
+                    yield* Deferred.await(steer2Sent);
+                    promptTexts.push(text);
+                    yield* Deferred.succeed(steer1Delivered, undefined);
+                    return { stopReason: "end_turn" as const };
+                  }
+                  if (text === "second steer") {
+                    promptTexts.push(text);
+                    yield* Deferred.succeed(steer2Sent, undefined);
+                    yield* Deferred.await(releaseSteer2);
+                    return { stopReason: "end_turn" as const };
+                  }
+                  promptTexts.push(text);
+                  yield* Deferred.succeed(initialStarted, undefined);
+                  yield* Deferred.await(releaseInitial);
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-consecutive-steers"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const turnInput = makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now,
+        ordinal: 1,
+      });
+      const collectTerminal = yield* Effect.forkChild(
+        runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+      yield* runtime.startTurn(turnInput);
+      yield* Deferred.await(initialStarted);
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, `${watchedSessions[0]}:turn:1`),
+      });
+
+      yield* runtime.steerTurn!({
+        threadId,
+        runId: turnInput.runId,
+        providerThread,
+        providerTurnId,
+        message: { ...turnInput.message, text: "first steer", attachments: [] },
+      });
+      yield* Deferred.await(steer1Busy);
+      // Second steer advances promptSequence while the first steer is in busy-retry sleep.
+      yield* runtime.steerTurn!({
+        threadId,
+        runId: turnInput.runId,
+        providerThread,
+        providerTurnId,
+        message: { ...turnInput.message, text: "second steer", attachments: [] },
+      });
+      yield* Deferred.await(steer2Sent);
+      yield* Deferred.await(steer1Delivered);
+      yield* Deferred.succeed(releaseInitial, undefined);
+      yield* Deferred.succeed(releaseSteer2, undefined);
+
+      const events = Array.from(yield* Fiber.join(collectTerminal));
+      const terminal = events.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "completed");
+      assert.include(promptTexts, "first steer");
+      assert.include(promptTexts, "second steer");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("pairs responses to concurrent same-method requests in request order", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
