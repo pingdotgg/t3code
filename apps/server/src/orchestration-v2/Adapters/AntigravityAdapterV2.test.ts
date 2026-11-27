@@ -1758,6 +1758,45 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  // The agent backgrounded a command, moved on to later steps and finished its reply
+  // without waiting on or killing it. The settled run must not stay Working for 30 minutes.
+  it.effect("completes a settled run whose only running command the agent moved past", () =>
+    Effect.gen(function* () {
+      const { offers, startTurn, until, throughPromptSettled } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: [
+            {
+              sessionUpdate: "tool_call",
+              toolCallId: "call_scan",
+              kind: "execute",
+              title: "find . -name '*.log'",
+              status: "in_progress",
+              rawInput: { CommandLine: "find . -name '*.log'", WaitMsBeforeAsync: 2000 },
+            },
+            {
+              sessionUpdate: "tool_call",
+              toolCallId: "call_write",
+              kind: "execute",
+              title: "echo done > report.txt",
+              status: "completed",
+              rawInput: { CommandLine: "echo done > report.txt", WaitMsBeforeAsync: 5000 },
+            },
+          ],
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      const terminal = yield* until((event) => event.type === "turn.terminal").pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 minute");
+      assert.isDefined(
+        terminal.pollUnsafe(),
+        "the finished reply completes the run instead of holding it for the command",
+      );
+      assert.lengthOf(offers, 0);
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   it.effect("keeps a silent scheduled wake in its run past the command hold bound", () =>
     Effect.gen(function* () {
       const { usage, offers, send, startTurn, until, throughPromptSettled } =
