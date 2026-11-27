@@ -9172,6 +9172,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
             }
           ORDER BY updated_at ASC, thread_id ASC
         `;
+          let cacheHits = 0;
           const threads = yield* Effect.forEach(rows, (row) =>
             Effect.gen(function* () {
               const digest = yield* digests.digestHex(
@@ -9179,7 +9180,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
                 textEncoder.encode(row.payload_json),
               );
               const cached = decodedPullRequestThreads.get(row.thread_id);
-              if (cached?.digest === digest) return cached.thread;
+              if (cached?.digest === digest) {
+                cacheHits++;
+                return cached.thread;
+              }
               return yield* decodeThreadPayload(row.payload_json).pipe(
                 Effect.map((thread): ProjectionThreadPullRequests => ({
                   id: thread.id,
@@ -9197,6 +9201,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
               );
             }),
           );
+          yield* Effect.annotateCurrentSpan({
+            "orchestration_v2.projection_row_count": rows.length,
+            "orchestration_v2.decode_cache_hit_count": cacheHits,
+            "orchestration_v2.decode_cache_miss_count": rows.length - cacheHits,
+          });
           if (threadId === undefined) {
             pullRequestSweepIds[options?.includeArchived === true ? "includeArchived" : "active"] =
               new Set(rows.map((row) => row.thread_id));

@@ -524,7 +524,23 @@ it.effect("sql: pull request sweeps decode only threads written since the last r
     yield* createThread("sweep-changed", {
       pullRequests: [pullRequestLink(2), pullRequestLink(4)],
     });
-    const second = byId(yield* store.getThreadsWithPullRequests());
+    const sweepSpans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        if (span.name === "ProjectionStore.getThreadsWithPullRequests") sweepSpans.push(span);
+        return span;
+      },
+    });
+    const second = byId(yield* store.getThreadsWithPullRequests().pipe(Effect.withTracer(tracer)));
+    assert.deepEqual(
+      [
+        "orchestration_v2.projection_row_count",
+        "orchestration_v2.decode_cache_hit_count",
+        "orchestration_v2.decode_cache_miss_count",
+      ].map((key) => sweepSpans[0]?.attributes.get(key)),
+      [2, 1, 1],
+    );
     assert.strictEqual(second.get(unchanged), first.get(unchanged));
     assert.notStrictEqual(second.get(changed), first.get(changed));
     assert.deepEqual(
