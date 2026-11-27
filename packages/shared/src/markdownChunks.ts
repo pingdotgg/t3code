@@ -17,6 +17,8 @@ const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3
 // A column-0 paragraph, quote or table after a blank line closes any open list, quote or table.
 const BLOCK_START = /^[\p{L}\p{N}`[!|>]/u;
 const LIST_ITEM = /^( {0,3}(?:[-*+]|\d{1,9}[.)]))([ \t]+|(?=\r?$))/;
+// Further markers on an item's first line open nested items that start on the same line.
+const NESTED_LIST_MARKERS = /^(?:(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|(?=\r?$)))+/;
 const BLOCK_QUOTE = /^ {0,3}>/;
 const DISPLAY_MATH_OPEN = /^ {0,3}\$\$/;
 // CommonMark HTML blocks of types 1-5 and display math run past blank lines until their closer.
@@ -385,12 +387,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           listContentIndent = itemIsEmpty || startsIndentedCode ? markerEnd + 1 : paddedColumn;
           listMarker = markerKind!;
         }
-        for (
-          let nested;
-          !THEMATIC_BREAK.test(itemContent) && (nested = LIST_ITEM.exec(itemContent));
-        ) {
-          itemContent = itemContent.slice(nested[0].length);
-        }
+        itemContent = itemContent.replace(NESTED_LIST_MARKERS, "");
       } else if (dedented && !blank && (afterBlankLine || afterFence || opensNonParagraph(line))) {
         // Dedented prose can still be a lazy continuation until a block boundary.
         listContentIndent = Infinity;

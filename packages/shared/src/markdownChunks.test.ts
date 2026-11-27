@@ -306,6 +306,7 @@ describe("splitMarkdown", () => {
 
   it.each([
     ["nested markers on one line", "- - ```\n    code\n    ```"],
+    ["a line of many nested markers", "- ".repeat(70_000) + "x"],
     ["a heading in a list item", "- # Heading\n  2. Item\n     ```\n     code\n        ```"],
     ["a lazy ordered marker", "- outer\n  - inner\n2. lazy\n    ```\n       ```"],
   ])("collects a list item definition after %s", (_, list) => {
