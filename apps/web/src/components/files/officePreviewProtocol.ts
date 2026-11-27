@@ -27,6 +27,12 @@ export type NotebookCell = {
 };
 
 export type EpubLocation = { readonly index: number; readonly anchor?: string };
+export type EpubNarrationCue = {
+  readonly src: string;
+  readonly begin: number;
+  readonly end?: number;
+  readonly anchor?: string;
+};
 export type EpubPage = {
   readonly html: string;
   readonly title?: string | undefined;
@@ -35,6 +41,7 @@ export type EpubPage = {
   readonly bodyAttrs?: string | undefined;
   readonly fixed?: { width: number; height: number } | undefined;
   readonly imagePage?: boolean;
+  readonly narration?: readonly EpubNarrationCue[];
 };
 
 export type OfficeWorkerResult =
