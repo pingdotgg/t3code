@@ -11,7 +11,6 @@ import {
   removeSpeechSynthesisModel,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import { readAloudWordAlignment } from "@t3tools/client-runtime/read-aloud";
 import {
   CloudSpeechSynthesisProvider,
   AuthFilesystemReadScope,
@@ -469,9 +468,6 @@ export function ReadAloudSettingsSection() {
     readAloudController.getSnapshot,
   );
   const remote = settings.provider !== "off" && settings.provider !== "system";
-  const locale = useLocale();
-  const alignment = readAloudWordAlignment(settings, locale);
-  const englishLocale = /^en(?:-|$)/i.test(locale);
   const change = (patch: Partial<ReadAloudSettings>) => {
     readAloudController.stop();
     void updateClientSettings({ readAloud: { ...settings, ...patch } });
@@ -489,7 +485,7 @@ export function ReadAloudSettingsSection() {
     if (!remote || !prepared) return;
     const abort = new AbortController();
     void runEnvironmentSpeech(
-      getSpeechSynthesisModels(prepared, settings.provider as SpeechSynthesisProvider, alignment),
+      getSpeechSynthesisModels(prepared, settings.provider as SpeechSynthesisProvider),
       { signal: abort.signal },
     ).then(
       (result) => {
@@ -512,7 +508,7 @@ export function ReadAloudSettingsSection() {
       },
     );
     return () => abort.abort();
-  }, [prepared, remote, settings.provider, catalogKey, catalogVersion, alignment]);
+  }, [prepared, remote, settings.provider, catalogKey, catalogVersion]);
   const modelEntry = catalog.models.find((entry) => entry.id === model);
   const voices =
     settings.provider === "system"
@@ -845,21 +841,6 @@ export function ReadAloudSettingsSection() {
               />
             }
           />
-          {remote && englishLocale && catalog.wordTimings !== "provider" ? (
-            <SettingsRow
-              title={gt("Multilingual word timing")}
-              description={gt(
-                "Highlight the spoken word in 25 languages, not just English. Downloads a 740 MB model to the selected environment instead of a 135 MB one.",
-              )}
-              control={
-                <Switch
-                  aria-label={gt("Time words in 25 languages")}
-                  checked={settings.multilingualWordTiming}
-                  onCheckedChange={(multilingualWordTiming) => change({ multilingualWordTiming })}
-                />
-              }
-            />
-          ) : null}
           <SettingsRow
             title={gt("Preview", { $context: "noun, a sample of the voice" })}
             description={

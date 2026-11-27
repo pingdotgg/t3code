@@ -1,330 +1,266 @@
-import type { SpeechSynthesisWord, SpeechWordAlignment } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+// @effect-diagnostics nodeBuiltinImport:off - the aligner's thread count comes from the host's CPU count.
+import * as NodeOS from "node:os";
+import type { AudioCppAlignedWord, AudioCppAudio } from "@t3tools/audio-cpp";
+import type { SpeechSynthesisWord } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
 
-import { getSpeechModel, type SpeechModel } from "./model.ts";
-import { loadNativeSpeechModel } from "./native.ts";
-import { isSpeechPlatformSupported } from "./platform.ts";
+import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
+import { loadLocalAlignmentModel, type SpeechSpan } from "./localSynthesisWorker.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
-import { estimateWords, matchHeardWords, textWords, type HeardWord } from "./wordAlignment.ts";
+import { estimateWords, textWords } from "./wordAlignment.ts";
 
-// `lag` is how much later than the spoken word each model places its start, measured against
-// Kokoro's own word timings; both reach the right word over 80% of the time.
-const ALIGNERS = {
-  english: { id: "handy-computer/parakeet-tdt_ctc-110m-gguf", lag: 0.125 },
-  multilingual: { id: "handy-computer/parakeet-tdt-0.6b-v3-gguf", lag: 0.035 },
-} as const satisfies Record<SpeechWordAlignment, { readonly id: string; readonly lag: number }>;
-const RATE = 16_000;
-// Later windows are long enough for context; the first is short so highlighting starts early.
-const WINDOW_SECONDS = 20;
-const FIRST_WINDOW_SECONDS = 6;
-// Players keep lame's encoder delay at the start of each MP3 stream these PCM chunks become.
+// Players keep lame's encoder delay at the start of each MP3 stream the PCM becomes.
 const MP3_ENCODER_DELAY_SAMPLES = 1105;
-// Share of heard characters the text accounts for: real readings measured 0.67 to 1, speech
-// unrelated to the text 0.3. Judged over the reply so far, as one window of spelled-out
-// numbers can fall below it.
-const MIN_MATCHED_SHARE = 0.5;
-const MIN_JUDGED_CHARACTERS = 100;
-// The English model hears other languages as English with confidence, so text left on `auto`
-// must read as English: these words make up several percent of nearly any English reply.
-const ENGLISH_FUNCTION_WORDS = new Set([
-  "the",
-  "and",
-  "to",
-  "of",
-  "is",
-  "in",
-  "it",
-  "that",
-  "for",
-  "you",
-  "this",
-  "with",
-  "on",
-  "be",
-  "are",
-  "was",
-  "not",
-  "but",
-]);
-const MIN_ENGLISH_FUNCTION_SHARE = 0.05;
 const IDLE_UNLOAD = "2 minutes";
-const SCRIPTS_WITHOUT_TIMINGS =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+// A star before every word lets the alignment pass over speech the text does not spell, such as
+// "twenty five" for "25". The text is given already romanized, as ASCII letters.
+const ALIGNMENT_OPTIONS = { text_normalization: "pre_romanized", star_frequency: "segment" };
+// Latin letters the aligner's alphabet writes as other letters; the rest only lose their marks.
+const LATIN_SPELLINGS: Readonly<Record<string, string>> = {
+  ß: "ss",
+  æ: "ae",
+  œ: "oe",
+  ø: "o",
+  đ: "d",
+  ð: "d",
+  þ: "th",
+  ł: "l",
+  ı: "i",
+  ŋ: "ng",
+  ħ: "h",
+};
 
-export type Transcriber = {
-  readonly align: (pcm: Float32Array, language?: string) => Promise<ReadonlyArray<HeardWord>>;
+export type Aligner = {
+  readonly align: (request: {
+    readonly audio: AudioCppAudio;
+    readonly text: string;
+    readonly language: string;
+    readonly options?: Readonly<Record<string, string>>;
+  }) => Promise<ReadonlyArray<AudioCppAlignedWord>>;
   readonly dispose: () => Promise<void>;
 };
 
-/** Times one reply's words from its audio, as the audio is produced. */
+/** Mono 16-bit PCM at `rate`, starting `startSeconds` into the reply's MP3, speaking `span`. */
+export type AlignmentAudio = {
+  readonly pcm: Int16Array;
+  readonly rate: number;
+  readonly startSeconds: number;
+  readonly span: SpeechSpan;
+};
+
+/** Times one reply's words from its audio, a stretch of text at a time as the audio arrives. */
 export type AlignmentSession = {
-  /** Mono 16-bit PCM at `rate`, starting `startSeconds` into the reply's MP3. */
-  readonly push: (
-    pcm: Int16Array,
-    rate: number,
-    startSeconds: number,
-  ) => Effect.Effect<ReadonlyArray<SpeechSynthesisWord>>;
-  /** Times the words still untimed, the last of them ending at `endSeconds`. */
-  readonly finish: (endSeconds: number) => Effect.Effect<ReadonlyArray<SpeechSynthesisWord>>;
+  /** Returns the words of the stretch before `audio`'s, once its audio is complete. */
+  readonly push: (audio: AlignmentAudio) => Effect.Effect<ReadonlyArray<SpeechSynthesisWord>>;
+  /** Times the words of the last stretch. */
+  readonly finish: Effect.Effect<ReadonlyArray<SpeechSynthesisWord>>;
 };
 
 export class SpeechAligner extends Context.Service<
   SpeechAligner,
   {
-    /** Downloads the model in the background when it is missing. */
-    readonly prepare: (alignment: SpeechWordAlignment) => Effect.Effect<void>;
-    /** `undefined` when the model is not installed yet or cannot hear the text's language. */
+    /** Downloads the aligner, and the runtime it runs on, in the background when missing. */
+    readonly prepare: Effect.Effect<void>;
+    /** `undefined` until the aligner is installed. */
     readonly session: (
       text: string,
       language: string,
-      alignment: SpeechWordAlignment,
     ) => Effect.Effect<AlignmentSession | undefined>;
   }
 >()("t3/speech/SpeechAligner") {}
 
-/** Linear resampling to 16 kHz floats, which speech recognition takes. */
-function toRecognitionRate(pcm: Int16Array, rate: number) {
-  const length = Math.floor((pcm.length * RATE) / rate);
-  const samples = new Float32Array(length);
-  for (let index = 0; index < length; index++) {
-    const position = (index * rate) / RATE;
-    const before = Math.floor(position);
-    const after = Math.min(before + 1, pcm.length - 1);
-    const mix = position - before;
-    samples[index] = ((pcm[before] ?? 0) * (1 - mix) + (pcm[after] ?? 0) * mix) / 0x8000;
+/**
+ * A word as the aligner spells it: lowercase ASCII letters and apostrophes, or undefined when it
+ * has letters outside the Latin script. Digits and symbols drop out, which can leave nothing.
+ */
+export function alignerSpelling(word: string) {
+  let spelled = "";
+  for (const character of word.toLowerCase().normalize("NFKD")) {
+    if (/[a-z']/.test(character)) spelled += character;
+    else if (LATIN_SPELLINGS[character]) spelled += LATIN_SPELLINGS[character];
+    else if (/\p{M}/u.test(character)) continue;
+    else if (/\p{L}/u.test(character)) return undefined;
   }
-  return samples;
+  return spelled;
 }
 
-/** The quietest 100 ms between `from` and `to` samples, so a window rarely splits a word. */
-function quietestCut(samples: Float32Array, from: number, to: number) {
-  const step = RATE / 10;
-  let best = to;
-  let bestEnergy = Infinity;
-  for (let start = from; start + step <= to; start += step / 2) {
-    let energy = 0;
-    for (let index = start; index < start + step; index++) energy += samples[index]! ** 2;
-    if (energy < bestEnergy) {
-      bestEnergy = energy;
-      best = start + step / 2;
-    }
-  }
-  return Math.floor(best);
-}
-
-function readsAsEnglish(text: string) {
-  const words = text.toLowerCase().match(/\p{L}+/gu) ?? [];
-  if (words.length < 12) return true;
-  const common = words.filter((word) => ENGLISH_FUNCTION_WORDS.has(word)).length;
-  return common / words.length >= MIN_ENGLISH_FUNCTION_SHARE;
-}
-
-function supportsLanguage(
-  model: SpeechModel,
-  alignment: SpeechWordAlignment,
-  language: string,
+/**
+ * The words of `text` in `span`, timed from `aligned`: the aligner's times for the words it
+ * spelled, given in order, and the rest spread between their timed neighbors.
+ */
+function timeSpanWords(
   text: string,
-) {
-  const code = language.toLowerCase().split("-")[0]!;
-  if (alignment === "english") return code === "en" || (code === "auto" && readsAsEnglish(text));
-  return code === "auto" || model.languages.includes(code);
+  span: SpeechSpan,
+  spelled: ReadonlyArray<boolean>,
+  aligned: ReadonlyArray<{ readonly startSeconds: number; readonly endSeconds: number }>,
+  audio: { readonly startSeconds: number; readonly endSeconds: number },
+): SpeechSynthesisWord[] {
+  const words = textWords(text).filter((word) => word.start >= span.start && word.end <= span.end);
+  const out: SpeechSynthesisWord[] = [];
+  let next = 0;
+  let untimed: Array<{ readonly start: number; readonly end: number }> = [];
+  let previousEnd = audio.startSeconds;
+  const spread = (until: number) => {
+    if (untimed.length) out.push(...estimateWords(text, untimed, previousEnd, until));
+    untimed = [];
+  };
+  words.forEach((word, index) => {
+    const timed = spelled[index] ? aligned[next++] : undefined;
+    if (!timed) {
+      untimed.push(word);
+      return;
+    }
+    const startSeconds = audio.startSeconds + timed.startSeconds;
+    spread(startSeconds);
+    const endSeconds = audio.startSeconds + timed.endSeconds;
+    out.push({ ...word, startSeconds, endSeconds });
+    previousEnd = endSeconds;
+  });
+  spread(audio.endSeconds);
+  return out;
 }
 
 export const make = Effect.fn("SpeechAligner.make")(function* (
-  loadTranscriber: (path: string, signal: AbortSignal) => Promise<Transcriber>,
+  loadAligner: (
+    options: { readonly libraryPath: string; readonly backend: string; readonly modelPath: string },
+    signal: AbortSignal,
+  ) => Promise<Aligner>,
 ) {
   const store = yield* SpeechModelStore.SpeechModelStore;
-  const platform = yield* HostProcess.Platform;
-  const architecture = yield* HostProcess.Architecture;
-  const libc = platform === "linux" ? yield* HostProcess.LinuxLibc : undefined;
-  const supported = isSpeechPlatformSupported(platform, architecture, libc);
+  const local = yield* LocalSpeechSynthesis.LocalSpeechSynthesis;
   const scope = yield* Effect.scope;
   // @effect-diagnostics-next-line abortControllerInEffect:off - The loaded worker must also stop on service shutdown.
   const lifetime = new AbortController();
   const permit = yield* Semaphore.make(1);
-  const downloading = new Set<SpeechWordAlignment>();
-  let loaded: { readonly alignment: SpeechWordAlignment; readonly model: Transcriber } | undefined;
+  let downloading = false;
+  let loaded: Aligner | undefined;
   let unload: Fiber.Fiber<void> | undefined;
 
   const dispose = Effect.promise(async () => {
     const current = loaded;
     loaded = undefined;
-    await current?.model.dispose();
+    await current?.dispose();
   });
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => lifetime.abort()).pipe(Effect.andThen(dispose)),
   );
 
-  const definition = (alignment: SpeechWordAlignment) => getSpeechModel(ALIGNERS[alignment].id)!;
-
-  const prepare = Effect.fn("SpeechAligner.prepare")(function* (alignment: SpeechWordAlignment) {
-    const model = definition(alignment);
-    if (!supported || downloading.has(alignment) || (yield* store.isReady(model))) return;
-    downloading.add(alignment);
-    yield* store.download(model).pipe(
-      Effect.tapError((error) =>
-        Effect.logWarning("Word timing model download failed.", { model: model.id, error }),
-      ),
+  const prepare = Effect.suspend(() => {
+    if (downloading) return Effect.void;
+    downloading = true;
+    return local.installRuntime.pipe(
+      Effect.andThen(store.download(SPEECH_ALIGNER_FILE)),
+      Effect.tapError((error) => Effect.logWarning("Word timing model download failed.", error)),
       Effect.ignore,
-      Effect.ensuring(Effect.sync(() => downloading.delete(alignment))),
+      Effect.ensuring(
+        Effect.sync(() => {
+          downloading = false;
+        }),
+      ),
       Effect.forkIn(scope),
+      Effect.asVoid,
     );
-  });
+  }).pipe(Effect.withSpan("SpeechAligner.prepare"));
 
-  // One model stays loaded, on the CPU, until it has been idle for a while.
-  const transcribe = (
-    alignment: SpeechWordAlignment,
-    path: string,
-    pcm: Float32Array,
-    language?: string,
+  // One aligner stays loaded until it has been idle for a while; alignments run one at a time.
+  const align = (
+    paths: { readonly libraryPath: string; readonly backend: string; readonly modelPath: string },
+    request: Parameters<Aligner["align"]>[0],
   ) =>
     Semaphore.withPermit(
       permit,
       Effect.gen(function* () {
         if (unload) yield* Fiber.interrupt(unload);
-        if (loaded?.alignment !== alignment) {
-          yield* dispose;
-          const model = yield* Effect.promise(() => loadTranscriber(path, lifetime.signal));
-          loaded = { alignment, model };
-        }
-        const model = loaded!.model;
-        const heard = yield* Effect.promise(() => model.align(pcm, language));
+        loaded ??= yield* Effect.promise(() => loadAligner(paths, lifetime.signal));
+        const aligner = loaded;
+        // A failed alignment may have taken the worker with it; the next one starts a fresh worker.
+        const words = yield* Effect.promise(() => aligner.align(request)).pipe(
+          Effect.onError(() => dispose),
+        );
         unload = yield* Effect.sleep(IDLE_UNLOAD).pipe(
           Effect.andThen(Semaphore.withPermit(permit, dispose)),
           Effect.forkIn(scope),
         );
-        return heard;
+        return words;
       }),
     );
 
-  const session = Effect.fn("SpeechAligner.session")(function* (
-    text: string,
-    language: string,
-    alignment: SpeechWordAlignment,
-  ) {
-    const model = definition(alignment);
-    if (
-      !supported ||
-      SCRIPTS_WITHOUT_TIMINGS.test(text) ||
-      !supportsLanguage(model, alignment, language, text)
-    )
-      return undefined;
-    const path = yield* store.installedPath(model);
-    if (!path) {
-      yield* prepare(alignment);
+  const session = Effect.fn("SpeechAligner.session")(function* (text: string, language: string) {
+    const library = yield* local.runtimeLibrary;
+    const modelPath = yield* store.installedPath(SPEECH_ALIGNER_FILE);
+    if (!library || !modelPath) {
+      yield* prepare;
       return undefined;
     }
+    const paths = { libraryPath: library.path, backend: library.backend, modelPath };
     const code = language.toLowerCase().split("-")[0]!;
-    const recognitionLanguage = alignment === "multilingual" && code !== "auto" ? code : undefined;
-    const lag = ALIGNERS[alignment].lag;
-    const words = textWords(text);
-    // Words before `next` are sent; `anchor` is the last heard word, sent with the next batch.
-    let next = 0;
-    let anchor: { readonly index: number; readonly seconds: number } | undefined;
-    let abandoned = false;
-    let matchedCharacters = 0;
-    let heardCharacters = 0;
-    let buffer: Float32Array[] = [];
-    let buffered = 0;
-    let bufferStart = 0;
+    // The romanized text carries no language of its own; the code is only recorded.
+    const alignmentLanguage = code === "auto" ? "und" : code;
+    let pending: AlignmentAudio[] = [];
 
-    const spread = (from: number, to: number, startSeconds: number, endSeconds: number) =>
-      estimateWords(text, words.slice(from, to), startSeconds, endSeconds);
-
-    const alignWindow = Effect.fnUntraced(function* (samples: Float32Array, startSeconds: number) {
-      if (abandoned || next >= words.length) return [];
-      const heard = (yield* transcribe(alignment, path, samples, recognitionLanguage).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Word timing failed.", cause).pipe(Effect.as(undefined)),
-        ),
-      ))?.map((word) => ({
-        text: word.text,
-        startSeconds: startSeconds + word.startSeconds - lag,
-        endSeconds: startSeconds + word.endSeconds - lag,
-      }));
-      if (!heard) {
-        abandoned = true;
-        return [];
-      }
-      const result = matchHeardWords(text, words, anchor?.index ?? next, heard);
-      matchedCharacters += result.matched;
-      heardCharacters += result.heard;
-      if (
-        heardCharacters >= MIN_JUDGED_CHARACTERS &&
-        matchedCharacters < heardCharacters * MIN_MATCHED_SHARE
-      ) {
-        abandoned = true;
-        return [];
-      }
-      const starts = result.starts;
-      const matched = [...starts].sort(([a], [b]) => a - b);
-      const out: SpeechSynthesisWord[] = [];
-      for (const [index, seconds] of matched) {
-        if (index < next || (anchor && (index <= anchor.index || seconds <= anchor.seconds)))
-          continue;
-        if (anchor) out.push(...spread(anchor.index, index, anchor.seconds, seconds));
-        else if (index > next) out.push(...spread(next, index, startSeconds, seconds));
-        anchor = { index, seconds: Math.max(seconds, 0) };
-        next = index;
-      }
-      return out;
-    });
-
-    const flush = Effect.fnUntraced(function* (upTo: number) {
-      const samples = new Float32Array(buffered);
+    const alignSpan = Effect.fnUntraced(function* (parts: ReadonlyArray<AlignmentAudio>) {
+      const [first] = parts;
+      if (!first) return [];
+      const span = first.span;
+      const rate = first.rate;
+      const length = parts.reduce((total, part) => total + part.pcm.length, 0);
+      const samples = new Float32Array(length);
       let offset = 0;
-      for (const chunk of buffer) {
-        samples.set(chunk, offset);
-        offset += chunk.length;
+      for (const part of parts) {
+        for (let index = 0; index < part.pcm.length; index++)
+          samples[offset + index] = part.pcm[index]! / 0x8000;
+        offset += part.pcm.length;
       }
-      const start = bufferStart;
-      buffer = [samples.subarray(upTo)];
-      buffered = samples.length - upTo;
-      bufferStart = start + upTo / RATE;
-      return yield* alignWindow(samples.subarray(0, upTo), start);
-    });
-
-    const push = Effect.fnUntraced(function* (pcm: Int16Array, rate: number, startSeconds: number) {
-      if (abandoned) return [];
-      const samples = toRecognitionRate(pcm, rate);
-      const start = startSeconds + MP3_ENCODER_DELAY_SAMPLES / rate;
-      const out: SpeechSynthesisWord[] = [];
-      // A gap, such as the next cloud piece, closes the window before it.
-      if (buffered && Math.abs(start - (bufferStart + buffered / RATE)) > 0.05)
-        out.push(...(yield* flush(buffered)));
-      if (!buffered) bufferStart = start;
-      buffer.push(samples);
-      buffered += samples.length;
-      for (
-        let window = anchor ? WINDOW_SECONDS : FIRST_WINDOW_SECONDS;
-        !abandoned && buffered >= window * RATE;
-        window = anchor ? WINDOW_SECONDS : FIRST_WINDOW_SECONDS
-      ) {
-        const merged = new Float32Array(buffered);
-        let offset = 0;
-        for (const chunk of buffer) {
-          merged.set(chunk, offset);
-          offset += chunk.length;
-        }
-        buffer = [merged];
-        out.push(...(yield* flush(quietestCut(merged, (window * 3 * RATE) / 4, window * RATE))));
-      }
-      return out;
-    });
-
-    const finish = Effect.fnUntraced(function* (endSeconds: number) {
-      const out: SpeechSynthesisWord[] = buffered ? [...(yield* flush(buffered))] : [];
-      if (!anchor) return out;
-      out.push(
-        ...spread(anchor.index, words.length, anchor.seconds, Math.max(endSeconds, anchor.seconds)),
+      const startSeconds = first.startSeconds + MP3_ENCODER_DELAY_SAMPLES / rate;
+      const bounds = { startSeconds, endSeconds: startSeconds + length / rate };
+      const words = textWords(text).filter(
+        (word) => word.start >= span.start && word.end <= span.end,
       );
-      next = words.length;
-      return out;
+      const spellings = words.map((word) => alignerSpelling(text.slice(word.start, word.end)));
+      const spelled = spellings.map((spelling) => !!spelling);
+      const transcript = spellings.filter((spelling) => !!spelling).join(" ");
+      const aligned = transcript
+        ? yield* align(paths, {
+            audio: { samples, sampleRate: rate, channels: 1 },
+            text: transcript,
+            language: alignmentLanguage,
+            options: ALIGNMENT_OPTIONS,
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Word timing failed.", cause).pipe(Effect.as([])),
+            ),
+          )
+        : [];
+      // Without a time for every word it spelled, the words are spread over the audio instead.
+      const complete = aligned.length === spelled.filter(Boolean).length;
+      return timeSpanWords(
+        text,
+        span,
+        complete ? spelled : spelled.map(() => false),
+        complete ? aligned : [],
+        bounds,
+      );
+    });
+
+    const push = Effect.fnUntraced(function* (audio: AlignmentAudio) {
+      const current = pending[0];
+      const done =
+        current && (current.span.start !== audio.span.start || current.span.end !== audio.span.end)
+          ? pending
+          : undefined;
+      if (done) pending = [];
+      pending.push(audio);
+      return done ? yield* alignSpan(done) : [];
+    });
+
+    const finish = Effect.suspend(() => {
+      const done = pending;
+      pending = [];
+      return alignSpan(done);
     });
 
     return { push, finish } satisfies AlignmentSession;
@@ -333,10 +269,15 @@ export const make = Effect.fn("SpeechAligner.make")(function* (
   return SpeechAligner.of({ prepare, session });
 });
 
+const { SPEECH_ALIGNER_FILE } = LocalSpeechSynthesis;
+
 export const layer = Layer.effect(
   SpeechAligner,
-  make(async (path, signal) => {
-    const model = await loadNativeSpeechModel(path, signal, undefined, "cpu");
-    return { align: model.align, dispose: model.dispose };
-  }),
+  make((options, signal) =>
+    loadLocalAlignmentModel({
+      ...options,
+      threads: Math.max(1, Math.min(8, NodeOS.availableParallelism() - 1)),
+      signal,
+    }),
+  ),
 );

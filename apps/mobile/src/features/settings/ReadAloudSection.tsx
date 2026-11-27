@@ -3,7 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import * as Speech from "expo-speech";
-import { T, useGT, useLocale } from "gt-react-native";
+import { T, useGT } from "gt-react-native";
 import { ScrollView, TextInput, View } from "react-native";
 import {
   AuthSettingsWriteScope,
@@ -21,7 +21,6 @@ import {
   removeSpeechSynthesisModel,
   setCloudSpeechKey,
 } from "@t3tools/client-runtime/voice-input";
-import { readAloudWordAlignment } from "@t3tools/client-runtime/read-aloud";
 import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
@@ -40,14 +39,11 @@ import { readAloudController } from "../read-aloud/playback";
 
 export function ReadAloudSection() {
   const gt = useGT();
-  const locale = useLocale();
   const preferences = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomCommand(saveMobilePreferences);
   const settings = AsyncResult.isSuccess(preferences)
     ? (preferences.value.readAloud ?? DEFAULT_READ_ALOUD_SETTINGS)
     : DEFAULT_READ_ALOUD_SETTINGS;
-  const alignment = readAloudWordAlignment(settings, locale);
-  const englishLocale = /^en(?:-|$)/i.test(locale);
   const prepared = Option.getOrNull(usePreparedConnection(settings.environmentId));
   const canManage = useEnvironmentScope(settings.environmentId, AuthSettingsWriteScope);
   const { environments } = useEnvironments();
@@ -114,10 +110,7 @@ export function ReadAloudSection() {
   useEffect(() => {
     if (!prepared || settings.provider === "system" || settings.provider === "off") return;
     const abort = new AbortController();
-    void runSpeech(
-      getSpeechSynthesisModels(prepared, settings.provider, alignment),
-      abort.signal,
-    ).then(
+    void runSpeech(getSpeechSynthesisModels(prepared, settings.provider), abort.signal).then(
       (value) => {
         if (!abort.signal.aborted)
           setCatalogState({
@@ -141,7 +134,7 @@ export function ReadAloudSection() {
       abort.abort();
       keyRequestVersion.current++;
     };
-  }, [prepared, settings.provider, catalogKey, catalogVersion, alignment]);
+  }, [prepared, settings.provider, catalogKey, catalogVersion]);
   const selectedModel = catalog.models.find((entry) => entry.id === model);
   const install = settings.provider === "local" ? selectedModel?.install : undefined;
   // Keyed by environment and model, so switching models mid-download doesn't move the spinner.
@@ -264,16 +257,6 @@ export function ReadAloudSection() {
               value={settings.skipCodeBlocks}
               onValueChange={(skipCodeBlocks) => change({ skipCodeBlocks })}
             />
-            {englishLocale && catalog.wordTimings !== "provider" ? (
-              <ListToggleRow
-                label={gt("Multilingual word timing")}
-                description={gt(
-                  "Highlight the spoken word in 25 languages. Downloads a 740 MB model instead of a 135 MB one.",
-                )}
-                value={settings.multilingualWordTiming}
-                onValueChange={(multilingualWordTiming) => change({ multilingualWordTiming })}
-              />
-            ) : null}
             <ListActionRow
               label={
                 state.id === "preview" && state.status !== "error"

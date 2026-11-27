@@ -1,8 +1,4 @@
-import type {
-  SpeechSynthesisProvider,
-  SpeechSynthesisRequest,
-  SpeechWordAlignment,
-} from "@t3tools/contracts";
+import type { SpeechSynthesisProvider, SpeechSynthesisRequest } from "@t3tools/contracts";
 import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -388,21 +384,17 @@ export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, model
     run: ({ client, headers }) => client.removeModel({ headers, payload: { modelId } }),
   });
 
-/** `alignment` asks the environment to fetch the model that times words this provider lacks. */
 export const getSpeechSynthesisModels = (
   prepared: PreparedConnection,
   provider: SpeechSynthesisProvider,
-  alignment?: SpeechWordAlignment,
-) => {
-  const query = alignment ? { alignment } : {};
-  return request({
+) =>
+  request({
     group: "voice",
     prepared,
     method: "GET",
-    path: (urls) => urls.synthesisModels({ params: { provider }, query }),
-    run: ({ client, headers }) => client.synthesisModels({ headers, params: { provider }, query }),
+    path: (urls) => urls.synthesisModels({ params: { provider } }),
+    run: ({ client, headers }) => client.synthesisModels({ headers, params: { provider } }),
   });
-};
 
 /** Starts synthesis and resolves, once audio exists, with the URL of its live MP3 stream and its token. */
 export const startSpeechSynthesis = (

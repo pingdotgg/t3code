@@ -47,8 +47,6 @@ export const ReadAloudSettings = Schema.Struct({
   language: Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(16)),
   skipCodeBlocks: Schema.Boolean,
   backgroundPlayback: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  /** English-locale users can trade the 135 MB English timing model for the multilingual one. */
-  multilingualWordTiming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ReadAloudSettings = typeof ReadAloudSettings.Type;
 export const DEFAULT_READ_ALOUD_SETTINGS: ReadAloudSettings = {
@@ -60,7 +58,6 @@ export const DEFAULT_READ_ALOUD_SETTINGS: ReadAloudSettings = {
   language: "auto",
   skipCodeBlocks: true,
   backgroundPlayback: true,
-  multilingualWordTiming: false,
 };
 export const ReadAloudPreference = ReadAloudSettings.pipe(
   Schema.withDecodingDefault(Effect.succeed(DEFAULT_READ_ALOUD_SETTINGS)),
@@ -69,25 +66,17 @@ export const ReadAloudPreference = ReadAloudSettings.pipe(
 export const SPEECH_SYNTHESIS_MAX_TEXT = 32_000;
 /** Serves a started synthesis as one MP3 stream that native players read while it is produced. */
 export const SPEECH_SYNTHESIS_AUDIO_PATH = "/api/voice/synthesis/audio";
-/** Which speech recognition model times the words of providers that report none. */
-export const SpeechWordAlignment = Schema.Literals(["english", "multilingual"]);
-export type SpeechWordAlignment = typeof SpeechWordAlignment.Type;
 export const SpeechSynthesisRequest = Schema.Struct({
   text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(SPEECH_SYNTHESIS_MAX_TEXT)),
   model: Schema.String.check(Schema.isMaxLength(160)),
   voice: Schema.String.check(Schema.isMaxLength(160)),
   speed: Schema.Number.check(Schema.isBetween({ minimum: 0.7, maximum: 1.5 })),
   language: Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(16)),
-  alignment: Schema.optionalKey(SpeechWordAlignment),
   /**
    * UTF-16 offset of the word the audio starts at. The text before it is still synthesized, so a
    * voice picking up mid-sentence reads in context; its audio and timings are dropped.
    */
   from: Schema.optionalKey(NonNegativeInt),
-});
-export const SpeechSynthesisCatalogQuery = Schema.Struct({
-  /** Fetches that timing model in the background when the provider reports no word timings. */
-  alignment: Schema.optionalKey(SpeechWordAlignment),
 });
 export type SpeechSynthesisRequest = typeof SpeechSynthesisRequest.Type;
 /** Single-purpose credential for `SPEECH_SYNTHESIS_AUDIO_PATH`, so media elements need no headers. */

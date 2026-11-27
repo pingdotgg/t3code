@@ -190,8 +190,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
                   }),
                 );
           // Choosing a provider without word timings fetches the model that times them.
-          if (args.query.alignment && catalog.wordTimings !== "provider")
-            yield* aligner.prepare(args.query.alignment);
+          if (catalog.wordTimings !== "provider") yield* aligner.prepare;
           return catalog;
         }),
       )

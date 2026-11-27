@@ -32,7 +32,7 @@ import * as ServerConfig from "../config.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 import type { SpeechSynthesisPart } from "./CloudSpeech.ts";
 import { loadLocalSynthesisModel, type LocalSynthesisModel } from "./localSynthesisWorker.ts";
-import { supertonicText } from "./synthesisAudio.ts";
+import { speechLineSpans, supertonicText } from "./synthesisAudio.ts";
 
 /** A preset the model names itself, one it reads from its own file, or a speaker it imitates. */
 type LocalVoice = {
@@ -1167,6 +1167,7 @@ export class LocalSynthesisInstallError extends Schema.TaggedError<LocalSynthesi
     cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {}
+const isInstallError = Schema.is(LocalSynthesisInstallError);
 
 export class LocalSpeechSynthesis extends Context.Service<
   LocalSpeechSynthesis,
@@ -1191,8 +1192,23 @@ export class LocalSpeechSynthesis extends Context.Service<
     readonly stream: (
       request: SpeechSynthesisRequest,
     ) => Stream.Stream<SpeechSynthesisPart, SpeechSynthesisError>;
+    /** The audio.cpp library local models and word timing run on, once installed. */
+    readonly runtimeLibrary: Effect.Effect<
+      { readonly path: string; readonly backend: string } | undefined
+    >;
+    /** Fetches that library when it is missing. */
+    readonly installRuntime: Effect.Effect<void, LocalSynthesisInstallError>;
   }
 >()("t3/speech/LocalSpeechSynthesis") {}
+
+/** The forced aligner that times the words of speech whose provider reports none. */
+export const SPEECH_ALIGNER_FILE: SpeechModelStore.ModelFile = {
+  id: AUDIO_CPP_GGUF,
+  revision: GGUF_REVISION,
+  filename: "MMS-Forced-Aligner-GGUF/mms-forced-aligner-f16.gguf",
+  size: 631_019_392,
+  sha256: "3faf596c743b5b1e6f959ca4f73be045fddd0068aeafff9da24295253f561e97",
+};
 
 /** Picks the language a model declares for a setting such as `en-US`; `auto` picks none. */
 export function localSynthesisLanguage(setting: string, languages: readonly string[]) {
@@ -1320,6 +1336,33 @@ const make = Effect.gen(function* () {
     );
   });
 
+  // One install at a time: a model install and the word aligner can both need the runtime.
+  const runtimeLock = yield* Semaphore.make(1);
+  const installRuntime = (progress?: {
+    readonly onProgress?: (downloaded: number) => void;
+    readonly onVerificationStart?: () => void;
+  }) =>
+    runtimeLock.withPermits(1)(
+      Effect.gen(function* () {
+        if (!runtime || !runtimeFile)
+          return yield* new LocalSynthesisInstallError({ reason: "unsupported-platform" });
+        if (yield* runtimeReady) return;
+        const archivePath = yield* store
+          .download(runtimeFile, progress)
+          .pipe(
+            Effect.mapError((cause) => new LocalSynthesisInstallError({ reason: "failed", cause })),
+          );
+        yield* extract(runtime.library, archivePath).pipe(
+          Effect.mapError((cause) =>
+            isInstallError(cause)
+              ? cause
+              : new LocalSynthesisInstallError({ reason: "failed", cause }),
+          ),
+        );
+        yield* store.remove(runtimeFile).pipe(Effect.ignore);
+      }),
+    );
+
   type Transfer = {
     readonly modelId: string;
     /** Fixed once the install knows which files it needs, so finishing one does not shrink it. */
@@ -1420,7 +1463,7 @@ const make = Effect.gen(function* () {
         );
         state.size = (needsRuntime ? runtimeFile.size : 0) + totalSize(missing);
         if (needsRuntime) {
-          const archivePath = yield* store.download(runtimeFile, {
+          yield* installRuntime({
             onProgress: (downloaded) => {
               state.runtime = downloaded;
               state.verifying = false;
@@ -1429,9 +1472,6 @@ const make = Effect.gen(function* () {
               state.verifying = true;
             },
           });
-          state.verifying = true;
-          yield* extract(runtime.library, archivePath);
-          yield* store.remove(runtimeFile).pipe(Effect.ignore);
           state.runtime = runtimeFile.size;
         }
         state.verifying = false;
@@ -1557,7 +1597,8 @@ const make = Effect.gen(function* () {
             yield* fs
               .remove(espeakCache, { recursive: true, force: true })
               .pipe(Effect.mapError(installFailed));
-          if (remaining.length === 0)
+          // Word timing runs on the runtime too, for every provider without its own timings.
+          if (remaining.length === 0 && !(yield* store.isReady(SPEECH_ALIGNER_FILE)))
             yield* fs
               .remove(runtimeDirectory, { recursive: true, force: true })
               .pipe(Effect.mapError(installFailed));
@@ -1665,12 +1706,15 @@ const make = Effect.gen(function* () {
       definition.takesLanguage === false
         ? undefined
         : localSynthesisLanguage(request.language, model.languages);
+    const lines = speechLineSpans(request.text)
+      .map((line) => ({ ...line, text: definition.speakable?.(line.text) ?? line.text }))
+      .filter((line) => line.text.trim());
     // One encoder spans the whole reply, so PCM time is MP3 time.
     let spokenSeconds = 0;
     const spoken = model
       .stream(
         {
-          text: definition.speakable?.(request.text) ?? request.text,
+          lines,
           ...(language ? { language } : {}),
           options: {
             ...definition.options,
@@ -1684,8 +1728,8 @@ const make = Effect.gen(function* () {
           ...(voice.clip && voicePath ? { voiceClip: voicePath } : {}),
         },
         (bytes) => Queue.offerUnsafe(queue, bytes),
-        (pcm, rate) => {
-          Queue.offerUnsafe(queue, { pcm, rate, startSeconds: spokenSeconds });
+        (pcm, rate, span) => {
+          Queue.offerUnsafe(queue, { pcm, rate, startSeconds: spokenSeconds, span });
           spokenSeconds += pcm.length / rate;
         },
       )
@@ -1713,7 +1757,22 @@ const make = Effect.gen(function* () {
       Stream.withSpan("LocalSpeechSynthesis.stream"),
     );
 
-  return LocalSpeechSynthesis.of({ catalog, download, cancel, link, remove, prepare, stream });
+  const library = Effect.gen(function* () {
+    if (!runtime || !libraryPath || !(yield* runtimeReady)) return undefined;
+    return { path: libraryPath, backend: runtime.backend };
+  });
+
+  return LocalSpeechSynthesis.of({
+    catalog,
+    download,
+    cancel,
+    link,
+    remove,
+    prepare,
+    stream,
+    runtimeLibrary: library,
+    installRuntime: installRuntime(),
+  });
 });
 
 export const layer = Layer.effect(LocalSpeechSynthesis, make);

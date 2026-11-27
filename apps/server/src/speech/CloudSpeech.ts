@@ -198,7 +198,13 @@ type SynthesisBackend = {
 export type SpeechSynthesisPart =
   | Uint8Array
   | { readonly words: ReadonlyArray<SpeechSynthesisWord> }
-  | { readonly pcm: Int16Array; readonly rate: number; readonly startSeconds: number };
+  | {
+      readonly pcm: Int16Array;
+      readonly rate: number;
+      readonly startSeconds: number;
+      /** The request text this audio speaks, which word timing aligns it to. */
+      readonly span: { readonly start: number; readonly end: number };
+    };
 
 // gpt-4o-mini-tts accepts 2,000 tokens, which Chinese or Japanese reaches near 2,000 characters,
 // and OpenRouter's Seed Audio accepts 3,000 characters. Pieces stream back to back, so small is cheap.
@@ -666,7 +672,12 @@ export const layer = Layer.effect(
               const { pcm, mp3 } = encoder.push(chunk);
               const parts: SpeechSynthesisPart[] = [];
               if (pcm.length) {
-                parts.push({ pcm, rate: format.rate, startSeconds: seconds });
+                parts.push({
+                  pcm,
+                  rate: format.rate,
+                  startSeconds: seconds,
+                  span: { start: 0, end: input.text.length },
+                });
                 seconds += pcm.length / format.rate;
               }
               if (mp3.length) parts.push(mp3);
@@ -749,7 +760,15 @@ export const layer = Layer.effect(
                     duration.push(part);
                     return part;
                   }
-                  if ("pcm" in part) return { ...part, startSeconds: part.startSeconds + offset };
+                  if ("pcm" in part)
+                    return {
+                      ...part,
+                      startSeconds: part.startSeconds + offset,
+                      span: {
+                        start: part.span.start + span.start,
+                        end: part.span.end + span.start,
+                      },
+                    };
                   return {
                     words: part.words.map((word) => ({
                       start: word.start + span.start,

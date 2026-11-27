@@ -32,8 +32,33 @@ export type AudioCppModel = {
   readonly dispose: () => void;
 };
 
+/** A word a forced aligner found, in seconds from the start of the audio it was given. */
+export type AudioCppAlignedWord = {
+  readonly word: string;
+  readonly startSeconds: number;
+  readonly endSeconds: number;
+};
+
+export type AudioCppAligner = {
+  readonly backend: string;
+  /** Times each word of `text` in `audio`, in order; words with nothing to align are left out. */
+  readonly align: (request: {
+    readonly audio: AudioCppAudio;
+    readonly text: string;
+    readonly language: string;
+    /** Request options the model spec declares, such as `star_frequency`. */
+    readonly options?: Readonly<Record<string, string>>;
+  }) => ReadonlyArray<AudioCppAlignedWord>;
+  readonly dispose: () => void;
+};
+
 export type AudioCppLibrary = {
   readonly buildVersion: string;
+  /** Opens a forced-alignment session, falling back to the CPU when `backend` fails. */
+  readonly loadAligner: (
+    path: string,
+    options: { readonly backend: string; readonly threads: number },
+  ) => AudioCppAligner;
   /**
    * Opens a text-to-speech session, streaming when the model can, falling back to the CPU when
    * `backend` fails.
@@ -127,6 +152,22 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
       "const char *",
       "const char *",
     ]),
+    requestSetAudio: lib.func("audiocpp_request_set_audio", "int", [
+      Request,
+      "float *",
+      "size_t",
+      "int",
+      "int",
+    ]),
+    wordCount: lib.func("audiocpp_result_word_count", "size_t", [Result]),
+    word: lib.func("audiocpp_result_word", "int", [
+      Result,
+      "size_t",
+      out("const char *"),
+      out("int64_t"),
+      out("int64_t"),
+      out("float"),
+    ]),
     requestSetVoiceAudio: lib.func("audiocpp_request_set_voice_audio", "int", [
       Request,
       "float *",
@@ -178,6 +219,86 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
 
   return {
     buildVersion: native.buildVersion(),
+    loadAligner(path, { backend, threads }) {
+      const loaded: [unknown] = [null];
+      check(native.modelLoad(registry[0], path, null, null, loaded), "model load");
+      const model = loaded[0];
+      const open = (target: string) => {
+        const session: [unknown] = [null];
+        check(
+          native.sessionCreate(
+            model,
+            "align",
+            "offline",
+            { backend: target, device: 0, threads },
+            null,
+            session,
+          ),
+          `${target} session creation`,
+        );
+        return session[0];
+      };
+      let session: unknown;
+      let sessionBackend = backend;
+      try {
+        if (!native.modelSupports(model, "align", "offline"))
+          throw new Error("This model does not support forced alignment.");
+        try {
+          session = open(backend);
+        } catch (error) {
+          if (backend === "cpu") throw error;
+          sessionBackend = "cpu";
+          session = open("cpu");
+        }
+      } catch (error) {
+        native.modelFree(model);
+        throw error;
+      }
+      return {
+        backend: sessionBackend,
+        align({ audio, text, language, options = {} }) {
+          const request = native.requestCreate();
+          if (!request) throw new Error("audio.cpp could not allocate a request.");
+          const result: [unknown] = [null];
+          try {
+            check(native.requestSetText(request, text, language), "request text");
+            check(
+              native.requestSetAudio(
+                request,
+                audio.samples,
+                audio.samples.length / audio.channels,
+                audio.sampleRate,
+                audio.channels,
+              ),
+              "request audio",
+            );
+            for (const [key, value] of Object.entries(options))
+              check(native.requestSetOption(request, key, value), `request option ${key}`);
+            check(native.sessionRun(session, request, result), "alignment");
+            const words: AudioCppAlignedWord[] = [];
+            for (let index = 0; index < Number(native.wordCount(result[0])); index++) {
+              const word: [string] = [""];
+              const start: [number | bigint] = [0];
+              const end: [number | bigint] = [0];
+              check(native.word(result[0], index, word, start, end, [0]), "word read");
+              words.push({
+                word: word[0],
+                startSeconds: Number(start[0]) / audio.sampleRate,
+                endSeconds: Number(end[0]) / audio.sampleRate,
+              });
+            }
+            return words;
+          } finally {
+            if (result[0]) native.resultFree(result[0]);
+            native.requestFree(request);
+          }
+        },
+        dispose() {
+          native.sessionFree(session);
+          native.modelFree(model);
+        },
+      };
+    },
     loadSpeechModel(path, { backend, threads }) {
       const loaded: [unknown] = [null];
       check(native.modelLoad(registry[0], path, null, null, loaded), "model load");

@@ -32,6 +32,13 @@ export function mp3Kbps(sampleRate: number) {
  * reference pipeline splits them, so the first arrives before the model reaches the rest.
  * Self-contained so the synthesis worker can inline it.
  */
+/** The lines of `text` with words in them, and where each sits in `text`. */
+export function speechLineSpans(text: string) {
+  return [...text.matchAll(/[^\n]+/g)]
+    .filter((line) => line[0].trim())
+    .map((line) => ({ text: line[0], start: line.index, end: line.index + line[0].length }));
+}
+
 export function speechLines(text: string) {
   return text.split(/\n+/).filter((line) => line.trim());
 }

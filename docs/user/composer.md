@@ -118,11 +118,9 @@ thread stops it. Code blocks are skipped by default.
 
 The paragraph and the word being read are highlighted, and the thread scrolls along until
 you scroll away. ElevenLabs reports when each word is spoken. For Grok TTS, OpenRouter and local
-models, your environment works it out from the audio with a
-small speech recognition model, downloaded the first time you choose one of them: 135 MB for
-English, or 740 MB for 25 languages, which non-English app languages use and which you can turn
-on under **Multilingual word timing**. Until it is installed, and for Japanese, Korean and
-Chinese replies, the highlighted word is an estimate.
+models, your environment lines the reply's words up with the audio using a 630 MB model,
+downloaded the first time you choose one of them. Until it is installed, and for words not
+written in the Latin alphabet, the highlighted word is an estimate.
 
 While a reply is read, a small player above the composer pauses, stops, and changes the speed,
 and brings you back to the word being read after you scroll away. Click or tap any word in the

@@ -1,11 +1,10 @@
-import { getActiveLocale, m } from "../../i18n/messages";
+import { m } from "../../i18n/messages";
 import {
   createReadAloudController,
   createReadAloudWarmup,
   createTimedWords,
   type SpeechPlayback,
   type SpokenWord,
-  readAloudWordAlignment,
 } from "@t3tools/client-runtime/read-aloud";
 import {
   getSpeechSynthesisModels,
@@ -153,13 +152,9 @@ export const readAloudController = createReadAloudController(
       : null;
     if (!prepared)
       throw new Error("Connect to the read-aloud environment selected in Settings → Voice.");
-    const alignment = readAloudWordAlignment(settings, getActiveLocale());
     let pendingCatalog = catalogs.get(signal);
     if (!pendingCatalog) {
-      pendingCatalog = runSpeech(
-        getSpeechSynthesisModels(prepared, settings.provider, alignment),
-        signal,
-      );
+      pendingCatalog = runSpeech(getSpeechSynthesisModels(prepared, settings.provider), signal);
       catalogs.set(signal, pendingCatalog);
     }
     const catalog = await pendingCatalog;
@@ -173,7 +168,6 @@ export const readAloudController = createReadAloudController(
         voice: settings.voice,
         speed: settings.speed,
         language: settings.language,
-        alignment,
         ...(from === undefined ? {} : { from }),
       }),
       signal,

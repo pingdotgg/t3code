@@ -1,5 +1,4 @@
 import {
-  SpeechSynthesisCatalogQuery,
   SpeechSynthesisProvider,
   SpeechSynthesisRequest,
   SpeechSynthesisCatalog,
@@ -874,7 +873,6 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     HttpApiEndpoint.get("synthesisModels", "/api/voice/synthesis/:provider/models", {
       headers: OptionalBearerHeaders,
       params: Schema.Struct({ provider: SpeechSynthesisProvider }),
-      query: SpeechSynthesisCatalogQuery,
       success: SpeechSynthesisCatalog,
       error: [...EnvironmentScopedOperationErrors, SpeechSynthesisError],
     }).middleware(EnvironmentAuthenticatedAuth),

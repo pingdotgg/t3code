@@ -35,8 +35,6 @@ const RECONNECT_GRACE: Duration.Input = "5 seconds";
 const FINISHED_RETENTION: Duration.Input = "2 minutes";
 // A timings read answers by then even when nothing changed, so a lost client is not held.
 const TIMINGS_WAIT: Duration.Input = "10 seconds";
-// Audio that starts at a word keeps this much before its timed start, so its onset is not clipped.
-const WORD_ONSET_SECONDS = 0.05;
 
 const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
 
@@ -177,9 +175,7 @@ const make = Effect.gen(function* () {
         if (target === undefined && !force) return Effect.void;
         const bytes = joined(lead.held);
         const frame =
-          (target === undefined
-            ? undefined
-            : mp3FrameAt(bytes, Math.max(0, target - WORD_ONSET_SECONDS))) ??
+          (target === undefined ? undefined : mp3FrameAt(bytes, target)) ??
           (force ? { offset: 0, seconds: 0 } : undefined);
         if (!frame) return Effect.void;
         lead.cut = frame.seconds;
@@ -205,10 +201,7 @@ const make = Effect.gen(function* () {
       return release(false);
     };
     // Audio that comes without word timings is timed from its PCM, off the audio's own path.
-    const pcm = yield* Queue.unbounded<
-      { readonly pcm: Int16Array; readonly rate: number; readonly startSeconds: number },
-      Cause.Done
-    >();
+    const pcm = yield* Queue.unbounded<SpeechAligner.AlignmentAudio, Cause.Done>();
     job.alignment = yield* Effect.gen(function* () {
       // Opened on the first PCM, so providers with their own timings never load a model.
       const opened: { session?: SpeechAligner.AlignmentSession | undefined } = {};
@@ -216,23 +209,15 @@ const make = Effect.gen(function* () {
         Stream.runForEach((part) =>
           Effect.gen(function* () {
             if (!("session" in opened)) {
-              opened.session = yield* aligner.session(
-                request.text,
-                request.language,
-                request.alignment ?? "english",
-              );
+              opened.session = yield* aligner.session(request.text, request.language);
               // Without a timing model the word is never timed; play from the lead-in instead.
               if (!opened.session) yield* release(true);
             }
-            if (opened.session)
-              yield* addWords(yield* opened.session.push(part.pcm, part.rate, part.startSeconds));
+            if (opened.session) yield* addWords(yield* opened.session.push(part));
           }),
         ),
       );
-      if (opened.session && !job.failed)
-        yield* addWords(
-          yield* opened.session.finish(lead ? lead.total.seconds : job.duration.seconds),
-        );
+      if (opened.session && !job.failed) yield* addWords(yield* opened.session.finish);
       yield* release(true);
     }).pipe(
       Effect.ensuring(

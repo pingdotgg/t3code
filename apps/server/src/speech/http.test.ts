@@ -88,10 +88,13 @@ effectIt.effect.each([false, true])(
       );
       const synthesisModels = vi.fn(() => Effect.succeed(EMPTY_SPEECH_SYNTHESIS_CATALOG));
       const local = { download: vi.fn(() => Effect.succeed(EMPTY_SPEECH_SYNTHESIS_CATALOG)) };
+      const prepare = vi.fn(() => Effect.void);
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
-          Layer.provide(Layer.mock(SpeechAligner.SpeechAligner)({})),
+          Layer.provide(
+            Layer.mock(SpeechAligner.SpeechAligner)({ prepare: Effect.suspend(prepare) }),
+          ),
           Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
           Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
           Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)(local)),
@@ -133,6 +136,8 @@ effectIt.effect.each([false, true])(
       );
       expect(response.status).toBe(allowed ? 200 : 403);
       expect(catalog.status).toBe(allowed ? 200 : 403);
+      // A provider without word timings fetches the aligner when it is chosen.
+      expect(prepare).toHaveBeenCalledTimes(allowed ? 1 : 0);
       // Installing a local model downloads hundreds of megabytes, so it needs settings access.
       const install = yield* Effect.promise(() =>
         handler(
@@ -182,7 +187,7 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
       HttpApi.make("environment").add(EnvironmentVoiceHttpApi),
     ).pipe(
       Layer.provide(speechHttpApiLayer),
-      Layer.provide(Layer.mock(SpeechAligner.SpeechAligner)({})),
+      Layer.provide(Layer.mock(SpeechAligner.SpeechAligner)({ prepare: Effect.void })),
       Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
       Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
       Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)({})),
@@ -319,7 +324,7 @@ effectIt.effect(
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
-          Layer.provide(Layer.mock(SpeechAligner.SpeechAligner)({})),
+          Layer.provide(Layer.mock(SpeechAligner.SpeechAligner)({ prepare: Effect.void })),
           Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
           Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
           Layer.provide(local),
@@ -506,7 +511,7 @@ effectIt.effect.each([
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(api).pipe(
           Layer.provide(speechHttpApiLayer),
-          Layer.provide(Layer.mock(SpeechAligner.SpeechAligner)({})),
+          Layer.provide(Layer.mock(SpeechAligner.SpeechAligner)({ prepare: Effect.void })),
           Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
           Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
           Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)({})),
@@ -578,7 +583,7 @@ effectIt.effect("tells the client why transcript cleanup failed", () =>
     const { handler, dispose } = HttpRouter.toWebHandler(
       HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
         Layer.provide(speechHttpApiLayer),
-        Layer.provide(Layer.mock(SpeechAligner.SpeechAligner)({})),
+        Layer.provide(Layer.mock(SpeechAligner.SpeechAligner)({ prepare: Effect.void })),
         Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
         Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
         Layer.provide(principal(AuthOrchestrationOperateScope)),

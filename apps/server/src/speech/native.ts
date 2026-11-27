@@ -176,26 +176,6 @@ process.on("message", async (message) => {
       const text = texts.join(" ").trim();
       audio = undefined;
       process.send({ type: "t3-speech-reply", ok: true, text });
-    } else if (message.kind === "align") {
-      const words = [];
-      const align = async (pcm, offset) => {
-        try {
-          const result = await model.transcribe(pcm, {
-            timestamps: "word",
-            ...(message.language ? { language: message.language } : {}),
-          });
-          for (const word of result.words)
-            words.push([word.text, offset + word.t0Ms / 1000, offset + word.t1Ms / 1000]);
-        } catch (error) {
-          if ((error?.constructor?.name !== "OutputTruncated" &&
-               error?.constructor?.name !== "InputTooLong") || pcm.length <= 16000) throw error;
-          const middle = Math.floor(pcm.length / 2);
-          await align(pcm.subarray(0, middle), offset);
-          await align(pcm.subarray(middle), offset + middle / 16000);
-        }
-      };
-      await align(message.pcm, 0);
-      process.send({ type: "t3-speech-reply", ok: true, words });
     }
   } catch (error) {
     process.send({ type: "t3-speech-reply", ok: false,
@@ -219,7 +199,6 @@ type Reply = {
   readonly languages?: unknown;
   readonly revision?: number;
   readonly preview?: SpeechStreamText | null;
-  readonly words?: unknown;
 };
 
 // transcribe-cpp has an import-only export. Load its disk entry with require so
@@ -465,19 +444,6 @@ async function loadNativeSpeechModelOnce(
       const result = await send({ kind: "transcribe", pcm, options, filterSilence, vadPath });
       if (typeof result.text !== "string") throw new Error("Invalid speech process response.");
       return { text: result.text };
-    },
-    /** Words heard in 16 kHz mono audio, in seconds from its start. */
-    align: async (pcm: Float32Array, language?: string) => {
-      const reply = await send({ kind: "align", pcm, ...(language ? { language } : {}) });
-      if (!Array.isArray(reply.words)) throw new Error("Invalid speech process response.");
-      return reply.words.flatMap((entry: unknown) =>
-        Array.isArray(entry) &&
-        typeof entry[0] === "string" &&
-        typeof entry[1] === "number" &&
-        typeof entry[2] === "number"
-          ? [{ text: entry[0], startSeconds: entry[1], endSeconds: entry[2] }]
-          : [],
-      );
     },
     dispose,
   };

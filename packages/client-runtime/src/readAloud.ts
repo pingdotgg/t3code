@@ -4,7 +4,6 @@ import {
   type ReadAloudSettings,
   type SpeechSynthesisTimings,
   type SpeechSynthesisWord,
-  type SpeechWordAlignment,
 } from "@t3tools/contracts";
 import {
   readAloudBlockFrom,
@@ -108,19 +107,6 @@ export type PlaybackClock = {
   readonly rate: number;
   readonly playing: boolean;
 };
-
-/**
- * The model that times words for providers that report none: English for English UI locales
- * unless the user asked for the multilingual one, which every other locale uses.
- */
-export function readAloudWordAlignment(
-  settings: Pick<ReadAloudSettings, "multilingualWordTiming">,
-  locale: string,
-): SpeechWordAlignment {
-  return /^en(?:-|$)/i.test(locale) && !settings.multilingualWordTiming
-    ? "english"
-    : "multilingual";
-}
 
 /**
  * Follows a synthesis' word timings on its audio clock. Players call `refresh` on each media event

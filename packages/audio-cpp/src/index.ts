@@ -1,5 +1,7 @@
 export {
   bindAudioCpp,
+  type AudioCppAlignedWord,
+  type AudioCppAligner,
   type AudioCppAudio,
   type AudioCppLibrary,
   type AudioCppModel,
