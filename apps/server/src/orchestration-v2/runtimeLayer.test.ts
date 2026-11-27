@@ -697,6 +697,56 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
       }),
   );
 
+  // regression: #44532 a turn start left retrying blocked the deleted thread's cleanup forever
+  it.effect("thread delete cancels a turn start that has not settled", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("runtime-delete-unsettled-start");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-delete-unsettled-start-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-delete-unsettled-start-project"),
+        title: "Unsettled start",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const messageCommandId = CommandId.make("runtime-delete-unsettled-start-message");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: messageCommandId,
+        threadId,
+        messageId: MessageId.make("runtime-delete-unsettled-start-message"),
+        text: "Start work.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+      });
+      const start = (yield* outbox.listByCommandId(messageCommandId)).find(
+        (effect) => effect.request.type === "provider-turn.start",
+      );
+      assert.equal(start?.status, "pending");
+
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("runtime-delete-unsettled-start-delete"),
+        threadId,
+      });
+
+      const after = (yield* outbox.listByCommandId(messageCommandId)).find(
+        (effect) => effect.id === start?.id,
+      );
+      assert.equal(after?.status, "cancelled");
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
   it.effect.each(["no fork", "a live fork"] as const)(
     "a queued edit's cleanup keeps a file earlier history still shows, with %s",
     (fork) =>
