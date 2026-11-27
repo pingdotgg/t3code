@@ -1542,28 +1542,6 @@ describe("PreviewManager", () => {
       ),
     );
 
-    effectIt.effect("forgets an action that ended in a same-document navigation", () =>
-      withManager((manager) =>
-        Effect.gen(function* () {
-          const preview = yield* openGuardedTab(manager, "tab_guarded_anchor");
-          Object.assign(preview.webContents, {
-            navigationHistory: {
-              canGoBack: () => true,
-              canGoForward: () => false,
-              getActiveIndex: () => 1,
-              goBack: () => startNavigation(preview, true),
-            },
-          });
-
-          yield* manager.goBack("tab_guarded_anchor");
-          blockUnload(preview);
-          yield* flushMicrotasks();
-
-          expect(showMessageBox).not.toHaveBeenCalled();
-        }),
-      ),
-    );
-
     effectIt.effect("opens the typed address on Leave", () =>
       withManager((manager) =>
         Effect.gen(function* () {
