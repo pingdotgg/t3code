@@ -243,7 +243,12 @@ export const make = Effect.gen(function* () {
                   ...error,
                   userFacingDetail: SourceControlProvider.repositoryNotFoundDetail(repositoryName),
                 })
-              : error,
+              : error.httpStatus === 403
+                ? new OriginCli.OriginCliError({
+                    ...error,
+                    userFacingDetail: `Your Cursor account does not have access to ${SourceControlProvider.transportSafeSourceControlErrorValue(repositoryName)} on Origin. Ask the repository owner for access and try again.`,
+                  })
+                : error,
           ),
         );
         return cloneUrls(repository, repositoryName);

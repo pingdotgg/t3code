@@ -109,7 +109,7 @@ describe("OriginSourceControlProvider.getRepositoryCloneUrls", () => {
     }),
   );
 
-  it.effect("surfaces not-found details without exposing raw upstream errors", () =>
+  it.effect("surfaces not-found and no-access details without exposing raw upstream errors", () =>
     Effect.gen(function* () {
       const notFoundProvider = yield* makeProvider(() =>
         Effect.fail(
@@ -132,6 +132,29 @@ describe("OriginSourceControlProvider.getRepositoryCloneUrls", () => {
       assert.strictEqual(
         SourceControlProvider.userFacingSourceControlDetail(notFound.cause),
         SourceControlProvider.repositoryNotFoundDetail("bedair81/missing"),
+      );
+
+      const forbiddenProvider = yield* makeProvider(() =>
+        Effect.fail(
+          new OriginCli.OriginCliError({
+            operation: "getRepositoryCloneUrls",
+            cwd: "/repo",
+            reason: "failed",
+            httpStatus: 403,
+            detail: "You do not have access to bedair81/mic-mute-tray on Origin.",
+          }),
+        ),
+      );
+
+      const forbidden = yield* Effect.flip(
+        forbiddenProvider.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "https://cursor.com/codebase/bedair81/mic-mute-tray/tree/main",
+        }),
+      );
+      assert.strictEqual(
+        SourceControlProvider.userFacingSourceControlDetail(forbidden.cause),
+        "Your Cursor account does not have access to bedair81/mic-mute-tray on Origin. Ask the repository owner for access and try again.",
       );
 
       const serverErrorProvider = yield* makeProvider(() =>
