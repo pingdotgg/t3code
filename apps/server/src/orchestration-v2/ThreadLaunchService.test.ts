@@ -32,6 +32,7 @@ import {
   TextGenerationError,
   ServerSettingsError,
   VcsProcessExitError,
+  ThreadTag,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -1355,6 +1356,24 @@ it.effect("records the checkout's branch on a root launch that names none", () =
     const threads = yield* ThreadManagement.ThreadManagementService;
     const { thread } = yield* threads.getThreadProjection(launched.threadId);
     assert.equal(thread.branch, "fix/checkout-total");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("creates a launched thread in the folders it names, with its first message", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const launched = yield* launches.launch({
+      ...launchInput({
+        command: "command:launch:tags",
+        thread: "thread:launch:tags",
+        message: "file this",
+      }),
+      tags: [ThreadTag.make("work")],
+    });
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const { thread } = yield* threads.getThreadProjection(launched.threadId);
+    assert.deepEqual(thread.tags, ["work"]);
   }).pipe(Effect.provide(harness.layer));
 });
 

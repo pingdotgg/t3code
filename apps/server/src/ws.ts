@@ -2285,6 +2285,7 @@ export const layerWsRpc = (
                           runtimeMode: input.runtimeMode,
                           interactionMode: input.interactionMode,
                           workspaceStrategy: input.workspaceStrategy,
+                          ...(input.tags === undefined ? {} : { tags: input.tags }),
                           ...(input.initialMessage === undefined
                             ? {}
                             : {

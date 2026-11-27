@@ -99,6 +99,7 @@ export interface CreateThreadInput extends CommandMetadata {
   readonly interactionMode: ProviderInteractionMode;
   readonly branch: string | null;
   readonly worktreePath: string | null;
+  readonly tags?: ReadonlyArray<string>;
 }
 
 export interface ThreadCommandInput extends CommandMetadata {
@@ -181,6 +182,7 @@ interface StartThreadBootstrap {
     readonly branch: string | null;
     readonly worktreePath: string | null;
     readonly createdAt: string;
+    readonly tags?: ReadonlyArray<string>;
   };
   readonly prepareWorktree?: {
     readonly requireWorktree?: boolean;
@@ -518,6 +520,7 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
     interactionMode: input.interactionMode,
     branch: input.branch,
     worktreePath: input.worktreePath,
+    ...(input.tags === undefined ? {} : { tags: input.tags }),
   });
 });
 
@@ -853,6 +856,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
       workspaceStrategy,
+      ...(bootstrap?.tags === undefined ? {} : { tags: bootstrap.tags }),
       initialMessage: {
         messageId: input.message.messageId,
         text: input.message.text,

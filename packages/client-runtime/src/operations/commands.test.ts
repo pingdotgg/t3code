@@ -290,12 +290,14 @@ describe("V2 environment commands", () => {
             branch: "feature",
             worktreePath: "/workspace/project-worktrees/feature",
             createdAt: "2026-06-20T00:00:00.000Z",
+            tags: ["work"],
           },
         },
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
       expect(launches[0]).toMatchObject({
         threadId: v2ThreadId,
+        tags: ["work"],
         title: "Continue here",
         generateTitle: true,
         workspaceStrategy: {
