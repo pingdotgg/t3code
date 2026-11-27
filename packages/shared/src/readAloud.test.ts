@@ -157,6 +157,21 @@ it("locates a spoken word by markdown range and by its repeats in the block", ()
   });
 });
 
+it("leaves rendered formulas out of the cues a renderer searches its text for", () => {
+  const markdown = "Predict the start of word $i$.";
+  const math = (tex: string) => (tex === "i" ? "i" : undefined);
+  const speech = readAloudSpeech(markdown, true, { math });
+  const formula = speech.text.lastIndexOf("i");
+  const position = readAloudPosition(speech, formula, formula + 1);
+  // The rendered paragraph's text ends "word ." since the formula shows as math.
+  expect(position?.block.last).toEqual({ text: ".", occurrence: 0 });
+  expect(position?.word.cue).toBeNull();
+  // Shown as TeX without math rendering, the formula is text like any other.
+  const plain = readAloudSpeech(markdown, true);
+  const tex = plain.text.indexOf("$i$");
+  expect(readAloudPosition(plain, tex, tex + 3)?.word.cue).toEqual({ text: "$i$", occurrence: 0 });
+});
+
 it("finds the block and word being read in text a renderer shows", () => {
   const markdown = [
     "# Plan",

@@ -33,6 +33,8 @@ export interface ReadAloudSpeech {
   /** The markdown offset of each UTF-16 unit of `text`, or -1 for punctuation added for speech. */
   readonly sources: ReadonlyArray<number>;
   readonly blocks: ReadonlyArray<ReadAloudBlock>;
+  /** Markdown ranges of formulas read as words; renderers show them as math, not as text. */
+  readonly formulas: ReadonlyArray<{ readonly start: number; readonly end: number }>;
 }
 
 type Run = { text: string; sources: number[] };
@@ -213,6 +215,16 @@ export function readAloudSpeech(
   let text = "";
   const sources: number[] = [];
   const blocks: ReadAloudBlock[] = [];
+  const formulas: Array<{ start: number; end: number }> = [];
+  // The formula's words, noting where it is when they replace what the reply shows.
+  const formula = (tex: string, node: Positioned) => {
+    const spoken = speakMath?.(tex);
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (spoken !== undefined && start !== undefined && end !== undefined)
+      formulas.push({ start, end });
+    return spoken ?? tex;
+  };
   const push = (run: Run) => {
     text += run.text;
     sources.push(...run.sources);
@@ -255,8 +267,7 @@ export function readAloudSpeech(
     if (node.type === "break") return added("\n");
     if (node.type === "html" || node.type === "image" || node.type === "imageReference")
       return added("");
-    if (node.type === "inlineMath")
-      return spread(` ${speakMath?.(node.value) ?? node.value} `, node);
+    if (node.type === "inlineMath") return spread(` ${formula(node.value, node)} `, node);
     // Files show as chips and bare addresses in full; both are read the way a person would say them.
     if (node.type === "inlineCode") {
       const path = inlineCodeFilePathCandidate(node.value);
@@ -292,7 +303,7 @@ export function readAloudSpeech(
         node,
       );
     else if (node.type === "math" || (speakMath && node.type === "code" && node.lang === "math"))
-      speak(spread(speakMath?.(node.value) ?? node.value, node), node);
+      speak(spread(formula(node.value, node), node), node);
     else if (node.type === "code") {
       // A diagram's source says nothing a listener can follow.
       if (!skipCodeBlocks && node.lang !== "mermaid")
@@ -305,7 +316,7 @@ export function readAloudSpeech(
       ? parseMarkdownWithMath(markdown)
       : parser.parse(markdown),
   );
-  return { text, sources, blocks };
+  return { text, sources, blocks, formulas };
 }
 
 export function readAloudText(markdown: string, skipCodeBlocks: boolean, words?: ReadAloudWords) {
@@ -377,7 +388,12 @@ export interface ReadAloudPosition {
     readonly first: ReadAloudCue;
     readonly last: ReadAloudCue;
   };
-  readonly word: { readonly start: number; readonly end: number; readonly cue: ReadAloudCue };
+  /** `cue` is null for a word spoken for a formula, which renderers show as math. */
+  readonly word: {
+    readonly start: number;
+    readonly end: number;
+    readonly cue: ReadAloudCue | null;
+  };
 }
 
 const occurrences = (text: string, find: string) => {
@@ -396,10 +412,17 @@ export function readAloudPosition(
     (entry) => spokenStart >= entry.spokenStart && spokenStart < entry.spokenEnd,
   );
   if (!block) return null;
+  // A rendered formula is no text a renderer can search, so cues leave its words out.
+  const shownAt = (index: number) => {
+    const source = speech.sources[index] ?? ADDED;
+    return (
+      source !== ADDED &&
+      !speech.formulas.some((range) => source >= range.start && source < range.end)
+    );
+  };
   const shown = (start: number, end: number) => {
     let result = "";
-    for (let index = start; index < end; index++)
-      if ((speech.sources[index] ?? ADDED) !== ADDED) result += speech.text[index];
+    for (let index = start; index < end; index++) if (shownAt(index)) result += speech.text[index];
     return result;
   };
   const cue = (start: number, end: number) => {
@@ -408,22 +431,25 @@ export function readAloudPosition(
       ? { text, occurrence: occurrences(shown(block.spokenStart, start), text) }
       : undefined;
   };
-  const words = [...speech.text.slice(block.spokenStart, block.spokenEnd).matchAll(/\S+/g)];
-  const first = words[0];
-  const last = words.at(-1);
-  const firstCue =
-    first &&
-    cue(block.spokenStart + first.index, block.spokenStart + first.index + first[0].length);
-  const lastCue =
-    last && cue(block.spokenStart + last.index, block.spokenStart + last.index + last[0].length);
-  const wordCue = cue(spokenStart, spokenEnd);
+  // The block's outermost words with shown text, past any formula at either end.
+  const cues = [...speech.text.slice(block.spokenStart, block.spokenEnd).matchAll(/\S+/g)]
+    .map((word) =>
+      cue(block.spokenStart + word.index, block.spokenStart + word.index + word[0].length),
+    )
+    .filter((entry) => entry !== undefined);
+  const firstCue = cues[0];
+  const lastCue = cues.at(-1);
   const wordSources = speech.sources
     .slice(spokenStart, spokenEnd)
     .filter((source) => source !== ADDED);
-  if (!firstCue || !lastCue || !wordCue || wordSources.length === 0) return null;
+  if (!firstCue || !lastCue || wordSources.length === 0) return null;
   return {
     block: { start: block.sourceStart, end: block.sourceEnd, first: firstCue, last: lastCue },
-    word: { start: Math.min(...wordSources), end: Math.max(...wordSources) + 1, cue: wordCue },
+    word: {
+      start: Math.min(...wordSources),
+      end: Math.max(...wordSources) + 1,
+      cue: cue(spokenStart, spokenEnd) ?? null,
+    },
   };
 }
 

@@ -162,25 +162,33 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
 const readAloudWords = vi.hoisted(() => ({
   emit: (_word: { start: number; end: number } | null) => {},
 }));
+// Words for formulas, as Speech Rule Engine says them, when a test renders math.
+const readAloudMath = vi.hoisted(() => ({
+  words: undefined as ((tex: string) => string | undefined) | undefined,
+}));
 vi.mock(import("../speech/readAloud"), async () => {
   const { createReadAloudController } = await import("@t3tools/client-runtime/read-aloud");
   return {
     warmReadAloud: () => {},
-    readAloudController: createReadAloudController(async () => {
-      const finished = Promise.withResolvers<void>();
-      return {
-        play: async () => {},
-        pause: () => {},
-        stop: () => finished.resolve(),
-        finished: finished.promise,
-        words: (listener) => {
-          readAloudWords.emit = listener;
-          return () => {
-            readAloudWords.emit = () => {};
-          };
-        },
-      };
-    }),
+    readAloudController: createReadAloudController(
+      async () => {
+        const finished = Promise.withResolvers<void>();
+        return {
+          play: async () => {},
+          pause: () => {},
+          stop: () => finished.resolve(),
+          finished: finished.promise,
+          words: (listener) => {
+            readAloudWords.emit = listener;
+            return () => {
+              readAloudWords.emit = () => {};
+            };
+          },
+        };
+      },
+      undefined,
+      () => readAloudMath.words,
+    ),
   };
 });
 
@@ -310,6 +318,39 @@ it("highlights the words of a block whose last word renders as a chip or with a 
   expect(await painted("This")).toEqual(["This"]);
   readAloudController.stop();
   await reading;
+});
+
+it("finds a paragraph whose last word is a rendered formula, not an earlier heading that starts alike", async () => {
+  settingsOverrides.mathRenderingEnabled = true;
+  const spokenMath: Record<string, string> = {
+    "L = \\sum_{i=1}^{n} (y_i - \\hat{y}_i)^2":
+      "L equals the sum from i equals 1 to n of open paren y sub i minus y hat sub i close paren squared",
+    n: "n",
+    "\\hat{y}_i": "y hat sub i",
+    i: "i",
+  };
+  readAloudMath.words = (tex) => spokenMath[tex];
+  const markdown =
+    "## The math behind the alignment\n\nThe aligner minimizes the squared error $L = \\sum_{i=1}^{n} (y_i - \\hat{y}_i)^2$ over $n$ samples, where $\\hat{y}_i$ is the predicted start of word $i$.";
+  await using _screen = await render(
+    <div ref={readAloudHighlightRoot("reply")}>
+      <ChatMarkdown cwd={undefined} text={markdown} />
+    </div>,
+  );
+  const reading = readAloudController.start("reply", markdown, {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+  });
+  await vi.waitFor(() => expect(readAloudController.getSnapshot().status).toBe("playing"));
+  const spoken = readAloudText(markdown, true, { math: readAloudMath.words });
+  const at = spoken.indexOf("The aligner");
+  await act(() => readAloudWords.emit({ start: at, end: at + 3 }));
+  const word = [...(CSS.highlights.get("t3-read-aloud-word") ?? [])][0];
+  expect(String(word)).toBe("The");
+  expect(word?.startContainer.parentElement?.tagName).toBe("P");
+  readAloudController.stop();
+  await reading;
+  readAloudMath.words = undefined;
 });
 
 function setup() {

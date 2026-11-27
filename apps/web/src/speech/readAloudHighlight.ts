@@ -137,7 +137,7 @@ function paint() {
   const text = spokenText(block);
   const first = locate(text, highlight.block.first);
   const last = locate(text, highlight.block.last);
-  const word = locate(text, highlight.word.cue);
+  const word = highlight.word.cue && locate(text, highlight.word.cue);
   const blockRange =
     first && last && first.start < last.end ? range(text, first.start, last.end) : null;
   if (blockRange) highlights.block.add(blockRange);
