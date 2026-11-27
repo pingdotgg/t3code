@@ -1514,9 +1514,16 @@ describe("AgentAwarenessRelay team notification gating", () => {
           assert.equal(liveRow?.updatedAt, jobState.updatedAt);
         }
 
-        // After the 60s TTL window, both synthetic notification rows are tombstoned cleanly
-        // without disturbing the real running thread row.
-        yield* TestClock.adjust("60 seconds");
+        // Delayed consumer verification beyond 60s (e.g. 2 minutes later): rows are still live
+        // in the relay store because the TTL spans the 5-minute async delivery window.
+        yield* TestClock.adjust("2 minutes");
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        assert.equal(publications.length, 3);
+
+        // After the full 5-minute TTL window, both synthetic notification rows are tombstoned
+        // cleanly without disturbing the real running thread row.
+        yield* TestClock.adjust("3 minutes");
         yield* Effect.yieldNow;
         yield* relay.drain;
         const tombstones = publications.slice(3);
@@ -1531,12 +1538,13 @@ describe("AgentAwarenessRelay team notification gating", () => {
   );
 
   it.effect(
-    "preserves waiting_for_approval while delivering queued-message push and skips completed/idle threads",
+    "caps concurrent synthetic rows during approval waits, flushes on revocation, and skips completed/idle threads",
     () =>
       Effect.gen(function* () {
+        let allowThread = true;
         const triggers = yield* PubSub.unbounded<TeamService.TeamNotificationTriggerEvent>();
         const teamService = {
-          shouldPublishRelayNotificationForThread: () => Effect.succeed(true),
+          shouldPublishRelayNotificationForThread: () => Effect.sync(() => allowThread),
           shouldPublishRelayQueuedMessageNotification: () => Effect.succeed(true),
           formatUpstreamCompatThreadTitle: (_threadId: ThreadId, title: string) =>
             Effect.succeed(`alice: ${title}`),
@@ -1557,6 +1565,9 @@ describe("AgentAwarenessRelay team notification gating", () => {
           teamService,
         });
 
+        const extractPublishedThreadId = (url: string) =>
+          decodeURIComponent(url.split("/threads/")[1]?.split("/")[0] ?? "");
+
         yield* relay.start();
         yield* Effect.yieldNow;
         yield* relay.publishThread(THREAD_ID);
@@ -1564,34 +1575,60 @@ describe("AgentAwarenessRelay team notification gating", () => {
         assert.equal(publications[0]?.state?.threadId, THREAD_ID);
         assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
 
-        // Queuing a message during waiting_for_approval publishes on a distinct synthetic row so
-        // the approval row stays untouched AND delayed consumers still deliver the queued alert.
-        yield* PubSub.publish(triggers, {
-          type: "queuedMessage",
-          threadId: THREAD_ID,
-          queuedRunId: "run-queued-during-approval",
-          senderMemberId: null,
-          senderPseudo: "bob",
-          recipientMemberIds: [],
-          messagePreview: "Wait for me",
-          createdAt: "2026-04-06T12:01:00.000Z",
-        });
+        // Queue 5 messages while the thread is awaiting approval: at most 2 synthetic rows stay
+        // live simultaneously (never filling the relay's 5-row aggregate or evicting the approval row).
+        for (let i = 1; i <= 5; i += 1) {
+          yield* PubSub.publish(triggers, {
+            type: "queuedMessage",
+            threadId: THREAD_ID,
+            queuedRunId: `run-queued-approval-${i}`,
+            senderMemberId: null,
+            senderPseudo: "bob",
+            recipientMemberIds: [],
+            messagePreview: `Wait #${i}`,
+            createdAt: `2026-04-06T12:0${i}:00.000Z`,
+          });
+        }
         yield* relay.publishThread(THREAD_ID);
         yield* Effect.yieldNow;
         yield* relay.drain;
 
-        assert.equal(publications.length, 2);
-        assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
-        assert.include(publications[1]?.state, {
-          threadId: ThreadId.make(`${THREAD_ID}:queued:run-queued-during-approval`),
-          threadTitle: "bob queued a message · alice: Deploy prod",
-          phase: "waiting_for_input",
-          deepLink: `/threads/${encodeURIComponent("relay-environment")}/${encodeURIComponent(THREAD_ID)}`,
-        });
+        // Reconstruct live relay rows at every step and confirm total live rows never exceeded 3
+        // (1 approval + at most 2 queued notifications) and the approval row was never evicted.
+        const liveRows = new Map<string, (typeof publications)[number]["state"]>();
+        let maxLiveRows = 0;
+        for (const pub of publications) {
+          const id = extractPublishedThreadId(pub.url);
+          if (pub.state === null) liveRows.delete(id);
+          else liveRows.set(id, pub.state);
+          maxLiveRows = Math.max(maxLiveRows, liveRows.size);
+        }
+        assert.isAtMost(maxLiveRows, 3);
+        assert.equal(liveRows.get(THREAD_ID)?.phase, "waiting_for_approval");
+        assert.isTrue(liveRows.has(`${THREAD_ID}:queued:run-queued-approval-4`));
+        assert.isTrue(liveRows.has(`${THREAD_ID}:queued:run-queued-approval-5`));
+
+        // Revoking access to the thread immediately tombstones its remaining synthetic rows
+        // without waiting for the 5-minute TTL.
+        const countBeforeRevoke = publications.length;
+        allowThread = false;
+        yield* relay.publishThread(THREAD_ID);
+        yield* relay.drain;
+        const revokeTombstones = publications
+          .slice(countBeforeRevoke)
+          .filter((entry) => entry.state === null)
+          .map((entry) => extractPublishedThreadId(entry.url))
+          .toSorted();
+        assert.deepEqual(revokeTombstones, [
+          `${THREAD_ID}:queued:run-queued-approval-4`,
+          `${THREAD_ID}:queued:run-queued-approval-5`,
+        ]);
 
         // Once the thread completes, late queued-message triggers are skipped so idle/completed
         // cards are never resurrected.
+        allowThread = true;
         currentShell = shell({ status: "completed", title: "Deploy prod" });
+        const countBeforeCompleted = publications.length;
         yield* PubSub.publish(triggers, {
           type: "queuedMessage",
           threadId: THREAD_ID,
@@ -1600,11 +1637,11 @@ describe("AgentAwarenessRelay team notification gating", () => {
           senderPseudo: "charlie",
           recipientMemberIds: [],
           messagePreview: "Too late",
-          createdAt: "2026-04-06T12:02:00.000Z",
+          createdAt: "2026-04-06T12:10:00.000Z",
         });
         yield* Effect.yieldNow;
         yield* relay.drain;
-        assert.equal(publications.length, 2);
+        assert.equal(publications.length, countBeforeCompleted);
       }),
   );
 });

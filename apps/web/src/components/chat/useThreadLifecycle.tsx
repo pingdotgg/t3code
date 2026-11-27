@@ -439,6 +439,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const handleStopBackgroundWork = async () => {
     if (
       isStoppingBackgroundWork ||
+      !canInterruptTurn ||
       !activeThread ||
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
     )
@@ -643,7 +644,8 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
           tasks: activeBackgroundTasks,
           turnItems,
           // Interrupt stops the active run first, not this work; the composer owns that Stop.
-          stopDisabled: runIsLive || !canOperateThread || isStoppingBackgroundWork,
+          stopDisabled:
+            runIsLive || !canOperateThread || !canInterruptTurn || isStoppingBackgroundWork,
           stopping: isStoppingBackgroundWork,
           onStop: handleStopBackgroundWorkStable,
           onOpenThread: onOpenRelatedThreadStable,

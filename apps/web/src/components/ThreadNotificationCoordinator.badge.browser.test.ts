@@ -983,4 +983,39 @@ it("notifies creator and active turn author on queued messages without duplicati
     ],
   });
   expect(TestNotification.sent).toHaveLength(1);
+
+  // Suspending Bob immediately closes his open queued-message notification and clears the badge.
+  state.teamStates.set("one", {
+    ...baseTeamState,
+    currentMember: { ...bob, status: "suspended" },
+    queuedMessageNotifications: [queuedNotification],
+  });
+  expect(TestNotification.sent[0]?.close).toHaveBeenCalledTimes(1);
+  expect(state.badge).toHaveBeenLastCalledWith(0);
+
+  // Re-activating Bob, receiving a new queued notification, and then losing thread access also clears it.
+  const secondNotification = {
+    threadId,
+    queuedRunId: "run-charlie-queued-2" as never,
+    senderMemberId: charlieId,
+    senderPseudo: "charlie" as never,
+    recipientMemberIds: [aliceId, bobId],
+    messagePreview: "Second update",
+    createdAt: "2026-09-13T07:03:00.000Z",
+  };
+  state.teamStates.set("one", {
+    ...baseTeamState,
+    queuedMessageNotifications: [queuedNotification, secondNotification],
+  });
+  expect(TestNotification.sent).toHaveLength(2);
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+
+  state.teamStates.set("one", {
+    ...baseTeamState,
+    threadAttributions: [],
+    attributionByThreadId: new Map(),
+    queuedMessageNotifications: [queuedNotification, secondNotification],
+  });
+  expect(TestNotification.sent[1]?.close).toHaveBeenCalledTimes(1);
+  expect(state.badge).toHaveBeenLastCalledWith(0);
 });
