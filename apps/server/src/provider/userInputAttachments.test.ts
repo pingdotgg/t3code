@@ -563,6 +563,8 @@ describe("question answer paths", () => {
             source: ["print(43 * 7)"],
             outputs: [
               { output_type: "stream", name: "stdout", text: "\u001b[32m301\u001b[0m\n" },
+              { output_type: "stream", name: "stdout", text: "Status: 10%" },
+              { output_type: "stream", name: "stdout", text: ["\r", "Status: Done\n"] },
               {
                 output_type: "stream",
                 name: "stderr",
@@ -648,6 +650,8 @@ describe("question answer paths", () => {
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Vessel: Larkspur");
       const extracted = NodeFS.readFileSync(`${path}.txt`, "utf8");
       expect(extracted).toContain("Output:\n301\n");
+      expect(extracted).toContain("301\nStatus: Done\n");
+      expect(extracted).not.toContain("Status: 10%");
       expect(extracted).toContain("100%|##########|\ndone\n");
       expect(extracted).not.toContain("10%|#");
       expect(extracted).toContain("42\nNext line");
