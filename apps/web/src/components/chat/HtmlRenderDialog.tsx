@@ -18,6 +18,7 @@ export function HtmlRenderDialog(props: {
   readonly src: string;
   readonly htmlRender: HtmlRenderReference;
   readonly threadRef?: ScopedThreadRef | undefined;
+  readonly formStateKey: string;
   readonly onClose: () => void;
 }) {
   const gt = useGT();
@@ -66,6 +67,7 @@ export function HtmlRenderDialog(props: {
                   src={props.src}
                   title={title}
                   threadRef={props.threadRef}
+                  formStateKey={props.formStateKey}
                   className="block size-full"
                   onContentHeight={setContentHeight}
                 />
