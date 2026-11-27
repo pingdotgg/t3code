@@ -318,8 +318,8 @@ export function makeAntigravityAcpAdapterFlavor(
     ...(profileDirectory === undefined
       ? {}
       : {
-          watchPromptOutcome: (sessionId: string) =>
-            watchAntigravityPromptOutcome(profileDirectory, sessionId),
+          watchPromptOutcome: (sessionId: string, textOnly: boolean) =>
+            watchAntigravityPromptOutcome(profileDirectory, sessionId, textOnly),
           subagentsOutlivingPrompt: ({ sessionId, nativeTaskIds }) =>
             readAntigravityChildrenAtWork({
               profileDirectory,

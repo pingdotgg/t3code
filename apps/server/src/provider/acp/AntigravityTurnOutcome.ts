@@ -15,6 +15,7 @@ import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityPro
 
 // CORTEX_STEP_TYPE_ERROR_MESSAGE in the native trajectory.
 const ERROR_STEP_TYPE = 17;
+const USER_INPUT_STEP_TYPE = 14;
 // CORTEX_STEP_TYPE_PLANNER_RESPONSE: the model answered within this turn.
 const PLANNER_RESPONSE_STEP_TYPE = 15;
 // The harness error text leads the payload; a Go stack trace follows it.
@@ -77,6 +78,7 @@ interface LastStep {
   readonly type: number;
   readonly payload: Uint8Array | null;
   readonly reachedModel: boolean;
+  readonly repeatedMediaError: boolean;
 }
 
 class AntigravitySessionLogError extends Schema.TaggedError<AntigravitySessionLogError>()(
@@ -113,12 +115,24 @@ const lastStepIndex = (database: NodeSqlite.DatabaseSync) => {
   return typeof index === "number" ? index : -1;
 };
 
+function isMalformedMediaError(payload: unknown) {
+  if (!(payload instanceof Uint8Array)) return false;
+  const text = new TextDecoder().decode(payload);
+  const error = API_ERROR.exec(text) ?? statusError(text);
+  return (
+    error?.[1] === "400" &&
+    error[3] === "INVALID_ARGUMENT" &&
+    error[2]?.trim() ===
+      "Unable to process input: the file or media data is empty, corrupted, or malformed."
+  );
+}
+
 const lastStepAfter =
-  (index: number) =>
+  (index: number, textOnly: boolean) =>
   (database: NodeSqlite.DatabaseSync): LastStep | undefined => {
     const row = database
       .prepare(
-        `SELECT step_type AS type, substr(step_payload, 1, ?) AS payload
+        `SELECT idx, step_type AS type, substr(step_payload, 1, ?) AS payload
          FROM steps WHERE idx > ? ORDER BY idx DESC LIMIT 1`,
       )
       .get(MAX_ERROR_PAYLOAD_BYTES, index);
@@ -127,7 +141,29 @@ const lastStepAfter =
       database
         .prepare("SELECT 1 FROM steps WHERE idx > ? AND step_type = ? LIMIT 1")
         .get(index, PLANNER_RESPONSE_STEP_TYPE) !== undefined;
+    // Only a text-only retry that fails before any tool or model step implicates saved history.
+    let repeatedMediaError = false;
+    if (
+      textOnly &&
+      typeof row.idx === "number" &&
+      row.type === ERROR_STEP_TYPE &&
+      isMalformedMediaError(row.payload)
+    ) {
+      const [input, previous] = database
+        .prepare(
+          `SELECT idx, step_type AS type,
+                CASE WHEN step_type = ? THEN substr(step_payload, 1, ?) END AS payload
+         FROM steps WHERE idx < ? ORDER BY idx DESC LIMIT 2`,
+        )
+        .all(ERROR_STEP_TYPE, MAX_ERROR_PAYLOAD_BYTES, row.idx);
+      repeatedMediaError =
+        input?.type === USER_INPUT_STEP_TYPE &&
+        previous?.idx === index &&
+        previous.type === ERROR_STEP_TYPE &&
+        isMalformedMediaError(previous.payload);
+    }
     return {
+      repeatedMediaError,
       type: row.type,
       payload: row.payload instanceof Uint8Array ? row.payload : null,
       reachedModel,
@@ -228,13 +264,13 @@ function turnFailure(
       }),
     );
   }
-  if (INVALID_THINKING_SIGNATURE.test(text)) {
+  if (step?.repeatedMediaError || INVALID_THINKING_SIGNATURE.test(text)) {
     return {
       failure: makeProviderFailure({
         class: "provider_error",
         message:
-          "Antigravity's saved conversation can no longer be sent to the model. The next message starts a fresh Antigravity session with this thread's context.",
-        code: "INVALID_THINKING_SIGNATURE",
+          "Antigravity's saved conversation can no longer be sent to the model. Once any background work finishes, the next message starts a fresh Antigravity session with this thread's context.",
+        code: step?.repeatedMediaError ? "INVALID_ARGUMENT" : "INVALID_THINKING_SIGNATURE",
         retryable: true,
       }),
       threadDisposition: "broken",
@@ -287,6 +323,7 @@ const conversationSegments = ["antigravity-acp", "conversations"];
 export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.watch")(function* (
   profileDirectory: string,
   sessionId: string,
+  textOnly = false,
 ) {
   const typedOnly = (result: EffectAcpSchema.PromptResponse) =>
     DateTime.now.pipe(Effect.map((now) => turnFailure(result.stopReason, undefined, now)));
@@ -340,7 +377,7 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
       (before.identity === undefined ||
         (after.info.dev === before.identity.dev && after.info.ino === before.identity.ino));
     const step = sameFile
-      ? yield* readSteps(after.path, lastStepAfter(startIndex)).pipe(
+      ? yield* readSteps(after.path, lastStepAfter(startIndex, textOnly)).pipe(
           Effect.tapError(() =>
             Effect.logWarning("Could not read the Antigravity session log after the prompt."),
           ),

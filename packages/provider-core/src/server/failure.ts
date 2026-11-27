@@ -38,6 +38,15 @@ export class ContextHandoffBackgroundWorkError extends Schema.TaggedError<Contex
   }
 }
 
+export class SessionReplacementBackgroundWorkError extends Schema.TaggedError<SessionReplacementBackgroundWorkError>()(
+  "SessionReplacementBackgroundWorkError",
+  {},
+) {
+  override get message() {
+    return "Background work is still running in this thread, so T3 cannot start a fresh provider session. Wait for it to finish or select Stop in the thread's background work panel, then retry your message.";
+  }
+}
+
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
@@ -133,6 +142,11 @@ function curatedCauseMessages(cause: unknown): {
         case "ContextHandoffBackgroundWorkError":
           return {
             known: new ContextHandoffBackgroundWorkError().message,
+            category: categoryMessage(),
+          };
+        case "SessionReplacementBackgroundWorkError":
+          return {
+            known: new SessionReplacementBackgroundWorkError().message,
             category: categoryMessage(),
           };
         case "AcpModelSelectionError":

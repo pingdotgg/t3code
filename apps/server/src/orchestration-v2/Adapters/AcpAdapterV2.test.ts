@@ -84,6 +84,7 @@ import {
   registerXAiBackgroundTaskTracking,
 } from "@t3tools/provider-grok/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { knownProviderFailureMessage } from "@t3tools/provider-core/server/failure";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -10713,6 +10714,10 @@ describe("AcpAdapterV2", () => {
           })
           .pipe(Effect.flip);
         assert.equal(refusedReplacement._tag, "ProviderAdapterEnsureThreadError");
+        assert.equal(
+          knownProviderFailureMessage(refusedReplacement),
+          "Background work is still running in this thread, so T3 cannot start a fresh provider session. Wait for it to finish or select Stop in the thread's background work panel, then retry your message.",
+        );
         const preserved = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
         assert.equal(preserved.nativeThreadRef?.nativeId, providerThread.nativeThreadRef?.nativeId);
         assert.isTrue(yield* hasPendingBackgroundWork);

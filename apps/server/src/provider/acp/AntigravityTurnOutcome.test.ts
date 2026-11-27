@@ -13,6 +13,7 @@ import { watchAntigravityPromptOutcome } from "./AntigravityTurnOutcome.ts";
 const USER_INPUT = 14;
 const PLANNER_RESPONSE = 15;
 const TOOL = 8;
+const FILE_READ = 132;
 const ERROR_MESSAGE = 17;
 
 // Error-step payloads trimmed from Antigravity 1.4.5 against a local Gemini endpoint.
@@ -125,10 +126,14 @@ describe("watchAntigravityPromptOutcome", () => {
       const turn = (
         steps: ReadonlyArray<readonly [number, Uint8Array]>,
         result: EffectAcpSchema.PromptResponse = { stopReason: "end_turn" },
-        options?: { readonly retired?: boolean },
+        options?: { readonly retired?: boolean; readonly textOnly?: boolean },
       ) =>
         Effect.gen(function* () {
-          const check = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
+          const check = yield* watchAntigravityPromptOutcome(
+            profileDirectory,
+            sessionId,
+            options?.textOnly,
+          );
           appendSteps(steps);
           return yield* check(result, options);
         });
@@ -262,6 +267,47 @@ describe("watchAntigravityPromptOutcome", () => {
         ]))?.failure.retryable,
         false,
       );
+      // The native log records a failed image read, then just user input and the same error on retry.
+      const mediaError =
+        "INVALID_ARGUMENT (code 400): Unable to process input: the file or media data is empty, corrupted, or malformed.";
+      const mediaTurn = (
+        textOnly: boolean,
+        steps: ReadonlyArray<readonly [number, Uint8Array]> = [],
+      ) =>
+        turn(
+          [
+            [USER_INPUT, input],
+            ...steps,
+            [
+              ERROR_MESSAGE,
+              Buffer.from(`${mediaError}\u001aHTTP 400 Bad Request\nTraceID: ${nextIndex}`),
+            ],
+          ],
+          undefined,
+          { textOnly },
+        );
+      assert.equal(
+        (yield* mediaTurn(true, [[FILE_READ, Buffer.from("Read photo.jpg")]]))?.threadDisposition,
+        "reusable",
+      );
+      assert.isUndefined(
+        yield* turn(
+          [
+            [USER_INPUT, input],
+            [PLANNER_RESPONSE, reply],
+          ],
+          undefined,
+          { textOnly: true },
+        ),
+      );
+      assert.equal((yield* mediaTurn(true))?.threadDisposition, "reusable");
+      // A new attachment or tool read can introduce a different bad image.
+      assert.equal((yield* mediaTurn(false))?.threadDisposition, "reusable");
+      assert.equal(
+        (yield* mediaTurn(true, [[FILE_READ, Buffer.from("Read another.jpg")]]))?.threadDisposition,
+        "reusable",
+      );
+      assert.equal((yield* mediaTurn(true))?.threadDisposition, "broken");
       // Google account verification errors surface the verified continuation link on both
       // pretty-printed and compact HTTP bodies, while rejecting untrusted or malformed URLs.
       for (const [url, compact, accepted] of [
