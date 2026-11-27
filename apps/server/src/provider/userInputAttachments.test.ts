@@ -1568,6 +1568,25 @@ describe("question answer paths", () => {
           ext: "odt",
           bounded: true,
           parts: {
+            "content.xml": [
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:other="urn:example:metadata"><office:body><office:text>',
+              '<text:p>Use the <text:hidden-text text:is-hidden="true" text:string-value="obsolete west or ">obsolete west or </text:hidden-text><text:hidden-text text:string-value="north"/><text:s/>entrance.</text:p>',
+              '<text:p><text:span><t:hidden-text xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" t:is-hidden=" &#x9;1 ">Retired</t:hidden-text></text:span>Bring your <text:hidden-text text:is-hidden="0">badge</text:hidden-text>.</text:p>',
+              '<text:p><text:hidden-text text:is-hidden="false" text:string-value="Visitor parking" other:string-value="Foreign value">Obsolete parking</text:hidden-text>.</text:p>',
+              '<text:p>Loading <text:hidden-text other:is-hidden="true" other:string-value="Foreign value">dock</text:hidden-text>.</text:p>',
+              '<text:p><other:hidden-text text:is-hidden="true" text:string-value="Foreign value">Emergency contacts</other:hidden-text>.</text:p>',
+              '<text:p><text:hidden-text text:string-value="">Unused content</text:hidden-text>Current instructions.</text:p>',
+              "</office:text></office:body></office:document-content>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "Use the north entrance.\nBring your badge.\nVisitor parking.\nLoading dock.\nEmergency contacts.\nCurrent instructions.",
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
             "content.xml":
               "<document><text><tracked-changes><changed-region><deletion><change-info><creator>Reviewer</creator></change-info><p>$500</p></deletion></changed-region></tracked-changes><p>Fee <change/>$700</p></text></document>",
           },

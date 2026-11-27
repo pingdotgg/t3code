@@ -157,6 +157,22 @@ function namespaceOf(tagName: string, scope: readonly XmlNode[]) {
   return scope.findLast((node) => Object.hasOwn(node.attrs, binding))?.attrs[binding];
 }
 
+function odfTextAttribute(
+  attributes: Record<string, string>,
+  localName: string,
+  scope: readonly XmlNode[],
+) {
+  return Object.entries(attributes).find(
+    ([name]) => name.endsWith(`:${localName}`) && namespaceOf(name, scope) === ODF_TEXT_NS,
+  )?.[1];
+}
+
+function isHiddenOdfField(attributes: Record<string, string>, scope: readonly XmlNode[]) {
+  return /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u.test(
+    odfTextAttribute(attributes, "is-hidden", scope) ?? "",
+  );
+}
+
 function isHiddenOdfSection(
   tagName: string,
   attributes: Record<string, string>,
@@ -262,10 +278,7 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
       );
       // A visible field keeps the paragraph visible even if another field hides it.
       if (paragraph && paragraph.odfParagraphHidden !== false) {
-        const visibility = Object.entries(tag.attributes).find(
-          ([name]) => name.endsWith(":is-hidden") && namespaceOf(name, stack) === ODF_TEXT_NS,
-        )?.[1];
-        paragraph.odfParagraphHidden = /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u.test(visibility ?? "");
+        paragraph.odfParagraphHidden = isHiddenOdfField(tag.attributes, stack);
       }
     }
     if (
@@ -289,6 +302,10 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    const isOdfHiddenText =
+      extension === ".odt" &&
+      node.name === "hidden-text" &&
+      namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS;
     if (extension === ".pptx" && node.name === "cNvPr") {
       const hidden = tag.attributes.hidden?.trim();
       const drawing = stack.at(-2);
@@ -347,6 +364,7 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
       (extension === ".docx" && node.name === "del") ||
       wordRunHidden ||
       (odf && node.name === "annotation" && parent.name !== "semantics") ||
+      (isOdfHiddenText && isHiddenOdfField(tag.attributes, [...stack, node])) ||
       (extension === ".odt" &&
         node.name === "section" &&
         isHiddenOdfSection(tag.name, tag.attributes, [...stack, node])) ||
@@ -384,6 +402,14 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
       if (citation?.hasText && body?.hasText) {
         body.odfInlineParagraphs = true;
         node.children = ["[", citation, ": ", body, "]"];
+      }
+    }
+    if (isOdfHiddenText) {
+      // ODF stores the visible field value in text:string-value when present.
+      const value = odfTextAttribute(tag.attributes, "string-value", [...stack, node]);
+      if (value !== undefined) {
+        node.children = [value];
+        node.hasText = value.trim() !== "";
       }
     }
     if (odf && node.name === "ruby" && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) {
