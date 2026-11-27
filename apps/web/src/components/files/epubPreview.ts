@@ -178,7 +178,12 @@ const shortTitle = (value: string) =>
 async function readXmlText(archive: JSZip, path: string) {
   const bytes = await archive.file(path)?.async("uint8array");
   if (!bytes || bytes.length > 8 * 1024 * 1024) throw new PreviewError({ code: "xml-invalid" });
-  return officeXmlDecoder(bytes).decode(bytes);
+  try {
+    return officeXmlDecoder(bytes).decode(bytes);
+  } catch (cause) {
+    if (cause instanceof RangeError) throw new PreviewError({ code: "xml-invalid" });
+    throw cause;
+  }
 }
 
 async function readChapter(archive: JSZip, path: string, mime: string): Promise<XmlNode> {
@@ -283,41 +288,51 @@ export async function openEpub(archive: JSZip) {
 
   const manifest = new Map(find(packageRoot, "item").map((item) => [item.attrs.id, item.attrs]));
   const media = new Map<string, string>();
-  for (const item of manifest.values()) {
+  const spineSources = new Map<string, { path: string; mime: string } | null>();
+  for (const [id, item] of manifest) {
     const path = localPath(archive, rootfile, item.href ?? "");
-    if (path && item["media-type"]) media.set(path, item["media-type"]);
+    const mime = item["media-type"];
+    if (path && mime) {
+      media.set(path, mime);
+      if (
+        id &&
+        (xhtmlTypes.has(mime) || mime === "image/svg+xml" || Object.values(images).includes(mime))
+      )
+        spineSources.set(id, { path, mime });
+    }
+  }
+  function resolveSpineSource(id: string | undefined) {
+    const visited = new Set<string>();
+    let source = null;
+    while (id && !visited.has(id)) {
+      const cached = spineSources.get(id);
+      if (cached !== undefined) {
+        source = cached;
+        break;
+      }
+      visited.add(id);
+      id = manifest.get(id)?.fallback;
+    }
+    for (const id of visited) spineSources.set(id, source);
+    return source;
   }
   const layout = find(packageRoot, "meta").find(
     (node) => node.attrs.property === "rendition:layout",
   );
   const fixed = layout ? text(layout).trim() === "pre-paginated" : false;
   const chapters = refs.flatMap(({ attrs }) => {
-    let id = attrs.idref;
-    const visited = new Set<string>();
-    while (id && !visited.has(id)) {
-      visited.add(id);
-      const item = manifest.get(id);
-      if (!item) break;
-      const path = localPath(archive, rootfile, item.href ?? "");
-      const mime = item["media-type"] ?? "";
-      if (
-        path &&
-        (xhtmlTypes.has(mime) || mime === "image/svg+xml" || Object.values(images).includes(mime))
-      )
-        return [
-          {
-            path,
-            mime,
-            linear: attrs.linear !== "no",
-            fixed: attrs.properties?.split(/\s+/).includes("rendition:layout-reflowable")
-              ? false
-              : fixed ||
-                !!attrs.properties?.split(/\s+/).includes("rendition:layout-pre-paginated"),
-          },
-        ];
-      id = item.fallback;
-    }
-    return [];
+    const source = resolveSpineSource(attrs.idref);
+    if (!source) return [];
+    const properties = attrs.properties?.split(/\s+/) ?? [];
+    return [
+      {
+        ...source,
+        linear: attrs.linear !== "no",
+        fixed:
+          !properties.includes("rendition:layout-reflowable") &&
+          (fixed || properties.includes("rendition:layout-pre-paginated")),
+      },
+    ];
   });
   if (!chapters.length) throw new PreviewError({ code: "epub-no-chapters" });
 
@@ -566,7 +581,10 @@ export async function openEpub(archive: JSZip) {
         const href = match[1] ?? match[2] ?? match[3];
         if (href === undefined || href.startsWith("#")) continue;
         const data = /^data:/i.test(href)
-          ? embeddedAsset(href.replace(/\\(?:\r\n|[\r\n\f])/g, ""), "font")
+          ? embeddedAsset(
+              href.replace(/\\(?:\r\n|[\r\n\f])/g, ""),
+              /^data:image\//i.test(href) ? "raster" : "font",
+            )
           : await resource(localPath(archive, base, href));
         result += bounded(
           css.slice(end, match.index) + (data ? `url("${data}")` : "url(about:blank)"),
@@ -785,8 +803,7 @@ export async function openEpub(archive: JSZip) {
       }
       // XHTML producers also place styles in the body. Keep the cascade in source order.
       if (body)
-        for (const tag of ["style", "svg:style"])
-          for (const node of find(body, tag)) await addStyle(text(node), path, node.attrs.media);
+        for (const node of find(body, "style")) await addStyle(text(node), path, node.attrs.media);
       const title = [...(head ? find(head, "title") : []), ...find(body ?? root, "h1")]
         .map((heading) => shortTitle(text(heading)))
         .find(Boolean);

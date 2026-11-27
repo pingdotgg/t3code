@@ -2288,13 +2288,18 @@ it("renders EPUB publisher styles and follows an anchored link to a fixed-layout
         </fieldset>
       </form>
       <table border="0" cellpadding="0" cellspacing="0"><tr><td align="center" valign="top">Value</td></tr></table>
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20">
+        <style>#swatch { fill: red; }</style><rect id="swatch" width="20" height="20"/>
+      </svg>
+      <style>#swatch { fill: blue; }</style>
     </section></body></html>`,
     )
     .file(
       "OPS/styles/book.css",
       `@import "accent.css";
       @namespace epub "http://www.idpf.org/2007/ops";
-      section[epub|type="chapter"] { background-image: url("../illustration.svg"); }`,
+      section[epub|type="chapter"] { background-image: url("../illustration.svg"); }
+      #opening { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=="); }`,
     )
     .file("OPS/styles/accent.css", "\uFEFF#opening { color: rgb(30, 45, 60); }")
     .file(
@@ -2389,6 +2394,12 @@ it("renders EPUB publisher styles and follows an anchored link to a fixed-layout
     ).toBeNull();
     expect(doc!.defaultView!.getComputedStyle(doc!.querySelector("#opening")!).color).toBe(
       "rgb(30, 45, 60)",
+    );
+    expect(
+      doc!.defaultView!.getComputedStyle(doc!.querySelector("#opening")!).backgroundImage,
+    ).toContain("blob:");
+    expect(doc!.defaultView!.getComputedStyle(doc!.querySelector("#swatch")!).fill).toBe(
+      "rgb(0, 0, 255)",
     );
     expect(
       doc!.defaultView!.getComputedStyle(doc!.querySelector("section")!).backgroundImage,

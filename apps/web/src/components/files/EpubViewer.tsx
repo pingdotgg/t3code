@@ -259,7 +259,9 @@ export default function EpubViewer(props: {
           <p className="text-sm font-medium">
             <T>No preview for this file</T>
           </p>
-          <p className="max-w-sm text-xs text-muted-foreground">{previewFailureText(result)}</p>
+          <p className="max-w-sm text-xs text-muted-foreground">
+            {previewFailureText(result, messages)}
+          </p>
         </div>
       ) : (
         <FileSurfaceLoading />

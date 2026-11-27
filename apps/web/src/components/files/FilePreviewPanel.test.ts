@@ -1,6 +1,7 @@
 import JSZip from "jszip";
 import { openRtf, openNotebook, openDocument } from "./extendedDocumentPreview";
 import { openEpub } from "./epubPreview";
+import { parseXml } from "./documentPreviewXml";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ProjectReadFileError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -766,6 +767,44 @@ Third}`;
     expect(image.headers.get("Content-Type")).toBe("image/png");
     for (const url of [...first.assets, ...second.assets]) URL.revokeObjectURL(url);
     expect(second.html).not.toMatch(/https:|script|alert/);
+  });
+
+  it("resolves shared EPUB spine fallbacks and skips unreadable optional navigation", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        `<package><manifest>
+          <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+          <item id="cover" fallback="shared"/>
+          <item id="chapter" fallback="shared"/>
+          <item id="shared" fallback="text"/>
+          <item id="text" href="text.xhtml" media-type="application/xhtml+xml"/>
+          <item id="cycle-a" fallback="cycle-b"/>
+          <item id="cycle-b" fallback="cycle-a"/>
+        </manifest><spine toc="ncx">
+          <itemref idref="cover" linear="no"/>
+          <itemref idref="cycle-a"/>
+          <itemref idref="cycle-b"/>
+          <itemref idref="chapter"/>
+        </spine></package>`,
+      )
+      .file("toc.ncx", '<?xml version="1.0" encoding="unknown-encoding"?><ncx/>')
+      .file("text.xhtml", "<html><body><h1>Readable chapter</h1></body></html>");
+    const book = await openEpub(archive);
+    expect(book.contents).toEqual([]);
+    expect(book.first).toBe(1);
+    expect(book.chapters.map(({ linear }) => linear)).toEqual([false, true]);
+    expect((await book.page(1)).title).toBe("Readable chapter");
+  });
+
+  it("reports excessive document nesting through the preview error code", () => {
+    expect(() => parseXml("<section>".repeat(104) + "text" + "</section>".repeat(104))).toThrow(
+      expect.objectContaining({ code: "xml-too-deep" }),
+    );
   });
 
   it("preserves the SVG filters used by EPUB artwork", async () => {

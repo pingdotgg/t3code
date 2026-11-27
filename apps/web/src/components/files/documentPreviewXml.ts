@@ -60,7 +60,14 @@ export function parseXml(source: string): XmlNode {
     parseTagValue: false,
     cdataPropName: "#cdata",
   });
-  const ordered = parser.parse(source) as OrderedXml[];
+  let ordered: OrderedXml[];
+  try {
+    ordered = parser.parse(source) as OrderedXml[];
+  } catch (cause) {
+    if (cause instanceof Error && cause.message === "Maximum nested tags exceeded")
+      throw new PreviewError({ code: "xml-too-deep" });
+    throw cause;
+  }
   let count = 0;
   function convert(
     items: OrderedXml[],
