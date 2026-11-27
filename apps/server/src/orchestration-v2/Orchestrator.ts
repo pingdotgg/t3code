@@ -4823,7 +4823,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           thread.settleWhenDone?.runId !== expected.runId ||
           thread.settleWhenDone.requestedAt !== expected.requestedAt ||
-          requestedRun === undefined ||
+          requestedRun === undefined
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "The response or its settlement request changed before completion.",
+          });
+        }
+        const superseded =
           newWork ||
           (shell?.latestUserAuthoredMessageAt != null &&
             DateTime.toEpochMillis(shell.latestUserAuthoredMessageAt) >
@@ -4832,14 +4840,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (link) =>
               link.watch !== undefined &&
               Date.parse(link.watch.startedAt) >= Date.parse(expected.requestedAt),
-          )
-        ) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "The response or its settlement request changed before completion.",
-          });
-        }
+          );
         const continuedRunIds = new Set(work.map((run) => run.restartContinuationOfRunId));
         const unsuccessful = work.filter(
           (run) =>
@@ -4849,9 +4850,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             !(run.id !== expected.runId && cancelledBeforeStart(run)) &&
             !continuedRunIds.has(run.id),
         );
-        if (unsuccessful.length > 0) {
+        if (superseded || unsuccessful.length > 0) {
           // Startup persists this outbox entry before publishing the interrupted run.
           if (
+            !superseded &&
             (yield* Effect.forEach(unsuccessful, awaitsRestartContinuation).pipe(
               mapDispatchError(command),
             )).some(Boolean)
@@ -12003,18 +12005,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(answers === undefined ? {} : { answers }),
       };
       const emitEvent = emit(events, command);
-      if (runtimeRequest.kind === "user_input" || command.feedback !== undefined) {
-        const thread = yield* projectionStore
-          .getThread(command.threadId)
-          .pipe(mapDispatchError(command));
-        if (thread.settleWhenDone != null) {
-          yield* emitEvent({
-            type: "thread.metadata-updated",
-            threadId: command.threadId,
-            occurredAt: now,
-            payload: { ...thread, settleWhenDone: null, updatedAt: now },
-          });
-        }
+      let respondingThread =
+        runtimeRequest.kind === "user_input" || command.feedback !== undefined
+          ? yield* projectionStore.getThread(command.threadId).pipe(mapDispatchError(command))
+          : undefined;
+      if (respondingThread?.settleWhenDone != null) {
+        respondingThread = { ...respondingThread, settleWhenDone: null, updatedAt: now };
+        yield* emitEvent({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: now,
+          payload: respondingThread,
+        });
       }
       const requestNode = context.node;
       if (command.feedback !== undefined) {
@@ -12200,19 +12202,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* recordSubagentFollowup(answer, events).pipe(mapDispatchError(answer));
       }
       if (providerSessionId === null) return;
-      if (runtimeRequest.kind === "user_input" && resolvedNodeStatus === "completed") {
-        const thread = yield* projectionStore
-          .getThread(command.threadId)
-          .pipe(mapDispatchError(command));
-        if (thread.snoozedUntil != null) {
-          yield* emitEvent({
-            type: "thread.unsnoozed",
-            threadId: command.threadId,
-            providerInstanceId: thread.providerInstanceId,
-            occurredAt: now,
-            payload: { ...thread, snoozedUntil: null, snoozedAt: null, updatedAt: now },
-          });
-        }
+      if (
+        runtimeRequest.kind === "user_input" &&
+        resolvedNodeStatus === "completed" &&
+        respondingThread?.snoozedUntil != null
+      ) {
+        yield* emitEvent({
+          type: "thread.unsnoozed",
+          threadId: command.threadId,
+          providerInstanceId: respondingThread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...respondingThread, snoozedUntil: null, snoozedAt: null, updatedAt: now },
+        });
       }
       yield* Ref.update(effects, (existing) => [
         ...existing,

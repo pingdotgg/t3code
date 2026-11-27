@@ -49,7 +49,7 @@ Enable **Settings → Labs → Boring sidebar (group by project)** on web/deskto
 
 > Tip: If a scheduled task targets a thread, settle it instead of archiving—archiving causes scheduled runs to fail.
 
-While a response is running, choose **Settle when done** to move the thread to Settled after the response and its delegated follow-up work finish. A clock beside the thread shows the pending request. Choose **Cancel settle when done** to keep it active. A failed, stopped, or rolled-back response cancels the request, as does a new PR watch. New input also cancels it, including question answers, approval feedback, messages from agents, and an agent's continuation after a workspace change. Request it again after sending input if you still want the thread to settle. Delegated completion messages and server restart recovery keep the request. Send or remove queued input before enabling it.
+While a response is running, choose **Settle when done** to move the thread to Settled after the response and its delegated follow-up work finish. A clock beside the thread shows the pending request. Choose **Cancel settle when done** to keep it active. A failed, stopped, or rolled-back response cancels the request, as does a new PR watch. New input also cancels it, including question answers or dismissals, approval feedback, messages from agents, and an agent's continuation after a workspace change. Request it again after sending input if you still want the thread to settle. Delegated completion messages and server restart recovery keep the request. Active programs in the thread's terminal keep it pending. Send or remove queued input before enabling it.
 
 ### Settlement rules and hooks
 

@@ -3305,6 +3305,7 @@ it.effect.each([
   { status: "completed", followup: "older-delivery" },
   { status: "completed", followup: "native-answer" },
   { status: "completed", followup: "new-watch" },
+  { status: "failed", followup: "unclassified" },
   { status: "completed", followup: "compaction" },
   { status: "completed", followup: "held-wake" },
   { status: "failed", followup: "held-wake" },
@@ -3509,6 +3510,12 @@ it.effect.each([
           },
         });
         yield* orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make("settle-native-answer-snooze"),
+          threadId,
+          snoozedUntil: "2099-07-25T09:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
           type: "runtime-request.respond",
           commandId: CommandId.make("settle-native-answer"),
           threadId,
@@ -3654,7 +3661,7 @@ it.effect.each([
                   taskIds: [NodeId.make("task:completion")],
                 },
               }
-            : followup === "compaction"
+            : followup === "compaction" || followup === "unclassified"
               ? {}
               : {
                   notification: {

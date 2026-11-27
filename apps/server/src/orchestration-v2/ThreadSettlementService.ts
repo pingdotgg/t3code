@@ -410,7 +410,11 @@ export const make = Effect.gen(function* () {
               (thread.pendingGuestMessageCount ?? 0) > 0)
           )
             return;
-          if (yield* terminals.hasActiveSubprocess({ threadId: thread.id })) return;
+          if (
+            thread.status === "completed" &&
+            (yield* terminals.hasActiveSubprocess({ threadId: thread.id }))
+          )
+            return;
           const sequence = yield* orchestrator.getThreadEventSequence(thread.id);
           yield* orchestrator.dispatch({
             type: "thread.settle",
@@ -423,6 +427,14 @@ export const make = Effect.gen(function* () {
             OrchestratorDispatchError: () => Effect.void,
             OrchestratorCommandPreviouslyRejectedError: () => Effect.void,
           }),
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("requested thread settlement skipped", {
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              }),
+          ),
         ),
       { concurrency: 4, discard: true },
     );

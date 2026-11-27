@@ -2663,11 +2663,54 @@ describe("isSnoozed", () => {
   });
 });
 
+it.effect("settle when done isolates a failing thread from automatic settlement", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const armed = makeThread("broken-explicit", {
+      status: "completed",
+      settleWhenDone: { runId: RunId.make("requested-run"), requestedAt: NOW },
+    });
+    const automatic = makeThread("automatic-after-broken", {
+      updatedAt: at(-10 * DAY_MS),
+      latestUserMessageAt: at(-10 * DAY_MS),
+      latestRunCompletedAt: at(-10 * DAY_MS),
+    });
+    const h = yield* makeHarness({
+      snapshot: makeSnapshot([armed, automatic]),
+      settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 1 },
+      hasActiveSubprocess: ({ threadId }) =>
+        threadId === armed.id
+          ? Effect.die(new Error("terminal read failed"))
+          : Effect.succeed(false),
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+      yield* startHarness(service, h.activation, h.snapshotReads);
+      assert.deepEqual(
+        (yield* Ref.get(h.commands)).map((command) => command.threadId),
+        [automatic.id],
+      );
+    }).pipe(Effect.provide(h.layer));
+  }),
+);
+
 it.effect.each([
   { name: "completed response", status: "completed" as const, action: "thread.settle" },
   { name: "running response", status: "running" as const, action: null },
   { name: "held automatic followup", status: "queued" as const, action: "thread.settle" },
   { name: "failed response", status: "failed" as const, action: "thread.settle" },
+  {
+    name: "failed response with terminal",
+    status: "failed" as const,
+    terminal: true,
+    action: "thread.settle",
+  },
+  {
+    name: "completed response with terminal",
+    status: "completed" as const,
+    terminal: true,
+    action: null,
+  },
   {
     name: "interrupted response",
     status: "interrupted" as const,
@@ -2749,6 +2792,7 @@ it.effect.each([
     });
     const h = yield* makeHarness({
       snapshot: makeSnapshot([thread]),
+      hasActiveSubprocess: () => Effect.succeed(scenario.terminal === true),
       settings: {
         ...DEFAULT_SERVER_SETTINGS,
         sidebarAutoSettleAfterDays: null,
