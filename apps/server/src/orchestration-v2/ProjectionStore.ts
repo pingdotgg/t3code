@@ -2,6 +2,7 @@ import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwarene
 import { applyOrchestrationV2ThreadVisit, pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
+import * as Digest from "effect/crypto/Digest";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
@@ -2390,10 +2391,13 @@ const isInlineWorkOutput = (payloadJson: string) => {
   );
 };
 
-export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = Layer.effect(
+type ProjectionStoreServices = SqlClient.SqlClient | Digest.Digest;
+
+export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreServices> = Layer.effect(
   ProjectionStoreV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const digests = yield* Digest.Digest;
 
     // SQLite uses the partial conversation index of migration 082 only for this exact predicate.
     const CONVERSATION_INDEX_EXCLUDED_TYPES = sql.literal(
@@ -9173,11 +9177,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
 
+    // The minute sweeps reread mostly unchanged rows; reuse a thread's decode while its payload digest matches.
+    const textEncoder = new TextEncoder();
+    const decodedPullRequestThreads = new Map<
+      string,
+      { readonly digest: string; readonly thread: ProjectionThreadPullRequests }
+    >();
+    const pullRequestSweepIds = {
+      active: new Set<string>(),
+      includeArchived: new Set<string>(),
+    };
     const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] =
       Effect.fn("ProjectionStore.getThreadsWithPullRequests")(
         function* (threadId, options) {
-          const rows = yield* sql<PayloadRow>`
-          SELECT payload_json
+          const rows = yield* sql<PayloadRow & { readonly thread_id: string }>`
+          SELECT thread_id, payload_json
           FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND thread_id = ${threadId}`}
             ${
@@ -9189,18 +9203,53 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
           ORDER BY updated_at ASC, thread_id ASC
         `;
-          return yield* Effect.forEach(rows, (row) =>
-            decodeThreadPayload(row.payload_json).pipe(
-              Effect.map((thread): ProjectionThreadPullRequests => ({
-                id: thread.id,
-                projectId: thread.projectId,
-                lineage: thread.lineage,
-                settledOverride: thread.settledOverride,
-                settledAt: thread.settledAt,
-                pullRequests: thread.pullRequests ?? [],
-              })),
-            ),
+          let cacheHits = 0;
+          const threads = yield* Effect.forEach(rows, (row) =>
+            Effect.gen(function* () {
+              const digest = yield* digests.digestHex(
+                Digest.sha256,
+                textEncoder.encode(row.payload_json),
+              );
+              const cached = decodedPullRequestThreads.get(row.thread_id);
+              if (cached?.digest === digest) {
+                cacheHits++;
+                return cached.thread;
+              }
+              return yield* decodeThreadPayload(row.payload_json).pipe(
+                Effect.map((thread): ProjectionThreadPullRequests => ({
+                  id: thread.id,
+                  projectId: thread.projectId,
+                  lineage: thread.lineage,
+                  settledOverride: thread.settledOverride,
+                  settledAt: thread.settledAt,
+                  pullRequests: thread.pullRequests ?? [],
+                })),
+                Effect.tap((thread) =>
+                  Effect.sync(() =>
+                    decodedPullRequestThreads.set(row.thread_id, { digest, thread }),
+                  ),
+                ),
+              );
+            }),
           );
+          yield* Effect.annotateCurrentSpan({
+            "orchestration_v2.projection_row_count": rows.length,
+            "orchestration_v2.decode_cache_hit_count": cacheHits,
+            "orchestration_v2.decode_cache_miss_count": rows.length - cacheHits,
+          });
+          if (threadId === undefined) {
+            pullRequestSweepIds[options?.includeArchived === true ? "includeArchived" : "active"] =
+              new Set(rows.map((row) => row.thread_id));
+            for (const id of decodedPullRequestThreads.keys()) {
+              if (
+                !pullRequestSweepIds.active.has(id) &&
+                !pullRequestSweepIds.includeArchived.has(id)
+              ) {
+                decodedPullRequestThreads.delete(id);
+              }
+            }
+          }
+          return threads;
         },
         Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
       );
