@@ -140,8 +140,7 @@ query PullRequestCore(
       viewerCanUpdate
       viewerDidAuthor
       viewerCanUpdateBranch
-      # Newer than some Enterprise servers; without them, branch rules never read as blocking.
-      viewerCanMergeAsAdmin @include(if: $mergeQueue)
+      # Newer than some Enterprise servers; without it, branch rules never read as blocking.
       isMergeQueueEnabled @include(if: $mergeQueue)
       baseRef {
         compare(headRef: $headRef) {

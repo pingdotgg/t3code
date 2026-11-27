@@ -314,7 +314,21 @@ export class GitHubBranchDeletionRefusedError extends Schema.TaggedError<GitHubB
   }
 }
 
+/**
+ * GitHub lets a viewer who may bypass branch rules merge a blocked pull request through the plain
+ * merge mutation, with none of the opt-in github.com asks for. T3 never takes that path on its own.
+ */
+export class GitHubMergeBlockedError extends Schema.TaggedError<GitHubMergeBlockedError>()(
+  "GitHubMergeBlockedError",
+  { number: Schema.Int },
+) {
+  override get message(): string {
+    return `The repository's rules block merging #${this.number} until their requirements are met. Enable auto-merge to merge it once they are, or bypass the rules on GitHub.`;
+  }
+}
+
 export type GitHubPullRequestApiError =
+  | GitHubMergeBlockedError
   | GitHubBranchDeletionRefusedError
   | GitHubStackActionError
   | GitHubRequestPolicy.GitHubApiError
@@ -2984,6 +2998,11 @@ export const make = Effect.gen(function* () {
           state.isMergeQueueEnabled === true ||
           (action === "enable-auto-merge" &&
             !IMMEDIATELY_MERGEABLE.has(state.mergeStateStatus?.toUpperCase() ?? ""));
+        // BLOCKED also covers pending required checks and reviews. A viewer who may bypass branch
+        // rules would merge straight past them here, so an immediate merge is refused while blocked.
+        if (!auto && state.mergeStateStatus?.toUpperCase() === "BLOCKED") {
+          return yield* new GitHubMergeBlockedError({ number: input.number });
+        }
         const merge = {
           pullRequestId: state.id,
           mergeMethod: GRAPHQL_MERGE_METHODS[input.mergeMethod ?? "merge"] ?? "MERGE",

@@ -71,7 +71,6 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         isDraft: false,
         mergeable: "MERGEABLE",
         mergeStateStatus: "BLOCKED",
-        viewerCanMergeAsAdmin: false,
         isMergeQueueEnabled: false,
         reviewDecision: null,
         additions: 0,
@@ -2441,7 +2440,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
           id: "PR_7",
           headRefOid: "abc123",
           isMergeQueueEnabled: false,
-          mergeStateStatus: "BLOCKED",
+          mergeStateStatus: "CLEAN",
           baseRef: { compare: { behindBy: 2 } },
           ...pullRequest,
         },
@@ -2531,6 +2530,45 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(
         yield* cli.runPullRequestAction({ ...pullRequestInput, action: "merge" }),
       ).toBeUndefined();
+    }),
+  );
+
+  // GitHub merges a BLOCKED pull request for a viewer who may bypass branch rules, with none of
+  // the opt-in github.com asks for, so the merge mutation must never be sent while it is blocked.
+  it.effect("refuses an immediate merge while branch rules block the pull request", () =>
+    Effect.gen(function* () {
+      route(
+        ["query PullRequestActionState", actionState({ mergeStateStatus: "BLOCKED" })],
+        ["mergePullRequest(", { data: { mergePullRequest: { pullRequest: { state: "MERGED" } } } }],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* Effect.flip(
+        cli.runPullRequestAction({ ...pullRequestInput, action: "merge" }),
+      );
+      expect(error._tag).toBe("GitHubMergeBlockedError");
+      // Only the action-state read ran; the merge mutation was never sent.
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  it.effect("still arms auto-merge for a blocked pull request", () =>
+    Effect.gen(function* () {
+      route(
+        ["query PullRequestActionState", actionState({ mergeStateStatus: "BLOCKED" })],
+        [
+          "enablePullRequestAutoMerge(",
+          {
+            data: {
+              enablePullRequestAutoMerge: {
+                pullRequest: { number: 7, autoMergeRequest: { mergeMethod: "MERGE" } },
+              },
+            },
+          },
+        ],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      yield* cli.runPullRequestAction({ ...pullRequestInput, action: "enable-auto-merge" });
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
     }),
   );
 
@@ -2874,7 +2912,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
               "Details\n\nCo-authored-by: Alice <alice@example.com>\nCo-authored-by: Claude <noreply@anthropic.com>",
             ),
           ],
-          ["query PullRequestActionState", actionState()],
+          [
+            "query PullRequestActionState",
+            // Auto-merge is what a pull request that is not ready to merge yet is armed with.
+            actionState({ mergeStateStatus: action === "merge" ? "CLEAN" : "BLOCKED" }),
+          ],
         );
         const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
         yield* cli.runPullRequestAction({
