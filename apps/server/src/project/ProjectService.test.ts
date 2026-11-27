@@ -33,6 +33,7 @@ import {
   orchestrationCommandsTotal,
 } from "../observability/Metrics.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -1395,4 +1396,38 @@ it.effect("a project update accepted before a policy lock still replays after it
       assert.strictEqual(refused._tag, "ProjectSettingsManagedError");
     }).pipe(Effect.provide(layerProjectServiceUnderPolicy(lockedModelPolicy, { baseDir })));
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("a project update stops when it can't tell whether it is a replay", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:receipt-read");
+    const created = yield* ProjectService.make;
+    yield* created.create({
+      commandId: CommandId.make("command:receipt-read:create"),
+      projectId,
+      title: "Before",
+      workspaceRoot: "/work/receipt-read",
+    });
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const service = yield* ProjectService.make.pipe(
+      Effect.provideService(CommandReceiptStore.CommandReceiptStoreV2, {
+        ...receipts,
+        getProjectByCommandId: (commandId) =>
+          Effect.fail(new CommandReceiptStore.CommandReceiptStoreReadError({ commandId })),
+      }),
+    );
+    const failure = yield* Effect.flip(
+      service.update({
+        commandId: CommandId.make("command:receipt-read:update"),
+        projectId,
+        title: "After",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-5-5",
+        },
+      }),
+    );
+    assert.strictEqual(failure._tag, "ProjectOperationError");
+    assert.strictEqual(Option.getOrThrow(yield* service.getById(projectId)).title, "Before");
+  }).pipe(Effect.provide(layerProjectServiceDependencies)),
 );

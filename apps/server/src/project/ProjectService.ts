@@ -619,8 +619,16 @@ export const make = Effect.gen(function* () {
   ) =>
     hasProjectSettings(input)
       ? receipts.getProjectByCommandId(commandId).pipe(
+          // Not knowing whether this is a replay, the check could refuse an accepted command.
+          Effect.mapError(
+            (cause) =>
+              new ProjectOperationError({
+                operation: "dispatch-project-command",
+                projectId,
+                cause,
+              }),
+          ),
           Effect.map(Option.isSome),
-          Effect.orElseSucceed(() => false),
           Effect.flatMap((replay) =>
             replay
               ? Effect.void
