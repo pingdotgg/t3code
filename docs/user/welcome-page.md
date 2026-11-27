@@ -4,6 +4,7 @@ The Welcome page runs on a fresh local installation to help you verify an agent,
 
 - Reopen it anytime from **Settings → About → Welcome page → Open**.
 - Hosted `app.t3.codes` skips this page and prompts you to sign in to T3 Connect and run `t3 connect` on your computer instead.
+- To import sessions from another connected environment, open its **⋯** menu in **Settings → Environments** and select **Import sessions…**.
 
 ## Agents
 
