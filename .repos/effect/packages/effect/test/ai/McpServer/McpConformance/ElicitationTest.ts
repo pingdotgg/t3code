@@ -248,25 +248,6 @@ export const suite = (
             })
         )
 
-        it.effect("MUST send elicitation requests when the client advertises elicitation", () =>
-          Effect.gen(function*() {
-            const test = yield* McpConformance
-            const peer = yield* test.makePeer({
-              capabilities: { elicitation: {} },
-              handlers: {
-                "elicitation/create": () =>
-                  Effect.succeed({
-                    action: "accept",
-                    content: { name: "Ada" }
-                  })
-              }
-            })
-
-            yield* peer.wireClient["elicitation/create"](request)
-
-            assert.strictEqual((yield* peer.takeRequest).method, "elicitation/create")
-          }))
-
         it.effect.skipIf(protocol.protocolVersion !== "2025-11-25")(
           "MUST gate form and URL modes on their independent nested capabilities",
           () =>
@@ -306,10 +287,13 @@ export const suite = (
               }
             })
 
-            const result = yield* peer.wireClient["elicitation/create"](request)
+            const result = yield* peer.reverseClient.elicit(
+              Schema.decodeUnknownSync(McpSchema.Elicit.payloadSchema)(request)
+            )
             const recorded = yield* peer.takeRequest
             const payload = yield* decodeElicitationRequest(recorded.payload)
 
+            assert.strictEqual(recorded.method, "elicitation/create")
             assert.strictEqual(payload.message, request.message)
             assert.deepStrictEqual(payload.requestedSchema, request.requestedSchema)
             assert.strictEqual(result.action, "accept")
