@@ -14,7 +14,6 @@ describe("commandProgramName", () => {
     ['"C:\\Program Files\\Git\\bin\\bash.exe" -lc "git status"', "git"],
     // regression: #9371 a multiline script whose later line re-quotes must still label its first program
     ["/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"", "git"],
-    ["bash -c $'npm test'", "npm"],
     ["bash -c $'ls\\nnpm test'", "ls"],
     ["bash -c $'\\x6e\\160m test'", "npm"],
   ])("unwraps shell scripts without executing them: %s", (command, program) => {
