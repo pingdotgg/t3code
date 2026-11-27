@@ -1,4 +1,5 @@
 {
+  "035aab5e99159bd8": "{count, plural, one {… No se muestra {hidden} carácter del medio.} other {… No se muestran {hidden} caracteres del medio.}} El texto termina con:",
   "4bcfa3b976a421cf": "Chat lateral",
   "23be753133ae6950": "Hilo",
   "0001ae5846061bb6": "Hilo en {machine}",
@@ -29,7 +30,6 @@
   "986b0873f913a840": "La política de {organization} no permite tareas de webhook.",
   "eebc538e25b09fe2": "La política de {organization} no permite importar cookies del navegador.",
   "7642a133db05f164": "La política de {organization} no permite abrir los servidores locales de esta máquina en otros dispositivos.",
-  "e0856d6a402ad821": "La política de {organization} no permite comandos de diseño de worktrees de proyectos.",
   "39f6771b49f9b3b6": "Usar valor predeterminado",
   "45bb0e90e1c42046": "Cuando vuelvas",
   "d8fa0a55446bbb0d": "Antes de que caduque la caché (beta)",
@@ -76,7 +76,6 @@
   "cd03eb1b84271c02": "Agente",
   "bfe1a60f3f9c60fb": "Turno {turn} · {what}",
   "dfdaa6255a416140": "Resumen de {turns, plural, one {{turns} turno reciente} other {{turns} turnos recientes}}, {textTurns, plural, =0 {sin texto de mensajes} one {con el texto de los mensajes del último turno} other {con el texto de los mensajes de los últimos {textTurns} turnos}}{truncated, select, yes {, acortado para ajustarse} other {}}",
-  "260c6b45f52d2f27": "Añade el texto de tus mensajes y de las respuestas del agente en {textTurns, plural, one {el último turno} other {los últimos {textTurns} turnos}}.",
   "afac52a5cc2dc801": "No se pudo enviar tu respuesta. Inténtalo de nuevo.",
   "79d776428f4d0650": "No se pudo cargar el archivo. Vuelve a conectarte e inténtalo de nuevo.",
   "3ea34cbb1ca5ba9b": "Vista previa cancelada.",
@@ -410,7 +409,6 @@
   "834ca879c14c167b": "Trabajando",
   "582d6df7dfab86fb": "En pausa",
   "ea6583ce92507ee3": "Durmiendo",
-  "7150557773b3818b": "En cola",
   "7ea8cb8af281ce93": "Esperando",
   "1347868f2523140e": "Terminada",
   "57d76c4614054271": "Detenida",
@@ -422,7 +420,6 @@
   "d3890f4eb1508781": "Ejecuta sus propios pasos",
   "3e7ced10c9482af0": "{step} está trabajando",
   "237e1bcb1cf1bdec": "Durmiendo en {step}",
-  "efbeb3993ee2c3f5": "En cola para {pool}",
   "3f7b17ac5a20c8d2": "Ejecuta {run}",
   "0306f5f324b8aaa5": "{count} ejecuciones en curso",
   "e8fd779b84a202a2": "Esperando",
@@ -922,7 +919,6 @@
   "3f0b962160edbe6d": "No se pudo sincronizar el hilo.",
   "752b4d69669b0019": "No se pudo cargar la actividad anterior.",
   "44de9731d5b8eb38": "El historial de trabajo cambió. Vuelve a cargarlo.",
-  "6ea901338c803e3e": "No se pudo usar el crédito de restablecimiento.",
   "c0ea8898cd494336": "No se pudo comprobar el acceso de esta conexión al diagnóstico y al uso.",
   "953b6473de4b9ad6": "Esta conexión no tiene acceso al diagnóstico ni al uso.",
   "8c68febc86a3f651": "Actualizando {provider}…",
@@ -1326,8 +1322,8 @@
   "bb34eaf6ddc55a72": "Esta cuenta no tiene límites de suscripción.",
   "42a2622893a6bced": "No se pudieron leer los límites.",
   "4897e228d3185c96": "No se informaron límites.",
-  "161135f0aea4d1ca": "{source}: no hay cuentas de Codex, Claude ni Grok. Se omitieron: {providers}.",
   "e27d2cb964df5dd5": "{source}: no se informaron cuentas.",
+  "161135f0aea4d1ca": "{source}: no hay cuentas de Codex, Claude ni Grok. Se omitieron: {providers}.",
   "1b503134018285f4": "{days} d {hours} h",
   "164c674cf062933a": "{label} · quedan {count} · caduca en {expires}",
   "9c82c39589c23938": "{label} · quedan {count}",
@@ -1968,7 +1964,6 @@
   "4d1f68ef069c7a0b": "Nueva pestaña",
   "9c149c8c50e58e4c": "Actualizar entornos",
   "d81626aad3a95cb2": "Inicia sesión en tu cuenta de T3 para configurar {product}.",
-  "6787f93bbf6ce0b6": "Ayuda al equipo de T3 Code a solucionar problemas de conexión. Las trazas incluyen tiempos, tipos de error, un ID de esta sesión de la app y la versión de la app, nunca tus hilos, prompts ni código. Puedes cambiarlo en Ajustes > Acerca de T3 Code > Diagnóstico.",
   "a1b125c5ff7c2dd3": "No volver a mostrar",
   "b28a147f66b0e088": "Fecha de vinculación no disponible",
   "6f0589fb1a5e38a9": "Vinculado el {date}",
@@ -2027,9 +2022,6 @@
   "782a518513f0777a": "Activar {environment}",
   "a35685d9ad9de747": "Cargando entornos en la nube vinculados.",
   "91ca3ba7b2f9d6b6": "No hay más entornos en la nube vinculados.",
-  "89bf40eb2503b6c5": "Nuevo dispositivo conectado a {environment}",
-  "c94b5fe9ef372bc0": "{device} se conectó a través de {product}. Si no fuiste tú, quítalo en Ajustes → Acceso en T3 Code en ese ordenador.",
-  "bec67d0ed485f885": "{count, plural, one {{count} dispositivo se conectó} other {{count} dispositivos se conectaron}} a través de {product}. Si no fuiste tú, quítalos en Ajustes → Acceso en T3 Code en ese ordenador.",
   "190165d4fad2f072": "La solicitud ya no está en espera",
   "c403db0535205f50": "Caducó o se respondió en otro sitio.",
   "4e3abf0ba32ed1d6": "La solicitud sigue en espera. Inténtalo de nuevo.",
@@ -2208,8 +2200,6 @@
   "f4a6fe781a07f2aa": "Copiar informe de fallo",
   "13c5214251f7d058": "Informes de fallos",
   "b3f6c24b0bf18cfb": "Enviar informes de fallos",
-  "18c30aa94d0a807f": "Diagnóstico de conexión",
-  "0b1e4aecbd38e0cf": "Cuando la app se conecta a un ordenador mediante {product}, envía al equipo de T3 Code cuánto tardó cada paso, el tipo de error, un ID de esta sesión de la app y la versión de la app. Las trazas nunca incluyen tus hilos, prompts ni código.",
   "93eb8ae0bf209025": "Leyendo el registro de fallos…",
   "4429ccae147b2b2f": "Pega el informe en una incidencia de GitHub. Contiene la versión de la app, el mensaje de error de JavaScript y la pila de componentes. Los mensajes de error pueden citar valores de la app, así que revísalo antes de compartirlo.",
   "58df920ec2681250": "Cuando la app falla o encuentra un error, envía al equipo de T3 Code el mensaje de error, la traza de la pila, la versión de la app y el modelo y la versión del sistema del dispositivo. Cada inicio también envía tiempos de arranque. Los informes llevan un ID aleatorio para esta instalación.",
@@ -2472,7 +2462,6 @@
   "a6eeff30440d26a2": "Issue {key}",
   "c0e2d952114e7d59": "de {author}",
   "2195cdd7774c1c23": "autor desconocido",
-  "4276743ee60a3c62": "{count, plural, one {{count} comentario} other {{count} comentarios}}",
   "217e1e7b60469736": "Estado de la issue, {state}",
   "5fd6c9c736b80b62": "Estado de la issue",
   "a749275f1ad66618": "Autor desconocido",
@@ -2605,7 +2594,6 @@
   "1e726fbe61076269": "Ensanchar panel",
   "4af8c6ef39e00592": "Estrechar panel",
   "54940a3e03ca7fc7": "{width} puntos de ancho",
-  "eb287395a09cd288": "Enviar trazas de conexión",
   "b1043ff2793170eb": "El proyecto ya existe",
   "34d24b23043908f5": "{title} sigue archivado. Inténtalo más tarde.",
   "cc5e0eb3b8d438e5": "No se añadió el proyecto",
@@ -2858,7 +2846,6 @@
   "dff9e061996e7b1d": "¿Activar la fusión automática?",
   "dafc4bac6e5e37b0": "¿Desactivar la fusión automática?",
   "88c7a80c40bbfe56": "Fusionar {layers} en {base} con {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}}. Las capas por encima de #{number} siguen abiertas.",
-  "892f08d21b8e48a9": "Fusionar {layers} en {base} con {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} cuando se cumplan sus requisitos. Puede ocurrir de inmediato.",
   "700223fdcaa96bb7": "Fusionar #{number} con {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} cuando se cumplan sus requisitos. Puede ocurrir de inmediato.",
   "de93a05a4db7ab76": "Impide que el proveedor fusione automáticamente esta {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}.",
   "385ba70d2783260b": "Fusionar #{number} en {branch} con {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}}.",
@@ -3135,6 +3122,7 @@
   "fa9012d7acfe1205": "Resolver conflictos",
   "6e45b380d5850b5c": "Seguir la {term, select, mr {MR} cr {solicitud de cambios} other {PR}}",
   "77c61ac22770f619": "Vídeo",
+  "4276743ee60a3c62": "{count, plural, one {{count} comentario} other {{count} comentarios}}",
   "a5b611e6548652c1": "Línea anterior {line}",
   "e4bc1643eb024e23": "Línea {line}",
   "b29eea552b16d20a": "{count, plural, one {{count} comentario · Toca para abrir} other {{count} comentarios · Toca para abrir}}",
@@ -3811,8 +3799,6 @@
   "b239ba3ce2899a3e": "O usa tus propias credenciales",
   "f0e6397ab4de588e": "Token",
   "ed83b25c71c98a20": "Elige uno o más {scope}s de {tracker} para cada proyecto. Sus issues aparecen junto a las del repositorio, y los agentes crean issues nuevas en el primero, salvo que se les pida otro.",
-  "99d51127f573296b": "Otra cuenta",
-  "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
   "ce2136b36f87b655": "Conecta este entorno para cambiar sus ajustes.",
   "a90a441fd0e08de7": "Este entorno",
   "32fb83554cfd85b4": "Modelos de transcripción",
@@ -4232,6 +4218,7 @@
   "4e0710d19dfc2e7e": "¿Enviar este informe al equipo de T3?",
   "bddfc683c21e1362": "Esto es todo lo que sale de tu máquina. No se envía nada hasta que toques Enviar.",
   "bf19826f81484328": "Incluir la conversación",
+  "260c6b45f52d2f27": "Añade el texto de tus mensajes y de las respuestas del agente en {textTurns, plural, one {el último turno} other {los últimos {textTurns} turnos}}.",
   "ddb7e6f8ce99e657": "Solo quien pueda ejecutar agentes en esta máquina puede enviarlo o rechazarlo.",
   "433e4a9af4b69ebb": "Tu próximo mensaje inicia una sesión nueva. El agente no verá los mensajes anteriores de este hilo.",
   "e1189d2e582b008d": "Mantener la sesión actual",
@@ -4347,6 +4334,15 @@
       "v": "v"
     }
   ],
+  "705cf2b2ee4e0e42": [
+    "La app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " salió de su página y se detuvo"
+  ],
   "796b81c4875c4feb": [
     "La app ",
     {
@@ -4361,15 +4357,6 @@
       "v": "v"
     },
     " más reciente en este entorno. Actualiza el servidor para usarla."
-  ],
-  "705cf2b2ee4e0e42": [
-    "La app ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " salió de su página y se detuvo"
   ],
   "5ef18e4d39b398bf": [
     "No se puede cargar la app ",
@@ -4472,7 +4459,6 @@
   "1d160d4ad1e53219": "Permitir una vez",
   "fb7f5d610fdf9a08": "Permitir en la sesión",
   "d13cbdad4a0e38e9": "Rechazar",
-  "035aab5e99159bd8": "{count, plural, one {… No se muestra {hidden} carácter del medio.} other {… No se muestran {hidden} caracteres del medio.}} El texto termina con:",
   "3554fbab5a8480ce": "Se necesita aprobación",
   "a5060e6a344b5097": "El proceso del proveedor de esta solicitud ya no está disponible. Interrumpe o reinicia la ejecución para continuar.",
   "72eea7fa7943b0d7": "Esta conexión no puede responder a aprobaciones.",
@@ -4794,8 +4780,8 @@
   "d506b798402041ab": "Enviar ahora",
   "9a62f694ba5c35c5": "Abriendo hilo…",
   "bb24a2960c689a20": "Este hilo no está disponible en la instantánea móvil actual.",
-  "4c9b5debaba23cbf": "Waiting to connect",
-  "f7078afe560cef3e": "Can't reach {environment} yet. The thread opens once it connects.",
+  "4c9b5debaba23cbf": "Esperando conexión",
+  "f7078afe560cef3e": "Aún no se puede conectar con {environment}. El hilo se abrirá en cuanto se conecte.",
   "41ca8f475c481866": "Subagente de {title}",
   "f3e00e6c416eab38": "De {origin}",
   "bdfb9e7660ab25d3": "No se pudo reanudar el hilo",
@@ -4822,10 +4808,10 @@
   "c11a66f71057f074": "Tu prompt contiene \"ultrathink\" en el texto. Quítalo para cambiar esta opción.",
   "b589c01784b9a88c": "Buscar un modelo",
   "9b0277205d8a9b04": "Todos los proveedores",
+  "72ae7e7c5ca1c5fc": "Solo favoritos",
   "279ab25bdca98778": "Ajustes del hilo",
   "0ef86daa831dde67": "Cancelar ajustes del hilo",
   "cb27bc9ea63671c0": "Filtros de modelos",
-  "72ae7e7c5ca1c5fc": "Solo favoritos",
   "441bfc4afe4b5760": "Proveedor",
   "33c68c5151a81e31": "Mostrar modelos antiguos",
   "ce9438608fd47e03": "Guardar",
@@ -4993,7 +4979,6 @@
   "5a2d803b3ea43f18": "Se alcanzó el límite de uso.",
   "d5365c5e28a18442": "{summary}: {message}",
   "bff5692f10fc10b0": "Mantén pulsado para copiar.",
-  "1a1beecff68a6e61": "Verificar cuenta de Google",
   "a1984c617f973156": "{preview}, falló la llamada a la herramienta",
   "38574c0d1e49b278": "{preview}, sesión iniciada",
   "fd0d04d5a6627f70": "Abre el hilo de este agente. Mantén pulsado para copiar.",
@@ -5190,6 +5175,7 @@
   "1a92fa2f744401bc": "Ahora mismo no hay nada que restablecer.",
   "fff9b7f838279ee3": "No quedan créditos de restablecimiento.",
   "cea3cf346788481d": "Ese crédito ya se canjeó.",
+  "6ea901338c803e3e": "No se pudo usar el crédito de restablecimiento.",
   "8864ac914d8205e8": "¿Usar un crédito de restablecimiento?",
   "e32c2c7e61a16f4b": "Usar crédito",
   "b58a90dc5356f80a": "se restablece ahora",
@@ -5291,8 +5277,6 @@
   "cd5d90cbbfae32f6": "Grabando {time}",
   "6236e2f587bc4eb4": "Transcribiendo",
   "4e430d5ea01c249b": "No se pudo enviar la respuesta",
-  "a3c43735e1a81498": "Motivo de {title}",
-  "bfad234f016cfa3f": "El porqué, en una frase. Acompaña a la respuesta que elijas.",
   "e721a8b98f44d5f7": "Preguntar antes al agente",
   "e39f89c909df4db0": "No se pudo reanudar la ejecución",
   "28c9dd162825c117": "¿Cancelar esta ejecución?",
@@ -5319,14 +5303,6 @@
       "v": "v"
     }
   ],
-  "e114d37b32ab0dc7": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " necesita un motivo."
-  ],
   "9de4e24c9273b496": "Esta conexión puede leer ejecuciones, pero no responderlas.",
   "6dac41769b114edf": [
     {
@@ -5342,62 +5318,21 @@
       "v": "v"
     }
   ],
-  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo",
   "204e2afe64cae32b": "Trabajando",
   "abd6c3f4734b9f97": "Falló",
   "59a3213338779c6e": "Terminado",
   "5a3b1fe78182d8dc": "Respondió {choice}",
   "b17bd06e3b1ec0d2": "Respondió {choice}: {reason}",
-  "99451a5d2d40440f": "Retirada por {by}.",
-  "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "89102905bf09b0e8": "Ver en directo",
   "eea0013efc9e4339": "Transcripción",
   "ba8337dca3232880": "Abrir ejecución",
-  "235902a19e95833b": [
-    "por ti,",
-    " ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "3759768c5d342c22": [
-    "respondida",
-    " ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "8afa4fbe16f95bcf": [
-    "por ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ",",
-    " ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    }
-  ],
   "cab70ed0237438ef": "Cargando el paso…",
   "30a5be40eb956663": "trabajando",
   "edc8f6e9720f4eda": "en espera",
   "0684698b49273da5": "esperando",
-  "0398ca6c1d24b92d": "en cola, el siguiente",
-  "0af6d5ffd5166214": "{count, plural, one {en cola, {count} delante} other {en cola, {count} delante}}",
   "063173aa16052cb9": "en curso",
   "3ba4cf953dd20f22": "falló",
-  "0f93532dd76391fc": "Respondiste {choice}",
-  "7e1fd2eb570a372b": "{who} respondió {choice}",
   "e777db2880f53a46": "nadie respondió",
-  "201490988858b511": "retirada por {by}",
   "34f59bbbead0b97f": "{names} y {count} más",
   "ac1556f6ce89a5ea": "{count} en paralelo",
   "e197c4963bacc746": "{count} en curso",
@@ -5410,7 +5345,6 @@
   "f25af5332ffc3734": "Nada espera tu respuesta.",
   "c3f0119b8d6231f8": "No hay nada en ejecución.",
   "33028dfc1229eaa6": "Aún no hay ejecuciones.",
-  "e4d1316c85ed7066": "No hay preguntas de este tipo esperándote.",
   "156ff7b625287a1e": "Ocultar omitidos",
   "69b985b97ab45e6b": "Mostrar {count} omitidos",
   "8f6589c9e0ac5d4e": "Ningún entorno conectado",
@@ -5418,8 +5352,8 @@
   "b9aae2f7cdb1a379": "Aún no hay ejecuciones de flujos de trabajo",
   "ace8fc1c643cf9f6": "Un flujo de trabajo une agentes, código, programaciones y preguntas para ti en una sola ejecución que sobrevive a los reinicios. Escribe uno en tu ordenador, en Flujos de trabajo y luego Definiciones.",
   "fc9c3a00cfc18b55": "Todos los tipos",
+  "e4d1316c85ed7066": "No hay preguntas de este tipo esperándote.",
   "45a94c724845ec1d": "Otras",
-  "fceb81aa6685fb47": "Chats",
   "86798f07ba2d7f4d": "Buscar issues",
   "484cd83bb303bab8": "Buscar pull requests",
   "75ed31fcea4f741a": "Filtrar issues",
@@ -5453,6 +5387,7 @@
   "f03ba5bbef74ca6d": "Issues",
   "ee0df48be7144de4": "Flujos de trabajo",
   "724eacadecd3a4cf": "Uso",
+  "fceb81aa6685fb47": "Chats",
   "f1bb8f9323639c63": "PR",
   "a3bd0ffad2733714": "Guía de revisión",
   "399447461c149bb1": "Vuelve a conectarte o pide a alguien con acceso de escritura que lo reintente.",
@@ -5703,5 +5638,70 @@
   "ad208e3e32c85029": "Ocultar todo",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Llamadas a herramientas en el chat",
-  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran."
+  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
+  "99d51127f573296b": "Otra cuenta",
+  "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
+  "892f08d21b8e48a9": "Fusionar {layers} en {base} con {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} cuando se cumplan sus requisitos. Puede ocurrir de inmediato.",
+  "89bf40eb2503b6c5": "Nuevo dispositivo conectado a {environment}",
+  "c94b5fe9ef372bc0": "{device} se conectó a través de {product}. Si no fuiste tú, quítalo en Ajustes → Acceso en T3 Code en ese ordenador.",
+  "bec67d0ed485f885": "{count, plural, one {{count} dispositivo se conectó} other {{count} dispositivos se conectaron}} a través de {product}. Si no fuiste tú, quítalos en Ajustes → Acceso en T3 Code en ese ordenador.",
+  "18c30aa94d0a807f": "Diagnóstico de conexión",
+  "eb287395a09cd288": "Enviar trazas de conexión",
+  "6787f93bbf6ce0b6": "Ayuda al equipo de T3 Code a solucionar problemas de conexión. Las trazas incluyen tiempos, tipos de error, un ID de esta sesión de la app y la versión de la app, nunca tus hilos, prompts ni código. Puedes cambiarlo en Ajustes > Acerca de T3 Code > Diagnóstico.",
+  "0b1e4aecbd38e0cf": "Cuando la app se conecta a un ordenador mediante {product}, envía al equipo de T3 Code cuánto tardó cada paso, el tipo de error, un ID de esta sesión de la app y la versión de la app. Las trazas nunca incluyen tus hilos, prompts ni código.",
+  "e0856d6a402ad821": "La política de {organization} no permite comandos de diseño de worktrees de proyectos.",
+  "7150557773b3818b": "En cola",
+  "efbeb3993ee2c3f5": "En cola para {pool}",
+  "0398ca6c1d24b92d": "en cola, el siguiente",
+  "0af6d5ffd5166214": "{count, plural, one {en cola, {count} delante} other {en cola, {count} delante}}",
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " necesita un motivo."
+  ],
+  "7e1fd2eb570a372b": "{who} respondió {choice}",
+  "a3c43735e1a81498": "Motivo de {title}",
+  "bfad234f016cfa3f": "El porqué, en una frase. Acompaña a la respuesta que elijas.",
+  "3759768c5d342c22": [
+    "respondida",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "por ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "0f93532dd76391fc": "Respondiste {choice}",
+  "235902a19e95833b": [
+    "por ti,",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1a1beecff68a6e61": "Verificar cuenta de Google",
+  "99451a5d2d40440f": "Retirada por {by}.",
+  "3ee30a50b70fffab": "Retirada por {by}: {reason}",
+  "201490988858b511": "retirada por {by}",
+  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo"
 }

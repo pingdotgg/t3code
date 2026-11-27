@@ -330,21 +330,6 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   } else if (connectionWait === "unreachable" && unreachableThreadKey !== routeThreadKey) {
     setUnreachableThreadKey(routeThreadKey);
   }
-  const retriedThreadKey = useRef<string | null>(null);
-  const retryKey = connectionWait === "unreachable" ? routeThreadKey : null;
-  const retryConnection = useEffectEvent((threadKey: string) => {
-    if (environmentId === null || retriedThreadKey.current === threadKey) return;
-    retriedThreadKey.current = threadKey;
-    onReconnectEnvironment(environmentId);
-  });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a linked thread whose environment is down retries the connection once instead of waiting out its backoff
-  useEffect(() => {
-    if (retryKey === null) {
-      retriedThreadKey.current = null;
-      return;
-    }
-    retryConnection(retryKey);
-  }, [retryKey]);
   const withInspectorHeader = (content: ReactNode) =>
     props.inspectorPresentation ? (
       <InspectorHeaderShownContext value>
