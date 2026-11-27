@@ -590,7 +590,7 @@ interface HarnessOptions {
   readonly onDispatch?: (command: AutoSettleCommand) => Effect.Effect<void>;
   readonly onScriptRun?: (
     input: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput,
-  ) => Effect.Effect<void>;
+  ) => Effect.Effect<ProjectSetupScriptRunner.ProjectSetupScriptRunnerResult | void>;
   readonly onCloseIdle?: () => Effect.Effect<void>;
   readonly hasActiveSubprocess?: (input: { readonly threadId: string }) => Effect.Effect<boolean>;
   readonly currentThreads?: ReadonlyArray<OrchestrationV2AppThread>;
@@ -748,7 +748,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       runForThread: (input) =>
         Queue.offer(scriptRuns, input).pipe(
           Effect.andThen(options.onScriptRun?.(input) ?? Effect.void),
-          Effect.as({ status: "no-script" } as const),
+          Effect.map((result) => result ?? ({ status: "no-script" } as const)),
         ),
     }),
     Layer.mock(GitManager.GitManager)({
@@ -2563,6 +2563,50 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         yield* fixture.publishEvent(settledEvent(marker));
         assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, repeated.id);
         assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
+  it.effect("runs one settle script at a time", () =>
+    Effect.gen(function* () {
+      const first = appThread("first-thread", "settled", "/worktrees/first");
+      const second = appThread("second-thread", "settled", "/worktrees/second");
+      const marker = appThread("marker-thread", "settled");
+      const firstFinished = yield* Deferred.make<void>();
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([]),
+        currentThreads: [first, second, marker],
+        existingWorktreePaths: ["/worktrees/first", "/worktrees/second"],
+        onScriptRun: (input) =>
+          Effect.succeed({
+            status: "started",
+            scriptId: "clean",
+            scriptName: "Clean",
+            scriptCommand: "clean",
+            terminalId: `settle-${input.threadId}`,
+            cwd: input.worktreePath,
+            async: true,
+            completion: (input.threadId === first.id
+              ? Deferred.await(firstFinished)
+              : Effect.void
+            ).pipe(Effect.as({ exitCode: 0, durationMs: 0 })),
+          } as const),
+      });
+
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+        yield* fixture.publishEvent(settledEvent(first));
+        yield* fixture.publishEvent(settledEvent(second));
+        yield* fixture.publishEvent(settledEvent(marker));
+        assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, first.id);
+        // Events run in order, so the second thread's settlement was handled before the marker's.
+        for (const thread of [first, second, marker]) {
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: thread.id });
+        }
+        assert.strictEqual(yield* Queue.size(fixture.scriptRuns), 0);
+        yield* Deferred.succeed(firstFinished, undefined);
+        assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, second.id);
       }).pipe(Effect.provide(fixture.layer));
     }),
   );

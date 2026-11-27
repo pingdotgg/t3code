@@ -10,6 +10,7 @@ import {
   CommandId,
   isDelegatedAppThread,
   isOrchestrationV2WorkActive,
+  type ProjectId,
   type ThreadId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
@@ -20,6 +21,7 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -54,6 +56,7 @@ export interface SettlementPullRequest {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
+const SETTLE_SCRIPT_SLOT_TIMEOUT = "5 minutes";
 
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
@@ -791,17 +794,17 @@ export const make = Effect.gen(function* () {
       return sweepThread(threadId).pipe(FiberSet.run(threadSweeps), Effect.asVoid);
     });
 
+  // Settle scripts run one at a time: a script may clean up across the repository, and a burst of
+  // settlements (a restart sweep, a bulk settle) would otherwise start one shell per thread at once.
+  const settleScriptRuns = yield* FiberSet.make<void>();
+  const settleScriptSlot = yield* Semaphore.make(1);
+
   // Skip settle scripts in shared checkouts where other threads may still work.
-  const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
-    function* (threadId: ThreadId) {
-      const settled = yield* projections.getThread(threadId);
-      if (settled.deletedAt !== null || settled.settledOverride !== "settled") return;
-      yield* terminals.closeOnSettle({ threadId });
-      const worktreePath = settled.worktreePath;
-      if (worktreePath === null) return;
+  const runSettleScript = Effect.fn("ThreadSettlementServiceV2.runSettleScript")(
+    function* (threadId: ThreadId, projectId: ProjectId, worktreePath: string) {
       if (!(yield* fileSystem.exists(worktreePath))) {
         // A settle script that tears something down would otherwise be skipped with no trace.
-        const project = Option.getOrUndefined(yield* projectStore.getShell(settled.projectId));
+        const project = Option.getOrUndefined(yield* projectStore.getShell(projectId));
         if (
           project !== undefined &&
           settleProjectScript(resolveProjectScripts(yield* settingsService.getSettings, project))
@@ -813,7 +816,7 @@ export const make = Effect.gen(function* () {
         }
         return;
       }
-      // Recheck after closing and worktree I/O; only live, settled threads may run scripts.
+      // Recheck after waiting, closing and worktree I/O; only live, settled threads may run scripts.
       const thread = yield* projections.getThread(threadId);
       if (thread.deletedAt !== null || thread.settledOverride !== "settled") return;
       const settledAtMs = toMillis(thread.settledAt);
@@ -840,8 +843,35 @@ export const make = Effect.gen(function* () {
       });
       settleActionRunAt.set(threadId, settledAtMs);
       if (run.status === "started" && run.completion) {
-        yield* run.completion.pipe(Effect.forkDetach);
+        // Interrupting the completion closes the script's terminal, so only the wait is bounded:
+        // a script that never finishes keeps running but stops holding back later settlements.
+        const completion = yield* run.completion.pipe(Effect.forkDetach);
+        yield* Fiber.await(completion).pipe(Effect.timeoutOption(SETTLE_SCRIPT_SLOT_TIMEOUT));
       }
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        settleScriptSlot.withPermits(1),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("running a settle script failed", {
+              threadId,
+              cause: Cause.pretty(cause),
+            }),
+        ),
+      ),
+  );
+
+  const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
+    function* (threadId: ThreadId) {
+      const settled = yield* projections.getThread(threadId);
+      if (settled.deletedAt !== null || settled.settledOverride !== "settled") return;
+      yield* terminals.closeOnSettle({ threadId });
+      if (settled.worktreePath === null) return;
+      yield* runSettleScript(threadId, settled.projectId, settled.worktreePath).pipe(
+        FiberSet.run(settleScriptRuns),
+      );
     },
     (effect, threadId) =>
       effect.pipe(
