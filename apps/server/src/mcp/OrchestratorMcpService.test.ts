@@ -4551,6 +4551,15 @@ describe("OrchestratorMcpService provider resolution", () => {
         prompt: `${"a".repeat(78)}😀 rest`,
         title: `${"a".repeat(78)}😀`,
       },
+      ...[
+        ["CR", "\r"],
+        ["Unicode line separator", "\u2028"],
+        ["Unicode paragraph separator", "\u2029"],
+      ].map(([label, newline]) => ({
+        name: `stops at a ${label}`,
+        prompt: `Review merge${newline}Check changelog`,
+        title: "Review merge",
+      })),
     ])("a prompt-derived title $name", ({ prompt, title }) =>
       Effect.gen(function* () {
         const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
