@@ -1361,6 +1361,7 @@ describe("pooled account columns", () => {
       remainingPercent: 30,
       pace: "under",
       paceRemainingPercent: 20,
+      timeLeftPercent: 40,
     });
     const refreshed = {
       ...blocked,

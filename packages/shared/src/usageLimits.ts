@@ -509,6 +509,7 @@ export interface LimitPoolWindow {
   readonly usedPercent: number;
   readonly pace: LimitPace | null;
   readonly paceRemainingPercent: number | null;
+  readonly timeLeftPercent: number | null;
   readonly resets: ReadonlyArray<{
     readonly member: LimitPoolMember;
     readonly at: number;
@@ -754,6 +755,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
           : Math.round(
               100 - usedPercent - (timedWeight * (meanElapsed * 100 - timedUsed)) / totalWeight,
             ),
+      timeLeftPercent: meanElapsed === null ? null : Math.round((1 - meanElapsed) * 100),
       resets,
     };
   });
