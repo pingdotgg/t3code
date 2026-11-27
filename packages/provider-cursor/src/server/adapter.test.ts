@@ -268,7 +268,7 @@ describe("CursorAdapterV2", () => {
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         );
-        assert.isTrue(sentWithMcpOverride);
+        assert.isFalse(sentWithMcpOverride);
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
         assert.equal(rows[0]?.subagent.model, model ?? null);
@@ -3476,10 +3476,10 @@ describe("CursorAdapterV2", () => {
           },
           "cwd-only": { command: "node", args: ["server.mjs"], cwd: projectRoot },
         };
-        // The agent is created with T3's server only; the resolved servers go with each turn.
-        assert.deepEqual(openedWith?.mcpServers, t3Servers);
+        // The agent opens with the resolved servers, so a turn with unchanged files sends none.
+        assert.deepEqual(openedWith?.mcpServers, { ...expectedServers, ...t3Servers });
         yield* sendTurn(1);
-        assert.deepEqual(sentWith[0], { ...expectedServers, ...t3Servers });
+        assert.isUndefined(sentWith[0]);
         // A server switched off between turns stays off on the next one.
         yield* fileSystem.writeFileString(
           path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
@@ -3514,13 +3514,136 @@ describe("CursorAdapterV2", () => {
           JSON.stringify({ mcpServers: { plain: { command: "node", args: ["server.mjs"] } } }),
         );
         yield* fileSystem.remove(path.join(home, ".cursor", "mcp.json"));
-        assert.deepEqual(yield* loadServers(), {});
+        assert.deepEqual((yield* loadServers()).servers, {});
       }).pipe(
         Effect.scoped,
         Effect.provide(
           Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
         ),
       ),
+  );
+
+  // A send carrying mcpServers makes the SDK reconnect every ~/.cursor/mcp.json server before the
+  // run starts, so an unreachable one stalls every turn.
+  it.effect("follow-up turns on a live agent with unchanged MCP servers send no mcpServers", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const scratch = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-mcp-turns-" });
+      const home = path.join(scratch, "home");
+      const cwd = path.join(scratch, "workspace");
+      yield* fileSystem.makeDirectory(cwd, { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(home, ".cursor"), { recursive: true });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-mcp-turns-thread");
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("cursor-mcp-turns-environment"),
+        threadId,
+        providerSessionId: "cursor-mcp-turns-session",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer synthetic-cursor-token",
+        browserToolsAvailable: false,
+      });
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd,
+      });
+      let opens = 0;
+      const sentWith: Array<Record<string, unknown> | undefined> = [];
+      const adapter = yield* makeCursorAdapterV2({ instanceId, environment: { HOME: home } }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.sync(() => {
+              opens += 1;
+              return {
+                agentId: "native-cursor-mcp-turns",
+                listMessages: Effect.succeed([]),
+                close: Effect.void,
+                send: (sendInput) => {
+                  sentWith.push(sendInput.options?.mcpServers);
+                  return Effect.die("sent");
+                },
+              };
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-mcp-turns-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime
+        .ensureThread({ threadId, modelSelection, runtimePolicy })
+        .pipe(
+          Effect.provideService(HostProcess.HomeDirectory, home),
+          Effect.provideService(HostProcess.Environment, {}),
+        );
+      const now = yield* DateTime.now;
+      for (const ordinal of [1, 2, 3]) {
+        yield* runtime
+          .startTurn({
+            threadId,
+            providerThread,
+            modelSelection,
+            runtimePolicy,
+            runId: RunId.make(`cursor-mcp-turns-run-${ordinal}`),
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: RunAttemptId.make(`cursor-mcp-turns-attempt-${ordinal}`),
+            rootNodeId: NodeId.make(`cursor-mcp-turns-root-${ordinal}`),
+            appThread: {
+              id: threadId,
+              projectId: ProjectId.make("cursor-mcp-turns-project"),
+              createdBy: "user",
+              creationSource: "web",
+              title: "Cursor MCP turns",
+              providerInstanceId: instanceId,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: providerThread.id,
+              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+            message: {
+              messageId: MessageId.make(`cursor-mcp-turns-message-${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: "Hello.",
+              attachments: [],
+            },
+          })
+          .pipe(
+            Effect.exit,
+            Effect.provideService(HostProcess.HomeDirectory, home),
+            Effect.provideService(HostProcess.Environment, {}),
+          );
+      }
+      assert.equal(sentWith.length, 3);
+      assert.equal(opens, 1);
+      assert.deepEqual(sentWith.slice(1), [undefined, undefined]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it("recognizes direct and SDK-wrapped abort failures as cancellation", () => {
