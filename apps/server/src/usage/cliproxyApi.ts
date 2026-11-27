@@ -519,6 +519,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
         ),
       ),
     ].toSorted();
+    const cachedBefore = (yield* Ref.get(routedModelsCache)).get(hub.url);
     // Model lists are optional, so their lookups run apart from the quota reads and stop at one
     // short deadline; a slow lookup must not push a refresh past its budget.
     const [readings, models] = yield* Effect.all(
@@ -534,6 +535,15 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ],
       { concurrency: 2 },
     );
+    const cacheHits = readable.filter(({ account }, index) => {
+      const entry = models[index];
+      return entry !== undefined && entry === cachedBefore?.get(account.id);
+    }).length;
+    yield* Effect.annotateCurrentSpan({
+      "cliproxy.accounts": readable.length,
+      "cliproxy.routed_models.cache_hits": cacheHits,
+      "cliproxy.routed_models.fetched": models.filter(Boolean).length - cacheHits,
+    });
     const now = yield* Clock.currentTimeMillis;
     yield* Ref.update(routedModelsCache, (cache) => {
       const next = new Map<string, ReadonlyMap<string, RoutedModelsEntry>>();
