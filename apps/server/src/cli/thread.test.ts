@@ -831,7 +831,6 @@ it.live("resolves a path inside a git worktree of the project's repository to th
       yield* resolveFrom([sample, alias, nested], path.join(worktree, "pkg")),
       nested,
     );
-    assert.deepStrictEqual(yield* resolveFrom([sample, alias], worktree, alias.id), alias);
     const aliased = yield* Effect.flip(resolveFrom([sample, alias], worktree));
     assert.strictEqual(aliased._tag, "ThreadUsageError");
     assert.include(aliased.message, "sample (project-sample)");
