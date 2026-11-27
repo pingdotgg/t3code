@@ -1,6 +1,10 @@
 import appCss from "../index.css?inline";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import * as shelfHooks from "../state/olderSettledShelf";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -29,6 +33,7 @@ import { useConnectedEnvironmentIds, usePrimaryEnvironmentId } from "../state/en
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useThreadSelectionStore } from "../threadSelectionStore";
 import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
@@ -477,6 +482,56 @@ describe("sidebar thread menu", () => {
     await userEvent.click(row, { button: "right" });
     await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(2));
     expect(show.mock.lastCall?.[2]).toBe("mouse");
+  });
+});
+
+describe("sidebar selection menu", () => {
+  it("counts only the selected threads Settle will settle", async () => {
+    const activeProject = project("active");
+    const activeThread = threadShell(activeProject.id, 0);
+    const settledThread = makeThreadFixture({
+      environmentId: activeProject.environmentId,
+      projectId: activeProject.id,
+      id: ThreadId.make("thread-1"),
+      title: "Thread 1",
+      settledOverride: "settled",
+      settledAt: "2026-01-01T00:00:00.000Z",
+    });
+    const settledRef = { environmentId: activeProject.environmentId, threadId: settledThread.id };
+    const show = vi.fn().mockResolvedValue(null);
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([activeThread, settledThread]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: settledRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: settledRef,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    await expect.element(screen.getByText("Thread 1").first()).toBeInTheDocument();
+    const selection = useThreadSelectionStore.getState();
+    selection.clearSelection();
+    selection.toggleThread(
+      scopedThreadKey(scopeThreadRef(activeProject.environmentId, activeThread.id)),
+    );
+    selection.toggleThread(scopedThreadKey(settledRef));
+    await userEvent.click(screen.getByText("Thread 0").first(), { button: "right" });
+    await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+    const settleItem = show.mock.lastCall?.[0].find((item: { id: string }) => item.id === "settle");
+    expect(settleItem?.label).toBe("Settle (1)");
+    selection.clearSelection();
   });
 });
 

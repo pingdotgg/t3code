@@ -738,6 +738,33 @@ describe("WorkflowRunsView", () => {
       .not.toMatchTextContent(/skipped/);
   });
 
+  it("shows a run of the workflow picked, not one of another workflow", async () => {
+    setup({
+      workflows: [
+        { name: "release", version: 1, triggers: [] },
+        { name: "report", version: 1, triggers: ["daily at 09:00"] },
+      ],
+      runs: [
+        run({ runId: "rep", workflow: "report", title: "Nightly report" }),
+        run({ runId: "rel", title: "Release 1.3", status: "completed", endedAt: at(3) }),
+      ],
+      questions: [],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    await expect.element(screen.getByRole("article", { name: "Nightly report" })).toBeVisible();
+    await screen.getByRole("button", { name: "All", exact: true }).click();
+    await screen.getByRole("combobox", { name: "Workflow" }).click();
+    await screen.getByRole("option", { name: "release" }).click();
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect.element(runs.getByRole("button", { name: /Release 1\.3/ })).toBeVisible();
+    await expect
+      .element(screen.getByRole("article", { name: "Nightly report" }))
+      .not.toBeInTheDocument();
+    await expect.element(screen.getByRole("article", { name: "Release 1.3" })).toBeVisible();
+  });
+
   const KIND_KEY = "t3code:workflows:question-kind";
   const asked = (runId: string, kind?: string): WorkflowQuestion => ({
     ...question,
