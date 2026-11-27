@@ -13038,5 +13038,7 @@
   "95435f0b59cb2193": "Vista previa de audio",
   "4a12506938295127": "Introduce primero {field}.",
   "5807c08e225c6b3d": "Descargar",
-  "0d50b5bfe7151ece": "No se pudo descargar el archivo"
+  "0d50b5bfe7151ece": "No se pudo descargar el archivo",
+  "03cc9d13df338ec1": "Tailscale denegó el permiso para configurar HTTPS. En el host, permite que la cuenta que ejecuta T3 Code administre Tailscale (en Linux: {command}) y reinicia el backend de T3 Code.",
+  "3fc83e017b2ed200": "No se pudo configurar HTTPS de Tailscale en el host. Comprueba que Tailscale esté en ejecución y tenga la sesión iniciada, y que MagicDNS y los certificados HTTPS estén activados en la tailnet. Luego reinicia el backend de T3 Code."
 }

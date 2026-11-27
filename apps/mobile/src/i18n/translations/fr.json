@@ -5716,5 +5716,7 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "201490988858b511": "retirée par {by}",
-  "46d614fa7b4bf1e5": "Exécutions de workflow"
+  "46d614fa7b4bf1e5": "Exécutions de workflow",
+  "03cc9d13df338ec1": "Tailscale a refusé la configuration HTTPS. Sur l’hôte, autorisez le compte qui exécute T3 Code à gérer Tailscale (sous Linux : {command}), puis redémarrez le backend de T3 Code.",
+  "3fc83e017b2ed200": "La configuration HTTPS de Tailscale a échoué sur l’hôte. Vérifiez que Tailscale fonctionne avec une session ouverte et que MagicDNS et les certificats HTTPS sont activés pour le tailnet, puis redémarrez le backend de T3 Code."
 }
