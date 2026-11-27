@@ -8,6 +8,8 @@ import * as Path from "effect/Path";
 import type * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const INDEX_LIST_MAX_BYTES = 64 * 1024 * 1024;
+// The checks get as long as callers give `git worktree remove` itself.
+const CHECK_TIMEOUT_MS = 5 * 60_000;
 
 /**
  * git-annex replaces a linked worktree's `.git` file with a symlink to its admin
@@ -128,6 +130,7 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
         cwd,
         args,
         maxOutputBytes: INDEX_LIST_MAX_BYTES,
+        timeoutMs: CHECK_TIMEOUT_MS,
         ...(env === undefined ? {} : { env }),
       })
       .pipe(Effect.map((result) => result.stdout));
