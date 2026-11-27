@@ -57,12 +57,10 @@ export const make = Effect.gen(function* () {
       );
       return yield* net.findAvailablePort(preferred, host);
     }
-    if (!windows.has(preferred) && (yield* net.isPortAvailableOnLoopback(preferred))) {
-      return preferred;
-    }
     // Linux and Windows ephemeral ranges overlap, so fallback ports can collide too.
     for (let attempt = 0; attempt < FALLBACK_ATTEMPTS; attempt += 1) {
-      const port = yield* net.reserveLoopbackPort();
+      const candidate = attempt === 0 && !windows.has(preferred) ? preferred : 0;
+      const port = yield* net.findAvailablePort(candidate, host);
       if (!windows.has(port)) return port;
     }
     return yield* new CliError.UserError({

@@ -30,7 +30,7 @@ const detail = vi.hoisted(() => ({
     edit: true,
     comment: false,
     labels: true,
-    assignees: false,
+    assignees: true,
     reactions: false,
     templates: false,
     linkedPullRequests: false,
@@ -42,7 +42,7 @@ const detail = vi.hoisted(() => ({
     comment: false,
     edit: true,
     labels: true,
-    assignees: false,
+    assignees: true,
   },
   states: [],
   viewer: null,
@@ -67,7 +67,10 @@ vi.mock(import("~/state/issues"), async (original) => {
         { name: "bug", color: "d73a4a", description: null },
         { name: "docs", color: "0075ca", description: null },
       ],
-      assignees: [],
+      assignees: [
+        { id: "1", login: "alice", name: null, avatarUrl: null },
+        { id: "2", login: "bob", name: null, avatarUrl: null },
+      ],
       truncated: false,
     }),
   );
@@ -181,5 +184,17 @@ describe("IssueDetailPanel", () => {
 
     await expect.element(page.getByRole("option", { name: "bug" })).toBeInTheDocument();
     await expect.element(page.getByRole("option", { name: "docs" })).not.toBeInTheDocument();
+  });
+
+  it("finds an assignee when the search has surrounding spaces", async () => {
+    setComments([]);
+    await using screen = await render(
+      <IssueDetailPanel environmentId={"env-1" as never} reference={reference} />,
+    );
+    await screen.getByRole("combobox", { name: "Change assignees" }).click();
+    await userEvent.fill(page.getByRole("combobox", { name: "Search people" }), " alice ");
+
+    await expect.element(page.getByRole("option", { name: "alice" })).toBeInTheDocument();
+    await expect.element(page.getByRole("option", { name: "bob" })).not.toBeInTheDocument();
   });
 });

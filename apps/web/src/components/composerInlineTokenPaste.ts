@@ -16,37 +16,41 @@ import {
   threadLinkContextReferences,
 } from "@t3tools/shared/composerContextReferences";
 
+import { restorePastedMarkdownLinks } from "~/markdown-clipboard";
 import { readThreadShell } from "~/state/entities";
 
 const threadTitle = (ref: ScopedThreadRef) => readThreadShell(ref)?.title;
 
-// Matches ProseMirror's default clipboard parser, which a custom handlePaste bypasses.
+// Matches ProseMirror's default clipboard parser, which a custom handlePaste bypasses. A leading
+// BOM is not content, and kept it would stop a first-line fence from opening a code block.
 export function readPastedPlainText(clipboardData: Pick<DataTransfer, "getData">): string {
-  return clipboardData.getData("text/plain").replace(/\r\n?/g, "\n");
+  return clipboardData
+    .getData("text/plain")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?/g, "\n");
 }
 
-/** Pasted thread links count as context too, so they become chips like a copied chip does. */
-export function readPastedComposerContext(
+export function readPastedComposerClipboard(
   clipboardData: Pick<DataTransfer, "getData">,
-): ComposerContextClipboardFragment | null {
-  const pastedText = clipboardData.getData("text/plain");
-  const decodedFragment =
+  plainTextOnly = false,
+) {
+  const plain = readPastedPlainText(clipboardData);
+  if (plainTextOnly || !plain) return { text: plain, context: null };
+  const html = clipboardData.getData("text/html");
+  const text = restorePastedMarkdownLinks(plain, html);
+  const copied =
     decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
-    decodeComposerContextClipboardHtml(clipboardData.getData("text/html"));
-  const threads = threadLinkContextReferences(
-    pastedText,
-    decodedFragment?.records ?? [],
-    threadTitle,
-  );
+    decodeComposerContextClipboardHtml(html);
+  const threads = threadLinkContextReferences(text, copied?.records ?? [], threadTitle);
   const source =
-    decodedFragment?.source ??
+    copied?.source ??
     (threads.records[0] ? { environmentId: threads.records[0].environmentId } : null);
-  if (source === null) return null;
+  if (source === null) return { text, context: null };
   const pastedIds = new Set<string>(
     collectComposerContextReferences(threads.text).map((occurrence) => occurrence.contextId),
   );
   const records = new Map<string, ComposerContextRecord>();
-  for (const record of [...(decodedFragment?.records ?? []), ...threads.records]) {
+  for (const record of [...(copied?.records ?? []), ...threads.records]) {
     if (
       record.kind === "preview-annotation" &&
       !("payload" in record) &&
@@ -57,23 +61,24 @@ export function readPastedComposerContext(
     }
     records.set(record.contextId, record);
   }
-  return {
+  const context: ComposerContextClipboardFragment = {
     version: 1,
     source,
     records: [...records.values()].filter((record) => pastedIds.has(record.contextId)),
   };
+  return { text, context };
 }
 
+export type PastedComposerClipboard = ReturnType<typeof readPastedComposerClipboard>;
+
 export function importPastedComposerText(
-  clipboardData: Pick<DataTransfer, "getData">,
+  { text: pastedText, context: fragment }: PastedComposerClipboard,
   importContextFragment?: (
     fragment: ComposerContextClipboardFragment,
   ) => ReadonlyMap<string, string>,
 ): string {
-  const pastedText = readPastedPlainText(clipboardData);
-  const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
   const rewrittenIds =
-    fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
+    fragment && fragment.records.length > 0 ? importContextFragment?.(fragment) : null;
   if (!rewrittenIds || rewrittenIds.size === 0) return pastedText;
   const nextId = (contextId: string) => {
     const id = rewrittenIds.get(contextId);
