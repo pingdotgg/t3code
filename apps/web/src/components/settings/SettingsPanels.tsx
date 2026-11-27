@@ -612,6 +612,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.enableProviderUpdateChecks !== DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
       ? [gt("Provider update checks")]
       : []),
+    ...(settings.enableModelPriceLookups !== DEFAULT_UNIFIED_SETTINGS.enableModelPriceLookups
+      ? [gt("Model price lookups")]
+      : []),
     ...(settings.continueThreadsAfterServerUpdate !==
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? [gt("Continue threads after restarts")]
@@ -747,6 +750,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      enableModelPriceLookups: DEFAULT_UNIFIED_SETTINGS.enableModelPriceLookups,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       keepAwakeWhileAgentsWork: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork,
@@ -2417,6 +2421,37 @@ export function MaintenanceSettingsPanel() {
                 updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
               }
               aria-label={gt("Check provider versions")}
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["enableModelPriceLookups"]}
+          {...setting("model-price-lookups")}
+          description={gt(
+            "Download the public LiteLLM price table from GitHub once a day to estimate what cloud models cost. When off, usage shows tokens without a price.",
+          )}
+          resetAction={
+            settings.enableModelPriceLookups !==
+            DEFAULT_UNIFIED_SETTINGS.enableModelPriceLookups ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset model price lookups to default")}
+                onClick={() =>
+                  updateSettings({
+                    enableModelPriceLookups: DEFAULT_UNIFIED_SETTINGS.enableModelPriceLookups,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["enableModelPriceLookups"]}
+              checked={settings.enableModelPriceLookups}
+              onCheckedChange={(checked) =>
+                updateSettings({ enableModelPriceLookups: Boolean(checked) })
+              }
+              aria-label={gt("Look up model prices")}
             />
           }
         />

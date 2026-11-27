@@ -10,8 +10,12 @@ What does leave your machine is what you set up:
   own terms. Hyakki does not control, see or answer for that traffic.
 - **Source control and issue trackers you connect.** GitHub, GitLab, Linear and the rest are only
   contacted when you link them.
-- **Updates.** The desktop app checks this repository's GitHub releases for a newer version and
-  fetches the published list of models from it.
+  Hyakki asks every agent it starts to switch off its own telemetry (`DO_NOT_TRACK`,
+  `DISABLE_TELEMETRY` and the agent-specific switches); a value you set yourself still wins.
+- **Updates.** The desktop app checks this repository's GitHub releases for a newer version.
+- **Lookups you switch on.** Settings › Maintenance has two, both off until you turn them on:
+  provider update checks (newer agent versions and this repository's list of models) and model
+  price lookups (the public LiteLLM price table on GitHub, used to estimate cloud costs).
 - **Your own telemetry export.** If you point Settings at an OpenTelemetry endpoint you run, Hyakki
   sends traces and metrics there and nowhere else.
 

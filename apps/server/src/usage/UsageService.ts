@@ -301,6 +301,11 @@ export const make = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const maxAgeMs = force ? RATES_REFRESH_FLOOR_MS : RATES_TTL_MS;
     yield* loadSavedRates;
+    const lookups = yield* settingsService.getSettings.pipe(
+      Effect.map((settings) => settings.enableModelPriceLookups),
+      Effect.catchCause(() => Effect.succeed(false)),
+    );
+    if (!lookups) return;
     if (ratesFetchedAtMs !== null && now - ratesFetchedAtMs < maxAgeMs) return;
     if (ratesLastFailedAtMs !== null && now - ratesLastFailedAtMs < RATES_REFRESH_FLOOR_MS) return;
 

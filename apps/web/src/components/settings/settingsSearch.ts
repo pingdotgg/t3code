@@ -861,6 +861,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "model-price-lookups",
+    title: msg("Model price lookups"),
+    to: "/settings/maintenance",
+    searchTerms: [msg("cost estimate price table litellm usage spend download")],
+    scope: "environment-defaults",
+  },
+  {
     id: "continue-threads-after-server-update",
     title: msg("Continue threads after restarts"),
     to: "/settings/maintenance",

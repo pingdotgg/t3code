@@ -216,7 +216,9 @@ const layerService = (input: {
     Layer.provideMerge(Layer.succeed(HostProcess.Platform, input.platform ?? "linux")),
     Layer.provideMerge(Layer.succeed(HostProcess.Hostname, input.hostname ?? "usage-test-host")),
     Layer.provideMerge(Layer.succeed(HostProcess.HomeDirectory, input.home)),
-    Layer.provideMerge(ServerSettings.layerTest(input.settings)),
+    Layer.provideMerge(
+      ServerSettings.layerTest({ enableModelPriceLookups: true, ...input.settings }),
+    ),
     Layer.provideMerge(
       Layer.succeed(
         HttpClient.HttpClient,
@@ -4327,6 +4329,29 @@ describe("UsageService", () => {
         assert.deepStrictEqual(cached.buckets, summary.buckets);
         assert.strictEqual(requests.length, 2);
       }),
+  );
+
+  it.effect("makes no price request while model price lookups are off", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-08-02T00:00:00Z"));
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(transcript, claudeLine(1, 5, "claude-fable-5")),
+      );
+      const requests: string[] = [];
+      const summary = yield* (yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-price-lookups-off-test",
+            home,
+            settings: { ...settings, enableModelPriceLookups: false },
+            onRatesFetch: (request) => requests.push(request.url),
+          }),
+        ),
+      )).readSummary(WINDOW);
+      assert.strictEqual(requests.length, 0);
+      assert.strictEqual(summary.pricing.knownModels, 0);
+    }),
   );
 
   it.effect("refetches cached rates early for a model they do not list", () =>
