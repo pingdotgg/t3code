@@ -1418,9 +1418,10 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     sourceId: BrowserImportSource["id"],
   ): Promise<BrowserImportSource | undefined> => {
     if (!previewBridge) return undefined;
+    const requestId = ++sourcesRequestIdRef.current;
     try {
       const latest = await previewBridge.listBrowserImportSources();
-      setSources(latest);
+      if (sourcesRequestIdRef.current === requestId) setSources(latest);
       return latest.find((source) => source.id === sourceId);
     } catch {
       return undefined;
