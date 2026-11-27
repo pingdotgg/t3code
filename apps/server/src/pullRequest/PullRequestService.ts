@@ -961,9 +961,17 @@ export const make = Effect.gen(function* () {
             cause: error,
           }),
       ),
+      // Each tracked folder is read as its own repository of the project, rooted at that folder.
       Effect.flatMap((projects) =>
         Effect.forEach(
-          projects,
+          projects.flatMap((project) => [
+            project,
+            ...(project.trackedFolders ?? []).map((folder) => ({
+              ...project,
+              workspaceRoot: folder.path,
+              repositoryIdentity: null,
+            })),
+          ]),
           (project) =>
             project.repositoryIdentity != null
               ? Effect.succeed(project)
@@ -1053,8 +1061,11 @@ export const make = Effect.gen(function* () {
   const requireProject = (ref: PullRequestRef): Effect.Effect<SupportedProject, PullRequestError> =>
     listWorkspaceProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
-        const own = supported[0];
         const repository = ref.repository.trim();
+        const own =
+          supported.find(
+            (candidate) => candidate.repository.toLowerCase() === repository.toLowerCase(),
+          ) ?? supported[0];
         const host = ref.host?.trim().toLowerCase();
         if (own !== undefined && own.repository.toLowerCase() === repository.toLowerCase()) {
           if (host === undefined || host === own.host) return Effect.succeed(own);
@@ -1168,18 +1179,27 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  // The project's own folder, not its tracked repositories, decides what it addresses.
+  const ownCheckout = ({ projects, supported }: WorkspaceProjects, projectId: ProjectId) => {
+    const root = projects.find((project) => project.id === projectId);
+    return {
+      root,
+      own: supported.find((candidate) => candidate.project.workspaceRoot === root?.workspaceRoot),
+    };
+  };
+
   // A failed read keeps the tools: their calls report the failure.
   const servesProject: PullRequestService["Service"]["servesProject"] = (projectId) =>
     listWorkspaceProjects({ projectId }).pipe(
-      Effect.map(({ supported }) => supported.length > 0),
+      Effect.map((workspace) => ownCheckout(workspace, projectId).own !== undefined),
       Effect.orElseSucceed(() => true),
     );
 
   const addressedProject: PullRequestService["Service"]["addressedProject"] = (projectId) =>
     listWorkspaceProjects({ projectId }).pipe(
-      Effect.map(({ projects, supported }) => {
-        const own = supported[0];
-        if (own === undefined) return projects.find((project) => project.id === projectId);
+      Effect.map((workspace) => {
+        const { root, own } = ownCheckout(workspace, projectId);
+        if (own === undefined) return root;
         const identity = own.project.repositoryIdentity;
         return identity == null || identity.provider === own.kind
           ? own.project
@@ -2921,21 +2941,22 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     if (input.refs.length === 0) return { stats: [] };
     const { supported } = yield* listWorkspaceProjects({});
-    const byProject = new Map(supported.map((project) => [project.project.id, project]));
     const wanted = new Map<
       string,
       { readonly project: SupportedProject; readonly number: number }
     >();
     for (const ref of input.refs) {
-      const project = byProject.get(ref.projectId);
-      if (
-        project === undefined ||
-        project.api.listChangeRequestStats === undefined ||
-        project.repository.toLowerCase() !== ref.repository.trim().toLowerCase()
-      ) {
-        continue;
-      }
-      wanted.set(`${project.project.id} ${ref.number}`, { project, number: ref.number });
+      const repository = ref.repository.trim().toLowerCase();
+      const host = ref.host?.trim().toLowerCase();
+      // A project holds its root repository and each tracked one.
+      const project = supported.find(
+        (candidate) =>
+          candidate.project.id === ref.projectId &&
+          candidate.repository.toLowerCase() === repository &&
+          (host === undefined || candidate.host === host),
+      );
+      if (project === undefined || project.api.listChangeRequestStats === undefined) continue;
+      wanted.set(`${project.cursorKey} ${ref.number}`, { project, number: ref.number });
     }
     const byHost = new Map<string, Array<{ project: SupportedProject; number: number }>>();
     for (const entry of wanted.values()) {
