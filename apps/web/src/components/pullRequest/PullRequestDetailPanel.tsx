@@ -2080,7 +2080,7 @@ export function PullRequestDetailPanel({
               <AlertAction>
                 <Button
                   size="xs"
-                  variant="outline"
+                  variant="secondary"
                   disabled={isInvalidating}
                   onClick={() => {
                     // The pin moves once the host read that reloads the diff has been asked for.

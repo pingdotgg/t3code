@@ -102,7 +102,7 @@ export function BackgroundWorkDetails(props: {
                   {childThreadId ? (
                     <Button
                       size="sm"
-                      variant="outline"
+                      variant="secondary"
                       onClick={() => {
                         setOpen(false);
                         props.onOpenThread(childThreadId);
