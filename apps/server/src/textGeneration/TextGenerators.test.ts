@@ -14,6 +14,7 @@ import { expect, vi } from "vite-plus/test";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { SECRET_REDACTED } from "../settingsSecrets.ts";
+import { TEXT_GENERATOR_DRIVERS } from "./textGeneratorDrivers.ts";
 import * as TextGenerators from "./TextGenerators.ts";
 
 const ID = ProviderInstanceId.make("router");
@@ -86,6 +87,26 @@ it.effect.each([
     );
     expect(failure.detail).toMatch(/rejected the API key: Incorrect API key provided$/);
   }),
+);
+
+it.effect.each(["openaiCompatible", "anthropic"] as const)(
+  "%s HTTP error detail does not split an emoji at the cutoff",
+  (kind) =>
+    Effect.gen(function* () {
+      const prefix = "a".repeat(299);
+      const upstream: typeof fetch = async () =>
+        Response.json({ error: { message: `${prefix}🚀` } }, { status: 400 });
+      const failure = yield* TEXT_GENERATOR_DRIVERS[kind]
+        .listModels({ baseUrl: "https://api.test/v1", apiKey: "", label: "Test API" })
+        .pipe(
+          Effect.provide(FetchHttpClient.layer),
+          Effect.provideService(FetchHttpClient.Fetch, upstream),
+          Effect.flip,
+        );
+
+      expect(failure.detail.isWellFormed()).toBe(true);
+      expect(failure.detail).toBe(`Test API returned HTTP 400: ${prefix}`);
+    }),
 );
 
 it.effect("a turned-off text generator fails instead of calling its API", () =>
