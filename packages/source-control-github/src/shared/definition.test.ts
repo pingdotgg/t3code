@@ -148,7 +148,7 @@ describe("GitHub media URLs", () => {
     ).toEqual({
       fetchUrl: "https://github.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c",
       fileName: "1a1842fb-6383-492f-873c-57aa0033fa6c",
-      kind: "video",
+      kind: "unknown",
       immutable: true,
     });
     expect(media("https://github.com/owner/repo/blob/main/docs/shot.png")).toEqual({

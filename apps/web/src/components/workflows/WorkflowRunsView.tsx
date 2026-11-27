@@ -209,6 +209,11 @@ export function WorkflowRunsView({
   const lists = workflowRunLists(groups);
   const all = allWorkflowRunNodes(groups);
   const section = groups.workflows.find((candidate) => candidate.name === workflow) ?? null;
+  // With a workflow picked, the list holds only its runs, so count only its skipped ones.
+  const skipped = listedWorkflowRuns(
+    section === null ? snapshot.runs : snapshot.runs.filter((run) => run.workflow === section.name),
+    false,
+  ).skipped;
   // A run that another invoked is not in the list itself; the one it is part of stands for it.
   const listedFor = (node: WorkflowRunNode | null): string | null => {
     if (node === null) return null;
@@ -253,11 +258,14 @@ export function WorkflowRunsView({
             workflowRunAsksKind(snapshot.workflows, node, kind) || node.run.runId === openRunId,
         );
   // With no run named, the one shown is one the list has: with a kind picked, one that asks it.
+  const fallback = all.find((node) => node.run.runId === defaultWorkflowRunId(groups)) ?? null;
   const shown =
     selectedRunId !== null
       ? selected
       : kind === EVERY_KIND
-        ? (all.find((node) => node.run.runId === defaultWorkflowRunId(groups)) ?? null)
+        ? fallback !== null && listed.some((node) => node.run.runId === listedFor(fallback))
+          ? fallback
+          : (listed[0] ?? null)
         : askingKind(listed, kind);
   const pickKind = (next: string) => {
     setPickedKind(next);
@@ -407,12 +415,12 @@ export function WorkflowRunsView({
                   ))}
                 </ul>
               )}
-              {tab === "all" && visible.skipped > 0 && !openedSkipped ? (
+              {tab === "all" && skipped > 0 && !openedSkipped ? (
                 <div className="flex justify-center pt-2">
                   <Button size="xs" variant="ghost" onClick={() => setShowSkipped(!showSkipped)}>
                     {showSkipped
                       ? gt("Hide skipped")
-                      : gt("Show {count} skipped", { count: visible.skipped })}
+                      : gt("Show {count} skipped", { count: skipped })}
                   </Button>
                 </div>
               ) : null}

@@ -17,6 +17,8 @@ const NUMBERED_LINE = /^\s*(?:(?:Line |L)(\d+): ?|(\d+):)(.*)$/;
 const CONTEXT_LINE = /^\s*\d+-/;
 const PATH_LINE_TEXT = /^(\S.*?):(\d+):(.*)$/;
 const COLON_HEADING = /^(\S.*):$/;
+const OPENCODE_NUMBERED_LINE = /^\s+Line \d+:/;
+const RIPGREP_NUMBERED_LINE = /^\d+:/;
 
 /**
  * Grep tool text as one result per matched line, from ripgrep's `path:line:text` and `--heading`
@@ -31,7 +33,8 @@ export function parseGrepOutput(
   const matches: Array<{ fileName: string; line: number; text: string }> = [];
   const notes: string[] = [];
   let file: string | undefined;
-  for (const line of output.split(/\r?\n/)) {
+  const lines = output.split(/\r?\n/);
+  for (const [index, line] of lines.entries()) {
     const trimmed = line.trim();
     if (!trimmed || trimmed === "--" || trimmed === "---" || SUMMARY_LINE.test(trimmed)) continue;
     const heading = FILE_HEADING.exec(trimmed);
@@ -47,12 +50,16 @@ export function parseGrepOutput(
     }
     // ripgrep context lines (`N-text`) can't be told apart from a file named like one.
     if (file !== undefined && CONTEXT_LINE.test(line)) return undefined;
-    const inline = PATH_LINE_TEXT.exec(line);
+    // `dir/a:12:b.txt:` is both an inline match and an OpenCode heading; an indented `Line N:` next decides.
+    const colonHeading = COLON_HEADING.exec(line.trimEnd());
+    const inline =
+      colonHeading && OPENCODE_NUMBERED_LINE.test(lines[index + 1] ?? "")
+        ? null
+        : PATH_LINE_TEXT.exec(line);
     if (inline) {
       matches.push({ fileName: inline[1] ?? "", line: Number(inline[2]), text: inline[3] ?? "" });
       continue;
     }
-    const colonHeading = COLON_HEADING.exec(line.trimEnd());
     if (colonHeading) {
       file = colonHeading[1];
       continue;
@@ -61,9 +68,12 @@ export function parseGrepOutput(
       notes.push(trimmed);
       continue;
     }
-    // ripgrep --heading prints the bare path above its numbered lines.
-    if (!/\s/.test(line.trimEnd())) {
-      file = line.trimEnd();
+    // A bare path with spaces needs a following ripgrep line to distinguish it from prose.
+    if (
+      !/\s/.test(line.trimEnd()) ||
+      (/^\S/.test(line) && RIPGREP_NUMBERED_LINE.test(lines[index + 1] ?? ""))
+    ) {
+      file = line;
       continue;
     }
     return undefined;
