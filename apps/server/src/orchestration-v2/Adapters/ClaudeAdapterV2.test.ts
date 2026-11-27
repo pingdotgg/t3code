@@ -22756,7 +22756,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             type: "system",
             subtype: "task_started",
             task_id: "fork-model",
-            description: "/probe",
+            description: "probe",
             task_type: "local_agent",
             skip_transcript: true,
             uuid: "00000000-0000-4000-8000-000000000241",
@@ -22768,7 +22768,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           subtype: "task_notification",
           task_id: "fork-model",
           status: "completed",
-          summary: "/probe",
+          summary: "probe",
           uuid: "00000000-0000-4000-8000-000000000242",
           session_id: WAKE_NATIVE_SESSION,
         });
@@ -22874,7 +22874,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             type: "system",
             subtype: "task_started",
             task_id: "fork-pending-model",
-            description: "/probe",
+            description: "probe",
             task_type: "local_agent",
             skip_transcript: true,
             uuid: "00000000-0000-4000-8000-000000000244",
@@ -22892,7 +22892,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             subtype: "task_notification",
             task_id: "fork-pending-model",
             status: "completed",
-            summary: "/probe",
+            summary: "probe",
             uuid: "00000000-0000-4000-8000-000000000246",
             session_id: WAKE_NATIVE_SESSION,
           }),
@@ -22922,7 +22922,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               type: "system",
               subtype: "task_started",
               task_id: "fork-pending-model",
-              description: "/probe resumed",
+              description: "probe resumed",
               task_type: "local_agent",
               uuid: "00000000-0000-4000-8000-000000000247",
               session_id: WAKE_NATIVE_SESSION,
@@ -22932,7 +22932,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             harness.events.some(
               (event) =>
                 event.type === "subagent.updated" &&
-                event.subagent.title === "/probe resumed" &&
+                event.subagent.title === "probe resumed" &&
                 event.subagent.status === "running",
             ),
           );
@@ -22960,7 +22960,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const task = harness.events.filter((event) => event.type === "subagent.updated").at(-1);
           assert.equal(task?.subagent.status, outcome === "cancelled" ? "cancelled" : "running");
           if (outcome === "resumed") assert.isNull(task?.subagent.model);
-          assert.equal(task?.subagent.title, "/probe resumed");
+          assert.equal(task?.subagent.title, "probe resumed");
         } else {
           yield* TestClock.adjust("30 seconds");
           yield* Deferred.await(lookupInterrupted);
@@ -23125,7 +23125,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* fileSystem.makeDirectory(subagentsDir, { recursive: true });
       yield* fileSystem.writeFileString(
         NodePath.join(subagentsDir, "agent-task-forked-skill.jsonl"),
-        `{"type":"assistant","effort":"low","uuid":"fork-line-0","message":{"role":"assistant","id":"msg_fork","content":[{"type":"text","text":"OK"}]}}\n`,
+        `{"type":"assistant","effort":"low","uuid":"fork-line-0","message":{"role":"assistant","id":"msg_fork","content":[{"type":"text","text":"OK"}],"stop_reason":"end_turn"}}\n`,
       );
       const harness = yield* makeWakeHarnessWithOptions({
         environment: { CLAUDE_CONFIG_DIR: configDir },

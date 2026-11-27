@@ -1913,7 +1913,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const providerSubagentModelLabel =
     activeThread?.modelUnreported === true
-      ? "Not reported"
+      ? gt("Not reported")
       : providerSubagentCatalogModel
         ? getTriggerDisplayModelName(
             providerSubagentCatalogModel,

@@ -8677,7 +8677,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
           // A completed subagent can settle before its first reply is flushed; wait out the flush once.
           if ((yield* read()) && completed && metadata.messageId === undefined) {
-            yield* Effect.sleep(WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS);
+            yield* Effect.sleep(CLAUDE_TRANSCRIPT_FLUSH_MS);
             yield* read();
           }
           return metadata.effort;
@@ -9823,7 +9823,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // The fork's report is only in its transcript (the stream never sends it) and can land
             // just after the task_notification.
             if (located !== undefined && !turnEnded) {
-              yield* Effect.sleep(WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS);
+              yield* Effect.sleep(CLAUDE_TRANSCRIPT_FLUSH_MS);
               yield* drain();
             }
             return;

@@ -1905,7 +1905,7 @@ function ThreadDetailBody(
                         provider={providerSubagentProvider ?? null}
                         modelLabel={
                           props.selectedThread.modelUnreported === true
-                            ? "Not reported"
+                            ? gt("Not reported")
                             : (providerSubagentCatalogModel?.name ??
                               formatModelSlugName(props.selectedThread.modelSelection.model))
                         }
