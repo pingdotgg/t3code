@@ -68,6 +68,7 @@ it.each([
   { kind: "file", edit: "switch" },
   { kind: "image", edit: "reload" },
   { kind: "file", edit: "cached" },
+  { kind: "image", edit: "cached" },
   { kind: "file", edit: "question" },
   { kind: "image", edit: "question" },
   { kind: "image", edit: "question-switch" },
@@ -120,7 +121,14 @@ it.each([
   rememberCopiedComposerAttachments(
     sourceEnvironmentId,
     edit === "cached"
-      ? new Map([["source-attachment", new File(["notes"], "notes.txt")]])
+      ? new Map([
+          [
+            "source-attachment",
+            new File(["notes"], "notes.txt", {
+              type: kind === "image" ? "image/png" : "text/plain",
+            }),
+          ],
+        ])
       : new Map(),
   );
   using _copy = {
@@ -168,15 +176,13 @@ it.each([
   const serializing = deferred<void>();
   const resumeSerialization = deferred<void>();
   const readAsDataURL = FileReader.prototype.readAsDataURL;
-  using _reader = pauseSerialization
-    ? vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (
-        this: FileReader,
-        blob,
-      ) {
-        serializing.resolve();
-        void resumeSerialization.promise.then(() => readAsDataURL.call(this, blob));
-      })
-    : undefined;
+  using reader = vi.spyOn(FileReader.prototype, "readAsDataURL");
+  if (pauseSerialization) {
+    reader.mockImplementation(function (this: FileReader, blob) {
+      serializing.resolve();
+      void resumeSerialization.promise.then(() => readAsDataURL.call(this, blob));
+    });
+  }
   const contextId = ComposerContextId.make(`${kind}_source`);
   const attachmentFields = {
     version: 1 as const,
@@ -264,6 +270,12 @@ it.each([
     await settled.promise;
   });
   expect(pendingDraftWork.has(target)).toBe(false);
+  if (
+    kind === "image" &&
+    (edit === "delete" || edit === "delete-annotation" || edit === "question-close")
+  ) {
+    expect(reader).not.toHaveBeenCalled();
+  }
   if (pauseSerialization) expect(slotsDuringSerialization).toBe(1);
   if (isQuestion) expect(useQuestionAttachmentPreparation.getState().counts[target] ?? 0).toBe(0);
   if (edit === "reload") {

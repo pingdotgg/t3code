@@ -231,45 +231,46 @@ export function useComposerContextImport(input: {
             ...(record.source ? { source: record.source } : {}),
           }
         : null;
-    // Question cleanup can move an accepted image. Prepare its saved record before publishing it.
-    const serialized = stagedImage ? await serializeComposerImages([stagedImage], []) : [];
-    if (!copiedFile || stagedImage) {
-      // Question attachments have no inline reference; annotations can own their screenshots.
+    const ownsAttachment = () => {
+      if (questionAttachmentTarget) {
+        return (
+          questionThread !== null &&
+          questionRequests !== null &&
+          appAtomRegistry
+            .get(questionRequests)
+            ?.userInputs.some(
+              (request) =>
+                request.responseCapability !== "not_resumable" &&
+                request.questions.some(
+                  (question) =>
+                    question.allowCustomAnswer !== false &&
+                    questionAttachmentDraftId(
+                      questionThread.environmentId,
+                      questionThread.threadId,
+                      request.requestId,
+                      question.id,
+                    ) === questionAttachmentTarget,
+                ),
+            ) === true
+        );
+      }
+      if (copiedFile && !stagedImage) return true;
+      // An annotation can own a screenshot without a separate image chip.
       const draft = getComposerDraft(composerDraftTarget);
       const references = new Set(collectInlineContextIds(draft?.prompt ?? ""));
-      if (
-        !questionAttachmentTarget &&
-        !references.has(toKindScopedComposerContextId(record.kind, localId)) &&
-        !(
-          record.kind === "image" &&
+      return (
+        references.has(toKindScopedComposerContextId(record.kind, localId)) ||
+        (record.kind === "image" &&
           references.has(previewAnnotationContextId(localId)) &&
-          draft?.previewAnnotations.some((annotation) => annotation.id === localId)
-        )
-      )
-        return;
-    }
-    if (
-      questionAttachmentTarget &&
-      (!questionThread ||
-        !questionRequests ||
-        !appAtomRegistry
-          .get(questionRequests)
-          ?.userInputs.some(
-            (request) =>
-              request.responseCapability !== "not_resumable" &&
-              request.questions.some(
-                (question) =>
-                  question.allowCustomAnswer !== false &&
-                  questionAttachmentDraftId(
-                    questionThread.environmentId,
-                    questionThread.threadId,
-                    request.requestId,
-                    question.id,
-                  ) === questionAttachmentTarget,
-              ),
-          ))
-    )
-      return;
+          draft?.previewAnnotations.some((annotation) => annotation.id === localId))
+      );
+    };
+    // A cached image is already available when the paste starts inserting its chip.
+    if (copiedFile && stagedImage) await Promise.resolve();
+    if (!ownsAttachment()) return;
+    // Question cleanup can move an accepted image. Prepare its saved record before publishing it.
+    const serialized = stagedImage ? await serializeComposerImages([stagedImage], []) : [];
+    if (stagedImage && !ownsAttachment()) return;
     const replacesFileMarker =
       record.kind === "file" &&
       getComposerDraft(attachmentDraftTarget)?.files.some(
