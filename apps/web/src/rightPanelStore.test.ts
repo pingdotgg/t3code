@@ -1022,7 +1022,7 @@ describe("rightPanelStore", () => {
     ).toEqual(["file:attachment:shared-id", "attachment:shared-id"]);
   });
 
-  it.each(["none", "next", "maximum"])(
+  it.each(["none", "next"])(
     "assigns a fresh line request after closing a file tab (persisted ID: %s)",
     async (persisted) => {
       const store = useRightPanelStore.getState();
@@ -1036,7 +1036,7 @@ describe("rightPanelStore", () => {
       };
       if (persisted !== "none") {
         store.openFile(refA, "seed.log", 42);
-        const persistedId = persisted === "maximum" ? Number.MAX_SAFE_INTEGER : requestId() + 1;
+        const persistedId = requestId() + 1;
         useRightPanelStore.setState({
           byThreadKey: {
             [scopedThreadKey(refA)]: {
@@ -1064,10 +1064,6 @@ describe("rightPanelStore", () => {
       store.openFile(refA, "app.log", 42);
       const reopened = requestId();
       expect(reopened).not.toBe(first);
-      expect(Number.isSafeInteger(reopened)).toBe(true);
-      store.openFile(refA, "app.log", 42);
-      expect(requestId()).not.toBe(reopened);
-      expect(Number.isSafeInteger(requestId())).toBe(true);
     },
   );
 

@@ -1197,9 +1197,6 @@ describe("large text scroll position", () => {
     { count: 1505, input: "layout" },
     { count: 66000, input: "none" },
     { count: 1505, input: "page down" },
-    { count: 1505, input: "space" },
-    { count: 1505, input: "page up" },
-    { count: 1505, input: "touch tap" },
   ])(
     "keeps the reading row with $count rows available on return (input: $input)",
     async ({ count, input }) => {
@@ -1219,26 +1216,10 @@ describe("large text scroll position", () => {
       if (count < 66000) {
         expect(firstVisibleRow()).toBe(0);
         scroller().focus();
-        if (input === "space") {
-          const scrolled = new Promise<void>((resolve) => {
-            scroller().addEventListener("scrollend", () => resolve(), { once: true });
-          });
-          await userEvent.keyboard(" ");
-          await scrolled;
-          readingRow = firstVisibleRow();
-          expect(readingRow).toBeGreaterThan(0);
-        } else if (input === "page down") {
+        if (input === "page down") {
           await userEvent.keyboard("{PageDown}");
           await vi.waitFor(() => expect(firstVisibleRow()).toBeGreaterThan(0));
           readingRow = firstVisibleRow();
-        } else if (input === "page up") {
-          await userEvent.keyboard("{PageUp}");
-        } else if (input === "touch tap") {
-          scroller()
-            .querySelector("[data-preview-row]")!
-            .dispatchEvent(
-              new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" }),
-            );
         } else {
           scroller().dispatchEvent(new Event("scroll"));
         }

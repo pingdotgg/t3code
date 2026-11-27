@@ -775,15 +775,8 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
   return { byThreadKey, threadPanelVisibilityByThreadKey };
 }
 
-const hydratedFileRevealRequestIds = new Set<number>();
+// One counter for every file tab, so a reopened tab never reuses a request a viewer already handled.
 let lastFileRevealRequestId = 0;
-
-function nextFileRevealRequestId() {
-  do {
-    lastFileRevealRequestId = (lastFileRevealRequestId % Number.MAX_SAFE_INTEGER) + 1;
-  } while (hydratedFileRevealRequestIds.has(lastFileRevealRequestId));
-  return lastFileRevealRequestId;
-}
 
 export const useRightPanelStore = create<RightPanelStoreState>()(
   persist(
@@ -1036,7 +1029,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const surface = fileSurface(
               relativePath,
               normalizeRevealLine(line),
-              nextFileRevealRequestId(),
+              ++lastFileRevealRequestId,
             );
             return {
               ...current,
@@ -1445,11 +1438,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       }),
       migrate: migratePersistedRightPanelState,
       onRehydrateStorage: () => (state) => {
-        // A restored tab can disappear before the next citation opens it again.
         for (const thread of Object.values(state?.byThreadKey ?? {})) {
           for (const surface of thread.surfaces) {
-            if (surface.kind === "file" && Number.isSafeInteger(surface.revealRequestId)) {
-              hydratedFileRevealRequestIds.add(surface.revealRequestId);
+            if (surface.kind === "file") {
+              lastFileRevealRequestId = Math.max(lastFileRevealRequestId, surface.revealRequestId);
             }
           }
         }
