@@ -14,6 +14,7 @@ import {
   buildWhenVariableOptions,
   commandLabel,
   filterKeybindingRows,
+  groupKeybindingRows,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
@@ -40,6 +41,19 @@ describe("KeybindingsSettings.logic", () => {
         (row) => row.command,
       ),
     ).toEqual(["chat.new"]);
+  });
+
+  it("lists back and forward under Navigation", () => {
+    const groups = groupKeybindingRows(
+      buildKeybindingRows(
+        compileResolvedKeybindingsConfig([
+          { command: "navigation.back", key: "mod+[" },
+          { command: "navigation.forward", key: "mod+]" },
+        ]),
+        "MacIntel",
+      ),
+    );
+    expect(groups.map((group) => group.id)).toEqual(["navigation"]);
   });
 
   it("keeps sibling row identities when a saved binding moves to the end", () => {

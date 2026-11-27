@@ -827,6 +827,32 @@ describe("fix findings handoff", () => {
     expect(handoff.prompt).toContain("6 further findings were omitted");
   });
 
+  it("counts only threads with readable text toward the findings limit", () => {
+    const reviewThreads = Array.from({ length: 21 }, (_, index) =>
+      thread(index === 0 ? "Fix wrong total" : "<!-- marker -->", { id: `t${index}` }),
+    );
+    const handoff = buildFixFindingsHandoff({ ...base, reviewThreads, checks: [] });
+    expect(handoff.reviewComments.slice(1).map((comment) => comment.text)).toEqual([
+      "reviewer: Fix wrong total",
+    ]);
+    expect(handoff.prompt).not.toContain("further findings were omitted");
+
+    const hiddenRoot = reviewThreads[1]!;
+    const withReply = buildFixFindingsHandoff({
+      ...base,
+      reviewThreads: [
+        {
+          ...hiddenRoot,
+          comments: [...hiddenRoot.comments, ...thread("Fix wrong total").comments],
+        },
+      ],
+      checks: [],
+    });
+    expect(withReply.reviewComments.slice(1).map((comment) => comment.text)).toEqual([
+      "reviewer: Fix wrong total",
+    ]);
+  });
+
   it("names a GitLab merge request as one", () => {
     const handoff = buildFixFindingsHandoff({
       ...base,

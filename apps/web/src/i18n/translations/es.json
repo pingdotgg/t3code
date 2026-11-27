@@ -8722,7 +8722,7 @@
   "a6a6dc235b108747": "Permite que los agentes usen el navegador compartido. Los proyectos pueden anularlo.",
   "ea5fed973bfc1aca": "Restablecer el acceso predeterminado al navegador al valor predeterminado",
   "19e1f74805f4a1fb": "Acceso de agentes al navegador",
-  "b395b88284e3bca2": "Muestra la vista previa flotante cuando un agente abre un navegador o dispositivo, salvo que el agente indique lo contrario.",
+  "d6ccca83a1676fcb": "Muestra la vista previa flotante cuando un agente abre un navegador o dispositivo, salvo que el agente indique lo contrario, y cuando cierras el panel derecho.",
   "6aadfd59cf60b4b5": "Restablecer mostrar automáticamente la vista previa flotante al valor predeterminado",
   "e4a7ec61190bc1f9": "Mostrar automáticamente la vista previa flotante",
   "3705c53cb3e76a28": "No se pudieron borrar los datos de {name}",
