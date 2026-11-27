@@ -2168,6 +2168,7 @@ function OpenCommandPaletteDialog(props: {
     if (newProjectFlow === null || !canSubmitNewProject || newProjectSubmittingRef.current) {
       return;
     }
+    const paletteAtSubmit = useCommandPaletteStore.getState();
     newProjectSubmittingRef.current = true;
     setIsCreatingNewProject(true);
     const created = await settlePromise(() =>
@@ -2180,7 +2181,14 @@ function OpenCommandPaletteDialog(props: {
     newProjectSubmittingRef.current = false;
     setIsCreatingNewProject(false);
     if (created._tag === "Failure") throw squashAtomCommandFailure(created);
-    if (created.value) setOpen(false);
+    // Dismissing or replacing the palette invalidates the submitting view.
+    if (
+      created.value &&
+      paletteAtSubmit.open &&
+      useCommandPaletteStore.getState() === paletteAtSubmit
+    ) {
+      setOpen(false);
+    }
   }
 
   function getDefaultCloneDestination(
