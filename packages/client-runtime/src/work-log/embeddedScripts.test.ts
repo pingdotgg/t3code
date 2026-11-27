@@ -67,6 +67,18 @@ describe("embeddedScripts", () => {
     [`deno eval --config deno.json 'console.log(1)'`, "typescript", "console.log(1)"],
     [`psql -f schema.sql -c 'select 1'`, "sql", "select 1"],
     [`node -C development -e 'console.log(1)'`, "javascript", "console.log(1)"],
+    [
+      `node --input-type module -e "import fs from 'node:fs'"`,
+      "javascript",
+      "import fs from 'node:fs'",
+    ],
+    [
+      `node --env-file .env -e 'console.log(process.env.FOO)'`,
+      "javascript",
+      "console.log(process.env.FOO)",
+    ],
+    [`node --env-file-if-exists .env.local -e 'console.log(1)'`, "javascript", "console.log(1)"],
+    [`node --experimental-loader ./loader.mjs -e 'console.log(1)'`, "javascript", "console.log(1)"],
     [`ruby -e 'puts 1'`, "ruby", "puts 1"],
     [`ruby -I lib -e 'puts 1'`, "ruby", "puts 1"],
     [`ruby -ne 'print if /foo/' input.txt`, "ruby", "print if /foo/"],

@@ -1302,6 +1302,19 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("closing the active split pane activates its neighbouring pane, as the drawer does", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    store.splitTerminal(refA, "terminal:term-1", "term-2");
+    store.splitTerminal(refA, "terminal:term-1", "term-3");
+    store.activateTerminal(refA, "terminal:term-1", "term-1");
+
+    store.closeTerminal(refA, "terminal:term-1", "term-1");
+
+    const surface = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+    expect(surface?.kind === "terminal" ? surface.activeTerminalId : null).toBe("term-2");
+  });
+
   it("closing the final terminal pane removes its surface and closes the panel", () => {
     useRightPanelStore.getState().openTerminal(refA, "term-1");
     useRightPanelStore.getState().closeTerminal(refA, "terminal:term-1", "term-1");

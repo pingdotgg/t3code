@@ -2733,8 +2733,8 @@
   "322f9f6712e4a3a7": "{count, plural, one {{count} angesehen} other {{count} angesehen}}",
   "ccd5fc4db08374d7": "{count, plural, one {{count} Testdatei ausgeblendet} other {{count} Testdateien ausgeblendet}}",
   "cb1e1e72fc3d2382": "Testdateien eingeschlossen",
-  "2ab7e87f961a419e": "Diff für {path} anzeigen, {additions} Hinzufügungen, {deletions} Löschungen, angesehen",
-  "e6fef106eeaa76ce": "Diff für {path} anzeigen, {additions} Hinzufügungen, {deletions} Löschungen",
+  "71828d9827de3793": "Diff für {path} anzeigen, {additions, plural, one {{additions} Hinzufügung} other {{additions} Hinzufügungen}}, {deletions, plural, one {{deletions} Löschung} other {{deletions} Löschungen}}, angesehen",
+  "9103c6fa7accc088": "Diff für {path} anzeigen, {additions, plural, one {{additions} Hinzufügung} other {{additions} Hinzufügungen}}, {deletions, plural, one {{deletions} Löschung} other {{deletions} Löschungen}}",
   "a52407bfe5da5df2": "Dateien prüfen",
   "a7764874320578a8": "Testdateien ausblenden",
   "186b7ac75ed4674c": "Review-Dateien filtern",
@@ -5722,5 +5722,8 @@
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "201490988858b511": "zurückgezogen von {by}",
-  "46d614fa7b4bf1e5": "Workflow-Ausführungen"
+  "46d614fa7b4bf1e5": "Workflow-Ausführungen",
+  "f6cf1627f4acc5ef": "Sichtbarkeit des Kommentars",
+  "eb1fd384ad5919dd": "Interne Notiz",
+  "b45f0b467e9406d0": "Dem Kunden antworten"
 }
