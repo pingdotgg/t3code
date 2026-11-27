@@ -112,7 +112,7 @@ and `writing-for-agents`.
     agreed sketch becomes a scaffold ticket that blocks every slice. Later steps are renumbered.
   - `wayfinder` and `to-tickets` read the Plan group of this fork's `principles` index.
   - `research` does the work itself when it already runs as the delegated agent, and saves where its
-    caller says. `wayfinder`'s research subagents record their own resolution (comment, close,
+    caller says. Its sources also include academic papers and web search. `wayfinder`'s research subagents record their own resolution (comment, close,
     Decisions-so-far line) after pushing their `research/<name>` branch.
   - `diagnosing-bugs` vets measurements with `benchmark-checklist`, runs `why` on a suspect that
     looks deliberate or a regression, and offers `improve-codebase-architecture` when no correct

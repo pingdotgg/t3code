@@ -50,8 +50,7 @@ one appears.
    skill.
 2. **Prove it.** Get proof for every change you made. See "Proof".
    Then run the `review-change` skill.
-3. **Get feedback.** Use the `sol-loop` skill to verify changes. When it skips
-   because no Sol is available, note that in the report and go on.
+3. **Get feedback.** Use the `sol-loop` skill to verify changes.
 4. **File the PR** with the `file-pr` skill. Rebase onto the latest default
    branch first. Add one short line to the description that says how you proved
    the change.

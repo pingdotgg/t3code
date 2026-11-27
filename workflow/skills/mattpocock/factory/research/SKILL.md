@@ -7,6 +7,6 @@ Spin up a **background agent** to do the research (in T3 Code: `delegate_task`, 
 
 Its job:
 
-1. Investigate the question against **primary sources** (official docs, source code, specs, first-party APIs), not a secondary write-up of them. Follow every claim back to the source that owns it.
+1. Investigate the question against **primary sources** (official docs, source code, specs, first-party APIs, academic sources, Google search, etc), avoid a secondary write-up of them. Follow every claim back to the source that owns it if needed.
 2. Write the findings to a single Markdown file, citing each claim's source.
 3. Save it where the caller says, such as `wayfinder`'s throwaway `research/<name>` branch. Otherwise save it where the repo already keeps such notes; match the existing convention, and if there is none, put it somewhere sensible and say where.
