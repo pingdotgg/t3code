@@ -35,8 +35,8 @@ export function sidebarFolderRowId(projectKey: string) {
 
 /**
  * A project folder in the boring sidebar. It reads like a shelf header: a trailing
- * count and chevron, with the count and a status dot only while it is closed, so a
- * closed folder still says when a hidden thread needs you.
+ * count and chevron, with the count only while closed and a status dot whenever hidden
+ * threads need you.
  */
 export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHeader(props: {
   group: SidebarProjectSnapshot;
@@ -55,7 +55,8 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   const { group, collapsed, hiddenThreads } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
-  const dot = collapsed
+  const hasHiddenThreads = hiddenThreads.length > 0;
+  const dot = hasHiddenThreads
     ? resolveSidebarFolderDot(
         hiddenThreads.map((thread) => ({
           ...thread,
