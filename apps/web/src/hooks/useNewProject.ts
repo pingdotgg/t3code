@@ -7,6 +7,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { extractProjectRepoIdentityKey } from "@t3tools/client-runtime/team";
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
@@ -99,12 +100,6 @@ export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Pro
     }
 
     const { projectId, workspaceRoot, commitError } = result.value;
-    if (input.assignToTeam) {
-      void assignProjectToTeam({
-        environmentId: input.environmentId,
-        input: { projectId, defaultViewId: null },
-      });
-    }
     toastManager.add(
       stackedThreadToast(
         commitError === undefined
@@ -149,6 +144,28 @@ export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Pro
       );
       return null;
     });
+    if (input.assignToTeam) {
+      const repoIdentityKey = project
+        ? extractProjectRepoIdentityKey(project.repositoryIdentity)
+        : null;
+      const assignResult = await assignProjectToTeam({
+        environmentId: input.environmentId,
+        input: {
+          projectId,
+          defaultViewId: null,
+          ...(repoIdentityKey ? { repoIdentityKey } : {}),
+        },
+      });
+      if (assignResult._tag === "Failure" && !isAtomCommandInterrupted(assignResult)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: m(msg("Could not assign project to team")),
+            description: errorMessage(squashAtomCommandFailure(assignResult)),
+          }),
+        );
+      }
+    }
     if (project === null) return true;
     await openProject(projectRef).catch((error: unknown) => {
       toastManager.add(

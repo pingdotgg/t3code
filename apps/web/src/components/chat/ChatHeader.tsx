@@ -45,7 +45,7 @@ import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
 import { formatTeamThreadTitle } from "@t3tools/client-runtime/team";
-import { useTeamThreadCreatorPseudo } from "../../state/team";
+import { readTeamThreadPostPermission, useTeamThreadCreatorPseudo } from "../../state/team";
 import { TeamPseudoPrefix } from "../team/TeamPseudoPrefix";
 import { TeamThreadAccessControls } from "../team/TeamThreadAccessControls";
 import { TeamThreadFollowButton } from "../team/TeamThreadFollowButton";
@@ -171,7 +171,8 @@ export const ChatHeader = memo(function ChatHeader({
   const startRename = () => {
     if (
       !isServerThread ||
-      !readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)
+      !readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope) ||
+      !readTeamThreadPostPermission(activeThreadEnvironmentId, activeThreadId).canPost
     )
       return;
     renameCommittedRef.current = false;
@@ -183,7 +184,11 @@ export const ChatHeader = memo(function ChatHeader({
   };
   const commitRename = (title: string) => {
     setRenaming(null);
-    if (!readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)) return;
+    if (
+      !readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope) ||
+      !readTeamThreadPostPermission(activeThreadEnvironmentId, activeThreadId).canPost
+    )
+      return;
     const resolution = resolveRenameCommit({
       title,
       originalTitle: renamingTitle ?? activeThreadTitle,

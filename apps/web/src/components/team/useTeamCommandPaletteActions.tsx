@@ -38,14 +38,15 @@ import {
 import { useEnvironmentScope } from "~/state/session";
 import { useProjects, useQuietThreadShell } from "~/state/entities";
 import {
+  cycleTeamSidebarFilterMode,
   openTeamForkDialog,
   setTeamThreadNoteMode,
   teamEnvironment,
   toggleShowColleaguesThreads,
   toggleShowFollowedThreadsOnly,
-  useShowColleaguesThreads,
-  useShowFollowedThreadsOnly,
+  useTeamSidebarFilterMode,
   useTeamStatesByEnvironment,
+  type TeamSidebarFilterMode,
 } from "~/state/team";
 import { threadEnvironment } from "~/state/threads";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
@@ -59,8 +60,9 @@ export function useTeamCommandPaletteActions(
   const gt = useGT();
   const navigate = useNavigate();
   const teamStatesByEnvironment = useTeamStatesByEnvironment();
-  const showColleaguesThreads = useShowColleaguesThreads();
-  const showFollowedThreadsOnly = useShowFollowedThreadsOnly();
+  const sidebarFilterMode = useTeamSidebarFilterMode();
+  const showColleaguesThreads = sidebarFilterMode === "all";
+  const showFollowedThreadsOnly = sidebarFilterMode === "followed";
   const { setFollowing: setTeamThreadFollowing } = useTeamThreadFollowToggle();
   const { setThreadView, setThreadLocked } = useTeamThreadAccessActions();
   const activeTeamState = activeThread
@@ -256,13 +258,42 @@ export function useTeamCommandPaletteActions(
     }
   }
   if (hasActiveTeamEnvironment(teamStatesByEnvironment)) {
+    const filterModeLabel = (mode: TeamSidebarFilterMode): string => {
+      if (mode === "mine") return gt("My threads");
+      if (mode === "followed") return gt("Followed");
+      return gt("All team");
+    };
+    const nextCycleMode: TeamSidebarFilterMode =
+      sidebarFilterMode === "mine" ? "followed" : sidebarFilterMode === "followed" ? "all" : "mine";
+    items.push({
+      kind: "action",
+      value: "action:team-cycle-sidebar-filter",
+      searchTerms: [
+        "team",
+        "filter",
+        "sidebar",
+        "threads",
+        "my threads",
+        "followed",
+        "all team",
+        "cycle",
+      ],
+      title: gt("Team thread filter: switch to {next} (currently {current})", {
+        next: filterModeLabel(nextCycleMode),
+        current: filterModeLabel(sidebarFilterMode),
+      }),
+      icon: <UsersIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        cycleTeamSidebarFilterMode();
+      },
+    });
     items.push({
       kind: "action",
       value: "action:team-toggle-colleagues",
       searchTerms: ["team", "colleagues", "members", "filter", "sidebar", "threads", "pseudo"],
       title: showColleaguesThreads
-        ? gt("Hide colleagues' threads")
-        : gt("Show colleagues' threads"),
+        ? gt("Filter sidebar to my threads")
+        : gt("Show all team threads"),
       shortcutCommand: "team.toggleColleagues",
       icon: <UsersIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
@@ -274,7 +305,7 @@ export function useTeamCommandPaletteActions(
       value: "action:team-toggle-followed-filter",
       searchTerms: ["team", "followed", "following", "filter", "sidebar", "notifications"],
       title: showFollowedThreadsOnly
-        ? gt("Show all visible team threads")
+        ? gt("Filter sidebar to my threads")
         : gt("Filter sidebar to followed threads"),
       icon: <BellIcon className={ITEM_ICON_CLASS} />,
       run: async () => {

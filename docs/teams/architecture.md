@@ -84,7 +84,7 @@ Two supported flows:
 1. **Deep-link invite (primary):**
    - An `owner`, `admin`, or `modo` (up to their own role) generates a one-time or bounded-use invite link on the Team Server, optionally prefilling `pseudo` and setting the granted `role`.
    - Format: `t3code://team/join?server=<encoded-url>&token=<invite-token>&pseudo=<optional-pseudo>` (and a hosted-web equivalent using URL fragment `#token=...` so the secret never hits a hosted origin, matching [05_remote.md](../internals/05_remote.md#hosted-web-is-a-client)).
-   - Opening the link in the desktop/web app opens a Join Team modal with the server URL and prefilled `pseudo` (editable if not locked by invite). Confirming exchanges the invite token for a member-bound DPoP/bearer session. _(The unmodified upstream mobile app connects via a standard member-bound pairing QR/code generated from a member's desktop/web session; see [Upstream Mobile App Compatibility](#upstream-mobile-app-compatibility-no-mobile-fork).)_
+   - Opening the link in the desktop/web app opens a Join Team modal with the server URL and prefilled `pseudo` (editable by the joining member). Confirming exchanges the invite token for a member-bound DPoP/bearer session. _(The unmodified upstream mobile app connects via a standard member-bound pairing QR/code generated from a member's desktop/web session; see [Upstream Mobile App Compatibility](#upstream-mobile-app-compatibility-no-mobile-fork).)_
 2. **Manual setup in Settings:**
    - In **Settings → Teams → Add Team**, the user enters the Team Server URL, invite token / pairing credential, and chooses their `pseudo`.
    - The server validates pseudo uniqueness and creates/binds the member session.
@@ -139,6 +139,7 @@ owner (4) > admin (3) > modo (2) > regular (1)
 | Post in unlocked team-owned (scheduled task) thread                                  | `view.postRule` | Yes (no `Send now`) | Yes (no `Send now`)        | Yes (no `Send now`) |
 | Configure team providers & remote environments                                       | No              | No                  | Yes                        | Yes                 |
 | Configure per-environment ACLs                                                       | No              | No                  | Yes                        | Yes                 |
+| Leave team (except last active `owner`)                                              | Yes             | Yes                 | Yes                        | Yes (if ≥2 owners)  |
 | Delete team / transfer last owner                                                    | No              | No                  | No                         | Yes                 |
 
 _\*`owner`, `admin`, and `modo` (on unlocked threads they can read) cannot click `Send now` (steer) on another member's thread; they have an explicit **Interrupt** action instead (immediately revoking the active turn's GitHub credential lease). See [Section 6](#6-per-turn-github-identity-forwarding--turn-isolation)._

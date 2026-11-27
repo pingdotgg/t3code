@@ -17,6 +17,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 | **Milestone 9a**   | Server-Side Upstream Mobile Compatibility Layer (No Mobile Fork)                    | Merged (PR #8)      |
 | **Milestone 9b**   | Optional Linux `bwrap` Worktree Sandboxing & `/proc` `hidepid=2` Runbook            | Merged (PR #9)      |
 | **Post-M8 Polish** | `modo` Interrupt + Queued-Msg Notif, Per-Team Sounds, `v0.1.13` + `harnessProfiles` | Merged (PR #11–#13) |
+| **Phase 7b**       | GitHub OAuth / GitHub App User-to-Server Tokens & Device Flow                       | Merged (PR #14)     |
 
 ---
 
@@ -122,15 +123,15 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
   - Reuse upstream's native queued-run pipeline and UI (`apps/web/src/components/chat/QueuedRunsControl.tsx` + `ChatView.tsx`): any message posted by a **non-creator** while a turn is already running **never auto-steers** the active turn; it enters the thread's native queue with its existing **dashed border/style** (`en pointillé`) plus author pseudo attribution.
   - Gate **`Send now`** (`promote_to_steer` / `steerNext`) strictly to the **thread creator only** on both server (`ws.ts` + MCP `t3_queue`) and UI (`QueuedRunsControl.tsx`) — hidden and server-rejected for other colleagues **and** for `owner`/`admin` on someone else's thread.
   - Tighten Milestone 3's `Interrupt` authorization on both server (`ws.ts` + MCP `t3_thread_interrupt`) and UI (`ChatView.tsx`):
-    - `regular` and `modo` non-creators **cannot** interrupt another member's active turn (the composer shows queue-send behavior instead of an interrupt control for foreign turns).
-    - `owner` and `admin` cannot click `Send now` on another member's thread, but receive an explicit **`Interrupt`** control to stop an ongoing turn cleanly (leaving a clean hook for Milestone 7 to immediately revoke the active turn's GitHub credential lease).
+    - `regular` non-creators **cannot** interrupt another member's active turn (the composer shows queue-send behavior instead of an interrupt control for foreign turns).
+    - `owner`, `admin`, and `modo` (extended to unlocked readable threads in PR #11) cannot click `Send now` on another member's thread, but receive an explicit **`Interrupt`** control to stop an ongoing turn cleanly (revoking any active turn's GitHub credential lease).
     - The thread creator (and active turn author) retains normal stop/interrupt control on their own turn.
 
 ### Definition of Done
 
 - An agent triggered by a `regular` member on the Default Team Environment calling `t3_thread_list`, `t3_thread_read`, `t3_thread_send`, `t3_thread_interrupt`, `t3_queue`, or `delegate_task` is restricted to that member's exact RBAC/View/Lock permissions; subagents inherit `actingMemberId` immutably.
 - Running `t3server --team-hub-only` refuses to spawn agents/terminals while serving the team control plane for an attached loopback `t3runner` running under a separate OS user.
-- While Alice's turn is running, Bob (`regular` or `modo`) posting a message sees it queued in dashed style via `QueuedRunsControl.tsx` with **no** `Send now` and **no** `Interrupt`; only Alice (creator) can click `Send now`; an `admin` sees explicit **`Interrupt`** (and **no** `Send now`).
+- While Alice's turn is running, Bob (`regular`) posting a message sees it queued in dashed style via `QueuedRunsControl.tsx` with **no** `Send now` and **no** `Interrupt`; only Alice (creator) can click `Send now`; `owner`, `admin`, and `modo` (on unlocked threads per PR #11) see explicit **`Interrupt`** (and **no** `Send now`).
 - When Bob's queued turn runs after Alice's turn finishes, the warm provider process recycles automatically and receives a fresh MCP token bound to Bob.
 
 ---
@@ -261,7 +262,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
     - If `locked === true`: only `owner` and `admin` may post.
     - If `locked === false`: **`owner`, `admin`, and `modo`** may always post in a team-owned scheduled-task thread (provided they can read its View), plus `regular` when `view.postRule` permits.
     - Mid-turn messages from `modo` (or other members) during an active automation run queue in dashed style (`QueuedRunsControl.tsx`) with **no `Send now` for `modo`** (and no `Send now` on automation runs).
-    - **`Interrupt`:** `owner` and `admin` retain explicit **`Interrupt`** on active automation runs (immediately revoking any active automation GitHub lease); human follow-up turn authors can stop their own turn; `modo` and `regular` cannot interrupt automation runs or colleagues' turns.
+    - **`Interrupt`:** `owner` and `admin` retain explicit **`Interrupt`** on active automation runs (immediately revoking any active automation GitHub lease); `modo` can also interrupt active turns on unlocked readable threads (PR #11); human follow-up turn authors can stop their own turn; `regular` members cannot interrupt automation runs or colleagues' turns.
 - **MCP (`team-automation`), GitHub (M7) & warm session recycle (M4) wiring:**
   - Execute team scheduled-task runs under synthetic MCP principal **`team-automation`** (`taskId`, `teamId`, `projectId`, `environmentId`, `viewId`, `mcpAccessLevel: "minimal" | "elevated"`), never inheriting the configuring member's personal `memberId` or role.
   - **`"minimal"` (default):** Equivalent to `regular`, further narrowed strictly to the task's `projectId`, `environmentId`, and target `viewId` — cannot read `admin`-only Views, manage team settings/members/views/schedules, or launch threads outside its scope; propagated immutably (narrowing only) to subagents, `delegate_task`, and MCP-created child threads.
@@ -276,7 +277,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 
 - Creating a team sets `displayName` (copying `name` automatically when omitted) and allows `owner`/`admin` to update it; a team scheduled task creates a thread prefixed `<displayName>: <title>` with `ownerKind = "team"` (no human `creatorMemberId`), hidden by default in the sidebar and in `owned_and_followed` upstream mobile mode until toggled or followed, with zero default notifications.
 - Personal environments without a team display standard upstream Scheduled Tasks UI with zero mention of the virtual `"personal"` team.
-- A `modo` can create/edit/`Run now` a `minimal` unlocked team scheduled task and post in its unlocked threads (queued dashed mid-turn with no `Send now` and no `Interrupt`), cannot create/edit/delete an `elevated` or `locked` task, and a `regular` member sees team tasks read-only (without webhook secrets).
+- A `modo` can create/edit/`Run now` a `minimal` unlocked team scheduled task and post in its unlocked threads (queued dashed mid-turn with no `Send now`, with `Interrupt` on unlocked threads per PR #11), cannot create/edit/delete an `elevated` or `locked` task, and a `regular` member sees team tasks read-only (without webhook secrets).
 - A `minimal` `team-automation` agent (and its delegates/subagents) cannot read `admin`-only Views or escalate privileges, while an `owner`/`admin`-configured `elevated` task works as expected.
 - A team scheduled task runs cleanly without a GitHub account configured (returning zero GitHub credentials to `git`/`gh`), uses the dedicated team automation GitHub account when configured by `owner`/`admin`, and recycles the warm session cleanly whenever a human posts a follow-up turn.
 - Full verification (`vp fmt`, `vp run i18n:check`, `vp run check:changed`, and all `vp run scenarios:team` scenarios) passes with zero changes to `apps/mobile/`.
@@ -299,6 +300,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 > - **`modo` `Interrupt` + queued-message notifications _(Merged — PR #11)_:** `modo` can interrupt active turns on unlocked threads they can read (revoking active GitHub leases); thread creator and active turn author are notified whenever a colleague queues a message during an active turn.
 > - **Per-team notification sounds _(Merged — PR #12)_:** `ClientSettings.teamNotificationSounds` keyed by `TeamId`, defaulting team threads to a distinct Web Audio `chime` preset (`chime`, `bell`, `marimba`, `pulse`, `classic`, `off`) with inline Preview in Settings → Notifications & Settings → Teams.
 > - **Upstream `v0.1.13` sync + Antigravity plugins & `harnessProfiles.ts` _(Merged — PR #13)_:** Merged stable `v0.1.13` (`bc0f04da94`), preserved enabled personal Antigravity plugins in isolated `team:<teamId>:antigravity` profiles with Team Skill precedence, added `ProviderSetupError` non-retry regression coverage, and unified driver descriptors in `apps/server/src/team/harnessProfiles.ts`.
+> - **Phase 7b — GitHub OAuth / GitHub App user-to-server tokens _(Merged — PR #14)_:** Added team GitHub App & OAuth App configuration (`owner`/`admin`), one-click browser OAuth with PKCE + cross-origin confirmation code, RFC 8628 Device Flow for LAN/Tailscale servers, automatic server-side token refresh with `needsReconnect` banners, and PAT fallback.
 >
 > **Remaining optional future follow-ups (explicitly deferred):**
 >

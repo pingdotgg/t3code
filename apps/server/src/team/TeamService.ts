@@ -104,8 +104,10 @@ import {
   type TeamCreateViewInput,
   type TeamDeletePrepromptInput,
   type TeamDeletePrepromptResult,
+  type TeamDeleteInput,
   type TeamDeleteProviderInput,
   type TeamDeleteProviderResult,
+  type TeamDeleteResult,
   type TeamDeleteSkillInput,
   type TeamDeleteSkillResult,
   type TeamDeleteThreadNoteInput,
@@ -126,6 +128,7 @@ import {
   type TeamInviteCreatedResult,
   type TeamInvitePreviewResult,
   type TeamIssueLocalSyncTokenResult,
+  type TeamLeaveResult,
   type TeamListThreadNotesInput,
   type TeamMember,
   type TeamMobilePairingLinkSummary,
@@ -225,8 +228,10 @@ import {
 } from "./TeamLocalSyncService.ts";
 import {
   clearTeamProviderRefreshLock,
+  readOAuthCredentialsFromServerProfileDir,
   readTeamProviderSecret,
   removeTeamProviderSecret,
+  resolveLinkedServerProviderProfileDir,
   teamProviderSecretKey,
   writeTeamProviderSecret,
   type StoredTeamProviderSecret,
@@ -433,6 +438,18 @@ export class TeamService extends Context.Service<
       readonly sessionId: AuthSessionId;
       readonly payload: TeamInitializeInput;
     }) => Effect.Effect<TeamInitializeResult, TeamOperationError>;
+    readonly leaveTeam: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+    }) => Effect.Effect<TeamLeaveResult, TeamOperationError>;
+    readonly deleteTeam: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamDeleteInput;
+      readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+      readonly teamProviderManager?: TeamProviderManager.TeamProviderManager["Service"];
+    }) => Effect.Effect<TeamDeleteResult, TeamOperationError>;
     readonly updateDisplayName: (input: {
       readonly sessionId: AuthSessionId;
       readonly payload: TeamUpdateDisplayNameInput;
@@ -2482,6 +2499,261 @@ const make = Effect.gen(function* () {
     yield* publish({ version: 1, type: "memberUpserted", payload: updatedMember });
     yield* publishAccessChange({ type: "member", memberId: updatedMember.id });
     return updatedMember;
+  });
+
+  const leaveTeam = Effect.fn("TeamService.leaveTeam")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+    readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "This session does not belong to the active team.",
+      });
+    }
+    const updatedAt = DateTime.formatIso(yield* DateTime.now);
+    const updatedMember = yield* withMembershipMutationGate(
+      Effect.gen(function* () {
+        const left = yield* repository
+          .leaveTeam({
+            teamId: team.id,
+            memberId: actor.id,
+            updatedAt,
+          })
+          .pipe(
+            Effect.catchTags({
+              TeamLastOwnerProtectedError: () =>
+                Effect.fail(
+                  new TeamOperationError({
+                    code: "last_owner",
+                    message:
+                      "You are the last active owner. Transfer ownership to another member before leaving the team.",
+                  }),
+                ),
+              TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+            }),
+          );
+        if (Option.isNone(left)) {
+          return yield* new TeamOperationError({
+            code: "not_found",
+            message: "Team member could not be found.",
+          });
+        }
+        yield* revokeSessionsForMember(left.value.id);
+        yield* revokePairingLinksForMember(left.value.id);
+        return left.value;
+      }),
+    );
+
+    if (Option.isSome(assetsRepositoryOption)) {
+      yield* assetsRepositoryOption.value
+        .revokeLocalSyncTokensForMember(updatedMember.id, updatedAt)
+        .pipe(Effect.ignore);
+    }
+    yield* TeamGitHubOAuth.withMemberGitHubCredentialMutationLock(
+      team.id,
+      updatedMember.id,
+      Effect.gen(function* () {
+        TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, updatedMember.id);
+        if (Option.isSome(githubRepositoryOption)) {
+          const removedSecretKeyOpt = yield* githubRepositoryOption.value
+            .deleteMemberCredential(updatedMember.id)
+            .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+          if (Option.isSome(removedSecretKeyOpt) && Option.isSome(secretStoreOption)) {
+            yield* TeamGitHubRepository.removeTeamGitHubSecret(
+              secretStoreOption.value,
+              removedSecretKeyOpt.value,
+            ).pipe(Effect.ignore);
+          }
+        }
+        yield* notifyGitHubCredentialChanged({
+          kind: "member",
+          teamId: team.id,
+          memberId: updatedMember.id,
+        });
+      }),
+    );
+    if (input.peerClientPairing) {
+      const envs = yield* repository
+        .listEnvironments(team.id)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
+      const targetEnvIds = envs.filter((env) => !env.isDefault).map((env) => env.environmentId);
+      if (input.peerLinks) {
+        const allPeers = yield* input.peerLinks.list.pipe(Effect.orElseSucceed(() => []));
+        for (const peer of allPeers) {
+          targetEnvIds.push(peer.environmentId);
+        }
+      }
+      const uniqueEnvIds = [...new Set(targetEnvIds)];
+      if (uniqueEnvIds.length > 0) {
+        yield* withRemoteRevocationBarrier(
+          revokeRemoteMemberGrantsForEnvironments({
+            teamId: team.id,
+            peerClientPairing: input.peerClientPairing,
+            environmentIds: uniqueEnvIds,
+            subjectPrefixes: [remoteSubjectForMember(team.id, updatedMember.id)],
+          }),
+        );
+      }
+    }
+    yield* publish({ version: 1, type: "memberUpserted", payload: updatedMember });
+    yield* publishAccessChange({ type: "member", memberId: updatedMember.id });
+    return {
+      left: true,
+      teamId: team.id,
+      memberId: updatedMember.id,
+    } satisfies TeamLeaveResult;
+  });
+
+  const deleteTeam = Effect.fn("TeamService.deleteTeam")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamDeleteInput;
+    readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
+    readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+    readonly teamProviderManager?: TeamProviderManager.TeamProviderManager["Service"];
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id || actor.role !== "owner") {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only a team owner can delete the team.",
+      });
+    }
+    if (input.payload.confirmTeamName.trim() !== team.name) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: `Confirmation text must match the team name "${team.name}".`,
+      });
+    }
+
+    const { members, environments, cleanupResult } = yield* withMembershipMutationGate(
+      Effect.gen(function* () {
+        const currentMembers = yield* repository
+          .listMembers(team.id)
+          .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamMember>));
+        const currentEnvs = yield* repository
+          .listEnvironments(team.id)
+          .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
+        const deleted = yield* repository
+          .deleteTeam(team.id)
+          .pipe(Effect.mapError(toInternalError));
+        return {
+          members: currentMembers,
+          environments: currentEnvs,
+          cleanupResult: deleted,
+        };
+      }),
+    );
+
+    if (!cleanupResult.deleted) {
+      return yield* new TeamOperationError({
+        code: "not_found",
+        message: "Team workspace could not be found.",
+      });
+    }
+
+    // Revoke every other team-bound session; keep the owner's current session so the server returns cleanly to personal mode.
+    const proofKeysToRevoke = new Set<string>();
+    const callerJkt = yield* sessionStore
+      .proofKeyThumbprintOf(input.sessionId)
+      .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+    yield* Effect.forEach(
+      cleanupResult.sessionIds,
+      (boundSessionId) => {
+        if (boundSessionId === input.sessionId) return Effect.void;
+        return Effect.gen(function* () {
+          const maybeJkt = yield* sessionStore
+            .proofKeyThumbprintOf(boundSessionId)
+            .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+          if (
+            Option.isSome(maybeJkt) &&
+            (Option.isNone(callerJkt) || maybeJkt.value !== callerJkt.value)
+          ) {
+            proofKeysToRevoke.add(maybeJkt.value);
+          }
+          yield* sessionStore.revoke(boundSessionId).pipe(Effect.ignore);
+        });
+      },
+      { discard: true },
+    );
+    yield* Effect.forEach(
+      [...proofKeysToRevoke],
+      (proofKeyThumbprint) => sessionStore.revokeByProofKey(proofKeyThumbprint).pipe(Effect.ignore),
+      { discard: true },
+    );
+
+    if (Option.isSome(pairingGrantStoreOption)) {
+      yield* Effect.forEach(
+        cleanupResult.pairingLinkIds,
+        (pairingLinkId) => pairingGrantStoreOption.value.revoke(pairingLinkId).pipe(Effect.ignore),
+        { discard: true },
+      );
+    }
+
+    for (const member of members) {
+      TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, member.id);
+      yield* notifyGitHubCredentialChanged({
+        kind: "member",
+        teamId: team.id,
+        memberId: member.id,
+      });
+    }
+    yield* notifyGitHubCredentialChanged({
+      kind: "automation",
+      teamId: team.id,
+    });
+
+    if (Option.isSome(secretStoreOption)) {
+      const secrets = secretStoreOption.value;
+      for (const secretKey of cleanupResult.providerSecretKeys) {
+        yield* removeTeamProviderSecret(secrets, secretKey).pipe(Effect.ignore);
+        clearTeamProviderRefreshLock(secretKey);
+      }
+      for (const secretKey of cleanupResult.githubSecretKeys) {
+        yield* TeamGitHubRepository.removeTeamGitHubSecret(secrets, secretKey).pipe(Effect.ignore);
+      }
+      if (cleanupResult.githubAppClientSecretKey) {
+        yield* TeamGitHubRepository.removeTeamGitHubSecret(
+          secrets,
+          cleanupResult.githubAppClientSecretKey,
+        ).pipe(Effect.ignore);
+      }
+    }
+
+    if (input.peerClientPairing) {
+      const remoteEnvIds = environments
+        .filter((env) => !env.isDefault)
+        .map((env) => env.environmentId);
+      if (remoteEnvIds.length > 0) {
+        yield* withRemoteRevocationBarrier(
+          revokeRemoteMemberGrantsForEnvironments({
+            teamId: team.id,
+            peerClientPairing: input.peerClientPairing,
+            environmentIds: [...new Set(remoteEnvIds)],
+            subjectPrefixes: [remoteSubjectPrefixForTeam(team.id)],
+          }),
+        );
+      }
+    }
+
+    const activeProviderManager =
+      input.teamProviderManager ?? Option.getOrUndefined(providerManagerOption);
+    if (activeProviderManager) {
+      yield* activeProviderManager.removeLocalTeamBinding(team.id).pipe(Effect.ignore);
+    }
+
+    yield* publish({ version: 1, type: "teamDeleted", payload: { teamId: team.id } });
+    yield* publishAccessChange({ type: "workspace" });
+    yield* notifyProviderManagerChanged();
+
+    return {
+      deleted: true,
+      teamId: team.id,
+    } satisfies TeamDeleteResult;
   });
 
   const createView = Effect.fn("TeamService.createView")(function* (input: {
@@ -9040,7 +9312,42 @@ const make = Effect.gen(function* () {
     const nowIso = DateTime.formatIso(yield* DateTime.now);
     const id = existing?.id ?? TeamProviderId.make(yield* random.uuidV4().pipe(Effect.orDie));
 
+    const sourceServerProviderInstanceId = input.payload.sourceServerProviderInstanceId;
+    if (
+      sourceServerProviderInstanceId !== undefined &&
+      sourceServerProviderInstanceId !== null &&
+      isTeamProviderInstanceId(sourceServerProviderInstanceId)
+    ) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: "Cannot link a team provider to a virtual team: provider instance.",
+      });
+    }
+
+    let importedServerOAuthSecret: StoredTeamProviderSecret | null = null;
+    if (
+      deliveryStrategy === "token-lease" &&
+      sourceServerProviderInstanceId !== undefined &&
+      sourceServerProviderInstanceId !== null &&
+      Option.isSome(serverConfigOption)
+    ) {
+      const profileDir = resolveLinkedServerProviderProfileDir({
+        stateDir: serverConfigOption.value.stateDir,
+        driver: input.payload.driver,
+        linkedServerInstanceId: sourceServerProviderInstanceId,
+      });
+      if (profileDir !== null) {
+        importedServerOAuthSecret = yield* Effect.promise(() =>
+          readOAuthCredentialsFromServerProfileDir({
+            driver: input.payload.driver,
+            profileDir,
+          }),
+        );
+      }
+    }
+
     const hasIncomingSecret =
+      importedServerOAuthSecret !== null ||
       input.payload.apiKey !== undefined ||
       input.payload.oauthAccessToken !== undefined ||
       input.payload.oauthRefreshToken !== undefined ||
@@ -9075,6 +9382,7 @@ const make = Effect.gen(function* () {
           : null;
       const nextSecret: StoredTeamProviderSecret = {
         ...previousSecret,
+        ...importedServerOAuthSecret,
         ...(input.payload.apiKey !== undefined ? { apiKey: input.payload.apiKey } : {}),
         ...(input.payload.oauthAccessToken !== undefined
           ? { oauthAccessToken: input.payload.oauthAccessToken }
@@ -9107,6 +9415,19 @@ const make = Effect.gen(function* () {
       secretKey = key;
     }
 
+    const baseConfig: Record<string, unknown> = {
+      ...(input.payload.config ?? existing?.config),
+    };
+    if (sourceServerProviderInstanceId !== undefined) {
+      if (sourceServerProviderInstanceId === null) {
+        delete baseConfig.linkedServerInstanceId;
+      } else {
+        baseConfig.linkedServerInstanceId = sourceServerProviderInstanceId;
+      }
+    } else if (deliveryStrategy !== "token-lease") {
+      delete baseConfig.linkedServerInstanceId;
+    }
+
     const stored = yield* assetsRepo
       .upsertProvider({
         id,
@@ -9128,7 +9449,7 @@ const make = Effect.gen(function* () {
             ? input.payload.apiKeyPrefix
             : (existing?.apiKeyPrefix ?? null),
         secretKey,
-        config: input.payload.config ?? existing?.config ?? {},
+        config: baseConfig,
         enabled: input.payload.enabled ?? existing?.enabled ?? true,
         updatedByMemberId: actor.id,
         now: nowIso,
@@ -10991,6 +11312,8 @@ const make = Effect.gen(function* () {
     subscribeAccessChanges,
     openAccessChangeSubscription,
     initializeTeam,
+    leaveTeam,
+    deleteTeam,
     updateDisplayName,
     updateMyPseudo,
     updateMemberRole,

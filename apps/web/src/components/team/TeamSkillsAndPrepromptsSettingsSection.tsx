@@ -35,6 +35,15 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
+import { confirmTeamDestructiveAction } from "./confirmTeamDestructiveAction";
+import {
+  formatTeamDriverLabel,
+  formatTeamPrepromptScopeLabel,
+  getTeamAssetDriverOptions,
+} from "./teamProviderDrivers";
+
+const CODEX_ADDITIONAL_CONTEXT_BYTE_LIMIT = 4_000;
+const utf8Encoder = new TextEncoder();
 
 interface EditableSkillReference extends TeamSkillReference {
   readonly key: string;
@@ -44,22 +53,6 @@ let nextSkillRefKey = 1;
 function toEditableSkillRef(ref: TeamSkillReference): EditableSkillReference {
   const key = `ref-${nextSkillRefKey++}`;
   return { ...ref, key };
-}
-
-function getAssetDriverOptions(
-  gt: ReturnType<typeof useGT>,
-): ReadonlyArray<{ readonly value: string; readonly label: string }> {
-  return [
-    { value: "*", label: gt("All providers (*)") },
-    { value: "codex", label: "Codex" },
-    { value: "claudeAgent", label: "Claude Code" },
-    // oxlint-disable-next-line t3code/no-untranslated-copy -- Proper provider name.
-    { value: "antigravity", label: "Antigravity (Gemini)" },
-    // oxlint-disable-next-line t3code/no-untranslated-copy -- Technical protocol name.
-    { value: "acpRegistry", label: "ACP Registry" },
-    { value: "opencode", label: "OpenCode" },
-    { value: "cursor", label: "Cursor" },
-  ];
 }
 
 function toAssetProviderDriver(value: string): TeamAssetProviderDriver {
@@ -82,7 +75,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
   readonly assetsRevision: number;
 }) {
   const gt = useGT();
-  const assetDriverOptions = getAssetDriverOptions(gt);
+  const assetDriverOptions = getTeamAssetDriverOptions(gt);
   const canManageSkillsScope = useAtomValue(
     teamEnvironment.upsertSkill.permissionAtom(environmentId),
   );
@@ -110,6 +103,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
   });
 
   // Skill form state
+  const [showSkillForm, setShowSkillForm] = useState(false);
   const [editingSkillId, setEditingSkillId] = useState<TeamSkillId | null>(null);
   const [skillSlug, setSkillSlug] = useState("");
   const [skillDriver, setSkillDriver] = useState("*");
@@ -122,6 +116,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
   const [deletingSkillId, setDeletingSkillId] = useState<string | null>(null);
 
   // Pre-prompt form state
+  const [showPrepromptForm, setShowPrepromptForm] = useState(false);
   const [editingPrepromptId, setEditingPrepromptId] = useState<TeamPrepromptId | null>(null);
   const [prepromptName, setPrepromptName] = useState("");
   const [prepromptDriver, setPrepromptDriver] = useState("*");
@@ -131,6 +126,12 @@ export function TeamSkillsAndPrepromptsSettingsSection({
   const [savingPreprompt, setSavingPreprompt] = useState(false);
   const [deletingPrepromptId, setDeletingPrepromptId] = useState<string | null>(null);
 
+  const prepromptByteLength = utf8Encoder.encode(prepromptContent).byteLength;
+  const appliesToCodexTurnCap =
+    prepromptScope === "turn" && (prepromptDriver === "*" || prepromptDriver === "codex");
+  const exceedsCodexTurnCap =
+    appliesToCodexTurnCap && prepromptByteLength > CODEX_ADDITIONAL_CONTEXT_BYTE_LIMIT;
+
   const reportError = (title: string, error: unknown) => {
     toastManager.add({
       type: "error",
@@ -139,7 +140,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
     });
   };
 
-  const resetSkillForm = () => {
+  const resetSkillForm = (closeForm = true) => {
     setEditingSkillId(null);
     setSkillSlug("");
     setSkillDriver("*");
@@ -148,15 +149,17 @@ export function TeamSkillsAndPrepromptsSettingsSection({
     );
     setSkillRefs([]);
     setSkillEnabled(true);
+    if (closeForm) setShowSkillForm(false);
   };
 
-  const resetPrepromptForm = () => {
+  const resetPrepromptForm = (closeForm = true) => {
     setEditingPrepromptId(null);
     setPrepromptName("");
     setPrepromptDriver("*");
     setPrepromptScope("thread");
     setPrepromptContent("");
     setPrepromptEnabled(true);
+    if (closeForm) setShowPrepromptForm(false);
   };
 
   const handleSaveSkill = async (event: FormEvent<HTMLFormElement>) => {
@@ -182,7 +185,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
     });
     setSavingSkill(false);
     if (result._tag === "Success") {
-      resetSkillForm();
+      resetSkillForm(true);
       toastManager.add({
         type: "success",
         title: gt("Team skill saved"),
@@ -195,12 +198,20 @@ export function TeamSkillsAndPrepromptsSettingsSection({
     }
   };
 
-  const handleDeleteSkill = async (skillId: TeamSkillId) => {
-    setDeletingSkillId(skillId);
-    const result = await runDeleteSkill({ environmentId, input: { skillId } });
+  const handleDeleteSkill = async (skill: TeamSkill) => {
+    const confirmed = await confirmTeamDestructiveAction(
+      [
+        gt('Delete team skill "/{slug}"?', { slug: skill.slug }),
+        gt("This removes the skill from all teammates' isolated team profiles on next sync."),
+      ].join("\n"),
+    );
+    if (!confirmed) return;
+
+    setDeletingSkillId(skill.id);
+    const result = await runDeleteSkill({ environmentId, input: { skillId: skill.id } });
     setDeletingSkillId(null);
     if (result._tag === "Success") {
-      if (editingSkillId === skillId) resetSkillForm();
+      if (editingSkillId === skill.id) resetSkillForm(true);
       toastManager.add({ type: "success", title: gt("Team skill deleted") });
       return;
     }
@@ -232,11 +243,11 @@ export function TeamSkillsAndPrepromptsSettingsSection({
     });
     setSavingPreprompt(false);
     if (result._tag === "Success") {
-      resetPrepromptForm();
+      resetPrepromptForm(true);
       toastManager.add({
         type: "success",
         title: gt("Team pre-prompt saved"),
-        description: `${result.value.name} (${result.value.injectionScope})`,
+        description: `${result.value.name} (${formatTeamPrepromptScopeLabel(result.value.injectionScope, gt)})`,
       });
       return;
     }
@@ -245,12 +256,23 @@ export function TeamSkillsAndPrepromptsSettingsSection({
     }
   };
 
-  const handleDeletePreprompt = async (prepromptId: TeamPrepromptId) => {
-    setDeletingPrepromptId(prepromptId);
-    const result = await runDeletePreprompt({ environmentId, input: { prepromptId } });
+  const handleDeletePreprompt = async (preprompt: TeamPreprompt) => {
+    const confirmed = await confirmTeamDestructiveAction(
+      [
+        gt('Delete team pre-prompt "{name}"?', { name: preprompt.name }),
+        gt("This instruction will no longer be injected into team threads."),
+      ].join("\n"),
+    );
+    if (!confirmed) return;
+
+    setDeletingPrepromptId(preprompt.id);
+    const result = await runDeletePreprompt({
+      environmentId,
+      input: { prepromptId: preprompt.id },
+    });
     setDeletingPrepromptId(null);
     if (result._tag === "Success") {
-      if (editingPrepromptId === prepromptId) resetPrepromptForm();
+      if (editingPrepromptId === preprompt.id) resetPrepromptForm(true);
       toastManager.add({ type: "success", title: gt("Team pre-prompt deleted") });
       return;
     }
@@ -265,6 +287,23 @@ export function TeamSkillsAndPrepromptsSettingsSection({
         id="teams-skills"
         title={gt("Team skills")}
         icon={<FileTextIcon className="size-4" />}
+        headerAction={
+          canEditSkills && !showSkillForm ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              data-testid="team-skill-add-open"
+              onClick={() => {
+                resetSkillForm(false);
+                setShowSkillForm(true);
+              }}
+            >
+              <PlusIcon />
+              <T>Add skill</T>
+            </Button>
+          ) : undefined
+        }
       >
         <SettingsRow
           title={gt("Pure Markdown skills (rev {revision})", { revision: assetsRevision })}
@@ -290,9 +329,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="font-mono text-sm font-medium">/{skill.slug}</span>
                         <Badge variant="outline" size="sm">
-                          {skill.providerDriver === "*"
-                            ? gt("All providers")
-                            : skill.providerDriver}
+                          {formatTeamDriverLabel(skill.providerDriver, gt)}
                         </Badge>
                         {!skill.enabled ? (
                           <Badge variant="secondary" size="sm">
@@ -325,6 +362,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                             setSkillMd(skill.skillMd);
                             setSkillRefs(skill.references.map(toEditableSkillRef));
                             setSkillEnabled(skill.enabled);
+                            setShowSkillForm(true);
                           }}
                         >
                           <T>Edit</T>
@@ -334,7 +372,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                           size="xs"
                           variant="ghost"
                           disabled={deletingSkillId === skill.id}
-                          onClick={() => void handleDeleteSkill(skill.id)}
+                          onClick={() => void handleDeleteSkill(skill)}
                           data-testid={`team-skill-delete-${skill.slug}`}
                         >
                           <Trash2Icon />
@@ -349,7 +387,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
           </div>
         </SettingsRow>
 
-        {canEditSkills ? (
+        {canEditSkills && showSkillForm ? (
           <SettingsRow
             title={editingSkillId ? gt("Edit team skill") : gt("Create team skill")}
             description={gt(
@@ -363,10 +401,14 @@ export function TeamSkillsAndPrepromptsSettingsSection({
             >
               <div className="grid gap-2 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground">
+                  <label
+                    className="block text-xs font-medium text-muted-foreground"
+                    htmlFor="team-skill-slug"
+                  >
                     <T>Skill slug</T>
-                  </p>
+                  </label>
                   <Input
+                    id="team-skill-slug"
                     data-testid="team-skill-slug-input"
                     value={skillSlug}
                     onChange={(event) => setSkillSlug(event.currentTarget.value)}
@@ -374,17 +416,20 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                   />
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground">
+                  <label
+                    className="block text-xs font-medium text-muted-foreground"
+                    htmlFor="team-skill-driver"
+                  >
                     <T>Provider scope</T>
-                  </p>
+                  </label>
                   <Select
                     value={skillDriver}
                     onValueChange={(value) => {
                       if (value) setSkillDriver(value);
                     }}
                   >
-                    <SelectTrigger data-testid="team-skill-driver-select">
-                      <SelectValue />
+                    <SelectTrigger id="team-skill-driver" data-testid="team-skill-driver-select">
+                      <SelectValue>{formatTeamDriverLabel(skillDriver, gt)}</SelectValue>
                     </SelectTrigger>
                     <SelectPopup>
                       {assetDriverOptions.map((option) => (
@@ -398,9 +443,15 @@ export function TeamSkillsAndPrepromptsSettingsSection({
               </div>
 
               <div className="space-y-1">
-                {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Exact required filename. */}
-                <p className="text-xs font-medium text-muted-foreground">SKILL.md</p>
+                <label
+                  className="block text-xs font-medium text-muted-foreground"
+                  htmlFor="team-skill-md"
+                >
+                  {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Exact required filename. */}
+                  SKILL.md
+                </label>
                 <Textarea
+                  id="team-skill-md"
                   rows={6}
                   data-testid="team-skill-md-input"
                   value={skillMd}
@@ -436,6 +487,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                     <div className="flex items-center gap-2">
                       <Input
                         value={ref.path}
+                        aria-label={gt("Reference file path")}
                         onChange={(event) => {
                           const nextPath = event.currentTarget.value;
                           setSkillRefs((prev) =>
@@ -450,6 +502,9 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                         type="button"
                         size="xs"
                         variant="ghost"
+                        aria-label={gt("Remove reference file {path}", {
+                          path: ref.path || gt("untitled"),
+                        })}
                         onClick={() =>
                           setSkillRefs((prev) => prev.filter((item) => item.key !== ref.key))
                         }
@@ -460,6 +515,9 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                     <Textarea
                       rows={3}
                       value={ref.content}
+                      aria-label={gt("Reference file contents for {path}", {
+                        path: ref.path || gt("untitled"),
+                      })}
                       onChange={(event) => {
                         const nextContent = event.currentTarget.value;
                         setSkillRefs((prev) =>
@@ -482,11 +540,14 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                   </span>
                 </label>
                 <div className="flex items-center gap-2">
-                  {editingSkillId ? (
-                    <Button type="button" size="sm" variant="ghost" onClick={resetSkillForm}>
-                      <T>Cancel edit</T>
-                    </Button>
-                  ) : null}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => resetSkillForm(true)}
+                  >
+                    <T>Cancel</T>
+                  </Button>
                   <Button
                     type="submit"
                     size="sm"
@@ -507,6 +568,23 @@ export function TeamSkillsAndPrepromptsSettingsSection({
         id="teams-preprompts"
         title={gt("Team pre-prompts")}
         icon={<BookOpenIcon className="size-4" />}
+        headerAction={
+          canEditPreprompts && !showPrepromptForm ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              data-testid="team-preprompt-add-open"
+              onClick={() => {
+                resetPrepromptForm(false);
+                setShowPrepromptForm(true);
+              }}
+            >
+              <PlusIcon />
+              <T>Add pre-prompt</T>
+            </Button>
+          ) : undefined
+        }
       >
         <SettingsRow
           title={gt("Thread & per-turn instructions")}
@@ -540,9 +618,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                             : gt("Thread start")}
                         </Badge>
                         <Badge variant="outline" size="sm">
-                          {preprompt.providerDriver === "*"
-                            ? gt("All providers")
-                            : preprompt.providerDriver}
+                          {formatTeamDriverLabel(preprompt.providerDriver, gt)}
                         </Badge>
                         {!preprompt.enabled ? (
                           <Badge variant="secondary" size="sm">
@@ -573,6 +649,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                             setPrepromptScope(preprompt.injectionScope);
                             setPrepromptContent(preprompt.content);
                             setPrepromptEnabled(preprompt.enabled);
+                            setShowPrepromptForm(true);
                           }}
                         >
                           <T>Edit</T>
@@ -582,7 +659,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                           size="xs"
                           variant="ghost"
                           disabled={deletingPrepromptId === preprompt.id}
-                          onClick={() => void handleDeletePreprompt(preprompt.id)}
+                          onClick={() => void handleDeletePreprompt(preprompt)}
                           data-testid={`team-preprompt-delete-${preprompt.id}`}
                         >
                           <Trash2Icon />
@@ -597,7 +674,7 @@ export function TeamSkillsAndPrepromptsSettingsSection({
           </div>
         </SettingsRow>
 
-        {canEditPreprompts ? (
+        {canEditPreprompts && showPrepromptForm ? (
           <SettingsRow
             title={editingPrepromptId ? gt("Edit team pre-prompt") : gt("Create team pre-prompt")}
             description={gt(
@@ -611,10 +688,14 @@ export function TeamSkillsAndPrepromptsSettingsSection({
             >
               <div className="grid gap-2 sm:grid-cols-3">
                 <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground">
+                  <label
+                    className="block text-xs font-medium text-muted-foreground"
+                    htmlFor="team-preprompt-name"
+                  >
                     <T>Name</T>
-                  </p>
+                  </label>
                   <Input
+                    id="team-preprompt-name"
                     data-testid="team-preprompt-name-input"
                     value={prepromptName}
                     onChange={(event) => setPrepromptName(event.currentTarget.value)}
@@ -622,17 +703,23 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                   />
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground">
+                  <label
+                    className="block text-xs font-medium text-muted-foreground"
+                    htmlFor="team-preprompt-driver"
+                  >
                     <T>Provider scope</T>
-                  </p>
+                  </label>
                   <Select
                     value={prepromptDriver}
                     onValueChange={(value) => {
                       if (value) setPrepromptDriver(value);
                     }}
                   >
-                    <SelectTrigger data-testid="team-preprompt-driver-select">
-                      <SelectValue />
+                    <SelectTrigger
+                      id="team-preprompt-driver"
+                      data-testid="team-preprompt-driver-select"
+                    >
+                      <SelectValue>{formatTeamDriverLabel(prepromptDriver, gt)}</SelectValue>
                     </SelectTrigger>
                     <SelectPopup>
                       {assetDriverOptions.map((option) => (
@@ -644,9 +731,12 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground">
+                  <label
+                    className="block text-xs font-medium text-muted-foreground"
+                    htmlFor="team-preprompt-scope"
+                  >
                     <T>Injection scope</T>
-                  </p>
+                  </label>
                   <Select
                     value={prepromptScope}
                     onValueChange={(value) => {
@@ -655,15 +745,18 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                       }
                     }}
                   >
-                    <SelectTrigger data-testid="team-preprompt-scope-select">
-                      <SelectValue />
+                    <SelectTrigger
+                      id="team-preprompt-scope"
+                      data-testid="team-preprompt-scope-select"
+                    >
+                      <SelectValue>{formatTeamPrepromptScopeLabel(prepromptScope, gt)}</SelectValue>
                     </SelectTrigger>
                     <SelectPopup>
                       <SelectItem value="thread">
-                        <T>Thread start (prefix-cached)</T>
+                        {formatTeamPrepromptScopeLabel("thread", gt)}
                       </SelectItem>
                       <SelectItem value="turn">
-                        <T>Every turn (compaction-proof)</T>
+                        {formatTeamPrepromptScopeLabel("turn", gt)}
                       </SelectItem>
                     </SelectPopup>
                   </Select>
@@ -671,16 +764,44 @@ export function TeamSkillsAndPrepromptsSettingsSection({
               </div>
 
               <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground">
-                  <T>Instruction text</T>
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label
+                    className="block text-xs font-medium text-muted-foreground"
+                    htmlFor="team-preprompt-content"
+                  >
+                    <T>Instruction text</T>
+                  </label>
+                  {appliesToCodexTurnCap ? (
+                    <span
+                      className={
+                        exceedsCodexTurnCap
+                          ? "text-2xs font-medium text-warning-foreground"
+                          : "text-2xs text-muted-foreground"
+                      }
+                      data-testid="team-preprompt-codex-size-hint"
+                    >
+                      {gt("{bytes} / 4,000 bytes (Codex per-turn limit)", {
+                        bytes: prepromptByteLength,
+                      })}
+                    </span>
+                  ) : null}
+                </div>
                 <Textarea
+                  id="team-preprompt-content"
                   rows={5}
                   data-testid="team-preprompt-content-input"
                   value={prepromptContent}
                   onChange={(event) => setPrepromptContent(event.currentTarget.value)}
                   placeholder={gt("Always run unit tests before declaring work complete.")}
                 />
+                {appliesToCodexTurnCap ? (
+                  <p className="text-2xs text-muted-foreground">
+                    <T>
+                      Codex truncates per-turn additional context entries past 4,000 bytes. Keep
+                      every-turn rules concise or use Thread start for longer documentation.
+                    </T>
+                  </p>
+                ) : null}
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -691,11 +812,14 @@ export function TeamSkillsAndPrepromptsSettingsSection({
                   </span>
                 </label>
                 <div className="flex items-center gap-2">
-                  {editingPrepromptId ? (
-                    <Button type="button" size="sm" variant="ghost" onClick={resetPrepromptForm}>
-                      <T>Cancel edit</T>
-                    </Button>
-                  ) : null}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => resetPrepromptForm(true)}
+                  >
+                    <T>Cancel</T>
+                  </Button>
                   <Button
                     type="submit"
                     size="sm"

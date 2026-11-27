@@ -59,7 +59,12 @@ import {
   selectTeamPrepromptsForDriver,
 } from "./TeamProfileMaterializer.ts";
 import { getTeamHarnessProfile } from "./harnessProfiles.ts";
-import { issueEphemeralTeamProviderLease } from "./TeamProviderLeaseService.ts";
+import {
+  issueEphemeralTeamProviderLease,
+  readLinkedServerInstanceIdFromConfig,
+  resolveLinkedServerProviderProfileDir,
+  teamProviderSecretKey,
+} from "./TeamProviderLeaseService.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 
 /** Proactive pre-turn renewal threshold: refresh before starting a turn if < 15 minutes remain. */
@@ -530,11 +535,22 @@ const make = Effect.gen(function* () {
       const serverProviderOpt = yield* assetsRepo
         .getProviderByInstanceId(teamId, sourceInstanceId)
         .pipe(Effect.orElseSucceed(() => Option.none()));
+      const linkedServerInstanceId = Option.isSome(serverProviderOpt)
+        ? readLinkedServerInstanceIdFromConfig(serverProviderOpt.value.config)
+        : null;
+      const fallbackProfileDir =
+        Option.isSome(serverProviderOpt) && linkedServerInstanceId !== null
+          ? resolveLinkedServerProviderProfileDir({
+              stateDir: config.stateDir,
+              driver: serverProviderOpt.value.driver,
+              linkedServerInstanceId,
+            })
+          : null;
       if (
         Option.isNone(serverProviderOpt) ||
         !serverProviderOpt.value.enabled ||
         serverProviderOpt.value.deliveryStrategy !== "token-lease" ||
-        !serverProviderOpt.value.secretKey
+        (!serverProviderOpt.value.secretKey && fallbackProfileDir === null)
       ) {
         return yield* new TeamProviderLeaseFetchError({
           teamId,
@@ -554,10 +570,11 @@ const make = Effect.gen(function* () {
       const lease = yield* issueEphemeralTeamProviderLease({
         secrets,
         httpClient,
-        secretKey: serverProvider.secretKey!,
+        secretKey: serverProvider.secretKey ?? teamProviderSecretKey(teamId, sourceInstanceId),
         providerInstanceId: sourceInstanceId,
         driver: serverProvider.driver,
         forceRefresh: options?.forceRefresh === true,
+        ...(fallbackProfileDir !== null ? { fallbackProfileDir } : {}),
       }).pipe(
         Effect.mapError(
           (failure) =>

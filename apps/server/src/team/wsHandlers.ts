@@ -63,6 +63,28 @@ export function makeTeamWsRpcHandlers(
     [TEAM_WS_METHODS.teamInitialize]: (
       payload: Parameters<typeof teamService.initializeTeam>[0]["payload"],
     ) => teamService.initializeTeam({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamLeave]: () =>
+      teamService.leaveTeam({
+        sessionId,
+        ...(deps?.peerClientPairing !== undefined
+          ? { peerClientPairing: deps.peerClientPairing }
+          : {}),
+        ...(deps?.peerLinks !== undefined ? { peerLinks: deps.peerLinks } : {}),
+      }),
+    [TEAM_WS_METHODS.teamDelete]: (
+      payload: Parameters<typeof teamService.deleteTeam>[0]["payload"],
+    ) =>
+      teamService.deleteTeam({
+        sessionId,
+        payload,
+        ...(deps?.peerClientPairing !== undefined
+          ? { peerClientPairing: deps.peerClientPairing }
+          : {}),
+        ...(deps?.peerLinks !== undefined ? { peerLinks: deps.peerLinks } : {}),
+        ...(deps?.teamProviderManager !== undefined
+          ? { teamProviderManager: deps.teamProviderManager }
+          : {}),
+      }),
     [TEAM_WS_METHODS.teamUpdateDisplayName]: (
       payload: Parameters<typeof teamService.updateDisplayName>[0]["payload"],
     ) => teamService.updateDisplayName({ sessionId, payload }),

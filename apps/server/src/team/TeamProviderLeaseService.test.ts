@@ -1,5 +1,8 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Local mock OAuth token endpoint for testing server-side refresh.
+// @effect-diagnostics nodeBuiltinImport:off -- Local mock OAuth token endpoint and temp profile dir for testing server-side refresh/fallback.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -106,6 +109,50 @@ describe("TeamProviderLeaseService", () => {
           yield* Effect.promise(
             () => new Promise<void>((resolve) => server.close(() => resolve())),
           );
+        }
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.live(
+    "leases ephemeral tokens from a linked server provider profile directory when no manual secret is stored, without exposing refresh_token",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-linked-profile-")),
+        );
+        try {
+          const expiresAt = DateTime.toEpochMillis(DateTime.add(yield* DateTime.now, { hours: 1 }));
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(
+              NodePath.join(tempDir, ".credentials.json"),
+              JSON.stringify({
+                claudeAiOauth: {
+                  accessToken: "linked-server-access-token",
+                  refreshToken: "linked-server-secret-refresh",
+                  expiresAt,
+                },
+              }),
+              "utf8",
+            ),
+          );
+
+          const secrets = yield* ServerSecretStore.ServerSecretStore;
+          const httpClient = yield* HttpClient.HttpClient;
+          const secretKey = teamProviderSecretKey("team-1", "team-linked-claude");
+
+          const lease = yield* issueEphemeralTeamProviderLease({
+            secrets,
+            httpClient,
+            secretKey,
+            providerInstanceId: ProviderInstanceId.make("team-linked-claude"),
+            driver: ProviderDriverKind.make("claudeAgent"),
+            fallbackProfileDir: tempDir,
+          });
+
+          expect(lease.accessToken).toBe("linked-server-access-token");
+          expect(JSON.stringify(lease)).not.toContain("linked-server-secret-refresh");
+        } finally {
+          yield* Effect.promise(() => NodeFSP.rm(tempDir, { recursive: true, force: true }));
         }
       }).pipe(Effect.provide(makeTestLayer())),
   );

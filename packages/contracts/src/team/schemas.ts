@@ -1415,6 +1415,13 @@ export const TeamStateStreamEvent = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    type: Schema.Literal("teamDeleted"),
+    payload: Schema.Struct({
+      teamId: TeamId,
+    }),
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
     type: Schema.Literal("memberUpserted"),
     payload: TeamMember,
   }),
@@ -1602,6 +1609,24 @@ export const TeamInitializeResult = Schema.Struct({
   owner: TeamMember,
 });
 export type TeamInitializeResult = typeof TeamInitializeResult.Type;
+
+export const TeamLeaveResult = Schema.Struct({
+  left: Schema.Boolean,
+  teamId: TeamId,
+  memberId: TeamMemberId,
+});
+export type TeamLeaveResult = typeof TeamLeaveResult.Type;
+
+export const TeamDeleteInput = Schema.Struct({
+  confirmTeamName: TrimmedNonEmptyString,
+});
+export type TeamDeleteInput = typeof TeamDeleteInput.Type;
+
+export const TeamDeleteResult = Schema.Struct({
+  deleted: Schema.Boolean,
+  teamId: TeamId,
+});
+export type TeamDeleteResult = typeof TeamDeleteResult.Type;
 
 export const TeamUpdateMyPseudoInput = Schema.Struct({
   pseudo: TrimmedNonEmptyString,
@@ -1919,6 +1944,8 @@ export const TeamUpsertProviderInput = Schema.Struct({
   oauthClientSecret: Schema.optionalKey(Schema.String),
   oauthEmail: Schema.optionalKey(Schema.NullOr(Schema.String)),
   oauthAuthMethod: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** Optional signed-in Team Server provider instance to import/link OAuth credentials from for `token-lease`. */
+  sourceServerProviderInstanceId: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
   clearSecret: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
   enabled: Schema.optionalKey(Schema.Boolean),

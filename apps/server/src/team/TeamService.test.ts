@@ -4321,4 +4321,155 @@ describe("TeamService", () => {
         ).toBe("Failure");
       }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
   );
+
+  it.effect(
+    "supports leaving a team (blocking last active owner, revoking sessions/credentials) and deleting a team (owner-only with name confirmation)",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessions.issue({ subject: "alice-owner" });
+        const init = yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "Acme Engineering", ownerPseudo: "alice" },
+        });
+
+        // Sole active owner cannot leave the team before transferring ownership.
+        const lastOwnerLeaveExit = yield* Effect.exit(
+          team.leaveTeam({ sessionId: aliceSession.sessionId }),
+        );
+        expect(lastOwnerLeaveExit._tag).toBe("Failure");
+        if (lastOwnerLeaveExit._tag === "Failure") {
+          expect(Cause.squash(lastOwnerLeaveExit.cause)).toMatchObject({
+            _tag: "TeamOperationError",
+            code: "last_owner",
+          });
+        }
+
+        // Invite Bob as regular member and Carol as second owner.
+        const bobInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "bob" },
+        });
+        const bobJoined = yield* team.redeemInvite({
+          token: bobInvite.token,
+          pseudo: "bob",
+          client: testClient,
+        });
+        const bobSession = yield* sessions.verify(bobJoined.accessToken);
+
+        const carolInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "owner", prefilledPseudo: "carol" },
+        });
+        const carolJoined = yield* team.redeemInvite({
+          token: carolInvite.token,
+          pseudo: "carol",
+          client: testClient,
+        });
+        const carolSession = yield* sessions.verify(carolJoined.accessToken);
+
+        // Create a custom view referencing Bob in memberIds to verify cleanup when Bob leaves.
+        const customView = yield* team.createView({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            name: "Restricted",
+            readRule: { roles: ["owner"], memberIds: [bobJoined.member.id] },
+            postRule: { roles: ["owner"], memberIds: [bobJoined.member.id] },
+          },
+        });
+
+        // Non-owner cannot delete the team.
+        const bobDeleteExit = yield* Effect.exit(
+          team.deleteTeam({
+            sessionId: bobSession.sessionId,
+            payload: { confirmTeamName: "Acme Engineering" },
+          }),
+        );
+        expect(bobDeleteExit._tag).toBe("Failure");
+        if (bobDeleteExit._tag === "Failure") {
+          expect(Cause.squash(bobDeleteExit.cause)).toMatchObject({
+            _tag: "TeamOperationError",
+            code: "forbidden",
+          });
+        }
+
+        // Bob leaves the team: his session is revoked, status becomes removed, and view memberIds cleaned up.
+        const bobLeft = yield* team.leaveTeam({ sessionId: bobSession.sessionId });
+        expect(bobLeft).toEqual({
+          left: true,
+          teamId: init.team.id,
+          memberId: bobJoined.member.id,
+        });
+        expect((yield* Effect.exit(sessions.verify(bobJoined.accessToken)))._tag).toBe("Failure");
+        const stateAfterBobLeft = yield* team.getState(aliceSession.sessionId);
+        expect(stateAfterBobLeft.members.find((m) => m.id === bobJoined.member.id)?.status).toBe(
+          "removed",
+        );
+        const refreshedView = stateAfterBobLeft.views.find((v) => v.id === customView.id);
+        expect(refreshedView?.readRule.memberIds).not.toContain(bobJoined.member.id);
+        expect(refreshedView?.postRule.memberIds).not.toContain(bobJoined.member.id);
+
+        // With Carol as a second active owner, Carol can leave while Alice remains owner.
+        const carolLeft = yield* team.leaveTeam({ sessionId: carolSession.sessionId });
+        expect(carolLeft).toEqual({
+          left: true,
+          teamId: init.team.id,
+          memberId: carolJoined.member.id,
+        });
+        expect((yield* Effect.exit(sessions.verify(carolJoined.accessToken)))._tag).toBe("Failure");
+
+        // Invite Dana so we can verify deleteTeam revokes other active members' sessions & emits teamDeleted.
+        const danaInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "admin", prefilledPseudo: "dana" },
+        });
+        const danaJoined = yield* team.redeemInvite({
+          token: danaInvite.token,
+          pseudo: "dana",
+          client: testClient,
+        });
+        const danaSession = yield* sessions.verify(danaJoined.accessToken);
+
+        // Mismatched confirmation name is rejected.
+        const wrongNameExit = yield* Effect.exit(
+          team.deleteTeam({
+            sessionId: aliceSession.sessionId,
+            payload: { confirmTeamName: "Wrong Name" },
+          }),
+        );
+        expect(wrongNameExit._tag).toBe("Failure");
+        if (wrongNameExit._tag === "Failure") {
+          expect(Cause.squash(wrongNameExit.cause)).toMatchObject({
+            _tag: "TeamOperationError",
+            code: "invalid_input",
+          });
+        }
+
+        // Subscribe Alice's stream to verify `teamDeleted` event broadcast.
+        const aliceStreamFiber = yield* team
+          .streamState(aliceSession.sessionId)
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+        yield* Effect.yieldNow;
+
+        const deleted = yield* team.deleteTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { confirmTeamName: "Acme Engineering" },
+        });
+        expect(deleted).toEqual({ deleted: true, teamId: init.team.id });
+
+        const aliceEvents = yield* Fiber.join(aliceStreamFiber);
+        expect(aliceEvents.map((e) => e.type)).toEqual(["snapshot", "teamDeleted"]);
+
+        // Other members' sessions are revoked; team is now unconfigured.
+        expect((yield* Effect.exit(sessions.verify(danaJoined.accessToken)))._tag).toBe("Failure");
+        const emptyState = yield* team.getState(aliceSession.sessionId);
+        expect(emptyState.team).toBeNull();
+        expect(emptyState.members).toEqual([]);
+        expect(emptyState.views).toEqual([]);
+        // Dana's session ID was revoked (unused variable silence check).
+        expect(danaSession.sessionId).toBeTruthy();
+      }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
+  );
 });

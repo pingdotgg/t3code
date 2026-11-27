@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Reads local provider token files when linked to a Team Server OAuth profile.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -68,6 +70,143 @@ const decodeAntigravityOAuthTokenFile = Schema.decodeUnknownOption(
     }),
   ),
 );
+
+const decodeClaudeCredentialsFile = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      claudeAiOauth: Schema.optionalKey(
+        Schema.Struct({
+          accessToken: Schema.optionalKey(Schema.String),
+          refreshToken: Schema.optionalKey(Schema.String),
+          expiresAt: Schema.optionalKey(Schema.Union([Schema.Number, Schema.String])),
+        }),
+      ),
+    }),
+  ),
+);
+
+const decodeCodexAuthFile = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      tokens: Schema.optionalKey(
+        Schema.Struct({
+          access_token: Schema.optionalKey(Schema.String),
+          refresh_token: Schema.optionalKey(Schema.String),
+        }),
+      ),
+    }),
+  ),
+);
+
+/**
+ * Resolves the on-disk profile directory for a signed-in Team Server provider instance
+ * referenced by `config.linkedServerInstanceId`.
+ */
+export function resolveLinkedServerProviderProfileDir(input: {
+  readonly stateDir: string;
+  readonly driver: ProviderDriverKind | string;
+  readonly linkedServerInstanceId: string;
+  readonly customHomePath?: string | null;
+}): string | null {
+  const customHome = input.customHomePath?.trim();
+  if (customHome && customHome.length > 0) {
+    return customHome;
+  }
+  if (input.driver === "antigravity") {
+    const hash = NodeCrypto.createHash("sha256")
+      .update(input.linkedServerInstanceId, "utf8")
+      .digest("hex");
+    return NodePath.join(input.stateDir, "providers", "antigravity", hash);
+  }
+  if (input.driver === "claudeAgent") {
+    const envDir = process.env.CLAUDE_CONFIG_DIR?.trim();
+    return envDir && envDir.length > 0 ? envDir : NodePath.join(NodeOS.homedir(), ".claude");
+  }
+  if (input.driver === "codex") {
+    const envDir = process.env.CODEX_HOME?.trim();
+    return envDir && envDir.length > 0 ? envDir : NodePath.join(NodeOS.homedir(), ".codex");
+  }
+  return null;
+}
+
+export function readLinkedServerInstanceIdFromConfig(
+  config: Readonly<Record<string, unknown>> | null | undefined,
+): string | null {
+  const raw = config?.linkedServerInstanceId;
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null;
+}
+
+export async function readOAuthCredentialsFromServerProfileDir(input: {
+  readonly driver: ProviderDriverKind | string;
+  readonly profileDir: string;
+}): Promise<StoredTeamProviderSecret | null> {
+  if (input.driver === "antigravity") {
+    const tokenPaths = getTeamHarnessProfile("antigravity").ephemeralTokenRelativePaths;
+    for (const segments of tokenPaths) {
+      const raw = await NodeFSP.readFile(
+        NodePath.join(input.profileDir, ...segments),
+        "utf8",
+      ).catch(() => undefined);
+      if (!raw) continue;
+      const parsedOpt = decodeAntigravityOAuthTokenFile(raw);
+      if (Option.isNone(parsedOpt)) continue;
+      const parsed = parsedOpt.value;
+      if (!parsed.token?.access_token) continue;
+      return {
+        oauthAccessToken: parsed.token.access_token,
+        ...(parsed.token.refresh_token ? { oauthRefreshToken: parsed.token.refresh_token } : {}),
+        ...(parsed.token.token_type ? { oauthTokenType: parsed.token.token_type } : {}),
+        ...(parsed.token.expiry ? { oauthExpiresAt: parsed.token.expiry } : {}),
+        ...(parsed.auth_method ? { oauthAuthMethod: parsed.auth_method } : {}),
+        ...(parsed.id_token_email ? { oauthEmail: parsed.id_token_email } : {}),
+      };
+    }
+    return null;
+  }
+
+  if (input.driver === "claudeAgent") {
+    const raw = await NodeFSP.readFile(
+      NodePath.join(input.profileDir, ".credentials.json"),
+      "utf8",
+    ).catch(() => undefined);
+    if (!raw) return null;
+    const parsedOpt = decodeClaudeCredentialsFile(raw);
+    if (Option.isNone(parsedOpt)) return null;
+    const oauth = parsedOpt.value.claudeAiOauth;
+    if (!oauth?.accessToken) return null;
+    const parsedExpiry =
+      typeof oauth.expiresAt === "number" && Number.isFinite(oauth.expiresAt)
+        ? DateTime.make(oauth.expiresAt)
+        : typeof oauth.expiresAt === "string"
+          ? DateTime.make(oauth.expiresAt)
+          : Option.none();
+    const expiresAtIso = Option.isSome(parsedExpiry)
+      ? DateTime.formatIso(parsedExpiry.value)
+      : undefined;
+    return {
+      oauthAccessToken: oauth.accessToken,
+      ...(oauth.refreshToken ? { oauthRefreshToken: oauth.refreshToken } : {}),
+      ...(expiresAtIso ? { oauthExpiresAt: expiresAtIso } : {}),
+    };
+  }
+
+  if (input.driver === "codex") {
+    const raw = await NodeFSP.readFile(NodePath.join(input.profileDir, "auth.json"), "utf8").catch(
+      () => undefined,
+    );
+    if (!raw) return null;
+    const parsedOpt = decodeCodexAuthFile(raw);
+    if (Option.isNone(parsedOpt)) return null;
+    const tokens = parsedOpt.value.tokens;
+    if (!tokens?.access_token) return null;
+    return {
+      oauthAccessToken: tokens.access_token,
+      ...(tokens.refresh_token ? { oauthRefreshToken: tokens.refresh_token } : {}),
+    };
+  }
+
+  return null;
+}
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -162,41 +301,20 @@ export const issueEphemeralTeamProviderLease = Effect.fn("TeamProviderLease.issu
     readonly providerInstanceId: ProviderInstanceId;
     readonly driver: ProviderDriverKind;
     readonly forceRefresh?: boolean;
-    readonly fallbackAntigravityProfileDir?: string;
+    readonly fallbackProfileDir?: string;
   }): Effect.fn.Return<TeamProviderLeaseResponse, TeamOperationError> {
     const lock = yield* getRefreshLock(input.secretKey);
     return yield* lock.withPermits(1)(
       Effect.gen(function* () {
         let stored = yield* readTeamProviderSecret(input.secrets, input.secretKey);
 
-        // Optional fallback: import token metadata from Team Server's own Antigravity profile if configured.
-        if (stored === null && input.fallbackAntigravityProfileDir) {
-          const imported = yield* Effect.promise(
-            async (): Promise<StoredTeamProviderSecret | null> => {
-              const tokenPaths = getTeamHarnessProfile("antigravity").ephemeralTokenRelativePaths;
-              for (const segments of tokenPaths) {
-                const raw = await NodeFSP.readFile(
-                  NodePath.join(input.fallbackAntigravityProfileDir!, ...segments),
-                  "utf8",
-                ).catch(() => undefined);
-                if (!raw) continue;
-                const parsedOpt = decodeAntigravityOAuthTokenFile(raw);
-                if (Option.isNone(parsedOpt)) continue;
-                const parsed = parsedOpt.value;
-                if (!parsed.token?.access_token) continue;
-                return {
-                  oauthAccessToken: parsed.token.access_token,
-                  ...(parsed.token.refresh_token
-                    ? { oauthRefreshToken: parsed.token.refresh_token }
-                    : {}),
-                  ...(parsed.token.token_type ? { oauthTokenType: parsed.token.token_type } : {}),
-                  ...(parsed.token.expiry ? { oauthExpiresAt: parsed.token.expiry } : {}),
-                  ...(parsed.auth_method ? { oauthAuthMethod: parsed.auth_method } : {}),
-                  ...(parsed.id_token_email ? { oauthEmail: parsed.id_token_email } : {}),
-                };
-              }
-              return null;
-            },
+        // Optional fallback: read token metadata from the linked Team Server provider profile directory.
+        if (stored === null && input.fallbackProfileDir) {
+          const imported = yield* Effect.promise(() =>
+            readOAuthCredentialsFromServerProfileDir({
+              driver: input.driver,
+              profileDir: input.fallbackProfileDir!,
+            }),
           );
           if (imported !== null) {
             stored = imported;

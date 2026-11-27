@@ -25,6 +25,8 @@ import {
   AlertTriangleIcon,
   BotIcon,
   CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CopyIcon,
   ExternalLinkIcon,
   GitBranchIcon,
@@ -49,6 +51,7 @@ import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
+import { confirmTeamDestructiveAction } from "./confirmTeamDestructiveAction";
 
 const GITHUB_OAUTH_CALLBACK_PATH = "/api/team/github/oauth/callback";
 
@@ -176,12 +179,14 @@ export function TeamGitHubSettingsSection({
     reportFailure: false,
   });
 
-  // Member PAT state
+  // Member PAT & author overrides state
   const [myTokenInput, setMyTokenInput] = useState("");
   const [myApiBaseUrlInput, setMyApiBaseUrlInput] = useState("");
   const [myGitNameInput, setMyGitNameInput] = useState("");
   const [myGitEmailInput, setMyGitEmailInput] = useState("");
-  const [showMyAdvanced, setShowMyAdvanced] = useState(false);
+  const [showMyAuthorOverrides, setShowMyAuthorOverrides] = useState(false);
+  const [showMyPatSection, setShowMyPatSection] = useState(false);
+  const [showMyEnterpriseApi, setShowMyEnterpriseApi] = useState(false);
   const [savingMine, setSavingMine] = useState(false);
   const [disconnectingMine, setDisconnectingMine] = useState(false);
 
@@ -357,6 +362,16 @@ export function TeamGitHubSettingsSection({
   };
 
   const handleClearAppConfig = async () => {
+    const confirmed = await confirmTeamDestructiveAction(
+      [
+        gt("Remove GitHub OAuth / GitHub App configuration?"),
+        gt(
+          "One-click GitHub sign-in will be disabled for this team. Members can still connect using personal access tokens.",
+        ),
+      ].join("\n"),
+    );
+    if (!confirmed) return;
+
     setClearingAppConfig(true);
     const result = await runClearGitHubAppConfig({
       environmentId,
@@ -614,6 +629,14 @@ export function TeamGitHubSettingsSection({
   };
 
   const handleDisconnectMyGitHub = async () => {
+    const confirmed = await confirmTeamDestructiveAction(
+      [
+        gt("Disconnect your GitHub identity?"),
+        gt("Your stored token will be removed and any active turn leases will be revoked."),
+      ].join("\n"),
+    );
+    if (!confirmed) return;
+
     setDisconnectingMine(true);
     stopDevicePolling();
     setActiveDeviceFlow(null);
@@ -684,6 +707,14 @@ export function TeamGitHubSettingsSection({
   };
 
   const handleClearAutomationGitHub = async () => {
+    const confirmed = await confirmTeamDestructiveAction(
+      [
+        gt("Remove the team automation GitHub account?"),
+        gt("Scheduled automation runs will execute without GitHub credentials."),
+      ].join("\n"),
+    );
+    if (!confirmed) return;
+
     setClearingAuto(true);
     const result = await runClearAutomationGitHub({
       environmentId,
@@ -1003,86 +1034,26 @@ export function TeamGitHubSettingsSection({
           </div>
         ) : null}
 
-        <form
-          className="mt-3 space-y-3 pb-3"
-          onSubmit={(event) => void handleConnectMyGitHub(event)}
-        >
-          <div className="space-y-1.5">
-            <label
-              className="block text-xs font-medium text-foreground"
-              htmlFor="team-my-github-token"
+        <div className="mt-3 space-y-2 pb-1">
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            onClick={() => setShowMyAuthorOverrides((prev) => !prev)}
+            data-testid="team-my-github-author-toggle"
+          >
+            {showMyAuthorOverrides ? (
+              <ChevronDownIcon className="size-3.5" />
+            ) : (
+              <ChevronRightIcon className="size-3.5" />
+            )}
+            <T>Git commit author overrides (optional)</T>
+          </Button>
+          {showMyAuthorOverrides ? (
+            <div
+              className="grid gap-3 rounded-lg border border-border/60 bg-muted/15 p-3 sm:grid-cols-2"
+              data-testid="team-my-github-author-fields"
             >
-              {isOAuthEnabled ? (
-                <T>Or connect with a fine-grained personal access token</T>
-              ) : myGitHubIdentity ? (
-                <T>Rotate fine-grained personal access token</T>
-              ) : (
-                <T>Fine-grained personal access token</T>
-              )}
-            </label>
-            <Input
-              id="team-my-github-token"
-              data-testid="team-my-github-token-input"
-              type="password"
-              autoComplete="off"
-              value={myTokenInput}
-              onChange={(event) => setMyTokenInput(event.currentTarget.value)}
-              placeholder={gt("github_pat_…")}
-              disabled={savingMine || !canConnectMine}
-            />
-          </div>
-
-          <div className="flex items-center justify-between gap-2">
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              onClick={() => setShowMyAdvanced((prev) => !prev)}
-              data-testid="team-my-github-advanced-toggle"
-            >
-              {showMyAdvanced ? (
-                <T>Hide enterprise / git author options</T>
-              ) : (
-                <T>Enterprise API URL & git author options</T>
-              )}
-            </Button>
-            <Button
-              type="submit"
-              size="sm"
-              disabled={savingMine || !canConnectMine || myTokenInput.trim().length === 0}
-              data-testid="team-my-github-save"
-            >
-              {savingMine ? (
-                <>
-                  <Spinner />
-                  <T>Verifying…</T>
-                </>
-              ) : myGitHubIdentity ? (
-                <T>Update token</T>
-              ) : (
-                <T>Connect GitHub</T>
-              )}
-            </Button>
-          </div>
-
-          {showMyAdvanced ? (
-            <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/15 p-3 sm:grid-cols-3">
-              <div className="space-y-1.5">
-                <label
-                  className="block text-xs font-medium text-foreground"
-                  htmlFor="team-my-github-api-url"
-                >
-                  <T>GitHub API base URL</T>
-                </label>
-                <Input
-                  id="team-my-github-api-url"
-                  data-testid="team-my-github-api-url-input"
-                  value={myApiBaseUrlInput}
-                  onChange={(event) => setMyApiBaseUrlInput(event.currentTarget.value)}
-                  placeholder={DEFAULT_GITHUB_API_BASE_URL}
-                  disabled={savingMine || !canConnectMine}
-                />
-              </div>
               <div className="space-y-1.5">
                 <label
                   className="block text-xs font-medium text-foreground"
@@ -1117,7 +1088,112 @@ export function TeamGitHubSettingsSection({
               </div>
             </div>
           ) : null}
-        </form>
+        </div>
+
+        {isOAuthEnabled ? (
+          <div className="mt-2 pb-2">
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              onClick={() => setShowMyPatSection((prev) => !prev)}
+              data-testid="team-my-github-pat-disclosure"
+            >
+              {showMyPatSection ? (
+                <ChevronDownIcon className="size-3.5" />
+              ) : (
+                <ChevronRightIcon className="size-3.5" />
+              )}
+              <T>Use a Personal Access Token instead</T>
+            </Button>
+          </div>
+        ) : null}
+
+        {!isOAuthEnabled || showMyPatSection ? (
+          <form
+            className="mt-2 space-y-3 pb-3"
+            onSubmit={(event) => void handleConnectMyGitHub(event)}
+          >
+            <div className="space-y-1.5">
+              <label
+                className="block text-xs font-medium text-foreground"
+                htmlFor="team-my-github-token"
+              >
+                {isOAuthEnabled ? (
+                  <T>Fine-grained personal access token</T>
+                ) : myGitHubIdentity ? (
+                  <T>Rotate fine-grained personal access token</T>
+                ) : (
+                  <T>Fine-grained personal access token</T>
+                )}
+              </label>
+              <Input
+                id="team-my-github-token"
+                data-testid="team-my-github-token-input"
+                type="password"
+                autoComplete="off"
+                value={myTokenInput}
+                onChange={(event) => setMyTokenInput(event.currentTarget.value)}
+                placeholder={gt("github_pat_…")}
+                disabled={savingMine || !canConnectMine}
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                onClick={() => setShowMyEnterpriseApi((prev) => !prev)}
+                data-testid="team-my-github-advanced-toggle"
+              >
+                {showMyEnterpriseApi ? (
+                  <T>Hide GitHub Enterprise API URL</T>
+                ) : (
+                  <T>GitHub Enterprise API URL</T>
+                )}
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={savingMine || !canConnectMine || myTokenInput.trim().length === 0}
+                data-testid="team-my-github-save"
+              >
+                {savingMine ? (
+                  <>
+                    <Spinner />
+                    <T>Verifying…</T>
+                  </>
+                ) : myGitHubIdentity ? (
+                  <T>Update token</T>
+                ) : (
+                  <T>Connect GitHub</T>
+                )}
+              </Button>
+            </div>
+
+            {showMyEnterpriseApi ? (
+              <div className="rounded-lg border border-border/60 bg-muted/15 p-3">
+                <div className="space-y-1.5">
+                  <label
+                    className="block text-xs font-medium text-foreground"
+                    htmlFor="team-my-github-api-url"
+                  >
+                    <T>GitHub API base URL</T>
+                  </label>
+                  <Input
+                    id="team-my-github-api-url"
+                    data-testid="team-my-github-api-url-input"
+                    value={myApiBaseUrlInput}
+                    onChange={(event) => setMyApiBaseUrlInput(event.currentTarget.value)}
+                    placeholder={DEFAULT_GITHUB_API_BASE_URL}
+                    disabled={savingMine || !canConnectMine}
+                  />
+                </div>
+              </div>
+            ) : null}
+          </form>
+        ) : null}
       </SettingsRow>
 
       {currentMember !== null && canManageTeamGitHubAppConfig(currentMember.role) ? (
@@ -1273,10 +1349,16 @@ export function TeamGitHubSettingsSection({
                   onClick={() => setShowAppAdvanced((prev) => !prev)}
                   data-testid="team-github-app-advanced-toggle"
                 >
-                  {showAppAdvanced ? (
-                    <T>Hide enterprise URLs & scopes</T>
+                  {effectiveAppMode === "oauth" ? (
+                    showAppAdvanced ? (
+                      <T>Hide enterprise URLs &amp; scopes</T>
+                    ) : (
+                      <T>Enterprise URLs &amp; scopes</T>
+                    )
+                  ) : showAppAdvanced ? (
+                    <T>Hide enterprise URLs</T>
                   ) : (
-                    <T>Enterprise URLs & scopes</T>
+                    <T>Enterprise URLs</T>
                   )}
                 </Button>
                 {githubAppConfig?.hasClientSecret && !appClearClientSecret ? (
@@ -1331,7 +1413,13 @@ export function TeamGitHubSettingsSection({
             </div>
 
             {showAppAdvanced ? (
-              <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/15 p-3 sm:grid-cols-3">
+              <div
+                className={
+                  effectiveAppMode === "oauth"
+                    ? "grid gap-3 rounded-lg border border-border/60 bg-muted/15 p-3 sm:grid-cols-3"
+                    : "grid gap-3 rounded-lg border border-border/60 bg-muted/15 p-3 sm:grid-cols-2"
+                }
+              >
                 <div className="space-y-1.5">
                   <label
                     className="block text-xs font-medium text-foreground"
@@ -1364,26 +1452,24 @@ export function TeamGitHubSettingsSection({
                     disabled={savingAppConfig || !canManageAppConfig}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <label
-                    className="block text-xs font-medium text-foreground"
-                    htmlFor="team-github-app-scopes"
-                  >
-                    <T>OAuth scopes (OAuth App only)</T>
-                  </label>
-                  <Input
-                    id="team-github-app-scopes"
-                    data-testid="team-github-app-scopes-input"
-                    value={effectiveAppScopes}
-                    onChange={(event) => setAppScopesDraft(event.currentTarget.value)}
-                    placeholder={
-                      effectiveAppMode === "oauth"
-                        ? DEFAULT_GITHUB_OAUTH_SCOPES
-                        : gt("Managed by GitHub App")
-                    }
-                    disabled={savingAppConfig || !canManageAppConfig}
-                  />
-                </div>
+                {effectiveAppMode === "oauth" ? (
+                  <div className="space-y-1.5">
+                    <label
+                      className="block text-xs font-medium text-foreground"
+                      htmlFor="team-github-app-scopes"
+                    >
+                      <T>OAuth scopes</T>
+                    </label>
+                    <Input
+                      id="team-github-app-scopes"
+                      data-testid="team-github-app-scopes-input"
+                      value={effectiveAppScopes}
+                      onChange={(event) => setAppScopesDraft(event.currentTarget.value)}
+                      placeholder={DEFAULT_GITHUB_OAUTH_SCOPES}
+                      disabled={savingAppConfig || !canManageAppConfig}
+                    />
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </form>

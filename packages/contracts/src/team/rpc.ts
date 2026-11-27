@@ -27,8 +27,10 @@ import {
   TeamCreateViewInput,
   TeamDeletePrepromptInput,
   TeamDeletePrepromptResult,
+  TeamDeleteInput,
   TeamDeleteProviderInput,
   TeamDeleteProviderResult,
+  TeamDeleteResult,
   TeamDeleteSkillInput,
   TeamDeleteSkillResult,
   TeamDeleteThreadNoteInput,
@@ -46,6 +48,7 @@ import {
   TeamInitializeResult,
   TeamInviteCreatedResult,
   TeamIssueLocalSyncTokenResult,
+  TeamLeaveResult,
   TeamListFollowedThreadsResult,
   TeamListMyMobilePairingLinksResult,
   TeamListProviderUsageResult,
@@ -111,6 +114,8 @@ export const TEAM_WS_METHODS = {
   teamGetState: "team.getState",
   teamSubscribeState: "team.subscribeState",
   teamInitialize: "team.initialize",
+  teamLeave: "team.leave",
+  teamDelete: "team.delete",
   teamUpdateDisplayName: "team.updateDisplayName",
   teamUpdateMyPseudo: "team.updateMyPseudo",
   teamUpdateMemberRole: "team.updateMemberRole",
@@ -170,6 +175,8 @@ export const TEAM_WS_METHODS = {
 
 export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamInitialize]: AuthAccessWriteScope,
+  [TEAM_WS_METHODS.teamLeave]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamDelete]: AuthAccessWriteScope,
   [TEAM_WS_METHODS.teamUpdateDisplayName]: AuthAccessWriteScope,
   [TEAM_WS_METHODS.teamUpdateMyPseudo]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamUpdateMyMobileVisibility]: AuthOrchestrationReadScope,
@@ -251,6 +258,18 @@ const WsTeamSubscribeStateRpc = Rpc.make(TEAM_WS_METHODS.teamSubscribeState, {
 const WsTeamInitializeRpc = Rpc.make(TEAM_WS_METHODS.teamInitialize, {
   payload: TeamInitializeInput,
   success: TeamInitializeResult,
+  error: TeamRpcError,
+});
+
+const WsTeamLeaveRpc = Rpc.make(TEAM_WS_METHODS.teamLeave, {
+  payload: Schema.Struct({}),
+  success: TeamLeaveResult,
+  error: TeamRpcError,
+});
+
+const WsTeamDeleteRpc = Rpc.make(TEAM_WS_METHODS.teamDelete, {
+  payload: TeamDeleteInput,
+  success: TeamDeleteResult,
   error: TeamRpcError,
 });
 
@@ -588,6 +607,8 @@ export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamGetStateRpc,
   WsTeamSubscribeStateRpc,
   WsTeamInitializeRpc,
+  WsTeamLeaveRpc,
+  WsTeamDeleteRpc,
   WsTeamUpdateDisplayNameRpc,
   WsTeamUpdateMyPseudoRpc,
   WsTeamUpdateMemberRoleRpc,

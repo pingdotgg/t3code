@@ -7,6 +7,7 @@ import {
 import {
   ALL_TEAM_ROLES,
   canManageTeamViews,
+  isTeamAdminRole,
   type EnvironmentId,
   type TeamAccessRule,
   type TeamMember,
@@ -20,7 +21,6 @@ import { LayersIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { m } from "~/i18n/messages";
-import { readLocalApi } from "~/localApi";
 import { teamEnvironment } from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
@@ -30,6 +30,7 @@ import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
+import { confirmTeamDestructiveAction } from "./confirmTeamDestructiveAction";
 import { formatTeamRoleLabel } from "./TeamJoinForm";
 
 interface ViewEditorDraft {
@@ -131,6 +132,7 @@ export function TeamViewsSettingsSection({
     currentMember.status === "active" &&
     canManageTeamViews(currentMember.role);
   const activeMembers = members.filter((member) => member.status === "active");
+  const nonAdminActiveMembers = activeMembers.filter((member) => !isTeamAdminRole(member.role));
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -146,7 +148,12 @@ export function TeamViewsSettingsSection({
     const trimmedDescription = draft.description.trim();
     const readRule: TeamAccessRule = {
       roles: draft.isDefault ? [...ALL_TEAM_ROLES] : [...draft.readRoles],
-      memberIds: draft.isDefault ? [] : [...draft.readMemberIds],
+      memberIds: draft.isDefault
+        ? []
+        : draft.readMemberIds.filter((id) => {
+            const member = memberById.get(id);
+            return member === undefined || !isTeamAdminRole(member.role);
+          }),
     };
     const postRule: TeamAccessRule = {
       roles: [...draft.postRoles],
@@ -201,10 +208,7 @@ export function TeamViewsSettingsSection({
       gt('Delete view "{viewName}"?', { viewName: view.name }),
       gt("Threads in this view will be moved to the Default view."),
     ].join("\n");
-    const api = readLocalApi();
-    const confirmed = api
-      ? await api.dialogs.confirm(confirmMessage, { variant: "destructive" })
-      : typeof window === "undefined" || window.confirm(confirmMessage);
+    const confirmed = await confirmTeamDestructiveAction(confirmMessage);
     if (!confirmed) return;
     setDeletingViewId(view.id);
     const result = await runDeleteView({
@@ -356,13 +360,13 @@ export function TeamViewsSettingsSection({
                   <p className="text-2xs text-muted-foreground">
                     <T>Owners and admins can always read all views.</T>
                   </p>
-                  {!draft.isDefault && activeMembers.length > 0 ? (
+                  {!draft.isDefault && nonAdminActiveMembers.length > 0 ? (
                     <div className="border-t border-border/50 pt-2">
                       <p className="mb-1.5 text-2xs text-muted-foreground">
                         <T>Specific members</T>
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {activeMembers.map((member) => {
+                        {nonAdminActiveMembers.map((member) => {
                           const checked = draft.readMemberIds.includes(member.id);
                           return (
                             <label
@@ -431,6 +435,9 @@ export function TeamViewsSettingsSection({
                       );
                     })}
                   </div>
+                  <p className="text-2xs text-muted-foreground">
+                    <T>Thread creators can always post in their own unlocked threads.</T>
+                  </p>
                   {activeMembers.length > 0 ? (
                     <div className="border-t border-border/50 pt-2">
                       <p className="mb-1.5 text-2xs text-muted-foreground">

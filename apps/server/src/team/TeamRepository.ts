@@ -625,6 +625,25 @@ export class TeamRepository extends Context.Service<
       Option.Option<TeamMember>,
       TeamRepositoryError | TeamLastOwnerProtectedError | TeamMemberForbiddenError
     >;
+    readonly leaveTeam: (input: {
+      readonly teamId: TeamId;
+      readonly memberId: TeamMemberId;
+      readonly updatedAt: string;
+    }) => Effect.Effect<
+      Option.Option<TeamMember>,
+      TeamRepositoryError | TeamLastOwnerProtectedError
+    >;
+    readonly deleteTeam: (teamId: TeamId) => Effect.Effect<
+      {
+        readonly deleted: boolean;
+        readonly sessionIds: ReadonlyArray<AuthSessionId>;
+        readonly pairingLinkIds: ReadonlyArray<string>;
+        readonly providerSecretKeys: ReadonlyArray<string>;
+        readonly githubSecretKeys: ReadonlyArray<string>;
+        readonly githubAppClientSecretKey: string | null;
+      },
+      TeamRepositoryError
+    >;
     readonly listSessionIdsForMember: (
       memberId: TeamMemberId,
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, TeamRepositoryError>;
@@ -1472,6 +1491,226 @@ const make = Effect.gen(function* () {
         return rows.map((row) => row.session_id as AuthSessionId);
       },
     ),
+
+    leaveTeam: Effect.fn("TeamRepository.leaveTeam")(function* (input) {
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const existingRows = yield* sql<MemberRow>`
+              SELECT
+                m.id,
+                m.team_id,
+                m.pseudo,
+                m.role,
+                m.status,
+                p.upstream_client_thread_visibility,
+                m.created_at,
+                m.updated_at
+              FROM team_members m
+              LEFT JOIN team_member_preferences p ON p.member_id = m.id
+              WHERE m.id = ${input.memberId} AND m.team_id = ${input.teamId}
+              LIMIT 1
+            `;
+            const current = existingRows[0];
+            if (!current || current.status !== "active") {
+              return Option.none<TeamMember>();
+            }
+            if (current.role === "owner") {
+              const owners = yield* sql<{ readonly count: number }>`
+                SELECT COUNT(*) AS count
+                FROM team_members
+                WHERE team_id = ${input.teamId} AND role = 'owner' AND status = 'active'
+              `;
+              if ((owners[0]?.count ?? 0) <= 1) {
+                return yield* new TeamLastOwnerProtectedError({});
+              }
+            }
+            yield* sql`
+              UPDATE team_members
+              SET status = 'removed', updated_at = ${input.updatedAt}
+              WHERE id = ${input.memberId} AND team_id = ${input.teamId}
+            `;
+            yield* sql`
+              DELETE FROM team_thread_follows
+              WHERE member_id = ${input.memberId}
+            `;
+            yield* sql`
+              DELETE FROM team_member_preferences
+              WHERE member_id = ${input.memberId}
+            `;
+            yield* sql`
+              DELETE FROM team_relay_binding
+              WHERE member_id = ${input.memberId}
+            `;
+            const views = yield* sql<ViewRow>`
+              SELECT id, team_id, name, description, is_default,
+                     read_roles_json, read_member_ids_json,
+                     post_roles_json, post_member_ids_json,
+                     created_at, updated_at
+              FROM team_views
+              WHERE team_id = ${input.teamId}
+            `;
+            for (const view of views) {
+              const readIds = parseMemberIdArray(view.read_member_ids_json);
+              const postIds = parseMemberIdArray(view.post_member_ids_json);
+              const nextReadIds = readIds.filter((id) => id !== input.memberId);
+              const nextPostIds = postIds.filter((id) => id !== input.memberId);
+              if (nextReadIds.length !== readIds.length || nextPostIds.length !== postIds.length) {
+                yield* sql`
+                  UPDATE team_views
+                  SET
+                    read_member_ids_json = ${encodeStringArrayJson(nextReadIds)},
+                    post_member_ids_json = ${encodeStringArrayJson(nextPostIds)},
+                    updated_at = ${input.updatedAt}
+                  WHERE id = ${view.id}
+                `;
+              }
+            }
+            const envs = yield* sql<TeamEnvironmentRow>`
+              SELECT id, team_id, environment_id, name, is_default, peer_link_id,
+                     access_roles_json, access_member_ids_json, created_at, updated_at
+              FROM team_environments
+              WHERE team_id = ${input.teamId}
+            `;
+            for (const env of envs) {
+              const accessIds = parseMemberIdArray(env.access_member_ids_json);
+              const nextAccessIds = accessIds.filter((id) => id !== input.memberId);
+              if (nextAccessIds.length !== accessIds.length) {
+                yield* sql`
+                  UPDATE team_environments
+                  SET
+                    access_member_ids_json = ${encodeStringArrayJson(nextAccessIds)},
+                    updated_at = ${input.updatedAt}
+                  WHERE id = ${env.id}
+                `;
+              }
+            }
+            const updatedRows = yield* sql<MemberRow>`
+              SELECT
+                m.id,
+                m.team_id,
+                m.pseudo,
+                m.role,
+                m.status,
+                p.upstream_client_thread_visibility,
+                m.created_at,
+                m.updated_at
+              FROM team_members m
+              LEFT JOIN team_member_preferences p ON p.member_id = m.id
+              WHERE m.id = ${input.memberId} AND m.team_id = ${input.teamId}
+              LIMIT 1
+            `;
+            return updatedRows[0] ? Option.some(mapMemberRow(updatedRows[0])) : Option.none();
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            isTeamLastOwnerProtectedError(cause)
+              ? cause
+              : new TeamRepositoryError({ operation: "leaveTeam", cause }),
+          ),
+        );
+    }),
+
+    deleteTeam: Effect.fn("TeamRepository.deleteTeam")(function* (teamId) {
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const existing = yield* sql<{ readonly id: string }>`
+              SELECT id FROM team_workspaces WHERE id = ${teamId} LIMIT 1
+            `;
+            if (existing.length === 0) {
+              return {
+                deleted: false,
+                sessionIds: [],
+                pairingLinkIds: [],
+                providerSecretKeys: [],
+                githubSecretKeys: [],
+                githubAppClientSecretKey: null,
+              };
+            }
+            const sessionRows = yield* sql<{ readonly session_id: string }>`
+              SELECT session_id FROM team_session_meta WHERE team_id = ${teamId}
+            `;
+            const pairingRows = yield* sql<{ readonly pairing_link_id: string }>`
+              SELECT pairing_link_id FROM team_pairing_meta WHERE team_id = ${teamId}
+            `;
+            const providerSecretRows = yield* sql<{ readonly secret_key: string | null }>`
+              SELECT secret_key FROM team_providers WHERE team_id = ${teamId} AND secret_key IS NOT NULL
+            `;
+            const memberGhSecretRows = yield* sql<{ readonly secret_key: string }>`
+              SELECT secret_key FROM team_github_member_credentials WHERE team_id = ${teamId}
+            `;
+            const autoGhSecretRows = yield* sql<{ readonly secret_key: string }>`
+              SELECT secret_key FROM team_github_automation_credentials WHERE team_id = ${teamId}
+            `;
+            const appGhSecretRows = yield* sql<{ readonly client_secret_key: string | null }>`
+              SELECT client_secret_key FROM team_github_app_config WHERE team_id = ${teamId}
+            `;
+
+            // Delete leaf/referencing tables first to respect all FK constraints cleanly.
+            yield* sql`DELETE FROM team_automation_turn_scopes WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_scheduled_task_meta WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_github_app_config WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_github_automation_credentials WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_github_member_credentials WHERE team_id = ${teamId}`;
+            yield* sql`
+              DELETE FROM team_session_scope_ceilings
+              WHERE session_id IN (SELECT session_id FROM team_session_meta WHERE team_id = ${teamId})
+            `;
+            yield* sql`DELETE FROM team_member_preferences WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_pairing_meta WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_local_sync_tokens WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_asset_tombstones WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_asset_revisions WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_preprompts WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_skills WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_provider_usage WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_providers WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_pending_remote_revocations WHERE team_id = ${teamId}`;
+            yield* sql`
+              DELETE FROM team_thread_env_labels
+              WHERE thread_id IN (SELECT thread_id FROM team_thread_meta WHERE team_id = ${teamId})
+            `;
+            yield* sql`DELETE FROM team_thread_notes WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_environments WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_project_meta WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_views WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_relay_binding WHERE team_id = ${teamId}`;
+            yield* sql`
+              DELETE FROM team_thread_follows
+              WHERE member_id IN (SELECT id FROM team_members WHERE team_id = ${teamId})
+            `;
+            yield* sql`
+              DELETE FROM team_turn_meta
+              WHERE thread_id IN (SELECT thread_id FROM team_thread_meta WHERE team_id = ${teamId})
+                 OR author_member_id IN (SELECT id FROM team_members WHERE team_id = ${teamId})
+            `;
+            yield* sql`DELETE FROM team_thread_meta WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_session_meta WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_invites WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_members WHERE team_id = ${teamId}`;
+            yield* sql`DELETE FROM team_workspaces WHERE id = ${teamId}`;
+
+            return {
+              deleted: true,
+              sessionIds: sessionRows.map((row) => row.session_id as AuthSessionId),
+              pairingLinkIds: pairingRows.map((row) => row.pairing_link_id),
+              providerSecretKeys: providerSecretRows.flatMap((row) =>
+                row.secret_key ? [row.secret_key] : [],
+              ),
+              githubSecretKeys: [
+                ...memberGhSecretRows.map((row) => row.secret_key),
+                ...autoGhSecretRows.map((row) => row.secret_key),
+              ],
+              githubAppClientSecretKey: appGhSecretRows[0]?.client_secret_key ?? null,
+            };
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) => new TeamRepositoryError({ operation: "deleteTeam", cause })),
+        );
+    }),
 
     listViews: Effect.fn("TeamRepository.listViews")(function* (teamId) {
       const rows = yield* runSql(
