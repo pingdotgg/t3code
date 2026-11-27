@@ -8063,6 +8063,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   sessionScopedId(normalized.sessionId, update.toolCallId),
                 );
               }
+              // A terminal-only command's pin is its synthetic tool; a linked tool clears its own.
+              if (update.sessionUpdate === "terminal_update") {
+                const terminalKey = sessionScopedId(normalized.sessionId, update.terminalId);
+                if (
+                  agentTerminalsById.get(terminalKey)?.exitStatus !== undefined &&
+                  !(toolCallIdsByAgentTerminalId.get(terminalKey)?.size ?? 0)
+                ) {
+                  expiredHoldCommandIds.delete(
+                    sessionScopedId(
+                      normalized.sessionId,
+                      `acp-agent-terminal:${update.terminalId}`,
+                    ),
+                  );
+                }
+              }
             },
             Effect.mapError(
               (cause) =>
