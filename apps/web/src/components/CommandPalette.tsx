@@ -607,7 +607,7 @@ function OpenCommandPaletteDialog(props: {
     await handleNewThread(projectRef);
   };
   const createNewProject = useNewProject(openAddedProject);
-  const cloneLookupGeneration = useRef(0);
+  const cloneFlowGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
   const { environmentLabelById, projectEnvironmentLocationById } = useEnvironmentLookups();
@@ -857,12 +857,11 @@ function OpenCommandPaletteDialog(props: {
     });
   };
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates the browse navigation coordinator and in-flight clone lookups when the palette session unmounts
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates the browse navigation coordinator and in-flight clone flow when the palette session unmounts
   useEffect(
     () => () => {
       browseNavigation.invalidate();
-      // A replaced or closed session must not report its in-flight lookup.
-      cloneLookupGeneration.current += 1;
+      cloneFlowGeneration.current += 1;
     },
     [browseNavigation],
   );
@@ -1023,7 +1022,7 @@ function OpenCommandPaletteDialog(props: {
 
   const popView = useStableCallback((): void => {
     browseNavigation.invalidate();
-    cloneLookupGeneration.current += 1;
+    cloneFlowGeneration.current += 1;
     setIsRemoteProjectLookingUp(false);
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
@@ -2260,7 +2259,7 @@ function OpenCommandPaletteDialog(props: {
       }
 
       setIsRemoteProjectLookingUp(true);
-      const lookupGeneration = ++cloneLookupGeneration.current;
+      const lookupGeneration = ++cloneFlowGeneration.current;
       const lookupResult = await lookupRepository({
         environmentId: addProjectCloneFlow.environmentId,
         input: {
@@ -2268,7 +2267,7 @@ function OpenCommandPaletteDialog(props: {
           repository: rawRepository,
         },
       });
-      if (lookupGeneration !== cloneLookupGeneration.current) return;
+      if (lookupGeneration !== cloneFlowGeneration.current) return;
       setIsRemoteProjectLookingUp(false);
       if (lookupResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(lookupResult)) {
@@ -2351,6 +2350,8 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
+    const paletteAtStart = useCommandPaletteStore.getState();
+    const flowGeneration = cloneFlowGeneration.current;
     setIsRemoteProjectCloning(true);
     const startResult = await startProjectClone({
       environmentId: addProjectCloneFlow.environmentId,
@@ -2375,16 +2376,24 @@ function OpenCommandPaletteDialog(props: {
       }
       return;
     }
-    setOpen(false);
     void suggestAppAccessForRemote(
       addProjectCloneFlow.environmentId,
       addProjectCloneFlow.remoteUrl,
     );
+    if (
+      useCommandPaletteStore.getState() !== paletteAtStart ||
+      cloneFlowGeneration.current !== flowGeneration
+    ) {
+      return;
+    }
+    setOpen(false);
+    const paletteAfterClose = useCommandPaletteStore.getState();
     const projectRef = scopeProjectRef(
       addProjectCloneFlow.environmentId,
       startResult.value.projectId,
     );
     await waitForProject(projectRef, 3_000).catch(() => null);
+    if (useCommandPaletteStore.getState() !== paletteAfterClose) return;
     const navigationResult = await settlePromise(() => openAddedProject(projectRef));
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);
