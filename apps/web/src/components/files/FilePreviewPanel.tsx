@@ -186,7 +186,7 @@ type FilePostRender = <LAnnotation>(
   phase: PostRenderPhase,
 ) => void;
 
-function WorkspaceImagePreview(props: {
+export function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;
@@ -195,21 +195,28 @@ function WorkspaceImagePreview(props: {
   readonly alt: string;
   readonly workspaceMutationId: string | null;
 }) {
-  const resource = workspaceAssetResource({
-    kind:
-      mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined
-        ? "workspace-file"
-        : "media-file",
+  // Media files report their revision, so an unchanged image keeps its element and zoom
+  // when the workspace revision moves; older servers fall back to the workspace revision.
+  const mediaResource = workspaceAssetResource({
+    kind: "media-file",
     threadRef: props.threadRef,
     draft: props.draft,
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  // A file inside the workspace lives on that host only; never fall back to a desktop-local file.
+  const resource =
+    mediaResource._tag === "media-file" &&
+    mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined
+      ? { ...mediaResource, hostOnly: true as const }
+      : mediaResource;
+  const assetUrl = useAssetUrlState(props.environmentId, resource, props.workspaceMutationId);
+  const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
+  const revision = fileRevision ?? props.workspaceMutationId;
   const revisionSuffix =
-    props.workspaceMutationId === null
+    revision === null
       ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId)}`;
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
   const imageUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
   const actionsSource: MediaActionSource = {
     kind: "image",
@@ -229,10 +236,12 @@ function WorkspaceImagePreview(props: {
     );
   }
 
-  return assetUrl._tag === "Success" && imageUrl !== null ? (
+  return assetUrl._tag === "Success" &&
+    imageUrl !== null &&
+    !(fileRevision === undefined && assetUrl.waiting) ? (
     <MediaActions source={actionsSource}>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <PreviewImage key={imageUrl} src={imageUrl} name={props.alt} />
+        <PreviewImage key={`${props.absolutePath}:${revision}`} src={imageUrl} name={props.alt} />
       </div>
     </MediaActions>
   ) : (
