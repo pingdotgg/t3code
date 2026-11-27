@@ -8840,10 +8840,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   threadId: nativeThreadId,
                 });
                 if (
-                  unloadInput.awaitClosed === true &&
-                  (status === "unsubscribed" ||
-                    (status === "notSubscribed" && pending !== undefined))
+                  status === "notLoaded" ||
+                  (status === "notSubscribed" && pending === undefined)
                 ) {
+                  if (threadClosings.get(nativeThreadId) === closing) {
+                    threadClosings.delete(nativeThreadId);
+                  }
+                  yield* Deferred.succeed(closing, undefined);
+                } else if (unloadInput.awaitClosed === true) {
                   yield* Deferred.await(closing);
                 }
               }

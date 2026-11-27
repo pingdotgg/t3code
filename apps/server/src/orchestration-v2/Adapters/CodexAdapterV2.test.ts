@@ -7916,7 +7916,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect("waits for an idle unsubscribe's native close before handing off the writer", () =>
+  it.effect.each([
+    { name: "waits for an idle unsubscribe's native close", subscribed: true },
+    { name: "discards a close waiter when the thread was already unsubscribed", subscribed: false },
+  ])("$name", ({ subscribed }) =>
     Effect.gen(function* () {
       const beforeClose = yield* Deferred.make<void>();
       const releaseClose = yield* Deferred.make<void>();
@@ -7939,13 +7942,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           entries: [
             ...backgroundExecTranscript.entries.slice(0, -1),
             ...backgroundTerminalLive(4),
-            ...unsubscribe(5, "unsubscribed"),
+            ...unsubscribe(5, subscribed ? "unsubscribed" : "notSubscribed"),
             ...unsubscribe(6, "notSubscribed"),
-            {
-              type: "emit_inbound",
-              label: "thread-close",
-              frame: { method: "thread/closed", params: { threadId: BG_NATIVE_THREAD } },
-            },
+            ...(subscribed
+              ? [
+                  {
+                    type: "emit_inbound" as const,
+                    label: "thread-close",
+                    frame: { method: "thread/closed", params: { threadId: BG_NATIVE_THREAD } },
+                  },
+                ]
+              : []),
           ],
         }),
         undefined,
@@ -7970,10 +7977,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       yield* harness.firstTerminal;
       const unload = harness.runtime.unloadThread!;
       yield* unload({ providerThread: harness.providerThread });
-      const handoff = yield* unload({
+      const handoffUnload = unload({
         providerThread: harness.providerThread,
         awaitClosed: true,
-      }).pipe(
+      });
+      if (!subscribed) {
+        yield* handoffUnload;
+        return;
+      }
+      const handoff = yield* handoffUnload.pipe(
         Effect.tap(() => Deferred.succeed(handoffDone, undefined)),
         Effect.forkScoped,
       );
