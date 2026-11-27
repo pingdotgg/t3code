@@ -1472,6 +1472,17 @@ describe("attachment HTML preview recovery", () => {
 });
 
 describe("document output sanitization", () => {
+  it("renders uppercase Roman markers on ordered list items", async () => {
+    await using screen = await render(
+      <DocumentPages html={'<ol type="I"><li>Prepare the site</li></ol>'} name="procedure.odt" />,
+    );
+    const frame = screen.container.querySelector("iframe")!;
+    await vi.waitFor(() => {
+      const item = frame.contentDocument?.querySelector("li");
+      expect(item && frame.contentWindow?.getComputedStyle(item).listStyleType).toBe("upper-roman");
+    });
+  });
+
   it("fits saved HTML outputs to their content and resizes when the content changes", async () => {
     await using screen = await render(
       <DocumentPages html="<table><tr><td>42</td></tr></table>" name="Output" output />,
