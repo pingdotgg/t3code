@@ -89,15 +89,14 @@ export function ttmlCaptions(root: XmlNode) {
     let seconds = clockSeconds + (frames + fractionalFrame) / frameRate;
     if (continuousSmpte) {
       const minutes = Math.floor(clockSeconds / 60);
-      const explicitLabelAtMinuteStart = clock?.[2] !== undefined && clockSeconds % 60 === 0;
+      const atMinuteStart = clock?.[2] !== undefined && clockSeconds % 60 === 0;
       let droppedFrames = 0;
       // TTML §N.3 counts skipped labels before applying the effective frame rate.
       if (dropMode === "dropNTSC") {
-        if (explicitLabelAtMinuteStart && minutes % 10 !== 0 && frames < 2) return;
+        if (atMinuteStart && minutes % 10 !== 0 && frames < 2) return;
         droppedFrames = (minutes - Math.floor(minutes / 10)) * 2;
       } else if (dropMode === "dropPAL") {
-        if (explicitLabelAtMinuteStart && minutes % 2 === 0 && minutes % 20 !== 0 && frames < 4)
-          return;
+        if (atMinuteStart && minutes % 2 === 0 && minutes % 20 !== 0 && frames < 4) return;
         droppedFrames = (Math.floor(minutes / 2) - Math.floor(minutes / 20)) * 4;
       } else if (dropMode !== "nonDrop") {
         return;
