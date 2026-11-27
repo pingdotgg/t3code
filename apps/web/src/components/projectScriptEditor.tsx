@@ -153,6 +153,7 @@ export function ProjectScriptEditorDialog({
     scriptId: string | null,
     input: NewProjectScriptInput,
     onActionCreated: (scriptId: string) => void,
+    retryingCreation: boolean,
   ) => Promise<ProjectScriptActionResult>;
   onDelete: (scriptId: string) => void;
   onClose: () => void;
@@ -277,6 +278,7 @@ function ProjectScriptEditorForm({
     scriptId: string | null,
     input: NewProjectScriptInput,
     onActionCreated: (scriptId: string) => void,
+    retryingCreation: boolean,
   ) => Promise<ProjectScriptActionResult>;
   onRequestDelete: (name: string) => void;
   onClose: () => void;
@@ -411,11 +413,16 @@ function ProjectScriptEditorForm({
     setIsSaving(true);
     setIconPickerOpen(false);
     try {
-      const result = await onSubmit(scriptId, payload, (createdId) => {
-        if (pendingSubmissionRef.current === submission) {
-          createdScriptIdRef.current = createdId;
-        }
-      });
+      const result = await onSubmit(
+        scriptId,
+        payload,
+        (createdId) => {
+          if (pendingSubmissionRef.current === submission) {
+            createdScriptIdRef.current = createdId;
+          }
+        },
+        request.scriptId === null && scriptId !== null,
+      );
       if (pendingSubmissionRef.current === submission) {
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {

@@ -227,24 +227,27 @@ export function useProjectScriptEditing(input: {
   const updateProjectScript = async (
     scriptId: string,
     input: NewProjectScriptInput,
+    retryingCreation = false,
   ): Promise<AtomCommandResult<void, unknown>> => {
     if (!project) {
       return AsyncResult.success(undefined);
     }
-    const existingScript = scripts.find((script) => script.id === scriptId);
-    if (!existingScript) {
+    const hasScript = scripts.some((script) => script.id === scriptId);
+    if (!hasScript && !retryingCreation) {
       return AsyncResult.failure(Cause.fail(new Error(m(msg("Script not found.")))));
     }
 
-    const updatedScript = buildProjectScript(existingScript.id, input);
-    const nextScripts = scripts.map((script) =>
+    const updatedScript = buildProjectScript(scriptId, input);
+    // A retry has a confirmed ID even if the settings subscription is still behind.
+    const currentScripts = hasScript ? scripts : [...scripts, updatedScript];
+    const nextScripts = currentScripts.map((script) =>
       script.id === scriptId ? updatedScript : releaseClaimedRoles(script, input),
     );
 
     return persistProjectScripts({
       projectId: project.id,
       projectCwd: project.workspaceRoot,
-      previousScripts: scripts,
+      previousScripts: currentScripts,
       nextScripts,
       keybinding: input.keybinding,
       keybindingCommand: commandForProjectScript(scriptId),

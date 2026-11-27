@@ -79,6 +79,7 @@ interface ProjectScriptsControlProps {
   onUpdateScript: (
     scriptId: string,
     input: NewProjectScriptInput,
+    retryingCreation?: boolean,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
 }
@@ -148,7 +149,11 @@ export default function ProjectScriptsControl({
     scriptId: string | null,
     input: NewProjectScriptInput,
     onActionCreated: (scriptId: string) => void,
-  ) => (scriptId === null ? onAddScript(input, onActionCreated) : onUpdateScript(scriptId, input));
+    retryingCreation: boolean,
+  ) =>
+    scriptId === null
+      ? onAddScript(input, onActionCreated)
+      : onUpdateScript(scriptId, input, retryingCreation);
 
   const importFileScript = async (fileScript: T3ProjectFileScript) => {
     const requestId = ++editorRequestIdRef.current;
