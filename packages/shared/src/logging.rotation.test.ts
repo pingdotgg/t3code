@@ -12,7 +12,7 @@ import { expect, vi } from "vite-plus/test";
 import { makeAsyncRotatingFileSink, RotatingFileSink, RotatingFileSinkError } from "./logging.ts";
 
 vi.mock("node:fs", { spy: true });
-const { renameSync } = await vi.importActual<typeof NodeFS>("node:fs");
+const { renameSync, rmSync } = await vi.importActual<typeof NodeFS>("node:fs");
 const modes = ["synchronous", "asynchronous"] as const;
 const isRotatingFileSinkError = Schema.is(RotatingFileSinkError);
 
@@ -22,6 +22,7 @@ const openSink = Effect.fnUntraced(function* (
   maxBytes: number,
   maxFiles: number,
   deny: (source: string, target: string) => boolean = () => false,
+  { throwOnError = true, denyRemove = (_path: string) => false } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const denied = (source: string) =>
@@ -33,20 +34,24 @@ const openSink = Effect.fnUntraced(function* (
     });
   if (mode === "synchronous") {
     const spy = vi.mocked(NodeFS.renameSync);
+    const removeSpy = vi.mocked(NodeFS.rmSync);
     const run = <A>(action: () => A) => {
       try {
         spy.mockImplementation((source, target) => {
           if (deny(String(source), String(target))) throw denied(String(source));
           renameSync(source, target);
         });
+        removeSpy.mockImplementation((path, options) => {
+          if (denyRemove(String(path))) throw denied(String(path));
+          rmSync(path, options);
+        });
         return action();
       } finally {
         spy.mockReset();
+        removeSpy.mockReset();
       }
     };
-    const sink = run(
-      () => new RotatingFileSink({ filePath, maxBytes, maxFiles, throwOnError: true }),
-    );
+    const sink = run(() => new RotatingFileSink({ filePath, maxBytes, maxFiles, throwOnError }));
     return {
       write: (chunk: string) =>
         Effect.try({
@@ -63,6 +68,8 @@ const openSink = Effect.fnUntraced(function* (
       ...fs,
       rename: (source, target) =>
         deny(source, target) ? Effect.fail(denied(source)) : fs.rename(source, target),
+      remove: (name, options) =>
+        denyRemove(name) ? Effect.fail(denied(name)) : fs.remove(name, options),
     }),
   );
 });
@@ -179,6 +186,64 @@ effectIt.layer(NodeServices.layer)("log rotation recovery", (it) => {
         "provider.log.1",
         "provider.log.2",
       ]);
+    }),
+  );
+
+  it.effect.each(modes.flatMap((mode) => [".oldest", ".json"].map((suffix) => ({ mode, suffix }))))(
+    "$mode sink appends while committed cleanup of $suffix is blocked",
+    ({ mode, suffix }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const filePath = path.join(directory, "provider.log");
+        const blockedPath = `${filePath}.rotating${suffix}`;
+        yield* fs.writeFileString(filePath, "active");
+        yield* fs.writeFileString(`${filePath}.1`, "previous");
+        let locked = true;
+        const options = { denyRemove: (name: string) => locked && name === blockedPath };
+        const sink = yield* openSink(mode, filePath, 6, 1, undefined, options);
+        yield* sink.write("first");
+        const reopened = yield* openSink(mode, filePath, 6, 1, undefined, options);
+        yield* reopened.write("second");
+        expect(yield* fs.readFileString(filePath)).toBe("firstsecond");
+        expect(yield* fs.readFileString(`${filePath}.1`)).toBe("active");
+        expect(yield* fs.exists(blockedPath)).toBe(true);
+
+        locked = false;
+        yield* reopened.write("third");
+        expect(yield* fs.readFileString(filePath)).toBe("third");
+        expect(yield* fs.readFileString(`${filePath}.1`)).toBe("firstsecond");
+        expect(yield* fs.exists(blockedPath)).toBe(false);
+      }),
+  );
+
+  it.effect("best-effort writes continue while rollback is blocked", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const filePath = path.join(directory, "provider.log");
+      yield* fs.writeFileString(filePath, "active");
+      yield* fs.writeFileString(`${filePath}.1`, "previous");
+      let locked = true;
+      const deny = (source: string, target: string) =>
+        locked &&
+        target === `${filePath}.1` &&
+        (source === `${filePath}.rotating` || source === `${filePath}.2`);
+      const options = { throwOnError: false };
+      const sink = yield* openSink("synchronous", filePath, 9, 2, deny, options);
+      yield* sink.write("next");
+      const reopened = yield* openSink("synchronous", filePath, 9, 2, deny, options);
+      yield* reopened.write("ok");
+      expect(yield* fs.readFileString(filePath)).toBe("nextok");
+      expect(yield* fs.readFileString(`${filePath}.rotating`)).toBe("active");
+
+      locked = false;
+      yield* reopened.write("yes");
+      expect(yield* fs.readFileString(filePath)).toBe("nextokyes");
+      expect(yield* fs.readFileString(`${filePath}.1`)).toBe("active");
+      expect(yield* fs.readFileString(`${filePath}.2`)).toBe("previous");
     }),
   );
 });

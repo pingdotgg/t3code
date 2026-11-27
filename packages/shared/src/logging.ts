@@ -60,30 +60,41 @@ const RotationPlan = Schema.fromJsonString(
 const decodeRotationPlan = Schema.decodeUnknownEffect(RotationPlan);
 const encodeRotationPlan = Schema.encodeEffect(RotationPlan);
 
+const ROTATION_SUFFIX = ".rotating";
+
+export function rotationSidecarBase(fileName: string): string | undefined {
+  const index = fileName.lastIndexOf(ROTATION_SUFFIX);
+  if (index < 0) return undefined;
+  const suffix = fileName.slice(index + ROTATION_SUFFIX.length);
+  if (suffix === "" || suffix === ".oldest" || suffix === ".json" || suffix === ".json.tmp") {
+    return fileName.slice(0, index);
+  }
+}
+
 function makeRotation<E>(fs: RotationFileSystem<E>, filePath: string, maxFiles: number) {
   const backup = (index: number) => `${filePath}.${index}`;
-  const staged = `${filePath}.rotating`;
+  const staged = filePath + ROTATION_SUFFIX;
   const journal = `${staged}.json`;
   const draft = `${journal}.tmp`;
   const parked = `${staged}.oldest`;
   const target = (index: number, oldest: number) => (index === oldest ? parked : backup(index + 1));
 
   const settle = Effect.gen(function* () {
-    if (!(yield* fs.exists(journal))) return;
+    if (!(yield* fs.exists(journal))) return true;
+    if (!(yield* fs.exists(staged))) {
+      // Publication committed. Cleanup may wait, but the parked slot cannot be reused yet.
+      return yield* Effect.andThen(fs.remove(parked), fs.remove(journal)).pipe(Effect.isSuccess);
+    }
     const { oldest, backups } = yield* decodeRotationPlan(yield* fs.read(journal));
-    if (yield* fs.exists(staged)) {
-      // Undo in reverse order. An occupied source means that move has not run or was already undone.
-      for (const index of [...backups].reverse()) {
-        const moved = target(index, oldest);
-        if (!(yield* fs.exists(backup(index))) && (yield* fs.exists(moved))) {
-          yield* fs.rename(moved, backup(index));
-        }
+    // Undo in reverse order. An occupied source means that move has not run or was already undone.
+    for (const index of [...backups].reverse()) {
+      const moved = target(index, oldest);
+      if (!(yield* fs.exists(backup(index))) && (yield* fs.exists(moved))) {
+        yield* fs.rename(moved, backup(index));
       }
-    } else {
-      // Publishing the staged file is the commit point. Only now can we discard the overflow.
-      yield* fs.remove(parked);
     }
     yield* fs.remove(journal);
+    return true;
   });
 
   const publish = Effect.gen(function* () {
@@ -98,7 +109,7 @@ function makeRotation<E>(fs: RotationFileSystem<E>, filePath: string, maxFiles: 
     yield* fs.rename(draft, journal);
     for (const index of backups) yield* fs.rename(backup(index), target(index, maxFiles));
     yield* fs.rename(staged, backup(1));
-    yield* settle;
+    return yield* settle;
   });
 
   const restoreActive = Effect.gen(function* () {
@@ -108,18 +119,19 @@ function makeRotation<E>(fs: RotationFileSystem<E>, filePath: string, maxFiles: 
   });
 
   const recover = Effect.gen(function* () {
-    yield* settle;
-    if (!(yield* fs.exists(staged))) return;
+    if (!(yield* settle)) return false;
+    if (!(yield* fs.exists(staged))) return true;
     yield* fs.remove(draft);
-    if (yield* fs.exists(filePath)) yield* publish;
-    else yield* restoreActive;
+    if (yield* fs.exists(filePath)) return yield* publish;
+    yield* restoreActive;
+    return true;
   });
 
   const rotate = Effect.gen(function* () {
-    if (!(yield* fs.exists(filePath))) return;
+    if (!(yield* fs.exists(filePath))) return true;
     // A denied active-file rename must leave the backups untouched.
     yield* fs.rename(filePath, staged);
-    yield* publish.pipe(
+    return yield* publish.pipe(
       Effect.tapError(() =>
         Effect.andThen(settle, Effect.andThen(fs.remove(draft), restoreActive)).pipe(Effect.ignore),
       ),
@@ -186,7 +198,12 @@ export class RotatingFileSink {
       this.filePath,
       this.maxFiles,
     );
-    this.needsRecovery = Effect.runSync(this.rotation.recover.pipe(Effect.isFailure));
+    this.needsRecovery = Effect.runSync(
+      this.rotation.recover.pipe(
+        Effect.orElseSucceed(() => false),
+        Effect.map((ready) => !ready),
+      ),
+    );
     if (!this.needsRecovery) this.pruneOverflowBackups();
     this.currentSize = this.readCurrentSize();
   }
@@ -197,18 +214,16 @@ export class RotatingFileSink {
 
     try {
       if (this.needsRecovery) {
-        if (!this.runRotation(this.rotation.recover)) return;
-        this.pruneOverflowBackups();
+        if (this.runRotation(this.rotation.recover)) this.pruneOverflowBackups();
         this.currentSize = this.readCurrentSize();
       }
-      if (this.currentSize > 0 && this.currentSize + buffer.length > this.maxBytes) {
-        if (this.runRotation(this.rotation.rotate)) {
-          this.currentSize = 0;
-        } else {
-          // Best-effort writers may still append once any pending moves have been undone.
-          if (!this.runRotation(this.rotation.recover)) return;
-          this.currentSize = this.readCurrentSize();
-        }
+      if (
+        !this.needsRecovery &&
+        this.currentSize > 0 &&
+        this.currentSize + buffer.length > this.maxBytes
+      ) {
+        this.runRotation(this.rotation.rotate);
+        this.currentSize = this.readCurrentSize();
       }
 
       NodeFS.appendFileSync(this.filePath, buffer);
@@ -230,9 +245,9 @@ export class RotatingFileSink {
 
   private runRotation(operation: typeof this.rotation.rotate): boolean {
     try {
-      Effect.runSync(operation);
-      this.needsRecovery = false;
-      return true;
+      const ready = Effect.runSync(operation);
+      this.needsRecovery = !ready;
+      return ready;
     } catch (cause) {
       this.needsRecovery = true;
       if (this.throwOnError) {
@@ -322,7 +337,7 @@ export const makeAsyncRotatingFileSink = Effect.fnUntraced(function* (
     options.filePath,
     options.maxFiles,
   );
-  let needsRecovery = yield* rotation.recover.pipe(Effect.isFailure);
+  let ready = yield* rotation.recover.pipe(Effect.orElseSucceed(() => false));
   const pruneOverflowBackups = Effect.gen(function* () {
     for (const entry of yield* fs.readDirectory(directory)) {
       if (!entry.startsWith(`${basename}.`)) continue;
@@ -333,7 +348,7 @@ export const makeAsyncRotatingFileSink = Effect.fnUntraced(function* (
       yield* fs.remove(path.join(directory, entry), { force: true });
     }
   }).pipe(Effect.mapError(failure("prune")));
-  if (!needsRecovery) yield* pruneOverflowBackups;
+  if (ready) yield* pruneOverflowBackups;
   const readSize = fs.stat(options.filePath).pipe(
     Effect.map((stat) => Number(stat.size)),
     Effect.catch((cause) =>
@@ -347,7 +362,7 @@ export const makeAsyncRotatingFileSink = Effect.fnUntraced(function* (
       Effect.mapError(failure("rotate")),
       Effect.tapError(() =>
         Effect.sync(() => {
-          needsRecovery = true;
+          ready = false;
         }),
       ),
     );
@@ -357,14 +372,14 @@ export const makeAsyncRotatingFileSink = Effect.fnUntraced(function* (
         Effect.gen(function* () {
           const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
           if (buffer.length === 0) return;
-          if (needsRecovery) {
-            yield* runRotation(rotation.recover);
-            yield* pruneOverflowBackups;
+          if (!ready) {
+            const recovered = yield* runRotation(rotation.recover);
+            if (recovered) yield* pruneOverflowBackups;
             currentSize = yield* readSize;
-            needsRecovery = false;
+            ready = recovered;
           }
-          if (currentSize > 0 && currentSize + buffer.length > options.maxBytes) {
-            yield* runRotation(rotation.rotate);
+          if (ready && currentSize > 0 && currentSize + buffer.length > options.maxBytes) {
+            ready = yield* runRotation(rotation.rotate);
             currentSize = 0;
           }
           yield* fs
