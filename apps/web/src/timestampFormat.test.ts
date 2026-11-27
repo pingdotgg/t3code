@@ -19,6 +19,18 @@ function useTimeZone(timeZone: string): Disposable {
   };
 }
 
+it("writes full timestamps in the system locale", async () => {
+  using _zone = useTimeZone("UTC");
+  vi.stubGlobal("window", { desktopBridge: { getSystemLocale: () => "de-DE" } });
+  vi.resetModules();
+  try {
+    const { formatFullTimestamp } = await import("./timestampFormat");
+    expect(formatFullTimestamp("2026-11-19T18:05:00.000Z", "24-hour")).toBe("19.11.2026, 18:05:00");
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 it("localizes the day period while honoring the system clock and explicit 24-hour mode", async () => {
   using _zone = useTimeZone("UTC");
   vi.stubGlobal("window", { desktopBridge: { getSystemLocale: () => "en-US" } });

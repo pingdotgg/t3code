@@ -348,7 +348,8 @@ const listGitCheckouts = Effect.fn("cli.thread.listGitCheckouts")(function* (dir
   const stdout = (yield* list(["-z"])) ?? (yield* list([]))?.replaceAll("\n", "\0") ?? "";
   return stdout.split("\0\0").flatMap((record) => {
     const [first = "", ...attributes] = record.split("\0");
-    return first.startsWith("worktree ") && !attributes.includes("bare")
+    const prunable = attributes.some((attribute) => attribute.startsWith("prunable"));
+    return first.startsWith("worktree ") && !attributes.includes("bare") && !prunable
       ? [first.slice("worktree ".length)]
       : [];
   });
