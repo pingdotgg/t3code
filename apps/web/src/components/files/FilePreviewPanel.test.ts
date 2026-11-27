@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import { openRtf, openNotebook, openDocument } from "./extendedDocumentPreview";
 import { openEpub } from "./epubPreview";
 import { parseXml } from "./documentPreviewXml";
+import { unlockOpenDocument } from "./openDocumentEncryption";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ProjectReadFileError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -207,6 +208,48 @@ describe("document preview contents", () => {
     const book = await openEpub(archive);
     expect(book.chapters).toHaveLength(30);
     expect((await book.page(29)).html).toBe("<figcaption></figcaption>".repeat(30_000));
+  });
+
+  it("skips broken EPUB encryption metadata and reports declared DRM", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="a" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+      )
+      .file("chapter.xhtml", "<html><body><p>Hello</p></body></html>");
+    const namespace = 'xmlns="http://www.w3.org/2001/04/xmlenc#"';
+    for (const metadata of ["<encryption>", `<EncryptedData ${namespace}/>`]) {
+      archive.file("META-INF/encryption.xml", metadata);
+      expect((await (await openEpub(archive)).page(0)).html).toBe("<p>Hello</p>");
+    }
+    archive.file(
+      "META-INF/encryption.xml",
+      `<EncryptedData ${namespace}><EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc"/></EncryptedData>`,
+    );
+    await expect(openEpub(archive)).rejects.toMatchObject({ code: "epub-drm" });
+  });
+
+  it("reports the aggregate OpenDocument decryption limit for supported encryption", async () => {
+    const parts = Array.from(
+      { length: 3 },
+      (_, index) => `<m:file-entry m:full-path="part-${index}.xml" m:size="1">
+        <m:encryption-data m:checksum-type="SHA1/1K" m:checksum="AA==">
+          <m:algorithm m:algorithm-name="http://www.w3.org/2001/04/xmlenc#aes256-cbc" m:initialisation-vector="AA=="/>
+          <m:key-derivation m:key-derivation-name="PBKDF2" m:iteration-count="1000000" m:salt="AA=="/>
+        </m:encryption-data>
+      </m:file-entry>`,
+    );
+    const archive = new JSZip().file(
+      "META-INF/manifest.xml",
+      `<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">${parts.join("")}</m:manifest>`,
+    );
+    await expect(unlockOpenDocument(archive, "open me")).rejects.toMatchObject({
+      code: "office-decryption-limit",
+    });
   });
 
   it("decodes rich text formatting and Unicode without showing hidden destinations", () => {
@@ -805,6 +848,67 @@ Third}`;
     expect(() => parseXml("<section>".repeat(104) + "text" + "</section>".repeat(104))).toThrow(
       expect.objectContaining({ code: "xml-too-deep" }),
     );
+  });
+
+  it("loads local EPUB captions and the narration cues for the current chapter", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        `<package><manifest>
+          <item id="chapter" href="book/chapter.xhtml" media-type="application/xhtml+xml" media-overlay="read"/>
+          <item id="read" href="overlays/chapter.smil" media-type="application/smil+xml"/>
+          <item id="captions" href="captions.xml" media-type="application/ttml+xml"/>
+          <item id="clip" href="clip.mp4" media-type="video/mp4"/>
+        </manifest><spine><itemref idref="chapter"/></spine></package>`,
+      )
+      .file(
+        "book/chapter.xhtml",
+        `<html><body><p id="line-1">First line</p>
+          <video autoplay=""><track kind="captions" srclang="en" label="English" src="../captions.xml" default=""/>
+          <track kind="captions" src="https://example.test/remote.vtt"/>
+          <source src="../clip.mp4#t=00:01:00,00:02:00"/><source src="../clip.mp4#t=,120"/>
+          <source src="../clip.mp4#t=npt:2.5,4.25"/></video>
+        </body></html>`,
+      )
+      .file(
+        "captions.xml",
+        `<tt xmlns="http://www.w3.org/ns/ttml"><body><div begin="1s" timeContainer="seq">
+          <div><p begin="500ms" dur="2s">Tea &amp; coffee<br/>served.</p></div>
+          <p begin="500ms" end="2s">Thanks.</p>
+        </div></body></tt>`,
+      )
+      .file(
+        "overlays/chapter.smil",
+        `<smil xmlns="http://www.w3.org/ns/SMIL"><body><seq>
+          <par><text src="../book/chapter.xhtml#line%2D1"/><audio src="../read.mp3" clipBegin="npt=2s" clipEnd="00:03.250"/></par>
+          <par><text src="../book/other.xhtml#skip"/><audio src="../read.mp3"/></par>
+          <par><text src="../book/chapter.xhtml#line-1"/><audio src="https://example.test/remote.mp3"/></par>
+        </seq></body></smil>`,
+      )
+      .file("read.mp3", new Uint8Array([255, 251, 16, 0]))
+      .file("clip.mp4", new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]));
+    const page = await (await openEpub(archive)).page(0);
+    try {
+      const tracks = page.html.match(/<track [^>]*>/g);
+      expect(tracks).toHaveLength(1);
+      expect(tracks?.[0]).toContain('kind="captions" srclang="en" label="English" default');
+      expect(page.html).toContain("<video controls playsinline>");
+      const caption = await fetch(tracks?.[0]?.match(/src="([^"]+)"/)?.[1] ?? "");
+      expect(caption.headers.get("Content-Type")).toBe("text/vtt");
+      expect(await caption.text()).toBe(
+        "WEBVTT\n\n00:00:01.500 --> 00:00:03.500\nTea &amp; coffee\nserved.\n\n00:00:04.000 --> 00:00:05.500\nThanks.\n",
+      );
+      expect(page.html.match(/#t=[\d.,]+(?=")/g)).toEqual(["#t=60,120", "#t=0,120", "#t=2.5,4.25"]);
+      expect(page.narration).toEqual([
+        { src: page.assets.at(-1), begin: 2, end: 3.25, anchor: "line-1" },
+      ]);
+    } finally {
+      for (const url of page.assets) URL.revokeObjectURL(url);
+    }
   });
 
   it("preserves the SVG filters used by EPUB artwork", async () => {
