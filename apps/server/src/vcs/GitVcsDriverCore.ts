@@ -7805,7 +7805,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   return GitVcsDriver.GitVcsDriver.of({
     execute,
     status,
-    readCurrentBranch: (cwd) => readCurrentBranch("GitVcsDriver.readCurrentBranch", cwd),
+    readCurrentBranch: Effect.fnUntraced(function* (cwd) {
+      return yield* readCurrentBranch("GitVcsDriver.readCurrentBranch", cwd);
+    }),
     statusDetails,
     statusDetailsLocal,
     statusDetailsRemote,
