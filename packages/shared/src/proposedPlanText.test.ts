@@ -26,9 +26,22 @@ it("takes the plan title from headings outside HTML comments", () => {
   }
   expect(proposedPlanTitle("<!--\n# Hidden title\n# Release plan")).toBeNull();
   expect(stripDisplayedPlanMarkdown("<!--\n# Hidden title\n# Release plan")).toBe("");
-  expect(stripDisplayedPlanMarkdown("<!--\nm\n--> note\n# Release plan\n\nBody")).toBe(
-    "<!--\nm\n--> note\n# Release plan\n\nBody",
-  );
+});
+
+it("keeps text on a comment's closing line while removing the plan title", () => {
+  for (const [preamble, titleBlock, displayedPreamble = preamble] of [
+    ["<!-- notes --> note", "# Release plan\n"],
+    ["<!--\n# Hidden title\n--> note", "\n#\n# Release plan\n\n## Summary\n"],
+    [
+      "<!-- first --> note\n#\n<!-- second --> more",
+      "# Release plan\n",
+      "<!-- first --> note\n<!-- second --> more",
+    ],
+  ]) {
+    const markdown = `${preamble}\n${titleBlock}\nBody`;
+    expect(proposedPlanTitle(markdown)).toBe("Release plan");
+    expect(stripDisplayedPlanMarkdown(markdown)).toBe(`${displayedPreamble}\n\nBody`);
+  }
 });
 
 it("skips empty plan headings without reading into the next line", () => {
