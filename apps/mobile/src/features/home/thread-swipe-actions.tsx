@@ -3,7 +3,7 @@ import { msg, useMessages } from "gt-react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import type { MenuAction } from "@react-native-menu/menu";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import {
   createContext,
   use,

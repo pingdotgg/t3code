@@ -5,7 +5,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { ScrollView } from "react-native";

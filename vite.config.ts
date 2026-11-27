@@ -57,6 +57,11 @@ const RESTRICTED_IMPORT_PATHS = [
     message:
       "Use RefreshControl from src/components/ui/RefreshControl: Android bottom sheets own the pull at the top, so it steps aside there.",
   },
+  {
+    name: "expo-haptics",
+    message:
+      "Use src/lib/haptics: Android maps touch feedback to device-tuned effects instead of Expo's vibration waveforms.",
+  },
 ];
 
 const RESTRICTED_UI_VARIANT_PATTERNS = [

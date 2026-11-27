@@ -14,7 +14,7 @@ import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-mes
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";

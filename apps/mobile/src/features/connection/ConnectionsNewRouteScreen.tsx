@@ -5,7 +5,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAuth } from "@clerk/expo";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import {
   StackActions,
   useIsFocused,
