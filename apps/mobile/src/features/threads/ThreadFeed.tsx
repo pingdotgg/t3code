@@ -475,6 +475,7 @@ function AssistantForkButton(props: {
   });
   const gt = useGT();
   const forkFromRun = useAtomCommand(threadEnvironment.forkFromRun, "fork from response");
+  const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const [busy, setBusy] = useState(false);
   const canFork = canForkProjectedAssistantItem({
@@ -491,6 +492,7 @@ function AssistantForkButton(props: {
       accessibilityLabel={gt("Fork from this response")}
       disabled={busy}
       onPress={() => {
+        const sourceNavigationState = navigation.getState();
         const targetThreadId = ThreadId.make(uuidv4());
         setBusy(true);
         void Haptics.selectionAsync();
@@ -523,6 +525,9 @@ function AssistantForkButton(props: {
                   "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
                 ),
               );
+              return;
+            }
+            if (!navigation.isFocused() || navigation.getState() !== sourceNavigationState) {
               return;
             }
             selectDetail({
