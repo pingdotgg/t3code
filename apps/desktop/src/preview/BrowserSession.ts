@@ -415,9 +415,8 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       const links = new Set<string>();
       cancelled = links;
       cancelledExternalLinks.set(requester, links);
-      requester.on("did-start-navigation", (event) => {
-        if (event.isMainFrame && !event.isSameDocument) links.clear();
-      });
+      // A protocol handoff starts a navigation that never commits, so only a committed document resets.
+      requester.on("did-navigate", () => links.clear());
     }
     cancelled.add(url);
   };

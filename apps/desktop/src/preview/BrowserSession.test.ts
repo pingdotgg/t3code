@@ -457,10 +457,11 @@ describe("BrowserSession", () => {
       assert.isFalse(yield* request());
       assert.strictEqual(showMessageBox.mock.calls.length, 1);
 
-      guest.emit("did-start-navigation", { isMainFrame: true, isSameDocument: true });
+      // The handoff itself starts an uncommitted main-frame navigation.
+      guest.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
       assert.isFalse(yield* request());
       assert.strictEqual(showMessageBox.mock.calls.length, 1);
-      guest.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+      guest.emit("did-navigate", {}, "https://www.douyin.com/next");
       assert.isFalse(yield* request());
       assert.strictEqual(showMessageBox.mock.calls.length, 2);
     }).pipe(Effect.provide(layer)),
