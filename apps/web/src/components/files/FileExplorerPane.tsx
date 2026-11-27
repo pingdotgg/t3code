@@ -64,7 +64,12 @@ export function FileExplorerPane({
           setMaxWidth(Math.max(minWidth, Math.min(MAX_WIDTH, availableWidth)));
           setResponsiveDefaultWidth(initialWidth);
         };
-        measure();
+        // observeResize delivers the initial size before paint via flushSync; calling measure()
+        // synchronously here forces a layout during commit.
+        if (typeof ResizeObserver === "undefined") {
+          measure();
+          return;
+        }
         return observeResize(row, measure);
       }}
       aria-label={gt("File explorer")}

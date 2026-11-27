@@ -58,12 +58,12 @@ function visitedThreadIds() {
   );
 }
 
-function TabVisit({ tabId }: { tabId: string }) {
+function TabVisit({ tabId, threadRef = threadA }: { tabId: string; threadRef?: ScopedThreadRef }) {
   const pane = useLayoutPane();
   return (
     <AppAtomRegistryProvider>
       <LayoutPaneContext value={{ ...pane, tabId }}>
-        <ThreadVisitWatermark threadRef={threadA} />
+        <ThreadVisitWatermark threadRef={threadRef} />
       </LayoutPaneContext>
     </AppAtomRegistryProvider>
   );
@@ -101,6 +101,37 @@ it("visits a layout tab only on screen and retains visits across render eviction
   const reopened = selectFocusedTab(useLayoutStore.getState().layout)!;
   await screen.rerender(<TabVisit tabId={reopened.id} />);
   expect(visitedThreadIds()).toEqual(["a", "a"]);
+});
+
+it("sends one visit when a tab switches threads", async () => {
+  mocks.visitRun.mockReset().mockReturnValue(Effect.void);
+  setShell(threadA, "2026-01-02T00:00:00.000Z");
+  setShell(threadB, "2026-01-03T00:00:00.000Z");
+  using _timers = fakeTimers();
+  vi.setSystemTime(NOW);
+  useLayoutStore.setState({
+    layout: createLayoutState(),
+    onScreenThreadKeys: new Set([scopedThreadKey(threadA)]),
+  });
+  useLayoutStore.getState().openTab({
+    kind: "chat",
+    target: { kind: "server", threadRef: threadA },
+  });
+  const tab = selectFocusedTab(useLayoutStore.getState().layout)!;
+  await using screen = await render(<TabVisit tabId={tab.id} />);
+  expect(visitedThreadIds()).toEqual(["a"]);
+
+  // The route renders the next thread before the layout store commits it into the same tab.
+  await screen.rerender(<TabVisit tabId={tab.id} threadRef={threadB} />);
+  expect(visitedThreadIds()).toEqual(["a", "b"]);
+  await act(() => {
+    useLayoutStore
+      .getState()
+      .replaceTabContent(tab.id, { kind: "chat", target: { kind: "server", threadRef: threadB } });
+    useLayoutStore.getState().setOnScreenThreadKeys(new Set([scopedThreadKey(threadB)]));
+  });
+  expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(tab.id);
+  expect(visitedThreadIds()).toEqual(["a", "b"]);
 });
 
 it("records the visit of the next thread at once after switching threads", async () => {

@@ -5,7 +5,7 @@ import { flushSync } from "react-dom";
 import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
-import { act, render } from "../../test/render";
+import { act, fakeTimers, render } from "../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import {
   fileSurface,
@@ -15,8 +15,10 @@ import {
 } from "../rightPanelStore";
 import { useLayoutBehaviorStore } from "./layoutBehavior";
 import { settleStripCamera } from "../motion/stripCamera";
+import { focusAdjacentLayoutTab } from "./layoutActions";
 import {
   commitLayoutDrop,
+  isLayoutDragActive,
   isLayoutDropUseful,
   type LayoutDragSource,
   type LayoutDragSurface,
@@ -37,8 +39,10 @@ import {
   setLayoutStripViewportWidth,
   useLayoutStore,
 } from "./layoutStore";
+import { LayoutDropZones } from "./DropZones";
 import { LayoutSurfaceHost, selectSurfaceMounts } from "./SurfaceHost";
 import { requestLayoutSurfacePlacement, useLayoutSurfaceSync } from "./surfaceSync";
+import { useTerminalUiStateStore } from "../terminalUiStateStore";
 
 const TOUR_KEY = "t3code:layout-tour:v1";
 
@@ -314,6 +318,12 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
     expect(startChevron!.getAttribute("aria-disabled")).toBe("true");
     expect(endChevron!.hasAttribute("data-can-scroll")).toBe(true);
   });
+  expect(getComputedStyle(endChevron!).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+  expect(getComputedStyle(strip).overscrollBehaviorX).toBe("contain");
+  const siblingStrip = [...document.querySelectorAll<HTMLElement>("[data-layout-tab-strip]")].find(
+    (candidate) => candidate !== strip,
+  );
+  expect(siblingStrip && getComputedStyle(siblingStrip).overscrollBehaviorX).toBe("auto");
   endChevron!.click();
   await vi.waitFor(() => expect(strip.scrollLeft).toBeGreaterThan(0));
   await vi.waitFor(() => expect(startChevron!.hasAttribute("data-can-scroll")).toBe(true));
@@ -417,6 +427,7 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   await vi.waitFor(() =>
     expect(strip.closest("[data-pane-header]")?.hasAttribute("data-tab-row-overflow")).toBe(false),
   );
+  expect(getComputedStyle(strip).overscrollBehaviorX).toBe("auto");
   await vi.waitFor(() =>
     expect(
       strip.closest("[data-pane-header]")?.querySelectorAll("[data-strip-scroll-button]").length,
@@ -555,6 +566,85 @@ it("keeps an unfocused pane's joined tab with a dim rim, and black chrome keeps 
     expect(getComputedStyle(inSecondPane('[data-pane-notch=""]'), "::before").right).toBe("0px");
   } finally {
     document.documentElement.classList.remove("black-chrome");
+  }
+});
+
+it("clears the pane's top corners so a joined tab's rim runs round them", async () => {
+  using _tabs = setup();
+  document.documentElement.style.setProperty("--desktop-window-corner-radius", "26px");
+  try {
+    await using _screen = await renderHost({ insetSidebar: true });
+    const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]')!;
+    const pane = inSecondPane("[data-pane-header]").closest<HTMLElement>("[data-layout-pane-id]")!;
+    await vi.waitFor(() => {
+      expect(pane.hasAttribute("data-pane-notched")).toBe(true);
+      expect(inset.hasAttribute("data-pane-notched")).toBe(true);
+    });
+    expect(getComputedStyle(inset).borderStartStartRadius).toBe("0px");
+    expect(getComputedStyle(inset).borderStartEndRadius).toBe("0px");
+    expect(getComputedStyle(pane).borderStartStartRadius).toBe("0px");
+    expect(getComputedStyle(pane).borderStartEndRadius).toBe("0px");
+    expect(
+      getComputedStyle(pane.querySelector(':scope > [data-pane-cut="start-top"]')!).display,
+    ).toBe("none");
+    expect(
+      getComputedStyle(pane.querySelector(':scope > [data-pane-cut="end-top"]')!).display,
+    ).toBe("none");
+    expect(
+      getComputedStyle(pane.querySelector(':scope > [data-pane-cut="start-bottom"]')!).display,
+    ).toBe("flex");
+  } finally {
+    document.documentElement.style.removeProperty("--desktop-window-corner-radius");
+  }
+});
+
+it("marks a hovered first tab's corner without reading layout on pointer moves", async () => {
+  using _tabs = setup();
+  await using _screen = await renderHost({ insetSidebar: true });
+  const header = inSecondPane("[data-pane-header]");
+  const pane = header.closest<HTMLElement>("[data-layout-pane-id]")!;
+  const paneModel = useLayoutStore.getState().layout.workspaces[0]!.columns[1]!.panes[0]!;
+  const [first, second] = paneModel.tabs;
+  expect(first).toBeDefined();
+  expect(second).toBeDefined();
+  useLayoutStore.getState().focusPane(pane.dataset.layoutPaneId!);
+  useLayoutStore.getState().focusTab(second!.id);
+  const strip = secondPaneStrip();
+  await vi.waitFor(() => {
+    expect(
+      strip.querySelector(`[data-layout-pane-tab="${second!.id}"]`)?.hasAttribute("data-joined"),
+    ).toBe(true);
+    expect(pane.querySelector("[data-pane-notch-unfocused]")).toBeNull();
+  });
+
+  const firstTab = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${first!.id}"]`)!;
+  const secondTab = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${second!.id}"]`)!;
+  const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+  try {
+    firstTab.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    expect(header.hasAttribute("data-pane-hover-start")).toBe(true);
+    expect(pane.hasAttribute("data-pane-hovered-start")).toBe(true);
+    expect(rectSpy).not.toHaveBeenCalled();
+
+    const setAttrSpy = vi.spyOn(Element.prototype, "setAttribute");
+    const removeAttrSpy = vi.spyOn(Element.prototype, "removeAttribute");
+    try {
+      (firstTab.firstElementChild ?? firstTab).dispatchEvent(
+        new PointerEvent("pointerover", { bubbles: true }),
+      );
+      expect(setAttrSpy).not.toHaveBeenCalled();
+      expect(removeAttrSpy).not.toHaveBeenCalled();
+    } finally {
+      setAttrSpy.mockRestore();
+      removeAttrSpy.mockRestore();
+    }
+
+    secondTab.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    expect(header.hasAttribute("data-pane-hover-start")).toBe(false);
+    expect(pane.hasAttribute("data-pane-hovered-start")).toBe(false);
+    expect(rectSpy).not.toHaveBeenCalled();
+  } finally {
+    rectSpy.mockRestore();
   }
 });
 
@@ -1049,4 +1139,360 @@ it("moves focus to the neighboring column on a double-click in the gutter on tha
   expect(focusedColumn()).toBe(2);
   // Pressing a gutter's handle without moving it resizes nothing.
   expect(columnWidths()).toEqual(widths);
+});
+
+it("keeps a Files split pane intact when opening the first file from it", async () => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  const tabFor = (surfaceId: string) =>
+    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
+      ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === surfaceId,
+    );
+  await using _screen = await render(<SurfaceSync />);
+  await act(() => {
+    requestLayoutSurfacePlacement(pullRequestThreadRef, {
+      kind: "split",
+      paneId: chatPaneId,
+      side: "right",
+    });
+    useRightPanelStore.getState().open(pullRequestThreadRef, "files");
+  });
+  const files = tabFor("files")!;
+  expect(files.pane.id).not.toBe(chatPaneId);
+
+  await act(() => {
+    useRightPanelStore.getState().openFile(pullRequestThreadRef, "src/app.ts");
+  });
+  const file = tabFor("file:src/app.ts")!;
+  expect(tabFor("files")).toBeUndefined();
+  expect(file.pane.id).toBe(files.pane.id);
+  expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(file.tab.id);
+});
+
+it("opening a second file in a reused surface pane does not loop through rightPanelStore.syncFromLayout", async () => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  const tabFor = (surfaceId: string) =>
+    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
+      ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === surfaceId,
+    );
+  await using screen = await renderHost();
+  await act(() => {
+    requestLayoutSurfacePlacement(pullRequestThreadRef, {
+      kind: "pane",
+      paneId: chatPaneId,
+    });
+    useRightPanelStore.getState().openFile(pullRequestThreadRef, "src/first.ts");
+  });
+  const firstTab = tabFor("file:src/first.ts")!;
+  const host = screen.container.querySelector<HTMLElement>(
+    `[data-layout-tab-id="${firstTab.tab.id}"]`,
+  )!;
+  const inner = document.createElement("button");
+  inner.dataset.workspaceArea = "panel";
+  inner.textContent = "tree item";
+  host.prepend(inner);
+  inner.focus();
+  expect(document.activeElement).toBe(inner);
+  expect(inner.getBoundingClientRect().height).toBeGreaterThan(0);
+
+  const focusSequence: Array<string | undefined> = [];
+  const unsub = useLayoutStore.subscribe((state) => {
+    focusSequence.push(selectFocusedTab(state.layout)?.id);
+  });
+  try {
+    await act(() => {
+      useRightPanelStore.getState().openFile(pullRequestThreadRef, "src/second.ts");
+    });
+    expect(document.activeElement).toBe(inner);
+    await act(() => {
+      useRightPanelStore.getState().openFile(pullRequestThreadRef, "src/third.ts");
+    });
+
+    const secondTab = tabFor("file:src/second.ts")!;
+    const thirdTab = tabFor("file:src/third.ts")!;
+    expect(focusSequence).toEqual([secondTab.tab.id, thirdTab.tab.id]);
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(thirdTab.tab.id);
+    expect(
+      useRightPanelStore.getState().byThreadKey[scopedThreadKey(pullRequestThreadRef)]
+        ?.activeSurfaceId,
+    ).toBe("file:src/third.ts");
+  } finally {
+    unsub();
+  }
+});
+
+it("hides a thread's companion splits when switching tabs in the same pane and restores them on return", async () => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  const terminalBefore = useTerminalUiStateStore.getState().terminalUiStateByThreadKey;
+  using _restoreTerminals = {
+    [Symbol.dispose]: () =>
+      useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: terminalBefore }),
+  };
+  useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: {} });
+  useLayoutStore.getState().openKeptTab({
+    kind: "chat",
+    target: { kind: "server", threadRef: pullRequestThreadRef },
+  });
+  const threadATab = findLayoutChatForThread(useLayoutStore.getState().layout, threadRef)!;
+  const threadBTab = findLayoutChatForThread(
+    useLayoutStore.getState().layout,
+    pullRequestThreadRef,
+  )!;
+  useLayoutStore.getState().focusTab(threadATab.tab.id);
+  await using _screen = await render(<SurfaceSync />);
+
+  await act(() => {
+    requestLayoutSurfacePlacement(threadRef, { kind: "split", paneId: chatPaneId, side: "right" });
+    useRightPanelStore.getState().open(threadRef, "diff");
+    requestLayoutSurfacePlacement(threadRef, { kind: "split", paneId: chatPaneId, side: "down" });
+    useTerminalUiStateStore.getState().setTerminalOpen(threadRef, true);
+    useLayoutStore.getState().focusTab(threadATab.tab.id);
+  });
+  expect(findLayoutSurfaceTabs(useLayoutStore.getState().layout, threadRef)).toHaveLength(2);
+
+  await act(() => {
+    focusAdjacentLayoutTab(1);
+  });
+  expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(threadBTab.tab.id);
+  expect(findLayoutSurfaceTabs(useLayoutStore.getState().layout, threadRef)).toHaveLength(0);
+  expect(useLayoutStore.getState().hiddenCompanionsByThreadKey[scopedThreadKey(threadRef)]).toEqual(
+    { panel: true, terminal: true },
+  );
+  expect(
+    useRightPanelStore
+      .getState()
+      .byThreadKey[scopedThreadKey(threadRef)]?.surfaces.map((s) => s.id),
+  ).toEqual(["diff"]);
+
+  await act(() => {
+    focusAdjacentLayoutTab(-1);
+  });
+  expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(threadATab.tab.id);
+  expect(findLayoutSurfaceTabs(useLayoutStore.getState().layout, threadRef)).toHaveLength(2);
+  expect(
+    useLayoutStore.getState().hiddenCompanionsByThreadKey[scopedThreadKey(threadRef)],
+  ).toBeUndefined();
+});
+
+it("does not switch tabs when releasing the pointer after Escape cancels a tab drag", async () => {
+  using tabs = setup();
+  await using _screen = await renderHost();
+  const pane = useLayoutStore.getState().layout.workspaces[0]!.columns[1]!.panes[0]!;
+  const first = pane.tabs.find((tab) => tab.id !== tabs.second.id)!;
+  useLayoutStore.getState().focusTab(first.id);
+  await vi.waitFor(() =>
+    expect(
+      secondPaneStrip().querySelector<HTMLElement>("[data-joined]")?.dataset.layoutPaneTab,
+    ).toBe(first.id),
+  );
+
+  const strip = secondPaneStrip();
+  const inactiveTab = strip.querySelector<HTMLElement>(
+    `[data-layout-pane-tab="${tabs.second.id}"]`,
+  )!;
+  const rect = inactiveTab.getBoundingClientRect();
+  using _timers = fakeTimers();
+  inactiveTab.dispatchEvent(
+    new PointerEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      pointerId: 1,
+      clientX: rect.left + 8,
+      clientY: rect.top + 8,
+    }),
+  );
+  window.dispatchEvent(
+    new PointerEvent("pointermove", {
+      bubbles: true,
+      pointerId: 1,
+      clientX: rect.left + 32,
+      clientY: rect.top + 8,
+    }),
+  );
+  expect(isLayoutDragActive()).toBe(true);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+  );
+  expect(isLayoutDragActive()).toBe(false);
+  vi.advanceTimersByTime(25);
+  window.dispatchEvent(
+    new PointerEvent("pointerup", {
+      bubbles: true,
+      pointerId: 1,
+      clientX: rect.left + 8,
+      clientY: rect.top + 8,
+    }),
+  );
+  inactiveTab.click();
+  vi.advanceTimersByTime(25);
+
+  expect(focusedTabId()).toBe(first.id);
+});
+
+it("keeps the tab drag insertion marker inside an overflowing tab strip", async () => {
+  using _tabs = setup();
+  for (let index = 0; index < 12; index++) {
+    useLayoutStore
+      .getState()
+      .openTab(createLayoutLauncherContent(null), { placement: "active-pane" });
+  }
+  await using screen = await render(
+    <>
+      <Host />
+      <LayoutDropZones />
+    </>,
+  );
+  await page.viewport(900, 600);
+  const pane = screen.container.querySelector<HTMLElement>("[data-layout-pane-id]")!;
+  const strip = pane.querySelector<HTMLElement>("[data-layout-tab-strip]")!;
+  await vi.waitFor(() => expect(strip.scrollWidth).toBeGreaterThan(strip.clientWidth));
+  const firstTab = strip.querySelector<HTMLElement>("[data-layout-pane-tab]")!;
+  const paneRect = pane.getBoundingClientRect();
+  const stripRect = strip.getBoundingClientRect();
+  const startRect = firstTab.getBoundingClientRect();
+  try {
+    firstTab.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        button: 0,
+        pointerId: 1,
+        clientX: startRect.left + 8,
+        clientY: startRect.top + 8,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent("pointermove", {
+        bubbles: true,
+        pointerId: 1,
+        clientX: paneRect.right - 12,
+        clientY: stripRect.top + 8,
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(document.querySelector("[data-layout-drag-overlay] .w-0\\.5")).not.toBeNull(),
+    );
+    const marker = document
+      .querySelector<HTMLElement>("[data-layout-drag-overlay] .w-0\\.5")!
+      .getBoundingClientRect();
+    expect(marker.left).toBeGreaterThanOrEqual(Math.max(paneRect.left, stripRect.left) - 1);
+    expect(marker.right).toBeLessThanOrEqual(Math.min(paneRect.right, stripRect.right) + 1);
+  } finally {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+  }
+});
+
+it("keeps scrollLeft settled when followView moves focus after manual sideways scrolling", async () => {
+  using _tabs = setup(0.7);
+  useLayoutStore.getState().openTab(createLayoutLauncherContent(null), { placement: "new-column" });
+  const initial = useLayoutStore.getState().layout;
+  const workspaceState = initial.workspaces[0]!;
+  const columns = workspaceState.columns.map((column) => ({ ...column, width: 0.7 }));
+  const firstPaneId = columns[0]!.panes[0]!.id;
+  const secondPaneId = columns[1]!.panes[0]!.id;
+  useLayoutStore.setState({
+    layout: {
+      ...initial,
+      workspaces: [{ ...workspaceState, columns, focusedPaneId: firstPaneId }],
+    },
+  });
+  await using _screen = await renderHost({ viewport: 900 });
+  const strip = document.querySelector<HTMLElement>("[data-layout-strip]")!;
+  await vi.waitFor(() => expect(strip.scrollWidth).toBeGreaterThan(1500));
+
+  strip.dispatchEvent(
+    new WheelEvent("wheel", { deltaX: 20, deltaY: 0, bubbles: true, cancelable: true }),
+  );
+  strip.scrollLeft = 340;
+  strip.dispatchEvent(new Event("scroll"));
+  await vi.waitFor(
+    () =>
+      expect(
+        document.querySelector(
+          `[data-layout-pane-id="${secondPaneId}"][data-layout-pane-focused="true"]`,
+        ),
+      ).not.toBeNull(),
+    { timeout: 1500 },
+  );
+
+  expect(Math.round(strip.scrollLeft)).toBe(340);
+});
+
+it("steps keyboard column resize from 1/3 to 1/2 instead of stopping at the minimum width clamp", async () => {
+  using _tabs = setup(1 / 3);
+  await using screen = await renderHost({ viewport: 1000 });
+  const handle = screen.container.querySelector<HTMLElement>('[role="separator"]')!;
+  handle.focus();
+  handle.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }),
+  );
+  await vi.waitFor(() =>
+    expect(useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.width).toBeCloseTo(0.5, 4),
+  );
+});
+
+it("keeps a revealed tab inside the viewport on a narrow overflowing tab strip", async () => {
+  using _tabs = setup();
+  for (let index = 0; index < 8; index++) {
+    useLayoutStore
+      .getState()
+      .openTab(createLayoutLauncherContent(null), { placement: "active-pane" });
+  }
+  await using screen = await renderHost();
+  const strip = screen.container.querySelector<HTMLElement>("[data-layout-tab-strip]")!;
+  strip.style.maxWidth = "140px";
+  await vi.waitFor(() => expect(strip.clientWidth).toBeLessThanOrEqual(140));
+  const tabs = [...strip.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")];
+  const targetId = tabs[4]!.dataset.layoutPaneTab!;
+  strip.scrollLeft = 0;
+
+  useLayoutStore.getState().focusTab(targetId);
+  await vi.waitFor(() => {
+    const active = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${targetId}"]`)!;
+    const box = active.getBoundingClientRect();
+    const bounds = strip.getBoundingClientRect();
+    expect(box.left).toBeGreaterThanOrEqual(bounds.left - 1);
+    expect(box.right).toBeLessThanOrEqual(bounds.right + 1);
+  });
+});
+
+it("skips hidden and aria-hidden inputs when moving keyboard focus into a surface pane", async () => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  const tabFor = (surfaceId: string) =>
+    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
+      ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === surfaceId,
+    );
+  await using screen = await renderHost();
+  await act(() => {
+    requestLayoutSurfacePlacement(pullRequestThreadRef, {
+      kind: "pane",
+      paneId: chatPaneId,
+    });
+    useRightPanelStore.getState().openFile(pullRequestThreadRef, "src/first.ts");
+  });
+  const firstTab = tabFor("file:src/first.ts")!;
+  const host = screen.container.querySelector<HTMLElement>(
+    `[data-layout-tab-id="${firstTab.tab.id}"]`,
+  )!;
+  const hiddenInput = document.createElement("input");
+  hiddenInput.tabIndex = -1;
+  hiddenInput.setAttribute("aria-hidden", "true");
+  host.prepend(hiddenInput);
+
+  const tabButton = screen.container.querySelector<HTMLElement>(
+    `[data-layout-pane-tab="${firstTab.tab.id}"]`,
+  )!;
+  tabButton.focus();
+
+  await act(() => {
+    useRightPanelStore.getState().openFile(pullRequestThreadRef, "src/second.ts");
+  });
+
+  expect(document.activeElement).not.toBe(hiddenInput);
+  expect(document.activeElement).toBe(host);
 });

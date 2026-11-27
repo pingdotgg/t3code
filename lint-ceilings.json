@@ -316,7 +316,7 @@
     "apps/web/src/components/chat/ThreadDetailsControl.tsx": 2,
     "apps/web/src/components/chat/ThreadDetailsPanel.tsx": 1,
     "apps/web/src/components/chat/ThreadDetailsSection.tsx": 1,
-    "apps/web/src/components/chat/ThreadDetailsUsage.tsx": 4,
+    "apps/web/src/components/chat/ThreadDetailsUsage.tsx": 1,
     "apps/web/src/components/chat/ThreadRelationshipIcon.tsx": 1,
     "apps/web/src/components/chat/ThreadRelationshipsControl.tsx": 2,
     "apps/web/src/components/chat/ThreadServersPanel.tsx": 1,

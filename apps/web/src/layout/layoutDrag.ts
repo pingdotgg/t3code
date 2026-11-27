@@ -29,6 +29,7 @@ import {
   type LayoutTabLocation,
 } from "./layoutModel";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
+import { registerCommands } from "../shortcuts/dispatcher";
 import { useDiffPanelStore } from "../diffPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { notePaneDrop } from "../motion/paneDrop";
@@ -79,6 +80,7 @@ export interface LayoutDragPane {
   paneId: string;
   rect: LayoutDragRect;
   tabs?: readonly { id: string; rect: LayoutDragRect }[];
+  tabStrip?: LayoutDragRect;
   /** A side panel or terminal pane: splits beside it, but no tabs into it. */
   companion: boolean;
 }
@@ -141,11 +143,30 @@ function measure(): { panes: LayoutDragPane[]; strip: LayoutDragRect } | null {
       const paneId = element.dataset.layoutPaneId;
       const rect = element.getBoundingClientRect();
       if (!paneId || rect.width === 0 || rect.height === 0) return [];
-      const tabs = [...element.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].map(
-        (tab) => ({ id: tab.dataset.layoutPaneTab!, rect: toRect(tab.getBoundingClientRect()) }),
-      );
+      const tabElements = [...element.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")];
+      const tabs = tabElements.map((tab) => ({
+        id: tab.dataset.layoutPaneTab!,
+        rect: toRect(tab.getBoundingClientRect()),
+      }));
+      const stripEl =
+        tabElements[0]?.closest<HTMLElement>("[data-layout-tab-strip]") ??
+        element.querySelector<HTMLElement>("[data-layout-tab-strip]");
+      const stripBox = stripEl ? toRect(stripEl.getBoundingClientRect()) : null;
+      const tabStrip = stripBox
+        ? {
+            ...stripBox,
+            left: Math.max(rect.left, stripBox.left),
+            right: Math.min(rect.right, stripBox.right),
+          }
+        : undefined;
       return [
-        { paneId, rect: toRect(rect), tabs, companion: element.dataset.layoutCompanion != null },
+        {
+          paneId,
+          rect: toRect(rect),
+          tabs,
+          ...(tabStrip ? { tabStrip } : {}),
+          companion: element.dataset.layoutCompanion != null,
+        },
       ];
     },
   );
@@ -643,11 +664,11 @@ function beginLayoutDrag(
       threadRef ? { composer: hoverThreadContextDrop(point, takesDrag) } : {},
     );
   };
-  const finish = (drop: { x: number; y: number } | null) => {
+  const finish = (drop: { x: number; y: number } | null, awaitRelease = false) => {
     window.removeEventListener("pointermove", move, true);
     window.removeEventListener("pointerup", up, true);
     window.removeEventListener("pointercancel", cancel, true);
-    window.removeEventListener("keydown", key, true);
+    unregisterKey();
     window.removeEventListener("blur", cancel);
     document.removeEventListener("selectionchange", clearSelection);
     if (!started) return;
@@ -660,21 +681,42 @@ function beginLayoutDrag(
       clickEvent.stopPropagation();
     };
     window.addEventListener("click", swallow, { capture: true, once: true });
-    setTimeout(() => window.removeEventListener("click", swallow, true), 0);
+    if (!awaitRelease) {
+      setTimeout(() => window.removeEventListener("click", swallow, true), 0);
+      return;
+    }
+    const clear = () => {
+      window.removeEventListener("pointerup", onRelease, true);
+      window.removeEventListener("pointercancel", onRelease, true);
+      window.removeEventListener("blur", clear);
+      setTimeout(() => window.removeEventListener("click", swallow, true), 0);
+    };
+    const onRelease = (releaseEvent: PointerEvent) => {
+      if (releaseEvent.pointerId === pointerId) clear();
+    };
+    window.addEventListener("pointerup", onRelease, true);
+    window.addEventListener("pointercancel", onRelease, true);
+    window.addEventListener("blur", clear);
   };
   const up = (upEvent: PointerEvent) => {
     if (upEvent.pointerId === pointerId) finish({ x: upEvent.clientX, y: upEvent.clientY });
   };
   const cancel = () => finish(null);
-  const key = (keyEvent: KeyboardEvent) => {
-    if (keyEvent.key !== "Escape" || !started) return;
-    keyEvent.preventDefault();
-    keyEvent.stopPropagation();
-    finish(null);
-  };
+  const unregisterKey = registerCommands(
+    {},
+    {
+      capture: true,
+      onKeyDown: (keyEvent) => {
+        if (keyEvent.key !== "Escape" || !started) return false;
+        keyEvent.preventDefault();
+        keyEvent.stopPropagation();
+        finish(null, true);
+        return true;
+      },
+    },
+  );
   window.addEventListener("pointermove", move, true);
   window.addEventListener("pointerup", up, true);
   window.addEventListener("pointercancel", cancel, true);
-  window.addEventListener("keydown", key, true);
   window.addEventListener("blur", cancel);
 }

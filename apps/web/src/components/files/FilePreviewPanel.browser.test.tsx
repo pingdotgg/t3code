@@ -783,3 +783,44 @@ describe("rendered Markdown relative images", () => {
     );
   });
 });
+
+describe("file breadcrumb reveal", () => {
+  it("reveals the current breadcrumb without scrolling an ancestor strip", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    state.file = {
+      relativePath: "apps/web/src/components/files/deeply/nested/SurfaceHost.tsx",
+      contents: "export const ok = true;\n",
+      byteLength: 24,
+      truncated: false,
+    };
+    await using screen = await render(
+      <div data-ancestor-strip="" style={{ width: 400, overflowX: "auto", display: "flex" }}>
+        <div style={{ width: 700, flexShrink: 0 }} />
+        <div style={{ width: 320, flexShrink: 0 }}>
+          <PanelTabSlotsContext
+            value={{ breadcrumb: null, actions: null, registerActions: () => () => {} }}
+          >
+            <div data-right-panel-surface-content>
+              {filePreview("apps/web/src/components/files/deeply/nested/SurfaceHost.tsx")}
+            </div>
+          </PanelTabSlotsContext>
+        </div>
+      </div>,
+    );
+    const ancestor = screen.container.querySelector<HTMLElement>("[data-ancestor-strip]")!;
+    const crumbs = screen.getByRole("navigation", { name: "File path" }).element();
+    const currentCrumb = crumbs.querySelector<HTMLElement>("[aria-current='page']")!;
+    const breadcrumbViewport = crumbs.closest<HTMLElement>("[data-slot='scroll-area-viewport']")!;
+    await vi.waitFor(() => {
+      const current = currentCrumb.getBoundingClientRect();
+      const viewport = breadcrumbViewport.getBoundingClientRect();
+      expect(current.left).toBeGreaterThanOrEqual(viewport.left - 1);
+      expect(current.right).toBeLessThanOrEqual(viewport.right + 1);
+    });
+    expect(ancestor.scrollLeft).toBe(0);
+  });
+});

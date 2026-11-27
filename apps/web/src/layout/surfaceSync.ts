@@ -354,8 +354,6 @@ function syncThreadSurfaces(
   const gone = tabs
     .filter((location) => !ids.has(surfaceIdOf(location.tab) ?? ""))
     .map((location) => location.tab.id);
-  const placesFirst = pendingPlacements.has(scopedThreadKey(threadRef));
-  if (!placesFirst) closeTabs(gone);
   const placed = new Set(tabs.map((location) => surfaceIdOf(location.tab)));
   const missing = after.surfaces.filter((surface) => !placed.has(surface.id));
   const focus = opened.byUser && !opened.closing;
@@ -370,14 +368,15 @@ function syncThreadSurfaces(
       createLayoutTab({ kind: "surface", threadRef, surfaceId: surface.id }),
     );
     const active = newTabs.find((tab) => surfaceIdOf(tab) === after.activeSurfaceId);
+    // Place replacements while gone tabs (e.g. standalone Files) still anchor their split pane.
     placeSurfaceTabs(threadRef, newTabs, {
       activate: focus ? (active?.id ?? null) : null,
       focus: focus && active !== undefined,
       terminal: false,
     });
-    if (placesFirst) closeTabs(gone);
+    closeTabs(gone);
     if (active && focus) return;
-  } else if (placesFirst) closeTabs(gone);
+  } else closeTabs(gone);
   // A user's open or pick of a surface that already has a tab shows it.
   if (focus && missing.length === 0) dropPanelPlacement(threadRef);
   if (focus && after.activeSurfaceId !== null) {

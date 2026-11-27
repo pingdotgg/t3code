@@ -2,8 +2,8 @@
  * Layout actions shared by the keyboard, the tab menu and the notch buttons.
  */
 import { closeThreadSurface } from "../components/ThreadSurfaceTab";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useClosedViewStore } from "../closedViewStore";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useClosedViewStore, WORKFLOWS_PAGE_REF } from "../closedViewStore";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { getLayoutBehavior } from "./layoutBehavior";
 import {
@@ -20,6 +20,7 @@ import { readThreadLineage } from "../state/entities";
 import { ISSUES_PANEL_REF, PULL_REQUESTS_PANEL_REF } from "../rightPanelStore";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { useLayoutStore } from "./layoutStore";
+import { followLayoutCompanions } from "./openRules";
 import type { LauncherSurfaceKind } from "../components/SurfaceLauncher";
 import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import { threadlessSurfacesRef } from "../threadlessSurfaces";
@@ -40,6 +41,7 @@ export function closeLayoutThread(threadRef: ScopedThreadRef): void {
     return ref?.environmentId === threadRef.environmentId && ref.threadId === threadRef.threadId;
   };
   const store = useLayoutStore.getState();
+  store.setHiddenCompanions(scopedThreadKey(threadRef), null);
   store.closeTabsWhere((tab) =>
     tab.content.kind === "chat"
       ? matches(tab.content.target)
@@ -95,6 +97,11 @@ export function openLayoutNewTab(placement: LayoutOpenPlacement = "active-pane")
   });
 }
 
+function surfaceThreadTarget(threadRef: ScopedThreadRef): ThreadRouteTarget {
+  const draftId = useComposerDraftStore.getState().getDraftIdByRef(threadRef);
+  return draftId !== null ? { kind: "draft", draftId } : { kind: "server", threadRef };
+}
+
 /** The launcher a new tab opened from `tabId`, or from the focused tab, shows. */
 export function createLayoutNewTabContent(tabId: string | null = null): LayoutLauncherContent {
   const layout = useLayoutStore.getState().layout;
@@ -108,7 +115,7 @@ export function createLayoutNewTabContent(tabId: string | null = null): LayoutLa
       : from?.kind === "launcher"
         ? from.context
         : from?.kind === "surface"
-          ? { kind: "server", threadRef: from.threadRef }
+          ? surfaceThreadTarget(from.threadRef)
           : null;
   return createLayoutLauncherContent(context);
 }
@@ -186,10 +193,20 @@ export function closeLayoutTabByUser(tabId: string, options: { bulk?: boolean } 
       return;
     }
   }
-  if (location && (tab?.content.kind === "issues" || tab?.content.kind === "pull-requests")) {
+  if (
+    location &&
+    (tab?.content.kind === "issues" ||
+      tab?.content.kind === "pull-requests" ||
+      tab?.content.kind === "workflows")
+  ) {
     useClosedViewStore.getState().remember({
       kind: "page",
-      threadRef: tab.content.kind === "issues" ? ISSUES_PANEL_REF : PULL_REQUESTS_PANEL_REF,
+      threadRef:
+        tab.content.kind === "issues"
+          ? ISSUES_PANEL_REF
+          : tab.content.kind === "pull-requests"
+            ? PULL_REQUESTS_PANEL_REF
+            : WORKFLOWS_PAGE_REF,
       page: tab.content.kind,
       ...(tab.content.href === undefined ? {} : { href: tab.content.href }),
       paneId: location.pane.id,
@@ -258,5 +275,5 @@ export function openLayoutBeside(kind: LayoutBesideKind): void {
 
 /** ctrl+Tab / ctrl+shift+Tab: the focused pane's tabs, surfaces included. */
 export function focusAdjacentLayoutTab(delta: 1 | -1): void {
-  useLayoutStore.getState().focusAdjacentTab(delta);
+  followLayoutCompanions(() => useLayoutStore.getState().focusAdjacentTab(delta));
 }

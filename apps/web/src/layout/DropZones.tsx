@@ -100,32 +100,37 @@ function targetZone(state: LayoutDragState, target: LayoutDropTarget): Box | nul
 
 function intoTabs(state: LayoutDragState, target: LayoutDropTarget) {
   if (target.kind !== "into") return null;
-  const tabs = state.panes.find((pane) => pane.paneId === target.paneId)?.tabs ?? [];
+  const pane = state.panes.find((candidate) => candidate.paneId === target.paneId);
+  const tabs = pane?.tabs ?? [];
   return {
     tabs: tabs.filter((tab) => tab.id !== state.sourceTabId),
     reorder: tabs.some((tab) => tab.id === state.sourceTabId),
     index: target.index,
+    clip: pane ? (pane.tabStrip ?? pane.rect) : null,
   };
 }
 
 function InsertionMarker({
   tabs,
   index,
+  clip,
 }: {
   tabs: readonly { rect: LayoutDragRect }[];
   index: number | undefined;
+  clip: LayoutDragRect | null;
 }) {
   if (index === undefined) return null;
   const before = tabs[index - 1];
   const after = tabs[index];
   const anchor = after ?? before;
   if (!anchor) return null;
-  const left =
+  const rawLeft =
     before && after
       ? (before.rect.right + after.rect.left) / 2
       : after
         ? after.rect.left - MARKER_GAP
         : anchor.rect.right + MARKER_GAP;
+  const left = clip ? Math.min(Math.max(rawLeft, clip.left), clip.right) : rawLeft;
   return (
     <div
       className="absolute w-0.5 -translate-x-1/2 rounded-full bg-strong-foreground"
@@ -362,7 +367,7 @@ export function LayoutDropZones() {
             <DraggedContentLabel source={state.source} />
           </DraggedTabGhostBody>
         )}
-        {into ? <InsertionMarker tabs={into.tabs} index={into.index} /> : null}
+        {into ? <InsertionMarker tabs={into.tabs} index={into.index} clip={into.clip} /> : null}
         {zone && state.target ? (
           <DropPill x={zone.left + zone.width / 2} y={zone.top + zone.height / 2}>
             <PillIcon target={state.target} />

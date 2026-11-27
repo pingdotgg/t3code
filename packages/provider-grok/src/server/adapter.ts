@@ -12,11 +12,13 @@ import {
   ProviderDriverKind,
   type OrchestrationV2ProviderCapabilities,
   type RuntimeMode,
+  type ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import { GrokSettings } from "../settings.ts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
@@ -349,6 +351,43 @@ const applyGrokSessionModelSelection: NonNullable<AcpAdapterV2Flavor["applyModel
     return appliedModelId;
   });
 
+const decodeGrokPromptUsageMeta = Schema.decodeUnknownOption(
+  Schema.Struct({
+    totalTokens: Schema.Finite,
+    modelId: Schema.optional(Schema.NullOr(Schema.String)),
+    inputTokens: Schema.optional(Schema.NullOr(Schema.Finite)),
+    outputTokens: Schema.optional(Schema.NullOr(Schema.Finite)),
+    cachedReadTokens: Schema.optional(Schema.NullOr(Schema.Finite)),
+    reasoningTokens: Schema.optional(Schema.NullOr(Schema.Finite)),
+  }),
+);
+
+function nonNegativeTokenCount(value: number | null | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : undefined;
+}
+
+function grokModelContextWindow(
+  session: AcpSessionRuntime.AcpSessionRuntimeStartResult,
+  candidateModelIds: ReadonlyArray<string | null | undefined>,
+): number | undefined {
+  const models =
+    session.sessionSetupResult.models ?? sessionModelStateFromInitialize(session.initializeResult);
+  if (models === undefined) return undefined;
+  for (const candidate of candidateModelIds) {
+    const modelId = candidate?.trim();
+    if (!modelId) continue;
+    const window = models.availableModels.find((model) => model.modelId.trim() === modelId)?._meta
+      ?.totalContextTokens;
+    // contextWindows includes selectable larger windows; totalContextTokens is the default.
+    if (typeof window === "number" && Number.isSafeInteger(window) && window > 0) {
+      return window;
+    }
+  }
+  return undefined;
+}
+
 export function makeGrokAcpAdapterFlavor(
   options: GrokAdapterV2Options,
   homeDirectory: string,
@@ -389,15 +428,39 @@ export function makeGrokAcpAdapterFlavor(
     getModelContextWindow: (selection, session) => {
       if (selection.instanceId !== options.instanceId) return undefined;
       const modelId = resolveGrokAcpBaseModelId(selection.model);
-      const models =
-        session.sessionSetupResult.models ??
-        sessionModelStateFromInitialize(session.initializeResult);
-      const window = models?.availableModels.find((model) => model.modelId === modelId)?._meta
-        ?.totalContextTokens;
-      // contextWindows includes selectable larger windows; totalContextTokens is the default.
-      return typeof window === "number" && Number.isSafeInteger(window) && window > 0
-        ? window
-        : undefined;
+      return grokModelContextWindow(session, [
+        modelId === GROK_DEFAULT_MODEL_SLUG ? undefined : modelId,
+        currentGrokModelIdFromSessionSetup(session.sessionSetupResult),
+        sessionModelStateFromInitialize(session.initializeResult)?.currentModelId,
+        modelId,
+      ]);
+    },
+    extractPromptContextUsage: ({
+      result,
+      modelSelection,
+      session,
+    }): ThreadTokenUsageSnapshot | undefined => {
+      const meta = Option.getOrUndefined(decodeGrokPromptUsageMeta(result._meta));
+      const usedTokens = nonNegativeTokenCount(meta?.totalTokens);
+      if (usedTokens === undefined || usedTokens <= 0) return undefined;
+      const maxTokens = grokModelContextWindow(session, [
+        meta?.modelId,
+        currentGrokModelIdFromSessionSetup(session.sessionSetupResult),
+        sessionModelStateFromInitialize(session.initializeResult)?.currentModelId,
+        resolveGrokAcpBaseModelId(modelSelection.model),
+      ]);
+      const inputTokens = nonNegativeTokenCount(meta?.inputTokens);
+      const cachedInputTokens = nonNegativeTokenCount(meta?.cachedReadTokens);
+      const outputTokens = nonNegativeTokenCount(meta?.outputTokens);
+      const reasoningOutputTokens = nonNegativeTokenCount(meta?.reasoningTokens);
+      return {
+        usedTokens,
+        ...(maxTokens === undefined ? {} : { maxTokens }),
+        ...(inputTokens === undefined ? {} : { inputTokens }),
+        ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+        ...(outputTokens === undefined ? {} : { outputTokens }),
+        ...(reasoningOutputTokens === undefined ? {} : { reasoningOutputTokens }),
+      };
     },
     applyModelSelection: applyGrokSessionModelSelection,
     ownedModelOptionIds: [GROK_REASONING_EFFORT_OPTION_ID],

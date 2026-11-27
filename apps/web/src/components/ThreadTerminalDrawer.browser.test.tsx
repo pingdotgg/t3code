@@ -188,6 +188,8 @@ vi.mock("../state/server", async () => {
     serverEnvironment: { configValueAtom: () => config },
     // The pane notch reads the theme (black chrome keeps the notch), which reads server themes.
     themeServerEnvironmentThemesAtom: Atom.make([]),
+    // Tab drags register their Escape handler with the shortcut dispatcher, which reads these.
+    primaryServerKeybindingsAtom: Atom.make([]),
   };
 });
 // The pane notch's theme loads main's theme background, which needs the real environment state.

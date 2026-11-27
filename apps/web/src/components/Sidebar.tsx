@@ -1183,13 +1183,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
   // The URL stays on the last chat while a surface has focus; the current row is the surface's.
-  const focusedSurfaceThreadRef = useLayoutStore((state) => {
+  // Return a primitive thread key so switching tabs of the same thread never re-renders the sidebar.
+  const focusedSurfaceThreadKey = useLayoutStore((state) => {
     const content = selectFocusedTab(state.layout)?.content;
     return content?.kind === "surface" && !isThreadlessSurfacesRef(content.threadRef)
-      ? content.threadRef
+      ? scopedThreadKey(content.threadRef)
       : null;
   });
-  const currentThreadRef = focusedSurfaceThreadRef ?? routeThreadRef;
+  const currentThreadRef =
+    focusedSurfaceThreadKey !== null
+      ? parseScopedThreadKey(focusedSurfaceThreadKey)
+      : routeThreadRef;
 
   // A selection made under one scope can hold threads the next scope hides.
   // The viewport outlives the scope and does not anchor, so a new list starts at the top.
@@ -1652,6 +1656,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (isMobile) {
       setOpenMobile(false);
     }
+    // A tab already open in the layout takes focus even if its URL is current.
+    followLayoutCompanions(() => useLayoutStore.getState().focusChat({ kind: "draft", draftId }));
     void router.navigate({ to: "/draft/$draftId", params: { draftId } });
   };
 

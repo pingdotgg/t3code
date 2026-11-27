@@ -2123,6 +2123,37 @@ describe("MessagesTimeline agent messages", () => {
 });
 
 describe("MessagesTimeline attachments", () => {
+  it("gives a wide lone user image a box as short as the image", async () => {
+    const src =
+      "data:image/svg+xml," +
+      encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1010" height="202"><rect width="1010" height="202" fill="#2462b2"/></svg>',
+      );
+    await using screen = await renderTimeline([
+      message("file a pr, full stop", {
+        attachments: [
+          {
+            type: "image" as const,
+            id: "wide-lone",
+            name: "wide-1010x202.png",
+            mimeType: "image/png",
+            sizeBytes: 1200,
+            previewUrl: src,
+          },
+        ],
+      }),
+    ]);
+    const img = screen.container.querySelector<HTMLImageElement>('img[alt="wide-1010x202.png"]')!;
+    const frame = img.closest("button")!.parentElement!;
+    await vi.waitFor(() => {
+      const image = img.getBoundingClientRect();
+      expect(image.height).toBeGreaterThan(0);
+      expect(image.height).toBeLessThan(192);
+      expect(image.width / image.height).toBeCloseTo(5, 1);
+      expect(frame.getBoundingClientRect().height).toBeCloseTo(image.height, 0);
+    });
+  });
+
   it.each(["image", "file"] as const)(
     "copies only matching context records for a wordless %s attachment",
     async (kind) => {

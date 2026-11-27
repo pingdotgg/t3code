@@ -21,14 +21,15 @@ function makeVisitTracker() {
   });
 }
 
-const trackersByTab = new WeakMap<LayoutTab, ReturnType<typeof makeVisitTracker>>();
+// By id: switching threads replaces the tab object, and a tracker per object sent each visit twice.
+const trackersByTabId = new Map<string, ReturnType<typeof makeVisitTracker>>();
 const loneTracker = makeVisitTracker();
-function trackerForTab(tab: LayoutTab | null) {
-  if (!tab) return loneTracker;
-  let tracker = trackersByTab.get(tab);
+function trackerForTab(tabId: string | null) {
+  if (tabId === null) return loneTracker;
+  let tracker = trackersByTabId.get(tabId);
   if (!tracker) {
     tracker = makeVisitTracker();
-    trackersByTab.set(tab, tracker);
+    trackersByTabId.set(tabId, tracker);
   }
   return tracker;
 }
@@ -54,6 +55,6 @@ export function ThreadVisitWatermark(props: { readonly threadRef: ScopedThreadRe
   const onScreen = useLayoutStore(
     (state) => tabThreadKey === null || state.onScreenThreadKeys.has(tabThreadKey),
   );
-  useAtomMount(trackerForTab(tab)(visible && onScreen ? props.threadRef : null));
+  useAtomMount(trackerForTab(tabId)(visible && onScreen ? props.threadRef : null));
   return null;
 }

@@ -175,15 +175,17 @@ export function PaneNotch({
   useLayoutEffect(() => {
     const notch = notchRef.current;
     if (!notch || !marksHost || !visible) return;
-    const unmarkPane = markNotchHost(
-      notch.closest(
-        side === "right" ? "[data-layout-tab-id], [data-pane-notch-host]" : "[data-layout-tab-id]",
-      ),
-      side,
-    );
+    const pane = notch.closest("[data-layout-tab-id]");
+    const notchHost = notch.closest("[data-pane-notch-host]");
+    const unmarkPane = markNotchHost(side === "right" ? (notchHost ?? pane) : pane, side);
+    const unmarkNotchHost =
+      side === "left" && notchHost && notchHost !== pane
+        ? markNotchHost(notchHost, side)
+        : () => {};
     const unmarkInset = markNotchHost(notch.closest('[data-slot="sidebar-inset"]'), side);
     return () => {
       unmarkPane();
+      unmarkNotchHost();
       unmarkInset();
     };
   }, [marksHost, side, visible]);

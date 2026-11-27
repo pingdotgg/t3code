@@ -22,7 +22,11 @@ import ProjectScriptsControl, {
 import { T, useGT } from "gt-react";
 import { useImperativeHandle, useRef, useState, type ComponentProps, type Ref } from "react";
 import { flushSync } from "react-dom";
-import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
+import {
+  selectActiveRightPanelSurface,
+  selectThreadPanelOpen,
+  useRightPanelStore,
+} from "../../rightPanelStore";
 import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
@@ -106,6 +110,15 @@ interface ThreadDetailsPanelProps extends Pick<
 
 export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
   const visible = useClientSettings(resolveThreadDetailsVisibility);
+  const companionFileActive = useRightPanelStore((state) => {
+    if (!props.openInShortcutEnabled) return false;
+    const surface = selectActiveRightPanelSurface(state.byThreadKey, {
+      environmentId: props.environmentId,
+      threadId: props.threadId,
+    });
+    return surface?.kind === "file" && surface.attachment === undefined;
+  });
+  const openInShortcutEnabled = props.openInShortcutEnabled && !companionFileActive;
   const gt = useGT();
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
   const focusBranchOnOpen = useRef(false);
@@ -267,7 +280,7 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                                   environmentId={props.environmentId}
                                   availableEditors={props.availableEditors}
                                   openInCwd={props.gitCwd}
-                                  enableShortcut={props.openInShortcutEnabled}
+                                  enableShortcut={openInShortcutEnabled}
                                   presentation="menu"
                                 />
                               ) : undefined
@@ -284,7 +297,7 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                         environmentId={props.environmentId}
                         availableEditors={props.availableEditors}
                         openInCwd={props.gitCwd}
-                        enableShortcut={props.openInShortcutEnabled}
+                        enableShortcut={openInShortcutEnabled}
                         displayMode="panel"
                       />
                     ) : null}
@@ -360,16 +373,22 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                       />
                     ) : null}
                   </div>
-                  <div className="grid grid-cols-[1rem_minmax(0,max-content)_minmax(min-content,1fr)] gap-x-1.5 ps-3 pe-2">
-                    {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
-                    {visible.context ? (
-                      <ThreadDetailsContext
-                        usage={props.usage.contextWindow}
-                        onCompact={props.onCompactContext}
-                        compactUnavailableReason={props.compactUnavailableReason}
-                      />
-                    ) : null}
-                  </div>
+                  {visible.usage || visible.context ? (
+                    <div className="flex flex-col gap-1.5 px-0.5 pt-1.5 pb-0.5">
+                      {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
+                      {visible.context ? (
+                        <div
+                          className={visible.usage ? "border-t border-divider pt-1.5" : undefined}
+                        >
+                          <ThreadDetailsContext
+                            usage={props.usage.contextWindow}
+                            onCompact={props.onCompactContext}
+                            compactUnavailableReason={props.compactUnavailableReason}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </section>
               ) : null}
 

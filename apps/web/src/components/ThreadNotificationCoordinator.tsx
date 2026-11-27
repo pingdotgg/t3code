@@ -7,6 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import { monitorHoldsWakeCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -24,6 +25,7 @@ import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings
 import { isWindowsPlatform } from "../lib/utils";
 import { selectVisibleLayoutTabs } from "../layout/layoutModel";
 import { useLayoutStore } from "../layout/layoutStore";
+import { followLayoutCompanions } from "../layout/openRules";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
@@ -205,6 +207,10 @@ export function startThreadNotifications(
           children: m(msg("Open thread")),
           onClick: () => {
             toastManager.close(toastId);
+            const threadRef = scopeThreadRef(environmentId, thread.id);
+            followLayoutCompanions(() =>
+              useLayoutStore.getState().focusChat({ kind: "server", threadRef }),
+            );
             void router.navigate({
               to: "/$environmentId/$threadId",
               params: { environmentId, threadId: thread.id },
@@ -235,6 +241,10 @@ export function startThreadNotifications(
         notification.close();
         window.focus();
         void window.desktopBridge?.revealWindow().catch(() => undefined);
+        const threadRef = scopeThreadRef(environmentId, thread.id);
+        followLayoutCompanions(() =>
+          useLayoutStore.getState().focusChat({ kind: "server", threadRef }),
+        );
         void router.navigate({
           to: "/$environmentId/$threadId",
           params: { environmentId, threadId: thread.id },

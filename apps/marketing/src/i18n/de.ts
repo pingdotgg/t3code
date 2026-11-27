@@ -32,7 +32,7 @@ export const de: Messages = {
     sourceLink: "Klau unseren Code (legal)",
     alsoOnPhone: "Auch auf deinem Handy:",
     screenshotAlt:
-      "T3 Code führt Subagenten von Claude, Codex, Muse und Gemini in einem Thread aus",
+      "T3 Code mit der Thread-Liste neben einem offenen Claude-Thread, dessen angedockte Detailkarte Branch, Änderungen, den verknüpften Pull Request mit bestandenen Checks, Nutzungslimits, Kontext, eine Automatisierung und einen Fork zeigt",
     endorsementsTitle: "Toleriert von über {users} Devs",
     endorsementsSub: "Ein paar haben sogar Nettes getwittert.",
     endorsementsLabel: "Stimmen von Entwicklern",
@@ -88,9 +88,13 @@ export const de: Messages = {
     channelLabel: "Release-Kanal",
     stable: "Stable",
     nightly: "Nightly",
+    stableTagline: "Jede Version lief vorher schon als Nightly-Build.",
+    nightlyTagline:
+      "Neue Änderungen, sobald sie landen, noch vor Stable. Rechne mit Ecken und Kanten.",
     intelNote: "Mac mit Intel-Chip? {link}.",
     intelLink: "Lade den x64-Build herunter",
     armNote: "Auf ARM? Lade das {deb} oder {appimage} für arm64 herunter.",
+    exeArmNote: "Auf ARM? Lade die {exe} für arm64 herunter.",
     mobile: "Mobil",
     iphoneIpad: "iPhone & iPad",
     terminal: "Terminal",

@@ -4611,6 +4611,7 @@
   "3e524e1c0141f4ad": "Not linked",
   "42a02a4b27828027": "Unavailable",
   "cfc49f96ba92c25c": "No usage windows reported.",
+  "96ac6f028d358793": "Left",
   "31e3e8d137ca1b40": "Show {count} more",
   "16fb3b76d0abbb2e": "Context window",
   "83bbceecef0f6872": "Context",
@@ -4619,17 +4620,24 @@
   "94478874c4070e6e": "Context: {used} / {max} tokens, {percent}% used",
   "6f77d87bfd5139f8": "Context: {used} / {max} tokens used",
   "4214d97447ddd9e9": "Context: {usedTokens} tokens used",
+  "be78e52efeb9149b": "{used} / {max}",
   "47233ef369410b52": "Compact context",
   "5123f0f8e2c1b9fd": "Used / max",
   "2668b03bc0c8e404": "Used",
-  "be78e52efeb9149b": "{used} / {max}",
-  "ee3ae58c8b38a425": "{left}% left",
-  "ebb26f93fb83a71b": "{label}: {left}% left",
-  "1b16346722b65812": "{timeLeft}% of the window left",
   "21c657cae336b772": "Next reset in {duration}",
   "c29a3a293c3f98c3": "Resets in {duration}",
+  "ebb26f93fb83a71b": "{label}: {left}% left",
   "78c1d280f021a28f": "From {sources}",
+  "1b16346722b65812": "{timeLeft}% of the window left",
   "e16b0b9b490c8bc7": "{label}: {value}",
+  "ec1e9343e1ba9349": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " accounts, pooled"
+  ],
   "d62967ed2aca3b27": [
     "Across ",
     {
@@ -12949,7 +12957,6 @@
   "7205c8b341454591": "Account {initials}",
   "67ca0906f5c6c1ca": "Plan",
   "69246abb2f659af2": "Via",
-  "96ac6f028d358793": "Left",
   "0d2c1db7fa27153e": "Resets",
   "e164fc7ee32dd6a4": "Even pace",
   "f017b7b86d1968e8": "{timeLeft}% left by now",
@@ -12962,14 +12969,6 @@
   "fad55a528a32f80e": "now",
   "a16b48709357a5a7": "Manage usage",
   "a00e74aaa421c524": "left",
-  "ec1e9343e1ba9349": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " accounts, pooled"
-  ],
   "3ea294de7a865364": "No limits to show",
   "8bd6f07136317c8f": "No provider on the selected environments reports subscription limits.",
   "87f5d0c61b335f38": "View usage in ChatGPT with your connected account.",

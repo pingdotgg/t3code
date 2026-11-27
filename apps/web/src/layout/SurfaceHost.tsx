@@ -1332,11 +1332,21 @@ export function LayoutSurfaceHost({
       const pane =
         best.panes.find((candidate) => candidate.id === remembered) ??
         best.panes[Math.min(Math.max(index, 0), best.panes.length - 1)]!;
+      const nextSlot = slotByPane.get(pane.id);
+      if (nextSlot) {
+        revealedSpan.current = {
+          paneId: pane.id,
+          left: nextSlot.rect.left,
+          width: nextSlot.rect.width,
+        };
+      }
       store.focusPane(pane.id);
     };
     const compute = (settled = false) => {
       // In shares of the strip, which the window may clip on the right.
-      const measured = scroller !== null && stripPx > 0;
+      // A non-overflowing strip (stripWidth <= 1) is overflow-hidden and always shows [0, 1],
+      // so skip reading scrollLeft/clientWidth to avoid forcing layout on every tab switch.
+      const measured = scroller !== null && stripWidth > 1 && stripPx > 0;
       const viewStart = measured ? scroller.scrollLeft / stripPx : 0;
       const viewEnd = measured ? (scroller.scrollLeft + scroller.clientWidth) / stripPx : 1;
       if (settled && measured && userStripScrollAge() <= USER_SCROLL_SETTLE_WINDOW_MS) {
@@ -1393,7 +1403,7 @@ export function LayoutSurfaceHost({
       );
     };
     compute();
-    if (!scroller) return;
+    if (!scroller || stripWidth <= 1) return;
     let timer: number | null = null;
     const settle = () => {
       // The user's gesture may still be going between its scroll events.
@@ -1423,6 +1433,7 @@ export function LayoutSurfaceHost({
     stacked,
     staged,
     stripPx,
+    stripWidth,
     unseenTabIds,
   ]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the shared on-screen thread registry when the strip unmounts
@@ -2263,6 +2274,12 @@ function LayoutSurfaceTabSurface({
   } satisfies LayoutPaneState;
   const tab = { id: tabId, content } satisfies LayoutTab;
   const slotRef = useRef<HTMLDivElement | null>(null);
+  const focusOrigin = useRef(document.activeElement);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the control that gave the surface pane keyboard focus when it leaves.
+  useLayoutEffect(() => {
+    const host = slotRef.current;
+    if (host) return holdSurfaceFocusOrigin(host, focusOrigin.current);
+  }, [slotRef]);
   return (
     <div
       ref={slotRef}
@@ -2312,12 +2329,6 @@ function SurfaceTabFocus({
   slotRef: React.RefObject<HTMLDivElement | null>;
   focused: boolean;
 }) {
-  const focusOrigin = useRef(document.activeElement);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the control that gave the surface keyboard focus when its tab leaves the pane.
-  useLayoutEffect(() => {
-    const host = slotRef.current;
-    if (host) return holdSurfaceFocusOrigin(host, focusOrigin.current);
-  }, [slotRef]);
   usePaneKeyboard(slotRef, focused, surfaceKeyboardTarget);
   return null;
 }
@@ -2326,8 +2337,14 @@ function SurfaceTabFocus({
 function chatKeyboardTarget(pane: HTMLElement): HTMLElement | null {
   return pane.querySelector<HTMLElement>("[contenteditable='true']");
 }
+const SURFACE_KEYBOARD_INPUT_SELECTOR =
+  'textarea:not([disabled]):not([hidden]):not([aria-hidden="true"]):not([tabindex="-1"]), input:not([type="hidden"]):not([disabled]):not([hidden]):not([aria-hidden="true"]):not([tabindex="-1"])';
+
 function surfaceKeyboardTarget(pane: HTMLElement): HTMLElement {
-  return pane.querySelector<HTMLElement>("textarea, input") ?? pane;
+  for (const input of pane.querySelectorAll<HTMLElement>(SURFACE_KEYBOARD_INPUT_SELECTOR)) {
+    if (!input.closest('[hidden], [inert], [aria-hidden="true"]')) return input;
+  }
+  return pane;
 }
 /** Settings takes the keyboard on the pane itself: focusing a field could start a shortcut recorder. */
 function settingsKeyboardTarget(pane: HTMLElement): HTMLElement {

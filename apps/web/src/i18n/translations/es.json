@@ -4609,6 +4609,7 @@
   "3e524e1c0141f4ad": "No vinculado",
   "42a02a4b27828027": "No disponible",
   "cfc49f96ba92c25c": "No se informó de ventanas de uso.",
+  "96ac6f028d358793": "Restante",
   "31e3e8d137ca1b40": "Mostrar {count} más",
   "16fb3b76d0abbb2e": "Ventana de contexto",
   "83bbceecef0f6872": "Contexto",
@@ -4617,17 +4618,24 @@
   "94478874c4070e6e": "Contexto: {used} / {max} tokens, {percent}% usado",
   "6f77d87bfd5139f8": "Contexto: {used} / {max} tokens usados",
   "4214d97447ddd9e9": "Contexto: {usedTokens} tokens usados",
+  "be78e52efeb9149b": "{used} / {max}",
   "47233ef369410b52": "Compactar el contexto",
   "5123f0f8e2c1b9fd": "Usado / máx.",
   "2668b03bc0c8e404": "Usado",
-  "be78e52efeb9149b": "{used} / {max}",
-  "ee3ae58c8b38a425": "{left} % restante",
-  "ebb26f93fb83a71b": "{label}: {left} % restante",
-  "1b16346722b65812": "Queda un {timeLeft}% de la ventana",
   "21c657cae336b772": "Próximo restablecimiento en {duration}",
   "c29a3a293c3f98c3": "Se restablece en {duration}",
+  "ebb26f93fb83a71b": "{label}: {left} % restante",
   "78c1d280f021a28f": "De {sources}",
+  "1b16346722b65812": "Queda un {timeLeft}% de la ventana",
   "e16b0b9b490c8bc7": "{label}: {value}",
+  "ec1e9343e1ba9349": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " cuentas, agrupadas"
+  ],
   "d62967ed2aca3b27": [
     "En ",
     {
@@ -12934,7 +12942,6 @@
   "7205c8b341454591": "Cuenta {initials}",
   "67ca0906f5c6c1ca": "Plan",
   "69246abb2f659af2": "Vía",
-  "96ac6f028d358793": "Restante",
   "0d2c1db7fa27153e": "Se restablece",
   "e164fc7ee32dd6a4": "Ritmo uniforme",
   "f017b7b86d1968e8": "Debería quedar un {timeLeft}% a estas alturas",
@@ -12947,14 +12954,6 @@
   "fad55a528a32f80e": "ahora",
   "a16b48709357a5a7": "Gestionar uso",
   "a00e74aaa421c524": "restante",
-  "ec1e9343e1ba9349": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " cuentas, agrupadas"
-  ],
   "3ea294de7a865364": "No hay límites que mostrar",
   "8bd6f07136317c8f": "Ningún proveedor de los entornos seleccionados informa de límites de suscripción.",
   "87f5d0c61b335f38": "Consulta el uso en ChatGPT con tu cuenta conectada.",

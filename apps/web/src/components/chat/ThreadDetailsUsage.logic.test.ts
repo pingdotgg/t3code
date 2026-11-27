@@ -8,7 +8,14 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { foldLimitRows, poolSources, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
+import {
+  foldLimitRows,
+  groupLimitRows,
+  isWideLimitLabel,
+  limitTone,
+  poolSources,
+  resolveThreadDetailsLimits,
+} from "./ThreadDetailsUsage.logic";
 
 const now = Date.parse("2026-10-30T12:00:00.000Z");
 const checkedAt = "2026-10-30T11:59:00.000Z";
@@ -188,5 +195,72 @@ describe("foldLimitRows", () => {
     expect(ids(foldLimitRows(rows, "claude-opus-5-5").hidden)).toEqual(["seven_day_sonnet"]);
     expect(foldLimitRows(rows.slice(0, 2), "claude-opus-5-5").hidden).toEqual([]);
     expect(foldLimitRows(rows.slice(0, 3), "claude-opus-5-5").hidden).toEqual([]);
+  });
+
+  it("never folds a window projected to run out before it resets", () => {
+    const rows = [
+      row("five_hour", "session", 40, claude),
+      row("seven_day", "weekly", 30, claude),
+      { ...row("seven_day_sonnet", "weekly", 70, claude), runsOutBeforeReset: true },
+    ];
+    expect(ids(foldLimitRows(rows, "claude-opus-5-5").shown)).toEqual([
+      "five_hour",
+      "seven_day",
+      "seven_day_sonnet",
+    ]);
+  });
+});
+
+describe("limitTone", () => {
+  it("flags low limits and limits projected to run out before reset", () => {
+    expect(limitTone(50)).toBeNull();
+    expect(limitTone(20)).toBe("warning");
+    expect(limitTone(10)).toBe("error");
+    expect(limitTone(30, true)).toBe("warning");
+    expect(limitTone(10, true)).toBe("error");
+  });
+});
+
+describe("groupLimitRows", () => {
+  const antigravity = ProviderDriverKind.make("antigravity");
+  const row = (
+    id: string,
+    usedPercent: number,
+    driver: ProviderDriverKind,
+    runsOutBeforeReset = false,
+  ) => ({
+    driver,
+    runsOutBeforeReset,
+    window: { id, kind: "session" as const, label: id, usedPercent },
+  });
+
+  it("groups by provider and orders both groups and windows tightest first", () => {
+    const rows = [
+      row("3p-weekly", 12, antigravity),
+      row("3p-5h", 36, antigravity),
+      row("five_hour", 42, claude),
+      row("seven_day_opus", 82, claude),
+      row("seven_day", 31, claude),
+      row("seven_day_fable", 42, claude, true),
+    ];
+    const groups = groupLimitRows(rows);
+    expect(groups.map((group) => group.driver)).toEqual([claude, antigravity]);
+    expect(groups[0]?.rows.map((entry) => entry.window.id)).toEqual([
+      "seven_day_opus",
+      "seven_day_fable",
+      "five_hour",
+      "seven_day",
+    ]);
+    expect(groups[1]?.rows.map((entry) => entry.window.id)).toEqual(["3p-5h", "3p-weekly"]);
+  });
+});
+
+describe("isWideLimitLabel", () => {
+  it("keeps short window names compact and gives shared or compound labels full width", () => {
+    expect(isWideLimitLabel("Session")).toBe(false);
+    expect(isWideLimitLabel("Weekly")).toBe(false);
+    expect(isWideLimitLabel("Opus")).toBe(false);
+    expect(isWideLimitLabel("Claude & GPT (shared) · 5-hour")).toBe(true);
+    expect(isWideLimitLabel("Cursor Models")).toBe(true);
   });
 });
