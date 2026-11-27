@@ -320,6 +320,16 @@ describe("question answer paths", () => {
     ],
     ["line break paragraphs", "{\\rtf1\\ansi First\\\nSecond\\\r\nThird}", "First\nSecond\nThird"],
     [
+      "footnote destinations",
+      String.raw`{\rtf1\ansi The north region{\super \chftn{\*\footnote \pard\plain {\super \chftn}\tab Inspect the {\b seals}.\par Do not reopen.\par}} is ready. The south region{\super \chftn}{\footnote \pard\plain \chftn\~Check power.} is ready.}`,
+      "The north region[Note: Inspect the seals.\nDo not reopen.] is ready. The south region[Note: Check power.] is ready.",
+    ],
+    [
+      "hidden footnote bodies",
+      String.raw`{\rtf1\ansi The north region{\*\unknown {\*\footnote \plain Hidden.}}{\*\footnote \v Hidden.} is ready.}`,
+      "The north region is ready.",
+    ],
+    [
       "tracked deletion",
       String.raw`{\rtf1\ansi The fee is {\deleted\revauthdel1\revdttmdel1 $500}{\revised\revauth1 $700}.}`,
       "The fee is $700.",
@@ -553,6 +563,8 @@ describe("question answer paths", () => {
             source: ["print(43 * 7)"],
             outputs: [
               { output_type: "stream", name: "stdout", text: "\u001b[32m301\u001b[0m\n" },
+              { output_type: "stream", name: "stdout", text: "Status: 10%" },
+              { output_type: "stream", name: "stdout", text: ["\r", "Status: Done\n"] },
               {
                 output_type: "stream",
                 name: "stderr",
@@ -638,6 +650,8 @@ describe("question answer paths", () => {
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Vessel: Larkspur");
       const extracted = NodeFS.readFileSync(`${path}.txt`, "utf8");
       expect(extracted).toContain("Output:\n301\n");
+      expect(extracted).toContain("301\nStatus: Done\n");
+      expect(extracted).not.toContain("Status: 10%");
       expect(extracted).toContain("100%|##########|\ndone\n");
       expect(extracted).not.toContain("10%|#");
       expect(extracted).toContain("42\nNext line");
@@ -1461,6 +1475,61 @@ describe("question answer paths", () => {
           absent: ["Omitted", "Draft", "Note", "Aside", "Formula"],
         },
         {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml": [
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="Retired"/></w:rPr><w:t>Old routing</w:t></w:r><w:r><w:rPr><w:rStyle w:val="RetiredChild"/></w:rPr><w:t>Old badge rules</w:t></w:r></w:p>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="VisibleChild"/></w:rPr><w:t>Current instructions</w:t></w:r></w:p>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="Retired"/><w:vanish w:val="0"/></w:rPr><w:t>Bring your badge.</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="WithToggle"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Retired"/></w:rPr><w:t>Both style levels toggle</w:t></w:r></w:p>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="CycleA"/></w:rPr><w:t>Unresolved cycle</w:t></w:r></w:p>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="DoubleToggle"/></w:rPr><w:t>Inherited toggles cancel</w:t></w:r></w:p>',
+              '<w:tbl><w:tblPr><w:tblStyle w:val="ToggleTable"/></w:tblPr><w:tr><w:tc><w:p><w:r><w:rPr><w:rStyle w:val="Retired"/></w:rPr><w:t>Table style combination</w:t></w:r></w:p></w:tc></w:tr></w:tbl>',
+              "</w:body></w:document>",
+            ].join(""),
+            "word/_rels/document.xml.rels":
+              '<Relationships><Relationship Id="style" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="../styles/word.xml"/></Relationships>',
+            "styles/word.xml": [
+              '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+              '<w:style w:type="character" w:styleId="Retired"><w:rPr><w:vanish/></w:rPr></w:style>',
+              '<w:style w:type="character" w:styleId="RetiredChild"><w:basedOn w:val="Retired"/></w:style>',
+              '<w:style w:type="character" w:styleId="VisibleChild"><w:basedOn w:val="Retired"/><w:rPr><w:vanish w:val="false"/></w:rPr></w:style>',
+              '<w:style w:type="paragraph" w:styleId="WithToggle"><w:rPr><w:vanish/></w:rPr></w:style>',
+              '<w:style w:type="character" w:styleId="CycleA"><w:basedOn w:val="CycleB"/></w:style>',
+              '<w:style w:type="character" w:styleId="CycleB"><w:basedOn w:val="CycleA"/></w:style>',
+              '<w:style w:type="character" w:styleId="DoubleToggle"><w:basedOn w:val="Retired"/><w:rPr><w:vanish/></w:rPr></w:style>',
+              '<w:style w:type="table" w:styleId="ToggleTable"><w:rPr><w:vanish/></w:rPr></w:style>',
+              "</w:styles>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "Current instructions\nBring your badge.\nBoth style levels toggle\nUnresolved cycle\nInherited toggles cancel\nTable style combination",
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml": [
+              '<w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="Toggle"/></w:rPr><w:t>Default style combination</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="Plain"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Toggle"/></w:rPr><w:t>Hidden by strict document style</w:t></w:r></w:p>',
+              "</w:body></w:document>",
+            ].join(""),
+            "word/styles.xml": [
+              '<text:styles xmlns:text="http://purl.oclc.org/ooxml/wordprocessingml/main">',
+              '<text:style text:type="paragraph" text:styleId="Default" text:default="1"><text:rPr><text:vanish/></text:rPr></text:style>',
+              '<text:style text:type="character" text:styleId="Toggle"><text:rPr><text:vanish/></text:rPr></text:style>',
+              '<text:style text:type="paragraph" text:styleId="Plain"/>',
+              "</text:styles>",
+            ].join(""),
+          },
+          expected: [],
+          exact: "Default style combination",
+        },
+        {
           ext: "odt",
           parts: {
             "content.xml":
@@ -1498,6 +1567,25 @@ describe("question answer paths", () => {
           expected: [],
           exact:
             "Warehouse instructions\nUse the north entrance.\nDeliveries welcome.\nBring your badge.\nLoading dock.\nVisitor parking.\nEmergency contacts.",
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml": [
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:other="urn:example:metadata"><office:body><office:text>',
+              '<text:p>Use the <text:hidden-text text:is-hidden="true" text:string-value="obsolete west or ">obsolete west or </text:hidden-text><text:hidden-text text:string-value="north"/><text:s/>entrance.</text:p>',
+              '<text:p><text:span><t:hidden-text xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" t:is-hidden=" &#x9;1 ">Retired</t:hidden-text></text:span>Bring your <text:hidden-text text:is-hidden="0">badge</text:hidden-text>.</text:p>',
+              '<text:p><text:hidden-text text:is-hidden="false" text:string-value="Visitor parking" other:string-value="Foreign value">Obsolete parking</text:hidden-text>.</text:p>',
+              '<text:p>Loading <text:hidden-text other:is-hidden="true" other:string-value="Foreign value">dock</text:hidden-text>.</text:p>',
+              '<text:p><other:hidden-text text:is-hidden="true" text:string-value="Foreign value">Emergency contacts</other:hidden-text>.</text:p>',
+              '<text:p><text:hidden-text text:string-value="">Unused content</text:hidden-text>Current instructions.</text:p>',
+              "</office:text></office:body></office:document-content>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "Use the north entrance.\nBring your badge.\nVisitor parking.\nLoading dock.\nEmergency contacts.\nCurrent instructions.",
         },
         {
           ext: "odt",
