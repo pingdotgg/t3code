@@ -575,12 +575,20 @@ const make = Effect.gen(function* () {
         return yield* new LoopbackTunnelSameMachineError({ environmentId, port: remotePort });
       }
       const scope = yield* Scope.fork(listenerScope);
-      const bind = (port: number) =>
-        NodeSocketServer.make({ port, host: "127.0.0.1" }).pipe(Scope.provide(scope));
-      const preferredPort = (yield* servedOverIpv6(remotePort)) ? 0 : remotePort;
-      const server = yield* bind(preferredPort).pipe(
-        // Taken here, or privileged: any free port still reaches the environment's.
-        Effect.catch(() => bind(0)),
+      const bind = (port: number, owner = scope) =>
+        NodeSocketServer.make({ port, host: "127.0.0.1" }).pipe(Scope.provide(owner));
+      const bindAlternative = Effect.gen(function* () {
+        const candidateScope = yield* Scope.fork(scope);
+        const candidate = yield* bind(0, candidateScope);
+        if ((candidate.address as NetAddress.InetAddress).port !== remotePort) return candidate;
+        // Linux can assign the IPv6 listener's port to an IPv4 bind of port zero. Keep it
+        // reserved while binding again so the second listener cannot get the same port.
+        return yield* bind(0).pipe(Effect.ensuring(Scope.close(candidateScope, Exit.void)));
+      });
+      const binding = (yield* servedOverIpv6(remotePort))
+        ? bindAlternative
+        : bind(remotePort).pipe(Effect.catch(() => bindAlternative));
+      const server = yield* binding.pipe(
         Effect.onError(() => Scope.close(scope, Exit.void)),
         Effect.mapError(
           (cause) => new LoopbackTunnelForwardError({ environmentId, port: remotePort, cause }),
