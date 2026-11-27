@@ -90,9 +90,16 @@ const deletionNoticeHtml = `<!doctype html>
               </td>
             </tr>
             <tr>
-              <td align="center" style="padding:48px 0 48px;">
-                <a href="https://t3.codes" style="font-family:${MONO};font-size:13px;color:#636368;text-decoration:none;">t3.codes</a>
-                <p style="margin:10px 0 0;font-size:12px;line-height:1.6;color:#636368;">T3 Tools, Inc.<br />You received this because a T3 Code account using this address was deleted.</p>
+              <td style="padding:48px 0 48px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #1d1d20;">
+                  <tr>
+                    <td style="padding:20px 0 0;font-size:12px;line-height:1.6;color:#8e8e93;">T3 Tools, Inc.</td>
+                    <td align="right" style="padding:20px 0 0;font-family:${MONO};font-size:12px;line-height:1.6;"><a href="https://t3.codes" style="color:#8e8e93;text-decoration:none;">t3.codes</a></td>
+                  </tr>
+                  <tr>
+                    <td colspan="2" style="padding:6px 0 0;font-size:12px;line-height:1.6;color:#636368;">Sent because a T3 Code account using this address was deleted.</td>
+                  </tr>
+                </table>
               </td>
             </tr>
           </table>
