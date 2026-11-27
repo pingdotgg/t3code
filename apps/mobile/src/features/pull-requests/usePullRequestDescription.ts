@@ -39,7 +39,10 @@ export function usePullRequestDescription(
       startDescriptionSave(current, { url: detail.url, observedAt: reading }, next),
     );
     savesRunning.current += 1;
-    const response = await update({ ...target, input: { ...target.input, body: next } });
+    const response = await update({
+      ...target,
+      input: { ...target.input, body: next, expectedBody: body },
+    });
     savesRunning.current -= 1;
     const saved = !AsyncResult.isFailure(response);
     setDraft((current) => settleDescriptionSave(current, detail.url, saved));

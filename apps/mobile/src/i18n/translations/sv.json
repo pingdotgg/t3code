@@ -5722,5 +5722,11 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "201490988858b511": "återkallad av {by}",
-  "46d614fa7b4bf1e5": "Arbetsflödeskörningar"
+  "46d614fa7b4bf1e5": "Arbetsflödeskörningar",
+  "70283068f9bb4114": "Den här beskrivningen har ändrats någon annanstans sedan du började redigera. Ditt utkast finns kvar ovan.",
+  "daf41681db7a899a": "Dölj den aktuella beskrivningen",
+  "8fc15cfdaa9abfc6": "Visa den aktuella beskrivningen",
+  "2d98551f5e3365ac": "Ingen beskrivning angiven.",
+  "5574a212c0cd0256": "Kasta mitt utkast",
+  "e5d6dc0c92c17ff7": "Behåll mitt utkast"
 }

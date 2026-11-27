@@ -5716,5 +5716,11 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "201490988858b511": "retirée par {by}",
-  "46d614fa7b4bf1e5": "Exécutions de workflow"
+  "46d614fa7b4bf1e5": "Exécutions de workflow",
+  "70283068f9bb4114": "Cette description a été modifiée ailleurs depuis que vous avez commencé à la modifier. Votre brouillon est conservé ci-dessus.",
+  "daf41681db7a899a": "Masquer la description actuelle",
+  "8fc15cfdaa9abfc6": "Afficher la description actuelle",
+  "2d98551f5e3365ac": "Aucune description fournie.",
+  "5574a212c0cd0256": "Abandonner mon brouillon",
+  "e5d6dc0c92c17ff7": "Garder mon brouillon"
 }

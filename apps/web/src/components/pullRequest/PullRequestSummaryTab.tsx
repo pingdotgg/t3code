@@ -4,6 +4,7 @@ import { holdLinkedNodeInView, holdScrollTop } from "./holdLinkedNodeInView";
 import { useAtomValue } from "@effect/atom-react";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   type EnvironmentId,
   type PullRequestComment,
@@ -21,6 +22,7 @@ import {
   ListFilterIcon,
   MessageSquarePlusIcon,
   TagIcon,
+  TriangleAlertIcon,
   UsersIcon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
@@ -45,6 +47,7 @@ import { RelativeTime } from "~/components/RelativeTime";
 import { useClientSettings } from "~/hooks/useSettings";
 import { formatFullTimestamp } from "~/timestampFormat";
 
+import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -82,6 +85,8 @@ import {
   pullRequestConversationItems,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
+  isPullRequestConflict,
+  readableFailure,
   visibleBody,
   type PullRequestChatSubject,
   type PullRequestConversationItem,
@@ -112,6 +117,8 @@ import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
+
+const SAVE_FAILURE_HINT = msg("The host refused the change. Refresh and try again.");
 
 function reviewerKey(login: string): string {
   return login.toLowerCase();
@@ -654,9 +661,14 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
   const canUpdate = useAtomValue(pullRequestEnvironment.update.permissionAtom(environmentId));
   const canEditDescription = canUpdate && canEditPullRequestChangeRequest(detail);
   // The editor keeps the body it opened from, so a failed save cannot reset what was typed.
+  // `changed` marks a save the host refused because the description changed elsewhere, with the
+  // read it was based on; the draft is saved again only once the user picks it over the newer one.
   const [bodyScope, setBodyScope] = useState<{
     readonly url: string;
     readonly body: string;
+    readonly expectedBody: string;
+    readonly changed?: { readonly observedAt: number | undefined } | undefined;
+    readonly discarded?: number;
   } | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState<DescriptionDraft | null>(null);
   const descriptionDraftKept = descriptionDraftInForce(descriptionDraft, detail.url, observedAt);
@@ -719,6 +731,11 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
     onRevealSettled?.(revealUrl);
   });
   const editingDescription = bodyScope?.url === detail.url;
+  const descriptionChanged = editingDescription ? bodyScope.changed : undefined;
+  // Both choices act on the newer description, so they wait for the refresh that reads it.
+  const changedDescriptionRead =
+    descriptionChanged !== undefined &&
+    (detail.observedAt === undefined || detail.observedAt !== descriptionChanged.observedAt);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls to a linked section, description or heading once it renders
   useEffect(() => {
     revealSummary();
@@ -744,14 +761,32 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
       startDescriptionSave(draft, { url: detail.url, observedAt }, body),
     );
     descriptionSavesRunning.current += 1;
-    const result = await update({ environmentId, input: { ...reference, body } });
+    const result = await update({
+      environmentId,
+      input: {
+        ...reference,
+        body,
+        expectedBody: bodyScope?.url === detail.url ? bodyScope.expectedBody : description,
+      },
+    });
     descriptionSavesRunning.current -= 1;
     const saved = result._tag === "Success";
     setDescriptionDraft((draft) => settleDescriptionSave(draft, key, saved));
-    if (!saved) {
-      toastManager.add({ type: "error", title: m(msg("Could not save the description")) });
+    const failure = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
+    const conflict = failure !== null && isPullRequestConflict(failure);
+    if (conflict && bodyScope?.url === key) {
+      setBodyScope({ ...bodyScope, body, changed: { observedAt: detail.observedAt } });
+    } else if (failure !== null) {
+      toastManager.add({
+        type: "error",
+        title: m(msg("Could not save the description")),
+        description: readableFailure(failure, m(SAVE_FAILURE_HINT)),
+      });
     }
-    if (descriptionSavesRunning.current === 0) onRefresh();
+    // The server may still hold the description it read before the edit elsewhere, so a
+    // conflict reads past it, as the checks' refresh does.
+    if (conflict) onRefreshChecks();
+    else if (descriptionSavesRunning.current === 0) onRefresh();
     return saved;
   };
   const saveBody = async (body: string) => {
@@ -783,7 +818,11 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
       });
       setCommentSaving(false);
       if (result._tag === "Failure") {
-        toastManager.add({ type: "error", title: m(msg("Could not save the comment")) });
+        toastManager.add({
+          type: "error",
+          title: m(msg("Could not save the comment")),
+          description: readableFailure(squashAtomCommandFailure(result), m(SAVE_FAILURE_HINT)),
+        });
         return;
       }
       setCommentScope(null);
@@ -1071,8 +1110,66 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
         revealCount={descriptionReveals}
       >
         <div className="group">
+          {descriptionChanged ? (
+            <Alert variant="warning" className="mb-2">
+              <TriangleAlertIcon />
+              <AlertDescription>
+                {gt(
+                  "This description changed elsewhere since you started editing. Your draft is kept below.",
+                )}
+                {changedDescriptionRead ? (
+                  <Collapsible>
+                    <CollapsibleTrigger className="text-xs underline-offset-4 hover:underline">
+                      {gt("Show the current description")}
+                    </CollapsibleTrigger>
+                    <CollapsiblePanel>
+                      <PullRequestMarkdown
+                        className="mt-1 rounded-md border p-2"
+                        text={
+                          description.trim().length > 0
+                            ? description
+                            : gt("_No description provided._")
+                        }
+                        cwd={detail.workspaceRoot}
+                        environmentId={environmentId}
+                        threadRef={threadRef}
+                      />
+                    </CollapsiblePanel>
+                  </Collapsible>
+                ) : null}
+              </AlertDescription>
+              <AlertAction>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={!changedDescriptionRead}
+                  onClick={() =>
+                    setBodyScope({
+                      url: detail.url,
+                      body: description,
+                      expectedBody: description,
+                      discarded: (bodyScope?.discarded ?? 0) + 1,
+                    })
+                  }
+                >
+                  {gt("Discard my draft")}
+                </Button>
+                <Button
+                  size="xs"
+                  disabled={!changedDescriptionRead}
+                  onClick={() =>
+                    bodyScope &&
+                    setBodyScope({ ...bodyScope, expectedBody: description, changed: undefined })
+                  }
+                >
+                  {gt("Keep my draft")}
+                </Button>
+              </AlertAction>
+            </Alert>
+          ) : null}
           {editingDescription ? (
             <PullRequestMarkdownEditor
+              key={bodyScope.discarded ?? 0}
               allowEmpty
               value={bodyScope.body}
               cwd={detail.workspaceRoot}
@@ -1088,6 +1185,7 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
                 { term: changeRequestTermKind(terminology) },
               )}
               saving={descriptionSaving}
+              saveBlocked={descriptionChanged !== undefined}
               onSave={(body) => void saveBody(body)}
               onCancel={() => setBodyScope(null)}
             />
@@ -1106,7 +1204,9 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
               {canEditDescription ? (
                 <PullRequestEditButton
                   aria-label={gt("Edit description")}
-                  onClick={() => setBodyScope({ url: detail.url, body: description })}
+                  onClick={() =>
+                    setBodyScope({ url: detail.url, body: description, expectedBody: description })
+                  }
                 />
               ) : null}
             </div>

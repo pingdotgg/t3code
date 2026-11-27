@@ -56,6 +56,8 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
       "forbidden",
       "rate-limited",
       "not-found",
+      // The host refused a write because what it was based on changed since it was read.
+      "conflict",
       "failed",
     ]),
     detail: Schema.String,
@@ -295,6 +297,7 @@ export interface ProviderChangeRequestActivity {
 }
 
 export interface ProviderDiffSlice {
+  readonly headSha?: string;
   readonly patch: string;
   /** Content was omitted within this slice. */
   readonly truncated: boolean;
@@ -589,6 +592,7 @@ export interface PullRequestProviderApi {
   /** Requires edit capability and at least one field. */
   readonly updateChangeRequest?: (
     input: ProviderRepositoryRef & {
+      readonly expectedBody?: string | undefined;
       readonly maintainerCanModify?: boolean | undefined;
       readonly number: number;
       readonly title?: string | undefined;

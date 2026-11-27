@@ -73,6 +73,9 @@ export function PullRequestGuideTab({
           onComment: ({ path, oldPath, position, startPosition, body }) =>
             addComment(reviewKey, {
               id: nextPendingReviewCommentId(),
+              ...(data?.guide === null || data?.guide === undefined
+                ? {}
+                : { headSha: data.guide.headSha }),
               path,
               ...(oldPath === null ? {} : { oldPath }),
               ...(startPosition === undefined ? {} : { startPosition }),

@@ -230,6 +230,7 @@ export function usePullRequestDiff(
   };
   return {
     ...query,
+    headSha: pages[0]?.result.headSha,
     /** Reads the whole diff again from page one, whichever page was showing or had failed. */
     refresh: () => reload(refreshFirstPage),
     /** Reads only the page that failed again, keeping the files already loaded. */

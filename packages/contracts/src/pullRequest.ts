@@ -755,6 +755,7 @@ export const PullRequestOmittedFileStat = Schema.Struct({
 export type PullRequestOmittedFileStat = typeof PullRequestOmittedFileStat.Type;
 
 export const PullRequestDiffResult = Schema.Struct({
+  headSha: Schema.optional(TrimmedNonEmptyString),
   patch: Schema.String,
   /** Content omitted within this slice; nextCursor separately indicates more slices. */
   truncated: Schema.Boolean,
@@ -870,6 +871,7 @@ export const PullRequestCommentInput = Schema.Struct({
 export type PullRequestCommentInput = typeof PullRequestCommentInput.Type;
 
 export const PullRequestUpdateInput = Schema.Struct({
+  expectedBody: Schema.optional(Schema.String),
   ...PullRequestRef.fields,
   title: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(1024))),
   body: Schema.optional(Schema.String.check(Schema.isMaxLength(65_536))),
@@ -905,6 +907,7 @@ export const PullRequestReviewPosition = Schema.Union([
 export type PullRequestReviewPosition = typeof PullRequestReviewPosition.Type;
 
 export const PullRequestReviewCommentDraft = Schema.Struct({
+  headSha: Schema.optional(TrimmedNonEmptyString),
   path: TrimmedNonEmptyString,
   /** GitLab needs both names for renamed-file comments; hosts using one path ignore this. */
   oldPath: Schema.optional(TrimmedNonEmptyString),
@@ -1062,7 +1065,7 @@ export class PullRequestOperationError extends Schema.TaggedError<PullRequestOpe
   {
     operation: Schema.String,
     detail: TrimmedNonEmptyString,
-    reason: Schema.optional(Schema.Literal("not-found")),
+    reason: Schema.optional(Schema.Literals(["not-found", "conflict"])),
     listResult: Schema.optional(PullRequestListResult),
     cause: Schema.optional(Schema.Defect()),
   },

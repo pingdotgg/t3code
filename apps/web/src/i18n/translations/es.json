@@ -13038,5 +13038,10 @@
   "95435f0b59cb2193": "Vista previa de audio",
   "4a12506938295127": "Introduce primero {field}.",
   "5807c08e225c6b3d": "Descargar",
-  "0d50b5bfe7151ece": "No se pudo descargar el archivo"
+  "0d50b5bfe7151ece": "No se pudo descargar el archivo",
+  "2c8f841a78699887": "El host rechazó el cambio. Actualiza e inténtalo de nuevo.",
+  "7c5a90bf39328351": "Esta descripción cambió en otro lugar desde que empezaste a editarla. Tu borrador se conserva abajo.",
+  "8fc15cfdaa9abfc6": "Mostrar la descripción actual",
+  "5574a212c0cd0256": "Descartar mi borrador",
+  "e5d6dc0c92c17ff7": "Conservar mi borrador"
 }

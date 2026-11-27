@@ -2,6 +2,7 @@ import * as AzureDevOps from "@t3tools/source-control-azure-devops/shared/defini
 import * as Bitbucket from "@t3tools/source-control-bitbucket/shared/definition";
 import { makeSourceControlDefinitionRegistry } from "@t3tools/source-control-core/shared/definition";
 import * as CursorOrigin from "@t3tools/source-control-cursor-origin/shared/definition";
+import * as Entire from "@t3tools/source-control-entire/shared/definition";
 import * as Forgejo from "@t3tools/source-control-forgejo/shared/definition";
 import * as GitCafe from "@t3tools/source-control-gitcafe/shared/definition";
 import * as GitHub from "@t3tools/source-control-github/shared/definition";
@@ -14,6 +15,7 @@ export { canonicalizePullRequestUrl as canonicalizeGitCafePullRequestUrl } from 
  * GitHub comes first as the client default for unknown hosts. GitCafe, TanStack Source and Origin
  * claim URLs first: GitHub and Forgejo accept the same routes on any hostname. TanStack Source is a
  * private beta: every reader knows its URLs, and only a server with its flag on offers the forge.
+ * Entire claims an `entire://` remote by its scheme, so it's recognized first.
  */
 export const builtInSourceControlDefinitions = makeSourceControlDefinitionRegistry(
   [
@@ -25,6 +27,7 @@ export const builtInSourceControlDefinitions = makeSourceControlDefinitionRegist
     Forgejo.definition,
     Bitbucket.definition,
     AzureDevOps.definition,
+    Entire.definition,
   ],
   {
     claimChangeRequestUrlsFirst: [
@@ -34,6 +37,7 @@ export const builtInSourceControlDefinitions = makeSourceControlDefinitionRegist
       AzureDevOps.definition.kind,
     ],
     recognizeRemotesIn: [
+      Entire.definition.kind,
       GitCafe.definition.kind,
       TanStackSource.definition.kind,
       CursorOrigin.definition.kind,

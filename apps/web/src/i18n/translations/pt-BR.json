@@ -13043,5 +13043,10 @@
   "95435f0b59cb2193": "Prévia de áudio",
   "4a12506938295127": "Informe primeiro {field}.",
   "5807c08e225c6b3d": "Baixar",
-  "0d50b5bfe7151ece": "Não foi possível baixar o arquivo"
+  "0d50b5bfe7151ece": "Não foi possível baixar o arquivo",
+  "2c8f841a78699887": "O host recusou a alteração. Atualize e tente novamente.",
+  "7c5a90bf39328351": "Esta descrição foi alterada em outro lugar desde que você começou a editá-la. Seu rascunho foi mantido abaixo.",
+  "8fc15cfdaa9abfc6": "Mostrar a descrição atual",
+  "5574a212c0cd0256": "Descartar meu rascunho",
+  "e5d6dc0c92c17ff7": "Manter meu rascunho"
 }

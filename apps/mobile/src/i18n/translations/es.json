@@ -5716,5 +5716,11 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo"
+  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo",
+  "70283068f9bb4114": "Esta descripción cambió en otro lugar desde que empezaste a editarla. Tu borrador se conserva arriba.",
+  "daf41681db7a899a": "Ocultar la descripción actual",
+  "8fc15cfdaa9abfc6": "Mostrar la descripción actual",
+  "2d98551f5e3365ac": "No se proporcionó ninguna descripción.",
+  "5574a212c0cd0256": "Descartar mi borrador",
+  "e5d6dc0c92c17ff7": "Conservar mi borrador"
 }

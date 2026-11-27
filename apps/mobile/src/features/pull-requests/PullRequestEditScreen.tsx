@@ -2,12 +2,14 @@ import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { useAtomValue } from "@effect/atom-react";
-import type { PullRequestComment } from "@t3tools/contracts";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { PullRequestOperationError, type PullRequestComment } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import * as Schema from "effect/Schema";
 import { useGT } from "gt-react-native";
-import { useRef, useState } from "react";
+import { use, useRef, useState } from "react";
+import { View } from "react-native";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { composerPullRequests } from "../../state/pull-requests";
@@ -32,6 +34,8 @@ export type PullRequestEditParams = PullRequestParams &
       }
   );
 
+const isPullRequestOperationError = Schema.is(PullRequestOperationError);
+
 export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEditParams>) {
   const params = route.params;
   const navigation = useNavigation();
@@ -40,6 +44,7 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
   const pr = detail.data;
   const permissions = usePullRequestPermissions(params, pr);
   const gt = useGT();
+  const registry = use(RegistryContext);
   const update = useAtomCommand(composerPullRequests.update, { reportFailure: false });
   const updateComment = useAtomCommand(composerPullRequests.updateComment, {
     reportFailure: false,
@@ -51,7 +56,10 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
       : params.field === "title"
         ? (pr?.title ?? null)
         : (pr?.body ?? null);
-  const [draft, setDraft] = useState<string | null>(null);
+  const [edit, setEdit] = useState<{ body: string; original: string | null } | null>(null);
+  const draft = edit?.body ?? null;
+  const setDraft = (body: string) =>
+    setEdit((current) => ({ body, original: current?.original ?? original }));
   const value = draft ?? original ?? "";
   const completions = usePullRequestCompletions({
     environmentId: params.environmentId,
@@ -62,6 +70,13 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A save the host refused because the description changed elsewhere, with the read it was based
+  // on; the draft is saved again only once the user picks it over the newer description.
+  const [changed, setChanged] = useState<{ readonly observedAt: number | undefined } | null>(null);
+  const [showCurrent, setShowCurrent] = useState(false);
+  // Both choices act on the newer description, so they wait for the refresh that reads it.
+  const changedRead =
+    changed !== null && (pr?.observedAt === undefined || pr.observedAt !== changed.observedAt);
   const inFlight = useRef(false);
   const allowed =
     params.field === "comment"
@@ -109,13 +124,37 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
             ...target,
             input: {
               ...target.input,
-              ...(params.field === "title" ? { title: value.trim() } : { body: value }),
+              ...(params.field === "title"
+                ? { title: value.trim() }
+                : {
+                    body: value,
+                    ...(edit?.original === null || edit?.original === undefined
+                      ? {}
+                      : { expectedBody: edit.original }),
+                  }),
             },
           });
     inFlight.current = false;
     setBusy(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
+      if (
+        params.field === "body" &&
+        isPullRequestOperationError(cause) &&
+        cause.reason === "conflict"
+      ) {
+        setChanged({ observedAt: pr?.observedAt });
+        setShowCurrent(false);
+        // The server may still hold the description it read before the edit elsewhere.
+        await runAtomCommand(
+          registry,
+          composerPullRequests.invalidate,
+          { environmentId: target.environmentId, input: { reference: target.input } },
+          { reportFailure: false },
+        );
+        detail.refresh();
+        return;
+      }
       setError(
         cause instanceof Error
           ? (errorDisplayMessage(cause, m) ?? cause.message)
@@ -144,7 +183,7 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
           tone="contrast"
           label={busy ? gt("Saving…") : gt("Save")}
           loading={busy}
-          disabled={!allowed || unchanged || invalid || original === null}
+          disabled={!allowed || unchanged || invalid || original === null || changed !== null}
           onPress={() => void save()}
         />
       }
@@ -188,6 +227,53 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
         }
         style={params.field === "title" ? undefined : { textAlignVertical: "top" }}
       />
+      {changed ? (
+        <View className="gap-2 rounded-[20px] bg-grouped-card p-4">
+          <Text className="text-sm text-foreground">
+            {gt(
+              "This description changed elsewhere since you started editing. Your draft is kept above.",
+            )}
+          </Text>
+          {changedRead ? (
+            <Button
+              size="compact"
+              tone="text"
+              label={
+                showCurrent
+                  ? gt("Hide the current description")
+                  : gt("Show the current description")
+              }
+              onPress={() => setShowCurrent((shown) => !shown)}
+            />
+          ) : null}
+          {changedRead && showCurrent ? (
+            <Text selectable className="text-sm text-foreground-muted">
+              {original?.trim() ? original : gt("No description provided.")}
+            </Text>
+          ) : null}
+          <View className="flex-row gap-2">
+            <Button
+              size="compact"
+              label={gt("Discard my draft")}
+              disabled={!changedRead}
+              onPress={() => {
+                setEdit(null);
+                setChanged(null);
+              }}
+            />
+            <Button
+              size="compact"
+              tone="primary"
+              label={gt("Keep my draft")}
+              disabled={!changedRead}
+              onPress={() => {
+                setEdit((current) => (current ? { body: current.body, original } : current));
+                setChanged(null);
+              }}
+            />
+          </View>
+        </View>
+      ) : null}
       {readOnlyReason ? (
         <Text className="text-xs text-foreground-muted">{readOnlyReason}</Text>
       ) : null}

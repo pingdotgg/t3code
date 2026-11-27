@@ -26,6 +26,7 @@ export function PullRequestMarkdownEditor({
   placeholder,
   label,
   saving,
+  saveBlocked = false,
   allowEmpty = false,
   className,
   onSave,
@@ -39,6 +40,8 @@ export function PullRequestMarkdownEditor({
   readonly placeholder?: string | undefined;
   readonly label: string;
   readonly saving: boolean;
+  /** Keeps the draft editable but unsaved, as while the user settles a conflict. */
+  readonly saveBlocked?: boolean;
   readonly allowEmpty?: boolean;
   readonly className?: string | undefined;
   readonly onSave: (next: string) => void;
@@ -49,12 +52,13 @@ export function PullRequestMarkdownEditor({
   const [draft, setDraft] = useState(value);
   const [preview, setPreview] = useState(false);
   const [seed, setSeed] = useState(value);
+  // A refresh, say after a save is refused as stale, must not replace unsaved edits.
   if (seed !== value) {
     setSeed(value);
-    setDraft(value);
+    if (draft === seed) setDraft(value);
   }
   const empty = draft.trim().length === 0;
-  const saveDisabled = !canWriteSourceControl || saving || (empty && !allowEmpty);
+  const saveDisabled = !canWriteSourceControl || saving || saveBlocked || (empty && !allowEmpty);
 
   return (
     <div
@@ -134,13 +138,9 @@ export function PullRequestMarkdownEditor({
         <Button
           size="xs"
           variant="outline"
-          disabled={!canWriteSourceControl || saving || (empty && !allowEmpty)}
+          disabled={saveDisabled}
           onClick={() => {
-            if (
-              !readEnvironmentScope(environmentId, AuthSourceControlWriteScope) ||
-              saving ||
-              (empty && !allowEmpty)
-            )
+            if (saveDisabled || !readEnvironmentScope(environmentId, AuthSourceControlWriteScope))
               return;
             onSave(draft);
           }}

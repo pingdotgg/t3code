@@ -13050,5 +13050,10 @@
   "95435f0b59cb2193": "Ljudförhandsvisning",
   "4a12506938295127": "Ange {field} först.",
   "5807c08e225c6b3d": "Ladda ned",
-  "0d50b5bfe7151ece": "Det gick inte att ladda ned filen"
+  "0d50b5bfe7151ece": "Det gick inte att ladda ned filen",
+  "2c8f841a78699887": "Värden avvisade ändringen. Uppdatera och försök igen.",
+  "7c5a90bf39328351": "Den här beskrivningen har ändrats någon annanstans sedan du började redigera. Ditt utkast finns kvar nedan.",
+  "8fc15cfdaa9abfc6": "Visa den aktuella beskrivningen",
+  "5574a212c0cd0256": "Kasta mitt utkast",
+  "e5d6dc0c92c17ff7": "Behåll mitt utkast"
 }

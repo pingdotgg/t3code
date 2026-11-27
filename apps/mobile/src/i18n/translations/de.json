@@ -5722,5 +5722,11 @@
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "201490988858b511": "zurückgezogen von {by}",
-  "46d614fa7b4bf1e5": "Workflow-Ausführungen"
+  "46d614fa7b4bf1e5": "Workflow-Ausführungen",
+  "70283068f9bb4114": "Diese Beschreibung wurde woanders geändert, seit du mit der Bearbeitung begonnen hast. Dein Entwurf bleibt oben erhalten.",
+  "daf41681db7a899a": "Aktuelle Beschreibung ausblenden",
+  "8fc15cfdaa9abfc6": "Aktuelle Beschreibung anzeigen",
+  "2d98551f5e3365ac": "Keine Beschreibung angegeben.",
+  "5574a212c0cd0256": "Meinen Entwurf verwerfen",
+  "e5d6dc0c92c17ff7": "Meinen Entwurf behalten"
 }
