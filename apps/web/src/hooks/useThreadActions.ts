@@ -1003,11 +1003,9 @@ export function useThreadActions() {
     return ThreadUndo.executeThreadUndo(
       plan,
       async (step) => {
-        // The cancelled settle may have replaced a snooze queued on the device, which is now
-        // gone too; a snooze the environment still holds needs nothing.
         if (
           cancelledOnDevice &&
-          (step.action !== "snooze" || readThreadShell(target)?.snoozedUntil === step.snoozedUntil)
+          !ThreadUndo.restoresAfterDeviceCancel(step, readThreadShell(target))
         ) {
           return AsyncResult.success(undefined);
         }
