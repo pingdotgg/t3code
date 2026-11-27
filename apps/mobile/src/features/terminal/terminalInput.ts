@@ -20,7 +20,8 @@ function applyCtrlModifier(input: string): string {
     return String.fromCharCode(lowerCharacter.charCodeAt(0) - 96);
   }
 
-  if (firstCharacter === "@") return "\u0000";
+  // Ctrl+Space sends NUL, the same as Ctrl+@.
+  if (firstCharacter === "@" || firstCharacter === " ") return "\u0000";
   if (firstCharacter === "[") return "\u001b";
   if (firstCharacter === "\\") return "\u001c";
   if (firstCharacter === "]") return "\u001d";
