@@ -82,7 +82,7 @@ import JSZip from "jszip";
 import { boundedZip } from "@t3tools/client-runtime/zip/bounded-zip";
 import BinaryViewer from "./BinaryViewer";
 import { decodeImagePreview } from "./decodeImagePreview";
-import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
+import { formatArchiveModifiedDate, type BinaryWorkerResult } from "./binaryPreviewProtocol";
 import type { TextPreviewResult } from "./largeTextProtocol";
 import type { ReactElement } from "react";
 import type { OfficeWorkerRequest, OfficeWorkerResult } from "./officePreviewProtocol";
@@ -315,6 +315,32 @@ describe("bounded binary previews", () => {
           ["empty.txt", "0 bytes"],
           ["readme.txt", "1 KB"],
         ]);
+      }, 10_000);
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  });
+
+  it("dates an archive folder by its own ZIP record when its children come first", async () => {
+    const zip = new JSZip();
+    const fileDate = new Date("2022-01-02T00:00:00Z");
+    zip.file("docs/readme.txt", "a".repeat(1024), { createFolders: false, date: fileDate });
+    zip.file("docs/sub/nested.txt", "b".repeat(1024), { createFolders: false, date: fileDate });
+    zip.file("docs/", null, { dir: true, date: new Date("2024-10-19T00:00:00Z") });
+    zip.file("docs/sub/", null, { dir: true, date: new Date("2023-07-08T00:00:00Z") });
+    zip.file("docs/later.txt", "c".repeat(1024), {
+      createFolders: false,
+      date: new Date("2025-05-06T00:00:00Z"),
+    });
+    const src = URL.createObjectURL(new Blob([await zip.generateAsync({ type: "arraybuffer" })]));
+    try {
+      await using screen = await render(<BinaryViewer src={src} name="dates.zip" kind="archive" />);
+      await vi.waitFor(() => {
+        expect(
+          [...screen.container.querySelectorAll("tbody td")].map((cell) =>
+            cell.textContent?.trim(),
+          ),
+        ).toEqual(["docs", "3 KB", formatArchiveModifiedDate("2024-10-19T00:00:00.000")]);
       }, 10_000);
     } finally {
       URL.revokeObjectURL(src);
