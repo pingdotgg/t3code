@@ -7,6 +7,12 @@ import "~/index.css";
 import { act, render } from "../../../test/render";
 import { TextGeneratorsSettings } from "./TextGeneratorsSettings";
 
+const checkTextGeneratorConfig = vi.hoisted(() =>
+  vi.fn<typeof import("../../textGenerators").checkTextGeneratorConfig>(async () => ({
+    models: [{ id: "demo-model", name: "Demo model" }],
+  })),
+);
+
 vi.mock("../../hooks/useSettings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../hooks/useSettings")>()),
   useEnvironmentSettings: () => ({
@@ -25,6 +31,7 @@ vi.mock("../../hooks/useSettings", async (importOriginal) => ({
 
 vi.mock("../../textGenerators", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../textGenerators")>()),
+  checkTextGeneratorConfig,
   useTextGeneratorModels: () =>
     AsyncResult.success(
       Array.from({ length: 9 }, (_, index) => ({ id: `model-${index}`, name: `Model ${index}` })),
@@ -73,4 +80,30 @@ it("clears the model search on Escape without closing the models dialog", async 
 
   await userEvent.keyboard("{Escape}");
   await expect.element(dialog).not.toBeInTheDocument();
+});
+
+it("submits step 1 of the text generator wizard on Enter when Connect is enabled", async () => {
+  checkTextGeneratorConfig.mockClear();
+  await using _screen = await render(
+    <TextGeneratorsSettings
+      environmentId={EnvironmentId.make("local")}
+      environmentLabel="This device"
+      providers={[]}
+      readOnly={false}
+    />,
+  );
+  await userEvent.click(page.getByRole("button", { name: "Add generator" }));
+  await userEvent.click(page.getByRole("radio", { name: "Custom" }));
+
+  const baseUrl = page.getByLabelText("Base URL");
+  await expect.element(page.getByRole("button", { name: "Connect" })).toBeDisabled();
+  await userEvent.click(baseUrl);
+  await userEvent.keyboard("{Enter}");
+  expect(checkTextGeneratorConfig).not.toHaveBeenCalled();
+
+  await userEvent.type(baseUrl, "http://localhost:11434/v1{Enter}");
+  expect(checkTextGeneratorConfig).toHaveBeenCalledOnce();
+  await expect
+    .element(page.getByText(/localhost:11434 is connected and lists 1 model\./))
+    .toBeVisible();
 });

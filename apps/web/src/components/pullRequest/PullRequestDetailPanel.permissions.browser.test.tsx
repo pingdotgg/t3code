@@ -7,7 +7,7 @@ import {
   type PullRequestDetailView,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { page } from "vite-plus/test/browser";
 import appCss from "~/index.css?inline";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { act, fakeTimers, render } from "../../../test/render";
@@ -248,7 +248,8 @@ it("reads the first diff page once the pointer rests on the Code tab", async () 
   const code = screen.getByRole("button", { name: "Code", exact: true });
   await expect.element(code).toBeVisible();
 
-  await userEvent.hover(code);
+  // userEvent advances fake timers while it runs (vitest#11242), blurring the 150 ms boundary.
+  await act(() => code.element().dispatchEvent(new PointerEvent("pointerover", { bubbles: true })));
   await act(() => vi.advanceTimersByTime(149));
   expect(reads.diff).toEqual([]);
   await act(() => vi.advanceTimersByTime(1));

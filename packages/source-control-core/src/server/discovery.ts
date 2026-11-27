@@ -42,6 +42,8 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly type: "cli";
   readonly executable: string;
   readonly versionArgs: ReadonlyArray<string>;
+  /** Another program shares the executable's name; one that rejects `versionArgs` is not this CLI. */
+  readonly rejectedVersionMeansMissing?: boolean;
   readonly authArgs: ReadonlyArray<string>;
   /** Asked in order while the answer is signed out; one counts only when it finds a sign-in. */
   readonly authRetryArgs?: (environment: NodeJS.ProcessEnv) => ReadonlyArray<ReadonlyArray<string>>;
@@ -200,6 +202,15 @@ function isCliRemoteRefinementSpec(
 const isVcsProcessTimeoutError = Schema.is(VcsProcessTimeoutError);
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 
+/** Checked before a probe spawns, so a CLI that is not installed records no failed process span. */
+export const isExecutableOnPath = Effect.fnUntraced(function* (executable: string) {
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const platform = yield* HostProcess.Platform;
+  const env = yield* HostProcess.Environment;
+  const path = yield* Effect.promise(async () => resolveExecutable(executable, platform, env));
+  return path !== undefined;
+});
+
 function probeCli(input: {
   readonly spec: SourceControlCliDiscoverySpec;
   readonly process: SourceControlHost.SourceControlHost["Service"]["process"];
@@ -306,24 +317,25 @@ export function probeSourceControlProvider(input: {
     return first;
   });
 
-  // The auth check does not depend on the version output, so both spawn at once.
-  return Effect.all(
-    [
-      probeCli({
-        spec,
-        process: input.process,
-        cwd: input.cwd,
-      }),
-      auth,
-    ],
-    { concurrency: "unbounded" },
-  ).pipe(
-    Effect.map(
-      ([item, auth]) =>
-        ({
-          ...item,
-          auth: item.status === "available" ? auth : unknownAuth(item.installHint),
-        }) satisfies SourceControlProviderDiscoveryItem,
+  // A CLI that is not installed is never spawned, and auth waits until the version probe answers.
+  return isExecutableOnPath(spec.executable).pipe(
+    Effect.flatMap((found): Effect.Effect<DiscoveryProbeResult> =>
+      found
+        ? probeCli({ spec, process: input.process, cwd: input.cwd })
+        : Effect.succeed({
+            kind: spec.kind,
+            label: spec.label,
+            executable: spec.executable,
+            status: "missing",
+            version: Option.none(),
+            installHint: spec.installHint,
+            detail: Option.none(),
+          }),
+    ),
+    Effect.flatMap((item): Effect.Effect<SourceControlProviderDiscoveryItem> =>
+      item.status === "available"
+        ? Effect.map(auth, (auth) => ({ ...item, auth }))
+        : Effect.succeed({ ...item, auth: unknownAuth(item.installHint) }),
     ),
   );
 }
@@ -384,13 +396,16 @@ export const failedProbeHint = Effect.fn("discovery.failedProbeHint")(function* 
   probe: {
     readonly executable: string;
     readonly versionArgs: ReadonlyArray<string>;
+    readonly rejectedVersionMeansMissing?: boolean;
     readonly installHint: string;
   },
   cause: unknown,
 ) {
   const hint = yield* unavailableInstallHint(probe.executable, probe.installHint, cause);
   // A wrong-CPU hint or an absent executable keeps its advice; other failures need repair.
-  return hint !== probe.installHint || isMissingExecutable(cause)
+  return hint !== probe.installHint ||
+    isMissingExecutable(cause) ||
+    (probe.rejectedVersionMeansMissing === true && isVcsProcessExitError(cause))
     ? hint
     : probeFailureHint(probe, cause);
 });

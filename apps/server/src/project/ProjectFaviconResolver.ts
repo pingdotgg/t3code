@@ -1,3 +1,4 @@
+import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -76,7 +77,9 @@ const ICON_SOURCE_FILES = [
   "src/index.html",
 ] as const;
 
-const HTML_LINK_RE = /<link\b[^<>]*>/gi;
+// A quote opens a value only right after `=`; the lookahead+backreference keeps it atomic so
+// backtracking cannot re-read the value as plain text.
+const HTML_LINK_RE = /<link\b(?:[^<>=]|=(?=([\t\n\f\r ]*(?:"[^"]*"|'[^']*')|))\1)*>/gi;
 // `rel` is an unordered, whitespace-separated token list; any `icon` token marks an icon link.
 const ICON_REL_VALUE = String.raw`(?:"(?:[^"]*[\t\n\f\r ])?icon(?=[\t\n\f\r "])|'(?:[^']*[\t\n\f\r ])?icon(?=[\t\n\f\r ']))`;
 // HTML attribute syntax: a name, then an optional double-quoted, single-quoted, or unquoted value.
@@ -186,7 +189,9 @@ export const make = Effect.gen(function* () {
     // `data:`, `https:` and `//host` icons name no project file, and a long data URL fails `stat`.
     if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href.trim())) return [];
     // Browsers strip surrounding whitespace from URL attributes; file paths keep theirs.
-    const clean = href.trim().replace(/^\//, "");
+    const clean = safeDecodeURIComponent(href.trim().replace(/^\//, ""));
+    // A decoded NUL fails `stat` instead of missing.
+    if (clean.includes("\0")) return [];
     return [path.join("public", clean), clean];
   };
 

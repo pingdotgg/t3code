@@ -142,6 +142,8 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryName("/srv/git/repo.git")).toBe("repo");
     expect(getCloneDirectoryName("C:\\src\\repo.git")).toBe("repo");
     expect(getCloneDirectoryName("git@github.com:repo.git")).toBe("repo");
+    expect(getCloneDirectoryName("git@forge.example:team/spec#2026.git")).toBe("spec#2026");
+    expect(getCloneDirectoryName("forge.example:team#1/spec.git")).toBe("spec");
     expect(getCloneDirectoryName("  https://github.com/owner/repo.git  ")).toBe("repo");
     expect(getCloneDirectoryName("/srv/git/firmware#2.git")).toBe("firmware#2");
     expect(getCloneDirectoryName("~/git/what?.git")).toBe("what?");
