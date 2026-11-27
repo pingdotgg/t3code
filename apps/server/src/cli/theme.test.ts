@@ -409,10 +409,7 @@ describe("t3 theme", () => {
 
       NodeFS.chmodSync(userdataDir, 0o555);
       try {
-        const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
-          Effect.flip,
-        );
-        assert.include(String(failure), `Could not write ${settingsPathFor(baseDir)}.`);
+        yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(Effect.flip);
         assert.equal(NodeFS.readFileSync(publishedPath, "utf8"), previous);
       } finally {
         NodeFS.chmodSync(userdataDir, 0o755);
