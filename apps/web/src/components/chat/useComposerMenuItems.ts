@@ -387,6 +387,7 @@ export function useComposerMenuItems({
           query: composerTrigger?.query ?? "",
           listData: pullRequestLookup.data,
           listError: pullRequestLookup.error,
+          detailError: exactPullRequestLookup.error,
         })
       ) {
         case "unavailable":

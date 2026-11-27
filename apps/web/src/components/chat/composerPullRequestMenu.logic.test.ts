@@ -193,4 +193,30 @@ describe("composer pull request menu", () => {
       }),
     ).toBe("empty");
   });
+
+  it("surfaces exact-lookup detail errors instead of no-match while keeping not-found as no-match", () => {
+    expect(
+      resolveComposerPullRequestEmptyStateKind({
+        projectId: PROJECT_ID,
+        repository: "acme/api",
+        hasTrackedFolders: false,
+        query: "25",
+        listData: { providers: [provider(1)], entries: [], errors: [] },
+        listError: null,
+        detailError: { environmentId: "env-1", message: "This host has no working credentials." },
+      }),
+    ).toBe("error");
+
+    expect(
+      resolveComposerPullRequestEmptyStateKind({
+        projectId: PROJECT_ID,
+        repository: "acme/api",
+        hasTrackedFolders: false,
+        query: "25",
+        listData: { providers: [provider(1)], entries: [], errors: [] },
+        listError: null,
+        detailError: null,
+      }),
+    ).toBe("no-match");
+  });
 });

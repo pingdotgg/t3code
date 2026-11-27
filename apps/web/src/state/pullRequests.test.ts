@@ -2,11 +2,13 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   EnvironmentId,
   ProjectId,
+  type PullRequestDetail,
   type PullRequestListEntry,
   type PullRequestListInput,
   PullRequestUnavailableError,
   PullRequestOperationError,
   type PullRequestListResult,
+  type PullRequestRef,
   type PullRequestSummary,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -15,6 +17,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const listAnswers = vi.hoisted(() => new Map<string, unknown>());
+const detailAnswers = vi.hoisted(() => new Map<string, unknown>());
 const registry = await vi.hoisted(async () =>
   (await import("effect/reactivity")).AtomRegistry.make(),
 );
@@ -35,6 +38,8 @@ vi.mock("@t3tools/client-runtime/state/pull-requests", async (importOriginal) =>
       ...actual.createPullRequestEnvironmentAtoms(...args),
       list: ({ environmentId }: { readonly environmentId: string }) =>
         listAnswers.get(environmentId),
+      detail: ({ input }: { readonly input: PullRequestRef }) =>
+        detailAnswers.get(`${input.host ?? ""}|${input.repository}|${input.number}`),
     }),
   };
 });
@@ -51,6 +56,7 @@ import {
   restoredPullRequestList,
   threadPullRequestLinkToSummary,
   observeFailedPullRequestList,
+  usePullRequestDetails,
   usePullRequestList,
 } from "./pullRequests";
 
@@ -602,5 +608,113 @@ describe("pull request list answers across a reload", () => {
       [...storage.held.keys()].filter((key) => key.startsWith("t3.pullRequests.list:")),
     ).toEqual([]);
     expect(storage.held.get("t3.other")).toBe("kept");
+  });
+
+  it("surfaces non-not-found detail errors while ignoring repository-local not-found failures", () => {
+    const projectId = ProjectId.make("project-1");
+    const notFound = new PullRequestOperationError({
+      operation: "detail",
+      detail: "Pull request not found.",
+      reason: "not-found",
+    });
+    const unauthenticated = new PullRequestUnavailableError({
+      reason: "cli-unauthenticated",
+    });
+    const foundDetail = {
+      ...summary({ projectId, repository: "acme/api", number: 25 }),
+      capabilities: {
+        diff: true,
+        comment: true,
+        actions: [],
+        mergeMethods: [],
+        search: true,
+        review: { inlineComment: true, reply: true, resolve: true, verdicts: [] },
+        reviewers: { request: false, listCandidates: false },
+      },
+      projectTitle: "Workspace",
+      workspaceRoot: "/workspace/acme/api",
+      body: "",
+      additions: 1,
+      deletions: 0,
+      changedFiles: 1,
+      createdAt: "2026-09-09T00:00:00Z",
+      mergedAt: null,
+      closedAt: null,
+      reviewers: [],
+      labels: [],
+      checks: [],
+      mergeCapabilities: { merge: false, squash: false, rebase: false },
+      viewerPermissions: {
+        actions: [],
+        comment: false,
+        resolve: false,
+        verdicts: [],
+        requestReviewers: false,
+      },
+    } as PullRequestDetail;
+
+    detailAnswers.clear();
+    detailAnswers.set(
+      "github.com|acme/api|25",
+      Atom.make(AsyncResult.failure(Cause.fail(notFound))),
+    );
+    detailAnswers.set(
+      "gitlab.com|acme/api|25",
+      Atom.make(AsyncResult.failure(Cause.fail(unauthenticated))),
+    );
+    const failedView = usePullRequestDetails([
+      {
+        environmentId: local,
+        input: { projectId, host: "github.com", repository: "acme/api", number: 25 },
+      },
+      {
+        environmentId: local,
+        input: { projectId, host: "gitlab.com", repository: "acme/api", number: 25 },
+      },
+    ]);
+    expect(failedView.details).toEqual([]);
+    expect(failedView.error).toMatchObject({ environmentId: local });
+
+    detailAnswers.set(
+      "github.com|acme/api|26",
+      Atom.make(AsyncResult.failure(Cause.fail(notFound))),
+    );
+    detailAnswers.set(
+      "gitlab.com|acme/api|26",
+      Atom.make(AsyncResult.failure(Cause.fail(notFound))),
+    );
+    const notFoundView = usePullRequestDetails([
+      {
+        environmentId: local,
+        input: { projectId, host: "github.com", repository: "acme/api", number: 26 },
+      },
+      {
+        environmentId: local,
+        input: { projectId, host: "gitlab.com", repository: "acme/api", number: 26 },
+      },
+    ]);
+    expect(notFoundView.details).toEqual([]);
+    expect(notFoundView.error).toBeNull();
+
+    detailAnswers.set(
+      "github.com|acme/api|27",
+      Atom.make(AsyncResult.failure(Cause.fail(notFound))),
+    );
+    detailAnswers.set(
+      "gitlab.com|acme/api|27",
+      Atom.make(AsyncResult.success({ ...foundDetail, number: 27 })),
+    );
+    const foundView = usePullRequestDetails([
+      {
+        environmentId: local,
+        input: { projectId, host: "github.com", repository: "acme/api", number: 27 },
+      },
+      {
+        environmentId: local,
+        input: { projectId, host: "gitlab.com", repository: "acme/api", number: 27 },
+      },
+    ]);
+    expect(foundView.details).toEqual([{ ...foundDetail, number: 27 }]);
+    expect(foundView.error).toBeNull();
   });
 });

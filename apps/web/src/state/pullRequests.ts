@@ -626,6 +626,11 @@ const failedListObservedAt = new WeakMap<object, number>();
 const isUnavailableList = Schema.is(PullRequestUnavailableError);
 const isFailedList = Schema.is(PullRequestOperationError);
 
+function isPullRequestNotFoundCause(cause: Cause.Cause<unknown>): boolean {
+  const failure = Option.getOrNull(Cause.findErrorOption(cause));
+  return isFailedList(failure) && failure.reason === "not-found";
+}
+
 export function observeFailedPullRequestList(
   result: AsyncResult.Failure<PullRequestListResult, unknown>,
 ): { readonly value: PullRequestListResult; readonly observedAt: number } | undefined {
@@ -648,9 +653,12 @@ function createMergedEnvironmentQuery<Input, A>(
   atomFor: (
     target: EnvironmentQueryTarget<Input>,
   ) => Atom.Atom<AsyncResult.AsyncResult<A, unknown>>,
-  observeFailure?: (
-    result: AsyncResult.Failure<A, unknown>,
-  ) => { readonly value: A; readonly observedAt: number } | undefined,
+  options?: {
+    readonly observeFailure?: (
+      result: AsyncResult.Failure<A, unknown>,
+    ) => { readonly value: A; readonly observedAt: number } | undefined;
+    readonly ignoreFailure?: (cause: Cause.Cause<unknown>) => boolean;
+  },
 ) {
   const family = Atom.family((key: string) =>
     Atom.make((get): MergedEnvironmentQueryView<A> => {
@@ -664,7 +672,11 @@ function createMergedEnvironmentQuery<Input, A>(
         const result = get(atomFor(target));
         isPending ||= result.waiting;
         if (result.waiting) pendingEnvironments.add(target.environmentId);
-        if (result._tag === "Failure" && error === null) {
+        if (
+          result._tag === "Failure" &&
+          error === null &&
+          options?.ignoreFailure?.(result.cause) !== true
+        ) {
           error = {
             environmentId: target.environmentId,
             message: formatEnvironmentQueryError(result.cause),
@@ -675,7 +687,7 @@ function createMergedEnvironmentQuery<Input, A>(
         if (result._tag === "Success") {
           observations.push([target.environmentId, result.value, result.timestamp]);
         } else if (result._tag === "Failure") {
-          const observation = observeFailure?.(result);
+          const observation = options?.observeFailure?.(result);
           if (observation !== undefined) {
             observations.push([target.environmentId, observation.value, observation.observedAt]);
           }
@@ -725,13 +737,13 @@ const usePullRequestHostListsQuery = createMergedEnvironmentQuery(
   "web-pull-requests:host-list",
   (target: EnvironmentQueryTarget<PullRequestListInput>) =>
     pullRequestHostAnswer(pullRequestEnvironment.list(target)),
-  observeFailedPullRequestList,
+  { observeFailure: observeFailedPullRequestList },
 );
 
 const usePullRequestListsQuery = createMergedEnvironmentQuery(
   "web-pull-requests:list",
   pullRequestEnvironment.list,
-  observeFailedPullRequestList,
+  { observeFailure: observeFailedPullRequestList },
 );
 
 const usePullRequestStatsQuery = createMergedEnvironmentQuery(
@@ -742,6 +754,7 @@ const usePullRequestStatsQuery = createMergedEnvironmentQuery(
 const usePullRequestDetailsQuery = createMergedEnvironmentQuery(
   "web-pull-requests:detail",
   pullRequestEnvironment.detail,
+  { ignoreFailure: isPullRequestNotFoundCause },
 );
 
 const usePullRequestFilterOptionsQuery = createMergedEnvironmentQuery(
@@ -813,11 +826,13 @@ export function usePullRequestDetails(
   targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestRef>>,
 ): {
   readonly details: ReadonlyArray<PullRequestDetail>;
+  readonly error: EnvironmentQueryError | null;
   readonly isPending: boolean;
 } {
   const query = usePullRequestDetailsQuery(targets);
   return {
     details: query.values.map(([, detail]) => detail),
+    error: query.error,
     isPending: query.isPending,
   };
 }

@@ -6211,3 +6211,106 @@ it.effect(
       assert.strictEqual(statsCalls.length, 2);
     }),
 );
+
+it.effect(
+  "deduplicates listed repositories by canonical identity for same-named Azure DevOps repos while collapsing duplicate checkouts",
+  () =>
+    Effect.gen(function* () {
+      const detailCwds = new Map<string, string>();
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "azure-multi",
+            title: "Azure Multi",
+            workspaceRoot: "/azure-multi",
+            trackedFolders: [
+              { path: "/azure-multi/org-a", name: "org-a", discovered: true },
+              { path: "/azure-multi/org-a-ssh", name: "org-a-ssh", discovered: true },
+              { path: "/azure-multi/org-b", name: "org-b", discovered: true },
+            ],
+          }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("azure-devops"), {
+            ...keyedByCanonicalKey,
+            listChangeRequests: () =>
+              Effect.succeed({
+                items: [],
+                truncated: false,
+                continues: false,
+              }),
+            getChangeRequest: ({ cwd, repository, number }) => {
+              detailCwds.set(`${cwd}:${repository}#${number}`, cwd);
+              return Effect.succeed({
+                ...hostedChangeRequest(`Azure PR ${number} in ${cwd}`),
+                number,
+                url: `https://dev.azure.com${cwd}/project/_git/${repository}/pullrequest/${number}`,
+              });
+            },
+          }),
+        ],
+        resolveRepositoryIdentity: (cwd) => {
+          if (cwd === "/azure-multi/org-a") {
+            return Effect.succeed({
+              canonicalKey: "dev.azure.com/org-a/project/_git/web",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "https://dev.azure.com/org-a/project/_git/web",
+              },
+              provider: SourceControlProviderKind.make("azure-devops"),
+              displayName: "org-a/project/_git/web",
+            });
+          }
+          if (cwd === "/azure-multi/org-a-ssh") {
+            return Effect.succeed({
+              canonicalKey: "ssh.dev.azure.com/v3/org-a/project/web",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "git@ssh.dev.azure.com:v3/org-a/project/web",
+              },
+              provider: SourceControlProviderKind.make("azure-devops"),
+              displayName: "org-a/project/_git/web",
+            });
+          }
+          if (cwd === "/azure-multi/org-b") {
+            return Effect.succeed({
+              canonicalKey: "dev.azure.com/org-b/project/_git/web",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "https://dev.azure.com/org-b/project/_git/web",
+              },
+              provider: SourceControlProviderKind.make("azure-devops"),
+              displayName: "org-b/project/_git/web",
+            });
+          }
+          return Effect.succeed(null);
+        },
+      });
+
+      const listed = yield* service.list({ state: "all", projectId: "azure-multi" as ProjectId });
+      assert.deepStrictEqual(listed.repositories, [
+        { host: "dev.azure.com", repository: "org-a/project/_git/web" },
+        { host: "dev.azure.com", repository: "org-b/project/_git/web" },
+      ]);
+
+      const orgADetail = yield* service.detail({
+        projectId: "azure-multi" as ProjectId,
+        host: "dev.azure.com",
+        repository: "org-a/project/_git/web",
+        number: 7,
+      });
+      const orgBDetail = yield* service.detail({
+        projectId: "azure-multi" as ProjectId,
+        host: "dev.azure.com",
+        repository: "org-b/project/_git/web",
+        number: 7,
+      });
+      assert.strictEqual(orgADetail.workspaceRoot, "/azure-multi/org-a");
+      assert.strictEqual(orgBDetail.workspaceRoot, "/azure-multi/org-b");
+      assert.strictEqual(detailCwds.get("/azure-multi/org-a:web#7"), "/azure-multi/org-a");
+      assert.strictEqual(detailCwds.get("/azure-multi/org-b:web#7"), "/azure-multi/org-b");
+    }),
+);

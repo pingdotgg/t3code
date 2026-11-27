@@ -603,7 +603,7 @@ export const pullRequestDiffStatKey = (row: {
   readonly repository: string;
   readonly number: number;
 }) =>
-  `${row.environmentId} ${row.projectId} ${row.host?.toLowerCase() ?? ""} ${row.repository.toLowerCase()} ${row.number}`;
+  `${row.environmentId} ${row.projectId} ${(row.host ?? "").trim().toLowerCase()} ${row.repository.trim().toLowerCase()} ${row.number}`;
 
 /** Older servers send counts without a host; those stand for the repository on any host. */
 export const readPullRequestDiffStat = <Stat>(

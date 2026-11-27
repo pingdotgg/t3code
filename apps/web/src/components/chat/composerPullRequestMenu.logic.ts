@@ -117,11 +117,14 @@ export function resolveComposerPullRequestEmptyStateKind(input: {
     readonly errors: ReadonlyArray<{ readonly projectId: ProjectId }>;
   } | null;
   readonly listError: unknown;
+  readonly detailError?: unknown;
 }): ComposerPullRequestEmptyStateKind {
+  const detailError = input.detailError ?? null;
   const trackedFoldersHaveNoRepository =
     input.repository === null &&
     input.listData !== null &&
     input.listError === null &&
+    detailError === null &&
     input.listData.providers.length === 0 &&
     input.listData.entries.length === 0 &&
     input.listData.errors.length === 0;
@@ -130,6 +133,7 @@ export function resolveComposerPullRequestEmptyStateKind(input: {
   }
   if (
     input.listError !== null ||
+    detailError !== null ||
     input.listData?.errors.some((error) => error.projectId === input.projectId)
   ) {
     return "error";

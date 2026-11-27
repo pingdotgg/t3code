@@ -1103,10 +1103,19 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
         const repository = ref.repository.trim();
         const host = ref.host?.trim().toLowerCase();
+        const referenceRepositoryKey =
+          host === undefined
+            ? null
+            : sourceControlDefinitions.canonicalRepositoryKey(
+                `${host}/${repository}`.toLowerCase(),
+              );
         const match = supported.find(
           (candidate) =>
-            candidate.repository.toLowerCase() === repository.toLowerCase() &&
-            (host === undefined || host === candidate.host),
+            (referenceRepositoryKey !== null &&
+              candidate.repositoryKey !== null &&
+              candidate.repositoryKey === referenceRepositoryKey) ||
+            (candidate.repository.toLowerCase() === repository.toLowerCase() &&
+              (host === undefined || host === candidate.host)),
         );
         if (match !== undefined) return Effect.succeed(match);
         if (host === undefined) {
@@ -1206,15 +1215,36 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const listedRepositoryOf = (project: SupportedProject) => {
+    if (project.repositoryKey !== null) {
+      const slash = project.repositoryKey.indexOf("/");
+      if (slash > 0 && slash < project.repositoryKey.length - 1) {
+        return {
+          key: project.repositoryKey,
+          host: project.repositoryKey.slice(0, slash),
+          repository: project.repositoryKey.slice(slash + 1),
+        };
+      }
+    }
+    return {
+      key:
+        project.repositoryKey ??
+        `${project.host.toLowerCase()}\0${project.repository.toLowerCase()}`,
+      host: project.host,
+      repository: project.repository,
+    };
+  };
+
   const canonicalRef = Effect.fn("PullRequestService.canonicalRef")(function* <
     I extends PullRequestRef,
   >(input: I) {
     const project = yield* requireProject(input);
+    const canonical = listedRepositoryOf(project);
     return {
       ...input,
       projectId: project.project.id,
-      host: project.host,
-      repository: project.repository,
+      host: canonical.host,
+      repository: canonical.repository,
     };
   });
 
@@ -1521,10 +1551,10 @@ export const make = Effect.gen(function* () {
         ? undefined
         : Array.from(
             new Map(
-              projects.map((project) => [
-                `${project.host.toLowerCase()}\0${project.repository.toLowerCase()}`,
-                { host: project.host, repository: project.repository },
-              ]),
+              projects.map((project) => {
+                const { key, host, repository } = listedRepositoryOf(project);
+                return [key, { host, repository }] as const;
+              }),
             ).values(),
           );
     if (readable.length === 0) {

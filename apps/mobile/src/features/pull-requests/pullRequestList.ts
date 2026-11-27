@@ -80,8 +80,19 @@ export const scopedPullRequestListKey = (entry: EnvironmentPullRequestListEntry)
   `${entry.environmentId}:${pullRequestListKey(entry)}`;
 
 export const pullRequestStatKey = (
-  row: Pick<PullRequestDiffStat, "projectId" | "repository" | "number">,
-) => `${row.projectId}:${row.repository}:${row.number}`;
+  row: Pick<PullRequestDiffStat, "projectId" | "host" | "repository" | "number">,
+) =>
+  `${row.projectId}:${(row.host ?? "").trim().toLowerCase()}:${row.repository.trim().toLowerCase()}:${row.number}`;
+
+export function findCachedPullRequestStat(
+  stats: ReadonlyMap<string, PullRequestDiffStat>,
+  entry: Pick<PullRequestListEntry, "projectId" | "host" | "repository" | "number">,
+): PullRequestDiffStat | undefined {
+  return (
+    stats.get(pullRequestStatKey(entry)) ??
+    stats.get(pullRequestStatKey({ ...entry, host: undefined }))
+  );
+}
 
 /**
  * Diff stats an environment has answered, the stats query that answered each, and each row's
@@ -109,7 +120,7 @@ export function withListedPullRequests(
   cache: PullRequestStatsCache,
   entries: readonly Pick<
     PullRequestListEntry,
-    "projectId" | "repository" | "number" | "updatedAt"
+    "projectId" | "host" | "repository" | "number" | "updatedAt"
   >[],
 ): {
   readonly cache: PullRequestStatsCache;
@@ -125,10 +136,13 @@ export function withListedPullRequests(
   const refresh = new Set<PullRequestListStatsInput>();
   for (const entry of moved) {
     const key = pullRequestStatKey(entry);
-    const query = answeredBy.get(key);
+    const legacyKey = pullRequestStatKey({ ...entry, host: undefined });
+    const query = answeredBy.get(key) ?? answeredBy.get(legacyKey);
     if (query) refresh.add(query);
     stats.delete(key);
+    stats.delete(legacyKey);
     answeredBy.delete(key);
+    answeredBy.delete(legacyKey);
     updatedAt.set(key, entry.updatedAt);
   }
   return { cache: { stats, answeredBy, updatedAt }, refresh: [...refresh] };
@@ -167,7 +181,9 @@ export function withShownPullRequestStats(
   if (!shown.size) return entries;
   let changed = false;
   const next = entries.map((entry) => {
-    const stat = shown.get(`${entry.environmentId}:${pullRequestStatKey(entry)}`);
+    const stat =
+      shown.get(`${entry.environmentId}:${pullRequestStatKey(entry)}`) ??
+      shown.get(`${entry.environmentId}:${pullRequestStatKey({ ...entry, host: undefined })}`);
     if (!stat || entry.additions + entry.deletions !== 0) return entry;
     if (stat.additions + stat.deletions === 0) return entry;
     changed = true;
