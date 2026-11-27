@@ -27,10 +27,11 @@ vi.mock("../media/mediaContent", () => ({ downloadMedia: state.download }));
 const environmentId = EnvironmentId.make("env");
 
 it("saves the host file through an attachment asset URL, and only with file access", async () => {
+  const downloaded = Promise.withResolvers<void>();
+  state.download.mockImplementationOnce(async () => downloaded.resolve());
   useFileDownload(environmentId)!("/repo", Promise.resolve("/repo/dist/a.zip"));
-  await vi.waitFor(() =>
-    expect(state.download).toHaveBeenCalledWith("https://host.example/api/assets/t/a.zip", "a.zip"),
-  );
+  await downloaded.promise;
+  expect(state.download).toHaveBeenCalledWith("https://host.example/api/assets/t/a.zip", "a.zip");
   expect(state.createUrl).toHaveBeenCalledWith({
     environmentId,
     input: {
