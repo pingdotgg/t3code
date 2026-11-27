@@ -698,6 +698,7 @@ export function parseGoalCommand(message: {
     case "pause":
       return { type: "pause" };
     case "resume":
+    case "continue":
       return { type: "resume" };
     default:
       return { type: "set", objective: argument };
