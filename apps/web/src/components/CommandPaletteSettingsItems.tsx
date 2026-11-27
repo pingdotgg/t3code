@@ -33,9 +33,7 @@ export function useCommandPaletteSettingsItems(
     searchTerms: [
       item.title,
       SETTINGS_SECTION_LABELS[item.to],
-      ...(SETTINGS_NAV_LABELS[item.to] !== SETTINGS_SECTION_LABELS[item.to]
-        ? [SETTINGS_NAV_LABELS[item.to]]
-        : []),
+      SETTINGS_NAV_LABELS[item.to],
       ...(item.searchTerms ?? []),
     ].flatMap((term) => [messages(term), decodeMsg(term)]),
     title: messages(item.title),

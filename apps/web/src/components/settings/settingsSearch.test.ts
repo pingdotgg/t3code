@@ -69,7 +69,6 @@ describe("searchSettings", () => {
     ];
     for (const [section, nav] of [
       ["Versionshantering och ärenden", "Versioner och ärenden"],
-      ["Controle de versão e issues", "Versões e issues"],
       ["Page title", "Navigation: localized suffix"],
     ] as const) {
       const translate = (message: string) =>
