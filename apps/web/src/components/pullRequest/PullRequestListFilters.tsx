@@ -2,6 +2,7 @@ import { Spinner } from "~/components/ui/spinner";
 import type {
   EnvironmentId,
   ProjectId,
+  PullRequestActor,
   PullRequestFilterOptionsInput,
   PullRequestInvolvement,
   PullRequestLabel,
@@ -54,6 +55,7 @@ import {
   selectedPullRequestLabels,
   pullRequestLabelChoices,
   pullRequestLabelColor,
+  rememberPullRequestAuthors,
   rememberPullRequestLabels,
   type PullRequestAuthorFacet,
   type PullRequestLabelFacet,
@@ -317,8 +319,11 @@ function PullRequestAuthorChoices({
   const gt = useGT();
   const [query, setQuery] = useState("");
   const hosted = useHostedFilterOptions(scope, "authors", query);
+  const [seen, setSeen] = useState<ReadonlyArray<PullRequestActor>>([]);
+  const remembered = rememberPullRequestAuthors(seen, hosted.authors);
+  if (remembered !== seen) setSeen(remembered);
   const login = value?.toLowerCase() ?? "";
-  const selected = selectedPullRequestAuthor(options, hosted.authors, value);
+  const selected = selectedPullRequestAuthor(options, remembered, value);
   const visible = [
     ...(selected ? [selected] : []),
     ...pullRequestAuthorChoices(options, hosted.authors, query).filter(

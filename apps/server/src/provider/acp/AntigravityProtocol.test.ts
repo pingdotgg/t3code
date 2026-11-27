@@ -877,6 +877,62 @@ describe("Antigravity served reads", () => {
     );
     expect(t3Call.data.rawInput).toEqual({ message: "Hello" });
 
+    const proxiedT3Call = normalizeAntigravityToolCall(
+      parseToolUpdate(
+        normalizeAntigravitySessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_t3_proxy_send",
+            title: "Run mcp_t3-code_tool_call",
+            kind: "other",
+            status: "in_progress",
+            rawInput: {
+              name: "send_to_user",
+              arguments: { message: "Hello", toolSummary: "Nested summary" },
+              toolSummary: "Outer summary",
+            },
+          },
+        }),
+      ).toolCall,
+    );
+    expect(proxiedT3Call.data.rawInput).toEqual({
+      name: "send_to_user",
+      arguments: { message: "Hello" },
+    });
+
+    const callMcpProxiedT3Call = normalizeAntigravityToolCall(
+      parseToolUpdate(
+        normalizeAntigravitySessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_t3_call_mcp_proxy_send",
+            title: "MCP Tool tool_call",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: {
+              ServerName: "t3-code",
+              ToolName: "tool_call",
+              Arguments: {
+                name: "send_to_user",
+                arguments: { message: "Hello", toolSummary: "Nested summary" },
+                toolSummary: "Outer summary",
+              },
+            },
+          },
+        }),
+      ).toolCall,
+    );
+    expect(callMcpProxiedT3Call.data.rawInput).toEqual({
+      ServerName: "t3-code",
+      ToolName: "tool_call",
+      Arguments: {
+        name: "send_to_user",
+        arguments: { message: "Hello" },
+      },
+    });
+
     const foreignCall = normalizeAntigravityToolCall(
       parseToolUpdate({
         sessionId: "session-1",

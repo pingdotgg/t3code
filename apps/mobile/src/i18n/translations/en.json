@@ -2826,7 +2826,7 @@
   "91e832d25ff2aba9": "{term, select, mr {Merge request} cr {Change request} other {Pull request}} {number}",
   "bbb7d40a7ad7ab71": "Private",
   "37f84b2c7830febb": "stack {position} of {size}",
-  "0469747f4bb9caac": "{additions} additions, {deletions} deletions",
+  "3920accacc91683e": "{additions, plural, one {{additions} addition} other {{additions} additions}}, {deletions, plural, one {{deletions} deletion} other {{deletions} deletions}}",
   "4e3cdb7e814e8962": "Double tap to open. Touch and hold for quick actions.",
   "d50c8bcf494b1158": "View attachment: {caption}",
   "868d7f357f06cdd2": "Reconnect to merge.",

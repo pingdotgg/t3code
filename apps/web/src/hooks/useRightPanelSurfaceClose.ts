@@ -102,18 +102,19 @@ export function useRightPanelSurfaceClose(input: {
       () => undefined,
     );
   };
-  // The active surface closes last so the panel does not flash through it.
   const finishClose = (toClose: readonly RightPanelSurface[]) => {
     if (!threadRef) return;
     const store = useRightPanelStore.getState();
-    const activeId = selectThreadRightPanelState(store.byThreadKey, threadRef).activeSurfaceId;
-    const ordered = toClose.toSorted(
-      (left, right) => Number(left.id === activeId) - Number(right.id === activeId),
+    const { activeSurfaceId, surfaces } = selectThreadRightPanelState(store.byThreadKey, threadRef);
+    const openIds = new Set(surfaces.map((surface) => surface.id));
+    const closingSurfaces = toClose.filter((surface) => openIds.has(surface.id));
+    if (closingSurfaces.length === 0) return;
+    // Close the tabs before releasing sessions, which can prune the tabs during reconciliation.
+    store.closeSurfaces(
+      threadRef,
+      closingSurfaces.map((surface) => surface.id),
     );
-    for (const surface of ordered) {
-      // Releasing a browser drops its session, which prunes the tab automatically; close it
-      // first so the close stays a user action that hides the panel after the last tab.
-      store.closeSurface(threadRef, surface.id);
+    for (const surface of closingSurfaces) {
       releaseSurfaceResources(threadRef, surface);
     }
     const nextActiveSurface = selectActiveRightPanelSurface(
@@ -123,7 +124,7 @@ export function useRightPanelSurfaceClose(input: {
     if (nextActiveSurface?.kind === "preview" && nextActiveSurface.resourceId) {
       setActivePreviewTab(threadRef, nextActiveSurface.resourceId);
     }
-    focusPanelTerminalAfterClose(threadRef, activeId);
+    focusPanelTerminalAfterClose(threadRef, activeSurfaceId);
   };
   const labelFor = (terminalId: string) =>
     terminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId, m);
@@ -177,6 +178,13 @@ export function useRightPanelSurfaceClose(input: {
     closeSurfaces(surfaces.slice(surfaceIndex + 1));
   });
   const closeAllSurfaces = useStableCallback(() => closeSurfaces(surfaces));
+  const closeSelectedSurfaces = useStableCallback(closeSurfaces);
 
-  return { closeSurface, closeOtherSurfaces, closeSurfacesToRight, closeAllSurfaces };
+  return {
+    closeSurface,
+    closeSelectedSurfaces,
+    closeOtherSurfaces,
+    closeSurfacesToRight,
+    closeAllSurfaces,
+  };
 }

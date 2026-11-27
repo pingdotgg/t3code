@@ -151,3 +151,38 @@ it("shows who commented on a linked comment in the active language", async () =>
 
   await expect.element(page.getByText(/octocat\s*がコメントしました/)).toBeVisible();
 });
+
+it("shows when a pull request was opened in the active language", async () => {
+  setup({
+    restoredPreview: {
+      projectId: "project",
+      repository: "owner/repo",
+      number: 1,
+      title: "Renamed title",
+      url: known.url,
+      author: { login: "octocat" },
+      state: "open",
+      isDraft: false,
+      createdAt: "2026-08-01T00:00:00Z",
+    },
+  });
+  const translations = await getTranslationsSnapshot("de");
+  using _now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-03T00:00:00Z"));
+  await using screen = await render(
+    <GTProvider locale="de" translations={translations}>
+      <PullRequestLinkPreview
+        link={<a href={known.url}>#1</a>}
+        originalUrl={known.url}
+        target={{
+          environmentId: EnvironmentId.make("environment"),
+          input: { projectId: ProjectId.make("project"), repository: "owner/repo", number: 1 },
+        }}
+      />
+    </GTProvider>,
+  );
+
+  await userEvent.hover(screen.getByRole("link"));
+
+  await expect.element(page.getByText("eröffnet vor 2 T.", { exact: true })).toBeVisible();
+  expect(page.getByText(/\bopened\b/i).query()).toBeNull();
+});
