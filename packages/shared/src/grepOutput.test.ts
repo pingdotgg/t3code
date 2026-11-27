@@ -47,6 +47,12 @@ describe("parseGrepOutput", () => {
       { fileName: "src/a.ts", line: 4, preview: "  const a = 1;" },
       { fileName: "src/a.ts", line: 7, preview: "a();" },
     ]);
+    expect(
+      parseGrepOutput("docs/Release notes.md\n2:match\n\nREADME.md\n6:another match", "."),
+    ).toEqual([
+      { fileName: "docs/Release notes.md", line: 2, preview: "match" },
+      { fileName: "README.md", line: 6, preview: "another match" },
+    ]);
   });
 
   it("reads Gemini's File and L-numbered form", () => {
@@ -69,6 +75,7 @@ describe("parseGrepOutput", () => {
   it.each([
     ["a directory listing", "Contents of /repo:\n  [DIR] .git\n  [FILE] README.md"],
     ["an error", "ripgrep failed: invalid regex"],
+    ["prose before a tool-specific numbered line", "Text output\n  Line 2: not a grep match"],
     ["a file list", "/repo/a.ts\n/repo/b.ts"],
     ["no matches", "No files found"],
     ["ripgrep context lines", "a.ts\n1-before\n2:needle"],

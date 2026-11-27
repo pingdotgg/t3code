@@ -749,6 +749,9 @@ describe("workflowOneLine", () => {
     expect(workflowOneLine("Fixed **`foo_bar`** and _see `x`_ now.")).toBe(
       "Fixed foo_bar and see x now.",
     );
+    expect(workflowOneLine("#4512 is merged.\nTests pass.")).toBe("#4512 is merged.");
+    expect(workflowOneLine("> ## Summary\n\nAll good.")).toBe("All good.");
+    expect(workflowOneLine("####### Seven hashes.\nok.")).toBe("####### Seven hashes.");
   });
 
   it("keeps underscores inside identifiers, paths and code", () => {

@@ -8722,7 +8722,7 @@
   "a6a6dc235b108747": "Permite que os agentes usem o navegador compartilhado. Os projetos podem substituir isso.",
   "ea5fed973bfc1aca": "Redefinir o acesso padrão ao navegador para o padrão",
   "19e1f74805f4a1fb": "Acesso dos agentes ao navegador",
-  "b395b88284e3bca2": "Mostra a pré-visualização flutuante quando um agente abre um navegador ou dispositivo, a menos que o agente diga o contrário.",
+  "d6ccca83a1676fcb": "Mostra a pré-visualização flutuante quando um agente abre um navegador ou dispositivo, a menos que o agente diga o contrário, e quando você fecha o painel direito.",
   "6aadfd59cf60b4b5": "Redefinir \"Mostrar pré-visualização flutuante automaticamente\" para o padrão",
   "e4a7ec61190bc1f9": "Mostrar pré-visualização flutuante automaticamente",
   "3705c53cb3e76a28": "Não foi possível limpar os dados de {name}",
