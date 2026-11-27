@@ -302,21 +302,10 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
-    if (extension === ".odt" && node.name === "hidden-text") {
-      const scope = [...stack, node];
-      if (namespaceOf(tag.name, scope) === ODF_TEXT_NS) {
-        if (isHiddenOdfField(tag.attributes, scope)) {
-          parent.children.pop();
-          return;
-        }
-        // ODF stores the visible field value in text:string-value when present.
-        const value = odfTextAttribute(tag.attributes, "string-value", scope);
-        if (value !== undefined) {
-          node.children = [value];
-          node.hasText = value.trim() !== "";
-        }
-      }
-    }
+    const isOdfHiddenText =
+      extension === ".odt" &&
+      node.name === "hidden-text" &&
+      namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS;
     if (extension === ".pptx" && node.name === "cNvPr") {
       const hidden = tag.attributes.hidden?.trim();
       const drawing = stack.at(-2);
@@ -375,6 +364,7 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
       (extension === ".docx" && node.name === "del") ||
       wordRunHidden ||
       (odf && node.name === "annotation" && parent.name !== "semantics") ||
+      (isOdfHiddenText && isHiddenOdfField(tag.attributes, [...stack, node])) ||
       (extension === ".odt" &&
         node.name === "section" &&
         isHiddenOdfSection(tag.name, tag.attributes, [...stack, node])) ||
@@ -412,6 +402,14 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
       if (citation?.hasText && body?.hasText) {
         body.odfInlineParagraphs = true;
         node.children = ["[", citation, ": ", body, "]"];
+      }
+    }
+    if (isOdfHiddenText) {
+      // ODF stores the visible field value in text:string-value when present.
+      const value = odfTextAttribute(tag.attributes, "string-value", [...stack, node]);
+      if (value !== undefined) {
+        node.children = [value];
+        node.hasText = value.trim() !== "";
       }
     }
     if (odf && node.name === "ruby" && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) {
