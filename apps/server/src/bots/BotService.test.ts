@@ -178,6 +178,7 @@ it.effect(
         ],
       );
       assert.include(orchestration.sent[0]!.text, "waits for an approval");
+      assert.include(orchestration.sent[0]!.text, "do not repeat or relay it");
       // The settled run's watch ended; workers stay watched with no watch at all.
       assert.deepStrictEqual(yield* bots.watches(leader.id), []);
 
