@@ -29,7 +29,7 @@ export function WorkflowRunsAbout({
   const nodes = allWorkflowRunNodes(groupWorkflowRuns([], about.data.runs, about.data.questions));
   return (
     <section className="mt-3 space-y-1">
-      <h3 className="text-xs font-medium text-muted-foreground">{gt("Workflow runs")}</h3>
+      <h3 className="text-meta text-muted-foreground">{gt("Workflow runs")}</h3>
       <ul className="space-y-0.5">
         {nodes.map((node) => {
           const question = node.questions[0];
@@ -38,7 +38,7 @@ export function WorkflowRunsAbout({
               <Link
                 to="/workflows"
                 search={{ env: environmentId, run: node.run.runId }}
-                className="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-inset focus-visible:outline-none"
+                className="flex min-w-0 items-center gap-1.5 rounded-row px-1.5 py-1 text-meta hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-inset focus-visible:outline-none"
               >
                 <WorkflowChip name={node.run.workflow} />
                 <span className="min-w-0 flex-1 truncate text-foreground">{node.run.title}</span>
