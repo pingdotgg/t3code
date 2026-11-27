@@ -3312,6 +3312,7 @@ it.effect.each([
   { status: "completed", followup: "cancelled-wake" },
   { status: "completed", followup: "cancelled-input" },
   { status: "cancelled", followup: "restart" },
+  { status: "cancelled", followup: "restart-disabled" },
 ] as const)(
   "settle when done persists and completes its work ($status, $followup)",
   ({ status, followup }) =>
@@ -3617,7 +3618,7 @@ it.effect.each([
         assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
         if (followup === "older-delivery") return;
       }
-      if (followup === "restart") {
+      if (followup === "restart" || followup === "restart-disabled") {
         const outbox = yield* EffectOutbox.EffectOutboxV2;
         yield* outbox.enqueue([
           {
@@ -3639,6 +3640,24 @@ it.effect.each([
         assert.isTrue(Exit.isFailure(duringRestart));
         assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, intent);
         assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
+        if (followup === "restart-disabled") {
+          const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+          const workerId = "settle-restart-test";
+          const claimed = Option.getOrThrow(yield* outbox.claimNext({ workerId }));
+          assert.equal(claimed.id, `effect:restart-continuation:${runId}`);
+          assert.isTrue(yield* outbox.succeed({ effectId: claimed.id, workerId }));
+          assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+          yield* orchestrator.dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make("settle-during-restart"),
+            threadId,
+            expectedLatestRunId: runId,
+            expectedSettleWhenDone: intent,
+          });
+          assert.isNull((yield* projections.getThread(threadId)).settleWhenDone ?? null);
+          assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
+          return;
+        }
       }
       if (followup !== "none" && followup !== "cancelled-input") {
         yield* orchestrator.dispatch({

@@ -241,6 +241,7 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
     commandId: CommandId,
     commandType: Schema.String,
     cause: Schema.optional(Schema.Defect()),
+    retryable: Schema.optional(Schema.Literal(true)),
   },
 ) {
   override get message(): string {
@@ -4862,6 +4863,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               commandId: command.commandId,
               commandType: command.type,
               cause: "The response is waiting for its restart continuation.",
+              retryable: true,
             });
           const now = yield* DateTime.now;
           yield* emit(
@@ -16882,10 +16884,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
       Effect.catch((cause) =>
         Effect.gen(function* () {
-          // Refusals depend on modes the user can change; a recorded rejection would block the retry.
+          // These refusals can clear without changing the command's identity.
           if (
             cause._tag === "OrchestratorThreadAboveModeLimitError" ||
-            cause._tag === "OrchestratorRuntimeModeAboveCeilingError"
+            cause._tag === "OrchestratorRuntimeModeAboveCeilingError" ||
+            (cause._tag === "OrchestratorDispatchError" && cause.retryable === true)
           ) {
             return yield* cause;
           }
