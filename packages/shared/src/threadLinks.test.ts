@@ -167,6 +167,23 @@ describe("thread links", () => {
     },
   );
 
+  it.each([
+    ["    ", ""],
+    ["\t", ""],
+    [">     ", "> "],
+    ["-     ", ""],
+  ])(
+    "rewrites prose links after an indented code line that looks like a fence (%j)",
+    (indent, prose) => {
+      for (const bom of ["", "\uFEFF"]) {
+        const example = `${bom}${indent}~~~\n${prose.trimEnd()}\n${prose}See `;
+        expect(replaceThreadLinks(`${example}<t3-thread://v2/local/t>`, () => "linked")).toBe(
+          `${example}linked`,
+        );
+      }
+    },
+  );
+
   it("leaves links inside code spans and fences as written", () => {
     const markdown = [
       "Live [old](t3-thread://v1/t1), literal `[old](t3-thread://v1/t1)`.",
