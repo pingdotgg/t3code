@@ -6828,6 +6828,7 @@
   "09f38e303898401f": "No se pudo preparar el checkout de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}",
   "853a77d42f86c918": "Checkout hecho, pero el hilo se quedó donde estaba",
   "0746dfa692f895cc": "El checkout está listo en `{branch}`. Apunta un hilo a él desde el selector de ramas y vuelve a preguntar.",
+  "0b9ec6d9983609b5": "No se pudo comprobar la rama. Vuelve a abrir el menú para reintentar.",
   "88db70a96177d202": "Checkout hecho aquí",
   "c9a052ee6afb40d4": "Checkout hecho aquí",
   "baa66fde3613022b": "Checkout hecho",

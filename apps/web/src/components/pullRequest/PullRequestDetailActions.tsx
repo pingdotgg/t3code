@@ -110,7 +110,8 @@ export function PullRequestCheckoutMenu({
         null)
       : null;
   const branch = useEnvironmentQuery(branchAtom);
-  const checkingBranch = branchAtom !== null && branch.data === null && branch.error === null;
+  const branchReadFailed = branchAtom !== null && branch.data === null && branch.error !== null;
+  const checkingBranch = branchAtom !== null && branch.data === null && !branchReadFailed;
   const worktreeBranchAlreadyCheckedOut =
     sameRepositoryHead !== null && branch.data?.refName === sameRepositoryHead;
   return (
@@ -153,7 +154,12 @@ export function PullRequestCheckoutMenu({
       />
       <MenuPopup align="end" side="bottom">
         <MenuItem
-          disabled={!canPrepareWorktree || checkingBranch || worktreeBranchAlreadyCheckedOut}
+          disabled={
+            !canPrepareWorktree ||
+            checkingBranch ||
+            branchReadFailed ||
+            worktreeBranchAlreadyCheckedOut
+          }
           onClick={() => onCheckout("worktree")}
         >
           <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
@@ -166,6 +172,8 @@ export function PullRequestCheckoutMenu({
                 <T>Checked out here</T>
               ) : checkingBranch ? (
                 <T>Checking…</T>
+              ) : branchReadFailed ? (
+                <T>Couldn't check the branch. Reopen the menu to retry.</T>
               ) : (
                 <T>Its own folder and thread. Nothing you have open moves.</T>
               )}

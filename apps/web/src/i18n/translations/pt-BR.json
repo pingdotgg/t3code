@@ -6828,6 +6828,7 @@
   "09f38e303898401f": "Não foi possível preparar o checkout {term, select, mr {do merge request} cr {da solicitação de alteração} other {do pull request}}",
   "853a77d42f86c918": "Checkout feito, mas a thread ficou onde estava",
   "0746dfa692f895cc": "O checkout está pronto em `{branch}`. Aponte uma thread para ele pelo seletor de branch e pergunte novamente.",
+  "0b9ec6d9983609b5": "Não foi possível verificar a branch. Reabra o menu para tentar novamente.",
   "88db70a96177d202": "Checkout feito aqui",
   "c9a052ee6afb40d4": "Checkout feito aqui",
   "baa66fde3613022b": "Checkout feito",

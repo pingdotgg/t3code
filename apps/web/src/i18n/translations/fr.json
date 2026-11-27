@@ -6829,6 +6829,7 @@
   "09f38e303898401f": "Impossible de préparer l’extraction de la {term, select, mr {merge request} cr {demande de modification} other {pull request}}",
   "853a77d42f86c918": "Récupérée, mais le fil est resté où il était",
   "0746dfa692f895cc": "Le checkout est prêt sur `{branch}`. Pointez un fil dessus depuis le sélecteur de branche, puis reposez la question.",
+  "0b9ec6d9983609b5": "Impossible de vérifier la branche. Rouvrez le menu pour réessayer.",
   "88db70a96177d202": "Récupérée ici",
   "c9a052ee6afb40d4": "Récupérée ici",
   "baa66fde3613022b": "Récupérée",

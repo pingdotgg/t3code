@@ -208,6 +208,27 @@ it.each([
   },
 );
 
+it("keeps worktree checkout disabled when the branch read fails and retries on reopen", async () => {
+  setup();
+  shown.detail = { ...detail, headRepositoryNameWithOwner: detail.repository };
+  const failed = Atom.make<AsyncResult.AsyncResult<{ refName: string }, Error>>(
+    AsyncResult.fail(new Error("Could not read the branch")),
+  );
+  const recovered = Atom.make(AsyncResult.success({ refName: "main" }));
+  createCheckoutBranch.mockReturnValueOnce(() => failed).mockReturnValueOnce(() => recovered);
+  await using screen = await render(panel());
+  const checkout = screen.getByRole("button", { name: "Check out", exact: true });
+  await userEvent.click(checkout);
+  const worktree = page.getByRole("menuitem", { name: /In a separate worktree/ });
+  await expect.element(worktree).toBeDisabled();
+  await expect
+    .element(worktree.getByText("Couldn't check the branch. Reopen the menu to retry."))
+    .toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(checkout);
+  await expect.element(worktree).toBeEnabled();
+});
+
 it("waits for the local branch only after the checkout menu opens", async () => {
   setup();
   shown.detail = { ...detail, headRepositoryNameWithOwner: detail.repository };

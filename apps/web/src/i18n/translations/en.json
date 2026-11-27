@@ -6835,6 +6835,7 @@
   "09f38e303898401f": "Could not prepare the {term, select, mr {merge request} cr {change request} other {pull request}} checkout",
   "853a77d42f86c918": "Checked out, but the thread stayed where it was",
   "0746dfa692f895cc": "The checkout is ready on `{branch}`. Point a thread at it from the branch picker, then ask again.",
+  "0b9ec6d9983609b5": "Couldn't check the branch. Reopen the menu to retry.",
   "88db70a96177d202": "Checked out here",
   "c9a052ee6afb40d4": "Checked out here",
   "baa66fde3613022b": "Checked out",

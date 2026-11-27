@@ -6834,6 +6834,7 @@
   "09f38e303898401f": "Kunde inte förbereda utcheckning av {term, select, mr {merge requesten} cr {ändringsbegäran} other {pull requesten}}",
   "853a77d42f86c918": "Utcheckad, men tråden stannade där den var",
   "0746dfa692f895cc": "Utcheckningen är redo på `{branch}`. Peka en tråd mot den från grenväljaren och fråga sedan igen.",
+  "0b9ec6d9983609b5": "Det gick inte att kontrollera grenen. Öppna menyn igen för att försöka på nytt.",
   "88db70a96177d202": "Utcheckad här",
   "c9a052ee6afb40d4": "Utcheckad här",
   "baa66fde3613022b": "Utcheckad",

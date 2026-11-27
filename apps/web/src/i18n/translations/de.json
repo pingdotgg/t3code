@@ -6828,6 +6828,7 @@
   "09f38e303898401f": "{term, select, mr {Checkout des Merge Requests konnte nicht vorbereitet werden} cr {Checkout der Änderungsanfrage konnte nicht vorbereitet werden} other {Checkout des Pull Requests konnte nicht vorbereitet werden}}",
   "853a77d42f86c918": "Ausgecheckt, aber der Thread ist geblieben, wo er war",
   "0746dfa692f895cc": "Der Checkout ist auf `{branch}` bereit. Richte einen Thread über die Branch-Auswahl darauf aus und frage dann erneut.",
+  "0b9ec6d9983609b5": "Der Branch konnte nicht geprüft werden. Öffne das Menü erneut, um es noch einmal zu versuchen.",
   "88db70a96177d202": "Hier ausgecheckt",
   "c9a052ee6afb40d4": "Hier ausgecheckt",
   "baa66fde3613022b": "Ausgecheckt",
