@@ -38,15 +38,24 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
     .split(/\r?\n/);
   let start = 0;
   let commentStart = -1;
+  let preambleStart = -1;
+  let preambleEnd = 0;
   for (const line of lines) {
     if (commentStart < 0 && /^ {0,3}<!--/.test(line)) commentStart = start;
     if (commentStart < 0 && line.trim().length > 0 && headingText(line) !== "") break;
     const end = commentStart >= 0 ? line.indexOf("-->") : -1;
-    if (end >= 0 && line.slice(end + 3).trim()) return lines.slice(commentStart).join("\n");
-    if (end >= 0) commentStart = -1;
+    if (end >= 0) {
+      if (preambleStart < 0 && line.slice(end + 3).trim()) preambleStart = commentStart;
+      if (preambleStart >= 0) preambleEnd = start + 1;
+      commentStart = -1;
+    }
     start += 1;
   }
-  if (headingText(lines[start] ?? "")) start += 1;
+  if (headingText(lines[start] ?? "")) {
+    start += 1;
+  } else if (preambleStart >= 0) {
+    return lines.slice(preambleStart).join("\n");
+  }
   while (lines[start]?.trim().length === 0) {
     start += 1;
   }
@@ -56,5 +65,8 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
       start += 1;
     }
   }
-  return lines.slice(start).join("\n");
+  const body = lines.slice(start).join("\n");
+  if (preambleStart < 0) return body;
+  const preamble = lines.slice(preambleStart, preambleEnd).join("\n");
+  return body ? `${preamble}\n\n${body}` : preamble;
 }
