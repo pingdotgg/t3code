@@ -3036,15 +3036,27 @@ it("shows T3 Code's push hooks approval as its own question and another server's
     },
   ];
   const onRespondToApproval = vi.fn(async () => {});
-  await using screen = await renderElement(
-    <MessagesTimeline
-      {...baseProps()}
-      timelineEntries={[]}
-      pendingApprovals={approvals}
-      canOperateThread
-      onRespondToApproval={onRespondToApproval}
-    />,
+  // Layer 2 renders approval action buttons in the composer tray card rather than inside the row.
+  const ui = (active: PendingApproval) => (
+    <>
+      <MessagesTimeline
+        {...baseProps()}
+        timelineEntries={[]}
+        pendingApprovals={approvals}
+        canOperateThread
+        onRespondToApproval={onRespondToApproval}
+      />
+      <ComposerApprovalPanel
+        key={active.requestId}
+        approval={active}
+        count={approvals.length}
+        disabled={false}
+        isResponding={false}
+        onRespond={onRespondToApproval}
+      />
+    </>
   );
+  await using screen = await renderElement(ui(approvals[0]!));
 
   const own = screen.getByRole("group", { name: "Push hooks approval" });
   await expect.element(own).toBeVisible();
@@ -3069,17 +3081,18 @@ it("shows T3 Code's push hooks approval as its own question and another server's
     ".husky/pre-push",
     "pnpm run checks",
   ]);
-  await own.getByRole("button", { name: "Approve", exact: true }).click();
+  await screen.getByRole("button", { name: "Approve", exact: true }).click();
   expect(onRespondToApproval).toHaveBeenLastCalledWith(ownRequest, "accept");
 
   // Any other server keeps the whole message in code style and its name beneath.
+  await screen.rerender(ui(approvals[1]!));
   const other = screen.getByRole("group", { name: "App access approval" });
   await expect
     .element(other.getByLabelText("App access request", { exact: true }))
     .toHaveTextContent("Deploy web to production?");
   await expect.element(other.getByText("t3-code", { exact: true })).toBeVisible();
   expect(other.element().querySelector('[data-approval-detail="push-hooks"]')).toBeNull();
-  await other.getByRole("button", { name: "Decline", exact: true }).click();
+  await screen.getByRole("button", { name: "Decline", exact: true }).click();
   expect(onRespondToApproval).toHaveBeenLastCalledWith(otherRequest, "decline");
 });
 
