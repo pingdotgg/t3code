@@ -1,6 +1,6 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
-import { normalizePreviewUrl } from "@t3tools/shared/preview";
+import { resolveAddressBarInput } from "@t3tools/shared/preview";
 import { msg, useGT } from "gt-react-native";
 import { useRef, useState } from "react";
 import { View } from "react-native";
@@ -63,7 +63,7 @@ export function LocalPreviewScreen(props: {
   const current = (!failed && page?.url) || requested;
 
   const open = (value: string) => {
-    const normalized = normalizedOrNull(value);
+    const normalized = typedAddressOrNull(value);
     const next = normalized === null ? null : forDevice(normalized);
     if (next === null) {
       Dialog.alert(m(msg("Could not open this address")), m(msg("Enter an http or https URL.")));
@@ -236,9 +236,9 @@ function forDevice(url: string): string {
   return localPreviewUrlForDevice(url) ?? "";
 }
 
-function normalizedOrNull(value: string): string | null {
+function typedAddressOrNull(value: string): string | null {
   try {
-    return normalizePreviewUrl(value);
+    return resolveAddressBarInput(value);
   } catch {
     return null;
   }

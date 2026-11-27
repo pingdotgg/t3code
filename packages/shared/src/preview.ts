@@ -79,6 +79,8 @@ function previewUrlProtocol(rawUrl: string): string | undefined {
 }
 
 const ADDRESS_HOST_PATTERN = /^(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[\da-f:.]+\])$/i;
+// URL parsing reads "3.14" as the IPv4 address 3.0.0.14; typed with nothing else, it is a number.
+const SHORT_DOTTED_NUMBER_PATTERN = /^\d+(?:\.\d+){1,2}\.?$/;
 const BARE_HOST_PORT_PATTERN = /^[^/?#:@]+:\d+(?:[/?#]|$)/;
 const URL_SCHEME_WITH_AUTHORITY_PATTERN = /^[a-z][a-z\d+.-]*:\/\//i;
 const KNOWN_NON_WEB_SCHEMES: ReadonlySet<string> = new Set([
@@ -173,7 +175,9 @@ export function resolveAddressBarInput(
     const authority = trimmed.split(/[/?#]/, 1)[0] ?? "";
     const host = authority.replace(/^[^@]*@/, "").replace(/:\d+$/, "");
     const hasPort = host.length < authority.replace(/^[^@]*@/, "").length;
-    if (hasPort || ADDRESS_HOST_PATTERN.test(host) || /^[^.]+(?:\.[^.]+)+\.?$/.test(host)) {
+    const isDomain =
+      /^[^.]+(?:\.[^.]+)+\.?$/.test(host) && !SHORT_DOTTED_NUMBER_PATTERN.test(trimmed);
+    if (hasPort || ADDRESS_HOST_PATTERN.test(host) || isDomain) {
       try {
         return normalizePreviewUrl(trimmed);
       } catch {}
