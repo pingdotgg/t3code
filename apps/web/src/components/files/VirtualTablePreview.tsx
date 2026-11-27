@@ -6,7 +6,7 @@ import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
 import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 import { createPositionMemory, PreviewPositionKey } from "./previewPosition";
 
-const savedFirstRows = createPositionMemory<number>();
+const savedRowPositions = createPositionMemory<{ row: number; atEnd: boolean }>();
 
 export default function VirtualTablePreview(props: {
   readonly name: string;
@@ -289,7 +289,7 @@ function ScaledRows(
   const pendingReveal = useRef<{ row: number; attempts: number } | null>(null);
   const pendingEnd = useRef(false);
   const positionKey = useContext(PreviewPositionKey);
-  const pendingRestore = useRef(savedFirstRows.get(positionKey));
+  const pendingRestore = useRef(savedRowPositions.get(positionKey));
   const position = { top, height: props.viewportHeight };
   const scrollHeight = Math.min(8_000_000, props.count * 29);
   // Chromium caps a scroll surface at 33 million pixels. Scale the track for
@@ -348,17 +348,20 @@ function ScaledRows(
     pendingReveal.current = { row, attempts: 0 };
     handledReveal.current = key;
   }, [props.revealLine, props.revealRequestId, props.count, headerRows, scale]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Return a reopened file to its saved row once that row has streamed in.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the scroll position once indexing has reached the saved row.
   useLayoutEffect(() => {
-    const row = pendingRestore.current;
+    const saved = pendingRestore.current;
     const node = ref.current;
-    if (row === undefined || !node || (props.revealLine == null && row >= props.count)) return;
+    if (!saved || !node || (props.revealLine == null && saved.row >= props.count)) return;
     pendingRestore.current = undefined;
     // A pending line reveal owns the scroll position.
     if (props.revealLine != null) return;
-    node.scrollTop = Math.max(0, (row - headerRows) * 29) * scale;
+    node.scrollTop = saved.atEnd
+      ? node.scrollHeight
+      : Math.max(0, (saved.row - headerRows) * 29) * scale;
     setTop(node.scrollTop);
-    pendingReveal.current = { row, attempts: 0 };
+    if (saved.atEnd) pendingEnd.current = true;
+    else pendingReveal.current = { row: saved.row, attempts: 0 };
   }, [props.revealLine, props.count, headerRows, scale]);
   const atStart = position.top === 0;
   const rowHeight = () =>
@@ -526,7 +529,7 @@ function ScaledRows(
     node.scrollTop += delta * (nativeTail ? 1 : (scale * 29) / Math.max(29, bounds.height));
     setTop(node.scrollTop);
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Complete End-key scrolling after the final worker row has loaded and its DOM layout has settled.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Finish scrolling to the end once the final row has loaded and its DOM layout has settled.
   useLayoutEffect(() => {
     const node = ref.current;
     const content = contentRef.current;
@@ -580,13 +583,17 @@ function ScaledRows(
         }
       }}
       onScroll={(event) => {
-        const scrolled = event.currentTarget.scrollTop;
+        const node = event.currentTarget;
+        const scrolled = node.scrollTop;
         setTop(scrolled);
         pendingRestore.current = undefined;
-        savedFirstRows.set(
-          positionKey,
-          Math.min(maxFirst, Math.floor(scrolled / scale / 29)) + headerRows,
-        );
+        const atEnd = scrolled > 0 && node.scrollHeight - node.clientHeight - scrolled <= 1;
+        savedRowPositions.set(positionKey, {
+          atEnd,
+          row: atEnd
+            ? props.count - 1
+            : Math.min(maxFirst, Math.floor(scrolled / scale / 29)) + headerRows,
+        });
       }}
     >
       <div className="relative" style={{ height: scrollHeight }}>
