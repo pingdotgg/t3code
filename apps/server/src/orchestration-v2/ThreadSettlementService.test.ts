@@ -29,6 +29,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -825,6 +826,7 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 const projectionStoreSql = ProjectionStore.layer.pipe(
+  Layer.provide(NodeCrypto.layerDigest),
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 

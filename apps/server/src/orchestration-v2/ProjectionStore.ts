@@ -2,8 +2,7 @@ import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwarene
 import { applyOrchestrationV2ThreadVisit, pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
-// @effect-diagnostics-next-line nodeBuiltinImport:off - a synchronous digest per row inside the pull request sweep decode.
-import * as NodeCrypto from "node:crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
@@ -2379,10 +2378,13 @@ const isInlineWorkOutput = (payloadJson: string) => {
   );
 };
 
-export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = Layer.effect(
+type ProjectionStoreServices = SqlClient.SqlClient | Digest.Digest;
+
+export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreServices> = Layer.effect(
   ProjectionStoreV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const digests = yield* Digest.Digest;
 
     // SQLite uses the partial conversation index of migration 082 only for this exact predicate.
     const CONVERSATION_INDEX_EXCLUDED_TYPES = sql.literal(
@@ -9145,6 +9147,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     );
 
     // The minute sweeps reread mostly unchanged rows; reuse a thread's decode while its payload digest matches.
+    const textEncoder = new TextEncoder();
     const decodedPullRequestThreads = new Map<
       string,
       { readonly digest: string; readonly thread: ProjectionThreadPullRequests }
@@ -9169,26 +9172,31 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
           ORDER BY updated_at ASC, thread_id ASC
         `;
-          const threads = yield* Effect.forEach(rows, (row) => {
-            const digest = NodeCrypto.createHash("sha256")
-              .update(row.payload_json)
-              .digest("base64");
-            const cached = decodedPullRequestThreads.get(row.thread_id);
-            if (cached?.digest === digest) return Effect.succeed(cached.thread);
-            return decodeThreadPayload(row.payload_json).pipe(
-              Effect.map((thread): ProjectionThreadPullRequests => ({
-                id: thread.id,
-                projectId: thread.projectId,
-                lineage: thread.lineage,
-                settledOverride: thread.settledOverride,
-                settledAt: thread.settledAt,
-                pullRequests: thread.pullRequests ?? [],
-              })),
-              Effect.tap((thread) =>
-                Effect.sync(() => decodedPullRequestThreads.set(row.thread_id, { digest, thread })),
-              ),
-            );
-          });
+          const threads = yield* Effect.forEach(rows, (row) =>
+            Effect.gen(function* () {
+              const digest = yield* digests.digestHex(
+                Digest.sha256,
+                textEncoder.encode(row.payload_json),
+              );
+              const cached = decodedPullRequestThreads.get(row.thread_id);
+              if (cached?.digest === digest) return cached.thread;
+              return yield* decodeThreadPayload(row.payload_json).pipe(
+                Effect.map((thread): ProjectionThreadPullRequests => ({
+                  id: thread.id,
+                  projectId: thread.projectId,
+                  lineage: thread.lineage,
+                  settledOverride: thread.settledOverride,
+                  settledAt: thread.settledAt,
+                  pullRequests: thread.pullRequests ?? [],
+                })),
+                Effect.tap((thread) =>
+                  Effect.sync(() =>
+                    decodedPullRequestThreads.set(row.thread_id, { digest, thread }),
+                  ),
+                ),
+              );
+            }),
+          );
           if (threadId === undefined) {
             pullRequestSweepIds[options?.includeArchived === true ? "includeArchived" : "active"] =
               new Set(rows.map((row) => row.thread_id));
