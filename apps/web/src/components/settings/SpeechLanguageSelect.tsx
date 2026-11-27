@@ -69,7 +69,7 @@ export function SpeechLanguageSelect({
         ) : null}
         {languages
           .toSorted((left, right) =>
-            languageLabel(left, locale).localeCompare(languageLabel(right, locale)),
+            languageLabel(left, locale).localeCompare(languageLabel(right, locale), locale),
           )
           .map((code) => (
             <SelectItem key={code} value={code}>
