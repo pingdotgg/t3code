@@ -1017,6 +1017,59 @@ describe("MessagesTimeline messages", () => {
     expect(shortfalls).toEqual(shortfalls.map(() => 0));
   });
 
+  it("keeps a reader at the end in place when a status line under the timeline ends", async () => {
+    setup();
+    const props = baseProps();
+    const entries = Array.from({ length: 12 }, (_, index) =>
+      message(`Turn ${index}:\n\n${"x ".repeat(200)}`, {}, `turn-${index}`),
+    );
+    const statusLine = <div style={{ height: 24 }}>Waiting · Child task</div>;
+    await using screen = await renderTimeline(entries, { ...props, footer: statusLine });
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const end = () => viewport.scrollHeight - viewport.clientHeight;
+    await vi.waitFor(() => {
+      expect(viewport.scrollTop).toBeGreaterThan(0);
+      expect(end() - viewport.scrollTop).toBeLessThan(2);
+    });
+    const readingAt = viewport.scrollTop;
+
+    // The subagent finishes: its line goes, and the reader stays where they were.
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries} footer={null} />);
+    await vi.waitFor(() => expect(screen.text()).not.toContain("Waiting · Child task"));
+    expect(viewport.scrollTop).toBe(readingAt);
+
+    // The next row takes over the held space instead of adding below it.
+    const heldHeight = viewport.scrollHeight;
+    const next = [...entries, message("Done.", { role: "assistant" }, "done")];
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={next} footer={null} />);
+    await vi.waitFor(() => {
+      const row = screen.getByText("Done.").element().closest(".messages-timeline-row-frame");
+      expect(row).not.toBeNull();
+      expect(viewport.scrollHeight).toBe(heldHeight + (row as HTMLElement).offsetHeight - 24);
+    });
+  });
+
+  it("gives the held space back once the reader scrolls away from the end", async () => {
+    setup();
+    const props = baseProps();
+    const entries = Array.from({ length: 12 }, (_, index) =>
+      message(`Turn ${index}:\n\n${"x ".repeat(200)}`, {}, `turn-${index}`),
+    );
+    const statusLine = <div style={{ height: 24 }}>Waiting · Child task</div>;
+    await using screen = await renderTimeline(entries, { ...props, footer: statusLine });
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    await vi.waitFor(() =>
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2),
+    );
+    const withLine = viewport.scrollHeight;
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries} footer={null} />);
+    await vi.waitFor(() => expect(screen.text()).not.toContain("Waiting · Child task"));
+    expect(viewport.scrollHeight).toBe(withLine);
+
+    viewport.scrollTop -= 200;
+    await vi.waitFor(() => expect(viewport.scrollHeight).toBe(withLine - 24));
+  });
+
   it("puts rows back in item order soon after a continuous scroll stops", async () => {
     setup();
     const props = baseProps();

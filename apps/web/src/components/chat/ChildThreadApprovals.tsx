@@ -98,7 +98,7 @@ export function ChildThreadApprovals({ threadRef }: { threadRef: ScopedThreadRef
   const approvals = useAtomValue(childThreadApprovalsAtom(threadRef));
   if (approvals.length === 0) return null;
   return (
-    <div className="mb-2 flex max-h-80 flex-col gap-2 overflow-auto">
+    <div className="mb-2 flex max-h-[min(20rem,50dvh)] flex-col gap-2 overflow-auto transition-[opacity,translate] duration-200 ease-out starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
       {approvals.map((entry) => (
         <ChildApproval
           key={JSON.stringify([

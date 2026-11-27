@@ -63,11 +63,12 @@ function threadInput(threadId: string, branch: string) {
 
 type ThreadInput = ReturnType<typeof threadInput>;
 
+// Each child asks a question; an approval of its own is answered from the floating card.
 it.each([
   { remote: false, approval: false, link: "Open question" },
   { remote: true, approval: false, link: "Open question" },
   { remote: true, approval: false, link: "Child" },
-  { remote: true, approval: true, link: "Open approval" },
+  { remote: true, approval: true, link: "Open question" },
 ])("opens the child in its environment ($remote, $link)", async ({ remote, approval, link }) => {
   setup();
   const parent = threadInput("parent", "main");
@@ -78,6 +79,7 @@ it.each([
       environmentId: childEnvironmentId,
       title: "Child",
       hasPendingApprovals: approval,
+      hasPendingUserInput: true,
       lineage: { sideChat: false },
     } as EnvironmentThreadShell,
   ];
@@ -96,6 +98,34 @@ it.each([
       `/${encodeURIComponent(childEnvironmentId)}/child`,
     ),
   );
+});
+
+it("leaves a subagent's approval to the floating card, not the timeline", async () => {
+  setup();
+  const parent = threadInput("parent", "main");
+  state.childThreadInputs = [
+    {
+      id: ThreadId.make("child"),
+      environmentId,
+      title: "Child",
+      hasPendingApprovals: true,
+      hasPendingUserInput: false,
+      lineage: { sideChat: false },
+    } as EnvironmentThreadShell,
+  ];
+  await using screen = await render(
+    <RestoreBranchHarness
+      thread={parent}
+      currentRouteThreadKeyRef={{ current: parent.routeThreadKey }}
+      refreshGitStatus={() => undefined}
+      focusComposer={() => undefined}
+    />,
+    { router: "/environment:test/parent" },
+  );
+  await expect.element(screen.getByRole("button", { name: "Restore branch" })).toBeVisible();
+  await expect
+    .element(screen.getByRole("button", { name: "Open approval" }))
+    .not.toBeInTheDocument();
 });
 
 function RestoreBranchHarness(props: {
