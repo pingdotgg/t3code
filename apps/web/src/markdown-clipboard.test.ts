@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   serializeCodeBlockToMarkdown,
   serializeRenderedMarkdownFragment,
+  serializeTableElementForChat,
   serializeTableElementToCsv,
   serializeTableElementToHtml,
   serializeTableElementToMarkdown,
@@ -779,5 +780,28 @@ describe("copying a table as CSV", () => {
     expect(serializeTableElementToCsv(table as unknown as Element)).toBe(
       'Col A,Col B\nline 1 line 2,para 1 para 2\nvisible,"a, b"',
     );
+  });
+
+  it("aligns columns with spaces inside a code fence for chat apps", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(
+          new FakeElement("TH").append(new FakeText("Name")),
+          new FakeElement("TH", [], { align: "right" }).append(new FakeText("Amount")),
+        ),
+      ),
+      new FakeElement("TBODY").append(
+        row(td(new FakeText("Ada")), td(new FakeText("1,200"))),
+        row(td(new FakeText("東京")), td(new FakeText("5"))),
+        row(td(new FakeText("```"))),
+      ),
+    );
+
+    const { text, html } = serializeTableElementForChat(table as unknown as Element);
+    const aligned = ["Name  Amount", "----  ------", "Ada    1,200", "東京       5", "```"].join(
+      "\n",
+    );
+    expect(text).toBe(`\`\`\`\`\n${aligned}\n\`\`\`\``);
+    expect(html).toBe(`<meta charset="utf-8"><pre>${aligned}</pre>`);
   });
 });

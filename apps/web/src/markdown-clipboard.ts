@@ -548,6 +548,69 @@ export function serializeTableElementToCsv(table: Element): string {
   return lines.join("\n");
 }
 
+// CJK and emoji count as two columns: close enough to East Asian Width for chat fonts.
+const WIDE_GRAPHEME =
+  /\p{Extended_Pictographic}|[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/u;
+let graphemes: Intl.Segmenter | undefined;
+
+function monospaceWidth(text: string): number {
+  graphemes ??= new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  let width = 0;
+  for (const { segment } of graphemes.segment(text)) width += WIDE_GRAPHEME.test(segment) ? 2 : 1;
+  return width;
+}
+
+function padToWidth(text: string, width: number, align: string): string {
+  const gap = width - monospaceWidth(text);
+  if (align === "right") return " ".repeat(gap) + text;
+  if (align === "center") {
+    const left = Math.floor(gap / 2);
+    return " ".repeat(left) + text + " ".repeat(gap - left);
+  }
+  return text + " ".repeat(gap);
+}
+
+/**
+ * Space-aligned columns for chat apps. The plain text is a code fence, which WhatsApp and
+ * Slack show monospaced; rich targets (Teams, Slack) paste the HTML flavor as a code block.
+ */
+export function serializeTableElementForChat(table: Element): MarkdownClipboardPayload {
+  const rows = [...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr")]
+    .map((row) =>
+      [...row.children].filter((cell) => cell.tagName === "TH" || cell.tagName === "TD"),
+    )
+    .filter((cells) => cells.length > 0);
+  if (rows.length === 0) return { text: "", html: "" };
+  const texts = rows.map((cells) =>
+    cells.map((cell) => csvCellText(cell).replace(/\s+/g, " ").trim()),
+  );
+  const columns = Math.max(...texts.map((cells) => cells.length));
+  const widths = Array.from({ length: columns }, (_, column) =>
+    Math.max(1, ...texts.map((cells) => monospaceWidth(cells[column] ?? ""))),
+  );
+  const aligns = widths.map((_, column) => {
+    const header = rows[0]?.[column] as HTMLElement | undefined;
+    return header?.style?.textAlign || header?.getAttribute("align") || "";
+  });
+  const line = (cells: string[]) =>
+    widths
+      .map((width, column) => padToWidth(cells[column] ?? "", width, aligns[column] ?? ""))
+      .join("  ")
+      .trimEnd();
+  const [header = [], ...body] = texts;
+  const lines = [
+    line(header),
+    widths.map((width) => "-".repeat(width)).join("  "),
+    ...body.map(line),
+  ];
+  const aligned = lines.join("\n");
+  const fence = codeFenceFor(aligned);
+  return {
+    text: `${fence}\n${aligned}\n${fence}`,
+    html: `<meta charset="utf-8"><pre>${escapeHtml(aligned)}</pre>`,
+  };
+}
+
 const TABLE_SECTION_TAGS = new Set(["THEAD", "TBODY", "TFOOT"]);
 // Elements that start a new line inside a copied cell.
 const HTML_CELL_BLOCK_TAGS = new Set([
