@@ -1166,6 +1166,17 @@ describe("Ardia, Dia, and discoverBrowserImportSources", () => {
           );
           yield* seedChromium(path.join(appSupport, "Slack"), {}, ["Network", "Cookies"]);
           yield* seedChromium(path.join(appSupport, "Ardia", "Chromium"), defaultState);
+          const outsideRoot = path.join(home, "outside-browser");
+          yield* seedChromium(outsideRoot, defaultState);
+          yield* writeFirefoxCookieDatabase(path.join(outsideRoot, "cookies.sqlite"), 1, 0);
+          yield* fileSystem.makeDirectory(path.join(appSupport, "EscapeFox"), { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(appSupport, "EscapeFox", "profiles.ini"),
+            `[Profile0]\nName=Outside\nIsRelative=0\nPath=${outsideRoot}\n`,
+          );
+          if (symlinksSupported) {
+            yield* fileSystem.symlink(outsideRoot, path.join(appSupport, "LinkedBrowser"));
+          }
           assert.deepEqual(yield* discoveredSummary(mac), [
             ["Ardia", "chromium"],
             ["Chrome Canary", "chromium"],

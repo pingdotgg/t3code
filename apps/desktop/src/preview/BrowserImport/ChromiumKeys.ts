@@ -241,13 +241,17 @@ export interface ChromiumKeyRequest {
   readonly linuxSecretApplications?: ReadonlyArray<string> | undefined;
 }
 
+export interface ChromiumKeyCandidateScore {
+  readonly accepted: boolean;
+  readonly score: number;
+}
+
 export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")(function* <
   E = never,
   R = never,
 >(
   request: ChromiumKeyRequest,
-  acceptKey: (keys: ChromiumKeyMaterial) => Effect.Effect<boolean, E, R> = () =>
-    Effect.succeed(true),
+  scoreKey?: (keys: ChromiumKeyMaterial) => Effect.Effect<ChromiumKeyCandidateScore, E, R>,
 ): Effect.fn.Return<
   ChromiumKeyMaterial,
   ChromiumKeyError | E,
@@ -263,7 +267,7 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
     if (candidates.length === 0) {
       return yield* new ChromiumKeyError({ reason: "unsupportedPlatform" });
     }
-    let firstKeys: ChromiumKeyMaterial | undefined;
+    let best: { readonly keys: ChromiumKeyMaterial; readonly score: number } | undefined;
     let missingError: ChromiumKeyError | undefined;
     for (const candidate of candidates) {
       const attempt = yield* readKeychainSecret(candidate.service, candidate.account).pipe(
@@ -277,10 +281,12 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
         continue;
       }
       const keys: ChromiumKeyMaterial = { cbcV10: derive(attempt, MAC_KEY_ITERATIONS) };
-      firstKeys ??= keys;
-      if (yield* acceptKey(keys)) return keys;
+      if (scoreKey === undefined || candidates.length <= 1) return keys;
+      const verdict = yield* scoreKey(keys);
+      if (verdict.accepted) return keys;
+      if (best === undefined || verdict.score > best.score) best = { keys, score: verdict.score };
     }
-    if (firstKeys !== undefined) return firstKeys;
+    if (best !== undefined) return best.keys;
     return yield* missingError ?? new ChromiumKeyError({ reason: "keychainItemMissing" });
   }
 
@@ -295,7 +301,7 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
       cbcV10: derive(LINUX_FALLBACK_PASSPHRASE, LINUX_KEY_ITERATIONS),
       cbcEmpty: derive("", LINUX_KEY_ITERATIONS),
     };
-    let firstKeys: ChromiumKeyMaterial | undefined;
+    let best: { readonly keys: ChromiumKeyMaterial; readonly score: number } | undefined;
     let lastError: ChromiumKeyError | undefined;
     for (const application of applications) {
       const attempt = yield* readLinuxSecret(application).pipe(
@@ -311,10 +317,12 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
         continue;
       }
       const keys: ChromiumKeyMaterial = { ...base, cbcV11: derive(attempt, LINUX_KEY_ITERATIONS) };
-      firstKeys ??= keys;
-      if (yield* acceptKey(keys)) return keys;
+      if (scoreKey === undefined || applications.length <= 1) return keys;
+      const verdict = yield* scoreKey(keys);
+      if (verdict.accepted) return keys;
+      if (best === undefined || verdict.score > best.score) best = { keys, score: verdict.score };
     }
-    if (firstKeys !== undefined) return firstKeys;
+    if (best !== undefined) return best.keys;
     return lastError ? { ...base, cbcV11Error: lastError } : base;
   }
 

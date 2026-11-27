@@ -102,17 +102,38 @@ const stripDomainBinding = (
     : null;
 };
 
+const utf8StrictDecoder = new TextDecoder("utf-8", { fatal: true });
+
+// Used only when ranking candidate keys on pre-schema-24 jars that lack a SHA-256 domain-binding hash.
+const isPlausibleLegacyCookie = (plaintext: Buffer): boolean => {
+  try {
+    const text = utf8StrictDecoder.decode(plaintext);
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      if ((code < 0x20 && code !== 0x09) || code === 0x7f) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const decryptCbc = (
   payload: Buffer,
   key: Buffer,
   domain: string,
   schemaVersion: number,
-): string | null => {
+): { readonly value: string; readonly verified: boolean } | null => {
   try {
     const decipher = NodeCrypto.createDecipheriv("aes-128-cbc", key, AES_CBC_IV);
     decipher.setAutoPadding(true);
     const plaintext = Buffer.concat([decipher.update(payload), decipher.final()]);
-    return stripDomainBinding(plaintext, domain, schemaVersion)?.toString("utf8") ?? null;
+    const stripped = stripDomainBinding(plaintext, domain, schemaVersion);
+    if (stripped === null) return null;
+    return {
+      value: stripped.toString("utf8"),
+      verified: schemaVersion >= 24 || isPlausibleLegacyCookie(stripped),
+    };
   } catch {
     return null;
   }
@@ -144,9 +165,13 @@ const decryptChromiumValueWithOrigin = (
   domain: string,
   schemaVersion: number,
   platform: NodeJS.Platform,
-): { readonly value: string | null; readonly matchedKeyringKey: boolean } => {
+): {
+  readonly value: string | null;
+  readonly keyringVerified: boolean;
+  readonly keyringUnverified: boolean;
+} => {
   const buffer = Buffer.from(encrypted);
-  if (buffer.length === 0) return { value: "", matchedKeyringKey: false };
+  if (buffer.length === 0) return { value: "", keyringVerified: false, keyringUnverified: false };
   const prefix = buffer.subarray(0, 3).toString("latin1");
   const payload = buffer.subarray(3);
 
@@ -157,32 +182,46 @@ const decryptChromiumValueWithOrigin = (
         prefix === "v10" && keys.gcmV10
           ? decryptGcm(payload, keys.gcmV10, domain, schemaVersion)
           : null,
-      matchedKeyringKey: false,
+      keyringVerified: false,
+      keyringUnverified: false,
     };
   }
 
   // Retry the empty-passphrase key used by some Linux clients (crbug.com/1195256).
   if (prefix === "v10") {
-    if (!keys.cbcV10) return { value: null, matchedKeyringKey: false };
+    if (!keys.cbcV10) return { value: null, keyringVerified: false, keyringUnverified: false };
     const primary = decryptCbc(payload, keys.cbcV10, domain, schemaVersion);
-    if (primary !== null) return { value: primary, matchedKeyringKey: platform === "darwin" };
+    if (primary !== null) {
+      return {
+        value: primary.value,
+        keyringVerified: platform === "darwin" && primary.verified,
+        keyringUnverified: platform === "darwin" && !primary.verified,
+      };
+    }
     const empty = keys.cbcEmpty ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion) : null;
-    return { value: empty, matchedKeyringKey: false };
+    return { value: empty?.value ?? null, keyringVerified: false, keyringUnverified: false };
   }
   if (prefix === "v11") {
-    if (!keys.cbcV11) return { value: null, matchedKeyringKey: false };
+    if (!keys.cbcV11) return { value: null, keyringVerified: false, keyringUnverified: false };
     const primary = decryptCbc(payload, keys.cbcV11, domain, schemaVersion);
-    if (primary !== null) return { value: primary, matchedKeyringKey: platform === "linux" };
+    if (primary !== null) {
+      return {
+        value: primary.value,
+        keyringVerified: platform === "linux" && primary.verified,
+        keyringUnverified: platform === "linux" && !primary.verified,
+      };
+    }
     const empty = keys.cbcEmpty ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion) : null;
-    return { value: empty, matchedKeyringKey: false };
+    return { value: empty?.value ?? null, keyringVerified: false, keyringUnverified: false };
   }
   if (platform === "darwin" || platform === "linux") {
     return {
       value: stripDomainBinding(buffer, domain, schemaVersion)?.toString("utf8") ?? null,
-      matchedKeyringKey: false,
+      keyringVerified: false,
+      keyringUnverified: false,
     };
   }
-  return { value: null, matchedKeyringKey: false };
+  return { value: null, keyringVerified: false, keyringUnverified: false };
 };
 
 export function decryptChromiumValue(
@@ -222,7 +261,9 @@ const readRawChromiumCookieDatabase = Effect.fnUntraced(function* (snapshotPath:
 
 interface EvaluatedCookieRows {
   readonly result: CookieReadResult;
-  readonly keyringDecrypted: number;
+  readonly schemaVersion: number;
+  readonly keyringVerified: number;
+  readonly keyringUnverified: number;
   readonly keyringFailed: number;
   readonly hasV11: boolean;
 }
@@ -235,7 +276,8 @@ const decryptChromiumCookieRows = (
 ): EvaluatedCookieRows => {
   const cookies: ImportedCookie[] = [];
   let undecryptable = 0;
-  let keyringDecrypted = 0;
+  let keyringVerified = 0;
+  let keyringUnverified = 0;
   let keyringFailed = 0;
   let hasV11 = false;
   const undecryptableHosts = new Set<string>();
@@ -255,7 +297,7 @@ const decryptChromiumCookieRows = (
     const usesKeyring = keyringPrefix !== undefined && prefix === keyringPrefix;
     const decrypted =
       row.encrypted_value.length === 0
-        ? { value: row.value, matchedKeyringKey: false }
+        ? { value: row.value, keyringVerified: false, keyringUnverified: false }
         : decryptChromiumValueWithOrigin(
             row.encrypted_value,
             keys,
@@ -269,7 +311,8 @@ const decryptChromiumCookieRows = (
       undecryptableHosts.add(bareHost(row.host_key));
       continue;
     }
-    if (decrypted.matchedKeyringKey) keyringDecrypted += 1;
+    if (decrypted.keyringVerified) keyringVerified += 1;
+    if (decrypted.keyringUnverified) keyringUnverified += 1;
     const secure = row.is_secure === 1;
     const scope = cookieScope(row.host_key, row.path, secure);
     cookies.push({
@@ -291,7 +334,9 @@ const decryptChromiumCookieRows = (
       undecryptable,
       undecryptableHosts: [...undecryptableHosts],
     },
-    keyringDecrypted,
+    schemaVersion,
+    keyringVerified,
+    keyringUnverified,
     keyringFailed,
     hasV11,
   };
@@ -370,7 +415,13 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
         )
       : resolveChromiumKeys(source, (candidateKeys) =>
           evaluateWith(candidateKeys).pipe(
-            Effect.map((ev) => ev.keyringFailed === 0 || ev.keyringDecrypted > 0),
+            Effect.map((ev) => ({
+              accepted:
+                ev.schemaVersion >= 24
+                  ? ev.keyringFailed === 0 || ev.keyringVerified > 0
+                  : ev.keyringFailed === 0 && ev.keyringUnverified === 0,
+              score: ev.keyringVerified,
+            })),
           ),
         )
   ).pipe(

@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Cipher from "effect/crypto/Cipher";
 import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
 import * as Kdf from "effect/crypto/Kdf";
 import { vi } from "vite-plus/test";
 
@@ -373,13 +374,20 @@ describe("BrowserImport.importCookies", () => {
         ),
       );
 
-      // Default listing skips disk scanning; unscanned discovered IDs are rejected.
+      // Default listing skips disk scanning; unscanned discovered IDs are rejected even for a real root on disk.
+      const digest = yield* Digest.Digest;
+      const librewolfHash = yield* digest.digest(
+        Digest.sha256,
+        new TextEncoder().encode(`firefox\0${path.resolve(librewolfRoot).toLowerCase()}`),
+      );
+      const librewolfRealId =
+        `discovered:firefox:${Hex.encode(librewolfHash).slice(0, 16)}` as const;
       const beforeScan = yield* importer.listSources();
       assert.isUndefined(beforeScan.find((s) => s.name === "Comet" || s.name === "LibreWolf"));
       const unscannedError = yield* importer
         .importCookies({
           input: {
-            sourceId: "discovered:firefox:0123456789abcdef",
+            sourceId: librewolfRealId,
             sourceProfileDirectory: librewolfProfileDirectory,
             targetProfileId: "default",
           },
@@ -396,8 +404,37 @@ describe("BrowserImport.importCookies", () => {
       const comet = sources.find((s) => s.name === "Comet")!;
       const librewolf = sources.find((s) => s.name === "LibreWolf")!;
       assert.match(comet.id, /^discovered:chromium:[0-9a-f]{16}$/);
-      assert.match(librewolf.id, /^discovered:firefox:[0-9a-f]{16}$/);
-      assert.isDefined((yield* importer.listSources()).find((s) => s.id === librewolf.id));
+      assert.equal(librewolf.id, librewolfRealId);
+
+      // Modifying a discovered Firefox fork's profiles.ini to point outside its root must not expose external profiles.
+      const outsideProfile = path.join(home, "outside-profile");
+      yield* fileSystem.makeDirectory(outsideProfile, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(outsideProfile, "cookies.sqlite"), "not-ours");
+      yield* fileSystem.writeFileString(
+        `${librewolfRoot}/profiles.ini`,
+        `[Profile0]\nName=Default\nIsRelative=1\nPath=Profiles/main.default\n[Profile1]\nName=Outside\nIsRelative=0\nPath=${outsideProfile}\n`,
+      );
+      const cachedAfterEdit = (yield* importer.listSources()).find((s) => s.id === librewolf.id)!;
+      assert.deepEqual(
+        cachedAfterEdit.profiles.map((p) => p.directory),
+        [librewolfProfileDirectory],
+      );
+      const outsideError = yield* importer
+        .importCookies({
+          input: {
+            sourceId: librewolf.id,
+            sourceProfileDirectory: outsideProfile,
+            targetProfileId: "default",
+          },
+          scope: "persist:t3code-preview-test",
+          persistent: true,
+        })
+        .pipe(Effect.flip);
+      assert.equal(outsideError._tag, "BrowserImportFailedError");
+      if (outsideError._tag === "BrowserImportFailedError") {
+        assert.equal(outsideError.reason, "unknownSourceProfile");
+      }
+
       assert.deepEqual(yield* decodeImportSource(librewolf), {
         id: librewolf.id,
         name: "LibreWolf",

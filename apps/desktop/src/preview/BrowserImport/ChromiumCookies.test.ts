@@ -524,4 +524,97 @@ describe("readChromiumCookieDatabase", () => {
         ]);
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
+
+  it.effect(
+    "does not accept a stale Linux secret candidate on schema 23 when wrong-key CBC output accidentally has valid padding",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-chromium-legacy-padding-",
+        });
+        const filename = `${directory}/Cookies`;
+        const chromiumKey = NodeCrypto.pbkdf2Sync("chromium-secret", "saltysalt", 1, 16, "sha1");
+        const encrypted = encryptChromium("v11", "session-from-chromium-key", chromiumKey);
+        // Find a wrong secret whose PBKDF2 key produces valid PKCS#7 padding on this ciphertext.
+        let collidingSecret = "";
+        for (let i = 0; i < 4096; i += 1) {
+          const candidate = `stale-${i}`;
+          const candidateKey = NodeCrypto.pbkdf2Sync(candidate, "saltysalt", 1, 16, "sha1");
+          if (
+            decryptChromiumValue(
+              encrypted,
+              { cbcV11: candidateKey },
+              "ardia.example",
+              23,
+              "linux",
+            ) !== null
+          ) {
+            collidingSecret = candidate;
+            break;
+          }
+        }
+        expect(collidingSecret).not.toBe("");
+
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`create table meta (key text primary key, value text not null)`;
+          yield* sql`insert into meta values ('version', 23)`;
+          yield* sql`
+            create table cookies (
+              host_key text not null, name text not null, value text not null,
+              encrypted_value blob not null, path text not null, expires_utc integer not null,
+              is_secure integer not null, is_httponly integer not null, samesite integer not null,
+              top_frame_site_key text not null default ''
+            )
+          `;
+          yield* sql`insert into cookies values
+            ('ardia.example', 'sid', '', ${encrypted}, '/', 0, 1, 1, 1, '')`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+        const seenApps: Array<string> = [];
+        const result = yield* readChromiumCookies({
+          cookieDatabasePath: filename,
+          platform: "linux",
+          keychainService: undefined,
+          keychainAccount: undefined,
+          linuxSecretApplication: "ardia",
+          linuxSecretApplications: ["ardia", "chromium"],
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              Layer.succeed(LinuxBrowserSecretPath, "/bundled/browser-secret/t3-browser-secret"),
+              Layer.succeed(
+                ChildProcessSpawner.ChildProcessSpawner,
+                ChildProcessSpawner.make((command) => {
+                  const app = (command as { readonly args: ReadonlyArray<string> }).args[0] ?? "";
+                  seenApps.push(app);
+                  const secret = app === "ardia" ? collidingSecret : "chromium-secret";
+                  return Effect.succeed(
+                    ChildProcessSpawner.makeHandle({
+                      pid: ChildProcessSpawner.ProcessId(1),
+                      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                      isRunning: Effect.succeed(false),
+                      kill: () => Effect.void,
+                      unref: Effect.succeed(Effect.void),
+                      stdin: Sink.drain,
+                      stdout: Stream.encodeText(Stream.make(secret)),
+                      stderr: Stream.empty,
+                      all: Stream.empty,
+                      getInputFd: () => Sink.drain,
+                      getOutputFd: () => Stream.empty,
+                    }),
+                  );
+                }),
+              ),
+            ),
+          ),
+        );
+
+        expect(seenApps).toEqual(["ardia", "chromium"]);
+        expect(result.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
+          { name: "sid", value: "session-from-chromium-key" },
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });
