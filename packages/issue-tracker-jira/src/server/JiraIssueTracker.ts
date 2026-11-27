@@ -350,9 +350,8 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
       parseIssueUrl: parseJiraIssueUrl,
 
       probeCredential: (credential) =>
-        Effect.all([jira.myself(credential), jira.projects(credential)], {
-          concurrency: 2,
-        }).pipe(
+        // In order: `myself` checks a Data Center's version before any request carries the token.
+        Effect.all([jira.myself(credential), jira.projects(credential)]).pipe(
           Effect.map(([me, projects]) => ({
             account: me.displayName?.trim() || me.emailAddress?.trim() || me.accountId,
             workspace: URL.parse(JiraApi.credentialOrigin(credential) ?? "")?.hostname,

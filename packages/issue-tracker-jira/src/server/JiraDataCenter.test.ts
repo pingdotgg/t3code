@@ -161,14 +161,15 @@ describe("JiraIssueTracker on Data Center", () => {
             { headers: { "x-ausername": "anonymous" } },
           ),
         "GET /myself": () => new Response(null, { status: 401 }),
-        "GET /project": () => [],
+        "GET /project": () => new Response(null, { status: 401 }),
       });
       const api = yield* tracker;
       const refused = yield* api.probeCredential(STORED).pipe(Effect.flip);
       expect(refused.detail).toBe(
         "Jira 8.13.5 has no personal access tokens. T3 Code needs Jira Data Center 8.14 or later.",
       );
-      expect(requests.map((request) => request.route)).not.toContain("GET /myself");
+      // No signed request goes out first, so its 401 cannot hide the version.
+      expect(requests.map((request) => request.route)).toEqual(["GET /serverInfo"]);
     }),
   );
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { markdownToWiki, wikiToMarkdown } from "./wikiMarkup.ts";
+import { hasUnwritableWiki, markdownToWiki, wikiToMarkdown } from "./wikiMarkup.ts";
 
 describe("wikiToMarkdown", () => {
   it("reads headings, emphasis, inline code and links", () => {
@@ -34,6 +34,9 @@ describe("wikiToMarkdown", () => {
       "See [`IssueService.ts`](https://example.com/a)",
     );
     expect(wikiToMarkdown("{code}\u00000\u0000{code}")).toBe("```\n0\n```");
+    // Backticks inside inline code need a longer delimiter, padded when they touch it.
+    expect(wikiToMarkdown("{{a`b`c}} and {{`x}}")).toBe("``a`b`c`` and `` `x ``");
+    expect(markdownToWiki("``a`b`c`` and `` `x ``")).toBe("{{a`b`c}} and {{`x}}");
   });
 
   it("reads code parameters by name, and closes a macro only with its own name", () => {
@@ -42,6 +45,12 @@ describe("wikiToMarkdown", () => {
         "{code:title=App.java|language=java}\nint a;\n{code}\n{noformat}\nUse {code}foo{code}\n{noformat}",
       ),
     ).toBe("```java\nint a;\n```\n```\nUse {code}foo{code}\n```");
+    // A fence in the code needs a longer one around it.
+    expect(wikiToMarkdown("{noformat}\n```\nx\n```\n{noformat}")).toBe("````\n```\nx\n```\n````");
+    // Only a code block's own opener counts, not one quoted inside another block.
+    expect(hasUnwritableWiki("{code:java|title=A.java}\nx\n{code}")).toBe(true);
+    expect(hasUnwritableWiki("{code:java}\nx\n{code}\n{code:language=go}\ny\n{code}")).toBe(false);
+    expect(hasUnwritableWiki("{noformat}\n{code:java|title=A.java}\n{noformat}")).toBe(false);
   });
 
   it("leaves macros it does not know as they are", () => {
@@ -72,11 +81,19 @@ describe("markdownToWiki", () => {
     expect(markdownToWiki("```ts\nconst a = **b**; # not a heading\n```\n\n```\nplain\n```")).toBe(
       "{code:ts}\nconst a = **b**; # not a heading\n{code}\n\n{code}\nplain\n{code}",
     );
+    // A fence closes only with its own character, at least as long as it opened.
+    expect(markdownToWiki("~~~\n**x**\n```\n~~~")).toBe("{code}\n**x**\n```\n{code}");
+    expect(markdownToWiki("````md\n```\ninner\n```\n````")).toBe(
+      "{code:md}\n```\ninner\n```\n{code}",
+    );
   });
 
   it("keeps a link whose label is code", () => {
     expect(markdownToWiki("See [`IssueService.ts`](https://example.com/a)")).toBe(
       "See [{{IssueService.ts}}|https://example.com/a]",
+    );
+    expect(markdownToWiki("[docs](https://example.org/a_(b))")).toBe(
+      "[docs|https://example.org/a_(b)]",
     );
   });
 

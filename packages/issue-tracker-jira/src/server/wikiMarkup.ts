@@ -23,6 +23,12 @@ const URL_TEXT = /https?:\/\/[^\s\]|)>]+/g;
 const BOLD_WIKI = /(^|[^\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])/g;
 const ITALIC_WIKI = /(^|[^\w])_(?=\S)([^_\n]+?)(?<=\S)_(?![\w])/g;
 const ITALIC_MD = /(^|[^\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])/g;
+// A macro closes with its own name, so a `{noformat}` block may show `{code}`.
+const BLOCK_WIKI = /(?<!\{)\{(code|noformat)(?::([^}]*))?\}\n?([\s\S]*?)\n?\{\1\}/g;
+
+/** Backticks one longer than the longest run in `text`, so `text` cannot close them. */
+const ticksAround = (text: string, least: number) =>
+  "`".repeat(Math.max(least, ...[...text.matchAll(/`+/g)].map(([run]) => run.length + 1)));
 
 /** `{code:java|title=A.java}` and `{code:title=A.java|language=java}` both name Java. */
 function codeLanguage(parameters: string | undefined): string {
@@ -34,8 +40,8 @@ function codeLanguage(parameters: string | undefined): string {
 
 /** Whether a code block names more than its language, such as a title, which Markdown drops. */
 export function hasUnwritableWiki(wiki: string): boolean {
-  return [...wiki.matchAll(/(?<!\{)\{(code|noformat):([^}]*)\}/g)].some(([, macro, parameters]) =>
-    parameters!
+  return [...wiki.matchAll(BLOCK_WIKI)].some(([, macro, parameters]) =>
+    (parameters ?? "")
       .split("|")
       .map((part) => part.trim())
       .some(
@@ -51,13 +57,18 @@ export function wikiToMarkdown(wiki: string): string {
   const { hold, release } = stash();
   // A literal NUL would read as a token, so none survives into the text.
   let text = wiki.replaceAll("\r\n", "\n").replaceAll(HOLD, "");
-  // A macro closes with its own name, so a `{noformat}` block may show `{code}`.
   text = text.replace(
-    /(?<!\{)\{(code|noformat)(?::([^}]*))?\}\n?([\s\S]*?)\n?\{\1\}/g,
-    (_, macro: string, parameters: string | undefined, code: string) =>
-      hold(`\`\`\`${macro === "code" ? codeLanguage(parameters) : ""}\n${code}\n\`\`\``),
+    BLOCK_WIKI,
+    (_, macro: string, parameters: string | undefined, code: string) => {
+      const fence = ticksAround(code, 3);
+      return hold(`${fence}${macro === "code" ? codeLanguage(parameters) : ""}\n${code}\n${fence}`);
+    },
   );
-  text = text.replace(/\{\{([^}\n]+)\}\}/g, (_, code: string) => hold(`\`${code}\``));
+  text = text.replace(/\{\{([^}\n]+)\}\}/g, (_, code: string) => {
+    const ticks = ticksAround(code, 1);
+    const pad = code.startsWith("`") || code.endsWith("`") ? " " : "";
+    return hold(`${ticks}${pad}${code}${pad}${ticks}`);
+  });
   text = text.replace(/\[([^\]|\n]+)\|(https?:\/\/[^\]\s]+|mailto:[^\]\s]+)\]/g, (_, label, url) =>
     hold(`[${label}](${url})`),
   );
@@ -91,19 +102,14 @@ function inlineWikiToMarkdown(text: string): string {
 export function markdownToWiki(markdown: string): string {
   const { hold, release } = stash();
   let text = markdown.replaceAll("\r\n", "\n").replaceAll(HOLD, "");
-  // A fence indented under a list item loses that indent, which Jira's lists cannot carry.
-  text = text.replace(
-    /^([ \t]*)```([^\n`]*)\n(?:([\s\S]*?)\n)?[ \t]*```[ \t]*$/gm,
-    (_, indent: string, language: string, code: string | undefined) =>
-      hold(
-        `{code${language.trim() === "" ? "" : `:${language.trim()}`}}\n${(code ?? "")
-          .split("\n")
-          .map((line) => line.replace(new RegExp(`^[ \\t]{0,${indent.length}}`), ""))
-          .join("\n")}\n{code}`,
-      ),
+  text = holdFences(text, hold);
+  // A code span closes on a run of backticks as long as its opener; one space each side is padding.
+  text = text.replace(/(?<!`)(`+)(?!`)([^\n]*?[^`\n])\1(?!`)/g, (_, _ticks, code: string) =>
+    hold(`{{${/^ .*[^ ].* $/.test(code) ? code.slice(1, -1) : code}}}`),
   );
-  text = text.replace(/`([^`\n]+)`/g, (_, code: string) => hold(`{{${code}}}`));
-  text = text.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (_, label, url) => hold(`[${label}|${url}]`));
+  text = text.replace(/\[([^\]\n]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)/g, (_, label, url) =>
+    hold(`[${label}|${url}]`),
+  );
   text = text.replace(/<(https?:\/\/[^>\s]+)>/g, (_, url) => hold(`[${url}]`));
   text = text.replace(URL_TEXT, hold);
   const levels: Array<{ indent: number; marker: string }> = [];
@@ -131,6 +137,35 @@ export function markdownToWiki(markdown: string): string {
       })
       .join("\n"),
   );
+}
+
+/**
+ * Swaps each fenced block for a held `{code}` macro. A fence opens with three or more backticks or
+ * tildes and closes only on a run of the same character at least as long; an open one runs to the
+ * end. A fence indented under a list item loses that indent, which Jira's lists cannot carry.
+ */
+function holdFences(text: string, hold: (text: string) => string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const open = /^([ \t]*)(`{3,}|~{3,})(.*)$/.exec(lines[index]!);
+    if (open === null || (open[2]![0] === "`" && open[3]!.includes("`"))) {
+      out.push(lines[index]!);
+      continue;
+    }
+    const [, indent, fence, info] = open;
+    const closer = new RegExp(`^[ \\t]*${fence![0]}{${fence!.length},}[ \\t]*$`);
+    let end = index + 1;
+    while (end < lines.length && !closer.test(lines[end]!)) end += 1;
+    const code = lines
+      .slice(index + 1, end)
+      .map((line) => line.replace(new RegExp(`^[ \\t]{0,${indent!.length}}`), ""))
+      .join("\n");
+    const language = info!.trim().split(/\s+/)[0] ?? "";
+    out.push(hold(`{code${language === "" ? "" : `:${language}`}}\n${code}\n{code}`));
+    index = end;
+  }
+  return out.join("\n");
 }
 
 /** Bold becomes a private marker first, so the single stars left are the italics. */

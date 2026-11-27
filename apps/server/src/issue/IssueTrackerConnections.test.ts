@@ -19,6 +19,7 @@ import * as IssueTrackerConnections from "./IssueTrackerConnections.ts";
 import * as IssueTrackerRegistry from "./IssueTrackerRegistry.ts";
 
 const LINEAR = IssueTrackerKind.make("linear");
+const JIRA = IssueTrackerKind.make("jira");
 
 describe("IssueTrackerConnections", () => {
   it.effect("keeps each account's key and bindings apart, and no key past its account", () => {
@@ -50,6 +51,28 @@ describe("IssueTrackerConnections", () => {
               { account: `user-${token}`, scopes: [] },
             ),
     } as unknown as StandaloneIssueTrackerApi;
+    const probed: Array<Readonly<Record<string, string>>> = [];
+    const jira = {
+      kind: JIRA,
+      standalone: {
+        tracker: JIRA,
+        displayName: "Jira",
+        host: "atlassian.net",
+        credential: {
+          label: "API token",
+          helpUrl: null,
+          fields: [
+            { key: "site", label: "Site", placeholder: null },
+            { key: "email", label: "Account email", placeholder: null, optional: true },
+          ],
+        },
+      },
+      probeCredential: ({ fields }: { readonly fields: Readonly<Record<string, string>> }) =>
+        Effect.sync(() => {
+          probed.push(fields);
+          return { account: "jira-user", scopes: [] };
+        }),
+    } as unknown as StandaloneIssueTrackerApi;
     const layer = IssueTrackerConnections.layer.pipe(
       Layer.provideMerge(IssueTrackerBindings.layer),
       Layer.provideMerge(
@@ -57,7 +80,7 @@ describe("IssueTrackerConnections", () => {
           SqlitePersistence.layerMemory,
           Layer.succeed(
             IssueTrackerRegistry.IssueTrackerRegistry,
-            IssueTrackerRegistry.fromTrackers([tracker]),
+            IssueTrackerRegistry.fromTrackers([tracker, jira]),
           ),
           Layer.mock(ServerSecretStore.ServerSecretStore)({
             get: (name) =>
@@ -79,6 +102,15 @@ describe("IssueTrackerConnections", () => {
     );
     return Effect.gen(function* () {
       const connections = yield* IssueTrackerConnections.IssueTrackerConnections;
+      // A blank optional field is left out; a blank required one refuses the credential.
+      yield* connections.connect({ tracker: JIRA, token: "pat", fields: { site: "jira.test" } });
+      expect(probed).toEqual([{ site: "jira.test" }]);
+      expect(
+        yield* Effect.flip(
+          connections.connect({ tracker: JIRA, token: "pat", fields: { email: "j@a.test" } }),
+        ),
+      ).toMatchObject({ reason: "rejected", detail: "Jira needs its site too." });
+      yield* connections.connect({ tracker: JIRA, token: null });
       yield* connections.connect({ tracker: LINEAR, token: "work" });
       const { accountId } = yield* connections.connect({
         tracker: LINEAR,

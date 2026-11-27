@@ -331,7 +331,7 @@ export class JiraApi extends Context.Service<
       { readonly comments: ReadonlyArray<JiraComment>; readonly total: number },
       IssueTrackerError
     >;
-    /** Which of the named permissions the account holds on the issue. Cloud only. */
+    /** Which of the named permissions the account holds on the issue. */
     readonly permissions: (
       key: string,
       names: ReadonlyArray<string>,
