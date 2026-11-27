@@ -114,7 +114,11 @@ export function useRightPanelSurfaceClose(input: {
       threadRef,
       closingSurfaces.map((surface) => surface.id),
     );
-    for (const surface of closingSurfaces) {
+    // The active tab's session closes last so reopening restores it first.
+    const releaseOrder = closingSurfaces.toSorted(
+      (left, right) => Number(left.id === activeSurfaceId) - Number(right.id === activeSurfaceId),
+    );
+    for (const surface of releaseOrder) {
       releaseSurfaceResources(threadRef, surface);
     }
     const nextActiveSurface = selectActiveRightPanelSurface(
