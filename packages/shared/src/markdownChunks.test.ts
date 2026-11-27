@@ -7,6 +7,7 @@ import remarkRehype from "remark-rehype";
 import { unified } from "unified";
 
 import {
+  joinMarkdownChunks,
   LARGE_MARKDOWN_CHUNK_MAX_CHARS,
   splitMarkdown,
   withMarkdownDefinitions,
@@ -93,6 +94,48 @@ describe("splitMarkdown", () => {
       "<div>",
       "# heading",
     ]);
+  });
+
+  it("splits CR-only Markdown into bounded chunks like LF and preserves line endings", () => {
+    const cr = `first\r\r# ${"x\r\r# ".repeat(30_000)}end`;
+    const lf = cr.replaceAll("\r", "\n");
+    const crResult = splitMarkdown(cr);
+    const lfResult = splitMarkdown(lf);
+
+    expect(crResult.chunks.length).toBe(lfResult.chunks.length);
+    expect(crResult.chunks.length).toBeGreaterThan(1);
+    expect(
+      crResult.chunks.every((chunk) => chunk.text.length <= LARGE_MARKDOWN_CHUNK_MAX_CHARS),
+    ).toBe(true);
+    expect(crResult.chunks.reduce((sum, chunk) => sum + chunk.lines, 0)).toBe(
+      lfResult.chunks.reduce((sum, chunk) => sum + chunk.lines, 0),
+    );
+    expect(joinMarkdownChunks(crResult.chunks)).toBe(cr);
+    const rendered = unified().use(remarkParse).use(remarkRehype);
+    expect(toHtml(rendered.runSync(rendered.parse(crResult.chunks[1]!.text)))).toContain(
+      "<h1>x</h1>",
+    );
+
+    const mixed = `---\rtitle: cr\r---\r\r[ref]: /cr-link\r\r\`\`\`md\r# inside fence\r\`\`\`\r\r<details>\r\r${"x".repeat(32 * 1024)}\r\r</details>\r\r# After [ref]\r\n\r\n- [ ] task`;
+    const mixedResult = splitMarkdown(mixed);
+    expect(mixedResult.definitions).toBe("[ref]: /cr-link");
+    expect(mixedResult.chunks.map((chunk) => chunk.text.split(/\r\n?|\n/)[0])).toEqual([
+      "---",
+      "# After [ref]",
+    ]);
+    expect(joinMarkdownChunks(mixedResult.chunks)).toBe(mixed);
+    const secondChunk = withMarkdownDefinitions(
+      mixedResult.chunks[1]!.text,
+      mixedResult.definitions,
+    );
+    const list = unified()
+      .use(remarkParse)
+      .use(remarkGfm)
+      .parse(secondChunk)
+      .children.find((node) => node.type === "list");
+    const marker = taskListMarkerOffset(secondChunk, list!.position!.start.offset!);
+    const secondStart = mixedResult.chunks[0]!.text.length + 1;
+    expect(secondStart + marker! - (mixedResult.definitions.length + 2)).toBe(mixed.indexOf("[ ]"));
   });
 
   it("keeps HTML blocks and display math open across blank lines", () => {
@@ -203,6 +246,58 @@ describe("splitMarkdown", () => {
     expect(splitLargeMarkdown(text, 6).map((chunk) => chunk.text)).toEqual([
       "# a\n\nb\n",
       "# c\n\nd",
+    ]);
+  });
+
+  it("keeps the complete sample fence before a later oversized source chunk", () => {
+    const example = ["```md", "Sample Markdown", "", "# Sample heading", "```"].join("\n");
+    const preview = ["x".repeat(4200), "<span>", example, "More prose", "<span>"].join("\n");
+    const oversized = "# Appendix\n" + "[link](/example) ".repeat(11_000);
+    const { chunks } = splitMarkdown(preview + "\n" + oversized);
+    expect(chunks.map((chunk) => chunk.text)).toEqual([preview, oversized]);
+  });
+
+  it.each(["===", "---", "***"])(
+    "keeps HTML together after a long paragraph and %s",
+    (boundary) => {
+      const text = ["x".repeat(9000), boundary, "<span>", "# literal"].join("\n");
+      expect(splitMarkdown(text).chunks.map((chunk) => chunk.text)).toEqual([text]);
+    },
+  );
+
+  it.each([
+    ["a fence", "```md", "```"],
+    ["an HTML comment", "<!--", "-->"],
+    ["display math", "$$", "$$"],
+  ])("keeps %s intact after an ambiguous standalone tag", (_, open, close) => {
+    const block = [open, "Sample Markdown", "", "# Sample heading", close].join("\n");
+    const preview = ["x".repeat(9000), "<span>", block].join("\n");
+    expect(splitMarkdown(preview).chunks.map((chunk) => chunk.text)).toEqual([preview]);
+  });
+
+  it("preserves an oversized ambiguous region for source display", () => {
+    const oversized = ["x".repeat(LARGE_MARKDOWN_CHUNK_MAX_CHARS), "<span>", "# Heading"].join(
+      "\n",
+    );
+    const next = "# Next";
+    const text = oversized + "\n\n" + next;
+    expect(splitMarkdown(text).chunks.map((chunk) => chunk.text)).toEqual([oversized + "\n", next]);
+  });
+
+  it.each([
+    ["multiline math with backticks", ["$$", "```", "$$", " # Heading"]],
+    ["single-line display math", ["$$x$$"]],
+  ])("keeps standalone HTML intact after %s", (_, math) => {
+    const text = ["x".repeat(4200), "<span>", ...math, "<span>", "# literal"].join("\n");
+    expect(splitMarkdown(text).chunks.map((chunk) => chunk.text)).toEqual([text]);
+  });
+
+  it("can cut at a heading after a tag in a lazy quote continuation", () => {
+    const quote = ["> " + "x".repeat(4200), "continued", "<span>"].join("\n");
+    const heading = "# Next";
+    expect(splitMarkdown(quote + "\n" + heading).chunks.map((chunk) => chunk.text)).toEqual([
+      quote,
+      heading,
     ]);
   });
 
