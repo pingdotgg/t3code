@@ -67,6 +67,40 @@ describe("ThemeImportDialog", () => {
     );
   });
 
+  // The count uses the host locale, not the UI language.
+  const compact = (count: number) =>
+    new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(
+      count,
+    );
+  it.each([
+    ["en", 1, "acme · 1 download"],
+    ["ru", 475_001, `acme · Скачиваний: ${compact(475_001)}`],
+  ])("counts %s theme downloads (%d)", async (locale, downloadCount, line) => {
+    searchOpenVsxThemes.mockReset();
+    searchOpenVsxThemes.mockResolvedValue([{ ...extension, downloadCount }]);
+    const translations = await getTranslationsSnapshot(locale);
+    using _locale = {
+      [Symbol.dispose]() {
+        // GTProvider leaves its locale in a cookie; this sets it back to English.
+        initializeI18n(() => {});
+      },
+    };
+    await using _screen = await render(
+      <GTProvider locale={locale} translations={translations}>
+        <ThemeImportDialog
+          open
+          onOpenChange={() => {}}
+          onImported={() => true}
+          onImportedMany={() => {}}
+        />
+      </GTProvider>,
+    );
+
+    await userEvent.fill(page.getByRole("searchbox"), "night");
+
+    await expect.element(page.getByText(line, { exact: true })).toBeVisible();
+  });
+
   it("clears the search on Escape before closing the dialog", async () => {
     searchOpenVsxThemes.mockReset();
     searchOpenVsxThemes.mockResolvedValue([]);
@@ -167,6 +201,34 @@ function isolateThemes() {
     },
   };
 }
+
+it("keeps a numbered copy when the theme name expands in its ID", async () => {
+  using _themes = isolateThemes();
+  const name = "İstanbul İncisi İzmir İskenderun İnegöl İpsala";
+  const original = installCustomTheme(parseThemeFile(theme(name)));
+  const updated = theme(name, "#f97316");
+  await using _screen = await render(
+    <ThemeImportDialog
+      open
+      onOpenChange={() => {}}
+      onImported={() => true}
+      onImportedMany={() => {}}
+    />,
+  );
+
+  await userEvent.fill(page.getByRole("textbox", { name: "Theme JSON" }), JSON.stringify(updated));
+  await page.getByRole("button", { name: "Add theme", exact: true }).click();
+  await expect.element(page.getByText("Already installed")).toBeVisible();
+  await page.getByRole("button", { name: "Keep both" }).click();
+
+  const themes = getCustomThemes();
+  expect(themes).toHaveLength(2);
+  expect(themes.find(({ id }) => id === original.id)).toEqual(original);
+  expect(themes.find(({ id }) => id !== original.id)).toMatchObject({
+    label: "İstanbul İncisi İzmir İskenderun İnegöl İ (1)",
+    colors: parseThemeFile(updated).colors,
+  });
+});
 
 it("sizes an oversized theme file just under 1 MB as 1.00 MB", async () => {
   using _themes = isolateThemes();
