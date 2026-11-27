@@ -1472,6 +1472,94 @@ describe("PreviewManager", () => {
       ),
     );
 
+    const startNavigation = (
+      preview: ReturnType<typeof makeFaviconWebContents>,
+      isSameDocument: boolean,
+    ) =>
+      preview.listeners.get("did-start-navigation")?.({
+        isMainFrame: true,
+        isSameDocument,
+      } as never);
+
+    effectIt.effect("keeps the guard when the page moved its history while asking", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const changes = makeChangeSignal();
+          const preview = yield* openGuardedTab(manager, "tab_guarded_history");
+          let activeIndex = 1;
+          const goBack = vi.fn(() => void blockUnload(preview));
+          Object.assign(preview.webContents, {
+            navigationHistory: {
+              canGoBack: () => true,
+              canGoForward: () => false,
+              getActiveIndex: () => activeIndex,
+              goBack,
+            },
+          });
+          let answered = false;
+          showMessageBox.mockImplementationOnce(async () => {
+            activeIndex = 2;
+            answered = true;
+            changes.notify();
+            return { response: 0, checkboxChecked: false };
+          });
+
+          yield* manager.goBack("tab_guarded_history");
+          yield* changes.until(() => answered);
+          yield* flushMicrotasks();
+
+          expect(goBack).toHaveBeenCalledTimes(1);
+          const later = blockUnload(preview);
+          expect(later.preventDefault).not.toHaveBeenCalled();
+        }),
+      ),
+    );
+
+    effectIt.effect("ignores Leave once the page has navigated away on its own", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const changes = makeChangeSignal();
+          const preview = yield* openGuardedTab(manager, "tab_guarded_moved");
+          preview.reload.mockImplementation(() => void blockUnload(preview));
+          let answered = false;
+          showMessageBox.mockImplementationOnce(async () => {
+            startNavigation(preview, false);
+            answered = true;
+            changes.notify();
+            return { response: 0, checkboxChecked: false };
+          });
+
+          yield* manager.refresh("tab_guarded_moved");
+          yield* changes.until(() => answered);
+          yield* flushMicrotasks();
+
+          expect(preview.reload).toHaveBeenCalledTimes(1);
+        }),
+      ),
+    );
+
+    effectIt.effect("forgets an action that ended in a same-document navigation", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const preview = yield* openGuardedTab(manager, "tab_guarded_anchor");
+          Object.assign(preview.webContents, {
+            navigationHistory: {
+              canGoBack: () => true,
+              canGoForward: () => false,
+              getActiveIndex: () => 1,
+              goBack: () => startNavigation(preview, true),
+            },
+          });
+
+          yield* manager.goBack("tab_guarded_anchor");
+          blockUnload(preview);
+          yield* flushMicrotasks();
+
+          expect(showMessageBox).not.toHaveBeenCalled();
+        }),
+      ),
+    );
+
     effectIt.effect("does not ask when the page blocked a navigation of its own", () =>
       withManager((manager) =>
         Effect.gen(function* () {

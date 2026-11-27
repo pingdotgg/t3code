@@ -613,18 +613,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   // recorded here, the prompt is async, and Leave repeats the action with the guard skipped once.
   const leaveAttempts = new Map<
     number,
-    { readonly retry: () => void; readonly expiresAt: number }
+    { readonly retry: () => boolean; readonly expiresAt: number }
   >();
   const confirmedLeaves = new Map<number, number>();
   const leavePromptsOpen = new Set<number>();
-  const armLeave = (wc: Electron.WebContents, retry: () => void) => {
+  /** `retry` returns false when the action no longer applies, so Leave must not skip the guard. */
+  const armLeave = (wc: Electron.WebContents, retry: () => boolean) => {
     leaveAttempts.set(wc.id, {
       retry,
       expiresAt: runSync(Clock.currentTimeMillis) + LEAVE_ATTEMPT_TTL_MS,
     });
   };
   const navigateAway = (wc: Electron.WebContents, action: () => void) => {
-    armLeave(wc, action);
+    armLeave(wc, () => {
+      action();
+      return true;
+    });
     action();
   };
   const traverseHistory = (wc: Electron.WebContents, direction: "back" | "forward") => {
@@ -634,7 +638,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const from = history.getActiveIndex();
     // The page may move its history while the prompt is open; Leave must not land elsewhere.
     armLeave(wc, () => {
-      if (history.getActiveIndex() === from) go();
+      if (history.getActiveIndex() !== from) return false;
+      go();
+      return true;
     });
     go();
   };
@@ -1313,10 +1319,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const navigationStarted = (
       event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
     ) => {
-      if (!event.isMainFrame || event.isSameDocument) return;
-      cancelFaviconCapture();
+      if (!event.isMainFrame) return;
       leaveAttempts.delete(wc.id);
       confirmedLeaves.delete(wc.id);
+      if (!event.isSameDocument) cancelFaviconCapture();
     };
     const tabDestroyed = Effect.callback<void>((resume) => {
       const done = () => resume(Effect.void);
@@ -1343,14 +1349,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       return response === 0;
     }).pipe(Effect.scoped);
-    const confirmLeave = Effect.fn("PreviewManager.confirmLeave")(function* (retry: () => void) {
+    const confirmLeave = Effect.fn("PreviewManager.confirmLeave")(function* (
+      retry: () => boolean,
+      askedDocumentId: number,
+    ) {
       const leave = yield* Effect.raceFirst(askToLeave, tabDestroyed.pipe(Effect.as(false))).pipe(
         Effect.orElseSucceed(() => false),
         Effect.ensuring(Effect.sync(() => void leavePromptsOpen.delete(wc.id))),
       );
-      if (!leave || wc.isDestroyed()) return;
+      // Navigation and detach both advance documentId; Leave answers only the page that asked.
+      if (!leave || wc.isDestroyed() || documentId !== askedDocumentId) return;
       confirmedLeaves.set(wc.id, (yield* Clock.currentTimeMillis) + LEAVE_ATTEMPT_TTL_MS);
-      yield* attempt({ operation: "leavePage.retry", tabId, webContentsId: wc.id }, retry);
+      const retried = yield* attempt(
+        { operation: "leavePage.retry", tabId, webContentsId: wc.id },
+        retry,
+      ).pipe(Effect.orElseSucceed(() => false));
+      if (!retried) confirmedLeaves.delete(wc.id);
     });
     const unloadPrevented = (event: Electron.Event) => {
       const now = runSync(Clock.currentTimeMillis);
@@ -1366,7 +1380,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       sync();
       if (!pending || now > pending.expiresAt || leavePromptsOpen.has(wc.id)) return;
       leavePromptsOpen.add(wc.id);
-      runFork(confirmLeave(pending.retry).pipe(Effect.ignore));
+      runFork(confirmLeave(pending.retry, documentId).pipe(Effect.ignore));
     };
     const audioStateChanged = (
       event: Electron.Event<Electron.WebContentsAudioStateChangedEventParams>,
@@ -2294,7 +2308,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () => {
       // A retry after Leave has no caller to report to; its failures show as tab state.
-      armLeave(wc, () => void wc.loadURL(url).catch(() => undefined));
+      armLeave(wc, () => {
+        void wc.loadURL(url).catch(() => undefined);
+        return true;
+      });
       return wc.loadURL(url);
     }).pipe(
       // A blocked unload (the leave prompt takes over) and a superseding navigation both reject with ERR_ABORTED.
