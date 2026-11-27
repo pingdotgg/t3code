@@ -69,10 +69,19 @@ describe("hasCloudPublicConfig", () => {
       expect(hasCloudPublicConfig()).toBe(expected);
     });
 
-    it("keeps production keys available in the Electron auth shell", () => {
-      vi.stubGlobal("window", { location: new URL("file:///app/index.html"), desktopBridge: {} });
+    it.each([true, false])(
+      "follows the desktop host's managed policy for T3 Connect: %s",
+      async (connectAllowed) => {
+        vi.stubGlobal("window", {
+          location: new URL("file:///app/index.html"),
+          desktopBridge: { getConnectAllowed: () => connectAllowed },
+        });
+        // The desktop answer is cached per page load.
+        vi.resetModules();
+        const fresh = await import("./publicConfig.ts");
 
-      expect(hasCloudPublicConfig()).toBe(true);
-    });
+        expect(fresh.hasCloudPublicConfig()).toBe(connectAllowed);
+      },
+    );
   });
 });

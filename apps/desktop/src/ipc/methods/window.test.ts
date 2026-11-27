@@ -39,6 +39,7 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
   installRelayTelemetryEnabled,
+  installConnectAllowed,
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
@@ -339,6 +340,46 @@ describe("installRelayTelemetryEnabled", () => {
       // A policy that cannot be read fails closed.
       assert.isFalse(
         yield* after({}, new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
+      );
+    }),
+  );
+});
+
+describe("installConnectAllowed", () => {
+  const connectAllowed = (policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0]) =>
+    Effect.gen(function* () {
+      const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
+      yield* installConnectAllowed().pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            DesktopIpc.layerTest({
+              removeHandler: () => undefined,
+              handle: () => undefined,
+              removeAllListeners: (channel) => void listeners.delete(channel),
+              on: (channel, listener) => void listeners.set(channel, listener),
+            }),
+            DesktopManagedPolicy.layerTest(policy),
+          ),
+        ),
+      );
+      const event = { returnValue: undefined as unknown };
+      listeners.get(IpcChannels.GET_CONNECT_ALLOWED_CHANNEL)?.(event as never);
+      return event.returnValue;
+    }).pipe(Effect.scoped);
+
+  it.effect("keeps Clerk off when the managed policy rules out T3 Connect", () =>
+    Effect.gen(function* () {
+      const policy = (limits: ManagedPolicyLimits) => ({
+        schemaVersion: 1 as const,
+        organization: "Example Corp",
+        limits,
+      });
+      assert.isTrue(yield* connectAllowed());
+      assert.isTrue(yield* connectAllowed(policy({ telemetry: false })));
+      assert.isFalse(yield* connectAllowed(policy({ connect: false, telemetry: false })));
+      assert.isFalse(yield* connectAllowed(policy({ clients: ["desktop"] })));
+      assert.isFalse(
+        yield* connectAllowed(new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
       );
     }),
   );

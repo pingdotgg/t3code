@@ -94,20 +94,23 @@ export function resolveRelayTracingConfig() {
     : null;
 }
 
+let desktopConnectAllowed: boolean | null = null;
+
 export function hasCloudPublicConfig(): boolean {
   const config = resolveCloudPublicConfig();
   if (!config.clerkPublishableKey || !config.clerkJwtTemplate || !config.relayUrl) {
     return false;
   }
+  if (typeof window === "undefined") return true;
 
-  // Electron has its own auth runtime; development keys also support private browser origins.
-  if (
-    typeof window === "undefined" ||
-    window.desktopBridge !== undefined ||
-    !config.clerkPublishableKey.startsWith("pk_live_")
-  ) {
-    return true;
+  // Electron has its own auth runtime, and Clerk stays unloaded where the policy rules out Connect.
+  if (window.desktopBridge) {
+    desktopConnectAllowed ??= window.desktopBridge.getConnectAllowed();
+    return desktopConnectAllowed;
   }
+
+  // Development keys also support private browser origins.
+  if (!config.clerkPublishableKey.startsWith("pk_live_")) return true;
 
   try {
     // Custom Frontend API hosts use clerk.<production domain>.

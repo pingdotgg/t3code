@@ -124,6 +124,34 @@ export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.instal
   },
 );
 
+/**
+ * Clerk loads in the renderer at startup, before any server config reaches it, so the window asks
+ * here whether the policy allows T3 Connect. A policy that cannot be read does not.
+ */
+export const installConnectAllowed = Effect.fn("desktop.ipc.window.installConnectAllowed")(
+  function* () {
+    const ipc = yield* DesktopIpc.DesktopIpc;
+    const allowed = yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
+      Effect.map((found) => {
+        const limits = found?.document.limits;
+        // As the server's allowsConnect: Connect is a way in for remote clients.
+        return (
+          limits?.connect !== false &&
+          (limits?.clients === undefined || limits.clients.includes("remote"))
+        );
+      }),
+      Effect.orElseSucceed(() => false),
+    );
+    yield* ipc.handleSync(
+      DesktopIpc.makeSyncIpcMethod({
+        channel: IpcChannels.GET_CONNECT_ALLOWED_CHANNEL,
+        result: Schema.Boolean,
+        handler: () => Effect.succeed(allowed),
+      }),
+    );
+  },
+);
+
 export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_SYSTEM_LOCALE_CHANNEL,
   result: Schema.String,
