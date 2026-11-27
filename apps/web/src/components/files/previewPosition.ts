@@ -3,6 +3,9 @@ import { createContext } from "react";
 /** Names the open workspace file per environment and thread, so viewers outlive remounts. */
 export const PreviewPositionKey = createContext<string | null>(null);
 
+/** The tab object identifies one line request, even when a closed tab's request number is reused. */
+export const PreviewRevealRequest = createContext<object | null>(null);
+
 export function previewPositionKey(
   ...parts: readonly [environmentId: string, threadId: string, cwd: string, path: string]
 ): string {
