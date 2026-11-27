@@ -26,6 +26,7 @@ import {
   isManagedDriverAllowed,
   ProviderDriverKind,
   ThreadId,
+  withProviderUsageAccess,
 } from "@t3tools/contracts";
 import { Link, useBlocker } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
@@ -33,6 +34,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  FolderSearchIcon,
   PlusIcon,
   SmartphoneIcon,
   TerminalIcon,
@@ -150,12 +152,14 @@ export function WelcomePage({
     canShare: canReadRelay && canWriteRelay,
     policy: useManagedPolicy(environmentId),
   });
-  const scans = useProjectScans([environmentId]);
   const [storedSelection, storeSelection] = useLocalStorage(
     welcomeImportSelectionKey(environmentId),
     null,
     StoredWelcomeImportSelection,
   );
+  // Agent history is read only after the user asks; a saved selection means they already did.
+  const [scanRequested, setScanRequested] = useState(() => storedSelection !== null);
+  const scans = useProjectScans(scanRequested ? [environmentId] : []);
   // The page keeps its own copy, so a failed write (a full quota) cannot undo a choice.
   const [importSelection, setImportSelectionState] = useState(storedSelection);
   const setImportSelection = (next: WelcomeImportSelection | null) => {
@@ -298,11 +302,20 @@ export function WelcomePage({
                 isPrimary={isPrimary}
                 onImportSourceEnabled={() => scans[0]?.refresh()}
               />
-              <ProjectsSection
-                scan={scans[0]}
-                projectImport={projectImport}
-                isImporting={isImporting}
-              />
+              {scanRequested ? (
+                <ProjectsSection
+                  environmentId={environmentId}
+                  scan={scans[0]}
+                  projectImport={projectImport}
+                  isImporting={isImporting}
+                />
+              ) : (
+                <FindProjectsSection
+                  environmentId={environmentId}
+                  disabled={isImporting}
+                  onFind={() => setScanRequested(true)}
+                />
+              )}
               {showPhone ? <PhoneSection environmentId={environmentId} /> : null}
             </div>
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
@@ -795,18 +808,90 @@ function AgentLogoStack({
   );
 }
 
+/** Asks before reading agent history: one click finds projects and can also allow usage stats. */
+function FindProjectsSection({
+  environmentId,
+  disabled,
+  onFind,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly disabled: boolean;
+  readonly onFind: () => void;
+}) {
+  const gt = useGT();
+  const { label: importSourcesLabel, count: importSourceCount } =
+    useImportSourcesLabel(environmentId);
+  const { providers, serverConfig } = useWelcomeAgents(environmentId);
+  const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
+  const [includeUsage, setIncludeUsage] = useState(true);
+  const usageCheckboxId = `welcome-usage-access-${environmentId}`;
+  const find = () => {
+    onFind();
+    if (!includeUsage || !serverConfig) return;
+    for (const provider of providers ?? []) {
+      if (!provider.enabled || !isImportSource(provider.driver)) continue;
+      const instance = serverConfig.settings.providerInstances[provider.instanceId];
+      if (instance?.usageAccess !== undefined) continue;
+      void persistProviderInstance({
+        operation: "upsert",
+        instanceId: provider.instanceId,
+        instance: withProviderUsageAccess(instance, provider.driver, "allowed"),
+      });
+    }
+  };
+  if (importSourceCount === 0) return null;
+  return (
+    <WelcomeSection title={gt("Projects")}>
+      <div className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-2 py-1">
+        <RowIcon>
+          <FolderSearchIcon className="size-4" />
+        </RowIcon>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-foreground">
+            <T>Bring in your projects</T>
+          </span>
+          <span className="block text-xs text-muted-foreground">
+            <T>
+              T3 Code can read your <Var>{importSourcesLabel}</Var> session history on this computer
+              to find the folders you worked in, and their git remotes.
+            </T>
+          </span>
+        </span>
+        <Button size="sm" variant="outline" disabled={disabled} onClick={find}>
+          <T>Find my projects</T>
+        </Button>
+      </div>
+      <label htmlFor={usageCheckboxId} className="flex items-center gap-3 py-1 ps-8 text-xs">
+        <RowIcon>
+          <Checkbox
+            id={usageCheckboxId}
+            checked={includeUsage}
+            disabled={disabled}
+            onCheckedChange={(checked) => setIncludeUsage(Boolean(checked))}
+          />
+        </RowIcon>
+        <span className="text-muted-foreground">
+          <T>Also show my usage stats from these agents</T>
+        </span>
+      </label>
+    </WelcomeSection>
+  );
+}
+
 function ProjectsSection({
+  environmentId,
   scan,
   projectImport,
   isImporting,
 }: {
+  readonly environmentId: EnvironmentId;
   readonly scan: ReturnType<typeof useProjectScans>[number] | undefined;
   readonly projectImport: ReturnType<typeof useProjectImport>;
   readonly isImporting: boolean;
 }) {
   const gt = useGT();
   const m = useMessages();
-  const importSourcesLabel = useImportSourcesLabel();
+  const { label: importSourcesLabel } = useImportSourcesLabel(environmentId);
   const [reviewing, setReviewing] = useState(false);
   const {
     canWrite,
@@ -1949,10 +2034,18 @@ const IMPORT_SOURCE_NAMES: Record<AgentSessionSource, string> = {
   codex: "Codex",
   pi: "Pi",
 };
-function useImportSourcesLabel() {
-  return new Intl.ListFormat(useLocale(), { type: "conjunction" }).format(
-    AgentSessionSource.literals.map((source) => IMPORT_SOURCE_NAMES[source]),
+// The scan reads only agents that are turned on, so name only those.
+function useImportSourcesLabel(environmentId: EnvironmentId) {
+  const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
+  const sources = AgentSessionSource.literals.filter((source) =>
+    providers?.some((provider) => provider.enabled && provider.driver === source),
   );
+  return {
+    count: sources.length,
+    label: new Intl.ListFormat(useLocale(), { type: "conjunction" }).format(
+      sources.map((source) => IMPORT_SOURCE_NAMES[source]),
+    ),
+  };
 }
 
 function ImportRowMeta({

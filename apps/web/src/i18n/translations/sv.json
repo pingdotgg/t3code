@@ -13031,5 +13031,78 @@
       "v": "v"
     },
     " till i Länkade objekt"
+  ],
+  "175fd48b1f788f46": "Tillåt användningsåtkomst för att visa den här agentens gränser.",
+  "e69560805f86c879": "Konfigurera",
+  "ffbe05f2f405850a": "Användningsåtkomst",
+  "40b7d767de71d529": "Användningsåtkomst för {provider}",
+  "b1407315384f1c1b": "Det gick inte att spara användningsåtkomsten",
+  "e8c85a531545e81e": "Visa användning från dina agenter?",
+  "fe435496a11f0a76": "Du kan ändra detta för varje agent under Inställningar → Leverantörer.",
+  "d0eb90f0a42166b7": "Tillåt inte",
+  "c23c1f8ee3808edb": "Tillåt",
+  "53d6f3510e1d2505": "Ta med dina projekt",
+  "f38cfff76578bff1": "Hitta mina projekt",
+  "9c6f941b55e5040d": "Visa även min användningsstatistik från dessa agenter",
+  "e6af2ef0f498384a": [
+    "T3 Code kan läsa din sessionshistorik från ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " på den här datorn för att hitta mapparna du har arbetat i och deras git-fjärrar."
+  ],
+  "c27aeb1a189a64c5": "T3 Code kan visa tokens, kostnad och gränser utifrån det dina agenter sparar på den här datorn. Välj vilka agenter som ska ingå.",
+  "4794e53fc07e3d86": "Läser sessionshistoriken och inloggningen för att fråga Anthropic om dina återställningskrediter.",
+  "845c5d64893a2cd1": "Läser sessionshistoriken och inloggningen för att fråga xAI om dina krediter.",
+  "693a46777fff9c2c": "Läser användningsdatabasen och Go-nyckeln för att fråga OpenCode om dina Go-gränser.",
+  "53e3445f40979e50": "Läser konversationshistoriken.",
+  "a7990527035b13c7": "Frågar Cursor om kontots användning med API-nyckeln du gav T3 Code.",
+  "dd05e52097323d6a": "Läser sessionshistoriken.",
+  "dd79a04014ffc88d": [
+    "Läser sessionshistoriken i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " och inloggningen för att fråga Anthropic om dina återställningskrediter."
+  ],
+  "7494e2ce9d51834d": [
+    "Läser sessionshistoriken i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " och inloggningen för att fråga xAI om dina krediter."
+  ],
+  "b36e17795a3c3059": [
+    "Läser användningsdatabasen i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " och Go-nyckeln för att fråga OpenCode om dina Go-gränser."
+  ],
+  "6eeddb4ee806cf22": [
+    "Läser konversationshistoriken i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "02139b3322ab2f61": [
+    "Läser sessionshistoriken i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
   ]
 }

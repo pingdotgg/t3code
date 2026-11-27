@@ -66,6 +66,8 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { PROVIDER_PRESENTATION } from "../usage/usageProviders";
+import { UsageAccessReads } from "../usage/UsageAccessReads";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
@@ -919,6 +921,12 @@ export function ProviderInstanceCard({
     onUpdate({ ...instance, enabled: value });
   };
 
+  const readsUsage = Object.values(PROVIDER_PRESENTATION).some(
+    (presentation) => presentation.driverKind === instance.driver,
+  );
+  const updateUsageAccess = (allowed: boolean) =>
+    onUpdate({ ...instance, usageAccess: allowed ? "allowed" : "denied" });
+
   const updateAccentColor = (value: string) => {
     const normalized = normalizeProviderAccentColor(value);
     const { accentColor: _omit, ...rest } = instance;
@@ -1376,6 +1384,20 @@ export function ProviderInstanceCard({
             </div>
           }
         />
+        {readsUsage ? (
+          <SettingsRow
+            title={gt("Usage access")}
+            description={<UsageAccessReads driver={instance.driver} />}
+            control={
+              <Switch
+                checked={instance.usageAccess === "allowed"}
+                disabled={readOnly}
+                onCheckedChange={(checked) => updateUsageAccess(Boolean(checked))}
+                aria-label={gt("Usage access for {provider}", { provider: displayName })}
+              />
+            }
+          />
+        ) : null}
       </SettingsSection>
 
       {setup || environmentFields.length > 0 ? (

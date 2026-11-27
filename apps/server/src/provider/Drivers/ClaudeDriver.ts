@@ -107,6 +107,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     accentColor,
     environment,
     enabled,
+    usageAccess = Effect.succeed(false),
     config,
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -288,8 +289,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               stateDir,
               catalog,
               scopedLimitNames,
+              // Reset credits need Claude's sign-in token, which T3 reads only with usage access.
               (version) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
+                usageAccess.pipe(
+                  Effect.flatMap((allowed) =>
+                    allowed
+                      ? ClaudeResetCredits.readClaudeResetCredits(configDir, version)
+                      : Effect.undefined,
+                  ),
                   Effect.provideService(HttpClient.HttpClient, httpClient),
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),

@@ -13024,5 +13024,78 @@
       "v": "v"
     },
     " weitere unter Verknüpfte Elemente"
+  ],
+  "175fd48b1f788f46": "Erlaube den Nutzungszugriff, um die Limits dieses Agenten anzuzeigen.",
+  "e69560805f86c879": "Einrichten",
+  "ffbe05f2f405850a": "Nutzungszugriff",
+  "40b7d767de71d529": "Nutzungszugriff für {provider}",
+  "b1407315384f1c1b": "Nutzungszugriff konnte nicht gespeichert werden",
+  "e8c85a531545e81e": "Nutzung deiner Agenten anzeigen?",
+  "fe435496a11f0a76": "Du kannst das für jeden Agenten unter Einstellungen → Anbieter ändern.",
+  "d0eb90f0a42166b7": "Nicht erlauben",
+  "c23c1f8ee3808edb": "Erlauben",
+  "53d6f3510e1d2505": "Bring deine Projekte mit",
+  "f38cfff76578bff1": "Meine Projekte finden",
+  "9c6f941b55e5040d": "Auch meine Nutzungsstatistiken dieser Agenten anzeigen",
+  "e6af2ef0f498384a": [
+    "T3 Code kann deinen Sitzungsverlauf von ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " auf diesem Computer lesen, um die Ordner zu finden, in denen du gearbeitet hast, samt ihrer Git-Remotes."
+  ],
+  "c27aeb1a189a64c5": "T3 Code kann Tokens, Kosten und Limits aus dem darstellen, was deine Agents auf diesem Computer speichern. Wähle, welche Agents einbezogen werden.",
+  "4794e53fc07e3d86": "Liest den Sitzungsverlauf und die Anmeldung, um bei Anthropic deine Reset-Guthaben abzufragen.",
+  "845c5d64893a2cd1": "Liest den Sitzungsverlauf und die Anmeldung, um bei xAI dein Guthaben abzufragen.",
+  "693a46777fff9c2c": "Liest die Nutzungsdatenbank und den Go-Schlüssel, um bei OpenCode deine Go-Limits abzufragen.",
+  "53e3445f40979e50": "Liest den Gesprächsverlauf.",
+  "a7990527035b13c7": "Fragt bei Cursor die Nutzung deines Kontos ab, mit dem API-Schlüssel, den du T3 Code gegeben hast.",
+  "dd05e52097323d6a": "Liest den Sitzungsverlauf.",
+  "dd79a04014ffc88d": [
+    "Liest den Sitzungsverlauf unter ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " und die Anmeldung, um bei Anthropic deine Reset-Guthaben abzufragen."
+  ],
+  "7494e2ce9d51834d": [
+    "Liest den Sitzungsverlauf unter ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " und die Anmeldung, um bei xAI dein Guthaben abzufragen."
+  ],
+  "b36e17795a3c3059": [
+    "Liest die Nutzungsdatenbank unter ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " und den Go-Schlüssel, um bei OpenCode deine Go-Limits abzufragen."
+  ],
+  "6eeddb4ee806cf22": [
+    "Liest den Gesprächsverlauf unter ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "02139b3322ab2f61": [
+    "Liest den Sitzungsverlauf unter ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
   ]
 }
