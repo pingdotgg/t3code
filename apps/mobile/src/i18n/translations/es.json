@@ -5712,5 +5712,7 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo"
+  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo",
+  "b62b5c8ef10071e1": "No se pudo aplicar el modo de permisos",
+  "6c86fefc59f0698f": "Este modo se aplicará a tu próximo mensaje. {detail}"
 }

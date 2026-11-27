@@ -1633,6 +1633,16 @@ export function releaseComposerDraftModelSelection(
   });
 }
 
+/** Lets the thread's runtime mode show again once the server accepted this pick. */
+export function releaseComposerDraftRuntimeMode(draftKey: string, runtimeMode: RuntimeMode): void {
+  updateComposerDrafts((current) => {
+    const existing = current[draftKey];
+    if (existing?.runtimeMode !== runtimeMode) return current;
+    const { runtimeMode: _runtimeMode, ...draft } = existing;
+    return withComposerDraft(current, draftKey, draft);
+  });
+}
+
 export function setFreshSessionPending(draftKey: string, pending: boolean): void {
   if ((getComposerDraftSnapshot(draftKey).freshContext === true) === pending) return;
   updateComposerDraftSettings(draftKey, { freshContext: pending ? true : undefined });

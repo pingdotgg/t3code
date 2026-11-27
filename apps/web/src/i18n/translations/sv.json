@@ -13040,6 +13040,8 @@
     },
     " till i Länkade objekt"
   ],
+  "b62b5c8ef10071e1": "Det gick inte att tillämpa behörighetsläget",
+  "6c86fefc59f0698f": "Det här läget gäller ditt nästa meddelande. {detail}",
   "717c1c47a852a1a5": "Pausa uppläsningen",
   "0eceb5780908eb6c": "Läs upp",
   "3ee98da81538c6de": "Det gick inte att spela upp uppläsningen.",
