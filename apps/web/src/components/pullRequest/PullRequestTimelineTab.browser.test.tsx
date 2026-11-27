@@ -5,7 +5,7 @@ import {
   ThreadId,
   type PullRequestDetailView,
 } from "@t3tools/contracts";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 const linkState = vi.hoisted(() => ({
@@ -225,10 +225,8 @@ it("opens activity host links through the link-target setting", async () => {
         detail={commented}
         environmentId={threadRef.environmentId}
         threadRef={threadRef}
-        reference={detail}
         order="oldest"
         onOpenCommit={() => {}}
-        onRefresh={() => {}}
       />
     </div>,
   );

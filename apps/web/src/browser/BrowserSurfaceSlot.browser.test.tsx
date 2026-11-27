@@ -4,7 +4,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
-import { RightPanelSheet } from "../components/RightPanelSheet";
+import { Sheet, SheetPopup } from "~/components/ui/sheet";
 import { BrowserSurfaceSlot } from "./BrowserSurfaceSlot";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 
@@ -12,13 +12,20 @@ it("presents a webview in the right panel sheet above the sheet, and its overlay
   const onFind = vi.fn();
   const onClose = vi.fn();
   await using _screen = await render(
-    <RightPanelSheet open animationDurationMs={0} onClose={onClose}>
-      <BrowserSurfaceSlot tabId="sheet-tab" visible className="h-40 w-40">
-        <button type="button" className="pointer-events-auto" onClick={onFind}>
-          Find in page
-        </button>
-      </BrowserSurfaceSlot>
-    </RightPanelSheet>,
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <SheetPopup transitionDurationMs={0} side="right" showCloseButton={false} keepMounted>
+        <BrowserSurfaceSlot tabId="sheet-tab" visible className="h-40 w-40">
+          <button type="button" className="pointer-events-auto" onClick={onFind}>
+            Find in page
+          </button>
+        </BrowserSurfaceSlot>
+      </SheetPopup>
+    </Sheet>,
   );
   const sheet = document.querySelector('[data-slot="sheet-viewport"]');
   const sheetZIndex = Number(getComputedStyle(sheet!).zIndex);

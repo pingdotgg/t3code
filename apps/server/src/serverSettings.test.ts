@@ -2071,7 +2071,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         settings.textGenerators[router]?.apiKey,
       ];
       const kept = (secret: SettingsSecretValue) => [secret, secret, secret];
-      yield* decodeServerSettingsPatch({
+      yield* decodeSettingsPatch({
         secretProviders: {
           personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
         },

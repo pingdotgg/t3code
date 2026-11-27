@@ -6,7 +6,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { initializeI18n } from "~/i18n/initializeI18n";
 import { registerCommands } from "~/shortcuts/dispatcher";
 import { act, render } from "../../../test/render";
-import { RightPanelSheet } from "../RightPanelSheet";
+import { Sheet, SheetPopup } from "~/components/ui/sheet";
 import { ReviewThreadCard } from "./PullRequestReviewAnnotation";
 
 const thread: PullRequestReviewThread = {
@@ -94,25 +94,32 @@ it("leaves IME keys in a review reply to the composition", async () => {
 it("Escape cancels a review reply without closing the right panel sheet", async () => {
   const onCloseSheet = vi.fn();
   await using _screen = await render(
-    <RightPanelSheet animationDurationMs={0} open onClose={onCloseSheet}>
-      <ReviewThreadCard
-        thread={thread}
-        workspaceRoot="/workspace"
-        canReply
-        canResolve={false}
-        canReact={false}
-        environmentId={EnvironmentId.make("environment")}
-        reference={{ projectId: ProjectId.make("project"), repository: "owner/repo", number: 1 }}
-        completionScope={null}
-        pending={false}
-        onReply={async () => true}
-        onLoadMore={async () => null}
-        canEditComment={() => false}
-        onEditComment={async () => false}
-        onToggleResolved={() => {}}
-        onReacted={() => {}}
-      />
-    </RightPanelSheet>,
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) onCloseSheet();
+      }}
+    >
+      <SheetPopup transitionDurationMs={0} side="right" showCloseButton={false} keepMounted>
+        <ReviewThreadCard
+          thread={thread}
+          workspaceRoot="/workspace"
+          canReply
+          canResolve={false}
+          canReact={false}
+          environmentId={EnvironmentId.make("environment")}
+          reference={{ projectId: ProjectId.make("project"), repository: "owner/repo", number: 1 }}
+          completionScope={null}
+          pending={false}
+          onReply={async () => true}
+          onLoadMore={async () => null}
+          canEditComment={() => false}
+          onEditComment={async () => false}
+          onToggleResolved={() => {}}
+          onReacted={() => {}}
+        />
+      </SheetPopup>
+    </Sheet>,
   );
   await act(() =>
     (page.getByRole("button", { name: "Reply", exact: true }).element() as HTMLElement).focus(),

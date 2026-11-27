@@ -4,7 +4,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { registerCommands } from "~/shortcuts/dispatcher";
 import { act, render } from "../../../test/render";
-import { RightPanelSheet } from "../RightPanelSheet";
+import { Sheet, SheetPopup } from "~/components/ui/sheet";
 import { DiffCommentAnnotation } from "./DiffCommentAnnotation";
 
 it("leaves IME keys in a diff comment to the composition", async () => {
@@ -75,9 +75,16 @@ it("Escape cancels a diff comment without closing the right panel sheet", async 
     );
   }
   await using _screen = await render(
-    <RightPanelSheet animationDurationMs={0} open onClose={onCloseSheet}>
-      <Draft />
-    </RightPanelSheet>,
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) onCloseSheet();
+      }}
+    >
+      <SheetPopup transitionDurationMs={0} side="right" showCloseButton={false} keepMounted>
+        <Draft />
+      </SheetPopup>
+    </Sheet>,
   );
   const draft = page.getByRole("textbox", { name: "Comment on lines 3" });
   await act(() => (draft.element() as HTMLElement).focus());

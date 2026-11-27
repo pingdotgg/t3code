@@ -5,31 +5,27 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import { PullRequestSearchInput } from "./PullRequestListFilters";
-import { PullRequestsColumn } from "./PullRequestsColumn";
+import { WorkItemListColumn } from "../workItem/WorkItemListColumn";
 
 import "~/index.css";
 
 function createColumn(maximizedAway: boolean, scrollRef: RefObject<HTMLDivElement | null>) {
   return (
-    <PullRequestsColumn
+    <WorkItemListColumn
+      area="pull-requests"
+      title="Pull requests"
+      icon={null}
+      refreshLabel="Refresh pull requests"
       refreshing={false}
       onRefresh={() => {}}
-      searchValue=""
-      involvement="all"
-      state="open"
-      host={undefined}
-      hostMenuOptions={[]}
-      onInvolvement={() => {}}
-      onState={() => {}}
-      onHost={() => {}}
+      providerMenu={null}
       searchInput={<input aria-label="Search pull requests" />}
       sortMenu={null}
       filtersMenu={null}
       savedViewsMenu={null}
-      rightPanelControl={null}
-      titlebarControls={null}
       rightPanelOpen={maximizedAway}
       maximizedAway={maximizedAway}
+      split={false}
       listBody={null}
       scrollRef={scrollRef}
     />
@@ -47,7 +43,7 @@ function dispatchFindShortcut() {
   return event;
 }
 
-describe("PullRequestsColumn find shortcut", () => {
+describe("WorkItemListColumn find shortcut", () => {
   it("leaves Cmd/Ctrl+F to the browser while the detail panel is maximized", async () => {
     const scrollRef = createRef<HTMLDivElement>();
     await using screen = await render(createColumn(false, scrollRef));
@@ -73,17 +69,14 @@ function CondensedSearchColumn({
   const [query, setQuery] = useState("label:bug");
   return (
     <div style={{ display: "flex", height: 400 }}>
-      <PullRequestsColumn
+      <WorkItemListColumn
+        area="pull-requests"
+        title="Pull requests"
+        icon={null}
+        refreshLabel="Refresh pull requests"
         refreshing={false}
         onRefresh={() => {}}
-        searchValue={query}
-        involvement="all"
-        state="open"
-        host={undefined}
-        hostMenuOptions={[]}
-        onInvolvement={() => {}}
-        onState={() => {}}
-        onHost={() => {}}
+        providerMenu={null}
         searchInput={
           <PullRequestSearchInput
             value={query}
@@ -96,20 +89,18 @@ function CondensedSearchColumn({
         sortMenu={null}
         filtersMenu={null}
         savedViewsMenu={null}
-        rightPanelControl={null}
-        titlebarControls={null}
         rightPanelOpen={false}
         maximizedAway={false}
+        split={false}
         listBody={<div style={{ height: 2000 }} />}
         scrollRef={scrollRef}
       />
-      <button type="button">Elsewhere</button>
     </div>
   );
 }
 
-describe("PullRequestsColumn condensed search", () => {
-  it("Escape clears the topbar search before the page's Escape leaves", async () => {
+describe("WorkItemListColumn search", () => {
+  it("Escape clears the search before the page's Escape leaves", async () => {
     const onSubmit = vi.fn();
     const scrollRef = createRef<HTMLDivElement>();
     await using _screen = await render(
@@ -128,11 +119,7 @@ describe("PullRequestsColumn condensed search", () => {
         },
       ),
     );
-    scrollRef.current?.scrollTo({ top: 1000 });
-    const searches = page.getByRole("searchbox", { name: "Search pull requests" });
-    // The topbar copy comes first and mounts once the header condenses.
-    await expect.element(searches.nth(1)).toBeInTheDocument();
-    const search = searches.nth(0);
+    const search = page.getByRole("searchbox", { name: "Search pull requests" });
     // Safari ends the composition just before the confirming keydown, reporting only keyCode 229.
     const pressDuringComposition = (key: string) =>
       act(() => {
@@ -158,10 +145,5 @@ describe("PullRequestsColumn condensed search", () => {
 
     await userEvent.keyboard("{Escape}");
     expect(leave).toHaveBeenCalledOnce();
-
-    await userEvent.click(page.getByRole("button", { name: "Elsewhere" }));
-    await expect
-      .element(page.getByRole("button", { name: "Search pull requests" }))
-      .toBeInTheDocument();
   });
 });

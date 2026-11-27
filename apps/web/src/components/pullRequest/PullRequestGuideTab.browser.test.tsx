@@ -13,7 +13,7 @@ vi.mock(import("./guide/useGuideDiffFiles"), () => ({
 }));
 
 import { render } from "../../../test/render";
-import { RightPanelSheet } from "../RightPanelSheet";
+import { Sheet, SheetPopup } from "~/components/ui/sheet";
 import type { ChatComposerHandle } from "../chat/ChatComposer";
 import { useChatShortcuts } from "../chat/useChatShortcuts";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
@@ -191,34 +191,36 @@ it("steps with J and K beside a chat, also after a stop button or while the chat
 
 it("leaves J and K to floating layers, side chats, and IME while stepping inside a panel sheet", async () => {
   await using _screen = await render(
-    <RightPanelSheet open animationDurationMs={0} onClose={() => {}}>
-      <GuideTour
-        environmentId={EnvironmentId.make("environment")}
-        reference={{ ...reference, number: 2 }}
-        guide={threeStopGuide}
-        banner={null}
-        active
-        commenting={null}
-        onAsk={null}
-        onFinish={null}
-        onOpenFile={() => {}}
-      />
-      <div role="dialog">
-        <button>Dialog action</button>
-      </div>
-      <div role="menu">
-        <button role="menuitem">Menu action</button>
-      </div>
-      <div data-slot="select-popup">
-        <button>Popup action</button>
-      </div>
-      <div data-side-chat-pane>
-        <button>Side chat action</button>
-      </div>
-      <button>IME action</button>
-    </RightPanelSheet>,
+    <Sheet open onOpenChange={() => {}}>
+      <SheetPopup transitionDurationMs={0} side="right" showCloseButton={false} keepMounted>
+        <GuideTour
+          environmentId={EnvironmentId.make("environment")}
+          reference={{ ...reference, number: 2 }}
+          guide={threeStopGuide}
+          banner={null}
+          active
+          commenting={null}
+          onAsk={null}
+          onFinish={null}
+          onOpenFile={() => {}}
+        />
+        <div role="dialog">
+          <button>Dialog action</button>
+        </div>
+        <div role="menu">
+          <button role="menuitem">Menu action</button>
+        </div>
+        <div data-slot="select-popup">
+          <button>Popup action</button>
+        </div>
+        <div data-side-chat-pane>
+          <button>Side chat action</button>
+        </div>
+        <button>IME action</button>
+      </SheetPopup>
+    </Sheet>,
   );
-  await expect.element(page.getByRole("dialog", { name: "Workspace panel" })).toBeVisible();
+  await expect.element(page.getByRole("dialog")).toBeVisible();
   page.getByRole("button", { name: "Next stop" }).element().focus();
   await userEvent.keyboard("j");
   await expect.element(page.getByText("Prose for the second stop.")).toBeVisible();

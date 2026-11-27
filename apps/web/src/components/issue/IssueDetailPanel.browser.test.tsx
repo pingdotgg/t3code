@@ -86,7 +86,7 @@ vi.mock(import("~/state/issues"), async (original) => {
   };
 });
 
-import { RightPanelSheet } from "../RightPanelSheet";
+import { Sheet, SheetPopup } from "~/components/ui/sheet";
 import { IssueDetailPanel } from "./IssueDetailPanel";
 
 const reference = {
@@ -156,9 +156,16 @@ describe("IssueDetailPanel", () => {
     setComments([]);
     const onCloseSheet = vi.fn();
     await using _screen = await render(
-      <RightPanelSheet animationDurationMs={0} open onClose={onCloseSheet}>
-        <IssueDetailPanel environmentId={"env-1" as never} reference={reference} />
-      </RightPanelSheet>,
+      <Sheet
+        open
+        onOpenChange={(open) => {
+          if (!open) onCloseSheet();
+        }}
+      >
+        <SheetPopup transitionDurationMs={0} side="right" showCloseButton={false} keepMounted>
+          <IssueDetailPanel environmentId={"env-1" as never} reference={reference} />
+        </SheetPopup>
+      </Sheet>,
     );
     await act(() =>
       (page.getByRole("button", { name: "Edit title" }).element() as HTMLElement).click(),

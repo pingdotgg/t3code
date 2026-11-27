@@ -3,7 +3,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import JSZip from "jszip";
 import "~/index.css";
-import { RightPanelSheet } from "~/components/RightPanelSheet";
+import { Sheet, SheetPopup } from "~/components/ui/sheet";
 import { act, render } from "../../../../test/render";
 import Spreadsheet from "./Spreadsheet";
 import { createWorkerClient } from "./worker-rpc";
@@ -372,21 +372,29 @@ it("Escape cancels a column resize without closing the panel sheet", async () =>
   const bytes = await archive.generateAsync({ type: "arraybuffer" });
   const onCloseSheet = vi.fn();
   await using _screen = await render(
-    createElement(RightPanelSheet, {
-      animationDurationMs: 0,
-      open: true,
-      onClose: onCloseSheet,
-      children: createElement(
-        "div",
-        { style: { display: "flex", width: "300px", height: "300px" } },
-        createElement(Spreadsheet, {
-          bytes,
-          view: { digitWidth: 7, themeFonts: { major: "Calibri Light", minor: "Calibri" } },
-          onDetails: vi.fn(),
-          onError: vi.fn(),
-        }),
+    createElement(
+      Sheet,
+      {
+        open: true,
+        onOpenChange: (open: boolean) => {
+          if (!open) onCloseSheet();
+        },
+      },
+      createElement(
+        SheetPopup,
+        { transitionDurationMs: 0, side: "right", showCloseButton: false, keepMounted: true },
+        createElement(
+          "div",
+          { style: { display: "flex", width: "300px", height: "300px" } },
+          createElement(Spreadsheet, {
+            bytes,
+            view: { digitWidth: 7, themeFonts: { major: "Calibri Light", minor: "Calibri" } },
+            onDetails: vi.fn(),
+            onError: vi.fn(),
+          }),
+        ),
       ),
-    }),
+    ),
   );
   const grid = page.getByRole("grid", { name: "Sample" });
   await expect.element(grid).toBeVisible();

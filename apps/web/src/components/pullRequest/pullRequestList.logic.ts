@@ -902,7 +902,9 @@ export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
   );
 }
 
-function withDiffStat<Entry extends PullRequestListEntry & { readonly environmentId: string }>(
+export function withDiffStat<
+  Entry extends PullRequestListEntry & { readonly environmentId: string },
+>(
   entry: Entry,
   statsByRow: ReadonlyMap<string, { readonly additions: number; readonly deletions: number }>,
 ): Entry {

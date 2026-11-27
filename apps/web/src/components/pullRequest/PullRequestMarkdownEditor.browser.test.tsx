@@ -50,7 +50,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => ({
   }),
 }));
 
-import { RightPanelSheet } from "../RightPanelSheet";
+import { Sheet, SheetPopup } from "~/components/ui/sheet";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 
 const secondary = EnvironmentId.make("secondary");
@@ -198,9 +198,16 @@ it("Escape cancels the edit without closing the right panel sheet", async () => 
     );
   }
   await using _screen = await render(
-    <RightPanelSheet animationDurationMs={0} open onClose={onCloseSheet}>
-      <EditableComment />
-    </RightPanelSheet>,
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) onCloseSheet();
+      }}
+    >
+      <SheetPopup transitionDurationMs={0} side="right" showCloseButton={false} keepMounted>
+        <EditableComment />
+      </SheetPopup>
+    </Sheet>,
   );
   const textarea = page.getByRole("textbox", { name: "Pull request description" });
   await expect.element(textarea).toHaveFocus();
