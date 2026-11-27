@@ -2182,13 +2182,7 @@ function OpenCommandPaletteDialog(props: {
     setIsCreatingNewProject(false);
     if (created._tag === "Failure") throw squashAtomCommandFailure(created);
     // Dismissing or replacing the palette invalidates the submitting view.
-    if (
-      created.value &&
-      paletteAtSubmit.open &&
-      useCommandPaletteStore.getState() === paletteAtSubmit
-    ) {
-      setOpen(false);
-    }
+    if (created.value && useCommandPaletteStore.getState() === paletteAtSubmit) setOpen(false);
   }
 
   function getDefaultCloneDestination(
