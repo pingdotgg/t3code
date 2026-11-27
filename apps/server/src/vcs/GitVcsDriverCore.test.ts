@@ -11583,6 +11583,102 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("a husky or Vite+ shim with no script to run is not a push hook", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const hooks = NodePath.join(repo.cwd, ".vite-hooks");
+        const runner = NodePath.join(hooks, "_", "h");
+        yield* git(repo.cwd, ["config", "core.hooksPath", ".vite-hooks/_"]);
+        NodeFS.mkdirSync(NodePath.join(hooks, "_"), { recursive: true });
+        // `vp config` and husky install the shim for every hook, whichever the project defines.
+        NodeFS.writeFileSync(NodePath.join(hooks, "_", "pre-push"), HUSKY_SHIM, { mode: 0o755 });
+        NodeFS.writeFileSync(NodePath.join(hooks, "pre-commit"), "vp staged\n", { mode: 0o755 });
+
+        NodeFS.writeFileSync(runner, HUSKY_RUNNER);
+        assert.isNull(yield* repo.driver.pushHooks(repo.cwd));
+        // Vite+ 1.5's runner starts the same way, with its own tracing switch.
+        NodeFS.writeFileSync(
+          runner,
+          HUSKY_RUNNER.replace(
+            '[ "$HUSKY" = "2" ] && set -x',
+            '{ [ "$HUSKY" = "2" ] || [ "$VP_GIT_HOOKS" = "2" ] || [ "$VITE_GIT_HOOKS" = "2" ]; } && set -x',
+          ),
+        );
+        assert.isNull(yield* repo.driver.pushHooks(repo.cwd));
+        assert.deepInclude(yield* repo.push(null), { status: "pushed" });
+
+        // A runner that does anything before it looks for the script is still a hook.
+        NodeFS.writeFileSync(
+          runner,
+          HUSKY_RUNNER.replace("n=$(basename", `echo ran >> '${repo.ran}'\nn=$(basename`),
+        );
+        assert.deepEqual((yield* repo.driver.pushHooks(repo.cwd))?.files, [
+          NodePath.join(hooks, "_", "pre-push"),
+          runner,
+        ]);
+
+        // So is a shim with no runner beside it, which fails where Git starts it.
+        NodeFS.rmSync(runner);
+        assert.deepEqual((yield* repo.driver.pushHooks(repo.cwd))?.files, [
+          NodePath.join(hooks, "_", "pre-push"),
+        ]);
+
+        // And so is the shim once the project defines its script.
+        NodeFS.writeFileSync(runner, HUSKY_RUNNER);
+        NodeFS.writeFileSync(NodePath.join(hooks, "pre-push"), "vp check\n");
+        assert.deepEqual((yield* repo.driver.pushHooks(repo.cwd))?.files, [
+          NodePath.join(hooks, "_", "pre-push"),
+          runner,
+          NodePath.join(hooks, "pre-push"),
+        ]);
+
+        // The runner drops the path's last part as written: here the script is in `_/up`.
+        NodeFS.rmSync(NodePath.join(hooks, "pre-push"));
+        NodeFS.mkdirSync(NodePath.join(hooks, "_", "up"));
+        NodeFS.writeFileSync(NodePath.join(hooks, "_", "up", "pre-push"), "vp check\n");
+        yield* git(repo.cwd, ["config", "core.hooksPath", ".vite-hooks/_/up/.."]);
+        assert.deepEqual((yield* repo.driver.pushHooks(repo.cwd))?.files, [
+          NodePath.join(hooks, "_", "pre-push"),
+          runner,
+          NodePath.join(hooks, "_", "up", "pre-push"),
+        ]);
+      }),
+    );
+
+    it.effect("a shim left out of an approved push stays out when its script appears", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const hooks = NodePath.join(repo.cwd, ".husky");
+        yield* git(repo.cwd, ["config", "core.hooksPath", ".husky/_"]);
+        NodeFS.mkdirSync(NodePath.join(hooks, "_"), { recursive: true });
+        for (const name of ["pre-push", "reference-transaction"]) {
+          NodeFS.writeFileSync(NodePath.join(hooks, "_", name), HUSKY_SHIM, { mode: 0o755 });
+        }
+        NodeFS.writeFileSync(NodePath.join(hooks, "_", "h"), HUSKY_RUNNER);
+        // The approved script defines the other hook's script while the push is under way.
+        const late = NodePath.join(hooks, "reference-transaction");
+        NodeFS.writeFileSync(
+          NodePath.join(hooks, "pre-push"),
+          `echo pre-push >> '${repo.ran}'\necho "echo late >> '${repo.ran}'" > '${late}'\n`,
+        );
+        const home = yield* makeTmpDir("git-husky-home-");
+        const env = { ...(yield* HostProcess.Environment), HOME: home, XDG_CONFIG_HOME: home };
+
+        const approved = yield* repo.driver.pushHooks(repo.cwd);
+        assert.deepEqual(approved?.files, [
+          NodePath.join(hooks, "_", "pre-push"),
+          NodePath.join(hooks, "_", "h"),
+          NodePath.join(hooks, "pre-push"),
+        ]);
+        const pushed = yield* repo
+          .push(approved!.digest)
+          .pipe(Effect.provideService(HostProcess.Environment, { ...env, HUSKY: undefined }));
+        assert.deepInclude(pushed, { status: "pushed" });
+        assert.isTrue(NodeFS.existsSync(late));
+        assert.equal(repo.hooksRun(), "pre-push\n");
+      }),
+    );
+
     it.effect("pushes to the requested remote instead of the primary remote", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

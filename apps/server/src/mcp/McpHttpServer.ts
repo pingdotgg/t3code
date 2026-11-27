@@ -1717,16 +1717,21 @@ const registerToolCall = Effect.fn("McpHttpServer.registerToolCall")(function* (
           );
         }
         const requestContext = Context.getOrUndefined(fiber.context, McpSchema.McpRequestContext);
+        // A sessionless client is asked by answering its call, and `callTool` passes on neither
+        // that answer nor the reply. The stand-in says so, or the tool would ask a client that
+        // never hears the question and read the silence as the person's decline.
+        const { elicitation: _unreachable, ...capabilities } =
+          requestContext?.clientCapabilities ?? {};
         const client =
           Context.getOrUndefined(fiber.context, McpSchema.McpServerClient) ??
           McpSchema.McpServerClient.of({
             clientId: 0,
-            clientCapabilities: requestContext?.clientCapabilities ?? {},
+            clientCapabilities: capabilities,
             clientInfo: requestContext?.clientInfo ?? enabledWhenFallbackClient.clientInfo,
             protocolVersion: enabledWhenFallbackClient.protocolVersion,
             initializePayload: {
               protocolVersion: enabledWhenFallbackClient.protocolVersion,
-              capabilities: requestContext?.clientCapabilities ?? {},
+              capabilities,
               clientInfo: requestContext?.clientInfo ?? enabledWhenFallbackClient.clientInfo,
             },
             getClient: Effect.die("Stateless MCP requests do not expose a client RPC handle."),

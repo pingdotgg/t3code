@@ -99,7 +99,9 @@ model.
   Windows has no such permission and is not checked. The digest covers what it names and no more: each configured
   hook's name, command and the points of the push that start it, each hook file Git starts and, where that file is the shim husky 9
   and Vite+ install (`. "$(dirname "$0")/h"`), the runner `h` beside it and the script of the
-  hook's name one directory up, such as `.husky/pre-push`. A named file edited after that last
+  hook's name one directory up, such as `.husky/pre-push`. Both install that shim for each hook
+  they know, so one whose script is missing is no hook at all, provided the runner is one known to
+  end before it runs anything in that case; any other runner keeps it a hook. A named file edited after that last
   read and before Git starts it runs as edited, as does a configured hook added in that time.
   Only hooks are limited: other programs Git's configuration can name for a push, such as
   `core.sshCommand`, a credential helper or a remote helper, run as configured.
@@ -109,7 +111,10 @@ model.
   be safe to run from the start twice. It reads that reply before any push
   (`McpClientInput.answered`): a decline pushes nothing, whatever the hooks are by then. A call
   asks at most three times; the request's state carries the count, so it holds across a
-  sessionless client's calls. A client that cannot be asked gets the push with hooks off.
+  sessionless client's calls. A client that cannot be asked gets the push with hooks off. So does
+  a sessionless client that reaches the tool through `tool_call` (Antigravity): Effect's
+  `callTool` hands on neither the request nor the reply, so the proxied tool is told the client
+  takes no elicitation.
   The Claude and Codex adapters never answer a request T3 Code's own tool made, whatever the
   turn's runtime mode and whatever was allowed for the session: it always reaches the person.
   In those threads the approval is the person's answer in the app, not the client's reply. The
