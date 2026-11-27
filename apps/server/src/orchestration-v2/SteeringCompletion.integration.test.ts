@@ -1879,6 +1879,92 @@ it.effect("queues a delegated completion wake whose steer the provider declined"
 );
 
 // regression: #26695 cancelling a Copilot prompt to steer it kills its background agents
+it.effect("starts the next run after its predecessor fails with an unanswered steer", () =>
+  Effect.gen(function* () {
+    const steerReached = yield* Deferred.make<void>();
+    const { events, started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+      "unanswered-steer",
+      false,
+      true,
+      Effect.void,
+      true,
+      undefined,
+      // The provider never answers the steer request.
+      () => Deferred.succeed(steerReached, undefined).pipe(Effect.andThen(Effect.never)),
+    );
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = yield* startFirstTurn;
+      const first = started[0]!;
+      const send = (id: string, deliveryIntent?: "steer") =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(id),
+          threadId,
+          messageId: MessageId.make(`message:${id}`),
+          text: id,
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "start_immediately" },
+          ...(deliveryIntent === undefined ? {} : { deliveryIntent }),
+          createdBy: "user",
+          creationSource: "web",
+        });
+      yield* send("steer", "steer");
+      yield* worker.runOnce().pipe(Effect.forkScoped);
+      yield* Deferred.await(steerReached);
+
+      const failed = yield* orchestrator.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === first.runId &&
+            event.payload.status === "failed",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+      yield* Queue.offer(events, {
+        type: "provider_turn.updated",
+        driver,
+        providerTurn: { ...turn, status: "failed", completedAt: yield* DateTime.now },
+      });
+      yield* Queue.offer(events, {
+        type: "turn.terminal",
+        driver,
+        providerThreadId: turn.providerThreadId,
+        providerTurnId: turn.id,
+        runOrdinal: first.runOrdinal,
+        status: "failed",
+        failure: {
+          class: "provider_error",
+          message: "Provider failed",
+          code: null,
+          retryable: null,
+        },
+        threadDisposition: "reusable",
+      });
+      yield* Fiber.join(failed);
+      yield* worker.drain();
+
+      yield* send("next");
+      yield* worker.drain();
+
+      const steerEffect = (yield* outbox.listByCommandId(CommandId.make("steer"))).find(
+        (effect) => effect.request.type === "provider-turn.steer",
+      );
+      // The steer's run is terminal, so the steer must no longer hold the thread.
+      assert.notEqual(steerEffect?.status, "running");
+      assert.equal(started.length, 2);
+      assert.equal(started[1]?.message.text, "next");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect("queues a steer until the turn ends when the provider cannot steer it", () =>
   Effect.gen(function* () {
     const { events, started, steered, interrupted, layer, startFirstTurn } =
