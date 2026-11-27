@@ -557,8 +557,8 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
               name.trim() ? [{ name, color: null, description: null }] : [],
             ),
             assignees: people.users.map((user) => ({ ...toActor(user), id: user.accountId })),
-            // Past the pages read, a person is found by searching Jira for them.
-            assigneeSearch: people.truncated,
+            // Jira filters each assignable page after reading it, so no page shows the list ended.
+            assigneeSearch: true,
             truncated: labels.truncated || people.truncated,
           })),
         ),

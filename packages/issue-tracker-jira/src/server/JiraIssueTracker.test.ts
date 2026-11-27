@@ -424,7 +424,7 @@ describe("JiraIssueTracker", () => {
     }),
   );
 
-  it.effect("assigns a person a search found past the assignable pages by account id", () =>
+  it.effect("assigns a person a search found after an empty assignable page", () =>
     Effect.gen(function* () {
       const JORDAN = user("acc_jordan", "Jordan");
       const { tracker, requests } = fakeJira({
@@ -437,7 +437,9 @@ describe("JiraIssueTracker", () => {
             ? query.get("startAt") === "0"
               ? [JORDAN]
               : []
-            : Array.from({ length: 100 }, () => THEO),
+            : query.get("startAt") === "0"
+              ? [THEO]
+              : [],
         "GET /rest/api/3/user/search": () => [],
         "POST /rest/api/3/issue": () => ({ id: "1", key: "ENG-9" }),
       });
