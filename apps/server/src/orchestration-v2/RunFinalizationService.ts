@@ -179,7 +179,7 @@ export const layerObserver = Layer.effect(
       refresh: Effect.fn("RunFinalizationService.refresh")(
         function* ({ cwd, threadId, runId }) {
           const [, local] = yield* Effect.all(
-            [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
+            [workspaceEntries.refresh(cwd, "passive"), vcsStatus.refreshLocalStatus(cwd)],
             { concurrency: "unbounded" },
           );
           const thread = yield* projections.getThreadShell(threadId);

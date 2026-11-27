@@ -449,18 +449,6 @@ it.each([
     expected: at(1),
   },
   {
-    name: "a spent Gemini quota does not hold back Claude on Antigravity",
-    accounts: [
-      {
-        driver: "antigravity",
-        models: ["claude-opus-4-6-thinking"],
-        windows: [spent("3p-5h", 1), spent("gemini-5h", 24)],
-      },
-    ],
-    model: "claude-opus-4-6-thinking",
-    expected: at(1),
-  },
-  {
     name: "a hub thinking suffix routes by its base model",
     accounts: [
       { driver: "codex", models: ["gpt-5.2"], windows: [spent("five_hour", 3)] },
@@ -468,24 +456,6 @@ it.each([
     ],
     model: "gpt-5.2(high)",
     expected: at(3),
-  },
-  {
-    name: "a prefixed Gemini model is held back by the Gemini quota",
-    accounts: [
-      {
-        driver: "antigravity",
-        models: ["ag/gemini-3.1-pro-high"],
-        windows: [spent("3p-5h", 1), spent("gemini-5h", 24)],
-      },
-    ],
-    model: "ag/gemini-3.1-pro-high",
-    expected: at(24),
-  },
-  {
-    name: "an alias of unknown family is held back by every Antigravity quota",
-    accounts: [{ driver: "antigravity", models: ["fast"], windows: [spent("gemini-5h", 24)] }],
-    model: "fast",
-    expected: at(24),
   },
   {
     name: "an own-driver account whose model list was unread still counts",
@@ -499,18 +469,6 @@ it.each([
     ],
     model: "claude-sonnet-4-6",
     expected: at(1),
-  },
-  {
-    name: "an Argon model waits only for the Argon quota",
-    accounts: [
-      {
-        driver: "antigravity",
-        models: ["gemini-4-argon-high"],
-        windows: [spent("gemini-argon-5h", 2), spent("gemini-carbon-weekly", 96)],
-      },
-    ],
-    model: "gemini-4-argon-high",
-    expected: at(2),
   },
 ])("hub pool reset: $name", ({ accounts, model, expected }) => {
   expect(

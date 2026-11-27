@@ -20,7 +20,6 @@ const state = vi.hoisted(() => ({
   holdingRows: false,
   failedAction: null as string | null,
   failureMessage: "Server rejected action",
-  unsettleResult: undefined as unknown,
   forgotten: [] as { environmentId: string; threadId: string }[],
   titleOutcome: null as ThreadTitleRegenerationOutcome | null,
   archivedRefreshes: [] as string[],
@@ -39,12 +38,16 @@ const state = vi.hoisted(() => ({
     buttons?: { text: string; onPress?: () => void }[];
   }[],
   afterRequest: undefined as (() => void) | undefined,
+  unsettleValue: undefined as unknown,
   heldActions: new Map<string, Promise<void>>(),
 }));
 
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useRef: (current: unknown) => ({ current }),
+}));
+vi.mock("../../lib/useStableCallback", () => ({
+  useStableCallback: (callback: unknown) => callback,
 }));
 vi.mock("react-native", () => ({
   Alert: {
@@ -190,7 +193,7 @@ vi.mock("../../state/threads", () => ({
             action === "regenerateTitle"
               ? state.titleOutcome
               : action === "unsettle"
-                ? state.unsettleResult
+                ? state.unsettleValue
                 : undefined,
           );
         },
@@ -234,7 +237,6 @@ beforeEach(() => {
   state.connectedEnvironmentIds = [primaryEnvironmentId, otherEnvironmentId];
   state.failedAction = null;
   state.failureMessage = "Server rejected action";
-  state.unsettleResult = undefined;
   state.forgotten = [];
   state.titleOutcome = null;
   state.archivedRefreshes = [];
@@ -251,6 +253,7 @@ beforeEach(() => {
   state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
+  state.unsettleValue = undefined;
   state.heldActions = new Map();
 });
 
@@ -472,6 +475,19 @@ describe("thread action undo", () => {
     },
   );
 
+  it("re-snoozes a thread whose queued snooze an offline settle replaced", async () => {
+    const snoozedUntil = "2099-01-01T09:00:00.000Z";
+    const thread = makeThread({ pinnedAt: "2026-01-01T00:00:00.000Z", snoozedUntil });
+    state.shells = [thread];
+    await useThreadListActions().settleThread(thread);
+    // Cancelling the queued settle also drops the snooze it replaced on the device.
+    state.shells = [{ ...thread, snoozedUntil: null }];
+    state.unsettleValue = { sequence: 0, cancelledOnDevice: true };
+    await readThreadUndoNotice()!.undo();
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle", "snooze"]);
+    expect(state.requests[2]?.input.snoozedUntil).toBe(snoozedUntil);
+  });
+
   it("keeps the latest unpin undo after concurrent unpin requests", async () => {
     const actions = useThreadListActions();
     const thread = makeThread();
@@ -517,8 +533,9 @@ describe("thread action undo", () => {
       pinOrderKey: "m",
       snoozedUntil: "2099-01-01T09:00:00.000Z",
     });
+    state.shells = [thread];
     expect(await useThreadListActions().settleThread(thread)).toBe(true);
-    state.unsettleResult = { sequence: 0, cancelledOnDevice: true };
+    state.unsettleValue = { sequence: 0, cancelledOnDevice: true };
 
     await readThreadUndoNotice()!.undo();
 
