@@ -1,6 +1,8 @@
 import { T, useGT, Var } from "gt-react";
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
+import { makePullRequestMediaKindAtom } from "@t3tools/client-runtime/pull-request-markdown";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   SOURCE_CONTROL_MEDIA_ASSET,
@@ -8,7 +10,7 @@ import {
   type EnvironmentId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { createContext, useContext } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import type { MarkdownExtensions } from "~/markdown/wordsHast";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -16,6 +18,7 @@ import { cn } from "~/lib/utils";
 import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
 import ChatMarkdown from "../ChatMarkdown";
+import { markdownImageCopy } from "../chat/ChatMarkdownMedia";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequestMarkdown.logic";
 
@@ -32,18 +35,24 @@ export const PullRequestMarkdownContext = createContext<{
 export const PullRequestMarkdownPanelContext =
   createContext<ScopedThreadRef>(PULL_REQUESTS_PANEL_REF);
 
-function PullRequestHostVideo({
+const pullRequestMediaKind = makePullRequestMediaKindAtom((url, options) => fetch(url, options));
+
+function PullRequestHostMedia({
   environmentId,
   cwd,
   url,
   fetchUrl,
   repository,
+  image,
+  fallback,
 }: {
   environmentId: EnvironmentId;
   cwd: string;
   url: string;
   fetchUrl: string;
   repository: string | undefined;
+  image?: ReactNode;
+  fallback?: ReactNode;
 }) {
   const gt = useGT();
   const resource: AssetResource = {
@@ -56,6 +65,18 @@ function PullRequestHostVideo({
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
     assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? fetchUrl : null;
+  const [kind, setKind] = useState<"image" | "video" | null>(null);
+  const detected = useAtomValue(
+    pullRequestMediaKind(
+      image === undefined || kind !== null || assetUrl._tag !== "Success" ? null : src,
+    ),
+  );
+  const detectedKind = detected._tag === "Success" ? detected.value : null;
+  if (kind === null && detectedKind !== null) setKind(detectedKind);
+  if (image !== undefined) {
+    if (kind === null) return fallback;
+    if (kind === "image") return image;
+  }
   return (
     <MediaVideoPlayer
       src={src === null ? null : src + markdownImageSourceFragment(url)}
@@ -121,10 +142,16 @@ function PullRequestBodySegmentView({
       </div>
     );
   }
-  if (segment.kind === "markdown" || segment.media === "image") {
-    return (
+  const hostMedia =
+    segment.kind === "attachment" ? sourceControlClients.mediaUrl(segment.url) : null;
+  if (segment.kind === "markdown" || segment.media !== "video") {
+    const markdown = (
       <ChatMarkdown
-        text={segment.kind === "markdown" ? segment.text : `![](<${segment.url}>)`}
+        text={
+          segment.kind === "markdown"
+            ? segment.text
+            : markdownImageCopy(segment.label ?? "", segment.url, undefined)
+        }
         cwd={cwd}
         threadRef={threadRef}
         pullRequestPanelRef={threadRef ?? listPanelRef}
@@ -144,11 +171,32 @@ function PullRequestBodySegmentView({
         }
       />
     );
+    if (segment.kind === "markdown" || segment.media === "image") return markdown;
+    const fallback = (
+      <PullRequestAttachmentLink
+        url={segment.url}
+        hostLabel={hostMedia?.definition.label}
+        label={segment.label}
+      />
+    );
+    return hostMedia === null ? (
+      fallback
+    ) : (
+      <PullRequestHostMedia
+        key={segment.url}
+        environmentId={environmentId}
+        cwd={cwd}
+        url={segment.url}
+        fetchUrl={hostMedia.fetchUrl}
+        repository={repository}
+        image={markdown}
+        fallback={fallback}
+      />
+    );
   }
-  const hostMedia = sourceControlClients.mediaUrl(segment.url);
-  if (segment.media === "video" && hostMedia !== null) {
+  if (hostMedia !== null) {
     return (
-      <PullRequestHostVideo
+      <PullRequestHostMedia
         key={`${segment.id}:${segment.url}`}
         environmentId={environmentId}
         cwd={cwd}
@@ -158,32 +206,42 @@ function PullRequestBodySegmentView({
       />
     );
   }
-  if (segment.media === "video") {
-    return (
-      <MediaVideoPlayer
-        key={`${segment.id}:${segment.url}`}
-        src={segment.url}
-        originalUrl={segment.url}
-        label={gt("Pull request video")}
-        className="w-full"
-        videoClassName="rounded-lg border border-border/60"
-      />
-    );
-  }
+  return (
+    <MediaVideoPlayer
+      key={`${segment.id}:${segment.url}`}
+      src={segment.url}
+      originalUrl={segment.url}
+      label={gt("Pull request video")}
+      className="w-full"
+      videoClassName="rounded-lg border border-border/60"
+    />
+  );
+}
+
+function PullRequestAttachmentLink({
+  url,
+  hostLabel,
+  label,
+}: {
+  url: string;
+  hostLabel: string | undefined;
+  label: string | undefined;
+}) {
   return (
     // Desktop converts blocked _blank navigation to openExternal.
     <a
-      href={segment.url}
+      href={url}
       rel="noreferrer noopener"
       target="_blank"
       className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm hover:bg-muted/60"
     >
       <PaperclipIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate">
-        <T>
-          Open attachment on{" "}
-          <Var>{hostMedia?.definition.label ?? new URL(segment.url).hostname}</Var>
-        </T>
+        {label ?? (
+          <T>
+            Open attachment on <Var>{hostLabel ?? new URL(url).hostname}</Var>
+          </T>
+        )}
       </span>
       <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
     </a>
