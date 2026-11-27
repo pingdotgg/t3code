@@ -414,7 +414,7 @@ export function DevicePanel(props: {
                                   <TooltipTrigger
                                     render={
                                       <Button
-                                        variant="outline"
+                                        variant="secondary"
                                         size="icon-sm"
                                         disabled={
                                           isStopping(device) ||

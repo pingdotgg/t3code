@@ -2029,7 +2029,7 @@ function WorkflowQuestionCard({
             <Button
               key={`${link.label}:${link.url}`}
               size="sm"
-              variant="outline"
+              variant="secondary"
               render={<a href={link.url} target="_blank" rel="noreferrer" />}
             >
               {link.label}

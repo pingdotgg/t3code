@@ -268,7 +268,7 @@ export function HostedPairingRouteSurface() {
             </Button>
             <Button
               size="sm"
-              variant="outline"
+              variant="secondary"
               onClick={() => {
                 stripPairingTokenFromUrl();
                 window.location.href = "/";

@@ -402,7 +402,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           <div className="ms-7 pb-1">
             <Button
               size="xs"
-              variant="outline"
+              variant="secondary"
               render={<a href={verificationUrl} target="_blank" rel="noopener noreferrer" />}
             >
               <T>Verify Google account</T>
