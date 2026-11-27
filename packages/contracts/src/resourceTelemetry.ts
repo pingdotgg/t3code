@@ -400,16 +400,8 @@ export const DesktopTelemetryServerReady = Schema.Struct({
 });
 export type DesktopTelemetryServerReady = typeof DesktopTelemetryServerReady.Type;
 
-/** The macOS backend preload runs in its final executable and waits for the desktop to record it. */
-export const DesktopTelemetryBackendSettled = Schema.Struct({
-  version: Schema.Literal(1),
-  type: Schema.Literal("backendSettled"),
-});
-export type DesktopTelemetryBackendSettled = typeof DesktopTelemetryBackendSettled.Type;
-
 export const DesktopTelemetryControlMessage = Schema.Union([
   DesktopTelemetryServerReady,
-  DesktopTelemetryBackendSettled,
   DesktopTelemetrySetDiagnosticsDemand,
   DesktopTelemetrySetHostPowerIntervals,
   DesktopTelemetryRequestDesktopUpdate,

@@ -4,12 +4,11 @@ import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import type * as Ffi from "ffi-rs";
 
-import {
-  BACKEND_SETTLED_ACK_FD,
-  BACKEND_SETTLED_LINE,
-  keepOpenAcrossExec,
-  macHelperExecutable,
-} from "./macHelperExec.ts";
+import { macHelperExecutable } from "./macHelperExec.ts";
+
+// sys/filio.h on Darwin.
+const FIOCLEX = 0x20006601;
+const FIONCLEX = 0x20006602;
 
 // The macOS desktop starts its backend as `<this entry> <server entry> ...args`. macOS files
 // everything a process starts under its "responsible" app, so this re-executes in place as the
@@ -40,8 +39,9 @@ function reexecAsHelper() {
     const [argv] = unwrapPointer([call(External, "_NSGetArgv", [], [])]);
     const [environment] = unwrapPointer([call(External, "_NSGetEnviron", [], [])]);
     // Node marks inherited descriptors close-on-exec at startup. Stdio and the desktop app's
-    // pipes (descriptors 0-8, see DesktopBackendConfiguration) must stay open across the exec.
-    const inherited = [0, 1, 2, 3, 4, 5, 6, 7, 8].filter((fd) => {
+    // pipes (descriptors 0-7, see DesktopBackendConfiguration) must stay open across the exec.
+    const ioctl = (fd: number, request: number) => call(I32, "ioctl", [I32, I64], [fd, request]);
+    const inherited = [0, 1, 2, 3, 4, 5, 6, 7].filter((fd) => {
       try {
         NodeFS.fstatSync(fd);
         return true;
@@ -49,10 +49,9 @@ function reexecAsHelper() {
         return false;
       }
     });
-    const restore = keepOpenAcrossExec(inherited, (fd, request) =>
-      call(I32, "ioctl", [I32, I64], [fd, request]),
-    );
+    const kept = inherited.filter((fd) => ioctl(fd, FIONCLEX) === 0);
     try {
+      if (kept.length !== inherited.length) throw new Error("a descriptor would close on exec");
       check(
         "posix_spawn",
         [I64, DataType.String, I64, External, External, External],
@@ -60,46 +59,14 @@ function reexecAsHelper() {
       );
     } finally {
       // Only reached when the exec failed and this process carries on.
-      const unrestored = restore();
-      if (unrestored.length > 0) {
-        console.warn(
-          `Descriptors ${unrestored.join(", ")} stay open in processes the backend starts`,
-        );
-      }
+      for (const fd of kept) ioctl(fd, FIOCLEX);
     }
   } catch (cause) {
     console.warn(`macOS will file processes the backend starts under T3 Code: ${String(cause)}`);
   }
 }
 
-// Now in its final process. Backend recovery identifies the backend by its audit token, which
-// the exec changed, so the desktop records it here, before the server can take the T3 home. Only
-// the desktop's ack lets the backend start; anything else means the desktop went away unrecorded.
-function settleWithDesktop() {
-  try {
-    NodeFS.writeSync(5, BACKEND_SETTLED_LINE);
-    const ack = Buffer.alloc(1);
-    let read: number | undefined;
-    while (read === undefined) {
-      try {
-        read = NodeFS.readSync(BACKEND_SETTLED_ACK_FD, ack);
-      } catch (error) {
-        // A signal can interrupt the blocking read; it is not the desktop going away.
-        if ((error as NodeJS.ErrnoException).code !== "EINTR") throw error;
-      }
-    }
-    if (read !== 1 || ack[0] !== 1) {
-      throw new Error("the desktop app did not acknowledge the backend");
-    }
-    NodeFS.closeSync(BACKEND_SETTLED_ACK_FD);
-  } catch (cause) {
-    console.error(`Stopping the backend before it starts: ${String(cause)}`);
-    process.exit(1);
-  }
-}
-
 if (!NodePath.basename(process.execPath).endsWith(" Helper")) reexecAsHelper();
-settleWithDesktop();
 // Run the server entry as the main module, as if Node had started it directly.
 process.argv.splice(1, 1);
 NodeModule.runMain();

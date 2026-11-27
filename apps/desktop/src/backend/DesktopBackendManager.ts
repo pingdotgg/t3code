@@ -92,11 +92,6 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
   readonly preflightFailure: Option.Option<PreflightFailure>;
-  /**
-   * Set when the macOS backend entry says `backendSettled` on its control channel, then waits on this
-   * input fd. The desktop records the backend first, so it is recorded before it can take the home.
-   */
-  readonly settledAckFd?: number;
   /** Set for a backend without a control channel; each evaluation yields a fresh probe. */
   readonly readinessProbe?: Effect.Effect<BackendReadinessProbe>;
   readonly runningDistro?: string;
@@ -480,19 +475,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   );
   const onOutput = options.onOutput ?? (() => Effect.void);
   const bootstrapStream = Stream.encodeText(Stream.make(`${bootstrapJson}\n`));
-  const settled = yield* Deferred.make<boolean>();
-  // False closes the ack fd without the byte, so the backend exits instead of starting unrecorded.
-  const acknowledged = yield* Deferred.make<boolean>();
   const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {};
-  if (options.settledAckFd !== undefined) {
-    additionalFds[`fd${options.settledAckFd}`] = {
-      type: "input",
-      stream: Stream.fromEffect(Deferred.await(acknowledged)).pipe(
-        Stream.filter((acked) => acked),
-        Stream.map(() => new Uint8Array([1])),
-      ),
-    };
-  }
   if (options.bootstrapDelivery === "fd3") {
     additionalFds.fd3 = {
       type: "input",
@@ -551,16 +534,6 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   const tracking = options.trackProcess
     ? yield* options.trackProcess(handle.pid).pipe(Effect.forkScoped)
     : undefined;
-  // A settled backend waits for this ack, so it cannot take the home before it is recorded.
-  if (options.settledAckFd !== undefined) {
-    yield* Deferred.await(settled).pipe(
-      Effect.tap((isSettled) =>
-        isSettled && tracking !== undefined ? Fiber.join(tracking) : Effect.void,
-      ),
-      Effect.onExit((exit) => Deferred.succeed(acknowledged, Exit.isSuccess(exit) && exit.value)),
-      Effect.forkScoped,
-    );
-  }
   const outputFibers: Array<Fiber.Fiber<void, never>> = [];
   const serverReady = yield* Deferred.make<void>();
 
@@ -577,9 +550,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
           Effect.flatMap((message) =>
             message.type === "serverReady"
               ? Deferred.succeed(serverReady, undefined)
-              : message.type === "backendSettled"
-                ? Deferred.succeed(settled, true)
-                : handleControl(message),
+              : handleControl(message),
           ),
           Effect.catchCause((cause) =>
             logBackendProcessWarning("ignored invalid desktop telemetry control message", {
@@ -594,20 +565,6 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
           fd: controlFd,
           cause: Cause.pretty(cause),
         }),
-      ),
-      // Without backendSettled on this channel the backend would wait for its ack forever.
-      Effect.ensuring(
-        options.settledAckFd === undefined
-          ? Effect.void
-          : Deferred.isDone(settled).pipe(
-              Effect.flatMap((isSettled) =>
-                isSettled
-                  ? Effect.void
-                  : handle
-                      .kill({ forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE })
-                      .pipe(Effect.ignore),
-              ),
-            ),
       ),
       Effect.ensuring(
         handleControl({
@@ -742,7 +699,6 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.exit,
   );
   yield* options.onExitObserved?.() ?? Effect.void;
-  yield* Deferred.succeed(settled, false);
   // A cancelled run may leave a survivor. Only forget after observing a real exit.
   if (tracking && Exit.isSuccess(exit)) {
     const forgetProcess = yield* Fiber.join(tracking);

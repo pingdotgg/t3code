@@ -244,7 +244,6 @@ describe("DesktopBackendConfiguration", () => {
           environment.macBackendEntryPath,
           environment.backendEntryPath,
         ]);
-        assert.equal(first.settledAckFd, 8);
         assert.equal(first.entryPath, environment.backendEntryPath);
         assert.equal(first.cwd, environment.backendCwd);
         assert.equal(first.captureOutput, true);
