@@ -464,6 +464,14 @@ describe("BrowserSession", () => {
       guest.emit("did-navigate", {}, "https://www.douyin.com/next");
       assert.isFalse(yield* request());
       assert.strictEqual(showMessageBox.mock.calls.length, 2);
+
+      // A click in the page right before the request is the user's own, so it asks again.
+      guest.emit("before-mouse-event", {}, { type: "mouseMove", x: 0, y: 0 });
+      assert.isFalse(yield* request());
+      assert.strictEqual(showMessageBox.mock.calls.length, 2);
+      guest.emit("before-mouse-event", {}, { type: "mouseDown", x: 0, y: 0 });
+      assert.isFalse(yield* request());
+      assert.strictEqual(showMessageBox.mock.calls.length, 3);
     }).pipe(Effect.provide(layer)),
   );
 

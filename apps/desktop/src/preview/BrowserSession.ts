@@ -2,6 +2,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { Certificate, Session, WebContents } from "electron";
 import { BrowserWindow, session, systemPreferences } from "electron";
 import { msg } from "gt-i18n";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Digest from "effect/crypto/Digest";
@@ -52,6 +53,9 @@ const NEVER_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set([
   "javascript:",
   "view-source:",
 ]);
+
+// How soon after a click or key press in the tab a request still counts as the user's own.
+const DELIBERATE_EXTERNAL_LINK_MS = 1_000;
 
 const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null => {
   if (!rawUrl) return null;
@@ -350,6 +354,7 @@ const previewHostWindow = (guest: WebContents | null): BrowserWindow | undefined
 
 /** @public */
 export const make = Effect.gen(function* BrowserSessionMake() {
+  const clock = yield* Clock.Clock;
   const crypto = yield* Digest.Digest;
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -408,17 +413,35 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     );
   };
   // A page that retries an app handoff must not re-prompt after Cancel; the next document may ask again.
-  const cancelledExternalLinks = new WeakMap<WebContents, Set<string>>();
+  const cancelledExternalLinks = new WeakMap<
+    WebContents,
+    { readonly links: Set<string>; lastInputAt: number }
+  >();
   const rememberCancelledExternalLink = (requester: WebContents, url: string): void => {
     let cancelled = cancelledExternalLinks.get(requester);
     if (cancelled === undefined) {
-      const links = new Set<string>();
-      cancelled = links;
-      cancelledExternalLinks.set(requester, links);
+      const state = { links: new Set<string>(), lastInputAt: Number.NEGATIVE_INFINITY };
+      cancelled = state;
+      cancelledExternalLinks.set(requester, state);
       // A protocol handoff starts a navigation that never commits, so only a committed document resets.
-      requester.on("did-navigate", () => links.clear());
+      requester.on("did-navigate", () => state.links.clear());
+      // openExternal details carry no user gesture, so the tab's own input marks a deliberate click.
+      requester.on("before-mouse-event", (_event, mouse) => {
+        if (mouse.type === "mouseDown") state.lastInputAt = clock.currentTimeMillisUnsafe();
+      });
+      requester.on("before-input-event", (_event, input) => {
+        if (input.type === "keyDown") state.lastInputAt = clock.currentTimeMillisUnsafe();
+      });
     }
-    cancelled.add(url);
+    cancelled.links.add(url);
+  };
+  const isCancelledExternalLink = (requester: WebContents | null, url: string): boolean => {
+    const cancelled = requester === null ? undefined : cancelledExternalLinks.get(requester);
+    return (
+      cancelled !== undefined &&
+      cancelled.links.has(url) &&
+      clock.currentTimeMillisUnsafe() - cancelled.lastInputAt > DELIBERATE_EXTERNAL_LINK_MS
+    );
   };
   /** Electron launches external protocols after granting openExternal; untrusted pages require confirmation. */
   const confirmOpenExternal = (
@@ -427,7 +450,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     callback: (granted: boolean) => void,
   ): void => {
     const url = externalProtocolPromptUrl(rawUrl);
-    if (url === null || (requester !== null && cancelledExternalLinks.get(requester)?.has(url))) {
+    if (url === null || isCancelledExternalLink(requester, url)) {
       callback(false);
       return;
     }
