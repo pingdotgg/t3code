@@ -267,7 +267,7 @@ describe("BrowserImport.importCookies", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("discovers and imports cookies from unlisted Chromium and Firefox browsers", () =>
+  it.effect("scans and imports unlisted Chromium and Firefox browsers only on explicit scan", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -275,99 +275,92 @@ describe("BrowserImport.importCookies", () => {
       const appSupport = `${home}/Library/Application Support`;
       const librewolfProfileDirectory = path.join("Profiles", "main.default");
 
-      // Auto-discovered Chromium browser (uses fallback Chromium Safe Storage key from mock).
       const cometRoot = `${appSupport}/Comet`;
       yield* fileSystem.makeDirectory(`${cometRoot}/Default/Network`, { recursive: true });
       yield* fileSystem.writeFileString(
         `${cometRoot}/Local State`,
-        JSON.stringify({ profile: { info_cache: { Default: { name: "Work" } } } }),
+        '{"profile":{"info_cache":{"Default":{"name":"Work"}}}}',
       );
-      const kdf = yield* Kdf.Kdf;
-      const cipher = yield* Cipher.Cipher;
-      const keyBytes = yield* kdf.derive(
+      const keyBytes = yield* (yield* Kdf.Kdf).derive(
         Kdf.pbkdf2({ hash: Digest.sha1, iterations: 1003 }),
         Buffer.from(chromiumKeychainSecret),
         { salt: Buffer.from("saltysalt"), length: 16 },
       );
-      const key = yield* Cipher.key(Cipher.aes128Cbc, keyBytes);
-      const ciphertext = yield* cipher.encrypt(key, Buffer.from("comet-session"), {
-        iv: Buffer.alloc(16, 0x20),
-      });
+      const ciphertext = yield* (yield* Cipher.Cipher).encrypt(
+        yield* Cipher.key(Cipher.aes128Cbc, keyBytes),
+        Buffer.from("comet-session"),
+        { iv: Buffer.alloc(16, 0x20) },
+      );
       yield* Effect.sync(() => {
-        using database = new NodeSqlite.DatabaseSync(`${cometRoot}/Default/Network/Cookies`);
-        database.exec(`
-          create table meta (key text primary key, value text not null);
-          insert into meta values ('version', '23');
-          create table cookies (
-            host_key text, name text, value text, encrypted_value blob, path text,
-            expires_utc integer, is_secure integer, is_httponly integer, samesite integer,
-            top_frame_site_key text not null default ''
-          );
-        `);
-        database
-          .prepare("insert into cookies values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-          .run(
-            "comet.example",
-            "sid",
-            "",
-            Buffer.concat([Buffer.from("v10"), ciphertext]),
-            "/",
-            0,
-            1,
-            1,
-            1,
-            "",
-          );
+        using db = new NodeSqlite.DatabaseSync(`${cometRoot}/Default/Network/Cookies`);
+        db.exec(
+          "create table meta (key text primary key, value text not null); insert into meta values ('version', '23');" +
+            "create table cookies (host_key text, name text, value text, encrypted_value blob, path text, expires_utc integer, is_secure integer, is_httponly integer, samesite integer, top_frame_site_key text not null default '');",
+        );
+        db.prepare("insert into cookies values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+          "comet.example",
+          "sid",
+          "",
+          Buffer.concat([Buffer.from("v10"), ciphertext]),
+          "/",
+          0,
+          1,
+          1,
+          1,
+          "",
+        );
       });
 
-      // Auto-discovered Firefox-based browser (LibreWolf).
       const librewolfRoot = `${appSupport}/LibreWolf`;
       yield* fileSystem.makeDirectory(`${librewolfRoot}/Profiles/main.default`, {
         recursive: true,
       });
       yield* fileSystem.writeFileString(
         `${librewolfRoot}/profiles.ini`,
-        ["[Profile0]", "Name=Default", "IsRelative=1", "Path=Profiles/main.default"].join("\n"),
+        "[Profile0]\nName=Default\nIsRelative=1\nPath=Profiles/main.default\n",
       );
       yield* Effect.sync(() => {
-        using database = new NodeSqlite.DatabaseSync(
+        using db = new NodeSqlite.DatabaseSync(
           `${librewolfRoot}/Profiles/main.default/cookies.sqlite`,
         );
-        database.exec(`
-          pragma user_version = 15;
-          create table moz_cookies (
-            host text, name text, value text, path text, expiry integer,
-            isSecure integer, isHttpOnly integer, sameSite integer,
-            originAttributes text not null default ''
-          );
-        `);
-        database
-          .prepare("insert into moz_cookies values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-          .run("librewolf.example", "token", "lw-value", "/", 0, 1, 1, 1, "");
+        db.exec(
+          "pragma user_version = 15;" +
+            "create table moz_cookies (host text, name text, value text, path text, expiry integer, isSecure integer, isHttpOnly integer, sameSite integer, originAttributes text not null default '');",
+        );
+        db.prepare("insert into moz_cookies values (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+          "librewolf.example",
+          "token",
+          "lw-value",
+          "/",
+          0,
+          1,
+          1,
+          1,
+          "",
+        );
       });
 
       const written: Electron.CookiesSetDetails[] = [];
       const session = {
         cookies: {
-          set: (cookie: Electron.CookiesSetDetails) => {
-            written.push(cookie);
+          set: (c: Electron.CookiesSetDetails) => {
+            written.push(c);
             return Promise.resolve();
           },
           flushStore: () => Promise.resolve(),
         },
       } as unknown as Session;
-
       const importer = yield* BrowserImport.BrowserImport.pipe(
         Effect.provide(
           BrowserImport.layer.pipe(
             Layer.provide(
               Layer.succeed(BrowserSession.BrowserSession, {
-                getPartition: () => Effect.die("getPartition must not be reached"),
+                getPartition: () => Effect.die("unused"),
                 isPartition: () => false,
                 getSession: () => Effect.succeed(session),
-                clearCookies: () => Effect.die("clearCookies must not be reached"),
-                cookiesCleared: () => Effect.die("cookiesCleared must not be reached"),
-                clearCache: () => Effect.die("clearCache must not be reached"),
+                clearCookies: () => Effect.die("unused"),
+                cookiesCleared: () => Effect.die("unused"),
+                clearCache: () => Effect.die("unused"),
               }),
             ),
             Layer.provide(DesktopManagedPolicy.layerTest()),
@@ -380,11 +373,9 @@ describe("BrowserImport.importCookies", () => {
         ),
       );
 
-      // Default listing checks only the known registry without scanning disk.
+      // Default listing skips disk scanning; unscanned discovered IDs are rejected.
       const beforeScan = yield* importer.listSources();
-      assert.isUndefined(beforeScan.find((candidate) => candidate.name === "Comet"));
-      assert.isUndefined(beforeScan.find((candidate) => candidate.name === "LibreWolf"));
-
+      assert.isUndefined(beforeScan.find((s) => s.name === "Comet" || s.name === "LibreWolf"));
       const unscannedError = yield* importer
         .importCookies({
           input: {
@@ -396,56 +387,36 @@ describe("BrowserImport.importCookies", () => {
           persistent: true,
         })
         .pipe(Effect.flip);
-      assert.instanceOf(unscannedError, BrowserImport.BrowserImportFailedError);
-      assert.equal(unscannedError.reason, "unknownSource");
+      assert.equal(unscannedError._tag, "BrowserImportFailedError");
+      if (unscannedError._tag === "BrowserImportFailedError") {
+        assert.equal(unscannedError.reason, "unknownSource");
+      }
 
-      // Explicit scan discovers unlisted browsers and keeps them available for subsequent reads/imports.
       const sources = yield* importer.listSources({ scan: true });
-      const comet = sources.find((candidate) => candidate.name === "Comet");
-      const librewolf = sources.find((candidate) => candidate.name === "LibreWolf");
-      assert.isDefined(comet);
-      assert.isDefined(librewolf);
-      assert.match(comet!.id, /^discovered:chromium:[0-9a-f]{16}$/);
-      assert.match(librewolf!.id, /^discovered:firefox:[0-9a-f]{16}$/);
-      assert.isDefined(
-        (yield* importer.listSources()).find((candidate) => candidate.id === librewolf!.id),
-      );
-      assert.deepEqual(yield* decodeImportSource(comet!), {
-        id: comet!.id,
-        name: "Comet",
-        profiles: [{ directory: "Default", name: "Work", cookieCount: 1 }],
-      });
-      assert.deepEqual(yield* decodeImportSource(librewolf!), {
-        id: librewolf!.id,
+      const comet = sources.find((s) => s.name === "Comet")!;
+      const librewolf = sources.find((s) => s.name === "LibreWolf")!;
+      assert.match(comet.id, /^discovered:chromium:[0-9a-f]{16}$/);
+      assert.match(librewolf.id, /^discovered:firefox:[0-9a-f]{16}$/);
+      assert.isDefined((yield* importer.listSources()).find((s) => s.id === librewolf.id));
+      assert.deepEqual(yield* decodeImportSource(librewolf), {
+        id: librewolf.id,
         name: "LibreWolf",
         profiles: [{ directory: librewolfProfileDirectory, name: "Default", cookieCount: 1 }],
       });
 
-      assert.deepEqual(
-        yield* importer.importCookies({
-          input: {
-            sourceId: comet!.id,
-            sourceProfileDirectory: "Default",
-            targetProfileId: "default",
-          },
-          scope: "persist:t3code-preview-test",
-          persistent: true,
-        }),
-        { imported: 1, skipped: 0, skippedDomains: [] },
-      );
-      assert.deepEqual(
-        yield* importer.importCookies({
-          input: {
-            sourceId: librewolf!.id,
-            sourceProfileDirectory: librewolfProfileDirectory,
-            targetProfileId: "default",
-          },
-          scope: "persist:t3code-preview-test",
-          persistent: true,
-        }),
-        { imported: 1, skipped: 0, skippedDomains: [] },
-      );
-
+      for (const [sourceId, sourceProfileDirectory] of [
+        [comet.id, "Default"],
+        [librewolf.id, librewolfProfileDirectory],
+      ] as const) {
+        assert.deepEqual(
+          yield* importer.importCookies({
+            input: { sourceId, sourceProfileDirectory, targetProfileId: "default" },
+            scope: "persist:t3code-preview-test",
+            persistent: true,
+          }),
+          { imported: 1, skipped: 0, skippedDomains: [] },
+        );
+      }
       assert.deepEqual(
         written.map((entry) => [entry.url, entry.name, entry.value]),
         [

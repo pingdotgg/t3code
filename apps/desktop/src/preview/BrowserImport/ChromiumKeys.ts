@@ -241,98 +241,81 @@ export interface ChromiumKeyRequest {
   readonly linuxSecretApplications?: ReadonlyArray<string> | undefined;
 }
 
-const isChromiumKeyError = Schema.is(ChromiumKeyError);
-
-export const resolveMacKeychainKey = Effect.fn("ChromiumKeys.resolveMacKeychainKey")(function* (
-  candidate: KeychainCredentialCandidate,
-): Effect.fn.Return<ChromiumKeyMaterial, ChromiumKeyError> {
-  const secret = yield* readKeychainSecret(candidate.service, candidate.account);
-  return { cbcV10: derive(secret, MAC_KEY_ITERATIONS) };
-});
-
-export const resolveLinuxApplicationKeys = Effect.fn("ChromiumKeys.resolveLinuxApplicationKeys")(
-  function* (
-    application: string | undefined,
-  ): Effect.fn.Return<
-    ChromiumKeyMaterial,
-    ChromiumKeyError,
-    ChildProcessSpawner.ChildProcessSpawner
-  > {
-    // v10 always uses the fallback passphrase; a keyring secret additionally unlocks v11.
-    const keyringSecret = application
-      ? yield* readLinuxSecret(application).pipe(
-          // Missing Secret Service or keys must not block v10; explicit denial, lock, or cancellation remains a consent failure.
-          Effect.catchIf(
-            (error) => error.reason !== "needsKeychainApproval",
-            (error) => Effect.succeed(error),
-          ),
-        )
-      : undefined;
-    return {
-      cbcV10: derive(LINUX_FALLBACK_PASSPHRASE, LINUX_KEY_ITERATIONS),
-      ...(typeof keyringSecret === "string"
-        ? { cbcV11: derive(keyringSecret, LINUX_KEY_ITERATIONS) }
-        : keyringSecret
-          ? { cbcV11Error: keyringSecret }
-          : {}),
-      cbcEmpty: derive("", LINUX_KEY_ITERATIONS),
-    };
-  },
-);
-
-export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")(function* (
+export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")(function* <
+  E = never,
+  R = never,
+>(
   request: ChromiumKeyRequest,
+  acceptKey: (keys: ChromiumKeyMaterial) => Effect.Effect<boolean, E, R> = () =>
+    Effect.succeed(true),
 ): Effect.fn.Return<
   ChromiumKeyMaterial,
-  ChromiumKeyError,
-  ChildProcessSpawner.ChildProcessSpawner
+  ChromiumKeyError | E,
+  ChildProcessSpawner.ChildProcessSpawner | R
 > {
   if (request.platform === "darwin") {
-    const candidates: ReadonlyArray<KeychainCredentialCandidate> =
-      request.keychainCandidates && request.keychainCandidates.length > 0
-        ? request.keychainCandidates
-        : request.keychainService && request.keychainAccount
-          ? [{ service: request.keychainService, account: request.keychainAccount }]
-          : [];
+    const candidates: ReadonlyArray<KeychainCredentialCandidate> = request.keychainCandidates
+      ?.length
+      ? request.keychainCandidates
+      : request.keychainService && request.keychainAccount
+        ? [{ service: request.keychainService, account: request.keychainAccount }]
+        : [];
     if (candidates.length === 0) {
       return yield* new ChromiumKeyError({ reason: "unsupportedPlatform" });
     }
+    let firstKeys: ChromiumKeyMaterial | undefined;
     let missingError: ChromiumKeyError | undefined;
     for (const candidate of candidates) {
-      const attempt = yield* resolveMacKeychainKey(candidate).pipe(
+      const attempt = yield* readKeychainSecret(candidate.service, candidate.account).pipe(
         Effect.catchIf(
           (error) => error.reason === "keychainItemMissing",
           (error) => Effect.succeed(error),
         ),
       );
-      if (!isChromiumKeyError(attempt)) {
-        return attempt;
+      if (typeof attempt !== "string") {
+        missingError = attempt;
+        continue;
       }
-      missingError = attempt;
+      const keys: ChromiumKeyMaterial = { cbcV10: derive(attempt, MAC_KEY_ITERATIONS) };
+      firstKeys ??= keys;
+      if (yield* acceptKey(keys)) return keys;
     }
+    if (firstKeys !== undefined) return firstKeys;
     return yield* missingError ?? new ChromiumKeyError({ reason: "keychainItemMissing" });
   }
 
   if (request.platform === "linux") {
-    const applications: ReadonlyArray<string> =
-      request.linuxSecretApplications && request.linuxSecretApplications.length > 0
-        ? request.linuxSecretApplications
-        : request.linuxSecretApplication
-          ? [request.linuxSecretApplication]
-          : [];
-    if (applications.length === 0) {
-      return yield* resolveLinuxApplicationKeys(undefined);
-    }
-    let lastKeys: ChromiumKeyMaterial | undefined;
+    // v10 always uses the fallback passphrase; a keyring secret additionally unlocks v11.
+    const applications: ReadonlyArray<string> = request.linuxSecretApplications?.length
+      ? request.linuxSecretApplications
+      : request.linuxSecretApplication
+        ? [request.linuxSecretApplication]
+        : [];
+    const base = {
+      cbcV10: derive(LINUX_FALLBACK_PASSPHRASE, LINUX_KEY_ITERATIONS),
+      cbcEmpty: derive("", LINUX_KEY_ITERATIONS),
+    };
+    let firstKeys: ChromiumKeyMaterial | undefined;
+    let lastError: ChromiumKeyError | undefined;
     for (const application of applications) {
-      const keys = yield* resolveLinuxApplicationKeys(application);
-      if (keys.cbcV11 !== undefined) {
-        return keys;
+      const attempt = yield* readLinuxSecret(application).pipe(
+        // Missing Secret Service or keys must not block v10; explicit denial, lock, or cancellation remains a consent failure.
+        Effect.catchIf(
+          (error) => error.reason !== "needsKeychainApproval",
+          (error) => Effect.succeed(error),
+        ),
+      );
+      if (typeof attempt !== "string") {
+        lastError = attempt;
+        if (attempt.reason !== "keychainItemMissing") break;
+        continue;
       }
-      lastKeys = keys;
-      if (keys.cbcV11Error?.reason !== "keychainItemMissing") break;
+      const keys: ChromiumKeyMaterial = { ...base, cbcV11: derive(attempt, LINUX_KEY_ITERATIONS) };
+      firstKeys ??= keys;
+      if (yield* acceptKey(keys)) return keys;
     }
-    return lastKeys ?? (yield* resolveLinuxApplicationKeys(undefined));
+    if (firstKeys !== undefined) return firstKeys;
+    return lastError ? { ...base, cbcV11Error: lastError } : base;
   }
 
   return yield* new ChromiumKeyError({ reason: "unsupportedPlatform" });

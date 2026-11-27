@@ -60,32 +60,40 @@ const layerHelper = (input: {
   readonly exitCode?: number;
   readonly spawnError?: PlatformError.PlatformError;
   readonly capture?: (command: CapturedCommand) => void;
+  readonly respond?: (command: CapturedCommand) => {
+    readonly stdout?: string;
+    readonly exitCode?: number;
+  };
 }) =>
   Layer.merge(
     Layer.succeed(LinuxBrowserSecretPath, "/bundled/browser-secret/t3-browser-secret"),
     Layer.succeed(
       ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make((command) =>
-        input.spawnError
-          ? Effect.fail(input.spawnError)
-          : Effect.succeed(
-              ChildProcessSpawner.makeHandle({
-                pid: ChildProcessSpawner.ProcessId(1),
-                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(input.exitCode ?? 0)),
-                isRunning: Effect.succeed(false),
-                kill: () => Effect.void,
-                unref: Effect.succeed(Effect.void),
-                stdin: Sink.drain,
-                stdout: input.stdoutStream ?? Stream.encodeText(Stream.make(input.stdout ?? "")),
-                stderr: input.stderrStream ?? Stream.encodeText(Stream.make(input.stderr ?? "")),
-                all: Stream.empty,
-                getInputFd: () => Sink.drain,
-                getOutputFd: () => Stream.empty,
-              }),
-            ).pipe(
-              Effect.tap(() => Effect.sync(() => input.capture?.(command as CapturedCommand))),
+      ChildProcessSpawner.make((command) => {
+        if (input.spawnError) return Effect.fail(input.spawnError);
+        const captured = command as CapturedCommand;
+        input.capture?.(captured);
+        const reply = input.respond?.(captured);
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(
+              ChildProcessSpawner.ExitCode(reply?.exitCode ?? input.exitCode ?? 0),
             ),
-      ),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout:
+              input.stdoutStream ??
+              Stream.encodeText(Stream.make(reply?.stdout ?? input.stdout ?? "")),
+            stderr: input.stderrStream ?? Stream.encodeText(Stream.make(input.stderr ?? "")),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      }),
     ),
   );
 
@@ -269,32 +277,6 @@ describe("Linux Chromium secrets", () => {
 
   it.effect("falls through missing Linux secret applications until one matches", () => {
     const seen: Array<string> = [];
-    const layerFallbackHelper = Layer.merge(
-      Layer.succeed(LinuxBrowserSecretPath, "/bundled/browser-secret/t3-browser-secret"),
-      Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make((command) => {
-          const app = (command as CapturedCommand).args[0] ?? "";
-          seen.push(app);
-          const found = app === "chromium";
-          return Effect.succeed(
-            ChildProcessSpawner.makeHandle({
-              pid: ChildProcessSpawner.ProcessId(1),
-              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(found ? 0 : 2)),
-              isRunning: Effect.succeed(false),
-              kill: () => Effect.void,
-              unref: Effect.succeed(Effect.void),
-              stdin: Sink.drain,
-              stdout: Stream.encodeText(Stream.make(found ? "linux-secret \t\n" : "")),
-              stderr: Stream.empty,
-              all: Stream.empty,
-              getInputFd: () => Sink.drain,
-              getOutputFd: () => Stream.empty,
-            }),
-          );
-        }),
-      ),
-    );
     return Effect.gen(function* () {
       const keys = yield* resolveChromiumKeys({
         platform: "linux",
@@ -305,7 +287,19 @@ describe("Linux Chromium secrets", () => {
       });
       expect(seen).toEqual(["thorium", "chromium"]);
       expect(keys.cbcV11?.toString("hex")).toBe("95aa769d6a5beca14d5d90ae655db112");
-    }).pipe(Effect.provide(layerFallbackHelper));
+    }).pipe(
+      Effect.provide(
+        layerHelper({
+          respond: (command) => {
+            const app = command.args[0] ?? "";
+            seen.push(app);
+            return app === "chromium"
+              ? { exitCode: 0, stdout: "linux-secret \t\n" }
+              : { exitCode: 2, stdout: "" };
+          },
+        }),
+      ),
+    );
   });
 });
 

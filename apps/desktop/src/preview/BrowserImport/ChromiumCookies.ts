@@ -15,8 +15,7 @@ import {
   ChromiumKeyError,
   ChromiumKeyFailure,
   readWindowsKey,
-  resolveLinuxApplicationKeys,
-  resolveMacKeychainKey,
+  resolveChromiumKeys,
   type ChromiumKeyMaterial,
   type KeychainCredentialCandidate,
 } from "./ChromiumKeys.ts";
@@ -331,22 +330,28 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
   ChromiumCookieReadError,
   FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
 > {
-  const wrapKeyError = (cause: ChromiumKeyError) =>
-    new ChromiumCookieReadError({
-      reason: cause.reason,
-      cookieDatabasePath: source.cookieDatabasePath,
-      cause,
-    });
-
   let cachedRaw:
     | { readonly rows: ReadonlyArray<typeof CookieRow.Type>; readonly schemaVersion: number }
     | undefined;
-  const loadRawDatabase = Effect.fnUntraced(
-    function* () {
-      if (cachedRaw !== undefined) return cachedRaw;
-      const snapshotPath = yield* snapshotCookieDatabase(source.cookieDatabasePath);
-      cachedRaw = yield* readRawChromiumCookieDatabase(snapshotPath);
-      return cachedRaw;
+  let cachedEvaluation:
+    | { readonly keys: ChromiumKeyMaterial; readonly evaluated: EvaluatedCookieRows }
+    | undefined;
+
+  const evaluateWith = Effect.fnUntraced(
+    function* (keys: ChromiumKeyMaterial) {
+      if (cachedEvaluation?.keys === keys) return cachedEvaluation.evaluated;
+      if (cachedRaw === undefined) {
+        const snapshotPath = yield* snapshotCookieDatabase(source.cookieDatabasePath);
+        cachedRaw = yield* readRawChromiumCookieDatabase(snapshotPath);
+      }
+      const evaluated = decryptChromiumCookieRows(
+        cachedRaw.rows,
+        cachedRaw.schemaVersion,
+        keys,
+        source.platform,
+      );
+      cachedEvaluation = { keys, evaluated };
+      return evaluated;
     },
     Effect.mapError(
       (cause) =>
@@ -358,117 +363,35 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
     ),
   );
 
-  if (source.platform === "win32" && source.windowsLocalStatePath) {
-    const gcmV10 = yield* readWindowsKey(source.windowsLocalStatePath).pipe(
-      Effect.mapError(wrapKeyError),
-    );
-    const raw = yield* loadRawDatabase();
-    return decryptChromiumCookieRows(raw.rows, raw.schemaVersion, { gcmV10 }, source.platform)
-      .result;
+  const keys = yield* (
+    source.platform === "win32" && source.windowsLocalStatePath
+      ? readWindowsKey(source.windowsLocalStatePath).pipe(
+          Effect.map((gcmV10): ChromiumKeyMaterial => ({ gcmV10 })),
+        )
+      : resolveChromiumKeys(source, (candidateKeys) =>
+          evaluateWith(candidateKeys).pipe(
+            Effect.map((ev) => ev.keyringFailed === 0 || ev.keyringDecrypted > 0),
+          ),
+        )
+  ).pipe(
+    Effect.mapError((cause) =>
+      isChromiumKeyError(cause)
+        ? new ChromiumCookieReadError({
+            reason: cause.reason,
+            cookieDatabasePath: source.cookieDatabasePath,
+            cause,
+          })
+        : cause,
+    ),
+  );
+
+  const evaluated = yield* evaluateWith(keys);
+  if (evaluated.result.cookies.length === 0 && keys.cbcV11Error !== undefined && evaluated.hasV11) {
+    return yield* new ChromiumCookieReadError({
+      reason: keys.cbcV11Error.reason,
+      cookieDatabasePath: source.cookieDatabasePath,
+      cause: keys.cbcV11Error,
+    });
   }
-
-  if (source.platform === "darwin") {
-    const candidates: ReadonlyArray<KeychainCredentialCandidate> =
-      source.keychainCandidates && source.keychainCandidates.length > 0
-        ? source.keychainCandidates
-        : source.keychainService && source.keychainAccount
-          ? [{ service: source.keychainService, account: source.keychainAccount }]
-          : [];
-    if (candidates.length === 0) {
-      return yield* wrapKeyError(new ChromiumKeyError({ reason: "unsupportedPlatform" }));
-    }
-    let missingError: ChromiumKeyError | undefined;
-    let firstResult: CookieReadResult | undefined;
-    for (const candidate of candidates) {
-      const attempt = yield* resolveMacKeychainKey(candidate).pipe(
-        Effect.catchIf(
-          (error) => error.reason === "keychainItemMissing",
-          (error) => Effect.succeed(error),
-        ),
-        Effect.mapError(wrapKeyError),
-      );
-      if (isChromiumKeyError(attempt)) {
-        missingError = attempt;
-        continue;
-      }
-      const raw = yield* loadRawDatabase();
-      const evaluated = decryptChromiumCookieRows(
-        raw.rows,
-        raw.schemaVersion,
-        attempt,
-        source.platform,
-      );
-      firstResult ??= evaluated.result;
-      // Accept the first credential that unlocks keyring-encrypted cookies (or when none exist);
-      // otherwise keep trying fallback candidates in case an earlier keychain item is stale.
-      if (evaluated.keyringFailed === 0 || evaluated.keyringDecrypted > 0) {
-        return evaluated.result;
-      }
-    }
-    if (firstResult !== undefined) return firstResult;
-    return yield* wrapKeyError(
-      missingError ?? new ChromiumKeyError({ reason: "keychainItemMissing" }),
-    );
-  }
-
-  if (source.platform === "linux") {
-    const applications: ReadonlyArray<string> =
-      source.linuxSecretApplications && source.linuxSecretApplications.length > 0
-        ? source.linuxSecretApplications
-        : source.linuxSecretApplication
-          ? [source.linuxSecretApplication]
-          : [];
-    if (applications.length === 0) {
-      const keys = yield* resolveLinuxApplicationKeys(undefined).pipe(
-        Effect.mapError(wrapKeyError),
-      );
-      const raw = yield* loadRawDatabase();
-      return decryptChromiumCookieRows(raw.rows, raw.schemaVersion, keys, source.platform).result;
-    }
-
-    let firstResult: CookieReadResult | undefined;
-    let lastErrorKeys: ChromiumKeyMaterial | undefined;
-    for (const application of applications) {
-      const keys = yield* resolveLinuxApplicationKeys(application).pipe(
-        Effect.mapError(wrapKeyError),
-      );
-      if (keys.cbcV11 === undefined) {
-        lastErrorKeys = keys;
-        if (keys.cbcV11Error?.reason === "keychainItemMissing") continue;
-        break;
-      }
-      const raw = yield* loadRawDatabase();
-      const evaluated = decryptChromiumCookieRows(
-        raw.rows,
-        raw.schemaVersion,
-        keys,
-        source.platform,
-      );
-      firstResult ??= evaluated.result;
-      if (evaluated.keyringFailed === 0 || evaluated.keyringDecrypted > 0) {
-        return evaluated.result;
-      }
-    }
-    if (firstResult !== undefined) return firstResult;
-    const fallbackKeys =
-      lastErrorKeys ??
-      (yield* resolveLinuxApplicationKeys(undefined).pipe(Effect.mapError(wrapKeyError)));
-    const raw = yield* loadRawDatabase();
-    const evaluated = decryptChromiumCookieRows(
-      raw.rows,
-      raw.schemaVersion,
-      fallbackKeys,
-      source.platform,
-    );
-    if (
-      evaluated.result.cookies.length === 0 &&
-      fallbackKeys.cbcV11Error !== undefined &&
-      evaluated.hasV11
-    ) {
-      return yield* wrapKeyError(fallbackKeys.cbcV11Error);
-    }
-    return evaluated.result;
-  }
-
-  return yield* wrapKeyError(new ChromiumKeyError({ reason: "unsupportedPlatform" }));
+  return evaluated.result;
 });
