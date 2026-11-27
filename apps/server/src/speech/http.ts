@@ -35,7 +35,6 @@ import * as CloudSpeech from "./CloudSpeech.ts";
 import * as OpenRouterSignIn from "./OpenRouterSignIn.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
-import * as SpeechAligner from "./SpeechAligner.ts";
 import * as SpeechService from "./SpeechService.ts";
 import * as SpeechSynthesisStreams from "./synthesisStreams.ts";
 
@@ -139,8 +138,13 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
     const openRouter = yield* OpenRouterSignIn.OpenRouterSignIn;
     const environment = yield* ServerEnvironment.ServerEnvironment;
     const local = yield* LocalSpeechSynthesis.LocalSpeechSynthesis;
+    // Estimated words can be timed on this environment once its word timing model is installed.
+    const withWordTiming = Effect.fnUntraced(function* (catalog: SpeechSynthesisCatalog) {
+      if (catalog.wordTimings === "provider") return catalog;
+      const wordTimingModel = yield* local.wordTiming;
+      return wordTimingModel ? { ...catalog, wordTimingModel } : catalog;
+    });
     const synthesisStreams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
-    const aligner = yield* SpeechAligner.SpeechAligner;
     const mapInstallError = <A, R>(
       effect: Effect.Effect<A, LocalSpeechSynthesis.LocalSynthesisInstallError, R>,
     ) =>
@@ -189,9 +193,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
                       failEnvironmentInternal("internal_error", error),
                   }),
                 );
-          // Choosing a provider without word timings fetches the model that times them.
-          if (catalog.wordTimings !== "provider") yield* aligner.prepare;
-          return catalog;
+          return yield* withWordTiming(catalog);
         }),
       )
       .handle(
@@ -230,7 +232,11 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
           return yield* local
             .download(args.payload.modelId)
-            .pipe(mapInstallError, Effect.flatMap(withoutCatalogHostPaths));
+            .pipe(
+              mapInstallError,
+              Effect.flatMap(withoutCatalogHostPaths),
+              Effect.flatMap(withWordTiming),
+            );
         }),
       )
       .handle(
@@ -239,7 +245,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
           return yield* local
             .cancel(args.payload.modelId)
-            .pipe(Effect.flatMap(withoutCatalogHostPaths));
+            .pipe(Effect.flatMap(withoutCatalogHostPaths), Effect.flatMap(withWordTiming));
         }),
       )
       .handle(
@@ -248,7 +254,11 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
           return yield* local
             .remove(args.payload.modelId)
-            .pipe(mapInstallError, Effect.flatMap(withoutCatalogHostPaths));
+            .pipe(
+              mapInstallError,
+              Effect.flatMap(withoutCatalogHostPaths),
+              Effect.flatMap(withWordTiming),
+            );
         }),
       )
       .handle(

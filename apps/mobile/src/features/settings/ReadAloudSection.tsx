@@ -13,6 +13,7 @@ import {
   EMPTY_SPEECH_SYNTHESIS_CATALOG,
   type ReadAloudSettings,
   type SpeechSynthesisCatalog,
+  WORD_TIMING_MODEL_ID,
 } from "@t3tools/contracts";
 import {
   cancelSpeechSynthesisModelDownload,
@@ -142,25 +143,32 @@ export function ReadAloudSection() {
   const [installing, setInstalling] = useState<string | null>(null);
   const downloading =
     installing === installKey || install?.state === "downloading" || install?.state === "verifying";
+  const wordTiming = catalog.wordTimingModel;
+  const wordTimingKey = JSON.stringify([settings.environmentId, WORD_TIMING_MODEL_ID]);
+  const timingDownloading =
+    installing === wordTimingKey ||
+    wordTiming?.state === "downloading" ||
+    wordTiming?.state === "verifying";
   // Waits for the catalog request in flight; refreshing again would abort it.
   const refreshing = catalogState.version !== catalogVersion;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Poll the environment's download progress while it runs.
   useEffect(() => {
-    if (!downloading || refreshing) return;
+    if ((!downloading && !timingDownloading) || refreshing) return;
     const timer = setTimeout(() => setCatalogVersion((value) => value + 1), 1_000);
     return () => clearTimeout(timer);
-  }, [downloading, refreshing]);
-  const changeInstall = (action: "download" | "cancel" | "remove") => {
-    if (!prepared || !selectedModel) return;
-    const requestKey = installKey;
+  }, [downloading, timingDownloading, refreshing]);
+  const selectedTarget = selectedModel ? { id: selectedModel.id, key: installKey } : undefined;
+  const changeInstall = (action: "download" | "cancel" | "remove", target = selectedTarget) => {
+    if (!prepared || !target) return;
+    const requestKey = target.key;
     if (action === "download") setInstalling(requestKey);
     setError("");
     void runSpeech(
       action === "download"
-        ? downloadSpeechSynthesisModel(prepared, selectedModel.id)
+        ? downloadSpeechSynthesisModel(prepared, target.id)
         : action === "cancel"
-          ? cancelSpeechSynthesisModelDownload(prepared, selectedModel.id)
-          : removeSpeechSynthesisModel(prepared, selectedModel.id),
+          ? cancelSpeechSynthesisModelDownload(prepared, target.id)
+          : removeSpeechSynthesisModel(prepared, target.id),
     )
       .then(
         () => {},
@@ -306,6 +314,53 @@ export function ReadAloudSection() {
               detail={gt("{size} MB", { size: Math.round(install.size / 1024 / 1024) })}
               disabled={!canManage}
               onPress={() => changeInstall("download")}
+            />
+          )}
+        </ListSection>
+      )}
+      {wordTiming && prepared && settings.provider !== "off" && (
+        <ListSection
+          title={gt("Word timing")}
+          footer={gt(
+            "Follows each spoken word exactly and starts reading right at the word you pick. Without it, the highlight is estimated.",
+          )}
+        >
+          {timingDownloading ? (
+            <ListActionRow
+              label={gt("Cancel word timing download")}
+              detail={
+                wordTiming.state === "verifying"
+                  ? gt("Verifying…")
+                  : gt("{percent}% downloaded", {
+                      percent:
+                        wordTiming.downloaded === undefined
+                          ? 0
+                          : Math.round((wordTiming.downloaded / wordTiming.size) * 100),
+                    })
+              }
+              disabled={!canManage}
+              onPress={() =>
+                changeInstall("cancel", { id: WORD_TIMING_MODEL_ID, key: wordTimingKey })
+              }
+            />
+          ) : wordTiming.state === "installed" ? (
+            <ListActionRow
+              label={gt("Delete the word timing model")}
+              detail={gt("Installed")}
+              tone="danger"
+              disabled={!canManage}
+              onPress={() =>
+                changeInstall("remove", { id: WORD_TIMING_MODEL_ID, key: wordTimingKey })
+              }
+            />
+          ) : (
+            <ListActionRow
+              label={gt("Download the word timing model")}
+              detail={gt("{size} MB", { size: Math.round(wordTiming.size / 1024 / 1024) })}
+              disabled={!canManage}
+              onPress={() =>
+                changeInstall("download", { id: WORD_TIMING_MODEL_ID, key: wordTimingKey })
+              }
             />
           )}
         </ListSection>

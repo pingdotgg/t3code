@@ -13,6 +13,7 @@ import {
   CloudSpeechError,
   SpeechSynthesisError,
   EMPTY_SPEECH_SYNTHESIS_CATALOG,
+  type SpeechSynthesisCatalog,
   DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
   SPEECH_MAX_OPTIONS_BYTES,
   SPEECH_SYNTHESIS_MAX_TEXT,
@@ -32,7 +33,6 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type * as NetAddress from "effect/net/NetAddress";
-import * as SpeechAligner from "./SpeechAligner.ts";
 import * as SpeechService from "./SpeechService.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
@@ -87,14 +87,13 @@ effectIt.effect.each([false, true])(
         Effect.succeed("stream-token"),
       );
       const synthesisModels = vi.fn(() => Effect.succeed(EMPTY_SPEECH_SYNTHESIS_CATALOG));
-      const local = { download: vi.fn(() => Effect.succeed(EMPTY_SPEECH_SYNTHESIS_CATALOG)) };
-      const prepare = vi.fn(() => Effect.void);
+      const local = {
+        download: vi.fn(() => Effect.succeed(EMPTY_SPEECH_SYNTHESIS_CATALOG)),
+        wordTiming: Effect.succeed({ state: "downloadable" as const, size: 205 }),
+      };
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
-          Layer.provide(
-            Layer.mock(SpeechAligner.SpeechAligner)({ prepare: Effect.suspend(prepare) }),
-          ),
           Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
           Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
           Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)(local)),
@@ -136,8 +135,15 @@ effectIt.effect.each([false, true])(
       );
       expect(response.status).toBe(allowed ? 200 : 403);
       expect(catalog.status).toBe(allowed ? 200 : 403);
-      // A provider without word timings fetches the aligner when it is chosen.
-      expect(prepare).toHaveBeenCalledTimes(allowed ? 1 : 0);
+      // A provider without word timings offers the model that times them.
+      if (allowed)
+        expect(
+          (yield* Effect.promise(() => catalog.json() as Promise<SpeechSynthesisCatalog>))
+            .wordTimingModel,
+        ).toEqual({
+          state: "downloadable",
+          size: 205,
+        });
       // Installing a local model downloads hundreds of megabytes, so it needs settings access.
       const install = yield* Effect.promise(() =>
         handler(
@@ -187,7 +193,6 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
       HttpApi.make("environment").add(EnvironmentVoiceHttpApi),
     ).pipe(
       Layer.provide(speechHttpApiLayer),
-      Layer.provide(Layer.mock(SpeechAligner.SpeechAligner)({ prepare: Effect.void })),
       Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
       Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
       Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)({})),
@@ -324,7 +329,6 @@ effectIt.effect(
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
-          Layer.provide(Layer.mock(SpeechAligner.SpeechAligner)({ prepare: Effect.void })),
           Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
           Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
           Layer.provide(local),
@@ -511,7 +515,6 @@ effectIt.effect.each([
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(api).pipe(
           Layer.provide(speechHttpApiLayer),
-          Layer.provide(Layer.mock(SpeechAligner.SpeechAligner)({ prepare: Effect.void })),
           Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
           Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
           Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)({})),
@@ -583,7 +586,6 @@ effectIt.effect("tells the client why transcript cleanup failed", () =>
     const { handler, dispose } = HttpRouter.toWebHandler(
       HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
         Layer.provide(speechHttpApiLayer),
-        Layer.provide(Layer.mock(SpeechAligner.SpeechAligner)({ prepare: Effect.void })),
         Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
         Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
         Layer.provide(principal(AuthOrchestrationOperateScope)),

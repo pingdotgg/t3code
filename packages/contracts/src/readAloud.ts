@@ -116,6 +116,8 @@ export const SpeechSynthesisModelInstall = Schema.Struct({
   linkedFrom: Schema.optionalKey(Schema.String),
 });
 export type SpeechSynthesisModelInstall = typeof SpeechSynthesisModelInstall.Type;
+/** The local model that times the words of speech whose provider reports none. */
+export const WORD_TIMING_MODEL_ID = "word-timing";
 /** An empty model loads the environment's default local model. */
 export const SpeechSynthesisPrepareRequest = Schema.Struct({
   model: Schema.String.check(Schema.isMaxLength(160)),
@@ -131,6 +133,11 @@ export const SpeechSynthesisCatalog = Schema.Struct({
   speedAppliedByProvider: Schema.Boolean,
   /** Absent when the timings are `estimated`. */
   wordTimings: Schema.optionalKey(ReadAloudWordTimings),
+  /**
+   * Present when the words are estimated and this environment can time them instead, once
+   * `WORD_TIMING_MODEL_ID` is downloaded like a local model.
+   */
+  wordTimingModel: Schema.optionalKey(SpeechSynthesisModelInstall),
   error: Schema.optionalKey(Schema.String),
   models: Schema.Array(
     Schema.Struct({

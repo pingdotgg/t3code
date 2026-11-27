@@ -2,7 +2,9 @@
 import * as NodeOS from "node:os";
 import {
   SpeechSynthesisError,
+  WORD_TIMING_MODEL_ID,
   type SpeechSynthesisCatalog,
+  type SpeechSynthesisModelInstall,
   type SpeechSynthesisRequest,
 } from "@t3tools/contracts";
 import {
@@ -31,7 +33,12 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 import type { SpeechSynthesisPart } from "./CloudSpeech.ts";
-import { loadLocalSynthesisModel, type LocalSynthesisModel } from "./localSynthesisWorker.ts";
+import {
+  loadLocalAlignmentModel,
+  loadLocalSynthesisModel,
+  type LocalAlignmentModel,
+  type LocalSynthesisModel,
+} from "./localSynthesisWorker.ts";
 import { speechLineSpans, supertonicText } from "./synthesisAudio.ts";
 
 /** A preset the model names itself, one it reads from its own file, or a speaker it imitates. */
@@ -1192,22 +1199,28 @@ export class LocalSpeechSynthesis extends Context.Service<
     readonly stream: (
       request: SpeechSynthesisRequest,
     ) => Stream.Stream<SpeechSynthesisPart, SpeechSynthesisError>;
-    /** The audio.cpp library local models and word timing run on, once installed. */
-    readonly runtimeLibrary: Effect.Effect<
-      { readonly path: string; readonly backend: string } | undefined
-    >;
-    /** Fetches that library when it is missing. */
-    readonly installRuntime: Effect.Effect<void, LocalSynthesisInstallError>;
+    /**
+     * The install of `WORD_TIMING_MODEL_ID`, which `download`, `cancel` and `remove` manage like
+     * a model; undefined where local models cannot run.
+     */
+    readonly wordTiming: Effect.Effect<SpeechSynthesisModelInstall | undefined>;
+    /** Times the words of a transcript in its audio, once the word timing model is installed. */
+    readonly align: (
+      request: Parameters<LocalAlignmentModel["align"]>[0],
+    ) => Effect.Effect<Awaited<ReturnType<LocalAlignmentModel["align"]>>, SpeechSynthesisError>;
   }
 >()("t3/speech/LocalSpeechSynthesis") {}
 
-/** The forced aligner that times the words of speech whose provider reports none. */
-export const SPEECH_ALIGNER_FILE: SpeechModelStore.ModelFile = {
-  id: AUDIO_CPP_GGUF,
-  revision: GGUF_REVISION,
-  filename: "MMS-Forced-Aligner-GGUF/mms-forced-aligner-f16.gguf",
-  size: 631_019_392,
-  sha256: "3faf596c743b5b1e6f959ca4f73be045fddd0068aeafff9da24295253f561e97",
+// Meta's MMS-300M forced aligner (CC BY-NC 4.0), quantized to Q4_K by audio.cpp's converter.
+const SPEECH_ALIGNER_RELEASE = "t3-2026.11.26";
+const SPEECH_ALIGNER_FILENAME = `audio-${SPEECH_ALIGNER_RELEASE}-mms-forced-aligner-q4_k.gguf`;
+const SPEECH_ALIGNER_FILE: SpeechModelStore.ModelFile = {
+  id: "pingdotgg/audio.cpp",
+  revision: SPEECH_ALIGNER_RELEASE,
+  filename: SPEECH_ALIGNER_FILENAME,
+  url: `https://github.com/pingdotgg/audio.cpp/releases/download/${SPEECH_ALIGNER_RELEASE}/${SPEECH_ALIGNER_FILENAME}`,
+  size: 205_171_744,
+  sha256: "fe9fddf7040a98e3ed5d8792663556b1d35d58f82790917ed600367a6ec1e9c3",
 };
 
 /** Picks the language a model declares for a setting such as `en-US`; `auto` picks none. */
@@ -1336,32 +1349,24 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // One install at a time: a model install and the word aligner can both need the runtime.
-  const runtimeLock = yield* Semaphore.make(1);
-  const installRuntime = (progress?: {
-    readonly onProgress?: (downloaded: number) => void;
-    readonly onVerificationStart?: () => void;
-  }) =>
-    runtimeLock.withPermits(1)(
-      Effect.gen(function* () {
-        if (!runtime || !runtimeFile)
-          return yield* new LocalSynthesisInstallError({ reason: "unsupported-platform" });
-        if (yield* runtimeReady) return;
-        const archivePath = yield* store
-          .download(runtimeFile, progress)
-          .pipe(
-            Effect.mapError((cause) => new LocalSynthesisInstallError({ reason: "failed", cause })),
-          );
-        yield* extract(runtime.library, archivePath).pipe(
-          Effect.mapError((cause) =>
-            isInstallError(cause)
-              ? cause
-              : new LocalSynthesisInstallError({ reason: "failed", cause }),
-          ),
-        );
-        yield* store.remove(runtimeFile).pipe(Effect.ignore);
-      }),
+  const installRuntime = Effect.fnUntraced(function* (progress: {
+    readonly onProgress: (downloaded: number) => void;
+    readonly onVerificationStart: () => void;
+  }) {
+    if (!runtime || !runtimeFile)
+      return yield* new LocalSynthesisInstallError({ reason: "unsupported-platform" });
+    const archivePath = yield* store
+      .download(runtimeFile, progress)
+      .pipe(
+        Effect.mapError((cause) => new LocalSynthesisInstallError({ reason: "failed", cause })),
+      );
+    yield* extract(runtime.library, archivePath).pipe(
+      Effect.mapError((cause) =>
+        isInstallError(cause) ? cause : new LocalSynthesisInstallError({ reason: "failed", cause }),
+      ),
     );
+    yield* store.remove(runtimeFile).pipe(Effect.ignore);
+  });
 
   type Transfer = {
     readonly modelId: string;
@@ -1377,31 +1382,46 @@ const make = Effect.gen(function* () {
   // overlap an install or each other.
   let changing = false;
 
-  const catalog = Effect.gen(function* () {
+  // `linked` is the file whose outside source an installed model reports.
+  const installOf = Effect.fnUntraced(function* (
+    modelId: string,
+    files: ReadonlyArray<SpeechModelStore.ModelFile>,
+    linked?: SpeechModelStore.ModelFile,
+  ) {
+    const active = transfer?.modelId === modelId ? transfer : undefined;
+    if (active)
+      return {
+        state: active.verifying ? "verifying" : "downloading",
+        size: active.size,
+        downloaded: active.runtime + active.model,
+      } satisfies SpeechSynthesisModelInstall;
     const ready = yield* runtimeReady;
+    const missing = yield* Effect.filter(files, (file) =>
+      store.isReady(file).pipe(Effect.map((fileReady) => !fileReady)),
+    );
+    if (ready && missing.length === 0) {
+      const linkedFrom = linked && (yield* store.linkedFrom(linked));
+      return {
+        state: "installed",
+        size: totalSize(files),
+        ...(linkedFrom && { linkedFrom }),
+      } satisfies SpeechSynthesisModelInstall;
+    }
     const runtimeSize = ready || !runtimeFile ? 0 : runtimeFile.size;
+    return {
+      state: "downloadable",
+      size: totalSize(missing) + runtimeSize,
+    } satisfies SpeechSynthesisModelInstall;
+  });
+
+  const wordTiming = Effect.suspend(() =>
+    runtimeFile ? installOf(WORD_TIMING_MODEL_ID, [SPEECH_ALIGNER_FILE]) : Effect.undefined,
+  );
+
+  const catalog = Effect.gen(function* () {
     const models = yield* Effect.forEach(LOCAL_SYNTHESIS_MODELS, (model) =>
       Effect.gen(function* () {
-        const active = transfer?.modelId === model.id ? transfer : undefined;
-        const files = modelFiles(model);
-        const missing = yield* Effect.filter(files, (file) =>
-          store.isReady(file).pipe(Effect.map((fileReady) => !fileReady)),
-        );
-        const installed = ready && missing.length === 0;
-        const linkedFrom = installed ? yield* store.linkedFrom(model.file) : undefined;
-        const install = active
-          ? {
-              state: active.verifying ? ("verifying" as const) : ("downloading" as const),
-              size: active.size,
-              downloaded: active.runtime + active.model,
-            }
-          : installed
-            ? {
-                state: "installed" as const,
-                size: totalSize(files),
-                ...(linkedFrom && { linkedFrom }),
-              }
-            : { state: "downloadable" as const, size: totalSize(missing) + runtimeSize };
+        const install = yield* installOf(model.id, modelFiles(model), model.file);
         return {
           id: model.id,
           name: model.name,
@@ -1436,10 +1456,14 @@ const make = Effect.gen(function* () {
     Effect.fromNullishOr(LOCAL_SYNTHESIS_MODELS.find((model) => model.id === modelId)).pipe(
       Effect.mapError(() => new LocalSynthesisInstallError({ reason: "unknown-model" })),
     );
+  const findFiles = (modelId: string) =>
+    modelId === WORD_TIMING_MODEL_ID
+      ? Effect.succeed([SPEECH_ALIGNER_FILE])
+      : findModel(modelId).pipe(Effect.map(modelFiles));
 
   // Publishes the transfer before forking: a cached file can finish before forkIn returns.
   const reserve = Effect.fn("LocalSpeechSynthesis.reserve")(function* (modelId: string) {
-    const model = yield* findModel(modelId);
+    const files = yield* findFiles(modelId);
     if (!runtimeFile || !runtime)
       return yield* new LocalSynthesisInstallError({ reason: "unsupported-platform" });
     // Checked and claimed without yielding, so a concurrent download or removal cannot interleave.
@@ -1448,7 +1472,7 @@ const make = Effect.gen(function* () {
     if (!transfer) {
       const state: Transfer = {
         modelId,
-        size: totalSize(modelFiles(model)),
+        size: totalSize(files),
         runtime: 0,
         model: 0,
         verifying: false,
@@ -1457,7 +1481,6 @@ const make = Effect.gen(function* () {
       const install = Effect.gen(function* () {
         // Read after claiming: no removal or link can start while this transfer exists.
         const needsRuntime = !(yield* runtimeReady);
-        const files = modelFiles(model);
         const missing = yield* Effect.filter(files, (file) =>
           store.isReady(file).pipe(Effect.map((fileReady) => !fileReady)),
         );
@@ -1527,19 +1550,78 @@ const make = Effect.gen(function* () {
     worker = undefined;
     await current?.model.dispose();
   });
+  // The aligner has a worker of its own, so words are timed while synthesis continues.
+  const alignerPermit = yield* Semaphore.make(1);
+  let aligner: LocalAlignmentModel | undefined;
+  const unloadAligner = Effect.promise(async () => {
+    const current = aligner;
+    aligner = undefined;
+    await current?.dispose();
+  });
   yield* Effect.addFinalizer(() =>
-    Effect.sync(() => lifetime.abort()).pipe(Effect.andThen(unloadWorker)),
-  );
-  const idleDeadlines = yield* Queue.sliding<void>(1);
-  yield* Stream.fromQueue(idleDeadlines).pipe(
-    Stream.switchMap(() =>
-      Stream.fromEffect(
-        Effect.sleep(IDLE_UNLOAD_MS).pipe(Effect.andThen(permit.withPermits(1)(unloadWorker))),
-      ),
+    Effect.sync(() => lifetime.abort()).pipe(
+      Effect.andThen(unloadWorker),
+      Effect.andThen(unloadAligner),
     ),
-    Stream.runDrain,
-    Effect.forkScoped,
   );
+  const unloadWhenIdle = Effect.fnUntraced(function* (
+    lock: Semaphore.Semaphore,
+    unload: Effect.Effect<void>,
+  ) {
+    const deadlines = yield* Queue.sliding<void>(1);
+    yield* Stream.fromQueue(deadlines).pipe(
+      Stream.switchMap(() =>
+        Stream.fromEffect(
+          Effect.sleep(IDLE_UNLOAD_MS).pipe(Effect.andThen(lock.withPermits(1)(unload))),
+        ),
+      ),
+      Stream.runDrain,
+      Effect.forkScoped,
+    );
+    return deadlines;
+  });
+  const idleDeadlines = yield* unloadWhenIdle(permit, unloadWorker);
+  const alignerIdleDeadlines = yield* unloadWhenIdle(alignerPermit, unloadAligner);
+
+  const align = Effect.fn("LocalSpeechSynthesis.align")(function* (
+    request: Parameters<LocalAlignmentModel["align"]>[0],
+  ) {
+    const modelPath = yield* store.installedPath(SPEECH_ALIGNER_FILE);
+    if (!runtime || !libraryPath || !modelPath || !(yield* runtimeReady))
+      return yield* failure("missing-model");
+    return yield* alignerPermit.withPermits(1)(
+      Effect.gen(function* () {
+        if (!aligner?.alive) {
+          yield* unloadAligner;
+          yield* Effect.tryPromise({
+            try: () =>
+              loadLocalAlignmentModel({
+                libraryPath,
+                backend: runtime.backend,
+                modelPath,
+                threads: Math.max(1, Math.min(8, NodeOS.availableParallelism() - 1)),
+                signal: lifetime.signal,
+              }),
+            catch: (cause) => failure("unavailable", cause),
+          }).pipe(
+            Effect.tap((model) =>
+              Effect.sync(() => {
+                aligner = model;
+              }),
+            ),
+            Effect.uninterruptible,
+          );
+        }
+        const loaded = aligner!;
+        return yield* Effect.tryPromise({
+          try: () => loaded.align(request),
+          catch: (cause) => failure("unavailable", cause),
+        });
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => Queue.offerUnsafe(alignerIdleDeadlines, undefined))),
+      ),
+    );
+  });
 
   // Claimed without yielding, so a download, removal, or link cannot interleave.
   const exclusive = <A, E>(effect: Effect.Effect<A, E>) =>
@@ -1578,7 +1660,32 @@ const make = Effect.gen(function* () {
     return yield* download(model.id);
   });
 
+  // The runtime stays while an installed voice or the word timing model runs on it.
+  const removeUnusedRuntime = Effect.gen(function* () {
+    const used = yield* Effect.filter(
+      [...LOCAL_SYNTHESIS_MODELS.map((model) => model.file), SPEECH_ALIGNER_FILE],
+      (file) => store.isReady(file),
+    );
+    if (used.length === 0)
+      yield* fs
+        .remove(runtimeDirectory, { recursive: true, force: true })
+        .pipe(Effect.mapError(installFailed));
+  });
+
+  const removeWordTiming = exclusive(
+    alignerPermit.withPermits(1)(
+      unloadAligner.pipe(
+        Effect.andThen(store.remove(SPEECH_ALIGNER_FILE).pipe(Effect.mapError(installFailed))),
+        Effect.andThen(removeUnusedRuntime),
+      ),
+    ),
+  );
+
   const remove = Effect.fn("LocalSpeechSynthesis.remove")(function* (modelId: string) {
+    if (modelId === WORD_TIMING_MODEL_ID) {
+      yield* removeWordTiming;
+      return yield* catalog;
+    }
     const model = yield* findModel(modelId);
     yield* exclusive(
       permit.withPermits(1)(
@@ -1597,11 +1704,7 @@ const make = Effect.gen(function* () {
             yield* fs
               .remove(espeakCache, { recursive: true, force: true })
               .pipe(Effect.mapError(installFailed));
-          // Word timing runs on the runtime too, for every provider without its own timings.
-          if (remaining.length === 0 && !(yield* store.isReady(SPEECH_ALIGNER_FILE)))
-            yield* fs
-              .remove(runtimeDirectory, { recursive: true, force: true })
-              .pipe(Effect.mapError(installFailed));
+          yield* removeUnusedRuntime;
         }),
       ),
     );
@@ -1757,11 +1860,6 @@ const make = Effect.gen(function* () {
       Stream.withSpan("LocalSpeechSynthesis.stream"),
     );
 
-  const library = Effect.gen(function* () {
-    if (!runtime || !libraryPath || !(yield* runtimeReady)) return undefined;
-    return { path: libraryPath, backend: runtime.backend };
-  });
-
   return LocalSpeechSynthesis.of({
     catalog,
     download,
@@ -1770,8 +1868,8 @@ const make = Effect.gen(function* () {
     remove,
     prepare,
     stream,
-    runtimeLibrary: library,
-    installRuntime: installRuntime(),
+    wordTiming,
+    align,
   });
 });
 

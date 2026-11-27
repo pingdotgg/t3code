@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { AUDIO_CPP_ESPEAK_DATA, AUDIO_CPP_VERSION, audioCppRuntime } from "@t3tools/audio-cpp";
+import { WORD_TIMING_MODEL_ID } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
@@ -216,4 +217,39 @@ it.effect("keeps eSpeak data and voice clips while another installed model reads
         }),
     );
   }),
+);
+
+it.effect(
+  "installs and removes the word timing model like a model, with the runtime it needs",
+  () =>
+    Effect.gen(function* () {
+      const ready = new Set<string>();
+      const removed: Array<string> = [];
+      yield* withService(
+        {
+          isReady: (file) => Effect.sync(() => ready.has(file.filename)),
+          installedPath: (file) =>
+            Effect.sync(() => (ready.has(file.filename) ? `/models/${file.filename}` : undefined)),
+          download: (file) => Effect.sync(() => (ready.add(file.filename), "/unused")),
+          remove: (file) =>
+            Effect.sync(() => {
+              ready.delete(file.filename);
+              removed.push(file.filename);
+            }),
+        },
+        (service) =>
+          Effect.gen(function* () {
+            expect(yield* service.wordTiming).toEqual({ state: "downloadable", size: 205_171_744 });
+            yield* service.download(WORD_TIMING_MODEL_ID);
+            expect(yield* service.wordTiming).toEqual({ state: "installed", size: 205_171_744 });
+            // No installed voice uses the runtime, so removing the model removes it too.
+            yield* service.remove(WORD_TIMING_MODEL_ID);
+            expect(removed).toEqual(["audio-t3-2026.11.26-mms-forced-aligner-q4_k.gguf"]);
+            expect(yield* service.wordTiming).toEqual({
+              state: "downloadable",
+              size: 205_171_744 + audioCppRuntime("darwin", "arm64")!.size,
+            });
+          }),
+      );
+    }),
 );

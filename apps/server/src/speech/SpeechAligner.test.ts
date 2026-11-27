@@ -2,11 +2,9 @@ import { it } from "@effect/vitest";
 import { describe, expect, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
 import * as SpeechAligner from "./SpeechAligner.ts";
-import * as SpeechModelStore from "./SpeechModelStore.ts";
 
 const RATE = 24_000;
 const ENCODER_DELAY = 1105 / RATE;
@@ -17,33 +15,28 @@ const setup = (options: {
   readonly aligned?: ReadonlyArray<ReadonlyArray<readonly [string, number, number]> | Error>;
 }) => {
   const responses = [...(options.aligned ?? [])];
-  const align = vi.fn(async (_request: Parameters<SpeechAligner.Aligner["align"]>[0]) => {
-    const response = responses.shift() ?? [];
-    if (response instanceof Error) throw response;
-    return response.map(([word, startSeconds, endSeconds]) => ({ word, startSeconds, endSeconds }));
-  });
-  const dispose = vi.fn(async () => {});
-  const load = vi.fn(async () => ({ align, dispose }));
-  // Still downloading, so a second request must not start another.
-  const download = vi.fn((_model: SpeechModelStore.ModelFile) => Effect.never);
-  const installRuntime = vi.fn(() => Effect.void);
-  const layer = Layer.effect(SpeechAligner.SpeechAligner, SpeechAligner.make(load)).pipe(
-    Layer.provide(
-      Layer.mock(SpeechModelStore.SpeechModelStore)({
-        installedPath: () => Effect.succeed(options.installed ? "/models/aligner.gguf" : undefined),
-        download,
+  const align = vi.fn(
+    (_request: Parameters<LocalSpeechSynthesis.LocalSpeechSynthesis["Service"]["align"]>[0]) =>
+      Effect.suspend(() => {
+        const response = responses.shift() ?? [];
+        if (response instanceof Error) return Effect.die(response);
+        return Effect.succeed(
+          response.map(([word, startSeconds, endSeconds]) => ({ word, startSeconds, endSeconds })),
+        );
       }),
-    ),
+  );
+  const layer = SpeechAligner.layer.pipe(
     Layer.provide(
       Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)({
-        runtimeLibrary: Effect.succeed(
-          options.installed ? { path: "/runtime/libaudiocpp.dylib", backend: "metal" } : undefined,
-        ),
-        installRuntime: Effect.suspend(installRuntime),
+        wordTiming: Effect.succeed({
+          state: options.installed ? "installed" : "downloadable",
+          size: 205_171_744,
+        }),
+        align,
       }),
     ),
   );
-  return { align, dispose, load, download, installRuntime, layer };
+  return { align, layer };
 };
 
 const spoken = (text: string, words: ReadonlyArray<{ start: number; end: number }>) =>
@@ -113,11 +106,10 @@ it.effect("aligns each stretch once its audio is complete and spreads what it ca
     expect(spoken(text, rest)).toEqual(["設定", "delta."]);
     expect(rest[0]!.startSeconds).toBeCloseTo(3 + ENCODER_DELAY, 6);
     expect(rest[1]!.startSeconds).toBeCloseTo(3 + ENCODER_DELAY + 0.9, 6);
-    expect(fake.load).toHaveBeenCalledTimes(1);
   }).pipe(Effect.provide(fake.layer));
 });
 
-it.effect("estimates a stretch's words when alignment fails, then starts a fresh aligner", () => {
+it.effect("estimates a stretch's words when alignment fails", () => {
   const fake = setup({
     installed: true,
     aligned: [new Error("worker exited"), [["beta", 0.2, 0.5]]],
@@ -141,40 +133,16 @@ it.effect("estimates a stretch's words when alignment fails, then starts a fresh
     expect(spoken(text, estimated)).toEqual(["Alpha."]);
     expect(estimated[0]!.startSeconds).toBeCloseTo(ENCODER_DELAY, 6);
     expect(estimated[0]!.endSeconds).toBeCloseTo(ENCODER_DELAY + 2, 6);
-    expect(fake.dispose).toHaveBeenCalledTimes(1);
     const timed = yield* session.finish;
     expect(timed[0]!.startSeconds).toBeCloseTo(2 + ENCODER_DELAY + 0.2, 6);
-    expect(fake.load).toHaveBeenCalledTimes(2);
   }).pipe(Effect.provide(fake.layer));
 });
 
-it.effect("unloads the aligner once it has been idle", () => {
-  const fake = setup({ installed: true, aligned: [[["alpha", 0, 0.4]]] });
-  return Effect.gen(function* () {
-    const aligner = yield* SpeechAligner.SpeechAligner;
-    const session = (yield* aligner.session("Alpha.", "en"))!;
-    yield* session.push({
-      pcm: silence(1),
-      rate: RATE,
-      startSeconds: 0,
-      span: { start: 0, end: 6 },
-    });
-    yield* session.finish;
-    expect(fake.dispose).not.toHaveBeenCalled();
-    yield* TestClock.adjust("2 minutes");
-    expect(fake.dispose).toHaveBeenCalledTimes(1);
-  }).pipe(Effect.provide(fake.layer));
-});
-
-it.effect("downloads a missing aligner once and has no session until it is installed", () => {
+it.effect("has no session until the word timing model is installed", () => {
   const fake = setup({ installed: false });
   return Effect.gen(function* () {
     const aligner = yield* SpeechAligner.SpeechAligner;
     expect(yield* aligner.session("Alpha beta.", "en")).toBeUndefined();
-    yield* aligner.prepare;
-    yield* Effect.yieldNow;
-    expect(fake.installRuntime).toHaveBeenCalledTimes(1);
-    expect(fake.download).toHaveBeenCalledTimes(1);
-    expect(fake.download.mock.calls[0]![0]).toBe(LocalSpeechSynthesis.SPEECH_ALIGNER_FILE);
+    expect(fake.align).not.toHaveBeenCalled();
   }).pipe(Effect.provide(fake.layer));
 });

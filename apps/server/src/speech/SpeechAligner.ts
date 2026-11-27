@@ -1,21 +1,14 @@
-// @effect-diagnostics nodeBuiltinImport:off - the aligner's thread count comes from the host's CPU count.
-import * as NodeOS from "node:os";
-import type { AudioCppAlignedWord, AudioCppAudio } from "@t3tools/audio-cpp";
 import type { SpeechSynthesisWord } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Semaphore from "effect/Semaphore";
 
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
-import { loadLocalAlignmentModel, type SpeechSpan } from "./localSynthesisWorker.ts";
-import * as SpeechModelStore from "./SpeechModelStore.ts";
+import type { SpeechSpan } from "./localSynthesisWorker.ts";
 import { estimateWords, textWords } from "./wordAlignment.ts";
 
 // Players keep lame's encoder delay at the start of each MP3 stream the PCM becomes.
 const MP3_ENCODER_DELAY_SAMPLES = 1105;
-const IDLE_UNLOAD = "2 minutes";
 // A star before every word lets the alignment pass over speech the text does not spell, such as
 // "twenty five" for "25". The text is given already romanized, as ASCII letters.
 const ALIGNMENT_OPTIONS = { text_normalization: "pre_romanized", star_frequency: "segment" };
@@ -32,16 +25,6 @@ const LATIN_SPELLINGS: Readonly<Record<string, string>> = {
   ı: "i",
   ŋ: "ng",
   ħ: "h",
-};
-
-export type Aligner = {
-  readonly align: (request: {
-    readonly audio: AudioCppAudio;
-    readonly text: string;
-    readonly language: string;
-    readonly options?: Readonly<Record<string, string>>;
-  }) => Promise<ReadonlyArray<AudioCppAlignedWord>>;
-  readonly dispose: () => Promise<void>;
 };
 
 /** Mono 16-bit PCM at `rate`, starting `startSeconds` into the reply's MP3, speaking `span`. */
@@ -63,9 +46,7 @@ export type AlignmentSession = {
 export class SpeechAligner extends Context.Service<
   SpeechAligner,
   {
-    /** Downloads the aligner, and the runtime it runs on, in the background when missing. */
-    readonly prepare: Effect.Effect<void>;
-    /** `undefined` until the aligner is installed. */
+    /** `undefined` until the word timing model is installed. */
     readonly session: (
       text: string,
       language: string,
@@ -124,79 +105,11 @@ function timeSpanWords(
   return out;
 }
 
-export const make = Effect.fn("SpeechAligner.make")(function* (
-  loadAligner: (
-    options: { readonly libraryPath: string; readonly backend: string; readonly modelPath: string },
-    signal: AbortSignal,
-  ) => Promise<Aligner>,
-) {
-  const store = yield* SpeechModelStore.SpeechModelStore;
+const make = Effect.gen(function* () {
   const local = yield* LocalSpeechSynthesis.LocalSpeechSynthesis;
-  const scope = yield* Effect.scope;
-  // @effect-diagnostics-next-line abortControllerInEffect:off - The loaded worker must also stop on service shutdown.
-  const lifetime = new AbortController();
-  const permit = yield* Semaphore.make(1);
-  let downloading = false;
-  let loaded: Aligner | undefined;
-  let unload: Fiber.Fiber<void> | undefined;
-
-  const dispose = Effect.promise(async () => {
-    const current = loaded;
-    loaded = undefined;
-    await current?.dispose();
-  });
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => lifetime.abort()).pipe(Effect.andThen(dispose)),
-  );
-
-  const prepare = Effect.suspend(() => {
-    if (downloading) return Effect.void;
-    downloading = true;
-    return local.installRuntime.pipe(
-      Effect.andThen(store.download(SPEECH_ALIGNER_FILE)),
-      Effect.tapError((error) => Effect.logWarning("Word timing model download failed.", error)),
-      Effect.ignore,
-      Effect.ensuring(
-        Effect.sync(() => {
-          downloading = false;
-        }),
-      ),
-      Effect.forkIn(scope),
-      Effect.asVoid,
-    );
-  }).pipe(Effect.withSpan("SpeechAligner.prepare"));
-
-  // One aligner stays loaded until it has been idle for a while; alignments run one at a time.
-  const align = (
-    paths: { readonly libraryPath: string; readonly backend: string; readonly modelPath: string },
-    request: Parameters<Aligner["align"]>[0],
-  ) =>
-    Semaphore.withPermit(
-      permit,
-      Effect.gen(function* () {
-        if (unload) yield* Fiber.interrupt(unload);
-        loaded ??= yield* Effect.promise(() => loadAligner(paths, lifetime.signal));
-        const aligner = loaded;
-        // A failed alignment may have taken the worker with it; the next one starts a fresh worker.
-        const words = yield* Effect.promise(() => aligner.align(request)).pipe(
-          Effect.onError(() => dispose),
-        );
-        unload = yield* Effect.sleep(IDLE_UNLOAD).pipe(
-          Effect.andThen(Semaphore.withPermit(permit, dispose)),
-          Effect.forkIn(scope),
-        );
-        return words;
-      }),
-    );
 
   const session = Effect.fn("SpeechAligner.session")(function* (text: string, language: string) {
-    const library = yield* local.runtimeLibrary;
-    const modelPath = yield* store.installedPath(SPEECH_ALIGNER_FILE);
-    if (!library || !modelPath) {
-      yield* prepare;
-      return undefined;
-    }
-    const paths = { libraryPath: library.path, backend: library.backend, modelPath };
+    if ((yield* local.wordTiming)?.state !== "installed") return undefined;
     const code = language.toLowerCase().split("-")[0]!;
     // The romanized text carries no language of its own; the code is only recorded.
     const alignmentLanguage = code === "auto" ? "und" : code;
@@ -224,16 +137,18 @@ export const make = Effect.fn("SpeechAligner.make")(function* (
       const spelled = spellings.map((spelling) => !!spelling);
       const transcript = spellings.filter((spelling) => !!spelling).join(" ");
       const aligned = transcript
-        ? yield* align(paths, {
-            audio: { samples, sampleRate: rate, channels: 1 },
-            text: transcript,
-            language: alignmentLanguage,
-            options: ALIGNMENT_OPTIONS,
-          }).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Word timing failed.", cause).pipe(Effect.as([])),
-            ),
-          )
+        ? yield* local
+            .align({
+              audio: { samples, sampleRate: rate, channels: 1 },
+              text: transcript,
+              language: alignmentLanguage,
+              options: ALIGNMENT_OPTIONS,
+            })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Word timing failed.", cause).pipe(Effect.as([])),
+              ),
+            )
         : [];
       // Without a time for every word it spelled, the words are spread over the audio instead.
       const complete = aligned.length === spelled.filter(Boolean).length;
@@ -266,18 +181,7 @@ export const make = Effect.fn("SpeechAligner.make")(function* (
     return { push, finish } satisfies AlignmentSession;
   });
 
-  return SpeechAligner.of({ prepare, session });
+  return SpeechAligner.of({ session });
 });
 
-const { SPEECH_ALIGNER_FILE } = LocalSpeechSynthesis;
-
-export const layer = Layer.effect(
-  SpeechAligner,
-  make((options, signal) =>
-    loadLocalAlignmentModel({
-      ...options,
-      threads: Math.max(1, Math.min(8, NodeOS.availableParallelism() - 1)),
-      signal,
-    }),
-  ),
-);
+export const layer = Layer.effect(SpeechAligner, make);

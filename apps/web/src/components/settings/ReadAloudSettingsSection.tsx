@@ -21,7 +21,9 @@ import {
   EMPTY_SPEECH_SYNTHESIS_CATALOG,
   type ReadAloudSettings,
   type SpeechSynthesisCatalog,
+  type SpeechSynthesisModelInstall,
   type SpeechSynthesisProvider,
+  WORD_TIMING_MODEL_ID,
 } from "@t3tools/contracts";
 import {
   getClientSettings,
@@ -250,6 +252,117 @@ function LocalSpeechModel({
         </div>
       </div>
     </div>
+  );
+}
+
+/** The environment's model that times spoken words for providers that report none. */
+function WordTimingRow({
+  prepared,
+  install,
+  refreshing,
+  onChanged,
+}: {
+  prepared: PreparedConnection;
+  install: SpeechSynthesisModelInstall;
+  /** A catalog request is in flight; polling waits for it rather than aborting it. */
+  refreshing: boolean;
+  onChanged: () => void;
+}) {
+  const gt = useGT();
+  const canManage = useEnvironmentScope(prepared.environmentId, AuthSettingsWriteScope);
+  const [requesting, setRequesting] = useState(false);
+  const [error, setError] = useState("");
+  const downloading = install.state === "downloading" || install.state === "verifying";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Poll the environment's download progress while it runs.
+  useEffect(() => {
+    if ((!downloading && !requesting) || refreshing) return;
+    const timer = window.setTimeout(onChanged, 1_000);
+    return () => window.clearTimeout(timer);
+  }, [downloading, requesting, refreshing, onChanged]);
+  const run = async (action: "download" | "cancel" | "remove") => {
+    setRequesting(true);
+    setError("");
+    try {
+      await runEnvironmentSpeech(
+        action === "download"
+          ? downloadSpeechSynthesisModel(prepared, WORD_TIMING_MODEL_ID)
+          : action === "cancel"
+            ? cancelSpeechSynthesisModelDownload(prepared, WORD_TIMING_MODEL_ID)
+            : removeSpeechSynthesisModel(prepared, WORD_TIMING_MODEL_ID),
+      );
+    } catch {
+      setError(
+        action === "download"
+          ? gt("Could not download the model. Check the environment’s connection and disk space.")
+          : gt("Could not change the model. Try again."),
+      );
+    }
+    setRequesting(false);
+    onChanged();
+  };
+  const progress =
+    install.downloaded === undefined || install.size === 0
+      ? 0
+      : Math.min(100, (install.downloaded / install.size) * 100);
+  return (
+    <SettingsRow
+      title={gt("Word timing")}
+      description={
+        error ? (
+          <span role="alert" className="text-destructive">
+            {error}
+          </span>
+        ) : downloading ? (
+          install.state === "verifying" ? (
+            gt("Verifying download…")
+          ) : (
+            gt("{percent}% downloaded", { percent: Math.round(progress) })
+          )
+        ) : (
+          gt(
+            "Follows each spoken word exactly and starts reading right at the word you pick. Without it, the highlight is estimated.",
+          )
+        )
+      }
+      control={
+        downloading ? (
+          <Button
+            size="icon-sm"
+            variant="outline"
+            aria-label={gt("Cancel word timing download")}
+            disabled={!canManage}
+            onClick={() => void run("cancel")}
+          >
+            <XIcon className="size-3.5" />
+          </Button>
+        ) : install.state === "installed" ? (
+          <SharedTooltipTrigger
+            render={
+              <Button
+                size="icon-sm"
+                variant="outline"
+                disabled={!canManage || requesting}
+                aria-label={gt("Delete the word timing model")}
+                onClick={() => void run("remove")}
+              />
+            }
+            label={gt("Delete the word timing model")}
+          >
+            <Trash2Icon />
+          </SharedTooltipTrigger>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canManage || requesting}
+            onClick={() => void run("download")}
+          >
+            <DownloadIcon />
+            {gt("Download {size}", { size: formatSize(install.size) })}
+          </Button>
+        )
+      }
+    />
   );
 }
 
@@ -828,6 +941,14 @@ export function ReadAloudSettingsSection() {
               </Select>
             }
           />
+          {prepared && catalog.wordTimingModel && (
+            <WordTimingRow
+              prepared={prepared}
+              install={catalog.wordTimingModel}
+              refreshing={catalogState.version !== catalogVersion}
+              onChanged={refreshCatalog}
+            />
+          )}
           <SettingsRow
             title={gt("Skip code blocks")}
             description={gt(
