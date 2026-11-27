@@ -976,6 +976,9 @@ importers:
       character-entities:
         specifier: 2.0.2
         version: 2.0.2
+      character-entities-legacy:
+        specifier: 3.0.0
+        version: 3.0.0
       diff:
         specifier: 8.0.3
         version: 8.0.3
