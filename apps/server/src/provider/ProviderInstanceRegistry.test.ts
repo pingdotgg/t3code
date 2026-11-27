@@ -979,7 +979,10 @@ it.effect("publishes a refreshed OpenCode catalog while its previous server is b
   Effect.gen(function* () {
     const instanceId = ProviderInstanceId.make("opencode");
     const driverKind = ProviderDriverKind.make("opencode");
-    const servers = new Map<ProviderInstance, OpenCode2Server.OpenCode2Server["Service"]>();
+    const servers = new Map<
+      ProviderInstance["retireInferenceCatalog"],
+      OpenCode2Server.OpenCode2Server["Service"]
+    >();
     const running = new Set<string>();
     let port = 4000;
     const runtime = Layer.mock(OpenCodeRuntime.OpenCodeRuntime)({
@@ -1021,7 +1024,7 @@ it.effect("publishes a refreshed OpenCode catalog while its previous server is b
             inferenceCatalog: config.inferenceModels,
             retireInferenceCatalog: server.retire,
           } as ProviderInstance;
-          servers.set(instance, server);
+          servers.set(instance.retireInferenceCatalog, server);
           return instance;
         }).pipe(
           Effect.provide(
@@ -1078,7 +1081,7 @@ it.effect("publishes a refreshed OpenCode catalog while its previous server is b
       configMap: configMap(initial),
     });
     const oldInstance = (yield* registry.getInstance(instanceId))!;
-    const oldServer = servers.get(oldInstance)!;
+    const oldServer = servers.get(oldInstance.retireInferenceCatalog)!;
     const firstBorrowed = yield* Deferred.make<string>();
     const finishTurn = yield* Deferred.make<void>();
     const turn = yield* oldServer
@@ -1091,7 +1094,7 @@ it.effect("publishes a refreshed OpenCode catalog while its previous server is b
     expect(running.has(firstUrl)).toBe(true);
     const newInstance = (yield* registry.getInstance(instanceId))!;
     expect(newInstance.inferenceCatalog).toEqual(updated);
-    const newServer = servers.get(newInstance)!;
+    const newServer = servers.get(newInstance.retireInferenceCatalog)!;
     const nextUrl = yield* newServer.withConnection(({ url }) => Effect.succeed(url));
     expect(nextUrl).not.toBe(firstUrl);
     yield* Deferred.succeed(finishTurn, undefined);

@@ -303,23 +303,32 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         ? parseClaudeAccountDir(claudeSettings.homePath)
         : undefined,
     );
+    const invocationSettings = investigate
+      ? investigationSettings(
+          yield* readClaudeUserSettings(claudeSettings, workingDirectory, claudeEnvironment).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          ),
+          launchArgSettings,
+        )
+      : launchArgSettings;
     const settings = claudePrivateSettings({
-      ...(investigate
-        ? investigationSettings(
-            yield* readClaudeUserSettings(claudeSettings, workingDirectory, claudeEnvironment).pipe(
-              Effect.provideService(FileSystem.FileSystem, fileSystem),
-              Effect.provideService(Path.Path, path),
-            ),
-            launchArgSettings,
-          )
-        : launchArgSettings),
-
+      ...invocationSettings,
       disableAllHooks: true,
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
       ...(typeof ultracode === "boolean" ? { ultracode } : {}),
       ...accountSettings,
-      env: { ...launchArgSettings?.env, ...accountSettings?.env },
+      env: {
+        ...(Predicate.isObject(invocationSettings?.env)
+          ? Object.fromEntries(
+              Object.entries(invocationSettings.env).filter(
+                (entry): entry is [string, string] => typeof entry[1] === "string",
+              ),
+            )
+          : {}),
+        ...accountSettings?.env,
+      },
     });
     const settingsJson = yield* encodeJsonForOperation(
       operation,

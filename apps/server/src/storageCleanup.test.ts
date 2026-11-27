@@ -552,7 +552,7 @@ const cleanupFixture = (
         branchPullRequest: (input: { branch: string }) =>
           Effect.sync(() => {
             pullRequestLookups.push(input.branch);
-            return null;
+            return branchPullRequests[input.branch] ?? null;
           }),
       } as unknown as GitManager.GitManager["Service"]),
       Effect.provideService(TerminalManager.TerminalManager, {

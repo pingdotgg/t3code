@@ -920,7 +920,11 @@ it.effect("the maintenance pass purges threads deleted before purging existed", 
 
     assert.isAbove((yield* maintenance.pruneEventStore()).purgedRowCount, 0);
     assert.equal(yield* contentRowCount(deleted.id), 0);
-    assert.deepEqual(yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox`, []);
+    assert.deepEqual(
+      yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox
+        WHERE effect_type != 'project-knowledge.scrub-deliveries'`,
+      [],
+    );
     const stream = yield* EventStore.EventStoreV2.pipe(
       Effect.flatMap((store) => store.read({ threadId: deleted.id }).pipe(Stream.runCollect)),
     );
@@ -973,7 +977,11 @@ it.effect("a deleted thread's leftover settled request is purged", () =>
 
     // The sweep alone finds the leftover request too.
     yield* maintenance.pruneEventStore();
-    assert.deepEqual(yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox`, []);
+    assert.deepEqual(
+      yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox
+        WHERE effect_type != 'project-knowledge.scrub-deliveries'`,
+      [],
+    );
 
     // A pass interrupted after the content rows went still leaves a content event.
     yield* Effect.flatMap(EventSink.EventSinkV2, (sink) =>

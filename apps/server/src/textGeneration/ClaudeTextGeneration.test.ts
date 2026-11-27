@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { claudeTelemetryOptOut } from "@t3tools/provider-core/server/providerTelemetry";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
@@ -164,7 +165,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           }),
       );
       expect(JSON.parse(yield* fs.readFileString(settingsLog))).toEqual({
-        env: { ORIGIN: "project" },
+        env: { ORIGIN: "project", ...claudeTelemetryOptOut },
         disableAllHooks: true,
       });
     }),
@@ -207,7 +208,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           }),
       );
       expect(JSON.parse(yield* fs.readFileString(settingsLog))).toEqual({
-        env: { ENDPOINT: "user", SHARED: "launch" },
+        env: { ENDPOINT: "user", SHARED: "launch", ...claudeTelemetryOptOut },
         permissions: { deny: ["Read(./private/**)", "Read(./keys/**)"] },
         disableAllHooks: true,
       });

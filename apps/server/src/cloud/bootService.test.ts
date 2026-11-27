@@ -1611,10 +1611,10 @@ process.disconnect();
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         activeVersion: "1.2.3",
       });
-      expect(commands.filter((command) => command.startsWith("schtasks "))).toEqual([
-        "schtasks /Query /TN t3code-PC-theo /XML",
-        `schtasks /Create /XML ${plan.unitPath} /TN t3code-PC-theo /F`,
-        "schtasks /Run /TN t3code-PC-theo",
+      expect(commands.filter((command) => command.startsWith(`${SCHTASKS} `))).toEqual([
+        `${SCHTASKS} /Query /TN t3code-PC-theo /XML`,
+        `${SCHTASKS} /Create /XML ${plan.unitPath} /TN t3code-PC-theo /F`,
+        `${SCHTASKS} /Run /TN t3code-PC-theo`,
       ]);
       // No launcher holds the lock here.
       expect(yield* service.status).toMatchObject({
@@ -1717,8 +1717,8 @@ process.disconnect();
       commands.length = 0;
 
       expect(yield* inside.install()).toMatchObject({ handedOff: true, logPath: plan.logPath });
-      expect(commands.filter((command) => command.startsWith("schtasks "))).toEqual([
-        "schtasks /Query /TN t3code-PC-theo /XML",
+      expect(commands.filter((command) => command.startsWith(`${SCHTASKS} `))).toEqual([
+        `${SCHTASKS} /Query /TN t3code-PC-theo /XML`,
         ...handoff,
       ]);
       expect(parseServiceState(yield* fs.readFileString(statePath))?.activeVersion).toBe("1.2.4");
@@ -1739,7 +1739,7 @@ process.disconnect();
       };
       commands.length = 0;
       expect(yield* inside.restart).toBe("queued");
-      expect(commands).toEqual(["schtasks /Query /TN t3code-PC-theo /XML", ...handoff]);
+      expect(commands).toEqual([`${SCHTASKS} /Query /TN t3code-PC-theo /XML`, ...handoff]);
       expect(control.task.xml).toContain("<LogonType>S4U</LogonType>");
       expect(decodeServiceUnit(yield* fs.readFile(plan.unitPath))).toContain(
         "<LogonType>S4U</LogonType>",

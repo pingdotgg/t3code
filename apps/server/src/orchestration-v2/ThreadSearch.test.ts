@@ -906,7 +906,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
         INSERT INTO orchestration_v2_projection_messages
           (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
         SELECT ${id} || i, ${apart}, 'user', 0,
-          ${DateTime.formatIso(at(5))}, ${DateTime.formatIso(at(5))}, json_object('text', ${text})
+          ${DateTime.formatIso(at(5))}, ${DateTime.formatIso(at(5))}, json_object('text', ${text}, 'createdBy', 'user', 'creationSource', 'web')
         FROM n
       `;
       yield* addNewer("exact-close:", "missing the osprey files", 2000);

@@ -373,7 +373,7 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
     })),
     {
       ...row,
-      position: 12,
+      position: 14,
       sourceItemId: webhookToolItemId,
       item: {
         ...row.item,
@@ -472,7 +472,9 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
     });
     expect(first.items).toHaveLength(10);
     expect(first).toMatchObject({ nextPosition: 9, hasMore: true });
-    for (const source of rows.slice(-2)) {
+    for (const source of rows.filter((entry) =>
+      entry.sourceItemId.startsWith("turn-item-binary-"),
+    )) {
       const pieces: Array<string> = [];
       let textOffset: number | null = 0;
       while (textOffset !== null) {

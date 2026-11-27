@@ -2157,8 +2157,8 @@ function ChatMarkdown({
             key={index}
             text={source}
             markdown={markdown}
-            // Every block before the last is finished, so its parse can be reused.
-            cache={!props.isStreaming || index < blocks.length - 1}
+            // Every block before the last is finished, and a trailing blank line finishes the last.
+            cache={!props.isStreaming || index < blocks.length - 1 || source.endsWith("\n\n")}
           />
         ))}
       </ChatMarkdownRendererContext>

@@ -1053,6 +1053,8 @@ export const make = Effect.gen(function* () {
       }
     } else if (
       // A download can be hours old: a release published since replaces it before restarting.
+      // A prepared install pins its version, so it does not re-check.
+      expectedVersion === undefined &&
       retainsExpectedDownload &&
       (yield* checkForUpdates(
         "install",

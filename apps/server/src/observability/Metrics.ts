@@ -136,6 +136,7 @@ export const webhookRunsTotal = Metric.counter("t3_webhook_runs_total", {
 export const agentForgeCommandsTotal = Metric.counter("t3_agent_forge_commands_total", {
   description:
     "Forge CLI commands agents ran, by forge, kind, read intent, provider and whether they bypassed T3.",
+  incremental: true,
 });
 
 export const secretRequestsTotal = Metric.counter("t3_secret_requests_total", {

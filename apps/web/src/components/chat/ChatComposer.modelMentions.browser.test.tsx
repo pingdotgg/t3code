@@ -52,6 +52,7 @@ vi.mock(import("../../state/server"), async (original) => {
 
 vi.mock("./ComposerCommandMenuLayer", () => ({
   ComposerCommandMenuLayer: ({ children }: { children: ReactNode }) => children,
+  DeferredComposerCommandMenuLayer: ({ children }: { children: ReactNode }) => children,
 }));
 
 vi.mock("./ComposerControlsBar", () => ({ ComposerControlsBar: () => null }));

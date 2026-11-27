@@ -2496,7 +2496,6 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Layer.mock(SecretRequests.SecretRequests)({}),
                 Layer.mock(RemoteDelegation.RemoteDelegation)({}),
                 Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-                Layer.mock(ModelEvaluations.ModelEvaluations)({}),
               ),
             ),
           ),

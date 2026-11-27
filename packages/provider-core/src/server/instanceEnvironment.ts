@@ -14,15 +14,11 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
 ) {
   // Commands the agent runs inherit this env; the AppImage mount's libraries would shadow the system's.
   const hostEnv = stripAppImageRuntimeEnv(baseEnv);
-  if (!environment || environment.length === 0) {
-    return hostEnv;
-  }
-
   const home = yield* HostProcess.HomeDirectory;
   const platform = yield* HostProcess.Platform;
   const windows = platform === "win32";
-  const next: NodeJS.ProcessEnv = { ...hostEnv };
-  for (const variable of environment) {
+  const next: NodeJS.ProcessEnv = environment?.length ? { ...hostEnv } : hostEnv;
+  for (const variable of environment ?? []) {
     // An unresolved secret reference carries no value; the registry resolves it for the provider.
     if (typeof variable.value !== "string") continue;
     // Windows reads names without regard to case, and a child gets the first spelling in sort

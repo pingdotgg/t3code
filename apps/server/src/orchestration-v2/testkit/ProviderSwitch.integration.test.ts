@@ -1132,7 +1132,10 @@ describe("orchestration v2 provider switching", () => {
                 threadId,
                 runId: handoff.targetRunId,
                 occurredAt: yield* DateTime.now,
-                payload: legacyHandoff,
+                payload: {
+                  ...legacyHandoff,
+                  summaryText: "User: Original request with constraints",
+                },
               },
             ],
           });
@@ -3110,7 +3113,7 @@ describe("orchestration v2 provider switching", () => {
           assert.include(deliveredHistory, '"role":"user"');
           assert.equal(handoff?.delivery?.status, "injected");
         } else {
-          assert.include(delivered.text, "User message:\nContinue");
+          assert.include(delivered.text, "Current message:\nContinue");
           assert.equal(handoff?.delivery?.status, "inline");
         }
         assert.notInclude(deliveredHistory, "Earlier successful request.");
@@ -3346,7 +3349,7 @@ describe("orchestration v2 provider switching", () => {
             assert.equal(slashTurn.driver, GROK_DRIVER);
             if (!verbatim) {
               assert.include(slashTurn.text, originalPrompt);
-              assert.include(slashTurn.text, `User message:\n${firstMessage}`);
+              assert.include(slashTurn.text, `Current message:\n${firstMessage}`);
               return;
             }
             assert.equal(
@@ -3360,7 +3363,7 @@ describe("orchestration v2 provider switching", () => {
             const next = (yield* Ref.get(capturedTurns)).at(-1)!;
             assert.include(next.text, originalPrompt);
             assert.include(next.text, codexResponse);
-            assert.include(next.text, "User message:\nContinue");
+            assert.include(next.text, "Current message:\nContinue");
           }).pipe(
             Effect.provide(
               ProviderReplayHarness.layerWithRegistry(
@@ -4400,9 +4403,23 @@ describe("orchestration v2 provider switching", () => {
         (item) => item.type === "user_message" && item.runId === projection.runs[3]?.id,
       );
       assert.isBelow(handoffItem?.ordinal ?? Infinity, queuedUserItem?.ordinal ?? -Infinity);
-      assert.include(
-        handoffItem?.type === "handoff" ? handoffItem.summary : "",
-        "Codex second queued turn complete",
+      const queuedHandoff = projection.contextHandoffs[0]!;
+      assert.equal(
+        handoffItem?.type === "handoff" ? handoffItem.summary : null,
+        queuedHandoff.summaryText,
+      );
+      assert.include(queuedHandoff.summaryText, "Selected 6 intact items; omitted 0 items.");
+      assert.notInclude(queuedHandoff.summaryText, "Codex second queued turn complete");
+      assert.deepEqual(
+        queuedHandoff.history?.messages.map((message) => message.text),
+        [
+          "Prompt 1",
+          "Codex current turn complete",
+          "Prompt 2",
+          "Codex first queued turn complete",
+          "Prompt 3",
+          "Codex second queued turn complete",
+        ],
       );
       assert.include(turns[3]?.text ?? "", "Codex current turn complete");
       assert.include(turns[3]?.text ?? "", "Codex first queued turn complete");
@@ -6878,7 +6895,10 @@ describe("orchestration v2 provider switching", () => {
           (handoff) => handoff.id === projection.runs[1]?.contextHandoffId,
         );
         assert.equal(recoveryHandoff?.strategy, "full_thread_summary");
-        assert.include(recoveryHandoff?.summaryText ?? "", failedPrompt);
+        assert.include(
+          recoveryHandoff?.history?.messages.map((message) => message.text) ?? [],
+          failedPrompt,
+        );
         if (queueBeforeFailure) {
           const handoffItem = projection.turnItems.find(
             (item) => item.type === "handoff" && item.runId === projection.runs[1]?.id,
@@ -7177,7 +7197,7 @@ describe("orchestration v2 provider switching", () => {
           const run4Turn = turns.at(-1)!;
           assert.include(run4Turn.text, "Afternoon Claude shipped b63 live draft.");
           assert.include(run4Turn.text, "Resume after failure");
-          assert.include(run4Turn.text, "User message:\nResume");
+          assert.include(run4Turn.text, "Current message:\nResume");
           const updatedHandoff = afterRun4.contextHandoffs.find(
             (handoff) => handoff.id === run3Handoff!.id,
           );

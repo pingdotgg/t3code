@@ -1138,7 +1138,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     runner.run({ command, args, timeout: Duration.seconds(5) }).pipe(Effect.option);
   const preserveWindowsTaskLogonType = Effect.fn("cloud.boot_service.preserve_task_logon_type")(
     function* (unit: string) {
-      const registered = yield* probe("schtasks", ["/Query", ...windowsTask, "/XML"]);
+      const registered = yield* probe(schtasks, ["/Query", ...windowsTask, "/XML"]);
       return Option.isSome(registered) && registered.value.code === 0
         ? preserveServiceTaskLogonType(unit, registered.value.stdout)
         : unit;

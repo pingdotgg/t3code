@@ -543,6 +543,7 @@ it.effect("hands out a link code or a guest link only within what the session it
       AuthAccessWriteScope,
       AuthOrchestrationReadScope,
       AuthOrchestrationOperateScope,
+      AuthFilesystemReadScope,
     ]);
     expect(
       yield* supervisor[WS_METHODS.peerLinksPairLink]({

@@ -817,7 +817,7 @@ it.effect(
 );
 
 it.effect("leaves delegated tasks and workflow agent steps out of the top-level list", () => {
-  const harness = makeHarness();
+  const harness = makeHarness({ providers: [readyCodexProvider] });
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
     const threads = yield* ThreadManagement.ThreadManagementService;

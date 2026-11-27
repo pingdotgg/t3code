@@ -148,6 +148,7 @@ describe("mergeProviderInstanceEnvironment", () => {
         });
 
         expect(merged).toEqual({
+          ...providerProcessEnvironment({}, "linux"),
           PATH: ":/usr/bin",
           LD_LIBRARY_PATH: keptLibraryPath,
           XDG_DATA_DIRS: "/usr/share",

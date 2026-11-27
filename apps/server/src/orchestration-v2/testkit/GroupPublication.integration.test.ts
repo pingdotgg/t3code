@@ -718,7 +718,9 @@ describe("group publication runs", () => {
           assert.lengthOf((yield* search.search({ query: "GONEPEERMARK" })).matches, 1);
 
           const target = beforeReply.runs.at(-1)!;
-          const checkpoint = beforeReply.checkpoints.find((c) => c.runId === target.id)!;
+          const checkpoint = (yield* awaitProjection(threadId, (p) =>
+            p.checkpoints.some((c) => c.runId === target.id),
+          )).checkpoints.find((c) => c.runId === target.id)!;
           yield* orchestrator.dispatch({
             type: "checkpoint.rollback",
             restoreFiles: false,
@@ -776,7 +778,10 @@ describe("group publication runs", () => {
           yield* say(threadId, "second", "SECONDQUESTION");
           yield* settle(threadId);
 
-          const checkpoint = base.checkpoints.find((c) => c.runId === base.runs[0]!.id)!;
+          const runId = base.runs[0]!.id;
+          const checkpoint = (yield* awaitProjection(threadId, (p) =>
+            p.checkpoints.some((c) => c.runId === runId),
+          )).checkpoints.find((c) => c.runId === runId)!;
           yield* orchestrator.dispatch({
             type: "checkpoint.rollback",
             restoreFiles: false,
