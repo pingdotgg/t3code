@@ -13,6 +13,7 @@ import {
   type ChatAttachment,
   CommandId,
   isDelegatedAppThread,
+  OrchestratorMcpTaskReceiptBinding,
   isListedThreadLineage,
   isOrchestrationV2WorkActive,
   MessageId,
@@ -64,6 +65,7 @@ import * as Stream from "effect/Stream";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
@@ -78,6 +80,12 @@ import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import { checkOutput, outputRequestProblem } from "./runOutput.ts";
 import { routineSpan } from "@t3tools/shared/observability";
+
+const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotFoundError);
+
+const decodeDelegationBinding = Schema.decodeOption(
+  Schema.fromJsonString(OrchestratorMcpTaskReceiptBinding),
+);
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -509,6 +517,22 @@ export interface ThreadManagementServiceShape {
   }) => Effect.Effect<boolean>;
   /** Receipt replays start no work; skip enablement checks with the same command id so settings cannot reject accepted retries. */
   readonly hasReceipt: (commandId: CommandId) => Effect.Effect<boolean>;
+  readonly getReceiptChildRun: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<OrchestrationV2Run | null, Orchestrator.OrchestratorV2Error>;
+  readonly getDelegationReceipt: (
+    commandId: CommandId,
+    threadId: ThreadId,
+  ) => Effect.Effect<
+    {
+      readonly status: "accepted" | "rejected";
+      readonly acceptedAt: DateTime.Utc;
+      readonly binding: typeof OrchestratorMcpTaskReceiptBinding.Type | null;
+    } | null,
+    CommandReceiptStore.CommandReceiptStoreV2Error | Orchestrator.OrchestratorV2Error
+  >;
+
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
@@ -681,6 +705,41 @@ const make = Effect.gen(function* () {
           resolveProjectProviderInstanceEnabled(current, input.projectId, input.instanceId),
         ),
       );
+
+  const getDelegationReceipt: ThreadManagementServiceShape["getDelegationReceipt"] = Effect.fn(
+    "ThreadManagementService.getDelegationReceipt",
+  )(function* (commandId, threadId) {
+    const found = yield* receipts.getByCommandId(commandId);
+    if (
+      Option.isNone(found) ||
+      found.value.threadId !== threadId ||
+      found.value.commandType !== "delegated_task.request"
+    )
+      return null;
+    const receipt = found.value;
+    let binding =
+      receipt.resultMetadata == null
+        ? null
+        : decodeDelegationBinding(receipt.resultMetadata).pipe(Option.getOrNull);
+    if (binding === null && receipt.status === "accepted") {
+      const events = yield* orchestrator.readCommandEvents(commandId);
+      const delegated = events.find(
+        ({ event }) =>
+          event.type === "subagent.updated" &&
+          event.threadId === threadId &&
+          event.payload.origin === "app_owned",
+      )?.event;
+      if (delegated?.type === "subagent.updated" && delegated.payload.childThreadId !== null) {
+        const childThreadId = delegated.payload.childThreadId;
+        const run = events.find(
+          ({ event }) => event.type === "run.created" && event.threadId === childThreadId,
+        )?.event;
+        if (run?.type === "run.created")
+          binding = { taskId: delegated.payload.id, childThreadId, childRunId: run.payload.id };
+      }
+    }
+    return { status: receipt.status, acceptedAt: receipt.acceptedAt, binding };
+  });
 
   const hasReceipt: ThreadManagementServiceShape["hasReceipt"] = (commandId) =>
     receipts.getByCommandId(commandId).pipe(
@@ -2007,6 +2066,24 @@ const make = Effect.gen(function* () {
     assertProviderInstanceEnabled,
     isProviderInstanceEnabledForProject,
     hasReceipt,
+    getDelegationReceipt,
+    getReceiptChildRun: Effect.fn("ThreadManagementService.getReceiptChildRun")(
+      function* (threadId, runId) {
+        const records = yield* orchestrator
+          .getThreadRecords(threadId, ["runs"], {
+            runIds: [runId],
+          })
+          .pipe(
+            Effect.catchTags({
+              OrchestratorProjectionError: (error) =>
+                isProjectionStoreThreadNotFoundError(error.cause)
+                  ? Effect.succeed(null)
+                  : Effect.fail(error),
+            }),
+          );
+        return records?.runs.find((run) => run.id === runId) ?? null;
+      },
+    ),
     waitForThread,
     settleAfterRun,
     settleThread,
