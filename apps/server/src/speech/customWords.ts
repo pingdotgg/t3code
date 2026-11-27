@@ -5,6 +5,7 @@ const UNSPACED_SCRIPTS = "\\p{scx=Han}\\p{scx=Hiragana}\\p{scx=Katakana}";
 const LETTER = `[[\\p{L}\\p{M}\\p{N}]--[${UNSPACED_SCRIPTS}]]`;
 const WORD_CHARACTER = `[[\\p{L}\\p{M}\\p{N}\\p{Pc}]--[${UNSPACED_SCRIPTS}]]`;
 const TOKEN = new RegExp(`${LETTER}(?:[^\\s${UNSPACED_SCRIPTS}]*${LETTER})?`, "gv");
+const WORD_CHAR = new RegExp(`^${WORD_CHARACTER}$`, "v");
 
 /** Fuzzy-matches preferred terms and rewrites aliases to their preferred spelling. */
 export function makeSpeechTextCorrector(
@@ -122,6 +123,26 @@ export function makeSpeechTextCorrector(
 
   const apply = (text: string): string => {
     if (keys.length === 0) return text;
+    const codePointBefore = (at: number) => {
+      for (const start of at > 1 ? [at - 2, at - 1] : [at - 1]) {
+        const value = text.codePointAt(start);
+        if (value !== undefined && start + String.fromCodePoint(value).length === at)
+          return String.fromCodePoint(value);
+      }
+      return undefined;
+    };
+    const codePointAt = (at: number) => {
+      const value = text.codePointAt(at);
+      return value === undefined ? undefined : String.fromCodePoint(value);
+    };
+    const boundsOk = (start: number, end: number) => {
+      const before = start > 0 ? codePointBefore(start) : undefined;
+      const after = end < text.length ? codePointAt(end) : undefined;
+      return (
+        !(before !== undefined && WORD_CHAR.test(before)) &&
+        !(after !== undefined && WORD_CHAR.test(after))
+      );
+    };
     // Leave surrounding punctuation in the source; only horizontal whitespace can join words.
     const tokens = [...text.matchAll(TOKEN)]
       .filter(([word]) => /^[\p{L}\p{M}\p{N}'’-]+$/u.test(word))
@@ -135,6 +156,7 @@ export function makeSpeechTextCorrector(
       let best: (Match & { readonly count: number }) | undefined;
       for (let count = Math.min(4, tokens.length - index); count >= 1; count -= 1) {
         const slice = tokens.slice(index, index + count);
+        if (!boundsOk(slice[0]!.start, slice[count - 1]!.end)) continue;
         if (
           slice
             .slice(0, -1)

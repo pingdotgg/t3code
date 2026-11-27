@@ -509,12 +509,12 @@ it.effect("honors exact aliases and phrase boundaries in batch and streamed text
       'a test with a i and ay eye. Robert, Roberts. "the publisher" and the publisher. (git hub), git (hub). ' +
       "git hub's API, git hub’s API, git’s hub, mac donald's menu, king's cross. vitamin c and plan c. " +
       "我用github和瑞安特，部署到kubernetis上。Robert用git hub。githubで管理する。" +
-      "Open T 3 code and VS code. I use I os, not VS CODE or VS CODE's.";
+      "Open T 3 code and VS code. I use I os, not VS CODE or VS CODE's. _github_ _git hub_ github.";
     const expected =
       "a test with AI and AI. Bob, Roberts. O'Reilly and the publisher. (GitHub), git (hub). " +
       "GitHub's API, GitHub’s API, git’s hub, McDonald’s menu, King’s Cross. vitamin c and plan c. " +
       "我用GitHub和React，部署到Kubernetes上。Bob用GitHub。GitHubで管理する。" +
-      "Open T3 Code and VSCode. I use iOS, not VSCODE or VSCODE's.";
+      "Open T3 Code and VSCode. I use iOS, not VSCODE or VSCODE's. _github_ _git hub_ GitHub.";
     native.transcribe.mockResolvedValueOnce({ text: spoken });
     native.finish.mockResolvedValueOnce(spoken);
     expect(yield* speech.transcribe(pcm(), options)).toBe(expected);
