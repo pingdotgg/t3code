@@ -9611,15 +9611,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect.each(
     (["aborted_tools", "aborted_streaming"] as const).flatMap((terminalReason) =>
       [
-        { steered: false, queryExits: false },
-        { steered: true, queryExits: false },
-        { steered: true, queryExits: true },
+        { steered: false, finish: "result" },
+        { steered: true, finish: "result" },
+        { steered: true, finish: "exit" },
+        { steered: true, finish: "stop" },
+        ...(terminalReason === "aborted_streaming" ? [{ steered: true, finish: "held-stop" }] : []),
       ].map((scenario) => ({ terminalReason, ...scenario })),
     ),
-  )("handles $terminalReason (steered=$steered, exits=$queryExits)", (scenario) =>
+  )("handles $terminalReason (steered=$steered, finish=$finish)", (scenario) =>
     Effect.gen(function* () {
-      const { terminalReason, steered, queryExits } = scenario;
-      const harness = yield* makeWakeHarness;
+      const { terminalReason, steered, finish } = scenario;
+      const queryExits = finish === "exit";
+      const held = finish === "held-stop";
+      const stopped = finish === "stop" || held;
+      const harness = yield* makeWakeHarnessWithOptions(stopped ? { close: Queue.shutdown } : {});
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const attemptId = RunAttemptId.make("attempt-steering-abort");
       const input = makeClaudeTestTurnInput({
@@ -9659,21 +9664,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             text: partialText,
           }),
         );
+      const earlier = makeResultFrame({
+        uuid: "00000000-0000-4000-8000-000000000901",
+        result: held ? partialText : "",
+        ...(held ? {} : { terminalReason }),
+        usage: {
+          input_tokens: 600,
+          output_tokens: 40,
+          cache_creation_input_tokens: 500,
+          cache_read_input_tokens: 2000,
+        },
+      });
       yield* harness.offerAndWait(
-        makeResultFrame({
-          uuid: "00000000-0000-4000-8000-000000000901",
-          result: "",
-          terminalReason,
-          usage: {
-            input_tokens: 600,
-            output_tokens: 40,
-            cache_creation_input_tokens: 500,
-            cache_read_input_tokens: 2000,
-          },
-        }),
+        held ? claudeSdkFrame({ ...earlier, user_message_uuid: harness.promptUuid(0) }) : earlier,
       );
       if (queryExits) {
         yield* Queue.shutdown(harness.sdkMessages);
+      } else if (stopped) {
+        yield* harness.offerAndWait(
+          usageSnapshotFrame("steered-request", "steered-reply", {
+            ...zeroUsage,
+            input_tokens: 600,
+            output_tokens: 10,
+          }),
+        );
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: lastProviderTurn(harness.events).id,
+        });
       } else if (steered) {
         yield* Queue.offer(harness.sdkMessages, wakeAssistant);
         yield* Queue.offer(
@@ -9691,8 +9709,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
       }
       const terminal = yield* Queue.take(harness.terminalReceipts);
-      assert.equal(terminal.status, queryExits ? "failed" : steered ? "completed" : "interrupted");
-      if (steered && !queryExits && terminalReason === "aborted_streaming") {
+      assert.equal(
+        terminal.status,
+        queryExits ? "failed" : steered && !stopped ? "completed" : "interrupted",
+      );
+      if (steered && !queryExits && !held && terminalReason === "aborted_streaming") {
         // The steer cut this reply off mid-stream; it must not read as a finished answer.
         const partial = harness.events.findLast(
           (event) =>
@@ -9706,7 +9727,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
       }
       if (steered) {
-        if (!queryExits)
+        if (!queryExits && !stopped)
           assert.isTrue(
             harness.events.some(
               (event) =>
@@ -9724,12 +9745,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             : undefined,
           {
             usageScope: "main_agent",
-            usageStatus: queryExits ? "partial" : "complete",
+            usageStatus: queryExits || stopped ? "partial" : "complete",
             hasSubagents: false,
-            inputTokens: queryExits ? 3100 : 603 + 2847 + 11455,
-            outputTokens: queryExits ? 40 : 46,
-            cachedInputTokens: queryExits ? 2000 : 11455,
-            cacheCreationTokens: queryExits ? 500 : 2847,
+            inputTokens: queryExits ? 3100 : stopped ? 3700 : 603 + 2847 + 11455,
+            outputTokens: queryExits ? 40 : stopped ? 50 : 46,
+            cachedInputTokens: queryExits || stopped ? 2000 : 11455,
+            cacheCreationTokens: queryExits || stopped ? 500 : 2847,
             ...(queryExits ? {} : { models: ["claude-sonnet-4-6"] }),
           },
         );
@@ -23205,7 +23226,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("shows a forked skill's work from its transcript while it runs, once", () =>
+  it.effect.each([false, true])("shows a live forked skill's work once (stop=%s)", (stopped) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const configDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-fork-" });
@@ -23239,12 +23260,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         uuid: "00000000-0000-4000-8000-000000000b04",
         session_id: WAKE_NATIVE_SESSION,
       };
+      const transcriptBashCall = `${JSON.stringify({
+        ...bashCall,
+        message: {
+          ...bashCall.message,
+          usage: { ...zeroUsage, input_tokens: 900, output_tokens: 90 },
+        },
+      })}\n`;
       yield* fileSystem.writeFileString(
         NodePath.join(subagentsDir, "agent-task-forked-live.jsonl"),
-        `${JSON.stringify(bashCall)}\n`,
+        transcriptBashCall,
       );
       const harness = yield* makeWakeHarnessWithOptions({
         environment: { CLAUDE_CONFIG_DIR: configDir },
+        ...(stopped ? { close: Queue.shutdown } : {}),
       });
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
@@ -23282,7 +23311,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       // just before task_notification and never sent on the stream.
       yield* fileSystem.writeFileString(
         NodePath.join(subagentsDir, "agent-task-forked-live.jsonl"),
-        `${JSON.stringify(bashCall)}\n${JSON.stringify({
+        `${transcriptBashCall}${JSON.stringify({
           type: "assistant",
           parent_tool_use_id: forkParent,
           message: {
@@ -23297,7 +23326,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           session_id: WAKE_NATIVE_SESSION,
         })}\n`,
       );
-      for (const frame of [
+      yield* harness.offerAndWait(
         claudeSdkFrame({
           type: "system",
           subtype: "task_notification",
@@ -23308,6 +23337,38 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000000b02",
           session_id: WAKE_NATIVE_SESSION,
         }),
+      );
+      if (stopped) {
+        const toolUpdates = () =>
+          harness.events.filter(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === "toolu-fork-live-bash",
+          ).length;
+        const shown = toolUpdates();
+        const liveCall = claudeSdkFrame({
+          ...bashCall,
+          message: {
+            ...bashCall.message,
+            usage: { ...zeroUsage, input_tokens: 120, output_tokens: 6 },
+          },
+        });
+        yield* harness.offerAndWait(liveCall);
+        yield* harness.offerAndWait(liveCall);
+        assert.equal(toolUpdates(), shown);
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: lastProviderTurn(harness.events).id,
+        });
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+        assert.deepEqual(lastProviderTurn(harness.events).turnTokenUsage?.otherUsage, {
+          inputTokens: 120,
+          outputTokens: 6,
+        });
+        return;
+      }
+
+      for (const frame of [
         claudeSdkFrame({
           type: "system",
           subtype: "init",

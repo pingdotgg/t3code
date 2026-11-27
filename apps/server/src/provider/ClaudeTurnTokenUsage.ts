@@ -14,6 +14,12 @@ const BILLED_USAGE_FIELDS = [
   "output_tokens",
 ] as const;
 
+export function hasPositiveClaudeUsage(
+  usage: Partial<Record<(typeof BILLED_USAGE_FIELDS)[number], unknown>> | undefined,
+): boolean {
+  return BILLED_USAGE_FIELDS.some((field) => (finiteNonNegativeInteger(usage?.[field]) ?? 0) > 0);
+}
+
 function addKnownCount(finalCount: unknown, earlierCounts: ReadonlyArray<unknown>): unknown {
   const counts = [finalCount, ...earlierCounts]
     .map(finiteNonNegativeInteger)
@@ -159,11 +165,7 @@ export function estimateStoppedClaudeUsage(
 ) {
   if (
     requests.size === 0 ||
-    (result !== undefined &&
-      (status === "completed" ||
-        BILLED_USAGE_FIELDS.some(
-          (field) => (finiteNonNegativeInteger(result.usage?.[field]) ?? 0) > 0,
-        )))
+    (result !== undefined && (status === "completed" || hasPositiveClaudeUsage(result.usage)))
   ) {
     return undefined;
   }
@@ -229,7 +231,19 @@ export function normalizeClaudeTurnTokenUsage(
       : {}),
   };
   const finalUsage = result?.usage as Record<string, unknown> | undefined;
-  const usage = withEarlierSegmentUsage(finalUsage ?? {}, earlierSegmentUsage);
+  const stopped = observed.stoppedRequestUsage;
+  const usage = withEarlierSegmentUsage(
+    stopped === undefined
+      ? (finalUsage ?? {})
+      : {
+          input_tokens:
+            stopped.inputTokens - stopped.cachedInputTokens - stopped.cacheCreationTokens,
+          cache_read_input_tokens: stopped.cachedInputTokens,
+          cache_creation_input_tokens: stopped.cacheCreationTokens,
+          output_tokens: stopped.outputTokens,
+        },
+    earlierSegmentUsage,
+  );
   const uncachedInputTokens = finiteNonNegativeInteger(usage.input_tokens);
   const cachedInputTokens = finiteNonNegativeInteger(usage.cache_read_input_tokens);
   const cacheCreationTokens = finiteNonNegativeInteger(usage.cache_creation_input_tokens);
@@ -250,23 +264,10 @@ export function normalizeClaudeTurnTokenUsage(
     cachedInputTokens !== undefined ||
     cacheCreationTokens !== undefined ||
     rawOutputTokens !== undefined;
-  const hasPositiveUsage =
-    (uncachedInputTokens ?? 0) +
-      (cachedInputTokens ?? 0) +
-      (cacheCreationTokens ?? 0) +
-      (rawOutputTokens ?? 0) >
-    0;
-
-  if (!hasPositiveUsage && observed.stoppedRequestUsage !== undefined) {
-    return {
-      ...observedFields,
-      ...observed.stoppedRequestUsage,
-      usageStatus: "partial",
-      usageScope: "main_agent",
-      hasSubagents: hasSubagents || observed.stoppedRequestUsage.otherUsage !== undefined,
-    };
-  }
-  if (!hasKnownUsage || (result?.subtype !== "success" && !hasPositiveUsage)) {
+  if (
+    stopped === undefined &&
+    (!hasKnownUsage || (result?.subtype !== "success" && !hasPositiveClaudeUsage(usage)))
+  ) {
     return {
       usageStatus: "unavailable",
       usageScope: "main_agent",
@@ -277,16 +278,18 @@ export function normalizeClaudeTurnTokenUsage(
 
   // The result omits subagent and compaction work that the process-wide ledger records.
   const otherUsage =
-    observed.ledger !== undefined &&
-    inputTokens !== undefined &&
-    rawOutputTokens !== undefined &&
-    observed.ledger.inputTokens >= inputTokens &&
-    observed.ledger.outputTokens >= rawOutputTokens
-      ? {
-          inputTokens: observed.ledger.inputTokens - inputTokens,
-          outputTokens: observed.ledger.outputTokens - rawOutputTokens,
-        }
-      : undefined;
+    stopped !== undefined
+      ? stopped.otherUsage
+      : observed.ledger !== undefined &&
+          inputTokens !== undefined &&
+          rawOutputTokens !== undefined &&
+          observed.ledger.inputTokens >= inputTokens &&
+          observed.ledger.outputTokens >= rawOutputTokens
+        ? {
+            inputTokens: observed.ledger.inputTokens - inputTokens,
+            outputTokens: observed.ledger.outputTokens - rawOutputTokens,
+          }
+        : undefined;
   const commonUsage = {
     ...observedFields,
     ...(otherUsage === undefined ? {} : { otherUsage }),
@@ -296,7 +299,7 @@ export function normalizeClaudeTurnTokenUsage(
     ...(thinkingTokens !== undefined && rawOutputTokens !== undefined
       ? { reasoningTokens: Math.min(rawOutputTokens, thinkingTokens) }
       : {}),
-    hasSubagents,
+    hasSubagents: hasSubagents || stopped?.otherUsage !== undefined,
   } as const;
   if (
     terminalStatus === "completed" &&
