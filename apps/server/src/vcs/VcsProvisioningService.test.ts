@@ -18,6 +18,7 @@ function makeDriver(calls: string[]): VcsDriver.VcsDriver["Service"] {
       resolveCleanHead: () => Effect.die("unexpected clean HEAD lookup"),
       captureHeadCheckpoint: () => Effect.die("unexpected HEAD checkpoint capture"),
       hasCheckpointRef: () => Effect.die("unexpected checkpoint lookup"),
+      copyCheckpointRef: () => Effect.die("unexpected checkpoint copy"),
       restoreCheckpoint: () => Effect.die("unexpected checkpoint restore"),
       diffCheckpoints: () => Effect.die("unexpected checkpoint diff"),
       listAuthoredPaths: () => Effect.die("unexpected checkpoint paths"),

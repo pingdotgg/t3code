@@ -330,7 +330,7 @@ it.effect.each([
               record("copy").pipe(
                 Effect.andThen(row.copy === undefined ? Effect.never : Effect.succeed(row.copy)),
               ),
-            captureCheckpoint: () => record("snapshot").pipe(Effect.as(null)),
+            captureCheckpoint: () => record("snapshot").pipe(Effect.as({ exclusions: [] })),
           }),
         ),
       ),
