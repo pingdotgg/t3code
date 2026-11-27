@@ -303,17 +303,16 @@ const FENCE_LIKE_LINE =
 const LIST_ITEM_LINE = /^[ \t>]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|\r?$)/m;
 
 function parsedCodeRanges(markdown: string) {
-  // Lists and footnotes can end a fence without a closing marker. Let the Markdown parser
-  // find the container boundary.
+  // Parse only when a fence-looking line could be indented code in its container, or when a
+  // list or footnote could end a fence that has no closing marker.
   const candidates = new RegExp(FENCE_LIKE_LINE, "gm");
   let candidate = candidates.exec(markdown);
-  if (!candidate) return undefined;
   if (!LIST_ITEM_LINE.test(markdown)) {
     while (candidate && !candidate.groups?.footnote && !/ {4}|\t/.test(candidate[0])) {
       candidate = candidates.exec(markdown);
     }
-    if (!candidate) return undefined;
   }
+  if (!candidate) return undefined;
 
   const ranges: Array<{ start: number; end: number }> = [];
   const pending: Nodes[] = [markdownParser.parse(markdown)];
