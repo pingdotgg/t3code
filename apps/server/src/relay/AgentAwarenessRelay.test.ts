@@ -1748,4 +1748,168 @@ describe("AgentAwarenessRelay team notification gating", () => {
         ]);
       }),
   );
+
+  it.effect(
+    "reconciles synthetic row capacity as real approval rows arrive, aborts on eviction failure, and preserves backoff during outages",
+    () =>
+      Effect.gen(function* () {
+        const triggers = yield* PubSub.unbounded<TeamService.TeamNotificationTriggerEvent>();
+        const teamService = {
+          shouldPublishRelayNotificationForThread: () => Effect.succeed(true),
+          shouldPublishRelayQueuedMessageNotification: () => Effect.succeed(true),
+          formatUpstreamCompatThreadTitle: (_threadId: ThreadId, title: string) =>
+            Effect.succeed(`alice: ${title}`),
+          subscribeNotificationEvents: () => Stream.fromPubSub(triggers),
+        } as unknown as TeamService.TeamService["Service"];
+
+        const threadIds = [1, 2, 3, 4, 5].map((n) => ThreadId.make(`approval-thread-${n}`));
+        const shellsById = new Map<ThreadId, OrchestrationV2ThreadShell>(
+          threadIds.map((id, idx) => [
+            id,
+            shell({
+              id,
+              status: "waiting",
+              title: `Approval ${idx + 1}`,
+              pendingRuntimeRequest: {
+                id: RuntimeRequestId.make(`req-cap-${idx + 1}`),
+                kind: "command",
+                createdAt: DateTime.makeUnsafe(NOW),
+              },
+            }),
+          ]),
+        );
+
+        let failEviction = false;
+        const { relay, publications, secrets } = yield* makeTestRelay({
+          readShell: (id) => Effect.succeed(shellsById.get(id) ?? null),
+          teamService,
+          respond: () =>
+            failEviction
+              ? new Response("relay outage", { status: 503 })
+              : Response.json({ ok: true, deliveries: [] }),
+        });
+        const extractPublishedThreadId = (url: string) =>
+          decodeURIComponent(url.split("/threads/")[1]?.split("/")[0] ?? "");
+
+        yield* relay.start();
+        yield* Effect.yieldNow;
+
+        // Publish 3 real approval rows + 2 synthetic queued rows (= 5 total priority-0 rows).
+        for (const id of threadIds.slice(0, 3)) {
+          yield* relay.publishThread(id);
+        }
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: threadIds[0]!,
+          queuedRunId: "run-cap-1",
+          senderMemberId: null,
+          senderPseudo: "bob",
+          recipientMemberIds: [],
+          messagePreview: "Queued 1",
+          createdAt: "2026-04-06T12:01:00.000Z",
+        });
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: threadIds[0]!,
+          queuedRunId: "run-cap-2",
+          senderMemberId: null,
+          senderPseudo: "charlie",
+          recipientMemberIds: [],
+          messagePreview: "Queued 2",
+          createdAt: "2026-04-06T12:02:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        // Failed cap eviction aborts publishing the 3rd synthetic row instead of exceeding the cap.
+        failEviction = true;
+        const beforeFailedEvict = publications.length;
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: threadIds[0]!,
+          queuedRunId: "run-cap-3-aborted",
+          senderMemberId: null,
+          senderPseudo: "dana",
+          recipientMemberIds: [],
+          messagePreview: "Should abort",
+          createdAt: "2026-04-06T12:03:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        // Only the failed eviction tombstone attempt was sent; run-cap-3-aborted was NOT published.
+        assert.equal(publications.length, beforeFailedEvict + 1);
+        assert.isNull(publications.at(-1)?.state);
+        assert.equal(
+          extractPublishedThreadId(publications.at(-1)!.url),
+          `${threadIds[0]!}:queued:run-cap-1`,
+        );
+
+        // Repeated flush attempts while row 1 is already in backoff retry must NOT cancel backoff or spin.
+        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+        yield* relay.requestCatchUp();
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        const afterFirstDisableFlush = publications.length;
+        // Row 2 was flushed once (failed 503); calling requestCatchUp again immediately must NOT re-attempt either row.
+        yield* relay.requestCatchUp();
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        assert.equal(publications.length, afterFirstDisableFlush);
+
+        // Recover relay and re-enable publishing: backoff retry clears both rows cleanly.
+        failEviction = false;
+        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        // Re-publish 2 synthetic rows alongside 3 approvals, then rotate credentials on the same
+        // relay and publish a 4th & 5th real approval: synthetic rows shrink to 1, then 0!
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: threadIds[0]!,
+          queuedRunId: "run-shrink-1",
+          senderMemberId: null,
+          senderPseudo: "bob",
+          recipientMemberIds: [],
+          messagePreview: "Shrink 1",
+          createdAt: "2026-04-06T12:04:00.000Z",
+        });
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: threadIds[0]!,
+          queuedRunId: "run-shrink-2",
+          senderMemberId: null,
+          senderPseudo: "charlie",
+          recipientMemberIds: [],
+          messagePreview: "Shrink 2",
+          createdAt: "2026-04-06T12:05:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        // Same-relay credential rotation preserves live attention phase accounting.
+        yield* secrets.set(
+          RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+          new TextEncoder().encode("credential-same-relay"),
+        );
+        const beforeFourthApproval = publications.length;
+        yield* relay.publishThread(threadIds[3]!);
+        yield* relay.drain;
+        const fourthTombstones = publications
+          .slice(beforeFourthApproval)
+          .filter((entry) => entry.state === null)
+          .map((entry) => extractPublishedThreadId(entry.url));
+        assert.deepEqual(fourthTombstones, [`${threadIds[0]!}:queued:run-shrink-1`]);
+
+        const beforeFifthApproval = publications.length;
+        yield* relay.publishThread(threadIds[4]!);
+        yield* relay.drain;
+        const fifthTombstones = publications
+          .slice(beforeFifthApproval)
+          .filter((entry) => entry.state === null)
+          .map((entry) => extractPublishedThreadId(entry.url));
+        assert.deepEqual(fifthTombstones, [`${threadIds[0]!}:queued:run-shrink-2`]);
+      }),
+  );
 });

@@ -505,11 +505,21 @@ export const make = Effect.gen(function* () {
     readonly relayIssuer: string;
     readonly publishedAtMs: number;
     attempts: number;
+    flushing: boolean;
     timer: Fiber.Fiber<void> | undefined;
   }
   const activeQueuedRelayRows = new Map<ThreadId, ActiveQueuedRelayRow>();
   let enqueueQueuedCleanup: (notificationThreadId: ThreadId) => Effect.Effect<void> = () =>
     Effect.void;
+  const countLiveRealAttentionRows = () => {
+    let count = 0;
+    for (const phase of livePublishedPhaseByThread.values()) {
+      if (phase === "waiting_for_approval" || phase === "waiting_for_input") {
+        count += 1;
+      }
+    }
+    return count;
+  };
   const cancelQueuedCleanupTimer = Effect.fnUntraced(function* (notificationThreadId: ThreadId) {
     const entry = activeQueuedRelayRows.get(notificationThreadId);
     if (entry?.timer !== undefined) {
@@ -518,24 +528,38 @@ export const make = Effect.gen(function* () {
       yield* Fiber.interrupt(timer);
     }
   });
+  const startQueuedRowFlush = Effect.fnUntraced(function* (notificationThreadId: ThreadId) {
+    const entry = activeQueuedRelayRows.get(notificationThreadId);
+    if (entry === undefined || entry.flushing) return;
+    entry.flushing = true;
+    yield* cancelQueuedCleanupTimer(notificationThreadId);
+    yield* enqueueQueuedCleanup(notificationThreadId);
+  });
+  const trimQueuedRowsToAggregateBudget = Effect.fnUntraced(function* (
+    projectedRealAttentionCount: number,
+  ) {
+    const budget = Math.min(
+      MAX_ACTIVE_QUEUED_RELAY_ROWS,
+      Math.max(0, RELAY_MAX_AGGREGATE_ROWS - projectedRealAttentionCount),
+    );
+    const nonFlushingIds = [...activeQueuedRelayRows.entries()]
+      .filter(([, entry]) => !entry.flushing)
+      .map(([id]) => id);
+    const excess = nonFlushingIds.length - budget;
+    for (let i = 0; i < excess; i += 1) {
+      yield* startQueuedRowFlush(nonFlushingIds[i]!);
+    }
+  });
   const flushQueuedMessageRowsForParent = Effect.fnUntraced(function* (parentThreadId: ThreadId) {
     const matching = [...activeQueuedRelayRows.entries()]
       .filter(([, entry]) => entry.parentThreadId === parentThreadId)
       .map(([notificationThreadId]) => notificationThreadId);
     for (const notificationThreadId of matching) {
-      yield* cancelQueuedCleanupTimer(notificationThreadId);
-      yield* enqueueQueuedCleanup(notificationThreadId);
+      yield* startQueuedRowFlush(notificationThreadId);
     }
   });
   const flushAllQueuedMessageRows = Effect.suspend(() =>
-    Effect.forEach(
-      [...activeQueuedRelayRows.keys()],
-      (notificationThreadId) =>
-        cancelQueuedCleanupTimer(notificationThreadId).pipe(
-          Effect.andThen(enqueueQueuedCleanup(notificationThreadId)),
-        ),
-      { discard: true },
-    ),
+    Effect.forEach([...activeQueuedRelayRows.keys()], startQueuedRowFlush, { discard: true }),
   );
   const pruneQueuedMessageCleanups = Effect.fnUntraced(function* (
     preserveRelay?: { readonly url: string; readonly issuer: string } | "all",
@@ -584,12 +608,21 @@ export const make = Effect.gen(function* () {
   const resetPublishedConnection = Effect.fn("resetPublishedConnection")(function* (options?: {
     readonly preserveRelay?: { readonly url: string; readonly issuer: string } | "all";
   }) {
+    const sameRelayRefresh =
+      options?.preserveRelay === "all" ||
+      (options?.preserveRelay !== undefined &&
+        publishedRelayConfig?.url === options.preserveRelay.url &&
+        publishedRelayConfig?.issuer === options.preserveRelay.issuer);
     yield* pruneQueuedMessageCleanups(options?.preserveRelay);
     publishedRelayConfig = undefined;
     cachedRelayClient = undefined;
     publishConfirmDeadlines.clear();
     heldCompletions.clear();
-    livePublishedPhaseByThread.clear();
+    // Preserve live attention phase counts across same-relay credential refresh because real
+    // rows remain live on the relay until overwritten or tombstoned.
+    if (!sameRelayRefresh) {
+      livePublishedPhaseByThread.clear();
+    }
     yield* Ref.set(publishedStateByThreadRef, new Map());
   });
 
@@ -727,8 +760,7 @@ export const make = Effect.gen(function* () {
           cloudUserId: relayConfig.cloudUserId,
         });
         if (!stillAllowed) {
-          yield* cancelQueuedCleanupTimer(notificationThreadId);
-          yield* enqueueQueuedCleanup(notificationThreadId);
+          yield* startQueuedRowFlush(notificationThreadId);
         }
       }
     }
@@ -895,6 +927,9 @@ export const make = Effect.gen(function* () {
     heldCompletions.delete(threadId);
     if (state === null) livePublishedPhaseByThread.delete(threadId);
     else livePublishedPhaseByThread.set(threadId, state.phase);
+    if (state?.phase === "waiting_for_approval" || state?.phase === "waiting_for_input") {
+      yield* trimQueuedRowsToAggregateBudget(countLiveRealAttentionRows());
+    }
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
       new Map(publishedStates).set(threadId, publishIdentity),
     );
@@ -961,6 +996,7 @@ export const make = Effect.gen(function* () {
         Effect.suspend(() => {
           if (activeQueuedRelayRows.get(notificationThreadId) !== entry) return Effect.void;
           entry.timer = undefined;
+          entry.flushing = true;
           return enqueueQueuedCleanup(notificationThreadId);
         }),
       ),
@@ -1023,9 +1059,15 @@ export const make = Effect.gen(function* () {
       return Effect.forEach(
         remaining,
         ([notificationThreadId, entry]) =>
-          withPublishLock(publishQueuedRowTombstoneUnsafe(notificationThreadId, entry)).pipe(
-            Effect.ignore,
-          ),
+          withPublishLock(
+            Effect.gen(function* () {
+              if (activeQueuedRelayRows.get(notificationThreadId) !== entry) return;
+              yield* publishQueuedRowTombstoneUnsafe(notificationThreadId, entry);
+              if (activeQueuedRelayRows.get(notificationThreadId) === entry) {
+                activeQueuedRelayRows.delete(notificationThreadId);
+              }
+            }),
+          ).pipe(Effect.ignore),
         { discard: true },
       ).pipe(Effect.timeoutOption("3 seconds"), Effect.asVoid);
     }),
@@ -1095,17 +1137,13 @@ export const make = Effect.gen(function* () {
           return;
         }
         // Preserve aggregate capacity for live real approval/input rows (5-row upstream limit).
-        let liveRealAttentionCount = 0;
-        for (const phase of livePublishedPhaseByThread.values()) {
-          if (phase === "waiting_for_approval" || phase === "waiting_for_input") {
-            liveRealAttentionCount += 1;
-          }
-        }
+        const liveRealAttentionCount = countLiveRealAttentionRows();
         const maxAllowedSyntheticRows = Math.min(
           MAX_ACTIVE_QUEUED_RELAY_ROWS,
           Math.max(0, RELAY_MAX_AGGREGATE_ROWS - liveRealAttentionCount),
         );
         if (maxAllowedSyntheticRows === 0) {
+          yield* trimQueuedRowsToAggregateBudget(liveRealAttentionCount);
           rememberPublishedQueuedRunId(trigger.queuedRunId);
           yield* Effect.logDebug(
             "agent activity queued message notification skipped; aggregate attention slots full",
@@ -1132,6 +1170,7 @@ export const make = Effect.gen(function* () {
             if (Cause.hasInterruptsOnly(evictExit.cause)) {
               return yield* Effect.failCause(evictExit.cause);
             }
+            oldestEntry.flushing = true;
             yield* scheduleQueuedCleanupTimer(oldestId, RELAY_AGENT_ACTIVITY_RETRY_DELAYS_MS[0]);
             return;
           }
@@ -1198,6 +1237,7 @@ export const make = Effect.gen(function* () {
           relayIssuer: relayConfig.issuer,
           publishedAtMs,
           attempts: 0,
+          flushing: false,
           timer: undefined,
         });
         yield* scheduleQueuedCleanupTimer(notificationThreadId, QUEUED_MESSAGE_RELAY_ROW_TTL_MS);
