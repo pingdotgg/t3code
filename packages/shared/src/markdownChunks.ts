@@ -95,12 +95,22 @@ function blockCloser(line: string): ((line: string) => boolean) | null | undefin
 export interface MarkdownChunk {
   readonly text: string;
   readonly lines: number;
+  readonly separator?: "\n" | "\r";
 }
 
 const FRONTMATTER_OPEN = /^\uFEFF?---[ \t]*\r?$/;
 const FRONTMATTER_CLOSE = /^(?:---|\.\.\.)[ \t]*\r?$/;
 // Cap the lookahead for a frontmatter closer; a leading rule with none is a thematic break.
 const FRONTMATTER_MAX_LINES = 1000;
+
+// A bare CR ends a line too; CRLF lines keep their `\r`, which the patterns here allow.
+function nextLineBreak(text: string, from: number): number {
+  for (let i = from; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 10 || (code === 13 && text.charCodeAt(i + 1) !== 10)) return i;
+  }
+  return text.length;
+}
 
 const hasFrontmatterClose = (lines: readonly string[]) =>
   lines.slice(1, FRONTMATTER_MAX_LINES + 1).some((line) => FRONTMATTER_CLOSE.test(line));
@@ -417,12 +427,9 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   const capturedFootnoteLabels: string[] = [];
   const footnoteDefs: string[] = [];
   const footnoteDefSpans: (readonly [offset: number, length: number])[] = [];
-  let lineOffset = 0;
   let activeFootnoteOffset = 0;
-  let lines: string[] = [];
   let chunkStartLine = 0;
   let first = true;
-  let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
   let ambiguousHtml = false;
   let afterBlankLine = false;
@@ -462,16 +469,26 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     pendingFootnoteBlanks = [];
   };
 
+  const sourceLines: string[] = [];
+  const lineStarts: number[] = [];
+  for (let start = 0; start <= text.length;) {
+    const end = nextLineBreak(text, start);
+    sourceLines.push(text.slice(start, end));
+    lineStarts.push(start);
+    start = end + 1;
+  }
+  // Slices the source so each piece keeps its own line endings and the break after it.
   const flush = (endLine: number) => {
-    chunks.push({ text: lines.join("\n"), lines: lines.length });
+    const from = lineStarts[chunkStartLine]!;
+    const to = endLine < sourceLines.length ? lineStarts[endLine]! - 1 : text.length;
+    const separator = text[to];
+    const chunk = { text: text.slice(from, to), lines: endLine - chunkStartLine };
+    chunks.push(separator === "\n" || separator === "\r" ? { ...chunk, separator } : chunk);
     if (mayHaveFootnotes) chunkLineRanges.push([chunkStartLine, endLine]);
     chunkStartLine = endLine;
-    lines = [];
-    chars = 0;
     heldCut = 0;
   };
 
-  const sourceLines = text.split("\n");
   const isBodyLine = mayHaveFootnotes ? new Uint8Array(sourceLines.length) : null;
 
   let flowStart = 0;
@@ -484,6 +501,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     htmlStarts = undefined;
   };
   for (const [lineIndex, line] of sourceLines.entries()) {
+    const chars = lineStarts[lineIndex]! - lineStarts[chunkStartLine]!;
     let handledAsFootnote = false;
     let interruptedFootnote = false;
 
@@ -530,7 +548,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           ((line.startsWith("#") && ATX_HEADING.test(line)) ||
             (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
         if (cutPoint && openWrappers === 0) flush(lineIndex);
-        else if (cutPoint) heldCut = lines.length;
+        else if (cutPoint) heldCut = lineIndex;
 
         if (isBodyLine !== null && !BLANK_LINE.test(line)) {
           if (!FOOTNOTE_CONTINUATION_INDENT.test(line)) {
@@ -551,7 +569,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
             seenFootnoteKeys.add(key);
             activeFootnoteLabel = label;
             activeFootnoteLines = [line];
-            activeFootnoteOffset = lineOffset;
+            activeFootnoteOffset = lineStarts[lineIndex]!;
           } else {
             activeFootnoteLabel = null;
             activeFootnoteLines = null;
@@ -656,16 +674,13 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     if (closes === closesAtBlankLine)
       openWrappers = Math.max(0, openWrappers + openedWrappers(line));
     first = false;
-    lines.push(line);
-    chars += line.length + 1;
-    lineOffset += line.length + 1;
     // A piece too large to render goes back to the last cut a wrapper held.
-    if (heldCut > 0 && chars - 1 > LARGE_MARKDOWN_CHUNK_MAX_CHARS) {
-      const cutLine = chunkStartLine + heldCut;
-      const rest = lines.splice(heldCut);
-      flush(cutLine);
-      lines = rest;
-      chars = rest.reduce((sum, kept) => sum + kept.length + 1, 0);
+    if (
+      heldCut > chunkStartLine &&
+      lineStarts[lineIndex]! + line.length - lineStarts[chunkStartLine]! >
+        LARGE_MARKDOWN_CHUNK_MAX_CHARS
+    ) {
+      flush(heldCut);
       openWrappers = 0;
     }
     afterBlankLine = BLANK_LINE.test(line);
@@ -718,6 +733,14 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   return footnotes
     ? { chunks, definitions: definitions.join("\n"), footnotes }
     : { chunks, definitions: definitions.join("\n") };
+}
+
+export function joinMarkdownChunks(chunks: readonly MarkdownChunk[]): string {
+  return chunks
+    .map((chunk, index) =>
+      index + 1 < chunks.length ? `${chunk.text}${chunk.separator ?? "\n"}` : chunk.text,
+    )
+    .join("");
 }
 
 /** Prepends shared definitions in document order; source offsets shift by the prefix length. */

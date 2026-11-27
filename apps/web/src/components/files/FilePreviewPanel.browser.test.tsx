@@ -791,6 +791,33 @@ describe("rendered Markdown select all", () => {
     await userEvent.click(screen.getByRole("checkbox"));
     await expectFileOnlySelection();
   });
+
+  it("copies the whole chunked file with its own line endings", async () => {
+    using _settings = setup();
+    const contents = `first\r\r# ${"x\r\r# ".repeat(2_000)}end`;
+    await using _screen = await render(
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        {markdownPreview(false, contents, "cr.md")}
+      </div>,
+    );
+    const firstChunk = await vi.waitFor(() => {
+      const first = document.querySelector("h1");
+      expect(first).not.toBeNull();
+      return first!;
+    });
+    await userEvent.click(firstChunk);
+    await userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+    );
+    let copied: string | undefined;
+    const read = (event: ClipboardEvent) => {
+      copied = event.clipboardData?.getData("text/plain");
+    };
+    window.addEventListener("copy", read);
+    using _listener = { [Symbol.dispose]: () => window.removeEventListener("copy", read) };
+    document.execCommand("copy");
+    expect(copied).toBe(contents);
+  });
 });
 
 describe("rendered Markdown relative images", () => {
