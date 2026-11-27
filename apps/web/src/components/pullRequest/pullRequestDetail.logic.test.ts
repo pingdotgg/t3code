@@ -60,6 +60,8 @@ import {
   pullRequestLinkSubject,
   writePullRequestDetailSnapshot,
   readableFailure,
+  samePullRequestReadExceptStamps,
+  seenPullRequestHead,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -358,6 +360,20 @@ describe("pull request timeline", () => {
       kind: "comment",
       excerpt: "Looks good, see run()",
     });
+    for (const [body, excerpt] of [
+      ["Keep `[!NOTE]` in the file.", "Keep [!NOTE] in the file."],
+      ["> [!NOTE]\n> Real alert.", "Real alert."],
+      ["Keep [!WARNING] in prose.", "Keep [!WARNING] in prose."],
+    ] as const) {
+      expect(
+        pullRequestLinkSubject(`${pr}#issuecomment-5`, {
+          comments: [{ ...activity.comments[0]!, body }],
+          reviewThreads: [],
+          commits: [],
+        }),
+        body,
+      ).toMatchObject({ kind: "comment", excerpt });
+    }
     // A review with no text of its own is shown through the comment it posted.
     expect(pullRequestLinkSubject(`${pr}#pullrequestreview-9`, activity)).toMatchObject({
       kind: "comment",
@@ -379,6 +395,14 @@ describe("pull request timeline", () => {
     const cut = pullRequestLinkSubject(`${pr}#issuecomment-5`, long);
     const excerpt = cut && "excerpt" in cut ? cut.excerpt : null;
     expect(excerpt).toMatch(/^(?:i ?)+…$/u);
+    const between = {
+      ...activity,
+      comments: [{ ...activity.comments[0]!, body: `${"a".repeat(278)} word` }],
+    };
+    const cutBetween = pullRequestLinkSubject(`${pr}#issuecomment-5`, between);
+    expect(cutBetween && "excerpt" in cutBetween ? cutBetween.excerpt : null).toBe(
+      `${"a".repeat(278)}…`,
+    );
   });
 
   it("orders host timestamps by instant across offsets and fractional seconds", () => {
@@ -779,6 +803,12 @@ describe("fix findings handoff", () => {
       checks: [],
     });
     expect(emojiAtCut.reviewComments[1]?.text).toBe(`reviewer: ${"x".repeat(986)}...`);
+    const spaceAtCut = buildFixFindingsHandoff({
+      ...base,
+      reviewThreads: [thread(`${"x".repeat(986)} and more of the review.${"y".repeat(100)}`)],
+      checks: [],
+    });
+    expect(spaceAtCut.reviewComments[1]?.text).toBe(`reviewer: ${"x".repeat(986)}...`);
   });
 
   it("keeps the newest threads and the failing checks when it has to cut", () => {
@@ -988,6 +1018,12 @@ describe("what to say when an action fails", () => {
     const reason = "The worktree directory already exists. Choose another directory.";
     expect(checkoutFailureDescription(diagnostic(reason))).toBe(reason);
     expect(checkoutFailureDescription(diagnostic("x".repeat(900)))).toBe(`${"x".repeat(319)}…`);
+    expect(checkoutFailureDescription(diagnostic(`${"x".repeat(318)}😀 tail`))).toBe(
+      `${"x".repeat(318)}…`,
+    );
+    expect(checkoutFailureDescription(diagnostic(`${"x".repeat(318)} tail`))).toBe(
+      `${"x".repeat(318)}…`,
+    );
     for (const failure of [undefined, diagnostic(""), diagnostic("exited with code 1")]) {
       expect(checkoutFailureDescription(failure)).toBe(
         "Check that the branch still exists and is not checked out elsewhere, then try again.",
@@ -2058,6 +2094,19 @@ describe("single-PR merge compatibility during stack discovery", () => {
   );
 });
 
+describe("seenPullRequestHead", () => {
+  it("takes the first settled head and keeps it until another pull request is shown", () => {
+    // A stored answer paints before the read settles, and is not what the reader ends up seeing.
+    const loading = seenPullRequestHead(null, "pr-1", undefined);
+    expect(loading).toEqual({ key: "pr-1", sha: undefined });
+    const seen = seenPullRequestHead(loading, "pr-1", "a");
+    expect(seen).toEqual({ key: "pr-1", sha: "a" });
+    expect(seenPullRequestHead(seen, "pr-1", "b")).toBe(seen);
+    expect(seenPullRequestHead(seen, "pr-1", undefined)).toBe(seen);
+    expect(seenPullRequestHead(seen, "pr-2", "c")).toEqual({ key: "pr-2", sha: "c" });
+  });
+});
+
 describe("readableFailure", () => {
   it("replaces a host tool's bare failure with the hint, for every host", () => {
     for (const message of [
@@ -2070,5 +2119,35 @@ describe("readableFailure", () => {
     expect(readableFailure(new Error("Branch is protected."), "Try again.")).toBe(
       "Branch is protected.",
     );
+  });
+});
+
+describe("samePullRequestReadExceptStamps", () => {
+  const read = {
+    title: "Fix it",
+    observedAt: 1,
+    checks: [{ name: "ci", state: "success", readAt: 1 }],
+    comments: [{ id: "1", body: "ok" }],
+  };
+
+  it("treats a refresh that only restamps the read as the same", () => {
+    expect(
+      samePullRequestReadExceptStamps(read, {
+        ...read,
+        observedAt: 2,
+        checks: [{ ...read.checks[0], readAt: 2 }],
+      }),
+    ).toBe(true);
+  });
+
+  it("sees any other change", () => {
+    expect(samePullRequestReadExceptStamps(read, { ...read, title: "Fix it again" })).toBe(false);
+    expect(
+      samePullRequestReadExceptStamps(read, {
+        ...read,
+        comments: [...read.comments, { id: "2", body: "more" }],
+      }),
+    ).toBe(false);
+    expect(samePullRequestReadExceptStamps(read, { ...read, draft: true })).toBe(false);
   });
 });

@@ -9,7 +9,7 @@ import { notifierConfig } from "../monitoring.ts";
 import { isPreviewStage } from "../previewStages.ts";
 
 const RUNBOOK_URL =
-  "https://github.com/pingdotgg/t3code/blob/main/docs/operations/relay-observability.md#mobile-crashes-and-errors";
+  "https://github.com/pingdotgg/t3code/blob/main/docs/operations/05_relay-observability.md#mobile-crashes-and-errors";
 
 // A new dataset has none of these fields until a report carries them, and an
 // unknown field fails the whole query, so every one has a default.

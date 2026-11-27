@@ -185,6 +185,8 @@ private struct ReviewDiffNativeStylePayload: Decodable {
   let fileHeaderStatusFontWeight: String?
   let emptyStateFontSize: Double?
   let emptyStateFontWeight: String?
+  let codeFontFamily: String?
+  let uiFontFamily: String?
 }
 
 private struct ReviewDiffNativeStyle: Equatable {
@@ -219,6 +221,8 @@ private struct ReviewDiffNativeStyle: Equatable {
   let fileHeaderStatusFontWeight: UIFont.Weight
   let emptyStateFontSize: CGFloat
   let emptyStateFontWeight: UIFont.Weight
+  let codeFontFamily: String?
+  let uiFontFamily: String?
 
   static func resolve(_ payload: ReviewDiffNativeStylePayload?) -> ReviewDiffNativeStyle {
     ReviewDiffNativeStyle(
@@ -252,7 +256,9 @@ private struct ReviewDiffNativeStyle: Equatable {
       fileHeaderStatusFontSize: metric(payload?.fileHeaderStatusFontSize, fallback: 10),
       fileHeaderStatusFontWeight: fontWeight(payload?.fileHeaderStatusFontWeight, fallback: .semibold),
       emptyStateFontSize: metric(payload?.emptyStateFontSize, fallback: 13),
-      emptyStateFontWeight: fontWeight(payload?.emptyStateFontWeight, fallback: .semibold)
+      emptyStateFontWeight: fontWeight(payload?.emptyStateFontWeight, fallback: .semibold),
+      codeFontFamily: payload?.codeFontFamily,
+      uiFontFamily: payload?.uiFontFamily
     )
   }
 
@@ -327,7 +333,9 @@ private struct ReviewDiffNativeStyle: Equatable {
       fileHeaderStatusFontSize: fileHeaderStatusFontSize,
       fileHeaderStatusFontWeight: fileHeaderStatusFontWeight,
       emptyStateFontSize: emptyStateFontSize,
-      emptyStateFontWeight: emptyStateFontWeight
+      emptyStateFontWeight: emptyStateFontWeight,
+      codeFontFamily: codeFontFamily,
+      uiFontFamily: uiFontFamily
     )
   }
 }
@@ -1029,6 +1037,7 @@ private struct ReviewDiffFileHeaderInteractiveRects {
   let chevron: CGRect
   let icon: CGRect
   let checkbox: CGRect
+  let checkboxHitTarget: CGRect
 }
 
 private struct ReviewDiffStickyFileHeaderIndex {
@@ -1452,35 +1461,43 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   }
 
   private var codeFont: UIFont {
-    UIFont.monospacedSystemFont(ofSize: style.codeFontSize, weight: style.codeFontWeight)
+    reviewDiffFont(
+      family: style.codeFontFamily, size: style.codeFontSize, weight: style.codeFontWeight, monospaced: true)
   }
 
   private var lineNumberFont: UIFont {
-    UIFont.monospacedSystemFont(ofSize: style.lineNumberFontSize, weight: style.lineNumberFontWeight)
+    reviewDiffFont(
+      family: style.codeFontFamily, size: style.lineNumberFontSize, weight: style.lineNumberFontWeight, monospaced: true)
   }
 
   private var hunkFont: UIFont {
-    UIFont.monospacedSystemFont(ofSize: style.hunkFontSize, weight: style.hunkFontWeight)
+    reviewDiffFont(
+      family: style.codeFontFamily, size: style.hunkFontSize, weight: style.hunkFontWeight, monospaced: true)
   }
 
   private var fileHeaderFont: UIFont {
-    UIFont.systemFont(ofSize: style.fileHeaderFontSize, weight: style.fileHeaderFontWeight)
+    reviewDiffFont(
+      family: style.uiFontFamily, size: style.fileHeaderFontSize, weight: style.fileHeaderFontWeight, monospaced: false)
   }
 
   private var fileHeaderMetaFont: UIFont {
-    UIFont.systemFont(ofSize: style.fileHeaderMetaFontSize, weight: style.fileHeaderMetaFontWeight)
+    reviewDiffFont(
+      family: style.uiFontFamily, size: style.fileHeaderMetaFontSize, weight: style.fileHeaderMetaFontWeight, monospaced: false)
   }
 
   private var fileHeaderSubtextFont: UIFont {
-    UIFont.systemFont(ofSize: style.fileHeaderSubtextFontSize, weight: style.fileHeaderSubtextFontWeight)
+    reviewDiffFont(
+      family: style.uiFontFamily, size: style.fileHeaderSubtextFontSize, weight: style.fileHeaderSubtextFontWeight, monospaced: false)
   }
 
   private var fileHeaderStatusFont: UIFont {
-    UIFont.systemFont(ofSize: style.fileHeaderStatusFontSize, weight: style.fileHeaderStatusFontWeight)
+    reviewDiffFont(
+      family: style.uiFontFamily, size: style.fileHeaderStatusFontSize, weight: style.fileHeaderStatusFontWeight, monospaced: false)
   }
 
   private var emptyStateFont: UIFont {
-    UIFont.systemFont(ofSize: style.emptyStateFontSize, weight: style.emptyStateFontWeight)
+    reviewDiffFont(
+      family: style.uiFontFamily, size: style.emptyStateFontSize, weight: style.emptyStateFontWeight, monospaced: false)
   }
 
   private lazy var horizontalPanGesture: UIPanGestureRecognizer = {
@@ -1643,7 +1660,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let interactiveRects = fileHeaderInteractiveRects(for: row, cardRect: rect)
     let fileId = resolvedFileId(for: row)
 
-    if interactiveRects.checkbox.contains(point) {
+    if interactiveRects.checkboxHitTarget.contains(point) {
       onToggleViewedFile?(fileId)
       return
     }
@@ -2349,10 +2366,17 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let chevronRect = CGRect(x: cardRect.minX + horizontalPadding, y: centerY - 10, width: 20, height: 20)
     let iconRect = CGRect(x: chevronRect.maxX + 8, y: centerY - 10, width: 20, height: 20)
     let checkboxRect = CGRect(x: cardRect.maxX - horizontalPadding - 20, y: centerY - 10, width: 20, height: 20)
+    let checkboxHitMinX = checkboxRect.minX - 14
     return ReviewDiffFileHeaderInteractiveRects(
       chevron: chevronRect,
       icon: iconRect,
-      checkbox: checkboxRect
+      checkbox: checkboxRect,
+      checkboxHitTarget: CGRect(
+        x: checkboxHitMinX,
+        y: cardRect.minY,
+        width: cardRect.maxX - checkboxHitMinX,
+        height: cardRect.height
+      )
     )
   }
 
@@ -2974,4 +2998,21 @@ private extension UIColor {
 
     self.init(red: red, green: green, blue: blue, alpha: alpha)
   }
+}
+
+/// Resolves a React Native family name; system names such as `System` and `ui-monospace` have no
+/// UIFont of that name and fall through to the platform font.
+private func reviewDiffFont(
+  family: String?, size: CGFloat, weight: UIFont.Weight, monospaced: Bool
+) -> UIFont {
+  if let family, let base = UIFont(name: family, size: size) {
+    let descriptor = UIFontDescriptor(fontAttributes: [
+      .family: base.familyName,
+      .traits: [UIFontDescriptor.TraitKey.weight: weight],
+    ])
+    return UIFont(descriptor: descriptor, size: size)
+  }
+  return monospaced
+    ? .monospacedSystemFont(ofSize: size, weight: weight)
+    : .systemFont(ofSize: size, weight: weight)
 }

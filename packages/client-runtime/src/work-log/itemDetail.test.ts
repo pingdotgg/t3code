@@ -120,18 +120,20 @@ describe("tool text output formatting", () => {
     '{"id":1}\n{"id":-9007199254740993}',
     '{"id":9.007199254740993e15}',
     '{"id":1e309}',
+    '{"ratio":1e-400}',
   ])("keeps %j as returned when parsing would change a number", (text) => {
     expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(text);
   });
 
-  it.each(['{"id":42,"note":"12345678901234567890"}', '{"ratio":0.1234567890123456789}'])(
-    "still pretty-prints %j",
-    (text) => {
-      expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(
-        JSON.stringify(JSON.parse(text), null, 2),
-      );
-    },
-  );
+  it.each([
+    '{"id":42,"note":"12345678901234567890"}',
+    '{"ratio":0.1234567890123456789}',
+    '{"ratio":0.00e-400}',
+  ])("still pretty-prints %j", (text) => {
+    expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(
+      JSON.stringify(JSON.parse(text), null, 2),
+    );
+  });
 });
 
 describe("MCP app tool output", () => {
@@ -180,5 +182,37 @@ describe("MCP app tool output", () => {
       ],
     });
     expect(turnItemOutputText(bounded)).toBe("chart\n[image]");
+  });
+});
+
+describe("file search output text", () => {
+  function searchItem(
+    results: Extract<OrchestrationV2TurnItem, { type: "file_search" }>["results"],
+  ): OrchestrationV2TurnItem {
+    const {
+      toolName: _toolName,
+      input: _input,
+      output: _output,
+      ...base
+    } = toolItem(null) as Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>;
+    return { ...base, type: "file_search", pattern: "needle", results };
+  }
+
+  it("prints matches under one heading per file", () => {
+    expect(
+      turnItemOutputText(
+        searchItem([
+          { fileName: "src/one.ts", line: 2, preview: "  const needle = 1;" },
+          { fileName: "src/two.ts", line: 7, column: 3, preview: "needle()" },
+          { fileName: "src/one.ts", line: 9, preview: "return needle;" },
+        ]),
+      ),
+    ).toBe("src/one.ts\n2:   const needle = 1;\n9: return needle;\n\nsrc/two.ts\n7:3: needle()");
+  });
+
+  it("keeps a plain file list one path per line", () => {
+    expect(turnItemOutputText(searchItem([{ fileName: "a.ts" }, { fileName: "b.ts" }]))).toBe(
+      "a.ts\nb.ts",
+    );
   });
 });

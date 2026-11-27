@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Junction fixtures work without symlink privileges on Windows.
+import * as NodeFSP from "node:fs/promises";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -15,7 +18,7 @@ import * as Path from "effect/Path";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
-import { Command } from "effect/cli";
+import { CliError, Command } from "effect/cli";
 import { vi } from "vite-plus/test";
 
 import * as McpBridge from "../mcp/AcpMcpStdioBridge.ts";
@@ -27,6 +30,7 @@ import {
   latestRunError,
   launchModelSelection,
   readLatestMessages,
+  readOutputSchema,
   resolveProject,
   threadCommand,
   type ThreadTools,
@@ -151,7 +155,7 @@ it.effect("list includes delegated threads across pages and still leaves out sub
 );
 
 it.effect(
-  "start resolves home-relative project paths while preserving ids and relative paths",
+  "start resolves project ids and registered aliases through absolute, relative, and home-relative paths",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -162,14 +166,17 @@ it.effect(
       const home = path.join(root, "home");
       const cwd = path.join(root, "current");
       const workspaceRoot = path.join(home, "My Project");
+      const aliasRoot = path.join(home, "My Project Alias");
       const nestedRoot = path.join(workspaceRoot, "nested");
       const baseDir = path.join(root, "state");
       yield* fs.makeDirectory(nestedRoot, { recursive: true });
       yield* fs.makeDirectory(cwd);
+      yield* Effect.promise(() => NodeFSP.symlink(workspaceRoot, aliasRoot, "junction"));
       const projects = [
         { id: ProjectId.make("current-project"), title: "Current", workspaceRoot: cwd },
         { id: ProjectId.make("home-project"), title: "Home", workspaceRoot: home },
         { id: ProjectId.make("intended-project"), title: "Intended", workspaceRoot },
+        { id: ProjectId.make("alias-project"), title: "Alias", workspaceRoot: aliasRoot },
         { id: ProjectId.make("nested-project"), title: "Nested", workspaceRoot: nestedRoot },
         { id: ProjectId.make("~/literal-id"), title: "Exact id", workspaceRoot: cwd },
       ];
@@ -202,6 +209,8 @@ it.effect(
         ["~/literal-id", "~/literal-id"],
         [workspaceRoot, "intended-project"],
         [path.relative(cwd, workspaceRoot), "intended-project"],
+        [aliasRoot, "alias-project"],
+        [path.join(aliasRoot, "nested"), "nested-project"],
         [".", "current-project"],
         ["~/My Project", "intended-project"],
         ["~", "home-project"],
@@ -524,17 +533,44 @@ it.effect("start rejects a repeated --option before reaching the server", () =>
   ),
 );
 
-/** Serves t3_thread_read pages the way the server does: positions count every item. */
+it.effect("--output-schema reads a ~/ path from the home directory", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-schema-" });
+    yield* fs.writeFileString(path.join(home, "schema.json"), '{"type":"object"}');
+
+    const output = yield* readOutputSchema(Option.some("~/schema.json")).pipe(
+      Effect.provideService(HostProcess.HomeDirectory, home),
+    );
+
+    assert.deepStrictEqual(output, { outputSchema: { type: "object" } });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+/** Serves t3_thread_read pages the way the server does: positions count every item, and a cursorless read is the newest page. */
 const timelineTools = (types: ReadonlyArray<string>) => {
   const items = types.map((type, position) => ({ position, itemId: `item-${position}`, type }));
   const served: Array<number> = [];
   const call = ((_tool: string, input: unknown) => {
     const args = input as { readonly afterPosition?: number; readonly limit: number };
+    const isMessage = (item: (typeof items)[number]) =>
+      ["user_message", "assistant_message", "proposed_plan"].includes(item.type);
+    if (args.afterPosition === undefined) {
+      const page = items.filter(isMessage).slice(-args.limit);
+      served.push(page.length);
+      return Effect.succeed({
+        thread: { itemCount: items.length },
+        items: page,
+        nextPosition: null,
+        hasMore: false,
+      });
+    }
     // Scanning one match past the page keeps reads of huge fixtures linear.
     const matching: typeof items = [];
-    for (let position = (args.afterPosition ?? -1) + 1; position < items.length; position++) {
+    for (let position = args.afterPosition + 1; position < items.length; position++) {
       const item = items[position]!;
-      if (["user_message", "assistant_message", "proposed_plan"].includes(item.type)) {
+      if (isMessage(item)) {
         matching.push(item);
         if (matching.length > args.limit) break;
       }
@@ -645,6 +681,45 @@ it.effect("show returns a --messages count larger than one call can spread", () 
   }),
 );
 
+it.effect("show rejects a negative --messages before reaching the server", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-show-messages-" });
+    const show = (messages: string) =>
+      Command.runWith(threadCommand, { version: "0.0.0" })([
+        "show",
+        threadId,
+        "--messages",
+        messages,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+
+    const error = yield* show("-1");
+    if (!CliError.isCliError(error) || error._tag !== "ShowHelp") {
+      assert.fail(`Expected ShowHelp, got ${String(error)}`);
+    }
+    const flagError = error.errors[0];
+    if (flagError?._tag !== "InvalidValue") {
+      assert.fail(`Expected InvalidValue, got ${String(flagError?._tag)}`);
+    }
+    assert.strictEqual(flagError.option, "messages");
+    assert.strictEqual(flagError.value, "-1");
+    // Zero is valid: it shows the thread's state with no messages.
+    assert.strictEqual((yield* show("0"))._tag, "ThreadServerNotRunningError");
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NetService.layer,
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_PORT: "3773" } })),
+      ),
+    ),
+  ),
+);
+
 it.effect("show gives the latest run's last error only when that run did not complete", () =>
   Effect.gen(function* () {
     const page = {
@@ -670,6 +745,14 @@ it.effect("show gives the latest run's last error only when that run did not com
     assert.lengthOf(calls, 1);
   }),
 );
+
+it.each([
+  ["CR", "\r"],
+  ["Unicode line separator", "\u2028"],
+  ["Unicode paragraph separator", "\u2029"],
+])("uses only the first line of a message with %s line endings", (_name, newline) => {
+  assert.strictEqual(titleFromMessage(`Review merge${newline}Check changelog`), "Review merge");
+});
 
 it("titles from a long first line without splitting an emoji", () => {
   const title = titleFromMessage(`${"a".repeat(78)}😀 and the rest of a long first line`);
@@ -739,5 +822,10 @@ it.live("resolves a path inside a git worktree of the project's repository to th
     assert.strictEqual(ambiguous._tag, "ThreadUsageError");
     assert.include(ambiguous.message, "sample (project-sample)");
     assert.include(ambiguous.message, "feature (project-feature)");
+
+    // An inherited relative GIT_DIR resolves against Git's cwd, where no repository is.
+    vi.stubEnv("GIT_DIR", ".git");
+    yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+    assert.deepStrictEqual(yield* resolveFrom([sample], path.join(worktree, "pkg")), sample);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
