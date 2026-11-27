@@ -51,7 +51,7 @@ function MatchedLine(props: { readonly text: string; readonly matchers: Readonly
   if (ranges.length === 0) return props.text;
   return splitSearchText(props.text, ranges).map((part) =>
     part.highlighted ? (
-      <mark key={part.start} className="rounded-xs bg-warning/20 text-foreground">
+      <mark key={part.start} className="surface-selected-soft font-semibold text-strong-foreground">
         {part.text}
       </mark>
     ) : (
@@ -80,7 +80,7 @@ export function FileSearchResults(props: {
   const gt = useGT();
   const matchers = patternMatchers(props.pattern);
   return (
-    <div className="max-h-96 divide-y divide-border/60 overflow-y-auto rounded-md border border-border/70 bg-muted/45 font-mono text-(length:--font-size-code,var(--text-2xs)) leading-relaxed select-text">
+    <div className="max-h-96 divide-y divide-border/60 overflow-y-auto rounded-control surface-timeline-inspector font-mono text-(length:--font-size-code,var(--text-2xs)) leading-relaxed select-text">
       {groupFileSearchResults(props.results).map((group) => {
         const lines = group.results.filter((result) => result.line !== undefined);
         const notes = group.results.flatMap((result) =>
