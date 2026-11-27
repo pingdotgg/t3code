@@ -6,6 +6,7 @@ import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { m } from "~/i18n/messages";
+import { useStableCallback } from "~/hooks/useStableCallback";
 
 import VirtualTablePreview from "./VirtualTablePreview";
 
@@ -21,6 +22,7 @@ import { FileSurfaceAction, FileSurfaceLoading, FileSurfaceNotice } from "./file
 import { OFFICE_PREVIEW_MAX_BYTES, type OfficeWorkerResult } from "./officePreviewProtocol";
 import { previewFailureText } from "./previewFailureMessages";
 
+const EpubViewer = lazy(() => import("./EpubViewer"));
 const DocumentPages = lazy(() => import("./DocumentPages"));
 const NotebookPreview = lazy(() => import("./NotebookPreview"));
 
@@ -76,6 +78,11 @@ function ExtendedOfficeViewer(props: {
 }) {
   const gt = useGT();
   const messages = useMessages();
+  const [epub, setEpub] = useState<Extract<OfficeWorkerResult, { type: "epub" }> | null>(null);
+  const [epubPage, setEpubPage] = useState<Extract<
+    OfficeWorkerResult,
+    { type: "epub-page" }
+  > | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sheetPages, setSheetPages] = useState(new Map<string, string[][]>());
   const pendingPages = useRef(new Set<string>());
@@ -122,7 +129,12 @@ function ExtendedOfficeViewer(props: {
       if (controller.signal.aborted) return;
       const result = event.data;
       if (result.type === "error") fail(previewFailureText(result));
-      else if (result.type === "document") {
+      else if (result.type === "epub") {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        setEpub(result);
+      } else if (result.type === "epub-page") {
+        setEpubPage(result);
+      } else if (result.type === "document") {
         if (timerRef.current) clearTimeout(timerRef.current);
         setDocument(result);
         setCount(result.pages.length > 1 ? result.pages.length : 0);
@@ -162,6 +174,9 @@ function ExtendedOfficeViewer(props: {
     };
   }, [props.src, props.kind, props.sizeBytes]);
   const selectPage = setPage;
+  const loadEpubPage = useStableCallback((index: number) =>
+    workerRef.current?.postMessage({ type: "epub-page", index }),
+  );
   if (error)
     return (
       <div
@@ -182,6 +197,18 @@ function ExtendedOfficeViewer(props: {
         <NotebookPreview notebook={notebook} sizeBytes={fileSize} />
       </Suspense>
     );
+  if (epub)
+    return (
+      <Suspense fallback={<FileSurfaceLoading />}>
+        <EpubViewer
+          name={props.name}
+          book={epub}
+          response={epubPage}
+          sizeBytes={fileSize}
+          loadPage={loadEpubPage}
+        />
+      </Suspense>
+    );
   const sheet = workbook?.sheets[page];
   const documentPage = previewDocument?.pages[page];
   const navigation = workbook ? "sheet" : (previewDocument?.navigation ?? "slide");
@@ -189,35 +216,20 @@ function ExtendedOfficeViewer(props: {
   const sheetName = (index: number) =>
     workbook?.sheets[index]?.name ?? gt("Sheet {number}", { number: String(index + 1) });
   const pageTitle = (index: number) =>
-    previewDocument?.pages[index]?.title ??
-    (navigation === "chapter"
-      ? gt("Chapter {number}", { number: String(index + 1) })
-      : gt("Page {number}", { number: String(index + 1) }));
+    previewDocument?.pages[index]?.title ?? gt("Page {number}", { number: String(index + 1) });
   const documentDetails =
-    navigation === "chapter"
-      ? gt("Chapter {page} of {count}", { page: String(page + 1), count: String(documentCount) })
-      : navigation === "slide"
-        ? gt("{count, plural, one {{count} slide} other {{count} slides}}", {
-            count: documentCount,
-          })
-        : navigation === "sheet"
-          ? gt("{count, plural, one {{count} sheet} other {{count} sheets}}", {
-              count: documentCount,
-            })
-          : gt("{count, plural, one {{count} page} other {{count} pages}}", {
-              count: documentCount,
-            });
+    navigation === "slide"
+      ? gt("{count, plural, one {{count} slide} other {{count} slides}}", { count: documentCount })
+      : gt("{count, plural, one {{count} page} other {{count} pages}}", { count: documentCount });
   const previousLabel = {
     sheet: gt("Previous sheet"),
     page: gt("Previous page"),
     slide: gt("Previous slide"),
-    chapter: gt("Previous chapter"),
   }[navigation];
   const nextLabel = {
     sheet: gt("Next sheet"),
     page: gt("Next page"),
     slide: gt("Next slide"),
-    chapter: gt("Next chapter"),
   }[navigation];
   const sizeDetails =
     fileSize !== undefined
@@ -252,29 +264,6 @@ function ExtendedOfficeViewer(props: {
                   {workbook.sheets.map((item, index) => (
                     <SelectItem key={index} value={index}>
                       {item.name ?? sheetName(index)}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            </div>
-          ) : previewDocument?.navigation === "chapter" ? (
-            <div className="min-w-0 flex-1">
-              <Select
-                value={page}
-                onValueChange={(value) => {
-                  if (value !== null) selectPage(value);
-                }}
-              >
-                <SelectTrigger
-                  aria-label={gt("Chapter", { $context: "noun, book chapter picker" })}
-                  size="xs"
-                >
-                  <SelectValue>{documentPage ? pageTitle(page) : undefined}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  {previewDocument.pages.map((item, index) => (
-                    <SelectItem key={index} value={index}>
-                      {item.title ?? pageTitle(index)}
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -316,11 +305,9 @@ function ExtendedOfficeViewer(props: {
       ) : null}
       {documentPage ? (
         <>
-          {props.kind !== "epub" ? (
-            <FileSurfaceNotice>
-              <T>Text and images. Layout and embedded objects may differ from the original.</T>
-            </FileSurfaceNotice>
-          ) : null}
+          <FileSurfaceNotice>
+            <T>Text and images. Layout and embedded objects may differ from the original.</T>
+          </FileSurfaceNotice>
           <Suspense fallback={<FileSurfaceLoading />}>
             <DocumentPages
               html={documentPage.html}
