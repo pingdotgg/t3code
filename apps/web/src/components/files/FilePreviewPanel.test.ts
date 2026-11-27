@@ -188,7 +188,7 @@ describe("document preview contents", () => {
     (fallback) => {
       const result = openRtf(bytes(String.raw`{\rtf1{\*\unknown\u945` + fallback + "}Hello}"));
       if (result.type !== "document") throw new Error("Expected document");
-      expect(result.pages[0]!.html).toBe("<p>Hello</p>");
+      expect(result.pages[0]!.html).toBe("<p data-rtf-whitespace>Hello</p>");
     },
   );
 
@@ -270,13 +270,17 @@ describe("document preview contents", () => {
       ),
     );
     if (styled.type !== "document") throw new Error("Expected document");
-    expect(styled.pages[0]!.html).toBe("<p><strong>🚀 Launch</strong> <em>𝔸</em></p>");
+    expect(styled.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace><strong>🚀 Launch</strong> <em>𝔸</em></p>",
+    );
     const fallbacks = openRtf(bytes("{\\rtf1\\b\\uc1\\u-10179\\_\\uc0\\u-8576 }"));
     if (fallbacks.type !== "document") throw new Error("Expected document");
-    expect(fallbacks.pages[0]!.html).toBe("<p><strong>🚀</strong></p>");
+    expect(fallbacks.pages[0]!.html).toBe("<p data-rtf-whitespace><strong>🚀</strong></p>");
     const escapedBreak = openRtf(bytes("{\\rtf1\\b A\\u66\\\nC\\par D}"));
     if (escapedBreak.type !== "document") throw new Error("Expected document");
-    expect(escapedBreak.pages[0]!.html).toBe("<p><strong>ABC</strong><br><strong>D</strong></p>");
+    expect(escapedBreak.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace><strong>ABC</strong><br><strong>D</strong></p>",
+    );
   });
 
   it("breaks lines at the paragraph and line breaks TextEdit writes", () => {
@@ -296,7 +300,7 @@ Third}`;
     expect(html(textEdit)).toEqual(expected);
     expect(html(textEdit.replaceAll("\n", "\r\n"))).toEqual(expected);
     const lineBreak = html(String.raw`{\rtf1\ansi First line\line Second line}`);
-    expect(lineBreak).toEqual(["<p>First line<br>Second line</p>"]);
+    expect(lineBreak).toEqual(["<p data-rtf-whitespace>First line<br>Second line</p>"]);
     expect(html(String.raw`{\rtf1\ansi{\v\line\line\line}First line\line Second line}`)).toEqual(
       lineBreak,
     );
@@ -313,9 +317,9 @@ Third}`;
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.navigation).toBe("page");
     expect(result.pages.map((page) => page.html)).toEqual([
-      "<p><strong>First</strong></p>",
-      "<p><strong>Second</strong></p>",
-      "<p>Third</p>",
+      "<p data-rtf-whitespace><strong>First</strong></p>",
+      "<p data-rtf-whitespace><strong>Second</strong></p>",
+      "<p data-rtf-whitespace>Third</p>",
     ]);
     expect(() => openRtf(bytes(String.raw`{\rtf1 ` + String.raw`\page`.repeat(501) + "}"))).toThrow(
       expect.objectContaining({ code: "rtf-too-many-pages" }),
@@ -330,16 +334,16 @@ Third}`;
     );
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages.map((page) => page.html)).toEqual([
-      "<p>North quota: 120<br>South quota: 240</p>",
-      "<p>East quota: 360<br>West quota: 480<br></p>",
+      "<p data-rtf-whitespace>North quota: 120<br>South quota: 240</p>",
+      "<p data-rtf-whitespace>East quota: 360<br>West quota: 480<br></p>",
     ]);
     const written = openRtf(
       bytes(String.raw`{\rtf1\ansi First\par\sect\sectd Second\par\column Third\page\sect Fourth}`),
     );
     if (written.type !== "document") throw new Error("Expected document");
     expect(written.pages.map((page) => page.html)).toEqual([
-      "<p>First<br>Second<br>Third</p>",
-      "<p>Fourth</p>",
+      "<p data-rtf-whitespace>First<br>Second<br>Third</p>",
+      "<p data-rtf-whitespace>Fourth</p>",
     ]);
   });
 
@@ -350,34 +354,37 @@ Third}`;
     input[input.indexOf(65)] = 0xc0;
     const result = openRtf(input.buffer);
     if (result.type !== "document") throw new Error("Expected document");
-    expect(result.pages[0]!.html).toBe("<p>А А<br>あ</p>");
+    expect(result.pages[0]!.html).toBe("<p data-rtf-whitespace>А А<br>あ</p>");
     for (const header of [String.raw`\mac`, String.raw`\mac\ansicpg10000`]) {
       const mac = openRtf(bytes(String.raw`{\rtf1` + header + String.raw` Caf\'8e Cr\'8fme}`));
       if (mac.type !== "document") throw new Error("Expected document");
-      expect(mac.pages[0]!.html).toBe("<p>Café Crème</p>");
+      expect(mac.pages[0]!.html).toBe("<p data-rtf-whitespace>Café Crème</p>");
     }
     for (const [rtf, expected] of [
-      [String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "<p>Café</p>"],
-      [String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`, "<p>Привет</p>"],
+      [String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "<p data-rtf-whitespace>Café</p>"],
+      [
+        String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`,
+        "<p data-rtf-whitespace>Привет</p>",
+      ],
       [
         String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl\f0\froman\fcharset0 Times-Roman;}\f0 \'805 caf\'e9}`,
-        "<p>€5 café</p>",
+        "<p data-rtf-whitespace>€5 café</p>",
       ],
       [
         String.raw`{\rtf1\mac\ansicpg10000{\fonttbl\f0\fnil\fcharset0 LucidaGrande;}\f0 pridr\'9eana}`,
-        "<p>pridržana</p>",
+        "<p data-rtf-whitespace>pridržana</p>",
       ],
       [
         String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl{\f0\fnil\fcharset0\cpg1251 Arial;}{\f1\fnil\fcharset204 Arial{\*\fontfile\cpg1252 arial.ttf};}}\f0 \'cf\'f0\'e8\f1\'e2\'e5\'f2}`,
-        "<p>Привет</p>",
+        "<p data-rtf-whitespace>Привет</p>",
       ],
       [
         String.raw`{\rtf1\ansi\ansicpg54936 Quarterly notes: \'d6\'d0\'ce\'c4 \'95\'32\'82\'36 \'82\'35\'8f\'33 \uc2\u20320\'c4\'e3 done\par}`,
-        "<p>Quarterly notes: 中文 𠀀 龦 你 done<br></p>",
+        "<p data-rtf-whitespace>Quarterly notes: 中文 𠀀 龦 你 done<br></p>",
       ],
       [
         String.raw`{\rtf1\ansi{\fonttbl{\f0\fnil\fcharset0\cpg54936 SimSun;}}\f0 \'d6\'d0\'ce\'c4}`,
-        "<p>中文</p>",
+        "<p data-rtf-whitespace>中文</p>",
       ],
     ] as const) {
       const decoded = openRtf(bytes(rtf));
