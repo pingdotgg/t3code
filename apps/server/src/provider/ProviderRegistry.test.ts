@@ -2522,6 +2522,7 @@ it.layer(
               slashCommands: [],
               skills: [],
             } as const satisfies ServerProvider;
+            const snapshotRef = yield* Ref.make<ServerProvider>(provider);
             const invalidations = yield* Ref.make(0);
             const probes = yield* Ref.make(0);
             const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean | "afterUpdate">>([]);
@@ -2544,8 +2545,14 @@ it.layer(
                       }),
                     ),
                   ),
-                getSnapshot: Effect.succeed(provider),
-                refresh: Ref.update(probes, (count) => count + 1).pipe(Effect.as(provider)),
+                getSnapshot: Ref.get(snapshotRef),
+                refresh: Ref.update(probes, (count) => count + 1).pipe(
+                  Effect.andThen(Ref.get(snapshotRef)),
+                ),
+                refreshUsage: Ref.update(snapshotRef, (current) => ({
+                  ...current,
+                  usageLimits: { checkedAt: "2026-06-10T00:05:00.000Z", windows: [] },
+                })),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
@@ -2655,6 +2662,17 @@ it.layer(
           assert.strictEqual(yield* Ref.get(second.probes), probesBefore + 1);
           // A changed manifest also rechecks latest CLI versions.
           assert.strictEqual(yield* readCachedVersion("codex_second-package", "3.0.0"), "3.0.0");
+
+          // A limits refresh updates limits directly and skips full probes and maintenance checks.
+          const probesBeforeLimits = yield* Ref.get(first.probes);
+          yield* first.takeMaintenanceReads;
+          yield* registry.refreshUsageLimits();
+          assert.strictEqual(yield* Ref.get(first.probes), probesBeforeLimits);
+          assert.deepStrictEqual(yield* first.takeMaintenanceReads, []);
+          const refreshedFirst = (yield* registry.getProviders).find(
+            (entry) => entry.instanceId === first.instance.instanceId,
+          );
+          assert.strictEqual(refreshedFirst?.usageLimits?.checkedAt, "2026-06-10T00:05:00.000Z");
 
           yield* first.takeMaintenanceReads;
           yield* Ref.set(updateEvents, []);
@@ -4782,6 +4800,55 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
+    it.effect("drops a retired gateway model when the surviving model is configured manually", () =>
+      Effect.gen(function* () {
+        const surviving = { value: "gateway/current", displayName: "Current", description: "" };
+        const retired = { value: "gateway/retired", displayName: "Retired", description: "" };
+        const settings = {
+          ...defaultClaudeSettings,
+          customModels: [{ slug: surviving.value, name: "My current model" }],
+        };
+        const environment = {
+          ANTHROPIC_BASE_URL: "https://gateway.example",
+          CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+        };
+        const before = yield* checkClaudeProviderStatus(
+          settings,
+          claudeCapabilities({ models: [surviving, retired] }),
+          environment,
+        );
+        const after = yield* checkClaudeProviderStatus(
+          settings,
+          claudeCapabilities({ models: [surviving] }),
+          environment,
+        );
+        const instanceId = ProviderInstanceId.make("claudeAgent");
+        const driver = ProviderDriverKind.make("claudeAgent");
+        const visible = ProviderRegistry.mergeProviderSnapshot(
+          { ...before, instanceId, driver },
+          { ...after, instanceId, driver },
+        );
+        assert.include(
+          before.models.map((model) => model.slug),
+          retired.value,
+        );
+        assert.deepStrictEqual(
+          visible.models
+            .filter((model) => model.slug.startsWith("gateway/"))
+            .map((model) => model.slug),
+          [surviving.value],
+        );
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "2.1.332\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("adds models Claude Code reports that the catalog does not know", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(

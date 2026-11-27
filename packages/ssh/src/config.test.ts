@@ -409,7 +409,7 @@ describe("ssh config", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("parses known_hosts entries without returning hashed hosts", () =>
+  it.effect("parses known_hosts entries without hashed, revoked or unknown-marker hosts", () =>
     Effect.sync(() => {
       assert.deepEqual(
         parseKnownHosts(
@@ -422,12 +422,17 @@ describe("ssh config", () => {
             "port.example.com:22 ssh-ed25519 HHHH",
             "::1 ssh-ed25519 FFFF",
             "2001:db8::1 ssh-ed25519 GGGG",
+            "@cert-authority ca.example.com ssh-ed25519 IIII",
+            "@cert-authority @cert-authority double.example.com ssh-ed25519 JJJJ",
+            "@revoked revoked.example.com ssh-ed25519 KKKK",
+            "@bogus bogus.example.com ssh-ed25519 MMMM",
             "",
           ].join("\n"),
         ),
         [
           { hostname: "::1", port: null },
           { hostname: "2001:db8::1", port: null },
+          { hostname: "ca.example.com", port: null },
           { hostname: "github.com", port: null },
           { hostname: "gitlab-alias", port: null },
           { hostname: "gitlab.com", port: null },

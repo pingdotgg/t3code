@@ -97,6 +97,7 @@ import {
   subagentStopNotice,
   delegatedTaskProgress,
   delegatedTaskReportRuns,
+  monitorUpdateRunIds,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   DispatchModeLimit,
@@ -785,11 +786,7 @@ function latestTerminalResultRun(
   delegatedRun: OrchestrationV2Run | undefined,
   awaitingContinuationRun: OrchestrationV2Run | undefined,
 ): OrchestrationV2Run | undefined {
-  const monitorRunIds = new Set(
-    projection.messages
-      .filter((message) => message.notification?.source.kind === "monitor")
-      .map((message) => message.runId),
-  );
+  const monitorRunIds = monitorUpdateRunIds(projection.messages, projection.runs);
   // A restart-cut run, and each cut run before it in the chain, has no outcome while a
   // continuation is pending, live, or ran to a result.
   const runsById = new Map(projection.runs.map((run) => [run.id, run]));
@@ -1919,7 +1916,9 @@ const make = Effect.gen(function* () {
       )
       .pipe(Effect.mapError(threadManagementFailure));
     const childRun = delegatedTaskRun(childControls, task);
-    const progress = delegatedTaskProgress(childControls);
+    const progress = delegatedTaskProgress(childControls, {
+      unsettled: task.result === null && task.cancelledRunId === undefined,
+    });
     const followupRuns =
       childRun?.delegatedTaskId === task.id ? delegatedTaskRuns(childControls, task.id) : undefined;
     const taskResultRun =
@@ -2475,7 +2474,7 @@ const make = Effect.gen(function* () {
       const modelSelection =
         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
       // Never end on a lone high surrogate, which renders as a broken character.
-      const derivedTitle = (input.prompt.split("\n")[0]?.trim() ?? "")
+      const derivedTitle = (input.prompt.split(/[\r\n\u2028\u2029]/, 1)[0]?.trim() ?? "")
         .slice(0, 80)
         .replace(/[\uD800-\uDBFF]$/, "");
       const title = input.title ?? (derivedTitle.length > 0 ? derivedTitle : "Scheduled task");

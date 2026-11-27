@@ -1,3 +1,4 @@
+import type { PreviewPassword, PreviewUnlock } from "./previewUnlock";
 import type { PreviewFailure } from "./previewFailure";
 import { ARCHIVE_MAX_BYTES } from "@t3tools/client-runtime/zip/bounded-zip";
 
@@ -29,12 +30,23 @@ export interface ArchiveEntry {
   directory: boolean;
 }
 
+type ArchiveRowOrder = Pick<ArchiveEntry, "path" | "directory">;
+let archiveNameCollator: Intl.Collator | undefined;
+
+export function compareArchiveRows(a: ArchiveRowOrder, b: ArchiveRowOrder): number {
+  if (a.directory !== b.directory) return a.directory ? -1 : 1;
+  archiveNameCollator ??= new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+  return archiveNameCollator.compare(a.path, b.path);
+}
+
 export type BinaryWorkerRequest =
+  | PreviewUnlock
   | { type: "open"; kind: "archive" | "sqlite"; name: string; bytes: ArrayBuffer }
   | { type: "entry"; path: string }
   | { type: "rows"; table: string; page: number };
 
 export type BinaryWorkerResult =
+  | PreviewPassword
   | ({ type: "error" } & PreviewFailure)
   | { type: "archive"; entries: ArchiveEntry[] }
   | { type: "entry"; path: string; bytes: Uint8Array<ArrayBuffer> }
