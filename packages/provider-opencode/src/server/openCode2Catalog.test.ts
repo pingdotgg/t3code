@@ -99,6 +99,19 @@ describe("loadOpenCode2Catalog", () => {
     }),
   );
 
+  it.effect("lists models from a server that never lists a plugin", () =>
+    Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(
+        readCatalog({
+          "/api/plugin": '{"location":{"directory":"/project"},"data":[]}',
+          "/api/model": MODELS_BODY,
+        }),
+      );
+      yield* TestClock.adjust("10 seconds");
+      assert.strictEqual((yield* Fiber.join(fiber)).length, 2);
+    }),
+  );
+
   it.effect("names the provider each listed model came from", () =>
     Effect.gen(function* () {
       const models = yield* readCatalog({

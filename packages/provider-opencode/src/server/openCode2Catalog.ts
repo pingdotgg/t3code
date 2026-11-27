@@ -7,6 +7,8 @@ import { openCodePrice, type OpenCode2Model } from "./status.ts";
 
 // Cold catalogs take seconds; model reads already retry empty catalogs.
 const PROVIDER_NAME_TIMEOUT = "3 seconds";
+// Activation took up to 2 seconds on cold OpenCode 2.0 to 2.4 servers.
+const PLUGIN_ACTIVATION_WAIT = "5 seconds";
 
 const locationOf = (directory: string | undefined) =>
   directory === undefined ? {} : { location: { directory } };
@@ -23,18 +25,13 @@ const readCatalog = <E>(
   providers: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly name: string }>, E>,
 ): Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError> =>
   client.plugin.list(locationOf(directory)).pipe(
+    // A location lists its startup catalog until its plugins activate, and lists no plugin before.
     Effect.repeat({
       until: (plugins) => plugins.data.length > 0,
       schedule: Schedule.spaced("250 millis"),
     }),
-    Effect.mapError(
-      (cause) =>
-        new OpenCodeRuntime.OpenCodeRuntimeError({
-          operation: "plugin.list",
-          detail: "The OpenCode server could not report plugin readiness.",
-          cause,
-        }),
-    ),
+    // A server that never lists a plugin must still list its models.
+    Effect.timeoutOption(PLUGIN_ACTIVATION_WAIT),
     Effect.andThen(
       Effect.all(
         {
@@ -63,14 +60,13 @@ const readCatalog = <E>(
         };
       });
     }),
-    Effect.mapError((cause) =>
-      OpenCodeRuntime.isOpenCodeRuntimeError(cause)
-        ? cause
-        : new OpenCodeRuntime.OpenCodeRuntimeError({
-            operation: "model.list",
-            detail: "The OpenCode server could not list its models.",
-            cause,
-          }),
+    Effect.mapError(
+      (cause) =>
+        new OpenCodeRuntime.OpenCodeRuntimeError({
+          operation: "model.list",
+          detail: "The OpenCode server could not list its models.",
+          cause,
+        }),
     ),
   );
 

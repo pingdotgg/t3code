@@ -765,9 +765,9 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
               }),
             ),
           );
-        case "/api/debug/location":
         case "/api/plugin":
           return json(JSON.parse(OPENCODE_2_RESPONSES["/api/plugin"].body));
+        case "/api/debug/location":
           return json([]);
         case "/api/provider":
         case "/api/model":
