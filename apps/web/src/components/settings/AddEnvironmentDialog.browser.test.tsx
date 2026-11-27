@@ -279,6 +279,30 @@ describe("AddEnvironmentDialog", () => {
         .toBeInTheDocument();
       await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
     });
+
+    it("keeps showing its progress after another machine's attempt starts", async () => {
+      using _bridge = setup();
+      await using _screen = await render(<Owner />);
+      const finishFirst = holdPairing();
+
+      await startPairingAndDismiss();
+      const finishRoute = holdPairing();
+      await userEvent.click(page.getByRole("button", { name: "Add a route to Devbox" }));
+      await userEvent.fill(page.getByPlaceholder("backend.example.com"), "route.example.com");
+      await userEvent.fill(page.getByPlaceholder("PAIRCODE"), "PAIRCODE");
+      await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Add route" }));
+      await userEvent.keyboard("{Escape}");
+      await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+      await finishRoute(AsyncResult.failure(Cause.fail(new Error("route pairing timed out"))));
+
+      await userEvent.click(page.getByRole("button", { name: "Add environment" }));
+      await expect
+        .element(
+          page.getByRole("dialog").getByRole("button", { name: /Pairing with slow\.example\.com/ }),
+        )
+        .toBeDisabled();
+      await finishFirst(AsyncResult.success(undefined));
+    });
   });
 
   it("submits Remote link with Enter and explains a missing pairing code", async () => {

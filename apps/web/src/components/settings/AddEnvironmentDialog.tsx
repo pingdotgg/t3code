@@ -146,7 +146,9 @@ export function AddEnvironmentDialog({
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
   const [sshHostSuggestionsOpen, setSshHostSuggestionsOpen] = useState(false);
   const highlightedSshHostRef = useRef<DesktopDiscoveredSshHost | undefined>(undefined);
-  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [pendingActions, setPendingActions] = useState<
+    Readonly<Partial<Record<string, PendingAction>>>
+  >({});
   const savedBackendSessionRef = useRef(0);
   const dialogTarget = routeTarget
     ? `route:${routeTarget.environmentId}`
@@ -155,15 +157,20 @@ export function AddEnvironmentDialog({
       : "new";
   // A dismissed attempt keeps running, so reopening the dialog for its target shows it.
   // The dialog for any other target stays usable and never shows that attempt's host.
-  const visiblePendingAction = pendingAction?.target === dialogTarget ? pendingAction : null;
+  const visiblePendingAction = pendingActions[dialogTarget] ?? null;
   const isAddingSavedBackend = visiblePendingAction !== null;
   const startAttempt = (action: PendingActionKind): PendingAction => {
     const attempt = { ...action, target: dialogTarget, session: savedBackendSessionRef.current };
-    setPendingAction(attempt);
+    setPendingActions((current) => ({ ...current, [dialogTarget]: attempt }));
     return attempt;
   };
   const finishAttempt = (attempt: PendingAction) =>
-    setPendingAction((current) => (current === attempt ? null : current));
+    setPendingActions((current) => {
+      if (current[attempt.target] !== attempt) return current;
+      const rest = { ...current };
+      delete rest[attempt.target];
+      return rest;
+    });
   // Dismissing the dialog starts a new session; a late result then only shows a toast.
   const isAttemptOnScreen = (attempt: PendingAction) =>
     attempt.session === savedBackendSessionRef.current;
@@ -361,7 +368,18 @@ export function AddEnvironmentDialog({
       resolved = await desktopBridge.resolveSshHost(target.alias);
     } catch (error) {
       finishAttempt(attempt);
-      if (isAttemptOnScreen(attempt)) onErrorChange(formatDesktopSshConnectionError(error));
+      const message = formatDesktopSshConnectionError(error);
+      if (isAttemptOnScreen(attempt)) {
+        onErrorChange(message);
+      } else {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: gt("Could not add backend"),
+            description: message,
+          }),
+        );
+      }
       return;
     }
     finishAttempt(attempt);
