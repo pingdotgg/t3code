@@ -107,10 +107,13 @@ export function parsePullRequestQuery(raw: string): {
         break;
       default:
         if (!value.startsWith("/")) {
+          const namespace = `${qualifier?.[2] ?? ""}:`;
           const names = boundedNames(
-            splitQualifierList(qualifier?.[3] ?? "").map((name) =>
-              name.includes(":") ? name : `${qualifier?.[2] ?? ""}:${name}`,
-            ),
+            splitQualifierList(`${namespace}${qualifier?.[3] ?? ""}`)
+              .map((name, index) =>
+                index === 0 || name.includes(":") ? name : `${namespace}${name}`,
+              )
+              .filter((name, index) => index > 0 || name !== namespace),
           );
           if (names.length === 0) break;
           if (negated) excludedLabels.push(...names);

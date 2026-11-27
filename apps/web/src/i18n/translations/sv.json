@@ -758,9 +758,11 @@
   "8360d689ebc7f829": "Pusha och skapa {shortLabel} från standardgrenen?",
   "daa408bb99d21d18": "{kind, select, pr {Den här åtgärden pushar lokala commits och skapar en PR på ”{branch}”. Du kan fortsätta på den här grenen eller skapa en funktionsgren och köra samma åtgärd där.} mr {Den här åtgärden pushar lokala commits och skapar en MR på ”{branch}”. Du kan fortsätta på den här grenen eller skapa en funktionsgren och köra samma åtgärd där.} generic {Den här åtgärden pushar lokala commits och skapar en ändringsbegäran på ”{branch}”. Du kan fortsätta på den här grenen eller skapa en funktionsgren och köra samma åtgärd där.} other {Den här åtgärden pushar lokala commits och skapar {changeRequest} på ”{branch}”. Du kan fortsätta på den här grenen eller skapa en funktionsgren och köra samma åtgärd där.}}",
   "8471c4c5a50ffde3": "Det går inte att bläddra bland ärenden för den här värden än.",
-  "2f4a47129f89fe22": "Inte ansluten. Lägg till en personlig API-nyckel för att lista dess ärenden.",
+  "4a727b074bbbc5b2": "Inte ansluten. Lägg till din personliga API-nyckel för att lista dess ärenden.",
+  "b40c70c4488dcebe": "Inte ansluten. Lägg till din API-token för att lista dess ärenden.",
   "024baab60525a419": "Den sparade autentiseringsuppgiften avvisades.",
-  "2613c232516f3c72": "Ansluten som {account} · inga projekt länkade än. Välj ett team för ett projekt för att lista dess ärenden.",
+  "1e89798e3a9050c6": "Ansluten som {account} · inga projekt länkade än. Länka ett till ett Linear-team för att lista dess ärenden.",
+  "c3ab6f9e8b29fbf1": "Ansluten som {account} · inga projekt länkade än. Länka ett till ett Jira-projekt för att lista dess ärenden.",
   "77d07bfe2f8ee19d": "{count, plural, one {Ansluten som {account} · {count} projekt länkat} other {Ansluten som {account} · {count} projekt länkade}}",
   "3eb9a01099aaf799": "{count} s",
   "3618302947c280f0": "{count} min",
@@ -1576,6 +1578,8 @@
   "737d3c6bec93f9e6": "Välj filer för sidan",
   "e6a3fa7cfc14f86a": "Webbläsardialog",
   "61a552a67e9e3eac": "Dialogsvar",
+  "cb5c27218e96e407": "Användarnamn",
+  "182a659d70f8ea72": "Lösenord",
   "3d000b56e95f3150": "Släpp kontrollen",
   "0633c3bcdcb95b2f": "Ta kontrollen",
   "b8ba763621bcdd70": "Serverns webbläsare har läst in sidan men ritar inte upp den. Försök läsa in den igen, eller öppna sidan i en webbläsare på den här datorn.",
@@ -13043,5 +13047,8 @@
   "717c1c47a852a1a5": "Pausa uppläsningen",
   "0eceb5780908eb6c": "Läs upp",
   "3ee98da81538c6de": "Det gick inte att spela upp uppläsningen.",
-  "95435f0b59cb2193": "Ljudförhandsvisning"
+  "95435f0b59cb2193": "Ljudförhandsvisning",
+  "4a12506938295127": "Ange {field} först.",
+  "5807c08e225c6b3d": "Ladda ned",
+  "0d50b5bfe7151ece": "Det gick inte att ladda ned filen"
 }

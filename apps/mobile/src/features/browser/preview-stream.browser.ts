@@ -206,6 +206,9 @@ export function start(configuration: PreviewStreamConfiguration) {
         onControl: (nextControl) => {
           const previous = control;
           control = nextControl;
+          // An HTTP challenge can pause the page before it draws the first frame.
+          if (nextControl.dialog?.type === "auth" && !streaming && !stopped)
+            reportStatus("streaming");
           post({ type: "control", ...nextControl });
           if (nextControl.controller === "you") agentCursor.style.opacity = "0";
           if (nextControl.controller !== "you") clearInput();

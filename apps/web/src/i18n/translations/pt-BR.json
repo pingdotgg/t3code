@@ -758,9 +758,11 @@
   "8360d689ebc7f829": "Fazer push e criar {shortLabel} a partir do branch padrão?",
   "daa408bb99d21d18": "{kind, select, pr {Esta ação vai fazer push dos commits locais e criar um PR em \"{branch}\". Você pode continuar neste branch ou criar um branch de feature e executar a mesma ação nele.} mr {Esta ação vai fazer push dos commits locais e criar um MR em \"{branch}\". Você pode continuar neste branch ou criar um branch de feature e executar a mesma ação nele.} generic {Esta ação vai fazer push dos commits locais e criar uma solicitação de alteração em \"{branch}\". Você pode continuar neste branch ou criar um branch de feature e executar a mesma ação nele.} other {Esta ação vai fazer push dos commits locais e criar {changeRequest} em \"{branch}\". Você pode continuar neste branch ou criar um branch de feature e executar a mesma ação nele.}}",
   "8471c4c5a50ffde3": "Ainda não é possível navegar pelas issues deste host.",
-  "2f4a47129f89fe22": "Não conectado. Adicione uma chave de API pessoal para listar as issues.",
+  "4a727b074bbbc5b2": "Não conectado. Adicione sua chave de API pessoal para listar as issues.",
+  "b40c70c4488dcebe": "Não conectado. Adicione seu token de API para listar as issues.",
   "024baab60525a419": "A credencial salva foi recusada.",
-  "2613c232516f3c72": "Conectado como {account} · nenhum projeto vinculado ainda. Escolha uma equipe para um projeto para listar as issues dele.",
+  "1e89798e3a9050c6": "Conectado como {account} · nenhum projeto vinculado ainda. Vincule um a uma equipe do Linear para listar as issues dele.",
+  "c3ab6f9e8b29fbf1": "Conectado como {account} · nenhum projeto vinculado ainda. Vincule um a um projeto do Jira para listar as issues dele.",
   "77d07bfe2f8ee19d": "{count, plural, one {Conectado como {account} · {count} projeto vinculado} other {Conectado como {account} · {count} projetos vinculados}}",
   "3eb9a01099aaf799": "{count}s",
   "3618302947c280f0": "{count}min",
@@ -1576,6 +1578,8 @@
   "737d3c6bec93f9e6": "Escolher arquivos para a página",
   "e6a3fa7cfc14f86a": "Caixa de diálogo do navegador",
   "61a552a67e9e3eac": "Resposta da caixa de diálogo",
+  "cb5c27218e96e407": "Nome de usuário",
+  "182a659d70f8ea72": "Senha",
   "3d000b56e95f3150": "Liberar o controle",
   "0633c3bcdcb95b2f": "Assumir o controle",
   "b8ba763621bcdd70": "O navegador do servidor carregou esta página, mas não a está desenhando. Tente recarregar ou abra a página em um navegador neste computador.",
@@ -13036,5 +13040,8 @@
   "717c1c47a852a1a5": "Pausar narração",
   "0eceb5780908eb6c": "Ler em voz alta",
   "3ee98da81538c6de": "Não foi possível reproduzir a narração.",
-  "95435f0b59cb2193": "Prévia de áudio"
+  "95435f0b59cb2193": "Prévia de áudio",
+  "4a12506938295127": "Informe primeiro {field}.",
+  "5807c08e225c6b3d": "Baixar",
+  "0d50b5bfe7151ece": "Não foi possível baixar o arquivo"
 }
