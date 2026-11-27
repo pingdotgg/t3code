@@ -178,5 +178,33 @@ describe("ConnectionDriver", () => {
         expect(error).toBe(expected);
       }),
     );
+
+    it.effect("still tries a later silent direct route after the first one fails", () =>
+      Effect.gen(function* () {
+        const usable = new BearerConnectionTarget({ ...environment, connectionId: "usable" });
+        const connection = {
+          prepared: { target: usable } as PreparedConnection,
+          session: {} as RpcSession.RpcSession,
+        };
+        const lease = yield* ConnectionDriver.connectOverRoutes(
+          {
+            target: unreachable.target,
+            profile: Option.none(),
+            enabled: true,
+            alternateRoutes: [{ target: usable, profile: Option.none() }, relay],
+          },
+          (route) =>
+            Effect.succeed<ConnectionDriver.RouteCheck>(
+              route.target === relay.target ? "unchecked" : "silent",
+            ),
+          (route) =>
+            route.target === usable
+              ? Effect.succeed(connection)
+              : Effect.fail(route.target === relay.target ? relay.failure : unreachable.failure),
+        ).pipe(Effect.scoped);
+
+        expect(lease.prepared).toBe(connection.prepared);
+      }),
+    );
   });
 });

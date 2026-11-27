@@ -95,6 +95,8 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   const headStart = yield* Effect.forkChild(Effect.sleep(ROUTE_CHECK_HEAD_START_MS));
   const attemptScope = yield* Scope.Scope;
   let transient: ConnectionAttemptError | undefined;
+  // Kept when `transient` is set aside below, so a relay refusal never ends retries.
+  let firstTransient: ConnectionAttemptError | undefined;
   let blocked: ConnectionAttemptError | undefined;
   let tunnelDisabled: ConnectionAttemptError | undefined;
   const refusedRouteIds: Array<string> = [];
@@ -107,7 +109,10 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       Effect.result,
     );
     if (result._tag === "Failure") {
-      if (result.failure._tag === "ConnectionTransientError") transient ??= result.failure;
+      if (result.failure._tag === "ConnectionTransientError") {
+        transient ??= result.failure;
+        firstTransient ??= result.failure;
+      }
       // A publish-only relay cannot explain why a direct route failed.
       else if (result.failure.failureCause === "tunnel_not_enabled")
         tunnelDisabled ??= result.failure;
@@ -150,11 +155,12 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result._tag === "Success") return { ...result.success, refusedRouteIds };
     if (result.failure.reason === "unsupported") return yield* result.failure;
     // A route that never answered cannot explain why a host that answered refused.
-    if (neverAnswered && blocked !== undefined) transient = undefined;
+    if (neverAnswered && (blocked ?? tunnelDisabled) !== undefined) transient = undefined;
   }
   return yield* (
     transient ??
     blocked ??
+    firstTransient ??
     tunnelDisabled ??
     new ConnectionTransientError({
       reason: "endpoint-unavailable",
