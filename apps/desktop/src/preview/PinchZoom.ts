@@ -91,47 +91,57 @@ export const installPinchZoom = (
     apply(next);
   };
 
-  // Capture, so a page that stops the wheel's propagation without preventing it still zooms.
-  const watch = (frame: Window, frameOrigin: () => Point) => {
+  const watchedDocuments = new WeakSet<Document>();
+  // `toTop` maps a point in the frame's viewport to the top frame's layout viewport.
+  const watch = (frame: Window, toTop: (x: number, y: number) => Point) => {
+    if (watchedDocuments.has(frame.document)) return;
+    watchedDocuments.add(frame.document);
+    // Capture, so a page that stops the wheel's propagation without preventing it still zooms.
     frame.addEventListener(
       "wheel",
       (event) => {
         if (!event.isTrusted || !event.ctrlKey) return;
-        const origin = frameOrigin();
-        pinches.push({ event, x: origin.x + event.clientX, y: origin.y + event.clientY });
+        pinches.push({ event, ...toTop(event.clientX, event.clientY) });
         if (frameScheduled) return;
         frameScheduled = true;
         scheduleFrame(flush);
       },
       { capture: true, passive: true },
     );
-    // Wheels over a same-origin frame stay in its document, so each one is watched too. Load
-    // events stop at the document, never reaching the window.
+    // Wheels over a same-origin frame stay in its document, so each one is watched too.
+    const watchIframe = (element: HTMLIFrameElement) => {
+      let child: Window | null;
+      try {
+        child = element.contentWindow;
+        if (!child?.document) return;
+      } catch {
+        return;
+      }
+      watch(child, (x, y) => {
+        const rect = element.getBoundingClientRect();
+        const style = frame.getComputedStyle(element);
+        // A CSS transform can draw the frame at a different size than its layout box.
+        const scaleX = element.offsetWidth > 0 ? rect.width / element.offsetWidth : 1;
+        const scaleY = element.offsetHeight > 0 ? rect.height / element.offsetHeight : 1;
+        return toTop(
+          rect.left + (element.clientLeft + Number.parseFloat(style.paddingLeft) + x) * scaleX,
+          rect.top + (element.clientTop + Number.parseFloat(style.paddingTop) + y) * scaleY,
+        );
+      });
+    };
+    // Load events stop at the document, never reaching the window.
     frame.document.addEventListener(
       "load",
       (event) => {
         const element = event.target as HTMLIFrameElement | null;
-        if (element?.nodeName !== "IFRAME") return;
-        let child: Window | null;
-        try {
-          child = element.contentWindow;
-          if (!child?.document) return;
-        } catch {
-          return;
-        }
-        watch(child, () => {
-          const parent = frameOrigin();
-          const rect = element.getBoundingClientRect();
-          return {
-            x: parent.x + rect.left + element.clientLeft,
-            y: parent.y + rect.top + element.clientTop,
-          };
-        });
+        if (element?.nodeName === "IFRAME") watchIframe(element);
       },
       true,
     );
+    // A nested frame can finish loading before its parent frame is watched.
+    for (const element of frame.document.querySelectorAll("iframe")) watchIframe(element);
   };
-  watch(target, () => ({ x: 0, y: 0 }));
+  watch(target, (x, y) => ({ x, y }));
 
   return {
     reset: () => {

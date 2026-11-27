@@ -36,17 +36,39 @@ interface FakeWheel {
   defaultPrevented: boolean;
 }
 
-const makeFrame = () => {
+interface FakeFrame {
+  readonly document: {
+    readonly addEventListener: (type: string, next: (event: unknown) => void) => void;
+    readonly querySelectorAll: () => unknown[];
+  };
+  readonly addEventListener: (type: string, next: (event: unknown) => void) => void;
+  readonly getComputedStyle: () => { paddingLeft: string; paddingTop: string };
+  readonly emit: (type: string, event: unknown) => void;
+}
+
+const makeFrame = (iframes: unknown[] = []): FakeFrame => {
   const listeners = new Map<string, (event: unknown) => void>();
   const listen = (type: string, next: (event: unknown) => void) => {
     listeners.set(type, next);
   };
   return {
-    document: { addEventListener: listen },
+    document: { addEventListener: listen, querySelectorAll: () => iframes },
     addEventListener: listen,
-    emit: (type: string, event: unknown) => listeners.get(type)?.(event),
+    getComputedStyle: () => ({ paddingLeft: "0px", paddingTop: "0px" }),
+    emit: (type, event) => listeners.get(type)?.(event),
   };
 };
+
+/** An iframe element laid out at 200x100 with a 2px border, drawn at `scale`. */
+const makeIframe = (contentWindow: FakeFrame, left: number, top: number, scale = 1) => ({
+  nodeName: "IFRAME",
+  contentWindow,
+  clientLeft: 2,
+  clientTop: 2,
+  offsetWidth: 200,
+  offsetHeight: 100,
+  getBoundingClientRect: () => ({ left, top, width: 200 * scale, height: 100 * scale }),
+});
 
 const makePage = () => {
   const frame = makeFrame();
@@ -61,7 +83,7 @@ const makePage = () => {
     (callback) => frames.push(callback),
     () => time,
   );
-  const pinch = (deltaY: number, init: Partial<FakeWheel> = {}, inFrame = frame) => {
+  const pinch = (deltaY: number, init: Partial<FakeWheel> = {}, inFrame: FakeFrame = frame) => {
     const event: FakeWheel = {
       isTrusted: true,
       ctrlKey: true,
@@ -92,17 +114,8 @@ const makePage = () => {
   const wait = (ms: number) => {
     time += ms;
   };
-  const loadIframe = (left: number, top: number) => {
-    const child = makeFrame();
-    frame.emit("load", {
-      target: {
-        nodeName: "IFRAME",
-        contentWindow: child,
-        clientLeft: 2,
-        clientTop: 2,
-        getBoundingClientRect: () => ({ left, top }),
-      },
-    });
+  const loadIframe = (child: FakeFrame, left: number, top: number, scale = 1) => {
+    frame.emit("load", { target: makeIframe(child, left, top, scale) });
     return child;
   };
   return { pinch, runFrames, requests, showZoom, wait, pinchZoom, loadIframe };
@@ -164,9 +177,26 @@ describe("installPinchZoom", () => {
 
   it("anchors a pinch over a same-origin frame at the pointer in the page", () => {
     const page = makePage();
-    const child = page.loadIframe(100, 50);
+    const child = page.loadIframe(makeFrame(), 100, 50);
     page.pinch(-100, { clientX: 8, clientY: 18 }, child);
     page.runFrames();
     expect(page.requests[0]).toEqual(zoomPage(UNZOOMED, Math.E, 110, 70, 1000, 800));
+  });
+
+  it("maps a pointer through an iframe drawn smaller than its layout size", () => {
+    const page = makePage();
+    const child = page.loadIframe(makeFrame(), 100, 50, 0.5);
+    page.pinch(-100, { clientX: 78, clientY: 38 }, child);
+    page.runFrames();
+    expect(page.requests[0]).toEqual(zoomPage(UNZOOMED, Math.E, 140, 70, 1000, 800));
+  });
+
+  it("watches a nested frame that loaded before its parent frame", () => {
+    const page = makePage();
+    const grandchild = makeFrame();
+    page.loadIframe(makeFrame([makeIframe(grandchild, 10, 20)]), 100, 50);
+    page.pinch(-100, { clientX: 8, clientY: 8 }, grandchild);
+    page.runFrames();
+    expect(page.requests[0]).toEqual(zoomPage(UNZOOMED, Math.E, 122, 82, 1000, 800));
   });
 });
