@@ -41,6 +41,7 @@ export const EMPTY_TERMINAL_OUTPUT: TerminalOutputState = {
 export const TERMINAL_OUTPUT_TAIL_CHARS = 64 * 1024;
 
 const LIVE_LINES = 64;
+const TAB_STOP_COLUMNS = 8;
 
 const MAX_PENDING_ESCAPE = 64;
 
@@ -605,13 +606,15 @@ class Terminal {
     };
     for (let index = 0; index < input.length; index += 1) {
       const code = input.charCodeAt(index);
-      if (code === 0x09 || (code >= 0x20 && code !== 0x7f && (code < 0x80 || code > 0x9f))) {
+      if (code >= 0x20 && code !== 0x7f && (code < 0x80 || code > 0x9f)) {
         continue;
       }
       flush(index);
       printable = index + 1;
       if (code === 0x0a) this.newline();
-      else if (code === 0x0d) this.col = 0;
+      else if (code === 0x09) {
+        this.moveTo(this.row, this.col + TAB_STOP_COLUMNS - (this.col % TAB_STOP_COLUMNS));
+      } else if (code === 0x0d) this.col = 0;
       else if (code === 0x08) this.col = Math.max(0, this.col - 1);
       else if (code === 0x1b) {
         const length = escapeLength(input, index);
