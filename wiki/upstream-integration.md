@@ -6,20 +6,20 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.2-astra
-  at: 2026-11-27T17:07:38+00:00
+  at: 2026-11-27T17:11:12+00:00
 verified:
   - by: opencode/gpt-6.2-astra
-    at: 2026-11-27T17:07:38+00:00
+    at: 2026-11-27T17:11:12+00:00
 snapshot:
-  at: 2026-11-27T17:07:38+00:00
+  at: 2026-11-27T17:11:12+00:00
   fork_main: abb5cd695b146401da7a6b9596571a0615803e0f
-  upstream_main: 57561ba820f0dc0a5761585c972a310b99554cca
+  upstream_main: f771ee89a4f9553647a802c175f68421c19a5000
   shared_baseline: f28ced81b36027597c2fe45a1cc271e880975451
   last_main_integration: abb5cd695b146401da7a6b9596571a0615803e0f
   last_main_upstream: f28ced81b36027597c2fe45a1cc271e880975451
-  missing_upstream_on_main: 325
-  branch_integration: 4d430deb0e5674a524ec4e9aea33c37a4f0fae04
-  branch_code_tip: 2965030b6826e2b941f43515d3b01d4b043502e0
+  missing_upstream_on_main: 328
+  branch_integration: b6edcc3b23b30293d2b7ed6a73848cd2365d33f8
+  branch_code_tip: b24873ea193bd7830be12ddf5accb88253c85413
   missing_upstream_on_branch: 0
 sources:
   - id: upstream-nov23-policy
@@ -446,7 +446,7 @@ sources:
 
 # Upstream integration
 
-The November 27 candidate merges [upstream `57561ba820`](https://github.com/pingdotgg/t3code/commit/57561ba820f0dc0a5761585c972a310b99554cca) into fork main `abb5cd695b`, incorporating 325 commits. Mobile uses upstream’s paginated branch list but distinguishes a project checkout from an explicitly selected worktree. Shortcut search retains ranked results and recognizes upstream’s displayed platform labels.
+The November 27 candidate merges [upstream `f771ee89a4`](https://github.com/pingdotgg/t3code/commit/f771ee89a4f9553647a802c175f68421c19a5000) into fork main `abb5cd695b`, incorporating 328 commits. Jujutsu can reuse a captured baseline after a steered message, while workspaces with submodules fall back to a fresh snapshot. Mobile uses upstream’s paginated branch list but distinguishes a project checkout from an explicitly selected worktree. Shortcut search retains ranked results and recognizes upstream’s displayed platform labels.
 
 ## November 26 sync
 
