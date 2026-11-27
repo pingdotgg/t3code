@@ -14,6 +14,8 @@ function hasSpacedDestinationAfterBracket(source: string): boolean {
       for (; index < source.length; index += 1) {
         const ch = source[index]!;
         if (ch === "\r" || ch === "\n") break;
+        // The next `](` starts its own candidate; stopping here keeps the scan linear.
+        if (ch === "]" && source[index + 1] === "(") break;
         if (ch === " " || ch === "\t") {
           sawSpace = true;
         } else if (ch === "(") {

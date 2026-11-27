@@ -590,6 +590,8 @@ export function spacedFilePathDestinationEnd(
     ) {
       return null;
     }
+    // A later `](` is scanned as its own candidate, so giving up here keeps scans linear.
+    if (char === "]" && markdown[index + 1] === "(") return null;
     if (char === "\\" && !isWindows) {
       const next = markdown[index + 1];
       if (next === undefined || next === "\r" || next === "\n") return null;
