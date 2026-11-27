@@ -189,6 +189,21 @@ const mailAddress = (address: SignalAddress) =>
       ? ["run", address.runId, address.wait]
       : ["key", address.workflow, address.channel],
   );
+// Exclusive UTF-8/Unicode successor of `prefix`, or null when no string can sort after all matches.
+const prefixUpperBound = (prefix: string): string | null => {
+  const normalized = prefix.toWellFormed();
+  for (let i = normalized.length; i > 0;) {
+    const prev = normalized.charCodeAt(i - 1);
+    const start = prev >= 0xdc00 && prev <= 0xdfff ? i - 2 : i - 1;
+    const codePoint = normalized.codePointAt(start);
+    if (codePoint !== undefined && codePoint < 0x10ffff) {
+      const next = codePoint === 0xd7ff ? 0xe000 : codePoint + 1;
+      return `${normalized.slice(0, start)}${String.fromCodePoint(next)}`;
+    }
+    i = start;
+  }
+  return null;
+};
 
 export class WorkflowStore extends Context.Service<
   WorkflowStore,
@@ -1414,14 +1429,17 @@ export const make = Effect.gen(function* () {
     }),
     runsWhere: Effect.fn("WorkflowStore.runsWhere")(function* (filter) {
       const prefix = filter.keyPrefix ?? null;
+      const prefixEnd = prefix === null ? null : prefixUpperBound(prefix);
       // Only the filters given, so SQLite can use an index for them.
       const where = sql.and([
         ...(filter.workflow === undefined ? [] : [sql`workflow = ${filter.workflow}`]),
         ...(filter.status === undefined ? [] : [sql`status = ${filter.status}`]),
         // A range, not LIKE, which would read `%` and `_` in a key as patterns.
-        ...(prefix === null
+        ...(prefix === null || prefix === ""
           ? []
-          : [sql`idempotency_key >= ${prefix} AND idempotency_key < ${`${prefix}\u{10FFFF}`}`]),
+          : prefixEnd === null
+            ? [sql`idempotency_key >= ${prefix}`]
+            : [sql`idempotency_key >= ${prefix} AND idempotency_key < ${prefixEnd}`]),
         ...(filter.skippedTopLevel === undefined
           ? []
           : filter.skippedTopLevel
