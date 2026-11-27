@@ -1665,9 +1665,9 @@ it.each(["archive", "sqlite"] as const)(
 );
 
 it("loads a font attachment through the lazy preview", async () => {
-  const { default: fontUrl } =
-    await import("../../../node_modules/@betteroffice/fonts/assets/Carlito-Regular.ttf?url");
-  const file = await (await fetch(fontUrl)).blob();
+  const { loadBundledFontBytes, resolveBundledFamilyFace } = await import("@betteroffice/fonts");
+  const bytes = await loadBundledFontBytes(resolveBundledFamilyFace("Carlito", false, false)!);
+  const file = new Blob([bytes], { type: "font/ttf" });
   await using screen = await render(
     <AttachmentFilePreview
       name="Carlito.ttf"
@@ -2334,9 +2334,17 @@ it("renders EPUB publisher styles and follows an anchored link to a fixed-layout
   function frame() {
     return screen.container.querySelector("iframe");
   }
+  // The cold worker parse takes most of a second; wait for the frame's onLoad pass before asserting.
+  await vi.waitFor(
+    () => {
+      const doc = frame()?.contentDocument;
+      expect(doc?.body.dir).toBe("rtl");
+      expect(doc?.querySelector("epub-nested-link")).toBeNull();
+    },
+    { timeout: 10_000 },
+  );
   await vi.waitFor(() => {
     const doc = frame()?.contentDocument;
-    expect(doc?.body.dir).toBe("rtl");
     expect(doc?.querySelector("pre")?.textContent).toBe("\n      npm test");
     expect(doc?.getElementById("pagebreak")?.textContent).toBe("");
     const caption = doc?.querySelector("#caption > a");

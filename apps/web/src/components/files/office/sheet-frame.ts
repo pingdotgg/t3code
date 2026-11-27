@@ -109,21 +109,6 @@ function reaching(
   };
 }
 
-/** The engine's screen gridlines: one-pixel solid lines in its gridline grey, unlike any border it draws. */
-const gridline = (command: DisplayList["commands"][number]) =>
-  command.op === "line" && command.color === "#d4d4d4" && command.width === 1 && !command.style;
-
-/** A frame without the gridlines the engine draws on every sheet, for a sheet whose view hides them. */
-export function withoutGridlines(frame: Frame): Frame {
-  return {
-    ...frame,
-    tiles: frame.tiles.map((tile) => ({
-      ...tile,
-      list: { ...tile.list, commands: tile.list.commands.filter((command) => !gridline(command)) },
-    })),
-  };
-}
-
 /**
  * A frame whose chart text names real fonts. The engine leaves the theme's `+mj-lt` and `+mn-lt` in chart text and the
  * painter sets chart families as CSS as they are, so an unresolved or missing family would keep the previous font.

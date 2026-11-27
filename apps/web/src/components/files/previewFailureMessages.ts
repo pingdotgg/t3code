@@ -98,7 +98,6 @@ const PREVIEW_FAILURE_MESSAGES = {
   "workbook-cell-metadata": msg("This workbook contains invalid cell metadata."),
   "workbook-no-data": msg("This workbook has no worksheet data."),
   "workbook-duplicate-styles": msg("This workbook contains duplicate stylesheet blocks."),
-  "workbook-number-formats": msg("This workbook has too many custom number formats."),
   "workbook-sheet-count": msg("This workbook has invalid or too many sheets."),
   "workbook-missing-sheet": msg("This workbook has a missing worksheet."),
   "office-too-large-expanded": msg("The expanded document is too large to preview safely."),

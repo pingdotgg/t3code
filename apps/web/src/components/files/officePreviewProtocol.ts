@@ -5,10 +5,10 @@ export const OFFICE_PREVIEW_MAX_BYTES = 50 * 1024 * 1024;
 export const OFFICE_PREVIEW_MAX_ROWS = 250_000;
 export const OFFICE_PREVIEW_MAX_COLUMNS = 1024;
 
-/** What a workbook's views ask of the preview that its engine does not read. */
+/** Workbook settings used by the preview worker. */
 export type WorkbookView = {
-  /** The sheets, by index in workbook order, whose view hides gridlines. */
-  readonly hiddenGridlines: readonly number[];
+  /** The default cell style's widest digit, in CSS pixels. */
+  readonly digitWidth: number;
   /** The theme's heading and body fonts, which chart text names as `+mj-lt` and `+mn-lt`. */
   readonly themeFonts: { readonly major: string; readonly minor: string };
 };
