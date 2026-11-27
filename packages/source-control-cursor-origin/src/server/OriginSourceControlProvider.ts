@@ -221,12 +221,32 @@ export const make = Effect.gen(function* () {
 
     getRepositoryCloneUrls: Effect.fn("OriginSourceControlProvider.getRepositoryCloneUrls")(
       function* (input) {
+        const repositoryName = OriginCli.parseOriginRepository(input.repository);
+        if (repositoryName === null) {
+          const detail = "Specify an Origin repository as owner/name or a Cursor Origin URL.";
+          return yield* new OriginCli.OriginCliError({
+            operation: "getRepositoryCloneUrls",
+            cwd: input.cwd,
+            reason: "failed",
+            detail,
+            userFacingDetail: detail,
+          });
+        }
         const repository = yield* getRepository(
           input.cwd,
-          input.repository,
+          repositoryName,
           "getRepositoryCloneUrls",
+        ).pipe(
+          Effect.mapError((error) =>
+            error.reason === "not-found"
+              ? new OriginCli.OriginCliError({
+                  ...error,
+                  userFacingDetail: SourceControlProvider.repositoryNotFoundDetail(repositoryName),
+                })
+              : error,
+          ),
         );
-        return cloneUrls(repository, input.repository);
+        return cloneUrls(repository, repositoryName);
       },
       (effect, input) =>
         effect.pipe(
