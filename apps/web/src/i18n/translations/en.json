@@ -5709,6 +5709,7 @@
   "76ebb03de52c92d6": "The text viewer stopped.",
   "f48162e8e8c12af7": "Could not load the text viewer. Close the file and try again.",
   "bc4c5b13d38a5da7": "Preview closed.",
+  "0e573160f73e19bc": "The file is unavailable.",
   "6ad6c8fbb630657d": "The file is unavailable.",
   "9450d1827ef336a1": "Another copy is in progress.",
   "8f48999eb6d9e2e3": "{count, plural, one {{formatted} line} other {{formatted} lines}}",
