@@ -22,6 +22,7 @@ export function mediaTime(value: string | undefined): number | undefined {
 
 const nptTime = /^(?:(?:\d+:)?[0-5]\d:[0-5]\d|\d+)(?:\.\d*)?$/;
 const ttmlContent = new Set(["ttml:tt", "ttml:body", "ttml:div", "ttml:p"]);
+const ttmlParameters = "{http://www.w3.org/ns/ttml#parameter}";
 
 export function mediaFragment(href: string) {
   const hash = href.indexOf("#");
@@ -51,6 +52,23 @@ function vttTime(seconds: number) {
 }
 
 export function ttmlCaptions(root: XmlNode) {
+  const document =
+    root.name === "ttml:tt" ? root : root.children.find((node) => node.name === "ttml:tt");
+  const rate = document?.attrs[ttmlParameters + "frameRate"]?.trim() ?? "30";
+  const multiplier = document?.attrs[ttmlParameters + "frameRateMultiplier"]?.trim() ?? "1 1";
+  const ratio = /^(\d+)\s+(\d+)$/.exec(multiplier);
+  const frameRate = /^\d+$/.test(rate)
+    ? Number(rate) * (Number(ratio?.[1]) / Number(ratio?.[2]))
+    : NaN;
+
+  function captionTime(value: string | undefined) {
+    const frames = /^(\d+(?:\.\d+)?)f$/.exec(value?.trim() ?? "");
+    if (!frames) return mediaTime(value);
+    if (!Number.isFinite(frameRate) || frameRate <= 0) return;
+    const seconds = Number(frames[1]) / frameRate;
+    if (Number.isFinite(seconds * 1000)) return seconds;
+  }
+
   const cues: string[] = [];
   function captionText(node: XmlNode): string {
     if (node.name === "ttml:br") return "\n";
@@ -58,9 +76,9 @@ export function ttmlCaptions(root: XmlNode) {
     return node.children.map(captionText).join("");
   }
   function visit(node: XmlNode, start: number, end: number): number {
-    const begin = start + (mediaTime(node.attrs.begin) ?? 0);
-    const until = mediaTime(node.attrs.end);
-    const duration = mediaTime(node.attrs.dur);
+    const begin = start + (captionTime(node.attrs.begin) ?? 0);
+    const until = captionTime(node.attrs.end);
+    const duration = captionTime(node.attrs.dur);
     const finish = Math.min(
       end,
       until === undefined ? Infinity : start + until,
