@@ -1,4 +1,7 @@
-import { recognizeRemoteWith } from "@t3tools/source-control-core/shared/definition";
+import {
+  parseGitRemoteHost,
+  recognizeRemoteWith,
+} from "@t3tools/source-control-core/shared/definition";
 import { describe, expect, it } from "vite-plus/test";
 
 import { definition } from "./definition.ts";
@@ -137,6 +140,25 @@ describe("GitHub remotes", () => {
     expect(recognize("https://ghe.com/owner/repo.git")).toBeNull();
     expect(recognize("https://notgithub.example.com/owner/repo.git")).toBeNull();
   });
+
+  it("reads the host ssh connects to for SCP logins, but not Git's bracketed forms", () => {
+    for (const url of [
+      "alice+ci@github.com:owner/repo.git",
+      "alice@corp.example@github.com:owner/repo.git",
+    ]) {
+      expect(recognize(url)?.baseUrl, url).toBe("https://github.com");
+    }
+    for (const url of [
+      "@github.com:owner/repo.git",
+      "alice@[work]@github.com:owner/repo.git",
+      "[git@git.internal]@github.com:repo@[x",
+      "-oProxyCommand=x@github.com:owner/repo.git",
+      "git@github.com:-x",
+    ]) {
+      expect(recognize(url), url).toBeNull();
+    }
+    expect(parseGitRemoteHost("alice+ci@[2001:db8::1]:team/repo.git")).toBeNull();
+  });
 });
 
 describe("GitHub media URLs", () => {
@@ -148,7 +170,7 @@ describe("GitHub media URLs", () => {
     ).toEqual({
       fetchUrl: "https://github.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c",
       fileName: "1a1842fb-6383-492f-873c-57aa0033fa6c",
-      kind: "video",
+      kind: "unknown",
       immutable: true,
     });
     expect(media("https://github.com/owner/repo/blob/main/docs/shot.png")).toEqual({

@@ -268,4 +268,27 @@ describe("Logger", () => {
 
       assert.deepStrictEqual(events, ["start:first", "end:first", "start:second", "end:second"])
     }))
+
+  it.effect("runs Logger.make synchronously in the logging fiber and defects on throw", () =>
+    Effect.gen(function*() {
+      const sentinel = new Error("logger failed")
+      const events: Array<string> = []
+      const logger = Logger.make<unknown, void>((options) => {
+        const message = String(options.message)
+        events.push(`log:${options.fiber.id}:${message}`)
+        if (message === "boom") {
+          throw sentinel
+        }
+      })
+
+      yield* Effect.gen(function*() {
+        const id = yield* Effect.fiberId
+        yield* Effect.log("ok")
+        events.push("after-ok")
+        const exit = yield* Effect.exit(Effect.log("boom"))
+
+        assert.deepStrictEqual(events, [`log:${id}:ok`, "after-ok", `log:${id}:boom`])
+        assert.deepStrictEqual(exit, Exit.die(sentinel))
+      }).pipe(Effect.provide(Logger.layer([logger])))
+    }))
 })

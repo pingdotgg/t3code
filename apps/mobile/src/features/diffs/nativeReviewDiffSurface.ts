@@ -100,6 +100,11 @@ export interface NativeReviewDiffStyle {
   readonly fileHeaderPathRightPadding?: number;
   readonly fileHeaderCountColumnWidth?: number;
   readonly fileHeaderCountGap?: number;
+  /** Family names as React Native takes them; a system family name selects the platform font. */
+  readonly codeFontFamily?: string;
+  readonly uiFontFamily?: string;
+  /** Android only: bundled families register one file per name, so bold needs its own. */
+  readonly uiBoldFontFamily?: string;
   readonly codeFontSize?: number;
   readonly codeFontWeight?: string;
   readonly lineNumberFontSize?: number;

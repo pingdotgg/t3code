@@ -339,6 +339,38 @@ function shiftedOrdinals(
   return shifted;
 }
 
+function historyTruncatedEvent(input: {
+  readonly threadId: ThreadId;
+  readonly at: DateTime.Utc;
+  readonly omittedMessageCount: number;
+}): OrchestrationV2DomainEvent {
+  const { threadId, at, omittedMessageCount } = input;
+  return {
+    id: EventId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
+    type: "turn-item.updated",
+    threadId,
+    occurredAt: at,
+    payload: {
+      id: TurnItemId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed",
+      title: null,
+      startedAt: at,
+      completedAt: at,
+      updatedAt: at,
+      type: "system_notice",
+      message: `${omittedMessageCount} earlier ${omittedMessageCount === 1 ? "message was" : "messages were"} not imported. This thread keeps the first user message and the most recent history. The original session transcript is unchanged.`,
+    },
+  };
+}
+
 const make = Effect.gen(function* () {
   const scanner = yield* AgentSessionScanner.AgentSessionScanner;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -450,9 +482,6 @@ const make = Effect.gen(function* () {
           // Pi resumes by session file path; its session UUID only names the thread.
           const nativeThreadId =
             thread.source === "pi" ? source.filePath : thread.providerSessionId;
-          const truncatedHistoryId = TurnItemId.make(
-            `${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`,
-          );
           const persistRuntime = runtimes.upsert(
             {
               threadId,
@@ -471,8 +500,8 @@ const make = Effect.gen(function* () {
             { onConflict: "ignore" },
           );
           const existing = yield* orchestrator
-            .getThreadRecords(threadId, ["messages", "turnItems"], {
-              turnItemTypes: ["user_message", "assistant_message", "system_notice"],
+            .getThreadRecords(threadId, ["messages", "runs", "turnItems"], {
+              turnItemTypes: ["user_message", "assistant_message"],
             })
             .pipe(
               Effect.asSome,
@@ -482,7 +511,7 @@ const make = Effect.gen(function* () {
               ),
             );
           if (Option.isSome(existing)) {
-            const { thread: current, messages, turnItems } = existing.value;
+            const { thread: current, messages, runs, turnItems } = existing.value;
             if (current.projectId !== input.projectId) {
               return yield* new AgentSessionThreadProjectConflictError({
                 threadId,
@@ -493,62 +522,47 @@ const make = Effect.gen(function* () {
             if (current.historyOrigin !== "v1_import") {
               return yield* new AgentSessionThreadModifiedError({ threadId });
             }
-            const stored = turnItems.filter(
+            const orderedItems = turnItems.filter(
               (item) => item.type === "user_message" || item.type === "assistant_message",
             );
-            if (
-              stored.length !== messages.length ||
-              stored.some(
-                (item, index) =>
-                  (item.type === "user_message" ? "user" : "assistant") !==
-                    thread.messages[index]?.role || item.text !== thread.messages[index]?.text,
-              )
-            ) {
-              return false;
-            }
-            const appended = thread.messages.slice(stored.length);
-            if (appended.length > 0) {
-              if (
-                thread.source !== "codex" ||
-                thread.omittedMessageCount > 0 ||
-                stored.length === 0 ||
-                current.deletedAt !== null ||
-                stored.some((message) => message.runId !== null)
-              ) {
-                return false;
-              }
-              // Imported items are ordered before local runs, so only extend an intact import.
-              const { runs, providerThreads } = yield* orchestrator.getThreadRecords(threadId, [
-                "runs",
-                "providerThreads",
-              ]);
-              const owner = providerThreads.find(
-                (providerThread) =>
-                  providerThread.id === current.activeProviderThreadId &&
-                  providerThread.appThreadId === threadId &&
-                  providerThread.driver === driver &&
-                  providerThread.providerInstanceId === thread.providerInstanceId &&
-                  providerThread.nativeThreadRef?.nativeId === nativeThreadId,
-              );
-              if (
-                owner === undefined ||
-                runs.length > 0 ||
-                turnItems.some((item) => item.id === truncatedHistoryId)
-              ) {
-                return false;
-              }
-              const committed = yield* eventSink.write({
-                unlessNativeThreadOwned: owner,
-                events: appended.flatMap((message, index) =>
-                  messageEvents({ threadId, index: stored.length + index, message }),
+            // Turn items preserve transcript order when message timestamps disagree.
+            const stored =
+              orderedItems.length === messages.length
+                ? orderedItems.map((item) => ({
+                    role: item.type === "user_message" ? "user" : "assistant",
+                    text: item.text,
+                  }))
+                : messages;
+            const changed = thread.messages.flatMap((message, index) =>
+              stored[index]?.role === message.role && stored[index]?.text === message.text
+                ? []
+                : messageEvents({ threadId, index, message }),
+            );
+            if (changed.length > 0 || stored.length !== thread.messages.length) {
+              if (runs.length > 0 || stored.length > thread.messages.length) return false;
+              const events = [
+                ...(thread.omittedMessageCount > 0
+                  ? [
+                      historyTruncatedEvent({
+                        threadId,
+                        at: current.createdAt,
+                        omittedMessageCount: thread.omittedMessageCount,
+                      }),
+                    ]
+                  : []),
+                ...changed,
+              ];
+              // Import event ids name a message slot, and a slot's later revisions need their own.
+              yield* eventSink.write({
+                events: yield* Effect.forEach(events, (event) =>
+                  Effect.map(idAllocator.allocate.event({ threadId }), (id) => ({ ...event, id })),
                 ),
               });
-              if (committed.length === 0) return false;
             }
             yield* persistRuntime;
             yield* runtimes.recordImportedTranscript({ threadId, source });
             importedThreadIds.add(threadId);
-            return appended.length > 0 ? true : null;
+            return null;
           }
 
           const model = thread.model ?? DEFAULT_MODEL_BY_PROVIDER[driver] ?? DEFAULT_MODEL;
@@ -631,30 +645,11 @@ const make = Effect.gen(function* () {
               },
               ...(thread.omittedMessageCount > 0
                 ? [
-                    {
-                      id: EventId.make(truncatedHistoryId),
-                      type: "turn-item.updated" as const,
+                    historyTruncatedEvent({
                       threadId,
-                      occurredAt: createdAt,
-                      payload: {
-                        id: truncatedHistoryId,
-                        threadId,
-                        runId: null,
-                        nodeId: null,
-                        providerThreadId: null,
-                        providerTurnId: null,
-                        nativeItemRef: null,
-                        parentItemId: null,
-                        ordinal: 0,
-                        status: "completed" as const,
-                        title: null,
-                        startedAt: createdAt,
-                        completedAt: createdAt,
-                        updatedAt: createdAt,
-                        type: "system_notice" as const,
-                        message: `${thread.omittedMessageCount} earlier ${thread.omittedMessageCount === 1 ? "message was" : "messages were"} not imported. This thread keeps the first user message and the most recent history. The original session transcript is unchanged.`,
-                      },
-                    },
+                      at: createdAt,
+                      omittedMessageCount: thread.omittedMessageCount,
+                    }),
                   ]
                 : []),
               ...thread.messages.flatMap((message, index) =>

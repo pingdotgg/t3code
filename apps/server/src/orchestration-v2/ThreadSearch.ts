@@ -660,21 +660,22 @@ export const make = Effect.gen(function* () {
         },
       ]),
     );
-    const titleHits: ThreadSearchHit[] = rankSearchItems(candidates, (row, options) =>
+    const titleRanked = rankSearchItems(candidates, (row, options) =>
       // An agent's search has no use for the user's palette picks.
       scoreThreadSearch(normalizedQuery, subjectById.get(row.thread.id)!, now, {
         ...options,
         picks: false,
       }),
-    )
-      .slice(0, limit)
-      .map(({ item }) => ({
-        threadId: item.thread.id,
-        projectId: item.thread.projectId,
-        title: item.thread.title,
-        source: "title",
-      }));
-    const shown = new Set(titleHits.map((hit) => hit.threadId));
+    );
+    const titleHits: ThreadSearchHit[] = titleRanked.slice(0, limit).map(({ item }) => ({
+      threadId: item.thread.id,
+      projectId: item.thread.projectId,
+      title: item.thread.title,
+      source: "title",
+    }));
+    // The message slots are for threads the titles miss: a weaker title match
+    // found again by its messages would push out a better one.
+    const shown = new Set(titleRanked.map(({ item }) => item.thread.id));
     const { matches } = yield* searchMessages({
       query: input.query,
       limit: 50,
