@@ -1,5 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { isPrivateNetworkHost, isPublicFaviconHost } from "@t3tools/shared/hostClassification";
+import { isPrivateNetworkHost } from "@t3tools/shared/hostClassification";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const readPreparedConnection = vi.fn();
@@ -122,79 +122,5 @@ describe("browser target resolver", () => {
     ];
     expect(privateHosts.filter((host) => !isPrivateNetworkHost(host))).toEqual([]);
     expect(publicHosts.filter(isPrivateNetworkHost)).toEqual([]);
-  });
-
-  it("allows only globally routable hosts to reach a public favicon provider", async () => {
-    const nonPublic = [
-      "192.0.0.0",
-      "192.0.0.255",
-      "192.0.2.0",
-      "192.0.2.255",
-      "192.88.99.0",
-      "192.88.99.255",
-      "198.51.100.0",
-      "198.51.100.255",
-      "203.0.113.0",
-      "203.0.113.255",
-      "224.0.0.0",
-      "255.255.255.255",
-      "::2",
-      "100::",
-      "100::ffff:ffff:ffff:ffff",
-      "100:0:0:1::",
-      "100:0:0:1:ffff:ffff:ffff:ffff",
-      "64:ff9b:1::1",
-      "64:ff9b::a00:1",
-      "64:ff9b::7f00:1",
-      "64:ff9b::c0a8:101",
-      "64:ff9b::c000:201",
-      "2001:5::1",
-      "2001:2::",
-      "2001:2:0:ffff:ffff:ffff:ffff:ffff",
-      "2001:db8::",
-      "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff",
-      "3fff::",
-      "3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff",
-      "5f00::1",
-      "fec0::",
-      "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
-      "::ffff:192.0.2.1",
-      "app.test",
-      "app.test..",
-      "printer.local..",
-      "printer.home.arpa..",
-      "devbox.example.ts.net..",
-      "127.0.0.1..",
-      "127.1..",
-      "10.1..",
-      "172.16.1..",
-      "192.168.1..",
-      "service.internal",
-      "hidden.onion",
-    ];
-    const publicHosts = [
-      "191.255.255.255",
-      "192.0.1.255",
-      "192.0.3.0",
-      "198.51.99.255",
-      "198.51.101.0",
-      "203.0.112.255",
-      "203.0.114.0",
-      "223.255.255.255",
-      "1.1.1.1",
-      "2001:4860:4860::8888",
-      "2606:4700:4700::1111",
-      "64:ff9b::808:808",
-      "2001:1::1",
-      "2001:3::1",
-      "2001:4:112::1",
-      "2001:20::1",
-      "2001:30::1",
-      "::ffff:8.8.8.8",
-      "example.com",
-      "example.com.",
-    ];
-    expect(nonPublic.filter(isPublicFaviconHost)).toEqual([]);
-    expect(publicHosts.filter((host) => !isPublicFaviconHost(host))).toEqual([]);
   });
 });

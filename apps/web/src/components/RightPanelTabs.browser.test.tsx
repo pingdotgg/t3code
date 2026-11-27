@@ -208,6 +208,56 @@ function panel(activeSurface: RightPanelSurface) {
   return <RightPanelTabs {...props} />;
 }
 
+it("renders browser tab icons without loading a third-party image", async () => {
+  const props = panel(BROWSER_SURFACE).props as RightPanelTabsProps;
+  const url = "https://dashboard.example.com/";
+  const navStatus = { _tag: "Success", url, title: "Dashboard" } as const;
+  const capturedFavicon =
+    "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+  const browserPanel = (captured: boolean) => (
+    <RightPanelTabs
+      {...props}
+      previewSessions={{
+        "tab-1": {
+          threadId: "thread-1",
+          tabId: "tab-1",
+          navStatus,
+          canGoBack: false,
+          canGoForward: false,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      }}
+      desktopByTabId={
+        captured
+          ? {
+              "tab-1": {
+                hasWebContents: true,
+                navStatus,
+                canGoBack: false,
+                canGoForward: false,
+                loading: false,
+                zoomFactor: 1,
+                pictureInPicture: false,
+                colorScheme: "system",
+                audioMuted: false,
+                audible: false,
+                controller: "none",
+                favicon: { dataUrl: capturedFavicon, pageUrl: url, capturedAt: 1 },
+              },
+            }
+          : {}
+      }
+    />
+  );
+
+  await using screen = await render(browserPanel(false));
+  const tabIcon = screen.getByRole("button", { name: "Close Dashboard", exact: true });
+  expect(tabIcon.element().querySelector("img")).toBeNull();
+
+  await screen.rerender(browserPanel(true));
+  expect(tabIcon.element().querySelector("img")?.getAttribute("src")).toBe(capturedFavicon);
+});
+
 it("drags a Shift-clicked range and closes it from a selected tab's menu", async () => {
   const files: RightPanelSurface = { id: "files", kind: "files" };
   const linkedItems: RightPanelSurface = { id: "pull-requests", kind: "pull-requests" };

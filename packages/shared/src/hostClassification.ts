@@ -63,16 +63,6 @@ const isPrivateIpv4Address = (parts: readonly number[]): boolean =>
   (parts[0] === 169 && parts[1] === 254) ||
   (parts[0] === 198 && parts[1]! >= 18 && parts[1]! <= 19);
 
-const isSpecialPurposeIpv4Address = (parts: readonly number[]): boolean =>
-  isPrivateIpv4Address(parts) ||
-  parts[0]! >= 224 ||
-  // Suppress the entire protocol-assignment block, including public .9/.10, to avoid disclosing special-purpose addresses.
-  (parts[0] === 192 && parts[1] === 0 && parts[2] === 0) ||
-  (parts[0] === 192 && parts[1] === 0 && parts[2] === 2) ||
-  (parts[0] === 192 && parts[1] === 88 && parts[2] === 99) ||
-  (parts[0] === 198 && parts[1] === 51 && parts[2] === 100) ||
-  (parts[0] === 203 && parts[1] === 0 && parts[2] === 113);
-
 export const isLocalLoopbackHost = (host: string): boolean => {
   const normalized = normalizeHostname(host);
   if (normalized === "localhost" || normalized === "::1") return true;
@@ -115,65 +105,6 @@ export const isPrivateNetworkHost = (host: string): boolean => {
     Number.isInteger(firstIpv6Hextet) &&
     ((firstIpv6Hextet & 0xfe00) === 0xfc00 || (firstIpv6Hextet & 0xffc0) === 0xfe80)
   );
-};
-
-// Includes private TLDs from RFC 6762 Appendix G.
-const PRIVATE_FAVICON_TLDS = [
-  ".alt",
-  ".corp",
-  ".example",
-  ".home",
-  ".internal",
-  ".intranet",
-  ".invalid",
-  ".lan",
-  ".localdomain",
-  ".onion",
-  ".private",
-  ".test",
-];
-const INTERNAL_HOST_LABELS: ReadonlySet<string> = new Set(["corp", "internal", "intranet"]);
-
-export const isPublicFaviconHost = (host: string): boolean => {
-  // One trailing DNS dot is valid; repeated dots can conceal legacy numeric addresses.
-  if (host.endsWith("..")) return false;
-  const normalized = normalizeHostname(host);
-  if (isPrivateNetworkHost(normalized)) return false;
-  if (
-    PRIVATE_FAVICON_TLDS.some(
-      (suffix) => normalized === suffix.slice(1) || normalized.endsWith(suffix),
-    )
-  ) {
-    return false;
-  }
-  // Public domains can contain internal service labels; keep them off third-party requests.
-  if (normalized.split(".").some((label) => INTERNAL_HOST_LABELS.has(label))) return false;
-  const ipv4 = parseIpv4Address(normalized) ?? parseIpv4MappedIpv6Address(normalized);
-  if (ipv4) return !isSpecialPurposeIpv4Address(ipv4);
-  if (!normalized.includes(":")) return true;
-  const ipv6 = parseIpv6Address(normalized);
-  if (!ipv6) return false;
-  if (ipv6PrefixMatches(ipv6, [0x0064, 0xff9b, 0, 0, 0, 0, 0, 0], 96)) {
-    const embeddedIpv4 = [ipv6[6]! >>> 8, ipv6[6]! & 0xff, ipv6[7]! >>> 8, ipv6[7]! & 0xff];
-    return !isSpecialPurposeIpv4Address(embeddedIpv4);
-  }
-  const first = ipv6[0]!;
-  if ((first & 0xe000) !== 0x2000) return false;
-  if (ipv6PrefixMatches(ipv6, [0x2001, 0, 0, 0, 0, 0, 0, 0], 23)) {
-    const publicProtocolAssignment =
-      (ipv6[1] === 1 &&
-        ipv6.slice(2, 7).every((part) => part === 0) &&
-        [1, 2, 3].includes(ipv6[7]!)) ||
-      ipv6PrefixMatches(ipv6, [0x2001, 3, 0, 0, 0, 0, 0, 0], 32) ||
-      ipv6PrefixMatches(ipv6, [0x2001, 4, 0x0112, 0, 0, 0, 0, 0], 48) ||
-      ipv6PrefixMatches(ipv6, [0x2001, 0x20, 0, 0, 0, 0, 0, 0], 28) ||
-      ipv6PrefixMatches(ipv6, [0x2001, 0x30, 0, 0, 0, 0, 0, 0], 28);
-    return publicProtocolAssignment;
-  }
-  if (ipv6PrefixMatches(ipv6, [0x2001, 0x0db8, 0, 0, 0, 0, 0, 0], 32)) return false;
-  if (ipv6PrefixMatches(ipv6, [0x2002, 0, 0, 0, 0, 0, 0, 0], 16)) return false;
-  if (first === 0x3fff && (ipv6[1]! & 0xf000) === 0) return false;
-  return true;
 };
 
 export const isWildcardHost = (host: string | undefined): boolean =>

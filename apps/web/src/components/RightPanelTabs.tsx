@@ -102,7 +102,6 @@ import {
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
-import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { useDeviceState } from "~/state/device";
 import type { PreviewPanelInlineSize } from "~/hooks/usePreviewPanelInlineSize";
@@ -656,17 +655,6 @@ function surfaceTitle(
   }
 }
 
-function PreviewFavicon({ capturedUrl, url }: { capturedUrl: string | null; url: string | null }) {
-  const publicProviderUrl = faviconUrlForOrigin(url, 32);
-  return (
-    <FaviconImage
-      sources={[capturedUrl, publicProviderUrl]}
-      fallback={<Globe2 className="size-3 shrink-0" />}
-      className="size-3 shrink-0 rounded-sm object-contain"
-    />
-  );
-}
-
 function sameOrigin(left: string, right: string): boolean {
   try {
     return new URL(left).origin === new URL(right).origin;
@@ -679,25 +667,22 @@ function previewFaviconOf(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
   desktopByTabId: Readonly<Record<string, DesktopPreviewOverlay>>,
-): { url: string | null; capturedUrl: string | null } {
+): string | null {
   const snapshot =
     surface.kind === "preview" && surface.resourceId ? sessions[surface.resourceId] : null;
   const url = !snapshot || snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
   const favicon = snapshot ? (desktopByTabId[snapshot.tabId]?.favicon ?? null) : null;
-  const capturedUrl = favicon && url && sameOrigin(favicon.pageUrl, url) ? favicon.dataUrl : null;
-  return { url, capturedUrl };
+  return favicon && url && sameOrigin(favicon.pageUrl, url) ? favicon.dataUrl : null;
 }
 
 function SurfaceIcon({
   surface,
-  previewUrl,
   previewCapturedUrl,
   theme,
   environmentId,
   pullRequestStatusSeed,
 }: {
   surface: RightPanelSurface;
-  previewUrl: string | null;
   previewCapturedUrl: string | null;
   theme: "light" | "dark";
   environmentId: EnvironmentId | null;
@@ -705,7 +690,13 @@ function SurfaceIcon({
 }) {
   switch (surface.kind) {
     case "preview":
-      return <PreviewFavicon capturedUrl={previewCapturedUrl} url={previewUrl} />;
+      return (
+        <FaviconImage
+          sources={[previewCapturedUrl]}
+          fallback={<Globe2 className="size-3 shrink-0" />}
+          className="size-3 shrink-0 rounded-sm object-contain"
+        />
+      );
     case "diff":
       return <FileDiff className="size-3 shrink-0" />;
     case "files":
@@ -1000,7 +991,6 @@ function RightPanelTab(
     title: string;
     audio: TabAudioState;
     audioRuntimeTabId: string | null;
-    previewUrl: string | null;
     previewCapturedUrl: string | null;
     theme: "light" | "dark";
     environmentId: EnvironmentId | null;
@@ -1059,7 +1049,6 @@ function RightPanelTab(
       <PanelTabCloseButton label={gt("Close {title}", { title })} onClick={() => onClose(surface)}>
         <SurfaceIcon
           surface={surface}
-          previewUrl={props.previewUrl}
           previewCapturedUrl={props.previewCapturedUrl}
           theme={props.theme}
           environmentId={props.environmentId}
@@ -1638,7 +1627,7 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
             >
               {props.surfaces.map((surface) => {
                 const previewTabId = previewTabIdOf(surface, props.previewSessions);
-                const favicon = previewFaviconOf(
+                const previewCapturedUrl = previewFaviconOf(
                   surface,
                   props.previewSessions,
                   props.desktopByTabId,
@@ -1664,8 +1653,7 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
                     audioRuntimeTabId={
                       previewTabId ? (props.previewRuntimeTabId?.(previewTabId) ?? null) : null
                     }
-                    previewUrl={favicon.url}
-                    previewCapturedUrl={favicon.capturedUrl}
+                    previewCapturedUrl={previewCapturedUrl}
                     theme={resolvedTheme}
                     environmentId={props.environmentId}
                     pullRequestStatusSeed={props.pullRequestStatusSeeds?.[surface.id]}
