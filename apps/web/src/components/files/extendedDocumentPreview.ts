@@ -617,7 +617,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         }
         fallback = state.uc;
       } else if (!hidden() && word === "page") finishPage();
-      else if (word === "cell") emit("\t", state.skip);
+      else if (word === "cell" || word === "nestcell") emit("\t", state.skip);
       else if (
         (!state.skip && word === "row") ||
         (!hidden() && (word === "par" || word === "line"))

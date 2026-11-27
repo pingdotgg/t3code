@@ -177,6 +177,11 @@ describe("document preview contents", () => {
       String.raw`{\rtf1 A{\deleted\uc1\u945\deleted0 old}B}`,
       "AB",
     ],
+    [
+      "nested table cells",
+      String.raw`{\rtf1\ansi\trowd\cellx3000\pard\intbl\itap2 Inner A\nestcell\pard\intbl\itap2 Inner B\nestcell{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}\pard\intbl\itap1\cell\row}`,
+      "Inner A\tInner B\t\t",
+    ],
   ])("keeps the text of %s", (_name, source, expected) => {
     const result = openRtf(bytes(source));
     if (result.type !== "document") throw new Error("Expected document");
