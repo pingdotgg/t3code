@@ -2632,6 +2632,48 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("names the gh account a pull request read of an unseen repository used", () =>
+    Effect.gen(function* () {
+      mockedCredential.mockImplementation((host) =>
+        Effect.succeed({
+          token: Redacted.make("account-a-token"),
+          fingerprint: `${host}:account-a-token`,
+          source: "gh",
+        }),
+      );
+      route(
+        [
+          "PullRequestCore",
+          {
+            data: { repository: null },
+            errors: [
+              {
+                type: "NOT_FOUND",
+                path: ["repository"],
+                message: "Could not resolve to a Repository with the name 'acme/private'.",
+              },
+            ],
+          },
+        ],
+        ["user", { id: 1, login: "account-a" }],
+      );
+      const provider = yield* GitHubPullRequestProvider.make;
+      const error = yield* Effect.flip(
+        provider.getChangeRequest({
+          cwd: "/w",
+          repository: "acme/private",
+          host: "github.com",
+          number: 7,
+        }),
+      );
+      expect(error.reason).toBe("not-found");
+      expect(`${error.detail} ${error.accessHint ?? ""}`).toContain("account-a");
+      expect(`${error.detail} ${error.accessHint ?? ""}`).toContain(
+        "Settings → Source control & issues",
+      );
+    }),
+  );
+
   const branchToDelete = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
     data: {
       repository: {
