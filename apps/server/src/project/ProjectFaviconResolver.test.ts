@@ -316,23 +316,28 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         expect(yield* resolver.resolvePath(malformedCwd)).toBe(
           (yield* Path.Path).join(malformedCwd, "public", "100%.svg"),
         );
+      }),
+    );
 
+    it.effect("resolves relative hrefs in src/index.html against src after public and root", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
         const path = yield* Path.Path;
-        const srcHtmlCwd = yield* makeTempDir;
+        const cwd = yield* makeTempDir;
         yield* writeTextFile(
-          srcHtmlCwd,
+          cwd,
           "src/index.html",
           '<link rel="icon" href="/brand/root.svg"><link rel="icon" type="image/png" href="assets/brand/icon.png">',
         );
-        yield* writeTextFile(srcHtmlCwd, "src/brand/root.svg", "<svg>src</svg>");
-        yield* writeTextFile(srcHtmlCwd, "src/assets/brand/icon.png", "png");
-        expect(yield* resolver.resolvePath(srcHtmlCwd)).toBe(
-          path.join(srcHtmlCwd, "src", "assets", "brand", "icon.png"),
+        yield* writeTextFile(cwd, "src/brand/root.svg", "<svg>src</svg>");
+        yield* writeTextFile(cwd, "src/assets/brand/icon.png", "png");
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          path.join(cwd, "src", "assets", "brand", "icon.png"),
         );
-        yield* writeTextFile(srcHtmlCwd, "public/assets/brand/icon.png", "public");
-        yield* resolver.invalidate(srcHtmlCwd);
-        expect(yield* resolver.resolvePath(srcHtmlCwd)).toBe(
-          path.join(srcHtmlCwd, "public", "assets", "brand", "icon.png"),
+        yield* writeTextFile(cwd, "public/assets/brand/icon.png", "public");
+        yield* resolver.invalidate(cwd);
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          path.join(cwd, "public", "assets", "brand", "icon.png"),
         );
       }),
     );

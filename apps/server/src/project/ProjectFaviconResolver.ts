@@ -239,9 +239,13 @@ export const make = Effect.gen(function* () {
     const clean = safeDecodeURIComponent(href.trim().replace(/^\//, ""));
     // A decoded NUL fails `stat` instead of missing.
     if (clean.includes("\0")) return [];
-    const dir = sourceFile.endsWith(".html") ? path.dirname(sourceFile) : ".";
-    if (dir === "." || href.trim().startsWith("/")) return [path.join("public", clean), clean];
-    return Array.from(new Set([path.join("public", clean), clean, path.join(dir, clean)]));
+    const candidates = [path.join("public", clean), clean];
+    // A relative href in HTML resolves against that file's directory (e.g. Vite `root: "src"`).
+    const htmlDir = sourceFile.endsWith(".html") ? path.dirname(sourceFile) : ".";
+    if (htmlDir !== "." && !href.trim().startsWith("/")) {
+      candidates.push(path.join(htmlDir, clean));
+    }
+    return candidates;
   };
 
   const findExistingFile = Effect.fn("ProjectFaviconResolver.findExistingFile")(function* (
