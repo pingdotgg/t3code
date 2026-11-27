@@ -43,6 +43,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
               .list({
                 ...(input.status === undefined ? {} : { status: input.status }),
                 ...(input.tag === undefined ? {} : { tag: input.tag }),
+                ...(input.subject === undefined ? {} : { subject: input.subject }),
               })
               .pipe(Effect.mapError(refused)),
           };
@@ -95,6 +96,19 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
             .signal(address, value, { id, ...(answeredBy === undefined ? {} : { answeredBy }) })
             .pipe(Effect.mapError(refused));
           return { delivery };
+        }
+        if (input.action === "withdraw") {
+          const runId = yield* required(input.runId, "runId");
+          const wait = yield* required(input.wait, "wait");
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const by =
+            scope.thread !== undefined
+              ? `thread ${scope.thread.threadId}`
+              : (scope.client?.label ?? "a person");
+          const withdrawal = yield* workflows
+            .withdraw(runId, wait, { by, reason: input.reason })
+            .pipe(Effect.mapError(refused));
+          return { withdrawal, ...(yield* workflows.get(runId).pipe(Effect.mapError(refused))) };
         }
         if (input.action === "store_set" || input.action === "store_delete") {
           const key = yield* required(input.key, "key");

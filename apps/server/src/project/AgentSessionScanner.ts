@@ -420,10 +420,36 @@ function codexHistoryBase(records: ReadonlyArray<DecodedTranscriptRecord>) {
     : undefined;
 }
 
+// Where the run of sticky `block` matches at the start of `text` ends.
+function leadingBlocksEnd(text: string, block: RegExp): number {
+  let end = 0;
+  while (block.test(text)) {
+    end = block.lastIndex;
+  }
+  return end;
+}
+
 // Claude Code records its own UI as user turns: slash commands, `!` shell runs and
 // their output, task notifications. Keep what the user typed, as they typed it.
-const CLAUDE_UI_OUTPUT =
-  /^(?:<(?:task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>|\[Request interrupted by user(?: for tool use)?\]$)/;
+function claudeUiOutputEnd(text: string): number {
+  return leadingBlocksEnd(
+    text,
+    /<(local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>[\s\S]*?<\/\1>\s*/y,
+  );
+}
+
+// Shell payloads can print closing tags verbatim, so a complete envelope is
+// judged by its outer tags; prose after a quoted block stays visible.
+function isClaudeShellOutput(text: string): boolean {
+  if (text.startsWith("<bash-stderr>")) return text.endsWith("</bash-stderr>");
+  if (!text.startsWith("<bash-stdout>")) return false;
+  return (
+    text.endsWith("</bash-stdout>") ||
+    (text.endsWith("</bash-stderr>") && /<\/bash-stdout>\s*<bash-stderr>/.test(text))
+  );
+}
+
+const CLAUDE_COMMAND_BLOCK = /<command-(name|message|args)>[\s\S]*?<\/command-\1>\s*/y;
 
 /**
  * A slash command as typed. Its arguments may name the thread; a bare command
@@ -431,6 +457,7 @@ const CLAUDE_UI_OUTPUT =
  */
 function claudeCommand(text: string): { readonly text: string; readonly titleText: string } | null {
   if (!/^<command-(?:name|message)>/.test(text)) return null;
+  if (leadingBlocksEnd(text, CLAUDE_COMMAND_BLOCK) !== text.length) return null;
   const name =
     /<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim() ||
     `/${/<command-message>([^<]*)<\/command-message>/.exec(text)?.[1]?.trim() ?? ""}`;
@@ -440,10 +467,24 @@ function claudeCommand(text: string): { readonly text: string; readonly titleTex
 
 /** What a Claude user turn shows the user typed, and the part of it that may name the thread. */
 function claudeUserText(text: string): { readonly text: string; readonly titleText: string } {
-  if (CLAUDE_UI_OUTPUT.test(text)) return { text: "", titleText: "" };
+  const outputEnd = claudeUiOutputEnd(text);
+  if (
+    outputEnd === text.length ||
+    // Only Claude writes task notifications, sometimes with trailing markup of its own.
+    text.startsWith("<task-notification>") ||
+    isClaudeShellOutput(text) ||
+    /^\[Request interrupted by user(?: for tool use)?\]$/.test(text)
+  ) {
+    return { text: "", titleText: "" };
+  }
   const shellInput = /^<bash-input>([\s\S]*)<\/bash-input>$/.exec(text)?.[1];
   if (shellInput !== undefined) return { text: `!${shellInput}`, titleText: "" };
-  return claudeCommand(text) ?? { text, titleText: text };
+  return (
+    claudeCommand(text) ?? {
+      text,
+      titleText: text.slice(outputEnd || leadingBlocksEnd(text, CLAUDE_COMMAND_BLOCK)),
+    }
+  );
 }
 
 function claudeVisibleText(record: DecodedTranscriptRecord) {
@@ -847,6 +888,11 @@ function extractCwd(parsed: unknown, source: AgentSessionSource): string | null 
   if (typeof parsed !== "object" || parsed === null) return null;
 
   const record = parsed as Record<string, unknown>;
+  if (source === "pi") {
+    return record.type === "session" && typeof record.cwd === "string"
+      ? record.cwd.trim() || null
+      : null;
+  }
   if (typeof record.cwd === "string" && record.cwd.trim().length > 0) {
     return record.cwd;
   }
@@ -1248,11 +1294,14 @@ export const make = Effect.gen(function* () {
               }
             };
             // Claude writes cwd before message, so a record with a large image need not be read to its end.
+            // Pi uses a small header, which must be complete before its cwd is trusted.
             let topLevelCwd: string | null = null;
             const createReader = () =>
               createTranscriptJsonReader(reserveSelected, selectCwdPath, {
                 onTopLevelString: (key, value) => {
-                  if (key === "cwd" && value.trim().length > 0) topLevelCwd ??= value;
+                  if (source !== "pi" && key === "cwd" && value.trim().length > 0) {
+                    topLevelCwd ??= value;
+                  }
                 },
               });
             let reader = createReader();
@@ -1344,11 +1393,16 @@ export const make = Effect.gen(function* () {
     filePath: string,
     expected: ReturnType<typeof transcriptIdentity>,
     source: AgentSessionSource,
+    decompressionBudget: { bytesRemaining: number },
     prefix?: { readonly endByteOffset: number; readonly historyBytes: number },
   ) {
     const compressed = isCompressedTranscript(filePath);
+    const readToEnd = compressed && prefix === undefined;
     const readBytes =
-      prefix?.endByteOffset ?? (compressed ? MAX_IMPORTED_TRANSCRIPT_BYTES : expected.size);
+      prefix?.endByteOffset ??
+      (compressed
+        ? Math.min(MAX_IMPORTED_TRANSCRIPT_BYTES, decompressionBudget.bytesRemaining)
+        : expected.size);
     if ((!compressed && readBytes > expected.size) || readBytes > MAX_IMPORTED_TRANSCRIPT_BYTES) {
       return null;
     }
@@ -1383,12 +1437,17 @@ export const make = Effect.gen(function* () {
             const finishRecord = () => {
               reader.write(decoder.decode());
               const value = reader.finish();
+              if (source === "pi" && Option.isNone(cwd)) {
+                cwd = Option.fromNullOr(extractCwd(value, source) || null);
+              }
               const decoded = decodeTranscriptValue(value);
               if (Option.isNone(decoded) && source === "pi") {
                 // Pi accepts messages this schema rejects, such as null content; keep their tree links.
                 records.push(...Option.toArray(decodePiEntryLinks(value)));
               } else if (Option.isSome(decoded)) {
-                if (Option.isNone(cwd)) cwd = Option.fromNullOr(extractDecodedCwd(decoded.value));
+                if (source !== "pi" && Option.isNone(cwd)) {
+                  cwd = Option.fromNullOr(extractDecodedCwd(decoded.value));
+                }
                 if (source === "claudeAgent") {
                   claudeFields = foldClaudeFields(claudeFields, decoded.value);
                 }
@@ -1422,11 +1481,12 @@ export const make = Effect.gen(function* () {
               );
               if (Option.isNone(next)) {
                 // A compressed rollout's decompressed length is only known at its end.
-                if (compressed && prefix === undefined) break;
+                if (readToEnd) break;
                 return null;
               }
 
               bytesRead += next.value.byteLength;
+              if (compressed) decompressionBudget.bytesRemaining -= next.value.byteLength;
               const withinBudget = yield* Effect.try({
                 try: () => {
                   let start = 0;
@@ -1444,6 +1504,11 @@ export const make = Effect.gen(function* () {
                 catch: (cause) => new TranscriptParseError({ filePath, cause }),
               });
               if (!withinBudget) return null;
+            }
+
+            // A full rollout that fills the budget is only usable if it ends here.
+            if (readToEnd && bytesRead === readBytes && Option.isSome(yield* readChunk(1))) {
+              return null;
             }
 
             if (
@@ -1483,14 +1548,14 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const file = yield* fileSystem.open(indexPath, { flag: "r" });
         const size = Number((yield* file.stat).size);
-        const start = Math.max(0, size - MAX_CODEX_SESSION_INDEX_BYTES);
+        const start = Math.max(0, size - MAX_CODEX_SESSION_INDEX_BYTES - 1);
         yield* file.seek(BigInt(start), "start");
         const bytes = yield* file.readAlloc(size - start);
         const contents = Option.match(bytes, {
           onNone: () => "",
           onSome: (value) => new TextDecoder().decode(value),
         });
-        // A tail read can start mid-record.
+        // A tail read starts one byte early so a preceding newline keeps the first complete record.
         return parseCodexThreadNames(
           start > 0 ? contents.slice(contents.indexOf("\n") + 1) : contents,
         );
@@ -2204,6 +2269,7 @@ export const make = Effect.gen(function* () {
     const importedSessions = new Set<string>();
     const codexThreadNamesByHome = new Map<string, ReadonlyMap<string, string>>();
     let bytesRemaining = MAX_IMPORT_BYTES;
+    const decompressionBudget = { bytesRemaining: MAX_IMPORT_BYTES };
     let transcriptsRemaining = MAX_IMPORT_TRANSCRIPTS;
     const codexRolloutPaths = new Map<ProviderInstanceId, ReadonlyMap<string, string>>();
     const codexRolloutPath = (providerInstanceId: ProviderInstanceId, rolloutId: string) => {
@@ -2237,15 +2303,22 @@ export const make = Effect.gen(function* () {
         const filePath = visited.has(base.thread_id)
           ? undefined
           : codexRolloutPath(providerInstanceId, base.thread_id);
-        if (filePath === undefined || base.end_byte_offset > bytesRemaining) return null;
+        if (filePath === undefined) return null;
+        const compressed = isCompressedTranscript(filePath);
+        if (
+          base.end_byte_offset > (compressed ? decompressionBudget.bytesRemaining : bytesRemaining)
+        ) {
+          return null;
+        }
         visited.add(base.thread_id);
         const stats = yield* statOption(filePath);
         if (Option.isNone(stats) || stats.value.type !== "File") return null;
-        bytesRemaining -= base.end_byte_offset;
+        if (!compressed) bytesRemaining -= base.end_byte_offset;
         const inherited = yield* readTranscript(
           filePath,
           transcriptIdentity(filePath, stats.value),
           "codex",
+          decompressionBudget,
           { endByteOffset: base.end_byte_offset, historyBytes },
         );
         if (inherited === null) return null;
@@ -2286,13 +2359,19 @@ export const make = Effect.gen(function* () {
           if (
             transcriptsRemaining === 0 ||
             identity.size > MAX_IMPORTED_TRANSCRIPT_BYTES ||
-            identity.size > bytesRemaining
+            identity.size > bytesRemaining ||
+            (isCompressedTranscript(transcript.filePath) &&
+              decompressionBudget.bytesRemaining === 0)
           ) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
-          transcriptsRemaining -= 1;
           bytesRemaining -= identity.size;
-          const snapshot = yield* readTranscript(transcript.filePath, identity, candidate.source);
+          const snapshot = yield* readTranscript(
+            transcript.filePath,
+            identity,
+            candidate.source,
+            decompressionBudget,
+          );
           if (snapshot === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
@@ -2340,13 +2419,14 @@ export const make = Effect.gen(function* () {
             if (candidate.source === "codex" && inheritedRecords === null) {
               return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
             }
-            // Never recorded as imported, so charging them would starve real sessions every run.
-            transcriptsRemaining += 1;
             return Option.none<AgentSessionRecentThread>();
           }
           if (parsedThread === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
+          // Unusable transcripts still cost bytes, but charging a slot would block older
+          // sessions on every retry because those files are never recorded as imported.
+          transcriptsRemaining -= 1;
           let savedTitle: string | undefined;
           if (candidate.source === "codex") {
             const names =

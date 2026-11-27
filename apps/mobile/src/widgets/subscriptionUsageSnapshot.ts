@@ -117,16 +117,24 @@ function widgetAccounts(
   accounts: readonly LimitAccount[],
   resolve: MessageResolver,
 ): WidgetLimitAccount[] {
-  const seen = new Map<string, number>();
+  const bases = accounts.map((account) => accountName(account, resolve));
+  // Redacted initials can collide, and the widget keys segments by name.
+  const taken = new Set(bases);
+  const used = new Set<string>();
   const memberByAccount = new Map(window.members.map((member) => [member.account.key, member]));
-  return accounts.map((source) => {
-    // Redacted initials can collide, and the widget keys segments by name.
-    const base = accountName(source, resolve);
-    const count = (seen.get(base) ?? 0) + 1;
-    seen.set(base, count);
+  return accounts.map((source, index) => {
+    const base = bases[index] ?? "";
+    let name = base;
+    if (used.has(name)) {
+      let count = 2;
+      while (taken.has(`${base}${count}`)) count += 1;
+      name = `${base}${count}`;
+      taken.add(name);
+    }
+    used.add(name);
     const color = normalizeProviderAccentColor(source.accentColor);
     // expo-widgets cannot convert an explicit undefined into a Kotlin value.
-    const account = { name: count > 1 ? `${base}${count}` : base, ...(color && { color }) };
+    const account = { name, ...(color && { color }) };
     const member = memberByAccount.get(source.key);
     if (!member) return account;
     const checkedAt = Date.parse(source.limits.checkedAt);

@@ -9,7 +9,7 @@ import type { LinkPillContent, MarkdownStyle } from "react-native-enriched-markd
 import type { ComposerContextRecord } from "@t3tools/contracts";
 import { contextChipAccent, contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
-import { FONT_FAMILIES } from "../lib/fontFamilies";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { contextChipIconSource } from "../lib/contextChipIconSource";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
 import { markdownLinkIcon } from "../lib/markdownLinkIcons";
@@ -121,6 +121,7 @@ export function useEnrichedLinkVariants(
 ) {
   const { linkCustomization, skills, models, textStyle, fileEmbedLabel } = props;
   const theme = useUniwindTheme();
+  const { fontFamilies } = useAppearancePreferences();
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
     for (const url of urls) {
@@ -149,22 +150,43 @@ export function useEnrichedLinkVariants(
       ),
     [links, textStyle, theme],
   );
+  const icons = useMemo(
+    () =>
+      new Map(
+        [...links].map(([url, link]) => [
+          url,
+          {
+            iconUri: link.icon ? Image.resolveAssetSource(link.icon)?.uri : undefined,
+            iconTintColor: link.chip?.tintsIcon ? chipForegrounds.get(url) : link.iconTintColor,
+          },
+        ]),
+      ),
+    [chipForegrounds, links],
+  );
+  // A link that shows its own text wraps with its icon in front; a pill is one unbreakable box,
+  // so only links that swap in a short label become pills.
   const linkVariants = useMemo<MarkdownStyle["linkVariants"]>(
     () =>
       Object.fromEntries(
         [...links].map(([url, link]) => {
           const chipForeground = chipForegrounds.get(url);
+          const icon = icons.get(url);
+          const inlineIconUri = link.label === undefined && icon?.iconUri;
           return [
             enrichedLinkVariantPattern(url),
             {
-              pill: {
-                borderColor: "transparent",
-                borderWidth: 0,
-                borderRadius: 6,
-                paddingHorizontal: 5,
-                paddingVertical: 2,
-              },
-              fontFamily: chipForeground ? FONT_FAMILIES.medium : textStyle.fontFamily,
+              ...(inlineIconUri
+                ? { inlineIcon: { iconUri: inlineIconUri, iconTintColor: icon.iconTintColor } }
+                : {
+                    pill: {
+                      borderColor: "transparent",
+                      borderWidth: 0,
+                      borderRadius: 6,
+                      paddingHorizontal: 5,
+                      paddingVertical: 2,
+                    },
+                  }),
+              fontFamily: chipForeground ? fontFamilies.medium : textStyle.fontFamily,
               color: chipForeground ?? link.color ?? textStyle.fileTextColor,
               underline: false,
               backgroundColor: "transparent",
@@ -172,21 +194,14 @@ export function useEnrichedLinkVariants(
           ];
         }),
       ),
-    [chipForegrounds, links, textStyle],
+    [chipForegrounds, fontFamilies, icons, links, textStyle],
   );
   const linkPillContent = useMemo<Record<string, LinkPillContent>>(
     () =>
       Object.fromEntries(
-        [...links].map(([url, link]) => [
-          url,
-          {
-            label: link.label,
-            iconUri: link.icon ? Image.resolveAssetSource(link.icon)?.uri : undefined,
-            iconTintColor: link.chip?.tintsIcon ? chipForegrounds.get(url) : link.iconTintColor,
-          },
-        ]),
+        [...links].map(([url, link]) => [url, { label: link.label, ...icons.get(url) }]),
       ),
-    [chipForegrounds, links],
+    [icons, links],
   );
   return { linkVariants, linkPillContent };
 }
