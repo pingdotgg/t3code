@@ -97,6 +97,17 @@ describe("appendTerminalOutput", () => {
     },
   );
 
+  it.each([
+    ["构建失败\nError", "before建失败\nError"],
+    ["😀 ok", "before ok"],
+    ["\ud83dX", "beforeX"],
+  ])("keeps output after non-ASCII %j aborts an unfinished CSI", (tail, expected) => {
+    const input = `before\u001b[3${tail}`;
+    for (let cut = 0; cut <= input.length; cut += 1) {
+      expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe(expected);
+    }
+  });
+
   it("keeps a bounded tail that starts on a fresh line", () => {
     const lines = Array.from({ length: 2_000 }, (_, index) => `line ${index}`).join("\n");
     const state = feed([lines], 1_000);

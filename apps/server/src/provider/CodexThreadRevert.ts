@@ -92,3 +92,36 @@ export const revertCodexThreadAfterTurn = Effect.fn("revertCodexThreadAfterTurn"
     }
   }
 });
+
+/** Rewind from the oldest recorded T3 turn still present in Codex's history. */
+export const revertCodexThreadFromKnownTurns = Effect.fn("revertCodexThreadFromKnownTurns")(
+  function* (client: CodexRevertClient, threadId: string, nativeTurnIds: ReadonlyArray<string>) {
+    const remaining = new Set(nativeTurnIds);
+    let beforeTurnId: string | undefined;
+    let cursor: string | null = null;
+    const visited = new Set<string | null>();
+    while (remaining.size > 0) {
+      if (visited.has(cursor)) return yield* repeatedCursorError();
+      visited.add(cursor);
+      const page: CodexSchema.V2ThreadTurnsListResponse = yield* client.request(
+        "thread/turns/list",
+        {
+          threadId,
+          cursor,
+          limit: 100,
+          sortDirection: "desc",
+          itemsView: "summary",
+        },
+      );
+      for (const turn of page.data) {
+        if (remaining.delete(turn.id)) beforeTurnId = turn.id;
+      }
+      cursor = page.nextCursor ?? null;
+      if (cursor === null) break;
+    }
+
+    return beforeTurnId === undefined
+      ? yield* client.request("thread/read", { threadId, includeTurns: false })
+      : yield* client.request("thread/revert", { threadId, beforeTurnId });
+  },
+);
