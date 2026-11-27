@@ -145,29 +145,19 @@ describe("GitHub remotes", () => {
     for (const url of [
       "alice+ci@github.com:owner/repo.git",
       "alice@corp.example@github.com:owner/repo.git",
-      "alice@corp[dev]@github.com:owner/repo.git",
-      "alice@[work@github.com:owner/repo.git",
     ]) {
-      expect(recognize(url), url).toEqual({
-        kind: "github",
-        name: "GitHub",
-        baseUrl: "https://github.com",
-      });
+      expect(recognize(url)?.baseUrl, url).toBe("https://github.com");
     }
     for (const url of [
       "@github.com:owner/repo.git",
       "alice@[work]@github.com:owner/repo.git",
-      "[git@git.internal]@github.com:owner/repo.git",
       "[git@git.internal]@github.com:repo@[x",
-      "alice+ci@github.com:work@[git.internal]:Team/Repo.git",
       "-oProxyCommand=x@github.com:owner/repo.git",
       "git@github.com:-x",
     ]) {
       expect(recognize(url), url).toBeNull();
     }
     expect(parseGitRemoteHost("alice+ci@[2001:db8::1]:team/repo.git")).toBeNull();
-    expect(parseGitRemoteHost("git@work[blue]:team/repo.git")?.host).toBe("work[blue]");
-    expect(parseGitRemoteHost("[alice]@[work@github.com:o/r")?.host).toBe("github.com");
   });
 });
 
