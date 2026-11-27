@@ -67,12 +67,14 @@ import {
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
+import { derive } from "@t3tools/provider-core/server/IdAllocator";
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { threadPullRequestUpdatedAtMs } from "@t3tools/shared/threadPullRequests";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -1848,6 +1850,29 @@ const make = Effect.gen(function* () {
     };
   });
 
+  const configuredFallbackTarget = Effect.fn("OrchestratorMcpService.configuredFallbackTarget")(
+    function* (
+      parent: Pick<OrchestrationV2ThreadProjection, "thread">,
+      providers: ReadonlyArray<ServerProvider>,
+      settings: Effect.Success<typeof serverSettings.getSettings>,
+    ) {
+      const { selection, fallback } = resolveNewThreadModelSelection({
+        defaultSelection: parent.thread.modelSelection,
+        fallbackSelection: settings.fallbackModelSelection,
+        providers,
+        settings,
+        projectId: parent.thread.projectId,
+        now: DateTime.toEpochMillis(yield* DateTime.now),
+      });
+      if (selection === null || fallback === null) return undefined;
+      return {
+        providerInstanceId: selection.instanceId,
+        model: selection.model,
+        ...(selection.options === undefined ? {} : { options: selection.options }),
+      };
+    },
+  );
+
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
     clientRequestId === undefined ? random.uuidV4() : Effect.succeed(clientRequestId);
 
@@ -2847,6 +2872,18 @@ const make = Effect.gen(function* () {
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
       const inherited = parent?.thread.modelSelection;
+      const configuredFallback = settings.fallbackModelSelection;
+      const fallbackTarget =
+        parent === undefined
+          ? undefined
+          : yield* configuredFallbackTarget(parent, providers, settings);
+      const fallbackActive =
+        parent !== undefined &&
+        fallbackTarget !== undefined &&
+        (yield* resolveTarget({ parent, providers, target: fallbackTarget }).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ));
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
       return {
         parentThreadId: parent?.thread.id ?? null,
@@ -2860,6 +2897,15 @@ const make = Effect.gen(function* () {
               ?.models.find((model) => model.slug === inherited?.model)?.capabilities
               ?.optionDescriptors,
           ) ?? [],
+        ...(configuredFallback === null
+          ? {}
+          : {
+              fallback: {
+                providerInstanceId: configuredFallback.instanceId,
+                model: configuredFallback.model,
+                active: fallbackActive,
+              },
+            }),
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         providers: providers.map((provider) => {
@@ -2950,6 +2996,24 @@ const make = Effect.gen(function* () {
           "A local task runs in this thread's project. Omit target.projectId, or pass target.environmentId to run it in that environment's project.",
         );
       }
+      const key = yield* requestKey(input.clientRequestId);
+      const commandId = stableCommandId({
+        scope,
+        requestKey: key,
+        operation: "delegate-task",
+      });
+      const hasReceipt =
+        input.clientRequestId !== undefined && (yield* threadManagement.hasReceipt(commandId));
+      if (hasReceipt) {
+        const taskId = derive.delegatedTaskNode({ commandId });
+        // A receipt can also record a rejected command, which has no task to replay.
+        const [task] = yield* loadTasks(scope.thread.threadId, [taskId]);
+        if (task?.id === taskId) {
+          return yield* input.mode === "wait"
+            ? awaitTask(scope, taskId, key, input.timeoutMs)
+            : readTask(scope, taskId, false, true);
+        }
+      }
       const parentRun =
         ThreadManagementService.latestActiveRun(parent) ??
         (yield* backgroundSubagentRun(scope, parent.thread.id));
@@ -2964,21 +3028,52 @@ const make = Effect.gen(function* () {
         );
       }
       const providers = yield* loadProviders;
-      const key = yield* requestKey(input.clientRequestId);
-      const commandId = stableCommandId({
-        scope,
-        requestKey: key,
-        operation: "delegate-task",
-      });
-      const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
-      const target = yield* resolveTargetRechecking({
-        parent,
-        target: input.target,
-        providers,
-        cwd: yield* parentWorkspaceCwd(parent),
-        skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
-        skipAgentModeRefusal: isRetryOfAcceptedDelegation,
-      });
+      const cwd = yield* parentWorkspaceCwd(parent);
+      const fallbackTarget =
+        !hasReceipt &&
+        input.target?.providerInstanceId === undefined &&
+        input.target?.driverKind === undefined &&
+        input.target?.model === undefined
+          ? yield* configuredFallbackTarget(
+              parent,
+              providers,
+              yield* serverSettings.getSettings.pipe(
+                Effect.mapError(() =>
+                  failure("orchestration_error", "Unable to read server settings."),
+                ),
+              ),
+            )
+          : undefined;
+      const fallback =
+        fallbackTarget === undefined
+          ? undefined
+          : yield* resolveTargetRechecking({
+              parent,
+              target: {
+                ...fallbackTarget,
+                ...(input.target?.options === undefined ? {} : { options: input.target.options }),
+              },
+              providers,
+              cwd,
+            }).pipe(
+              Effect.catchIf(
+                (error) =>
+                  input.target?.options === undefined ||
+                  error.code === "provider_unavailable" ||
+                  error.code === "model_unavailable",
+                () => Effect.undefined,
+              ),
+            );
+      const target =
+        fallback ??
+        (yield* resolveTargetRechecking({
+          parent,
+          target: input.target,
+          providers,
+          cwd,
+          skipProjectEnablementFilter: hasReceipt,
+          skipAgentModeRefusal: hasReceipt,
+        }));
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
         input.runtimeMode,
@@ -2991,12 +3086,12 @@ const make = Effect.gen(function* () {
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (
         input.isolation === "worktree" &&
-        !isRetryOfAcceptedDelegation &&
+        !hasReceipt &&
         (yield* threadLaunch.isNonGitProject(parent.thread.projectId))
       ) {
         // A plain project folder has no commit of its own; `HEAD` leaves each repository on its default branch.
         workspaceStrategy = { type: "worktree", baseRef: "HEAD" };
-      } else if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
+      } else if (input.isolation === "worktree" && !hasReceipt) {
         const project = yield* requireProject(parent.thread.projectId);
         const base = yield* gitDriver
           .resolveCommit({

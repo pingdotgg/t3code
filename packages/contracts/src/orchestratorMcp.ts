@@ -705,6 +705,13 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   inheritedModel: Schema.NullOr(Schema.String),
   inheritedOptions: Schema.optional(Schema.Array(ProviderOptionSelection)),
+  fallback: Schema.optional(
+    Schema.Struct({
+      providerInstanceId: ProviderInstanceId,
+      model: Schema.String,
+      active: Schema.Boolean,
+    }),
+  ),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
