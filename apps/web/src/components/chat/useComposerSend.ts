@@ -1732,8 +1732,9 @@ export function useComposerSend(input: ComposerSendInput) {
           sendSnapshot.environmentContexts.length > 0 ||
           sendSnapshot.replyTo !== null;
         const firstImage = sendSnapshot.images[0];
-        const failedSendToastId = toastManager.add(
-          stackedThreadToast({
+        let restored = false;
+        const failedSendToastId = toastManager.add({
+          ...stackedThreadToast({
             type: "error",
             title: isAtomCommandInterrupted(failure)
               ? m(msg("Message may not have been sent"))
@@ -1747,7 +1748,6 @@ export function useComposerSend(input: ComposerSendInput) {
               hideCopyButton: true,
               ...(canRestore
                 ? {
-                    onClose: () => releaseDraftAttachments(sendSnapshot.attachments),
                     secondaryActionProps: {
                       children: m(msg("Restore failed draft")),
                       onClick: () => {
@@ -1766,6 +1766,7 @@ export function useComposerSend(input: ComposerSendInput) {
                           return;
                         }
                         restoreFailedSend();
+                        restored = true;
                         toastManager.close(failedSendToastId);
                       },
                     },
@@ -1816,7 +1817,10 @@ export function useComposerSend(input: ComposerSendInput) {
                 }
               : {}),
           }),
-        );
+          onClose: () => {
+            if (!restored) releaseDraftAttachments(sendSnapshot.attachments);
+          },
+        });
       } else {
         restoreFailedSend();
       }
