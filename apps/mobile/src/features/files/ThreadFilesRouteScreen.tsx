@@ -9,10 +9,19 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { useGT, useMessages } from "gt-react-native";
-import { type ComponentProps, type ReactNode, useId, useState } from "react";
+import { type ComponentProps, type ReactNode, useId, useMemo, useState } from "react";
 import { Platform, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-import { EnvironmentId, type ProjectReadFileResult, ThreadId } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  type AssetResource,
+  EnvironmentId,
+  ProjectReadFileError,
+  type ProjectReadFileResult,
+  ThreadId,
+} from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
+import * as Schema from "effect/Schema";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
   isWorkspaceBrowserPreviewPath,
@@ -28,6 +37,7 @@ import { AudioFilePreview } from "./AudioFilePreview";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { LoadingScreen } from "../../components/LoadingScreen";
+import { attachmentTextAtom, noAttachmentText } from "../../lib/attachmentDocument";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { isPdfFile } from "../../lib/filePreview";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
@@ -37,6 +47,7 @@ import { useMediaActions } from "../../state/mediaActions";
 import { type MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useFreshAssetUrl } from "../../state/assets";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { projectEnvironment } from "../../state/projects";
@@ -176,6 +187,8 @@ function FileHeader(props: {
     />
   );
 }
+
+const isProjectReadFileError = Schema.is(ProjectReadFileError);
 
 type FileViewMode = "preview" | "source";
 
@@ -734,9 +747,6 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         : null,
     revision: `${fileData?.byteLength ?? 0}:${fileRefreshCount}`,
   });
-  // Until the full text arrives, the 1 MB preview shows with its partial-file notice.
-  const fileContents = fullText ?? fileData?.contents ?? null;
-  const fileTruncated = fileData?.truncated === true && fullText === null;
   const assetPreviewPath =
     !metadataPending &&
     directoryPath === null &&
@@ -751,6 +761,46 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     draftCwd: threadId === null ? cwd : null,
   });
   const assetPreviewUri = assetPreview._tag === "Success" ? assetPreview.url : null;
+  // The server reads only UTF-8. Like web, a file it rejects is decoded from its downloaded bytes,
+  // which covers GBK/GB18030; mobile never saves, so the decoded text cannot rewrite the file.
+  const needsDecodedText =
+    isProjectReadFileError(fileQuery.failure) && fileQuery.failure.failure === "binary_file";
+  const decodedTextResource = useMemo<AssetResource | null>(() => {
+    if (!needsDecodedText || targetPath === null || relativePath === null) return null;
+    if (threadId !== null) {
+      return { _tag: "media-file", threadId, path: targetPath, disposition: "attachment" };
+    }
+    return cwd === null
+      ? null
+      : { _tag: "draft-workspace-file", cwd, path: relativePath, disposition: "attachment" };
+  }, [needsDecodedText, targetPath, relativePath, threadId, cwd]);
+  const decodedTextUrlResult = useFreshAssetUrl(environmentId, decodedTextResource, 0);
+  const decodedTextUrl =
+    AsyncResult.isSuccess(decodedTextUrlResult) && !decodedTextUrlResult.waiting
+      ? decodedTextUrlResult.value
+      : null;
+  const decodedTextResult = useAtomValue(
+    decodedTextUrl !== null && decodedTextResource !== null
+      ? attachmentTextAtom({
+          uri: decodedTextUrl.url,
+          authorizedAt: decodedTextUrl.authorizedAt,
+          environmentId,
+          resource: decodedTextResource,
+          sizeBytes: metadata.data?.byteLength ?? 0,
+          revision: fileRefreshCount,
+        })
+      : noAttachmentText,
+  );
+  const decodedText = AsyncResult.isSuccess(decodedTextResult) ? decodedTextResult.value : null;
+  const decodedTextPending =
+    needsDecodedText &&
+    decodedText === null &&
+    !AsyncResult.isFailure(decodedTextResult) &&
+    !AsyncResult.isFailure(decodedTextUrlResult);
+  // Until the full text arrives, the 1 MB preview shows with its partial-file notice.
+  const fileContents = fullText ?? fileData?.contents ?? decodedText?.text ?? null;
+  const fileTruncated =
+    (fileData?.truncated === true && fullText === null) || decodedText?.truncated === true;
   const mediaSource: MediaActionsSource | undefined =
     environmentId !== null &&
     relativePath !== null &&
@@ -1103,7 +1153,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           mediaSource={mediaSource}
           resolveVideoUri={assetPreview.refresh}
           fileContents={fileContents}
-          fileError={fileQuery.error}
+          fileError={decodedTextPending ? null : fileQuery.error}
           initialLine={targetLine}
           relativePath={relativePath}
           threadId={threadId}

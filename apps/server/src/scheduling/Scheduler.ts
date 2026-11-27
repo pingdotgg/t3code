@@ -6,7 +6,7 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
-import { forkParked } from "../serverActivation.ts";
+import { forkParked, withoutParentSpan } from "../serverActivation.ts";
 
 export class Scheduler extends Context.Service<
   Scheduler,
@@ -20,14 +20,15 @@ export class Scheduler extends Context.Service<
 
 const make = Effect.gen(function* () {
   const sources = yield* Ref.make(new Map<symbol, Effect.Effect<void>>());
-  const register: Scheduler["Service"]["register"] = Effect.fn("Scheduler.register")(function* <
-    E,
-    R,
-  >(name: string, runDueWork: Effect.Effect<void, E, R>) {
+  const register: Scheduler["Service"]["register"] = Effect.fnUntraced(function* <E, R>(
+    name: string,
+    runDueWork: Effect.Effect<void, E, R>,
+  ) {
     const scope = yield* Effect.scope;
     const context = yield* Effect.context<R>();
     const permit = yield* Semaphore.make(1);
     const run = runDueWork.pipe(
+      withoutParentSpan,
       Effect.provideContext(context),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)

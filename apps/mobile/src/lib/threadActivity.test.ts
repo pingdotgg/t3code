@@ -513,6 +513,22 @@ describe("buildThreadFeed", () => {
     },
   );
 
+  it("returns the cached feed when its rows have not changed", () => {
+    const message = (id: string, role: "user" | "assistant"): OrchestrationV2TurnItem => ({
+      ...(role === "user" ? userMessage() : assistantMessage()),
+      id: TurnItemId.make(id),
+      messageId: MessageId.make(id),
+    });
+    const rows = [
+      projected(message("ask", "user"), 0),
+      projected(message("reply", "assistant"), 1),
+    ];
+    const cache = createThreadFeedCache();
+    const feed = buildThreadFeed(rows, { cache });
+    expect(buildThreadFeed(rows, { cache })).toBe(feed);
+    expect(buildThreadFeed([...rows], { cache })).not.toBe(feed);
+  });
+
   it.each([false, true])(
     "keeps answered questions outside settled work (attachments only: %s)",
     (attachmentsOnly) => {

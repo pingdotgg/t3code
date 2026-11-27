@@ -58,11 +58,13 @@ function Chat(props: {
   composerKeys: string[];
   launcher?: { keys: string; received: string[] };
   finds?: string[];
+  scriptKeybindings?: ResolvedKeybindingsConfig;
+  scriptsRan?: string[];
 }) {
   useChatShortcuts({
     enabled: true,
     keybindings: [ctrl("f", "chat.find")],
-    scriptKeybindings: [],
+    scriptKeybindings: props.scriptKeybindings ?? [],
     getShortcutContext: () => shortcutContext,
     threadFindActive: false,
     // Type-to-focus only calls insertTextAtEnd, so the stand-in composer implements just that.
@@ -77,7 +79,8 @@ function Chat(props: {
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
     commands: { "chat.find": () => void props.finds?.push("main") },
-    fallback: () => undefined,
+    fallback: (command) =>
+      props.scriptsRan ? () => void props.scriptsRan?.push(command) : undefined,
   });
   return props.launcher ? <Launcher {...props.launcher} /> : null;
 }
@@ -392,4 +395,37 @@ it("leaves keys to a focused video player with controls", async () => {
   (document.activeElement as HTMLElement).blur();
   await userEvent.keyboard("a");
   expect(composerKeys).toEqual(["a"]);
+});
+
+it("leaves project-script shortcuts alone inside a keybinding capture field", async () => {
+  const scriptsRan: string[] = [];
+  const prevented: boolean[] = [];
+  await using screen = await render(
+    <>
+      <Chat
+        composerKeys={[]}
+        scriptKeybindings={[ctrl("y", "script.build.run", true)]}
+        scriptsRan={scriptsRan}
+      />
+      <input
+        ref={focusOnMount}
+        aria-label="Keybinding"
+        data-keybinding-capture=""
+        readOnly
+        onKeyDown={(event) => {
+          if (event.key.toLowerCase() === "y") prevented.push(event.defaultPrevented);
+        }}
+      />
+      <button type="button">Outside</button>
+    </>,
+    options,
+  );
+
+  await userEvent.keyboard("{Control>}{Shift>}Y{/Shift}{/Control}");
+  expect(scriptsRan).toEqual([]);
+  expect(prevented).toEqual([false]);
+
+  await userEvent.click(screen.getByRole("button", { name: "Outside" }));
+  await userEvent.keyboard("{Control>}{Shift>}Y{/Shift}{/Control}");
+  expect(scriptsRan).toEqual(["script.build.run"]);
 });

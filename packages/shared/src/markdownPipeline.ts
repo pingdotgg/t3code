@@ -30,7 +30,7 @@ import { isWindowsAbsolutePath } from "./path.ts";
 import {
   CHAT_MARKDOWN_SANITIZE_SCHEMA,
   chatMarkdownImageSource,
-  rehypeNormalizeLocalEditorLinks,
+  rehypeNormalizeLocalFileLinks,
   rehypePreserveImageSourceMeta,
   type ChatMarkdownImageProperties,
 } from "./markdownHast.ts";
@@ -50,12 +50,17 @@ type MarkdownImageHastNode = {
 // Whole tags, attributes, and comments, so closing-anchor text inside them never counts as a tag.
 const RAW_HTML_TAG_PATTERN = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
 
-function rehypePreserveBareAnchorPlaceholders() {
+/**
+ * Follows raw anchors the way the browser will: a bare `<a>` that never closes stays text, and
+ * text inside any other open anchor already belongs to a link.
+ */
+function scanRawHtmlAnchors(rawType: "raw" | "html") {
   return (tree: MarkdownImageHastNode) => {
     const anchors: Array<MarkdownImageHastNode | null> = [];
+    const anchorAt = new Map<MarkdownImageHastNode, MarkdownImageHastNode | null>();
     let rawTextTag: string | undefined;
     const visit = (node: MarkdownImageHastNode) => {
-      if (node.type === "raw" && typeof node.value === "string") {
+      if (node.type === rawType && typeof node.value === "string") {
         const tags = new RegExp(RAW_HTML_TAG_PATTERN);
         let offset = 0;
         while (rawTextTag !== "plaintext") {
@@ -84,14 +89,27 @@ function rehypePreserveBareAnchorPlaceholders() {
             anchors.pop();
           }
         }
+      } else if (rawType === "html" && node.type === "text" && (rawTextTag || anchors.length > 0)) {
+        anchorAt.set(node, rawTextTag || anchors.includes(null) ? null : anchors.at(-1)!);
       }
+      // Like the linker, stay out of Markdown link labels: the browser closes raw anchors there.
+      if (rawType === "html" && (node.type === "link" || node.type === "linkReference")) return;
       node.children?.forEach(visit);
     };
 
     visit(tree);
-    for (const anchor of anchors) {
-      if (anchor) anchor.type = "text";
-    }
+    const bare = new Set(anchors.filter((anchor) => anchor !== null));
+    return {
+      bare,
+      insideAnchor: (node: MarkdownImageHastNode) =>
+        anchorAt.has(node) && !bare.has(anchorAt.get(node)!),
+    };
+  };
+}
+
+function rehypePreserveBareAnchorPlaceholders() {
+  return (tree: MarkdownImageHastNode) => {
+    for (const anchor of scanRawHtmlAnchors("raw")(tree).bare) anchor.type = "text";
   };
 }
 
@@ -99,11 +117,11 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
   remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
-  remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkKeepOrderedListNumbers,
   remarkNormalizeListItemIndentation,
+  remarkLinkAbsoluteFilePaths,
   remarkCodexDirectives,
   remarkBreakAroundImageLines,
   remarkPreserveCodeMeta,
@@ -116,11 +134,11 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
   remarkKeepLeadingWhitespace,
-  remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkKeepOrderedListNumbers,
   remarkNormalizeListItemIndentation,
+  remarkLinkAbsoluteFilePaths,
   remarkCodexDirectives,
   remarkBreakAroundImageLines,
   remarkBreaks,
@@ -210,7 +228,7 @@ export const CHAT_MARKDOWN_REHYPE_PLUGINS: PluggableList = [
   rehypePreserveBareAnchorPlaceholders,
   rehypeRawWhenPresent,
   rehypePreserveImageSourceMeta,
-  rehypeNormalizeLocalEditorLinks,
+  rehypeNormalizeLocalFileLinks,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ];
 
@@ -223,11 +241,23 @@ const isImageNode = (node: PhrasingContent | undefined): boolean =>
 const endsLine = (node: PhrasingContent | undefined) =>
   node === undefined ||
   node.type === "break" ||
-  (node.type === "text" && /\n[ \t]*$/.test(node.value));
+  (node.type === "text" && /(?:\r\n|\r|\n)[ \t]*$/.test(node.value));
 const startsLine = (node: PhrasingContent | undefined) =>
   node === undefined ||
   node.type === "break" ||
-  (node.type === "text" && /^[ \t]*\n/.test(node.value));
+  (node.type === "text" && /^[ \t]*(?:\r\n|\r|\n)/.test(node.value));
+
+// A caption line ending in a screenshot reads as a figure, so the trailing images get a line.
+function trailingImagesStart(children: readonly PhrasingContent[]): number | undefined {
+  let start: number | undefined;
+  for (let index = children.length - 1; index >= 0; index--) {
+    const child = children[index]!;
+    if (isImageNode(child)) start = index;
+    else if (child.type !== "break" && !(child.type === "text" && !child.value.trim()))
+      return start;
+  }
+  return undefined;
+}
 
 function breakLinesAroundImages(paragraph: Paragraph) {
   const children = paragraph.children;
@@ -236,19 +266,26 @@ function breakLinesAroundImages(paragraph: Paragraph) {
     isImageNode(children[index]) &&
     endsLine(children[index - 1]) &&
     startsLine(children[index + 1]);
+  const trailingStart = trailingImagesStart(children);
   paragraph.children = children.flatMap((child, index): PhrasingContent[] => {
-    if (child.type !== "text") return [child];
+    // Kept indentation after a line ending already sits on a line of its own.
+    const beforeTrailing =
+      index + 1 === trailingStart &&
+      !(child.type === "text" && !child.value.trim() && endsLine(children[index - 1]));
+    if (child.type !== "text") {
+      return beforeTrailing && child.type !== "break" ? [child, { type: "break" }] : [child];
+    }
     const afterImage = ownsLine(index - 1);
     const beforeImage = ownsLine(index + 1);
-    if (!afterImage && !beforeImage) return [child];
+    if (!afterImage && !beforeImage && !beforeTrailing) return [child];
     const parts: PhrasingContent[] = [];
     let value = child.value;
     if (afterImage) {
-      value = value.replace(/^[ \t]*\n/, "");
+      value = value.replace(/^[ \t]*(?:\r\n|\r|\n)/, "");
       parts.push({ type: "break" });
     }
-    const breakAfter = beforeImage && /\n[ \t]*$/.test(value);
-    if (breakAfter) value = value.replace(/[ \t]*\n[ \t]*$/, "");
+    const breakAfter = (beforeImage && /(?:\r\n|\r|\n)[ \t]*$/.test(value)) || beforeTrailing;
+    if (breakAfter) value = value.replace(/[ \t]*(?:(?:\r\n|\r|\n)[ \t]*)?$/, "");
     if (value) parts.push({ type: "text", value });
     if (breakAfter) parts.push({ type: "break" });
     return parts;
@@ -522,17 +559,11 @@ function remarkEndAutolinksAtScriptPunctuation(this: Processor): Transformer<Roo
 function remarkLinkAbsoluteFilePaths(): Transformer<Root> {
   return (tree) => {
     // Raw `<a>` tags are sibling html nodes, so text inside one is not under a link node.
-    let rawAnchorDepth = 0;
+    const { insideAnchor } = scanRawHtmlAnchors("html")(tree);
     const visit = (node: Root | RootContent) => {
       if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
       node.children = node.children.flatMap((child): typeof node.children => {
-        if (child.type === "html") {
-          for (const [tag] of child.value.matchAll(RAW_HTML_TAG_PATTERN)) {
-            if (/^<a[\s/>]/i.test(tag)) rawAnchorDepth += 1;
-            else if (/^<\/a[\s>]/i.test(tag)) rawAnchorDepth = Math.max(0, rawAnchorDepth - 1);
-          }
-        }
-        if (child.type !== "text" || rawAnchorDepth > 0) {
+        if (child.type !== "text" || insideAnchor(child)) {
           visit(child);
           return [child];
         }
@@ -575,12 +606,11 @@ function remarkPreserveCodeMeta() {
 function remarkNormalizeLinksAndTagInlineCode() {
   return (tree: MarkdownAstNode) => {
     const visit = (node: MarkdownAstNode, insideLink: boolean) => {
-      if (
-        (node.type === "link" || node.type === "definition") &&
-        typeof node.url === "string" &&
-        /^[A-Za-z]:[\\/]/.test(node.url)
-      ) {
-        node.url = `file:///${node.url.replaceAll("\\", "/")}`;
+      if ((node.type === "link" || node.type === "definition") && typeof node.url === "string") {
+        const path = node.url.replace(/%5C/gi, "\\");
+        if (/^[A-Za-z]:[\\/]/.test(path)) {
+          node.url = `file:///${path.replaceAll("\\", "/")}`;
+        }
       }
       if (node.type === "inlineCode" && !insideLink) {
         node.data = {
