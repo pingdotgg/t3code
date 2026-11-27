@@ -199,7 +199,10 @@ function AgentRow(props: {
   return (
     <View className="flex-row items-center">
       {content}
-      <SubagentStopButton environmentId={props.environmentId} subagent={subagent} />
+      {/* Every row reserves the stop slot so running and finished rows share a trailing edge. */}
+      <View className="ml-2 min-w-8 android:min-w-12">
+        <SubagentStopButton environmentId={props.environmentId} subagent={subagent} />
+      </View>
     </View>
   );
 }

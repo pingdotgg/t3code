@@ -18,7 +18,7 @@ export function IconButton(props: IconButtonProps) {
   return (
     <Pressable
       // Keeps the compact button's touch target at 44 points.
-      hitSlop={compact ? 6 : undefined}
+      hitSlop={compact ? 8 : undefined}
       onPress={props.onPress}
       disabled={props.disabled}
       accessibilityLabel={props.accessibilityLabel}
