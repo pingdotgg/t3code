@@ -6,11 +6,13 @@ import {
   type UsageLimitSourceConfig,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -36,6 +38,7 @@ const AuthFile = Schema.Struct({
   provider: Schema.String,
   email: Schema.optional(Schema.String),
   disabled: Schema.optional(Schema.Boolean),
+  modtime: Schema.optional(Schema.NullOr(Schema.String)),
   id_token: Schema.optional(
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
@@ -187,6 +190,16 @@ const creditRedeemRequestId = Effect.fn("CliproxyApi.creditRedeemRequestId")(fun
 });
 
 type AuthFile = typeof AuthFile.Type;
+
+// Hub config edits that do not touch the auth file show up after at most this long.
+const ROUTED_MODELS_TTL_MS = 30 * 60 * 1000;
+interface RoutedModelsEntry {
+  readonly stamp: string;
+  readonly fetchedAt: number;
+  readonly models: ReadonlyArray<string>;
+}
+const authFileStamp = (account: AuthFile) =>
+  JSON.stringify([account.auth_index, account.provider, account.modtime ?? null]);
 /** Sends one upstream request with the account's token, as GET or as a JSON POST of `data`. */
 type HubCall = (
   url: string,
@@ -352,6 +365,10 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
 export const makeCliproxyApi = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
   const digest = yield* Digest.Digest;
+  // Hub URL -> auth file id -> last routed-model list.
+  const routedModelsCache = yield* Ref.make<
+    ReadonlyMap<string, ReadonlyMap<string, RoutedModelsEntry>>
+  >(new Map());
 
   const management = Effect.fn("CliproxyApi.management")(function* (
     hub: CliproxyHub,
@@ -450,8 +467,31 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return { id: account.id, driver: provider.driver, ...reading };
   });
 
+  const cachedRoutedModels = Effect.fn("CliproxyApi.cachedRoutedModels")(function* (
+    hub: CliproxyHub,
+    account: AuthFile,
+    fresh: boolean,
+  ) {
+    const stamp = authFileStamp(account);
+    const cached = (yield* Ref.get(routedModelsCache)).get(hub.url)?.get(account.id);
+    if (
+      !fresh &&
+      cached?.stamp === stamp &&
+      (yield* Clock.currentTimeMillis) - cached.fetchedAt < ROUTED_MODELS_TTL_MS
+    ) {
+      return cached;
+    }
+    const models = yield* routedModels(hub, account).pipe(
+      Effect.timeoutOption("2 seconds"),
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    if (Option.isNone(models)) return undefined;
+    return { stamp, fetchedAt: yield* Clock.currentTimeMillis, models: models.value };
+  });
+
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
     hub: CliproxyHub,
+    options?: { readonly freshModels?: boolean },
   ): Effect.fn.Return<
     {
       readonly accounts: ReadonlyArray<UsageLimitSourceAccount>;
@@ -488,20 +528,34 @@ export const makeCliproxyApi = Effect.gen(function* () {
         }),
         Effect.forEach(
           readable,
-          ({ account }) =>
-            routedModels(hub, account).pipe(
-              Effect.timeoutOption("2 seconds"),
-              Effect.orElseSucceed(() => Option.none()),
-            ),
+          ({ account }) => cachedRoutedModels(hub, account, options?.freshModels === true),
           { concurrency: "unbounded" },
         ),
       ],
       { concurrency: 2 },
     );
+    const now = yield* Clock.currentTimeMillis;
+    yield* Ref.update(routedModelsCache, (cache) => {
+      const next = new Map<string, ReadonlyMap<string, RoutedModelsEntry>>();
+      // Hubs removed from settings age out instead of lingering.
+      for (const [url, entries] of cache) {
+        if (url === hub.url) continue;
+        const live = [...entries].filter(
+          ([, entry]) => now - entry.fetchedAt < ROUTED_MODELS_TTL_MS,
+        );
+        if (live.length > 0) next.set(url, new Map(live));
+      }
+      const listed = readable.flatMap(({ account }, index) => {
+        const entry = models[index];
+        return entry ? [[account.id, entry] as const] : [];
+      });
+      if (listed.length > 0) next.set(hub.url, new Map(listed));
+      return next;
+    });
     return {
       accounts: readings.map((reading, index) => {
         const listed = models[index];
-        return listed && Option.isSome(listed) ? { ...reading, models: listed.value } : reading;
+        return listed ? { ...reading, models: listed.models } : reading;
       }),
       unreadProviders,
     };

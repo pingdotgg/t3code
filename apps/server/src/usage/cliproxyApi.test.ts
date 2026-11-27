@@ -54,6 +54,7 @@ function fixture(
       provider: string;
       email?: string;
       disabled?: boolean;
+      modtime?: string;
       project_id?: string;
       id_token?: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
     }>;
@@ -249,6 +250,52 @@ describe("CLIProxyAPI built-in management API", () => {
       const { accounts: result } = yield* api.readAccounts(config);
       expect(result.map((account) => account.models)).toEqual([["gpt-5.6-sol"], undefined, []]);
       expect(result[1]?.usageLimits.windows).toHaveLength(1);
+    }),
+  );
+
+  it.effect("reuses each account's routed models across reads until they may have changed", () =>
+    Effect.gen(function* () {
+      const listed = accounts.map((account) => ({ ...account, modtime: "2026-11-01T00:00:00Z" }));
+      const test = fixture({
+        accounts: listed,
+        models: () => Response.json({ models: [{ id: "gpt-5.6-sol" }] }),
+      });
+      const api = yield* test.api;
+      const reads = () =>
+        test.requests.filter((request) => request.path.endsWith("/auth-files/models")).length;
+
+      const first = yield* api.readAccounts(config);
+      expect(first.accounts.map((account) => account.models)).toEqual([
+        ["gpt-5.6-sol"],
+        ["gpt-5.6-sol"],
+      ]);
+      expect(reads()).toBe(2);
+
+      yield* TestClock.adjust("5 minutes");
+      const second = yield* api.readAccounts(config);
+      expect(second.accounts.map((account) => account.models)).toEqual([
+        ["gpt-5.6-sol"],
+        ["gpt-5.6-sol"],
+      ]);
+      expect(reads()).toBe(2);
+
+      listed[1] = { ...listed[1]!, modtime: "2026-11-02T00:00:00Z" };
+      yield* api.readAccounts(config);
+      expect(reads()).toBe(3);
+
+      yield* api.readAccounts(config, { freshModels: true });
+      expect(reads()).toBe(5);
+
+      yield* TestClock.adjust("31 minutes");
+      yield* api.readAccounts(config);
+      expect(reads()).toBe(7);
+
+      const removed = listed.splice(1, 1);
+      yield* api.readAccounts(config);
+      expect(reads()).toBe(7);
+      listed.push(removed[0]!);
+      yield* api.readAccounts(config);
+      expect(reads()).toBe(8);
     }),
   );
 

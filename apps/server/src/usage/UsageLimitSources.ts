@@ -68,6 +68,8 @@ export class UsageLimitSources extends Context.Service<
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly refresh: Effect.Effect<void>;
+    /** A refresh that also re-reads the models each hub routes to its accounts. */
+    readonly refreshWithRoutedModels: Effect.Effect<void>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
@@ -149,6 +151,7 @@ export const make = Effect.gen(function* () {
   const readSource = Effect.fn("UsageLimitSources.readSource")(function* (
     id: UsageLimitSourceId,
     config: UsageLimitSourceConfig,
+    freshModels = false,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const url = URL.parse(config.url);
@@ -196,7 +199,7 @@ export const make = Effect.gen(function* () {
       return { ...base, accounts: [], error: missingManagementKey(config) };
     }
     const accounts = yield* api
-      .readAccounts({ url: config.url, managementKey })
+      .readAccounts({ url: config.url, managementKey }, { freshModels })
       .pipe(Effect.result);
     if (accounts._tag === "Failure") {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
@@ -221,20 +224,25 @@ export const make = Effect.gen(function* () {
 
   // Serialize refreshes so slow old-settings reads cannot resurrect removed sources after newer refreshes.
   const refreshLock = yield* Semaphore.make(1);
-  const refresh = Effect.gen(function* () {
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.orElseSucceed((): ServerSettings | null => null),
-    );
-    const entries = Object.entries(settings?.usageLimitSources ?? {}).filter(
-      ([, config]) => config.enabled,
-    );
-    const snapshots = yield* Effect.forEach(
-      entries,
-      ([id, config]) => readSource(id as UsageLimitSourceId, config),
-      { concurrency: 4 },
-    );
-    yield* publish(keepLastGoodReadings(yield* Ref.get(stateRef), snapshots));
-  }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
+  const refreshSources = Effect.fn("UsageLimitSources.refreshSources")(
+    function* (freshModels: boolean) {
+      const settings = yield* settingsService.getSettings.pipe(
+        Effect.orElseSucceed((): ServerSettings | null => null),
+      );
+      const entries = Object.entries(settings?.usageLimitSources ?? {}).filter(
+        ([, config]) => config.enabled,
+      );
+      const snapshots = yield* Effect.forEach(
+        entries,
+        ([id, config]) => readSource(id as UsageLimitSourceId, config, freshModels),
+        { concurrency: 4 },
+      );
+      yield* publish(keepLastGoodReadings(yield* Ref.get(stateRef), snapshots));
+    },
+    refreshLock.withPermits(1),
+    Effect.ignoreCause({ log: true }),
+  );
+  const refresh = refreshSources(false);
 
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
   const consumeResetCredit = Effect.fn("UsageLimitSources.consumeResetCredit")(function* (
@@ -298,6 +306,7 @@ export const make = Effect.gen(function* () {
     current: Ref.get(stateRef),
     consumeResetCredit,
     refresh,
+    refreshWithRoutedModels: refreshSources(true),
     get streamChanges() {
       return Stream.unwrap(
         Effect.gen(function* () {
