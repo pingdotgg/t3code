@@ -225,10 +225,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       );
       return;
     }
-    if (
-      currentRouteThreadKeyRef.current !== routeThreadKey ||
-      router.latestLocation !== location
-    ) {
+    if (currentRouteThreadKeyRef.current !== routeThreadKey || router.latestLocation !== location) {
       return;
     }
     await navigate({
