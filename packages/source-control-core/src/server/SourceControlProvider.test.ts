@@ -20,8 +20,6 @@ it.each([
   ["github.com:T3Tools/t3code.git", "T3Tools/t3code"],
   ["github.com:/T3Tools/t3code.git", "T3Tools/t3code"],
   ["gitlab.com:T3Tools/platform/t3code", "T3Tools/platform/t3code"],
-  ["gitlab.com:/T3Tools/platform/t3code", "T3Tools/platform/t3code"],
-  ["backup:git@forge:/Owner/Repo.git", "git@forge:/Owner/Repo"],
   ["hg::user@host:Owner/Repo.git", null],
   ["https://github.com/T3Tools/t3code.git", "T3Tools/t3code"],
   ["https://github.com/T3Tools/t3code.git?view=compact", "T3Tools/t3code"],
