@@ -180,6 +180,8 @@ async function odfHtml(
         : 1;
   const start = odfListStart(tag === "li" && inOrderedList ? node : numberingLevel);
   let attributes = start === undefined ? "" : ` ${tag === "ol" ? "start" : "value"}="${start}"`;
+  const format = numberingLevel?.attrs["style:num-format"] ?? "";
+  if (/^[aAiI]$/.test(format)) attributes += ` type="${format}"`;
   // Spans on repeated cells or rows would multiply past the preview's table limits.
   if (tag === "td" && count === 1)
     for (const [name, attr, max] of [
