@@ -19,7 +19,7 @@ export interface ProviderHostPaths {
   readonly baseDir: string;
   readonly stateDir: string;
   readonly providerStatusCacheDir: string;
-  /** Where chat attachments are stored; threads may read only attachments they own. */
+  /** Where chat attachments are stored. */
   readonly attachmentsDir: string;
 }
 
@@ -50,7 +50,7 @@ export class ProviderHost extends Context.Service<
     readonly awaitServerReady?: Effect.Effect<void>;
     /** Absolute attachment path, or null if the ID does not resolve inside attachmentsDir. */
     readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
-    /** Canonical absolute attachment path (symlink-first resolved). */
+    /** Returns whether `threadId` owns the canonical absolute `attachmentPath` (symlink-first resolved). */
     readonly canReadThreadAttachment?: (
       threadId: ThreadId,
       attachmentPath: string,

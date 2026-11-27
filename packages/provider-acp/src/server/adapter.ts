@@ -10635,7 +10635,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(activeSessionId, activated.sessionId);
               yield* Ref.set(loadingSessionId, null);
               yield* setActiveSessionSetup(activated);
-              yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
+              yield* configureSession(
+                activated,
+                turnInput.modelSelection,
+                turnInput.runtimePolicy,
+              ).pipe(Effect.tapError(() => restorePreviousTurnBinding));
               yield* Ref.set(activeSelection, turnInput.modelSelection);
               yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
             } else {
@@ -10649,6 +10653,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ) {
                 const currentSessionSetup = yield* Ref.get(activeSessionSetup);
                 if (currentSessionSetup === null) {
+                  yield* restorePreviousTurnBinding;
                   return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                     driver,
                     detail: `ACP session ${requestedSessionId} has no active setup metadata`,
@@ -10658,7 +10663,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   currentSessionSetup,
                   turnInput.modelSelection,
                   turnInput.runtimePolicy,
-                );
+                ).pipe(Effect.tapError(() => restorePreviousTurnBinding));
                 yield* Ref.set(activeSelection, turnInput.modelSelection);
                 yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
               }
@@ -11439,7 +11444,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     yield* Ref.set(activeSessionId, activated.sessionId);
                     yield* Ref.set(loadingSessionId, null);
                     yield* setActiveSessionSetup(activated);
-                    yield* configureSession(activated, nextSelection, nextRuntimePolicy);
+                    yield* configureSession(activated, nextSelection, nextRuntimePolicy).pipe(
+                      Effect.tapError(() => restorePreviousResumeState),
+                    );
                     yield* Ref.set(activeSelection, nextSelection);
                     yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);
                   }
