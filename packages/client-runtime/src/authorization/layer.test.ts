@@ -208,6 +208,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     registerLiveActivity: unexpected,
     getAgentActivitySnapshot: unexpected,
     resetTokenCache: Effect.void,
+    analyticsId: () => Effect.succeedNone,
   });
   const layer = RemoteEnvironmentAuthorization.layer.pipe(
     Layer.provideMerge(

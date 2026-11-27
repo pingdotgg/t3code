@@ -41,6 +41,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as HttpClientError from "effect/http/HttpClientError";
@@ -433,6 +434,11 @@ export class ManagedRelayClient extends Context.Service<
       readonly clerkToken: string;
     }) => Effect.Effect<RelayAgentActivitySnapshotResponse, ManagedRelayClientError>;
     readonly resetTokenCache: Effect.Effect<void>;
+    /**
+     * The analytics id the relay issued this account, learned from the last environment
+     * listing. Never fetched here, so a connection never waits on the relay for analytics.
+     */
+    readonly analyticsId: (accountId: string) => Effect.Effect<Option.Option<string>>;
   }
 >()("@t3tools/client-runtime/relay/managedRelay/ManagedRelayClient") {}
 
@@ -570,6 +576,9 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
     resetTokenCache: Effect.void.pipe(
       Effect.withSpan("clientRuntime.managedRelay.resetTokenCache"),
     ),
+    analyticsId: Effect.fn("clientRuntime.managedRelay.analyticsId")(function* () {
+      return yield* Effect.succeedNone;
+    }),
   });
 }
 
@@ -588,6 +597,7 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
     ReadonlyArray<ManagedRelayAccessTokenCacheEntry>
   >(initialTokens.filter((token) => token.clientId === options.clientId));
   const urlBuilder = HttpApiClient.urlBuilder(RelayApi, { baseUrl: relayUrl });
+  const analyticsIds = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
 
   type DpopProofTarget = Pick<ManagedRelayDpopProofInput, "method" | "url">;
   const dpopProofTargets = {
@@ -855,13 +865,20 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
     relayUrl,
     listEnvironments: Effect.fnUntraced(
       function* (input) {
-        return yield* client.client
+        const response = yield* client.client
           .listEnvironments({ headers: bearerHeaders(input.clerkToken) })
           .pipe(
-            Effect.map((response) => response.environments),
             Effect.mapError(relayRequestError("list relay-managed environments")),
             timeoutRelayRequest("Relay environment listing"),
           );
+        const accountId = yield* relayAccountId(input.clerkToken);
+        const { analyticsId } = response;
+        if (Option.isSome(accountId) && analyticsId !== undefined) {
+          yield* Ref.update(analyticsIds, (current) =>
+            new Map(current).set(accountId.value, analyticsId),
+          );
+        }
+        return response.environments;
       },
       Effect.withSpan("clientRuntime.managedRelay.listEnvironments"),
       withRelayClientTracing,
@@ -1112,6 +1129,9 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       Effect.withSpan("clientRuntime.managedRelay.resetTokenCache"),
       withRelayClientTracing,
     ),
+    analyticsId: Effect.fn("clientRuntime.managedRelay.analyticsId")(function* (accountId) {
+      return Option.fromNullishOr((yield* Ref.get(analyticsIds)).get(accountId));
+    }),
   });
 });
 

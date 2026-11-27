@@ -1075,6 +1075,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           registerLiveActivity: unexpected,
           getAgentActivitySnapshot,
           resetTokenCache: Effect.void,
+          analyticsId: () => Effect.succeedNone,
         }),
       ).pipe(Layer.merge(layerPersistenceTest));
     }

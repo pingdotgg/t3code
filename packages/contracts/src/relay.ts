@@ -219,6 +219,11 @@ export const RelayLinkProofRequest = Schema.Struct({
 });
 export type RelayLinkProofRequest = typeof RelayLinkProofRequest.Type;
 
+export const RelayAnalyticsId = TrimmedNonEmptyString.annotate({
+  description:
+    "Random id the relay issues this Connect account for product analytics, in place of anything derived from the account id. Older relays omit it.",
+});
+
 export const RelayEnvironmentConfigRequest = Schema.Struct({
   relayUrl: Schema.String,
   relayIssuer: Schema.optional(Schema.String),
@@ -226,6 +231,7 @@ export const RelayEnvironmentConfigRequest = Schema.Struct({
   environmentCredential: Schema.String,
   cloudMintPublicKey: Schema.String,
   endpointRuntime: Schema.NullOr(RelayManagedEndpointRuntimeConfig),
+  analyticsId: Schema.optional(RelayAnalyticsId),
 });
 export type RelayEnvironmentConfigRequest = typeof RelayEnvironmentConfigRequest.Type;
 
@@ -342,6 +348,7 @@ export const RelayEnvironmentLinkResponse = Schema.Struct({
   relayIssuer: TrimmedNonEmptyString,
   environmentCredential: TrimmedNonEmptyString,
   cloudMintPublicKey: TrimmedNonEmptyString,
+  analyticsId: Schema.optional(RelayAnalyticsId),
 });
 export type RelayEnvironmentLinkResponse = typeof RelayEnvironmentLinkResponse.Type;
 
@@ -723,6 +730,7 @@ export type RelayClientEnvironmentRecord = typeof RelayClientEnvironmentRecord.T
 
 export const RelayListEnvironmentsResponse = Schema.Struct({
   environments: Schema.Array(RelayClientEnvironmentRecord),
+  analyticsId: Schema.optional(RelayAnalyticsId),
 });
 export type RelayListEnvironmentsResponse = typeof RelayListEnvironmentsResponse.Type;
 
@@ -1275,6 +1283,15 @@ const RelayServerGroup = HttpApiGroup.make("server")
         success: RelayOkResponse,
         error: RelayAuthAndInternalErrors,
       },
+    ),
+    HttpApiEndpoint.post("getAnalyticsId", "/v1/environments/:environmentId/analytics-id", {
+      params: Schema.Struct({ environmentId: EnvironmentId }),
+      payload: Schema.Struct({ cloudUserId: Schema.String }),
+      success: Schema.Struct({ analyticsId: RelayAnalyticsId }),
+      error: RelayAuthAndInternalErrors,
+    }).annotate(
+      OpenApi.Summary,
+      "Get the analytics id of the account that linked this environment",
     ),
     HttpApiEndpoint.post("wakeHeldHooks", "/v1/environments/:environmentId/hooks/wake", {
       params: Schema.Struct({ environmentId: EnvironmentId }),

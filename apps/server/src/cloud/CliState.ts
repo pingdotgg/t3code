@@ -6,6 +6,7 @@ import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINK_REVOKED,
+  CLOUD_LINKED_ANALYTICS_ID,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
@@ -61,6 +62,7 @@ export const dropRevokedCloudLink = Effect.gen(function* () {
   yield* Effect.all(
     [
       secrets.remove(CLOUD_LINKED_USER_ID),
+      secrets.remove(CLOUD_LINKED_ANALYTICS_ID),
       secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
       secrets.remove(CLOUD_MINT_PUBLIC_KEY),
       secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
@@ -79,6 +81,7 @@ export const clearPersistedCloudLink = Effect.gen(function* () {
     [
       secrets.remove(CLOUD_CLI_DESIRED_LINK_SECRET),
       secrets.remove(CLOUD_LINKED_USER_ID),
+      secrets.remove(CLOUD_LINKED_ANALYTICS_ID),
       secrets.remove(RELAY_URL_SECRET),
       secrets.remove(RELAY_ISSUER_SECRET),
       secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),

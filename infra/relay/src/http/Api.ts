@@ -59,6 +59,7 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 
+import * as AnalyticsIds from "../accounts/AnalyticsIds.ts";
 import * as DeliveryAttempts from "../agentActivity/DeliveryAttempts.ts";
 import * as AgentActivityRows from "../agentActivity/AgentActivityRows.ts";
 import * as Devices from "../agentActivity/Devices.ts";
@@ -816,13 +817,24 @@ export const layerClientApi = HttpApiBuilder.group(
     const devices = yield* Devices.Devices;
     const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
     const tunnelLimits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
+    const analyticsIds = yield* AnalyticsIds.AnalyticsIds;
+    // Analytics never block the request that carries the id; a client without one sends no owner.
+    const optionalAnalyticsId = (userId: string) =>
+      analyticsIds.getOrCreate({ userId }).pipe(
+        Effect.map((analyticsId) => ({ analyticsId })),
+        Effect.catch((error) =>
+          Effect.logWarning("Could not read the account's analytics id", {
+            error: error.message,
+          }).pipe(Effect.as({})),
+        ),
+      );
     return handlers
       .handle(
         "listEnvironments",
         Effect.fn("relay.api.client.listEnvironments")(function* () {
           const { userId } = yield* RelayClientPrincipal;
           const environments = yield* links.listForUser({ userId });
-          return { environments };
+          return { environments, ...(yield* optionalAnalyticsId(userId)) };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
@@ -865,6 +877,7 @@ export const layerClientApi = HttpApiBuilder.group(
               relayIssuer: config.relayIssuer,
               environmentCredential: result.environmentCredential,
               cloudMintPublicKey: config.cloudMintPublicKey,
+              ...(yield* optionalAnalyticsId(userId)),
             };
           },
           Effect.tapError(appendCloudflareRetryAfter),
@@ -1207,6 +1220,7 @@ export const layerServerApi = HttpApiBuilder.group(
     const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
     const publishSignatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
     const heldHooks = yield* HeldHooks.HeldHooks;
+    const analyticsIds = yield* AnalyticsIds.AnalyticsIds;
     const requireOwnEnvironment =
       /* Request instrumentation already owns the span; keep this helper in that context. */
       Effect.fnUntraced(function* (environmentId: string) {
@@ -1450,6 +1464,22 @@ export const layerServerApi = HttpApiBuilder.group(
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
+        "getAnalyticsId",
+        Effect.fn("relay.api.server.getAnalyticsId")(function* ({ params, payload }) {
+          yield* requireOwnEnvironment(params.environmentId);
+          const principal = yield* RelayEnvironmentPrincipal;
+          const analyticsId = yield* analyticsIds.getForLinkedEnvironment({
+            userId: payload.cloudUserId,
+            environmentId: params.environmentId,
+            environmentPublicKey: principal.environmentPublicKey,
+          });
+          if (analyticsId === null) {
+            return yield* new HttpApiError.Unauthorized({});
+          }
+          return { analyticsId };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
         "wakeHeldHooks",
         Effect.fn("relay.api.server.wakeHeldHooks")(function* ({ params }) {
           yield* requireOwnEnvironment(params.environmentId);
@@ -1484,6 +1514,7 @@ const currentTraceId = Effect.currentParentSpan.pipe(
 );
 
 const RelayCommonPersistenceError = Schema.Union([
+  AnalyticsIds.AnalyticsIdPersistenceError,
   Devices.DeviceRegistrationPersistenceError,
   Devices.DeviceUnregistrationPersistenceError,
   Devices.DeviceListPersistenceError,

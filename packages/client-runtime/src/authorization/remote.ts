@@ -9,13 +9,14 @@ import {
   type AuthWebSocketTicketUse,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
-import { hashTelemetryId } from "@t3tools/shared/telemetryId";
+import { hashTelemetryId, isTelemetryIdHash } from "@t3tools/shared/telemetryId";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequest,
   makeEnvironmentHttpApiGroupClient,
@@ -42,7 +43,10 @@ const clientMetadataTokenExchangeFields = (
   };
 };
 
-/** Hashes of who is connecting. Only hashes leave the client. */
+/**
+ * Who is connecting. `connect` is the relay-issued analytics id of the T3 Connect
+ * account, `device` the hash of this client's device id.
+ */
 export interface ClientOwnerParams {
   readonly connect?: string;
   readonly device?: string;
@@ -54,10 +58,16 @@ export interface ClientOwnerParams {
  */
 export const readClientOwnerParams = Effect.gen(function* () {
   const session = yield* Effect.serviceOption(ClientCapabilities.CloudSession);
+  const relay = yield* Effect.serviceOption(ManagedRelay.ManagedRelayClient);
   const account = Option.isSome(session) ? yield* session.value.identity : Option.none();
+  // Never derived from the account id: without a relay-issued id there is no connect owner.
+  const connect =
+    Option.isSome(account) && Option.isSome(relay)
+      ? Option.filter(yield* relay.value.analyticsId(account.value.accountId), isTelemetryIdHash)
+      : Option.none();
   const device = yield* (yield* ClientCapabilities.AnalyticsDevice).id;
   return {
-    ...(Option.isSome(account) ? { connect: hashTelemetryId(account.value.accountId) } : {}),
+    ...(Option.isSome(connect) ? { connect: connect.value } : {}),
     ...(Option.isSome(device) ? { device: hashTelemetryId(device.value) } : {}),
   } satisfies ClientOwnerParams;
 });

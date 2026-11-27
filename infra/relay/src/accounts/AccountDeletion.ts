@@ -24,6 +24,7 @@ import { unlinkEnvironmentRecord } from "../http/Api.ts";
 import {
   relayAccountDeletions,
   relayAgentActivityRows,
+  relayAnalyticsIds,
   relayDeliveryAttempts,
   relayEnvironmentCredentials,
   relayEnvironmentLinks,
@@ -232,6 +233,7 @@ const make = Effect.gen(function* () {
           yield* db
             .delete(relayManagedTunnelLimits)
             .where(eq(relayManagedTunnelLimits.userId, userId));
+          yield* db.delete(relayAnalyticsIds).where(eq(relayAnalyticsIds.userId, userId));
         }),
       )
       .pipe(

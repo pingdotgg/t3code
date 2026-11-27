@@ -17,6 +17,12 @@ count as product use.
 - **Hash everywhere with [one helper](../../packages/shared/src/telemetryId.ts).** Clients and
   servers hash with the same SHA-256 helper so IDs correlate; the server accepts only hashes from
   clients.
+- **The Connect owner id is relay-issued, never derived from the account id.** An unsalted hash of
+  a Connect account id can be recomputed by anyone who knows the id, and deleting the account
+  would not unlink it. The relay keeps a random 64-hex analytics id per account (returned with the
+  environment listing and the link response, or to a linked server on request) and drops it when
+  the account is deleted, after which nothing links leftover analytics to anyone. Without that id,
+  send no `connect` owner; never fall back to hashing the account id.
 
 ## Attribution boundaries
 

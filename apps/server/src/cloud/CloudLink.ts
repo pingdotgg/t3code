@@ -38,6 +38,7 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl, normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import { isTelemetryIdHash } from "@t3tools/shared/telemetryId";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -79,6 +80,7 @@ import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINK_REVOKED,
+  CLOUD_LINKED_ANALYTICS_ID,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
   decodeConfirmedOrigin,
@@ -813,6 +815,10 @@ const make = Effect.gen(function* () {
         stringToBytes(payload.relayIssuer ?? payload.relayUrl),
       );
       yield* secrets.set(CLOUD_LINKED_USER_ID, stringToBytes(payload.cloudUserId));
+      // An older client omits the id; telemetry then fetches it for this link on the next start.
+      yield* payload.analyticsId !== undefined && isTelemetryIdHash(payload.analyticsId)
+        ? secrets.set(CLOUD_LINKED_ANALYTICS_ID, stringToBytes(payload.analyticsId))
+        : secrets.remove(CLOUD_LINKED_ANALYTICS_ID);
       yield* secrets.set(
         RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
         stringToBytes(payload.environmentCredential),
@@ -922,6 +928,7 @@ const make = Effect.gen(function* () {
           environmentCredential: link.environmentCredential,
           cloudMintPublicKey: link.cloudMintPublicKey,
           endpointRuntime: link.endpointRuntime,
+          analyticsId: link.analyticsId,
         },
         {
           lockHeld: true,
@@ -1358,6 +1365,7 @@ const make = Effect.gen(function* () {
           yield* Effect.all(
             [
               secrets.remove(CLOUD_LINKED_USER_ID),
+              secrets.remove(CLOUD_LINKED_ANALYTICS_ID),
               secrets.remove(RELAY_URL_SECRET),
               secrets.remove(RELAY_ISSUER_SECRET),
               secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
@@ -1368,7 +1376,7 @@ const make = Effect.gen(function* () {
               secrets.remove(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET),
               secrets.remove(CLOUD_LINK_REVOKED),
             ],
-            { concurrency: 10 },
+            { concurrency: 11 },
           );
           yield* setCliDesiredCloudLink(false).pipe(withSecrets);
           return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;

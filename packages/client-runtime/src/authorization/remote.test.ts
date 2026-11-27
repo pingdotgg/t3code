@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
@@ -13,6 +15,7 @@ import {
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import * as RpcHttp from "../rpc/http.ts";
 
 const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
@@ -314,19 +317,20 @@ describe("remote environment authorization", () => {
     }),
   );
 
-  it.effect("names the signed-in Connect account and this device by hash only", () =>
+  it.effect("names the Connect account only by its relay-issued analytics id", () =>
     Effect.gen(function* () {
-      const fetch = recordedFetch(
-        Response.json({ ticket: "ws-ticket", expiresAt: "2026-05-01T12:05:00.000Z" }),
-      );
-
-      const url = new URL(
-        yield* resolveRemoteWebSocketConnectionUrl({
+      const analyticsId = "a".repeat(64);
+      const connectUrl = (issued: Option.Option<string>) =>
+        resolveRemoteWebSocketConnectionUrl({
           wsBaseUrl: "wss://remote.example.com/",
           httpBaseUrl: "https://remote.example.com/",
           bearerToken: "bearer-token",
         }).pipe(
-          provideRemoteHttp(fetch.fetchFn),
+          provideRemoteHttp(
+            recordedFetch(
+              Response.json({ ticket: "ws-ticket", expiresAt: "2026-05-01T12:05:00.000Z" }),
+            ).fetchFn,
+          ),
           Effect.provideService(
             ClientCapabilities.CloudSession,
             ClientCapabilities.CloudSession.of({
@@ -337,13 +341,24 @@ describe("remote environment authorization", () => {
           Effect.provideService(ClientCapabilities.AnalyticsDevice, {
             id: Effect.succeedSome("device-1"),
           }),
-        ),
-      );
+          Effect.provide(
+            Layer.mock(ManagedRelay.ManagedRelayClient, {
+              relayUrl: "https://relay.example.test",
+              analyticsId: (accountId) =>
+                Effect.succeed(accountId === "user_connect" ? issued : Option.none()),
+            }),
+          ),
+          Effect.map((url) => new URL(url)),
+        );
 
-      expect(url.searchParams.get("clientOwner")).toBe(hashTelemetryId("user_connect"));
+      const url = yield* connectUrl(Option.some(analyticsId));
+      expect(url.searchParams.get("clientOwner")).toBe(analyticsId);
       expect(url.searchParams.get("clientDevice")).toBe(hashTelemetryId("device-1"));
       expect(url.toString()).not.toContain("user_connect");
       expect(url.toString()).not.toContain("device-1");
+
+      const withoutRelayId = yield* connectUrl(Option.none());
+      expect(withoutRelayId.searchParams.has("clientOwner")).toBe(false);
     }),
   );
 });

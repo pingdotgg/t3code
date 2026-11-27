@@ -219,3 +219,11 @@ export const relayAccountDeletions = pgTable(
       .where(sql`${table.completedAt} is null`),
   ],
 );
+
+// A random id per Connect account that analytics use in place of the account id. Deleting the
+// account deletes this row, after which nothing links the id back to anyone.
+export const relayAnalyticsIds = pgTable("relay_analytics_ids", {
+  userId: varchar("user_id", { length: 255 }).primaryKey(),
+  analyticsId: varchar("analytics_id", { length: 64 }).notNull(),
+  createdAt: varchar("created_at", { length: 64 }).notNull(),
+});

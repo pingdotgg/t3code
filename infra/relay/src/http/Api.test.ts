@@ -7,6 +7,7 @@ import {
 import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as Devices from "../agentActivity/Devices.ts";
+import * as AnalyticsIds from "../accounts/AnalyticsIds.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
 import { createClerkClient, verifyToken } from "@clerk/backend";
@@ -131,6 +132,7 @@ describe("managed endpoint provisioning errors", () => {
           Layer.mock(Devices.Devices, {}),
           Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false }),
           Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, {}),
+          Layer.mock(AnalyticsIds.AnalyticsIds, {}),
         ),
       ),
       Layer.provideMerge(
@@ -243,6 +245,7 @@ describe("device listing compatibility", () => {
           }),
           Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false }),
           Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, {}),
+          Layer.mock(AnalyticsIds.AnalyticsIds, {}),
         ),
       ),
       Layer.provideMerge(
@@ -325,6 +328,7 @@ describe("Cloudflare rate-limit retry hint", () => {
           Layer.mock(Devices.Devices, {}),
           Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false }),
           Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, {}),
+          Layer.mock(AnalyticsIds.AnalyticsIds, {}),
         ),
       ),
       Layer.provideMerge(
@@ -1478,7 +1482,12 @@ describe("relay routing fallback", () => {
                 Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
               ),
             ),
-            Layer.provide([layerPublisher, layerSignatures, Layer.mock(HeldHooks.HeldHooks, {})]),
+            Layer.provide([
+              layerPublisher,
+              layerSignatures,
+              Layer.mock(HeldHooks.HeldHooks, {}),
+              Layer.mock(AnalyticsIds.AnalyticsIds, {}),
+            ]),
           ),
         ),
         Layer.provide(layerAuth),

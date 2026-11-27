@@ -331,6 +331,7 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
           environmentCredential: link.environmentCredential,
           cloudMintPublicKey: link.cloudMintPublicKey,
           endpointRuntime: link.endpointRuntime,
+          analyticsId: link.analyticsId,
         },
       }),
   }).pipe(

@@ -5,16 +5,23 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
 
+import { EnvironmentId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { CLOUD_LINKED_USER_ID } from "../cloud/config.ts";
+import {
+  CLOUD_LINKED_USER_ID,
+  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+  RELAY_URL_SECRET,
+} from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Identify from "./Identify.ts";
 
 interface CapturedLog {
@@ -143,16 +150,44 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("telemetry identi
     }).pipe(Effect.provide(layerIdentity("t3-telemetry-identify-read-", logs)));
   });
 
-  it.effect("reads only the linked Connect account as an owner", () =>
-    Effect.gen(function* () {
+  it.effect("owns a linked install by its relay-issued analytics id, never the account id", () => {
+    const analyticsId = "c".repeat(64);
+    const requests: Array<{ readonly url: string; readonly body: string }> = [];
+    const relayFetch: typeof globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      requests.push({ url: request.url, body: await request.text() });
+      return Response.json({ analyticsId });
+    };
+    const encode = (value: string) => new TextEncoder().encode(value);
+    return Effect.gen(function* () {
       const secrets = yield* ServerSecretStore.ServerSecretStore;
       assert.deepEqual(yield* Identify.getServerOwners, []);
 
-      yield* secrets.set(CLOUD_LINKED_USER_ID, new TextEncoder().encode("user_connect"));
+      yield* secrets.set(CLOUD_LINKED_USER_ID, encode("user_connect"));
+      // No relay to ask: no connect owner rather than one derived from the account id.
+      assert.deepEqual(yield* Identify.getServerOwners, []);
 
-      assert.deepEqual(yield* Identify.getServerOwners, [
-        { source: "connect", ownerId: yield* sha256("user_connect") },
+      yield* secrets.set(RELAY_URL_SECRET, encode("https://relay.example.test"));
+      yield* secrets.set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, encode("environment-credential"));
+      const expected = [{ source: "connect", ownerId: analyticsId }];
+      assert.deepEqual(yield* Identify.getServerOwners, expected);
+      assert.deepEqual(yield* Identify.getServerOwners, expected);
+      assert.deepEqual(requests, [
+        {
+          url: "https://relay.example.test/v1/environments/environment-1/analytics-id",
+          body: JSON.stringify({ cloudUserId: "user_connect" }),
+        },
       ]);
-    }).pipe(Effect.provide(layerIdentity("t3-telemetry-identify-owners-"))),
-  );
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, relayFetch),
+      Effect.provide(
+        Layer.merge(
+          layerIdentity("t3-telemetry-identify-owners-"),
+          Layer.mock(ServerEnvironment.ServerEnvironment, {
+            getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-1")),
+          }),
+        ),
+      ),
+    );
+  });
 });

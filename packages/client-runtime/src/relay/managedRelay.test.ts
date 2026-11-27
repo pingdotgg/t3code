@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { RELAY_GATEWAY_TIMEOUT_MESSAGE, relayRequestFailureDetail } from "./errorPresentation.ts";
 import * as ManagedRelay from "./managedRelay.ts";
@@ -60,6 +61,20 @@ describe("ManagedRelayClient", () => {
       });
       expect(requestCount).toBe(0);
     }).pipe(Effect.provide(layerManagedRelayTest(fetchFn, "http://relay.example.test")));
+  });
+
+  it.effect("remembers the analytics id an environment listing returns for its account", () => {
+    const analyticsId = "b".repeat(64);
+    const fetchFn = (() =>
+      Promise.resolve(Response.json({ environments: [], analyticsId }))) satisfies typeof fetch;
+
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
+      expect(yield* relayClient.analyticsId("user-1")).toEqual(Option.none());
+      yield* relayClient.listEnvironments({ clerkToken: clerkToken("user-1", "a") });
+      expect(yield* relayClient.analyticsId("user-1")).toEqual(Option.some(analyticsId));
+      expect(yield* relayClient.analyticsId("user-2")).toEqual(Option.none());
+    }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
   });
 
   it.effect("uses a cached token while another scope waits for an exchange", () => {

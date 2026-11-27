@@ -4,7 +4,7 @@ T3 Code sends lightweight product usage events and relay connection traces to ke
 
 ## Product usage events
 
-The server sends usage events to `ingest.t3.codes` under a hashed random install ID (plus a hashed T3 Connect account ID when signed in, and random client device IDs). Events contain provider, catalog model name (non-catalog models report as custom), reasoning effort, permission mode, turn/request outcome, duration, release channel, and token counts.
+The server sends usage events to `ingest.t3.codes` under a hashed random install ID (plus, when signed in, a random analytics ID that T3 Connect issues your account and deletes with it, and random client device IDs). Events contain provider, catalog model name (non-catalog models report as custom), reasoning effort, permission mode, turn/request outcome, duration, release channel, and token counts.
 
 ## Disable telemetry
 

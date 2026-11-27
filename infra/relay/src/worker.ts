@@ -74,6 +74,7 @@ import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
 import * as HookForwarder from "./hooks/HookForwarder.ts";
 import * as ManagedTunnelBinding from "./environments/ManagedTunnelBinding.ts";
 import * as AccountDeletion from "./accounts/AccountDeletion.ts";
+import * as AnalyticsIds from "./accounts/AnalyticsIds.ts";
 import * as HeldHooks from "./hooks/HeldHooks.ts";
 import * as HookInbox from "./hooks/HookInbox.ts";
 import * as HookInboxObject from "./hooks/HookInboxObject.ts";
@@ -346,6 +347,7 @@ export const layer = Api.make(
       Layer.provideMerge(
         Layer.mergeAll(
           CloudflareApiPause.layer,
+          AnalyticsIds.layer,
           EnvironmentLinks.layer,
           ManagedEndpointAllocations.layer,
           ManagedTunnelLimits.layer,

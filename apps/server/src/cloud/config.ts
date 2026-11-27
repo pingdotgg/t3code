@@ -12,6 +12,8 @@ export const CLOUD_MINT_PUBLIC_KEY = "cloud-mint-ed25519-public-key";
 export const CLOUD_ENDPOINT_RUNTIME_CONFIG = "cloud-endpoint-runtime-config";
 export const CLOUD_ENDPOINT_CONFIRMED_ORIGIN = "cloud-endpoint-confirmed-origin";
 export const CLOUD_LINKED_USER_ID = "cloud-linked-user-id";
+/** The relay-issued analytics id of the linked account; see telemetry/Identify.ts. */
+export const CLOUD_LINKED_ANALYTICS_ID = "cloud-linked-analytics-id";
 export const RELAY_URL_SECRET = "cloud-relay-url";
 export const RELAY_ISSUER_SECRET = "cloud-relay-issuer";
 export const RELAY_ENVIRONMENT_CREDENTIAL_SECRET = "cloud-relay-environment-credential";

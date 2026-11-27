@@ -2029,6 +2029,7 @@ describe("EnvironmentSupervisor", () => {
         registerLiveActivity: unused,
         getAgentActivitySnapshot: unused,
         resetTokenCache: Effect.void,
+        analyticsId: () => Effect.succeedNone,
       });
       const layerHttp = RpcHttp.layerRemoteHttpClient(fetchFn);
       const remoteAuthorization = yield* RemoteEnvironmentAuthorization.make.pipe(
