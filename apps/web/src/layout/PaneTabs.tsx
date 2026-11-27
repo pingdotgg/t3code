@@ -147,6 +147,7 @@ interface PaneStrip {
   readonly litProperties: readonly [start: string, end: string];
   lit: { host: HTMLElement; offset: number; width: number } | null;
   width: number;
+  scrollWidth: number;
   scrollLeft: number;
   restoreScroll: boolean;
   overflowing: boolean;
@@ -388,6 +389,7 @@ function createPaneStrip(role?: "panel"): PaneStrip {
         : ["--pane-lit-start", "--pane-lit-end"],
     lit: null,
     width: 0,
+    scrollWidth: 0,
     scrollLeft: 0,
     restoreScroll: false,
     overflowing: false,
@@ -479,10 +481,15 @@ function stripScrollLeft(entry: PaneStrip): number {
 
 /** How much of the strip is scrolled out at each end, for its edge fade. */
 function markStripOverflow(strip: HTMLElement): void {
-  const row = strip.closest("[data-pane-header]");
+  const row = strip.closest<HTMLElement>("[data-pane-header]");
   const entry = stripEntries.get(strip);
   const { scrollWidth, clientWidth } = strip;
   const scrollLeft = entry ? stripScrollLeft(entry) : strip.scrollLeft;
+  if (entry) {
+    entry.atPaneEdge = stripAtPaneEdge(strip, row);
+    entry.width = clientWidth;
+    entry.scrollWidth = scrollWidth;
+  }
   const overflow = scrollWidth > clientWidth;
   if (row && row.hasAttribute("data-tab-row-overflow") !== overflow) {
     row.toggleAttribute("data-tab-row-overflow", overflow);
@@ -495,7 +502,6 @@ function markStripOverflow(strip: HTMLElement): void {
   setPaneLitProperty(strip, "--strip-overflowing-end", canEnd ? "1" : "0");
   setPaneLitProperty(strip, "--strip-overflowing-start", canStart ? "1" : "0");
   if (!entry) return;
-  entry.width = clientWidth;
   const overflowChanged = entry.overflowing !== overflow;
   entry.overflowing = overflow;
   entry.canStart = canStart;
@@ -504,7 +510,7 @@ function markStripOverflow(strip: HTMLElement): void {
   if (overflowChanged) {
     for (const listener of entry.overflowListeners) listener();
   }
-  markJoinAtStart(entry);
+  markJoinAtStart(entry, scrollLeft);
   if (entry.hoveredTab) markHoverAtStart(entry, entry.hoveredTab, true);
   markPaneLit(entry, scrollLeft);
 }
@@ -521,17 +527,16 @@ function activeTabInView(entry: PaneStrip): boolean {
  * controls before it): its side runs on down the pane's edge, and the
  * pane's corner there gives way (index.css, data-pane-join-start).
  */
-function markJoinAtStart(entry: PaneStrip): void {
+function markJoinAtStart(entry: PaneStrip, scrollLeft = stripScrollLeft(entry)): void {
   const { strip, shown } = entry;
   const row = strip.closest<HTMLElement>("[data-pane-header]");
   if (!row) return;
-  const scrollLeft = stripScrollLeft(entry);
   const atStart =
     shown !== null &&
     !(scrollLeft > 0.5 && hasFinePointer()) &&
     shown.x - scrollLeft <= PANE_JOIN_EAR_PX + 1 &&
     shown.x + shown.w - scrollLeft >= PANE_JOIN_EAR_PX + 14 &&
-    stripAtPaneEdge(strip, row);
+    entry.atPaneEdge;
   // Keep hiding the pane corner while a scrolled joined tab straddles the pane's
   // left edge, but still let its label fade into the tab fill when clipped there.
   const nextValue = !atStart ? null : shown.x - scrollLeft < PANE_JOIN_EAR_PX - 1 ? "clipped" : "";
@@ -626,18 +631,19 @@ function transformScale(element: HTMLElement, box: DOMRect): number {
 }
 
 function measurePaneLit(entry: PaneStrip): void {
+  const stripBox = entry.strip.getBoundingClientRect();
+  const clientWidth = entry.strip.clientWidth;
   const notch = entry.strip.closest<HTMLElement>('[data-pane-notch=""]');
   const notchBox = notch?.getBoundingClientRect();
   const notchScale = notch && notchBox ? transformScale(notch, notchBox) : 0;
   entry.footOffset =
-    notchBox && notchScale > 0
-      ? (entry.strip.getBoundingClientRect().left - notchBox.left) / notchScale
-      : null;
+    notchBox && notchScale > 0 ? (stripBox.left - notchBox.left) / notchScale : null;
   entry.atPaneEdge = stripAtPaneEdge(
     entry.strip,
     entry.strip.closest<HTMLElement>("[data-pane-header]"),
   );
-  entry.width = entry.strip.clientWidth;
+  entry.width = clientWidth;
+  entry.scrollWidth = entry.strip.scrollWidth;
   const host = entry.strip.closest<HTMLElement>("[data-layout-pane-id]");
   if (entry.lit && entry.lit.host !== host) {
     clearPaneLit(entry);
@@ -649,8 +655,8 @@ function measurePaneLit(entry: PaneStrip): void {
   if (scale <= 0) return;
   entry.lit = {
     host,
-    offset: (entry.strip.getBoundingClientRect().left - hostBox.left) / scale,
-    width: entry.strip.clientWidth,
+    offset: (stripBox.left - hostBox.left) / scale,
+    width: clientWidth,
   };
 }
 
@@ -691,8 +697,9 @@ function markJoinFoot(
 }
 
 function markPaneLit(entry: PaneStrip, scrollLeft: number): void {
-  const { strip, lit, shown, footOffset } = entry;
-  const overflowEnd = strip.scrollWidth - strip.clientWidth - scrollLeft;
+  const { lit, shown, footOffset } = entry;
+  const maxScroll = Math.max(0, entry.scrollWidth - entry.width);
+  const overflowEnd = maxScroll - scrollLeft;
   const canStart = scrollLeft > 0.5;
   const canEnd = overflowEnd > 0.5;
   const lead = canStart && entry.atPaneEdge ? PANE_JOIN_EAR_PX : 0;
@@ -707,7 +714,6 @@ function markPaneLit(entry: PaneStrip, scrollLeft: number): void {
   }
   setPaneLitProperty(entry.joinLayer, "--pane-join-layer-lead", `${lead}px`);
   setPaneLitProperty(entry.joinLayer, "--pane-join-layer-tail", `${entry.width - visibleEnd}px`);
-  const maxScroll = Math.max(0, strip.scrollWidth - strip.clientWidth);
   setPaneLitProperty(entry.join, "--pane-join-max-scroll", `${maxScroll}px`);
   setPaneLitProperty(entry.join, "--pane-join-lead-x", `${lead}px`);
   setPaneLitProperty(entry.join, "--pane-join-scroll", `${scrollLeft + lead}px`);
@@ -875,7 +881,23 @@ function moveJoin(
   const was = entry.shown;
   // Already heading there (a slide begun on the press): let it land.
   if (entry.slide && was?.tabId === to.tabId && was.x === to.x && was.w === to.w) return;
+  // Read all layout geometry before mutating styles or attributes so moving the
+  // shape never forces a synchronous layout.
   measurePaneLit(entry);
+  const scrollLeft = stripScrollLeft(entry);
+  // Under black chrome and on phones the notch draws the tab and no shape shows.
+  const canSlide = was !== null && motionMs > 0 && !join.hidden && join.getClientRects().length > 0;
+  // From where the shape is drawn now, mid-slide included.
+  const capBox =
+    canSlide && entry.slide
+      ? join.querySelector('[data-jc="l"]')?.getBoundingClientRect()
+      : undefined;
+  const stripBox = capBox ? entry.strip.getBoundingClientRect() : undefined;
+  const fromX =
+    capBox && stripBox
+      ? Math.round(capBox.left - stripBox.left + scrollLeft + PANE_JOIN_EAR_PX)
+      : (was?.x ?? to.x);
+
   entry.shown = to;
   join.hidden = false;
   const middle = (width: number) =>
@@ -883,27 +905,20 @@ function moveJoin(
   join.style.setProperty("--jx", `${to.x}px`);
   join.style.setProperty("--jw", `${to.w}px`);
   join.style.setProperty("--jm", String(middle(to.w)));
-  markJoinAtStart(entry);
-  markPaneLit(entry, entry.strip.scrollLeft);
+  markJoinAtStart(entry, scrollLeft);
   const land = () => {
+    const landedScroll = stripScrollLeft(entry);
     entry.slide = null;
     entry.joinedId = to.tabId;
     markJoinedLabel(entry);
-    markStripOverflow(entry.strip);
+    markJoinAtStart(entry, landedScroll);
+    markPaneLit(entry, landedScroll);
   };
-  // Under black chrome and on phones the notch draws the tab and no shape shows.
-  if (!was || motionMs <= 0 || join.getClientRects().length === 0) {
+  if (!canSlide) {
     entry.slide?.cancel();
     land();
     return;
   }
-  // From where the shape is drawn now, mid-slide included.
-  const capBox = join.querySelector('[data-jc="l"]')?.getBoundingClientRect();
-  const stripBox = entry.strip.getBoundingClientRect();
-  const fromX =
-    entry.slide && capBox
-      ? Math.round(capBox.left - stripBox.left + entry.strip.scrollLeft + PANE_JOIN_EAR_PX)
-      : was.x;
   const from = { x: fromX, w: was.w };
   entry.slide?.cancel();
   const timing = { duration: motionMs, easing: PANE_JOIN_EASING };
@@ -933,7 +948,7 @@ function moveJoin(
     return;
   }
   entry.slide = slide;
-  markPaneLit(entry, entry.strip.scrollLeft);
+  markPaneLit(entry, scrollLeft);
   void slide.finished.then(
     () => {
       if (entry.slide === slide) land();
@@ -1014,7 +1029,10 @@ function revealPaneTab(strip: HTMLElement, tabId: string | null): number | null 
   // Room for the joined tab's ears inside the strip's clip, and at the end for
   // its rim's tail, which the next control on the bar overlaps. At the pane's
   // edge the pane clips the strip's ear room and the fade starts past it.
-  const clipped = stripAtPaneEdge(strip, strip.closest("[data-pane-header]"))
+  const entry = stripEntries.get(strip);
+  const clipped = (
+    entry ? entry.atPaneEdge : stripAtPaneEdge(strip, strip.closest("[data-pane-header]"))
+  )
     ? PANE_JOIN_EAR_PX
     : 0;
   const chevron = hasFinePointer() ? PANE_STRIP_CHEVRON_PX : 0;
