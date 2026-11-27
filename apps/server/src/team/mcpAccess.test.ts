@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
   type AuthClientMetadata,
 } from "@t3tools/contracts";
@@ -341,7 +342,7 @@ describe("Team MCP containment (Plane 1) and hub-only isolation (Plane 2)", () =
         yield* childAuthVal.teamService.prepareThreadInheritedFromParent({
           parentThreadId: aliceDefaultThread,
           threadId: bobChildFromAlice,
-          creatorMemberId: childAuthVal.memberId,
+          creatorMemberId: childAuthVal.memberId!,
         });
         const childAttr = Option.getOrThrow(yield* repo.getThreadAttribution(bobChildFromAlice));
         expect(childAttr.creatorMemberId).toBe(bob.member.id);
@@ -608,6 +609,277 @@ describe("Team MCP containment (Plane 1) and hub-only isolation (Plane 2)", () =
             ),
           ))._tag,
         ).toBe("Failure");
+      }).pipe(Effect.provide(makeTeamLayer())),
+  );
+
+  it.effect(
+    "enforces Milestone 8 synthetic team-automation MCP principal (minimal vs elevated) and immutable propagation",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+        const mcpRegistry = yield* McpSessionRegistry.McpSessionRegistry;
+        const sql = yield* SqlClient.SqlClient;
+
+        const aliceSession = yield* sessions.issue({ subject: "alice-mcp-m8" });
+        const init = yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "MCP M8 Team", displayName: "M8 Bot", ownerPseudo: "alice" },
+        });
+        const aliceState = yield* team.getState(aliceSession.sessionId);
+        const defaultEnvId = (aliceState.environments ?? []).find(
+          (e) => e.isDefault,
+        )!.environmentId;
+
+        const adminView = yield* team.createView({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            name: "Admin Secret",
+            readRule: { roles: ["owner", "admin"], memberIds: [] },
+            postRule: { roles: ["owner", "admin"], memberIds: [] },
+          },
+        });
+        const scopedProjectId = ProjectId.make("proj-m8-scoped");
+        const otherProjectId = ProjectId.make("proj-m8-other");
+        const adminThreadId = ThreadId.make("thread-m8-admin-view");
+        const scopedThreadId = ThreadId.make("thread-m8-scoped-view");
+        const otherProjectThreadId = ThreadId.make("thread-m8-other-proj");
+        const now = "2026-01-01T00:00:00.000Z";
+
+        // Seed minimal orchestration_v2_projection_threads rows so getThreadProjectIdInProjection resolves projectIds.
+        for (const [tid, pid] of [
+          [adminThreadId, scopedProjectId],
+          [scopedThreadId, scopedProjectId],
+          [otherProjectThreadId, otherProjectId],
+        ] as const) {
+          yield* sql`
+            INSERT OR IGNORE INTO orchestration_v2_projection_threads (
+              thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+              active_provider_thread_id, created_at, updated_at, archived_at, deleted_at, payload_json
+            ) VALUES (
+              ${tid}, ${pid}, ${tid}, 'devReplay', 'full-access', 'default',
+              NULL, ${now}, ${now}, NULL, NULL, '{}'
+            )
+          `;
+        }
+
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: adminThreadId,
+          viewId: adminView.id,
+        });
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: scopedThreadId,
+          viewId: init.team.defaultViewId,
+        });
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: otherProjectThreadId,
+          viewId: init.team.defaultViewId,
+        });
+
+        const minimalPrincipal = {
+          taskId: ScheduledTaskId.make("task-m8-mcp-min"),
+          teamId: init.team.id,
+          projectId: scopedProjectId,
+          environmentId: defaultEnvId,
+          viewId: init.team.defaultViewId,
+          mcpAccessLevel: "minimal" as const,
+        };
+        const elevatedPrincipal = {
+          ...minimalPrincipal,
+          taskId: ScheduledTaskId.make("task-m8-mcp-elev"),
+          mcpAccessLevel: "elevated" as const,
+        };
+
+        const minCred = yield* mcpRegistry.issue({
+          threadId: scopedThreadId,
+          providerInstanceId: ProviderInstanceId.make("devReplay"),
+          teamAutomation: minimalPrincipal,
+        });
+        const minCaller = yield* mcpRegistry.resolve(
+          minCred.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+        );
+        expect(minCaller?.thread.teamAutomation).toEqual(minimalPrincipal);
+
+        // Minimal automation CANNOT read admin-only view OR threads in another project,
+        // CAN read threads inside its own (projectId, environmentId, viewId).
+        const minReadable = yield* withThreadCaller(
+          minCaller!,
+          TeamMcpAccess.filterReadableThreadIds([
+            adminThreadId,
+            scopedThreadId,
+            otherProjectThreadId,
+          ]),
+        );
+        expect(minReadable.has(scopedThreadId)).toBe(true);
+        expect(minReadable.has(adminThreadId)).toBe(false);
+        expect(minReadable.has(otherProjectThreadId)).toBe(false);
+
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(minCaller!, TeamMcpAccess.assertCanReadThread(adminThreadId)),
+          ))._tag,
+        ).toBe("Failure");
+
+        // Minimal automation CANNOT launch a child thread in another project.
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(
+              minCaller!,
+              TeamMcpAccess.authorizeChildThreadCreation({
+                sourceThreadId: scopedThreadId,
+                projectId: otherProjectId,
+              }),
+            ),
+          ))._tag,
+        ).toBe("Failure");
+
+        // Minimal automation launching inside its own scope propagates teamAutomation immutably with memberId = null.
+        const childAuthOpt = yield* withThreadCaller(
+          minCaller!,
+          TeamMcpAccess.authorizeChildThreadCreation({
+            sourceThreadId: scopedThreadId,
+            projectId: scopedProjectId,
+          }),
+        );
+        expect(Option.isSome(childAuthOpt)).toBe(true);
+        const childAuth = Option.getOrThrow(childAuthOpt);
+        expect(childAuth.memberId).toBeNull();
+        expect(childAuth.teamAutomation).toEqual(minimalPrincipal);
+
+        // Minimal automation CANNOT access other projects or Scratch, CAN access its own project.
+        yield* withThreadCaller(minCaller!, TeamMcpAccess.assertCanAccessProject(scopedProjectId));
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(minCaller!, TeamMcpAccess.assertCanAccessProject(otherProjectId)),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(minCaller!, TeamMcpAccess.assertCanUseScratchProject()),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          Option.getOrNull(
+            yield* withThreadCaller(minCaller!, TeamMcpAccess.getMinimalAutomationProjectId()),
+          ),
+        ).toBe(scopedProjectId);
+
+        // Minimal automation configured on an admin-only View, admin-only Environment, and locked
+        // team thread CAN still read/post/execute/spawn on its OWN thread & scope, while remaining
+        // blocked from unrelated locked human threads or other views/projects.
+        const envRecord = (aliceState.environments ?? []).find(
+          (e) => e.environmentId === defaultEnvId,
+        )!;
+        yield* team.updateEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: envRecord.environmentId,
+            accessRule: { roles: ["owner", "admin"], memberIds: [] },
+          },
+        });
+        const lockedAdminAutoThreadId = ThreadId.make("thread-m8-locked-admin-auto");
+        const lockedHumanAdminThreadId = ThreadId.make("thread-m8-locked-human-admin");
+        for (const tid of [lockedAdminAutoThreadId, lockedHumanAdminThreadId]) {
+          yield* sql`
+            INSERT OR IGNORE INTO orchestration_v2_projection_threads (
+              thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+              active_provider_thread_id, created_at, updated_at, archived_at, deleted_at, payload_json
+            ) VALUES (
+              ${tid}, ${scopedProjectId}, ${tid}, 'devReplay', 'full-access', 'default',
+              NULL, ${now}, ${now}, NULL, NULL, '{}'
+            )
+          `;
+        }
+        const adminMinTaskId = ScheduledTaskId.make("task-m8-admin-min");
+        yield* team.saveScheduledTaskMeta({
+          taskId: adminMinTaskId,
+          teamId: init.team.id,
+          environmentId: defaultEnvId,
+          viewId: adminView.id,
+          locked: true,
+          mcpAccessLevel: "minimal",
+          actorMemberId: init.owner.id,
+        });
+        yield* team.prepareTeamAutomationThreadAttribution({
+          taskId: adminMinTaskId,
+          threadId: lockedAdminAutoThreadId,
+          projectId: scopedProjectId,
+        });
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: lockedHumanAdminThreadId,
+          viewId: adminView.id,
+          locked: true,
+        });
+        const adminMinPrincipal = {
+          taskId: adminMinTaskId,
+          teamId: init.team.id,
+          projectId: scopedProjectId,
+          environmentId: defaultEnvId,
+          viewId: adminView.id,
+          mcpAccessLevel: "minimal" as const,
+        };
+        const adminMinCred = yield* mcpRegistry.issue({
+          threadId: lockedAdminAutoThreadId,
+          providerInstanceId: ProviderInstanceId.make("devReplay"),
+          teamAutomation: adminMinPrincipal,
+        });
+        const adminMinCaller = yield* mcpRegistry.resolve(
+          adminMinCred.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+        );
+        yield* withThreadCaller(adminMinCaller!, TeamMcpAccess.assertCanAccessCallerThread("read"));
+        yield* withThreadCaller(
+          adminMinCaller!,
+          TeamMcpAccess.assertCanAccessCallerThread("write"),
+        );
+        yield* withThreadCaller(
+          adminMinCaller!,
+          TeamMcpAccess.assertCanAccessEnvironment(defaultEnvId),
+        );
+        yield* withThreadCaller(
+          adminMinCaller!,
+          TeamMcpAccess.authorizeChildThreadCreation({
+            sourceThreadId: lockedAdminAutoThreadId,
+            projectId: scopedProjectId,
+            locked: true,
+          }),
+        );
+        // Still blocked from posting into an unrelated locked human thread in the same view,
+        // and blocked from reading Default View threads outside its configured Admin view.
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(
+              adminMinCaller!,
+              TeamMcpAccess.assertCanPostInThread(lockedHumanAdminThreadId),
+            ),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(adminMinCaller!, TeamMcpAccess.assertCanReadThread(scopedThreadId)),
+          ))._tag,
+        ).toBe("Failure");
+
+        // Elevated automation CAN read admin-only view while still attributed as team-automation (memberId = null).
+        const elevCred = yield* mcpRegistry.issue({
+          threadId: scopedThreadId,
+          providerInstanceId: ProviderInstanceId.make("devReplay"),
+          teamAutomation: elevatedPrincipal,
+        });
+        const elevCaller = yield* mcpRegistry.resolve(
+          elevCred.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+        );
+        const elevReadable = yield* withThreadCaller(
+          elevCaller!,
+          TeamMcpAccess.filterReadableThreadIds([adminThreadId, scopedThreadId]),
+        );
+        expect(elevReadable.has(adminThreadId)).toBe(true);
+        expect(elevReadable.has(scopedThreadId)).toBe(true);
+        yield* withThreadCaller(elevCaller!, TeamMcpAccess.assertCanAccessProject(otherProjectId));
+        yield* withThreadCaller(elevCaller!, TeamMcpAccess.assertCanUseScratchProject());
       }).pipe(Effect.provide(makeTeamLayer())),
   );
 });

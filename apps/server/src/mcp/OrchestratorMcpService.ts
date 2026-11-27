@@ -2503,7 +2503,6 @@ const make = Effect.gen(function* () {
 
   return OrchestratorMcpService.of({
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
-      yield* TeamMcpAccess.assertCanUseScheduledTasks();
       const { parent, limits } = yield* loadCaller(scope, ["runs"]);
       const projectId = yield* resolveProjectTarget(parent, input.projectId);
       yield* assertLiveCallerForOtherProject(scope, parent, projectId);
@@ -2559,6 +2558,7 @@ const make = Effect.gen(function* () {
       };
       // A replayed key rewrites the task it created, which its user may since have raised or
       // rebound: that is an edit of the task as it now stands.
+      let replayed: ScheduledTask | null = null;
       if (commandId !== undefined) {
         const replayedId = ScheduledTaskService.scheduledTaskIdForCommand(commandId);
         const { tasks } = yield* scheduledTasks
@@ -2568,11 +2568,18 @@ const make = Effect.gen(function* () {
               failure("orchestration_error", `Could not load scheduled task: ${error.message}`),
             ),
           );
-        const replayed = tasks.find((candidate) => candidate.id === replayedId);
-        if (replayed !== undefined) yield* requireScheduledTaskWithinLimits(replayed, limits);
+        replayed = tasks.find((candidate) => candidate.id === replayedId) ?? null;
+        if (replayed !== null) yield* requireScheduledTaskWithinLimits(replayed, limits);
       }
+      const teamMetaAuth = yield* TeamMcpAccess.authorizeScheduledTaskUpsert({
+        input: upsertInput,
+        existingTask: replayed,
+      });
       const { task } = yield* scheduledTasks
-        .upsert(upsertInput)
+        .upsert(
+          upsertInput,
+          Option.isSome(teamMetaAuth) ? { teamMeta: teamMetaAuth.value.meta } : undefined,
+        )
         .pipe(
           Effect.mapError((error) =>
             failure("orchestration_error", `Could not schedule task: ${error.message}`),
@@ -2582,7 +2589,6 @@ const make = Effect.gen(function* () {
     }),
     listScheduledTasks: Effect.fn("OrchestratorMcpService.listScheduledTasks")(
       function* (scope, input) {
-        yield* TeamMcpAccess.assertCanUseScheduledTasks();
         const { parent } = yield* loadCaller(scope, []);
         const projectId = input.projectId ?? parent?.thread.projectId;
         const { tasks } = yield* scheduledTasks
@@ -2592,8 +2598,9 @@ const make = Effect.gen(function* () {
               failure("orchestration_error", `Could not list scheduled tasks: ${error.message}`),
             ),
           );
+        const readableTasks = yield* TeamMcpAccess.filterReadableScheduledTasks(tasks);
         return {
-          tasks: tasks
+          tasks: readableTasks
             .filter(
               (task) =>
                 (projectId === undefined || task.projectId === projectId) &&
@@ -2605,10 +2612,10 @@ const make = Effect.gen(function* () {
     ),
     updateScheduledTask: Effect.fn("OrchestratorMcpService.updateScheduledTask")(
       function* (scope, input) {
-        yield* TeamMcpAccess.assertCanUseScheduledTasks();
         const { parent, limits } = yield* loadCaller(scope, ["runs"]);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
+        yield* assertProjectProviderAllowed(existing.projectId, existing.modelSelection.instanceId);
         if (
           input.bindToCurrentThread === true &&
           (parent === undefined || parent.thread.projectId !== existing.projectId)
@@ -2671,8 +2678,15 @@ const make = Effect.gen(function* () {
           createdBy: existing.createdBy,
           creationSource: existing.creationSource,
         };
+        const teamMetaAuth = yield* TeamMcpAccess.authorizeScheduledTaskUpsert({
+          input: upsertInput,
+          existingTask: existing,
+        });
         const { task } = yield* scheduledTasks
-          .upsert(upsertInput)
+          .upsert(
+            upsertInput,
+            Option.isSome(teamMetaAuth) ? { teamMeta: teamMetaAuth.value.meta } : undefined,
+          )
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not update scheduled task: ${error.message}`),
@@ -2683,9 +2697,12 @@ const make = Effect.gen(function* () {
     ),
     deleteScheduledTask: Effect.fn("OrchestratorMcpService.deleteScheduledTask")(
       function* (scope, input) {
-        yield* TeamMcpAccess.assertCanUseScheduledTasks();
         const { parent, limits } = yield* loadCaller(scope, ["runs"]);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
+        yield* TeamMcpAccess.assertCanMutateScheduledTask(
+          existing.id,
+          existing.threadId == null ? null : ThreadId.make(existing.threadId),
+        );
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         yield* scheduledTasks
           .delete({ id: existing.id })
@@ -3113,6 +3130,7 @@ const make = Effect.gen(function* () {
           const derivedChildThreadId = deriveOrchestrationId.delegatedTaskThread({ commandId });
           const teamChildAuth = yield* TeamMcpAccess.authorizeChildThreadCreation({
             sourceThreadId: scope.thread.threadId,
+            projectId: parent.thread.projectId,
           });
           const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
           const preparedAttribution = Option.isSome(maybeTeam)
@@ -3120,9 +3138,11 @@ const make = Effect.gen(function* () {
                 .prepareThreadInheritedFromParent({
                   parentThreadId: scope.thread.threadId,
                   threadId: derivedChildThreadId,
-                  ...(Option.isSome(teamChildAuth)
-                    ? { creatorMemberId: teamChildAuth.value.memberId }
-                    : {}),
+                  ...(Option.isSome(teamChildAuth) && teamChildAuth.value.teamAutomation !== null
+                    ? { teamAutomation: teamChildAuth.value.teamAutomation }
+                    : Option.isSome(teamChildAuth) && teamChildAuth.value.memberId !== null
+                      ? { creatorMemberId: teamChildAuth.value.memberId }
+                      : {}),
                 })
                 .pipe(
                   Effect.mapError((error) =>
@@ -3135,20 +3155,43 @@ const make = Effect.gen(function* () {
             : false;
           if (Option.isSome(teamChildAuth)) {
             const derivedChildMessageId = deriveOrchestrationId.delegatedTaskMessage({ commandId });
-            yield* teamChildAuth.value.teamService
-              .requireTurnAuthoredByMember({
-                memberId: teamChildAuth.value.memberId,
-                threadId: derivedChildThreadId,
-                turnId: `msg:${derivedChildMessageId}`,
-              })
-              .pipe(
-                Effect.mapError((error) =>
-                  failure(
-                    "capability_denied",
-                    `Unable to record delegated turn attribution: ${error.message}`,
+            const rollbackPreparedDelegate = () =>
+              preparedAttribution && Option.isSome(maybeTeam)
+                ? maybeTeam.value.rollbackPreparedThreadAttribution(derivedChildThreadId)
+                : Effect.void;
+            if (teamChildAuth.value.teamAutomation !== null) {
+              yield* teamChildAuth.value.teamService
+                .requireTeamAutomationTurn({
+                  threadId: derivedChildThreadId,
+                  turnId: `msg:${derivedChildMessageId}`,
+                  principal: teamChildAuth.value.teamAutomation,
+                })
+                .pipe(
+                  Effect.onError(rollbackPreparedDelegate),
+                  Effect.mapError((error) =>
+                    failure(
+                      "capability_denied",
+                      `Unable to record delegated automation turn scope: ${error.message}`,
+                    ),
                   ),
-                ),
-              );
+                );
+            } else if (teamChildAuth.value.memberId !== null) {
+              yield* teamChildAuth.value.teamService
+                .requireTurnAuthoredByMember({
+                  memberId: teamChildAuth.value.memberId,
+                  threadId: derivedChildThreadId,
+                  turnId: `msg:${derivedChildMessageId}`,
+                })
+                .pipe(
+                  Effect.onError(rollbackPreparedDelegate),
+                  Effect.mapError((error) =>
+                    failure(
+                      "capability_denied",
+                      `Unable to record delegated turn attribution: ${error.message}`,
+                    ),
+                  ),
+                );
+            }
           }
           const result = yield* threadManagement
             .dispatch({
@@ -3206,9 +3249,11 @@ const make = Effect.gen(function* () {
             yield* maybeTeam.value.recordThreadInheritedFromParent({
               parentThreadId: scope.thread.threadId,
               threadId: childThreadId,
-              ...(Option.isSome(teamChildAuth)
-                ? { creatorMemberId: teamChildAuth.value.memberId }
-                : {}),
+              ...(Option.isSome(teamChildAuth) && teamChildAuth.value.teamAutomation !== null
+                ? { teamAutomation: teamChildAuth.value.teamAutomation }
+                : Option.isSome(teamChildAuth) && teamChildAuth.value.memberId !== null
+                  ? { creatorMemberId: teamChildAuth.value.memberId }
+                  : {}),
               ...(childRunEvent?.event.type === "run.created"
                 ? { turnId: childRunEvent.event.payload.id }
                 : {}),
@@ -3535,6 +3580,7 @@ const make = Effect.gen(function* () {
                     };
               const teamChildAuth = yield* TeamMcpAccess.authorizeChildThreadCreation({
                 sourceThreadId: scope.thread.threadId,
+                projectId: parent.thread.projectId,
               });
               const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
               const preparedAttribution = Option.isSome(maybeTeam)
@@ -3542,9 +3588,12 @@ const make = Effect.gen(function* () {
                     .prepareThreadInheritedFromParent({
                       parentThreadId: scope.thread.threadId,
                       threadId,
-                      ...(Option.isSome(teamChildAuth)
-                        ? { creatorMemberId: teamChildAuth.value.memberId }
-                        : {}),
+                      ...(Option.isSome(teamChildAuth) &&
+                      teamChildAuth.value.teamAutomation !== null
+                        ? { teamAutomation: teamChildAuth.value.teamAutomation }
+                        : Option.isSome(teamChildAuth) && teamChildAuth.value.memberId !== null
+                          ? { creatorMemberId: teamChildAuth.value.memberId }
+                          : {}),
                     })
                     .pipe(
                       Effect.mapError((error) =>
@@ -3556,13 +3605,33 @@ const make = Effect.gen(function* () {
                     )
                 : false;
               if (initialMessage !== undefined && Option.isSome(teamChildAuth)) {
-                yield* teamChildAuth.value.teamService
-                  .requireTurnAuthoredByMember({
-                    memberId: teamChildAuth.value.memberId,
-                    threadId,
-                    turnId: `msg:${initialMessage.messageId}`,
-                  })
-                  .pipe(Effect.mapError((error) => failure("capability_denied", error.message)));
+                const rollbackPreparedChild = () =>
+                  preparedAttribution && Option.isSome(maybeTeam)
+                    ? maybeTeam.value.rollbackPreparedThreadAttribution(threadId)
+                    : Effect.void;
+                if (teamChildAuth.value.teamAutomation !== null) {
+                  yield* teamChildAuth.value.teamService
+                    .requireTeamAutomationTurn({
+                      threadId,
+                      turnId: `msg:${initialMessage.messageId}`,
+                      principal: teamChildAuth.value.teamAutomation,
+                    })
+                    .pipe(
+                      Effect.onError(rollbackPreparedChild),
+                      Effect.mapError((error) => failure("capability_denied", error.message)),
+                    );
+                } else if (teamChildAuth.value.memberId !== null) {
+                  yield* teamChildAuth.value.teamService
+                    .requireTurnAuthoredByMember({
+                      memberId: teamChildAuth.value.memberId,
+                      threadId,
+                      turnId: `msg:${initialMessage.messageId}`,
+                    })
+                    .pipe(
+                      Effect.onError(rollbackPreparedChild),
+                      Effect.mapError((error) => failure("capability_denied", error.message)),
+                    );
+                }
               }
               const created = yield* threadManagement
                 .dispatch({
@@ -3605,9 +3674,11 @@ const make = Effect.gen(function* () {
                 yield* maybeTeam.value.recordThreadInheritedFromParent({
                   parentThreadId: scope.thread.threadId,
                   threadId,
-                  ...(Option.isSome(teamChildAuth)
-                    ? { creatorMemberId: teamChildAuth.value.memberId }
-                    : {}),
+                  ...(Option.isSome(teamChildAuth) && teamChildAuth.value.teamAutomation !== null
+                    ? { teamAutomation: teamChildAuth.value.teamAutomation }
+                    : Option.isSome(teamChildAuth) && teamChildAuth.value.memberId !== null
+                      ? { creatorMemberId: teamChildAuth.value.memberId }
+                      : {}),
                   ...(createdRunEvent?.event.type === "run.created"
                     ? { turnId: createdRunEvent.event.payload.id }
                     : initialMessage !== undefined

@@ -113,10 +113,6 @@ export function QueuedRunsControl({
     scopeThreadRef(props.environmentId, props.threadId),
   )?.projection;
   const teamState = useTeamEnvironmentState(props.environmentId);
-  const canPromoteQueuedRun = canCurrentMemberPromoteQueuedRun({
-    teamState,
-    threadId: props.threadId,
-  });
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
@@ -134,6 +130,12 @@ export function QueuedRunsControl({
   const workflow = projection ? deriveThreadQueueWorkflowState(projection, messages) : null;
   const queued = workflow?.queuedRuns ?? [];
   const activeRun = workflow?.activeRun ?? null;
+  const canPromoteQueuedRun = canCurrentMemberPromoteQueuedRun({
+    teamState,
+    threadId: props.threadId,
+    activeRunId: activeRun?.id ?? null,
+    activeUserMessageId: activeRun?.userMessageId ?? null,
+  });
   // A fresh message starts its own turn: it may skip compaction, but not steer into a turn.
   // In team mode, `Send now` (promoting a queued run) is strictly restricted to the thread creator.
   const canSendRun = (freshContext: boolean) =>

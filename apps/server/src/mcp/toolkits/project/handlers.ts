@@ -272,6 +272,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "scratch:true picks its own project and folder; omit projectId and workspaceStrategy.",
           });
+        if (input.scratch === true) {
+          yield* TeamMcpAccess.assertCanUseScratchProject();
+        }
         const projectId =
           input.scratch === true
             ? (yield* ManagedProjectFolders.ManagedProjectFolders.pipe(
@@ -285,6 +288,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ),
               )).projectId
             : yield* resolveProjectId(context, input.projectId);
+        yield* TeamMcpAccess.assertCanAccessProject(projectId);
         // A retry of an accepted launch replays it: it keeps the model it started
         // with and skips the checks only a new launch needs, which the project
         // may no longer pass, such as a base branch deleted since.
@@ -506,9 +510,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         ) {
           yield* assertLocalAgentMcpExecutionAllowed;
         }
-        const teamChildAuth = yield* TeamMcpAccess.authorizeChildThreadCreation(
-          caller === undefined ? {} : { sourceThreadId: caller.id },
-        );
+        const teamChildAuth = yield* TeamMcpAccess.authorizeChildThreadCreation({
+          ...(caller === undefined ? {} : { sourceThreadId: caller.id }),
+          projectId,
+        });
         const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
         const preparedAttribution = Option.isSome(teamServiceOption)
           ? caller !== undefined
@@ -516,9 +521,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 .prepareThreadInheritedFromParent({
                   parentThreadId: caller.id,
                   threadId,
-                  ...(Option.isSome(teamChildAuth)
-                    ? { creatorMemberId: teamChildAuth.value.memberId }
-                    : {}),
+                  ...(Option.isSome(teamChildAuth) && teamChildAuth.value.teamAutomation !== null
+                    ? { teamAutomation: teamChildAuth.value.teamAutomation }
+                    : Option.isSome(teamChildAuth) && teamChildAuth.value.memberId !== null
+                      ? { creatorMemberId: teamChildAuth.value.memberId }
+                      : {}),
                 })
                 .pipe(
                   Effect.mapError(
@@ -529,14 +536,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                       }),
                   ),
                 )
-            : Option.isSome(teamChildAuth)
+            : Option.isSome(teamChildAuth) && teamChildAuth.value.teamAutomation !== null
               ? yield* teamServiceOption.value
-                  .prepareThreadAttributionForMember({
-                    memberId: teamChildAuth.value.memberId,
+                  .prepareTeamAutomationThreadAttribution({
                     threadId,
+                    taskId: teamChildAuth.value.teamAutomation.taskId,
+                    projectId,
                     ...(teamChildAuth.value.inheritedViewId === undefined
                       ? {}
                       : { viewId: teamChildAuth.value.inheritedViewId }),
+                    environmentId: teamChildAuth.value.teamAutomation.environmentId,
                   })
                   .pipe(
                     Effect.mapError(
@@ -547,27 +556,69 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                         }),
                     ),
                   )
-              : false
+              : Option.isSome(teamChildAuth) && teamChildAuth.value.memberId !== null
+                ? yield* teamServiceOption.value
+                    .prepareThreadAttributionForMember({
+                      memberId: teamChildAuth.value.memberId,
+                      threadId,
+                      ...(teamChildAuth.value.inheritedViewId === undefined
+                        ? {}
+                        : { viewId: teamChildAuth.value.inheritedViewId }),
+                    })
+                    .pipe(
+                      Effect.mapError(
+                        (error) =>
+                          new OrchestratorMcpFailure({
+                            code: "orchestration_error",
+                            message: error.message,
+                          }),
+                      ),
+                    )
+                : false
           : false;
+        const rollbackPrepared = () =>
+          preparedAttribution && Option.isSome(teamServiceOption)
+            ? teamServiceOption.value.rollbackPreparedThreadAttribution(threadId)
+            : Effect.void;
         if (
           (input.message !== undefined || attachments.length > 0) &&
           Option.isSome(teamChildAuth)
         ) {
-          yield* teamChildAuth.value.teamService
-            .requireTurnAuthoredByMember({
-              memberId: teamChildAuth.value.memberId,
-              threadId,
-              turnId: `msg:${messageId}`,
-            })
-            .pipe(
-              Effect.mapError(
-                (error) =>
-                  new OrchestratorMcpFailure({
-                    code: "capability_denied",
-                    message: error.message,
-                  }),
-              ),
-            );
+          if (teamChildAuth.value.teamAutomation !== null) {
+            yield* teamChildAuth.value.teamService
+              .requireTeamAutomationTurn({
+                threadId,
+                turnId: `msg:${messageId}`,
+                principal: teamChildAuth.value.teamAutomation,
+              })
+              .pipe(
+                Effect.onError(rollbackPrepared),
+                Effect.mapError(
+                  (error) =>
+                    new OrchestratorMcpFailure({
+                      code: "capability_denied",
+                      message: error.message,
+                    }),
+                ),
+              );
+          } else if (teamChildAuth.value.memberId !== null) {
+            yield* teamChildAuth.value.teamService
+              .requireTurnAuthoredByMember({
+                memberId: teamChildAuth.value.memberId,
+                threadId,
+                turnId: `msg:${messageId}`,
+              })
+              .pipe(
+                Effect.onError(rollbackPrepared),
+                Effect.mapError(
+                  (error) =>
+                    new OrchestratorMcpFailure({
+                      code: "capability_denied",
+                      message: error.message,
+                    }),
+                ),
+              );
+          }
         }
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
@@ -636,25 +687,38 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             yield* teamServiceOption.value.recordThreadInheritedFromParent({
               parentThreadId: caller.id,
               threadId: thread.id,
-              ...(Option.isSome(teamChildAuth)
-                ? { creatorMemberId: teamChildAuth.value.memberId }
-                : {}),
+              ...(Option.isSome(teamChildAuth) && teamChildAuth.value.teamAutomation !== null
+                ? { teamAutomation: teamChildAuth.value.teamAutomation }
+                : Option.isSome(teamChildAuth) && teamChildAuth.value.memberId !== null
+                  ? { creatorMemberId: teamChildAuth.value.memberId }
+                  : {}),
               ...(run ? { turnId: run.id } : {}),
             });
           } else if (Option.isSome(teamChildAuth)) {
-            yield* teamServiceOption.value.recordThreadCreatedByMember({
-              memberId: teamChildAuth.value.memberId,
-              threadId: thread.id,
-              ...(teamChildAuth.value.inheritedViewId === undefined
-                ? {}
-                : { viewId: teamChildAuth.value.inheritedViewId }),
-            });
-            if (run) {
-              yield* teamServiceOption.value.recordTurnAuthoredByMember({
+            if (teamChildAuth.value.teamAutomation !== null) {
+              yield* teamServiceOption.value.publishTeamAutomationThreadAttributed(thread.id);
+              if (run) {
+                yield* teamServiceOption.value.recordTeamAutomationTurn({
+                  threadId: thread.id,
+                  turnId: run.id,
+                  principal: teamChildAuth.value.teamAutomation,
+                });
+              }
+            } else if (teamChildAuth.value.memberId !== null) {
+              yield* teamServiceOption.value.recordThreadCreatedByMember({
                 memberId: teamChildAuth.value.memberId,
                 threadId: thread.id,
-                turnId: run.id,
+                ...(teamChildAuth.value.inheritedViewId === undefined
+                  ? {}
+                  : { viewId: teamChildAuth.value.inheritedViewId }),
               });
+              if (run) {
+                yield* teamServiceOption.value.recordTurnAuthoredByMember({
+                  memberId: teamChildAuth.value.memberId,
+                  threadId: thread.id,
+                  turnId: run.id,
+                });
+              }
             }
           }
         }
@@ -673,6 +737,21 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_project_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const projects = yield* access;
+      const scopedProjectId = yield* TeamMcpAccess.getMinimalAutomationProjectId();
+      if (Option.isSome(scopedProjectId)) {
+        const cursor = input.cursor ?? 0;
+        if (cursor > 0) {
+          return { projects: [], nextCursor: null };
+        }
+        const scoped = yield* projects
+          .getById(scopedProjectId.value)
+          .pipe(Effect.mapError(unavailable));
+        const format = yield* withSavedProjectSettings;
+        return {
+          projects: Option.isSome(scoped) ? [format(scoped.value)] : [],
+          nextCursor: null,
+        };
+      }
       // Identities are resolved: linked environments find this side's project by repository.
       const page = yield* projects
         .listPage({ cursor: input.cursor ?? 0, limit: input.limit ?? 20 })
@@ -682,6 +761,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   t3_project_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
+      yield* TeamMcpAccess.assertCanAccessProject(input.projectId);
       const projects = yield* access;
       const result = yield* projects.getById(input.projectId).pipe(Effect.mapError(unavailable));
       if (Option.isNone(result))

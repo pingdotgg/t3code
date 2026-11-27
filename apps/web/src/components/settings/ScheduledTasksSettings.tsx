@@ -1,8 +1,14 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import {
+  canCurrentMemberConfigurePrivilegedTeamScheduledTask,
+  canCurrentMemberCreateTeamScheduledTask,
+  canCurrentMemberMutateTeamScheduledTask,
   filterProviderEntriesForTeamProject,
+  listAccessibleTeamViews,
   resolveProjectTeamAssignment,
+  resolveTeamDefaultView,
+  resolveTeamScheduledTaskMeta,
 } from "@t3tools/client-runtime/team";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
@@ -11,6 +17,7 @@ import {
   ChevronDownIcon,
   Clock3Icon,
   CopyIcon,
+  EyeIcon,
   InboxIcon,
   MessageSquareIcon,
   MoreHorizontalIcon,
@@ -29,6 +36,8 @@ import type {
   ScheduledTaskThreadMode,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliverySummary,
+  TeamScheduledTaskMcpAccessLevel,
+  TeamViewId,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -218,6 +227,9 @@ const EMPTY_DRAFT: DraftState = {
   coalesceWindowSeconds: "",
   filters: [],
   savedFilters: [],
+  teamViewId: "",
+  teamLocked: false,
+  teamMcpAccessLevel: "minimal",
 };
 
 function WebhookFiltersField({
@@ -454,13 +466,19 @@ export function ScheduledTasksSettings(target: {
       replace: true,
     });
   };
+  const teamStates = useTeamStatesByEnvironment();
   const createPermissions = useAtomValue(
     scheduledTaskCreatePermissionsAtom(
       environmentIdsKey(connectedEnvironments.map((entry) => entry.environmentId)),
     ),
   );
   const permittedEnvironments = connectedEnvironments.filter(
-    (_entry, index) => createPermissions[index],
+    (entry, index) =>
+      createPermissions[index] &&
+      canCurrentMemberCreateTeamScheduledTask(
+        teamStates.get(entry.environmentId),
+        entry.environmentId,
+      ),
   );
   const creationEnvironment =
     permittedEnvironments.find(
@@ -556,13 +574,28 @@ function ScheduledTaskEnvironmentList({
   const messages = useMessages();
   const gt = useGT();
   const { scope, environments } = useSettingsScope();
-  const connectedIds = environments.flatMap((environment) =>
+  const teamStates = useTeamStatesByEnvironment();
+  const hasTeamEnvironment = environments.some(
+    (entry) => teamStates.get(entry.environmentId)?.team != null,
+  );
+  const [selectedTeamEnvId, setSelectedTeamEnvId] = useState<string>("all");
+  const effectiveFilterEnvId =
+    hasTeamEnvironment &&
+    selectedTeamEnvId !== "all" &&
+    environments.some((entry) => entry.environmentId === selectedTeamEnvId)
+      ? selectedTeamEnvId
+      : "all";
+  const filteredEnvironments =
+    effectiveFilterEnvId === "all"
+      ? environments
+      : environments.filter((entry) => entry.environmentId === effectiveFilterEnvId);
+  const connectedIds = filteredEnvironments.flatMap((environment) =>
     environment.connection.phase === "connected" && environment.serverConfig !== null
       ? [environment.environmentId]
       : [],
   );
   const queries = useAtomValue(scheduledTasksListAtom(environmentIdsKey(connectedIds)));
-  const states = environments.map((environment) => {
+  const states = filteredEnvironments.map((environment) => {
     const index = connectedIds.indexOf(environment.environmentId);
     const query = index < 0 ? null : queries[index]!;
     const data = query === null ? null : AsyncResult.getOrElse(query, () => null);
@@ -588,7 +621,9 @@ function ScheduledTaskEnvironmentList({
     "No tasks on": [],
   };
   for (const { environment, connected, tasks, error } of states) {
-    const label = settingsScopeEnvironmentLabel(environment, environments);
+    const envTeam = teamStates.get(environment.environmentId)?.team ?? null;
+    const baseLabel = settingsScopeEnvironmentLabel(environment, environments);
+    const label = envTeam ? `${envTeam.displayName} · ${baseLabel}` : baseLabel;
     if (!connected) {
       summaries["Not connected:"]!.push(
         `${label} (${connectionStatusTitle(environment.connection, messages)})`,
@@ -602,76 +637,133 @@ function ScheduledTaskEnvironmentList({
     }
   }
 
+  const filterOptionLabel = (entry: EnvironmentPresentation) => {
+    const envTeam = teamStates.get(entry.environmentId)?.team ?? null;
+    const baseLabel = settingsScopeEnvironmentLabel(entry, environments);
+    return envTeam ? `${envTeam.displayName} · ${baseLabel}` : baseLabel;
+  };
+  const selectedFilterEntry =
+    effectiveFilterEnvId === "all"
+      ? null
+      : (environments.find((entry) => entry.environmentId === effectiveFilterEnvId) ?? null);
+
   return (
-    <SettingsGroup>
-      {populated.map(({ environment, tasks, timeZone }) => {
-        const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
-        return (
-          <div key={environment.environmentId} className="divide-y divide-border/50">
-            <EnvironmentRow
-              kind={resolveEnvironmentMachineKind(environment.serverConfig)}
-              label={primary}
-              subtitle={
-                <ScheduledTaskEnvironmentSubtitle environment={environment} secondary={secondary} />
-              }
+    <div className="space-y-3">
+      {hasTeamEnvironment ? (
+        <div className="flex items-center justify-end gap-2">
+          <Label htmlFor="scheduled-tasks-team-env-filter">
+            <T>Scope</T>
+          </Label>
+          <Select
+            value={effectiveFilterEnvId}
+            onValueChange={(value) => {
+              if (typeof value === "string") setSelectedTeamEnvId(value);
+            }}
+          >
+            <SelectTrigger
+              id="scheduled-tasks-team-env-filter"
+              size="sm"
+              className="w-64"
+              data-testid="scheduled-tasks-team-env-filter"
             >
-              <ConnectionStatusDot
-                dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
-                tooltipText={connectionStatusTitle(environment.connection, messages)}
-              />
-              <span className="text-xs text-muted-foreground">
-                {connectionStatusTitle(environment.connection, messages)}
-              </span>
-            </EnvironmentRow>
-            {tasks?.map((task) => (
-              <ScheduledTaskRow
-                key={task.id}
-                environmentId={environment.environmentId}
-                task={task}
-                timeZone={timeZone}
-                onEdit={() => onEdit(environment.environmentId, task)}
-              />
-            ))}
-          </div>
-        );
-      })}
-      {taskId && linkedState?.tasks && linkedState.error === null && !linkedTask ? (
-        <SettingsRow
-          title={gt("Task unavailable")}
-          description={gt(
-            "This task was deleted or belongs to a different project. Check your project filter.",
-          )}
-          role="status"
-        />
+              <SelectValue>
+                {selectedFilterEntry
+                  ? filterOptionLabel(selectedFilterEntry)
+                  : gt("All environments")}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup>
+              <SelectItem value="all">
+                <T>All environments</T>
+              </SelectItem>
+              {environments.map((entry) => (
+                <SelectItem key={entry.environmentId} value={entry.environmentId}>
+                  {filterOptionLabel(entry)}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        </div>
       ) : null}
-      {populated.length === 0 && loaded.length > 0 ? (
-        <SettingsRow
-          title={gt("No scheduled tasks")}
-          description={gt("No tasks match this environment and project selection.")}
-        />
-      ) : null}
-      {Object.entries(summaries).map(([label, entries]) => {
-        if (entries.length === 0) return null;
-        const summary = messages(SCOPE_SUMMARY_TEMPLATES[label] ?? label, {
-          environments: entries.join(", "),
-        });
-        return (
-          <Tooltip key={label}>
-            <TooltipTrigger
-              render={
-                <p
-                  className="truncate px-3 py-2.5 text-xs text-muted-foreground sm:px-4"
-                  role="status"
+      <SettingsGroup>
+        {populated.map(({ environment, tasks, timeZone }) => {
+          const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
+          const envTeam = teamStates.get(environment.environmentId)?.team ?? null;
+          return (
+            <div key={environment.environmentId} className="divide-y divide-border/50">
+              <EnvironmentRow
+                kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+                label={primary}
+                subtitle={
+                  <ScheduledTaskEnvironmentSubtitle
+                    environment={environment}
+                    secondary={secondary}
+                  />
+                }
+              >
+                {envTeam ? (
+                  <Badge variant="secondary" data-testid="scheduled-tasks-env-team-badge">
+                    {envTeam.displayName}
+                  </Badge>
+                ) : null}
+                <ConnectionStatusDot
+                  dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
+                  tooltipText={connectionStatusTitle(environment.connection, messages)}
                 />
-              }
-            >
-              {summary}
-            </TooltipTrigger>
-            <TooltipPopup>{summary}</TooltipPopup>
-          </Tooltip>
-        );
-      })}
-    </SettingsGroup>
+                <span className="text-xs text-muted-foreground">
+                  {connectionStatusTitle(environment.connection, messages)}
+                </span>
+              </EnvironmentRow>
+              {tasks?.map((task) => (
+                <ScheduledTaskRow
+                  key={task.id}
+                  environmentId={environment.environmentId}
+                  task={task}
+                  timeZone={timeZone}
+                  onEdit={() => onEdit(environment.environmentId, task)}
+                />
+              ))}
+            </div>
+          );
+        })}
+        {taskId && linkedState?.tasks && linkedState.error === null && !linkedTask ? (
+          <SettingsRow
+            title={gt("Task unavailable")}
+            description={gt(
+              "This task was deleted or belongs to a different project. Check your project filter.",
+            )}
+            role="status"
+          />
+        ) : null}
+        {populated.length === 0 && loaded.length > 0 ? (
+          <SettingsRow
+            title={gt("No scheduled tasks")}
+            description={gt("No tasks match this environment and project selection.")}
+          />
+        ) : null}
+        {Object.entries(summaries).map(([label, entries]) => {
+          if (entries.length === 0) return null;
+          const summary = messages(SCOPE_SUMMARY_TEMPLATES[label] ?? label, {
+            environments: entries.join(", "),
+          });
+          return (
+            <Tooltip key={label}>
+              <TooltipTrigger
+                render={
+                  <p
+                    className="truncate px-3 py-2.5 text-xs text-muted-foreground sm:px-4"
+                    role="status"
+                  />
+                }
+              >
+                {summary}
+              </TooltipTrigger>
+              <TooltipPopup>{summary}</TooltipPopup>
+            </Tooltip>
+          );
+        })}
+      </SettingsGroup>
+    </div>
   );
 }
 
@@ -704,6 +796,8 @@ function ScheduledTaskEnvironmentSection({
 }) {
   const gt = useGT();
   const { scope } = useSettingsScope();
+  const teamStates = useTeamStatesByEnvironment();
+  const envTeam = teamStates.get(environment.environmentId)?.team ?? null;
   const connected =
     environment.connection.phase === "connected" && environment.serverConfig !== null;
   const tasksQuery = useEnvironmentQuery(
@@ -721,8 +815,8 @@ function ScheduledTaskEnvironmentSection({
   const linkedTask = tasks?.find((task) => task.id === taskId);
   return (
     <SettingsSection
-      title={environment.label}
-      hideTitle
+      title={envTeam ? `${envTeam.displayName} · ${environment.label}` : environment.label}
+      hideTitle={!envTeam}
       icon={
         <EnvironmentMachineIcon
           kind={resolveEnvironmentMachineKind(environment.serverConfig)}
@@ -788,9 +882,26 @@ function ScheduledTaskRow({
   const messages = useMessages();
   const locale = useLocale();
   const gt = useGT();
+  const teamStates = useTeamStatesByEnvironment();
+  const teamState = teamStates.get(environmentId);
+  const isTeamEnv = teamState?.team != null;
+  const taskMeta = resolveTeamScheduledTaskMeta(teamState, task.id);
+  const taskView =
+    isTeamEnv && teamState
+      ? (teamState.viewById.get(taskMeta?.viewId ?? teamState.team!.defaultViewId) ??
+        resolveTeamDefaultView(teamState))
+      : null;
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );
+  const canMutate =
+    canOperate &&
+    canCurrentMemberMutateTeamScheduledTask({
+      teamState,
+      taskId: task.id,
+      environmentId,
+      boundThreadId: task.threadId,
+    });
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const [busy, setBusy] = useState(false);
   const [deliveriesOpen, setDeliveriesOpen] = useState(false);
@@ -805,7 +916,8 @@ function ScheduledTaskRow({
     label: "scheduled task delete",
   });
   const act = async (action: "toggle" | "run" | "delete") => {
-    if (busy || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+    if (busy || !canMutate || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+      return;
     if (action === "delete") {
       const message = `${gt('Delete "{title}"?', { title: task.title })}\n${gt("This cannot be undone.")}`;
       const confirmed =
@@ -866,6 +978,26 @@ function ScheduledTaskRow({
               {messages(RUN_STATUS_LABELS[task.lastRunStatus])}
             </Badge>
           ) : null}
+          {isTeamEnv && taskView ? (
+            <Badge variant="outline" data-testid="scheduled-task-team-view-badge">
+              {taskView.name}
+            </Badge>
+          ) : null}
+          {isTeamEnv && taskMeta?.locked ? (
+            <Badge variant="outline" data-testid="scheduled-task-team-locked-badge">
+              <T>Locked</T>
+            </Badge>
+          ) : null}
+          {isTeamEnv && taskMeta?.mcpAccessLevel === "elevated" ? (
+            <Badge variant="warning" data-testid="scheduled-task-team-elevated-badge">
+              <T>Elevated MCP</T>
+            </Badge>
+          ) : null}
+          {isTeamEnv && !canMutate ? (
+            <Badge variant="outline" data-testid="scheduled-task-team-readonly-badge">
+              <T>Read-only</T>
+            </Badge>
+          ) : null}
           {task.threadId !== null && scheduledTaskThreadMode(task) !== "new_thread" ? (
             <ScheduledTaskThreadLink environmentId={environmentId} threadId={task.threadId} />
           ) : null}
@@ -876,7 +1008,7 @@ function ScheduledTaskRow({
         <div className="flex items-center gap-2">
           <Switch
             checked={task.enabled}
-            disabled={busy || !canOperate}
+            disabled={busy || !canMutate}
             aria-label={gt("Enable {title}", { title: task.title })}
             onCheckedChange={() => void act("toggle")}
           />
@@ -886,7 +1018,7 @@ function ScheduledTaskRow({
                 <Button
                   size="icon-sm"
                   variant="ghost"
-                  disabled={busy || !canOperate}
+                  disabled={busy || (!canOperate && !isTeamEnv)}
                   aria-label={gt("Actions for {title}", { title: task.title })}
                 />
               }
@@ -895,25 +1027,31 @@ function ScheduledTaskRow({
             </MenuTrigger>
             <MenuPopup align="end">
               <MenuItem onClick={onEdit}>
-                <PencilIcon />
-                <T>Edit</T>
+                {canMutate ? <PencilIcon /> : <EyeIcon />}
+                {canMutate ? <T>Edit</T> : <T>View</T>}
               </MenuItem>
               {isWebhook ? (
-                <MenuItem onClick={() => setDeliveriesOpen(true)}>
-                  <InboxIcon />
-                  <T>Deliveries</T>
-                </MenuItem>
-              ) : (
+                canMutate && task.webhook !== undefined ? (
+                  <MenuItem onClick={() => setDeliveriesOpen(true)}>
+                    <InboxIcon />
+                    <T>Deliveries</T>
+                  </MenuItem>
+                ) : null
+              ) : canMutate ? (
                 <MenuItem onClick={() => void act("run")}>
                   <PlayIcon />
                   <T>Run now</T>
                 </MenuItem>
-              )}
-              <MenuSeparator />
-              <MenuItem onClick={() => void act("delete")}>
-                <Trash2Icon />
-                Delete
-              </MenuItem>
+              ) : null}
+              {canMutate ? (
+                <>
+                  <MenuSeparator />
+                  <MenuItem onClick={() => void act("delete")}>
+                    <Trash2Icon />
+                    <T>Delete</T>
+                  </MenuItem>
+                </>
+              ) : null}
             </MenuPopup>
           </Menu>
           {deliveriesOpen ? (
@@ -1150,9 +1288,11 @@ function DeliveryBlock({ title, children }: { title: string; children: ReactNode
 function WebhookEndpointField({
   environmentId,
   task,
+  readOnly = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
+  readonly readOnly?: boolean;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -1172,10 +1312,17 @@ function WebhookEndpointField({
   });
   const [rotating, setRotating] = useState(false);
   const endpoint = task?.webhook;
-  if (!task || !endpoint) {
+  if (!task) {
     return (
       <p className="text-sm text-muted-foreground">
         <T>The URL appears after you save.</T>
+      </p>
+    );
+  }
+  if (!endpoint) {
+    return (
+      <p className="text-sm text-muted-foreground" data-testid="scheduled-task-webhook-redacted">
+        <T>Webhook URL and signing secret are hidden for your role.</T>
       </p>
     );
   }
@@ -1225,7 +1372,7 @@ function WebhookEndpointField({
           size="sm"
           variant="outline"
           type="button"
-          disabled={rotating || !canRotate}
+          disabled={readOnly || rotating || !canRotate}
           onClick={() => void rotateUrl()}
         >
           <T>Rotate</T>
@@ -1499,6 +1646,12 @@ function ScheduledTaskEditorForm({
   const scopedProjects = projectsOn(environmentId);
   const settings = useEnvironmentSettings(environmentId);
   const teamStates = useTeamStatesByEnvironment();
+  const teamState = teamStates.get(environmentId);
+  const isTeamEnv = teamState?.team != null;
+  const accessibleTeamViews = listAccessibleTeamViews(teamState);
+  const defaultTeamView = resolveTeamDefaultView(teamState);
+  const isPrivilegedTeamRole = canCurrentMemberConfigurePrivilegedTeamScheduledTask(teamState);
+  const initialTaskMeta = task ? resolveTeamScheduledTaskMeta(teamState, task.id) : null;
   const allProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const canOperate = useAtomValue(
@@ -1514,12 +1667,49 @@ function ScheduledTaskEditorForm({
   );
   const [draft, setDraft] = useState<DraftState>(() =>
     task
-      ? taskToDraft(task)
+      ? taskToDraft(task, initialTaskMeta)
       : {
           ...EMPTY_DRAFT,
           projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
+          teamViewId: defaultTeamView?.id ?? "",
         },
   );
+  const taskMeta = draft.editingId
+    ? resolveTeamScheduledTaskMeta(teamState, draft.editingId as ScheduledTaskId)
+    : null;
+  const canMutateThisTask =
+    canOperate &&
+    (draft.editingId === null
+      ? canCurrentMemberCreateTeamScheduledTask(teamState, environmentId)
+      : canCurrentMemberMutateTeamScheduledTask({
+          teamState,
+          taskId: draft.editingId as ScheduledTaskId,
+          environmentId,
+          boundThreadId: draft.savedThreadId
+            ? (draft.savedThreadId as ThreadId)
+            : (task?.threadId ?? null),
+        }));
+  const readOnly = !canMutateThisTask;
+  const effectiveTeamViewId =
+    draft.teamViewId && accessibleTeamViews.some((view) => view.id === draft.teamViewId)
+      ? draft.teamViewId
+      : (taskMeta?.viewId ?? defaultTeamView?.id ?? accessibleTeamViews[0]?.id ?? "");
+  const effectiveTeamLocked = draft.teamLocked ?? taskMeta?.locked ?? false;
+  const effectiveTeamMcpAccessLevel =
+    draft.teamMcpAccessLevel ?? taskMeta?.mcpAccessLevel ?? "minimal";
+  const effectiveTeamView =
+    teamState?.viewById.get(effectiveTeamViewId as TeamViewId) ??
+    accessibleTeamViews.find((view) => view.id === effectiveTeamViewId) ??
+    defaultTeamView;
+  const selectableEnvironments =
+    task !== null
+      ? connectedEnvironments
+      : connectedEnvironments.filter((entry) =>
+          canCurrentMemberCreateTeamScheduledTask(
+            teamStates.get(entry.environmentId),
+            entry.environmentId,
+          ),
+        );
   // Pinned first. The chosen project stays listed after it is archived.
   const projects = scopedProjects
     .filter(
@@ -1607,6 +1797,7 @@ function ScheduledTaskEditorForm({
 
   const submit = async () => {
     if (
+      readOnly ||
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       submissionPending.current ||
       saving ||
@@ -1700,6 +1891,27 @@ function ScheduledTaskEditorForm({
         draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
+      ...(isTeamEnv
+        ? {
+            teamMeta: {
+              environmentId,
+              ...((draft.editingId === null || taskMeta !== null || draft.teamViewId !== "") &&
+              effectiveTeamViewId
+                ? { viewId: effectiveTeamViewId as TeamViewId }
+                : {}),
+              ...(isPrivilegedTeamRole
+                ? {
+                    ...((draft.teamLocked ?? taskMeta?.locked) !== undefined
+                      ? { locked: draft.teamLocked ?? taskMeta!.locked }
+                      : {}),
+                    ...((draft.teamMcpAccessLevel ?? taskMeta?.mcpAccessLevel) !== undefined
+                      ? { mcpAccessLevel: draft.teamMcpAccessLevel ?? taskMeta!.mcpAccessLevel }
+                      : {}),
+                  }
+                : {}),
+            },
+          }
+        : {}),
     };
     // Lock before React renders, and keep successful creates locked until the form closes.
     submissionPending.current = true;
@@ -1719,7 +1931,9 @@ function ScheduledTaskEditorForm({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{draft.editingId ? gt("Edit task") : gt("New task")}</DialogTitle>
+        <DialogTitle>
+          {draft.editingId ? (readOnly ? gt("View task") : gt("Edit task")) : gt("New task")}
+        </DialogTitle>
         <DialogDescription>
           <T>
             Run a prompt automatically on an interval, at a fixed time, once at a set date, or when
@@ -1730,19 +1944,35 @@ function ScheduledTaskEditorForm({
 
       <DialogPanel>
         {/* Fieldsets default to min-width: min-content, which lets one wide control widen the form past the dialog. */}
-        <fieldset disabled={saving} className="min-w-0 space-y-5">
+        <fieldset disabled={saving || readOnly} className="min-w-0 space-y-5">
           {!connected ? (
             <p className="text-sm text-destructive">
               <T>Reconnect this environment before saving.</T>
             </p>
           ) : null}
+          {isTeamEnv &&
+          !isPrivilegedTeamRole &&
+          taskMeta !== null &&
+          (taskMeta.locked || taskMeta.mcpAccessLevel === "elevated") ? (
+            <p
+              className="rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+              data-testid="scheduled-task-team-privileged-notice"
+            >
+              <T>
+                This task uses owner/admin settings (locked threads or elevated MCP access) and is
+                read-only for your role.
+              </T>
+            </p>
+          ) : null}
           <Field label={gt("Runs on")} htmlFor="scheduled-task-environment">
             <Select
               value={environmentId}
-              disabled={task !== null || saving}
+              disabled={task !== null || saving || readOnly}
               onValueChange={(id) => {
-                const next = connectedEnvironments.find((entry) => entry.environmentId === id);
+                const next = selectableEnvironments.find((entry) => entry.environmentId === id);
                 if (!next) return;
+                const nextTeamState = teamStates.get(next.environmentId);
+                const nextDefaultView = resolveTeamDefaultView(nextTeamState);
                 setEnvironmentId(next.environmentId);
                 setDraft((current) => ({
                   ...unbindDraftFromThread(current),
@@ -1751,6 +1981,9 @@ function ScheduledTaskEditorForm({
                   baseRef: "",
                   startFromOrigin: true,
                   existingWorktreePath: "",
+                  teamViewId: nextDefaultView?.id ?? "",
+                  teamLocked: false,
+                  teamMcpAccessLevel: "minimal",
                 }));
               }}
             >
@@ -1761,21 +1994,27 @@ function ScheduledTaskEditorForm({
                       kind={resolveEnvironmentMachineKind(environment?.serverConfig ?? null)}
                       className="size-4"
                     />
-                    {environment?.label ?? gt("Unavailable environment")}
+                    {teamState?.team
+                      ? `${teamState.team.displayName} · ${environment?.label ?? gt("Unavailable environment")}`
+                      : (environment?.label ?? gt("Unavailable environment"))}
                   </span>
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup>
-                {connectedEnvironments.map((entry) => {
+                {selectableEnvironments.map((entry) => {
                   const { secondary } = settingsScopeEnvironmentLabels(
                     entry,
-                    connectedEnvironments,
+                    selectableEnvironments,
                   );
+                  const entryTeam = teamStates.get(entry.environmentId)?.team ?? null;
+                  const entryLabel = entryTeam
+                    ? `${entryTeam.displayName} · ${entry.label}`
+                    : entry.label;
                   return (
                     <SelectItem
                       key={entry.environmentId}
                       value={entry.environmentId}
-                      label={entry.label}
+                      label={entryLabel}
                     >
                       <span className="flex min-w-0 items-center gap-2">
                         <EnvironmentMachineIcon
@@ -1783,7 +2022,7 @@ function ScheduledTaskEditorForm({
                           className="size-4"
                         />
                         <span className="min-w-0">
-                          <span className="block truncate">{entry.label}</span>
+                          <span className="block truncate">{entryLabel}</span>
                           {secondary ? (
                             <span className="block max-w-72 truncate text-xs text-muted-foreground">
                               {secondary}
@@ -1823,7 +2062,7 @@ function ScheduledTaskEditorForm({
             projectId={selectedProjectId}
             threadId={draft.threadId ? (draft.threadId as ThreadId) : null}
             threadMode={draft.threadMode}
-            disabled={saving || !connected}
+            disabled={saving || !connected || readOnly}
             onSelect={(thread) =>
               setDraft((current) =>
                 thread === null
@@ -1913,7 +2152,7 @@ function ScheduledTaskEditorForm({
                 onStartFromOriginChange={(startFromOrigin) =>
                   setDraft((current) => ({ ...current, startFromOrigin }))
                 }
-                disabled={saving || !connected}
+                disabled={saving || !connected || readOnly}
               />
             </Field>
           ) : null}
@@ -1953,7 +2192,7 @@ function ScheduledTaskEditorForm({
               <ProviderModelPicker
                 environmentId={environmentId}
                 // The saved selection only seeds new threads; bound runs ignore it.
-                disabled={saving || !connected || draft.threadId !== ""}
+                disabled={saving || !connected || readOnly || draft.threadId !== ""}
                 activeInstanceId={shownInstanceId}
                 model={shownModel}
                 lockedProvider={null}
@@ -1978,7 +2217,7 @@ function ScheduledTaskEditorForm({
                   modelOptions={activeSelection.options ?? []}
                   allowPromptInjectedEffort={false}
                   includePlanAgent={selectsPlanAgent(activeSelection.options)}
-                  disabled={saving || !connected}
+                  disabled={saving || !connected || readOnly}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   onModelOptionsChange={(options) =>
                     setDraft((current) => ({
@@ -2075,7 +2314,11 @@ function ScheduledTaskEditorForm({
             webhookDenial !== undefined &&
             draft.enabled ? null : draft.scheduleMode === "webhook" ? (
               <div className="space-y-4">
-                <WebhookEndpointField environmentId={environmentId} task={liveTask} />
+                <WebhookEndpointField
+                  environmentId={environmentId}
+                  task={liveTask}
+                  readOnly={readOnly}
+                />
                 <p className="text-xs text-muted-foreground">
                   {gt(
                     "Each request runs the prompt. Use {bodyPath}, {headerName}, {queryName}, {body} or {request} in the prompt; only what it names reaches the agent.",
@@ -2349,6 +2592,94 @@ function ScheduledTaskEditorForm({
             )}
           </div>
 
+          {isTeamEnv ? (
+            <div className="space-y-4 rounded-lg border border-border/70 bg-muted/20 p-3">
+              <Field label={gt("Target view")} htmlFor="scheduled-task-team-view">
+                <Select
+                  value={effectiveTeamViewId}
+                  disabled={saving || readOnly}
+                  onValueChange={(value) => {
+                    if (typeof value === "string") {
+                      setDraft((current) => ({ ...current, teamViewId: value }));
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    id="scheduled-task-team-view"
+                    size="sm"
+                    data-testid="scheduled-task-team-view"
+                  >
+                    <SelectValue>{effectiveTeamView?.name ?? gt("Default view")}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {accessibleTeamViews.map((view) => (
+                      <SelectItem key={view.id} value={view.id}>
+                        {view.name}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </Field>
+              {isPrivilegedTeamRole ? (
+                <>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0 space-y-1">
+                      <Label htmlFor="scheduled-task-team-locked">
+                        <T>Lock generated threads</T>
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        <T>Only owners and admins can post in threads started by this task.</T>
+                      </p>
+                    </div>
+                    <Switch
+                      id="scheduled-task-team-locked"
+                      data-testid="scheduled-task-team-locked"
+                      checked={effectiveTeamLocked}
+                      disabled={saving || readOnly}
+                      onCheckedChange={(teamLocked) =>
+                        setDraft((current) => ({ ...current, teamLocked }))
+                      }
+                    />
+                  </div>
+                  <Field label={gt("MCP access level")} htmlFor="scheduled-task-team-mcp-access">
+                    <Select
+                      value={effectiveTeamMcpAccessLevel}
+                      disabled={saving || readOnly}
+                      onValueChange={(value) => {
+                        if (value === "minimal" || value === "elevated") {
+                          setDraft((current) => ({
+                            ...current,
+                            teamMcpAccessLevel: value as TeamScheduledTaskMcpAccessLevel,
+                          }));
+                        }
+                      }}
+                    >
+                      <SelectTrigger
+                        id="scheduled-task-team-mcp-access"
+                        size="sm"
+                        data-testid="scheduled-task-team-mcp-access"
+                      >
+                        <SelectValue>
+                          {effectiveTeamMcpAccessLevel === "elevated"
+                            ? gt("Elevated (admin MCP access)")
+                            : gt("Minimal (scoped to view & project)")}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup>
+                        <SelectItem value="minimal">
+                          <T>Minimal (scoped to view & project)</T>
+                        </SelectItem>
+                        <SelectItem value="elevated">
+                          <T>Elevated (admin MCP access)</T>
+                        </SelectItem>
+                      </SelectPopup>
+                    </Select>
+                  </Field>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0 space-y-1">
               <Label htmlFor="scheduled-task-enabled">
@@ -2362,6 +2693,7 @@ function ScheduledTaskEditorForm({
               id="scheduled-task-enabled"
               aria-describedby="scheduled-task-enabled-description"
               checked={draft.enabled}
+              disabled={saving || readOnly}
               onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
             />
           </div>
@@ -2370,23 +2702,25 @@ function ScheduledTaskEditorForm({
 
       <DialogFooter>
         <DialogClose render={<Button variant="outline" size="sm" disabled={saving} />}>
-          <T>Cancel</T>
+          {readOnly ? <T>Close</T> : <T>Cancel</T>}
         </DialogClose>
-        <Button
-          size="sm"
-          disabled={
-            !canOperate ||
-            saving ||
-            editingTaskMissing ||
-            !connected ||
-            !tasksQuery.data ||
-            automaticBaseRefLoading ||
-            (draft.enabled && draft.scheduleMode === "webhook" && webhookDenial !== undefined)
-          }
-          onClick={() => void submit()}
-        >
-          {draft.editingId ? gt("Save task") : gt("Create task")}
-        </Button>
+        {readOnly ? null : (
+          <Button
+            size="sm"
+            disabled={
+              !canOperate ||
+              saving ||
+              editingTaskMissing ||
+              !connected ||
+              !tasksQuery.data ||
+              automaticBaseRefLoading ||
+              (draft.enabled && draft.scheduleMode === "webhook" && webhookDenial !== undefined)
+            }
+            onClick={() => void submit()}
+          >
+            {draft.editingId ? gt("Save task") : gt("Create task")}
+          </Button>
+        )}
       </DialogFooter>
     </>
   );

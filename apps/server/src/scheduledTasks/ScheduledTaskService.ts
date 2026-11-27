@@ -60,6 +60,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as TeamService from "../team/TeamService.ts";
 import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 import {
@@ -274,6 +275,7 @@ export class ScheduledTaskService extends Context.Service<
     readonly subscribeList: () => Stream.Stream<ScheduledTaskListResult, ScheduledTaskError>;
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
+      options?: { readonly teamMeta?: TeamService.AuthorizedTeamScheduledTaskUpsert },
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly setEnabled: (
       input: ScheduledTaskSetEnabledInput,
@@ -499,6 +501,7 @@ export const layer = Layer.effect(
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
+    const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
     const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
     // Existing webhook tasks stay stored but report why they do not run.
     const webhookPolicyBlock =
@@ -939,7 +942,12 @@ export const layer = Layer.effect(
             AND julianday(last_run_at) >= julianday(json_extract(schedule_json, '$.runAt'))
           RETURNING task_id
         `;
-        if (removed.length > 0) yield* notifyChanged;
+        if (removed.length > 0) {
+          if (Option.isSome(teamServiceOption)) {
+            yield* teamServiceOption.value.deleteScheduledTaskMeta(taskId).pipe(Effect.ignore);
+          }
+          yield* notifyChanged;
+        }
         return;
       }
       // Only the run's failed errors feed latestRootProviderFailure; a long-lived task
@@ -1120,41 +1128,106 @@ export const layer = Layer.effect(
               }),
             );
 
+        const teamServiceForRun =
+          Option.isSome(teamServiceOption) && (yield* teamServiceOption.value.isTeamConfigured())
+            ? teamServiceOption.value
+            : null;
+
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
         const result =
           active.threadId === null
             ? yield* Effect.exit(
-                threadLaunch
-                  .launch({
-                    commandId,
-                    projectId: active.projectId,
-                    title: active.title,
-                    modelSelection: active.modelSelection,
-                    runtimeMode: active.runtimeMode,
-                    interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
-                    initialMessage: {
-                      messageId,
-                      scheduledTaskId: active.id,
-                      text: prompt,
-                      attachments: [],
-                    },
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
-                  })
-                  .pipe(
-                    Effect.map((launched) => launched.threadId),
-                    Effect.tap((threadId) =>
-                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
-                    ),
-                  ),
+                Effect.gen(function* () {
+                  let allocatedThreadId: ThreadId | undefined;
+                  let preparedTeamThread = false;
+                  if (teamServiceForRun !== null) {
+                    const uuid = yield* random.uuidV4();
+                    allocatedThreadId = ThreadId.make(`thread:${uuid}`);
+                    preparedTeamThread =
+                      yield* teamServiceForRun.prepareTeamAutomationThreadAttribution({
+                        threadId: allocatedThreadId,
+                        taskId: active.id,
+                        projectId: active.projectId,
+                      });
+                    yield* teamServiceForRun
+                      .requireTeamAutomationTurn({
+                        threadId: allocatedThreadId,
+                        turnId: `msg:${messageId}`,
+                        taskId: active.id,
+                        projectId: active.projectId,
+                      })
+                      .pipe(
+                        Effect.onError(() =>
+                          preparedTeamThread && allocatedThreadId !== undefined
+                            ? teamServiceForRun.rollbackPreparedThreadAttribution(allocatedThreadId)
+                            : Effect.void,
+                        ),
+                      );
+                  }
+                  const launched = yield* threadLaunch
+                    .launch({
+                      ...(allocatedThreadId === undefined ? {} : { threadId: allocatedThreadId }),
+                      commandId,
+                      projectId: active.projectId,
+                      title: active.title,
+                      modelSelection: active.modelSelection,
+                      runtimeMode: active.runtimeMode,
+                      interactionMode: active.interactionMode,
+                      workspaceStrategy: active.workspaceStrategy,
+                      initialMessage: {
+                        messageId,
+                        scheduledTaskId: active.id,
+                        text: prompt,
+                        attachments: [],
+                      },
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    })
+                    .pipe(
+                      Effect.onError(() =>
+                        preparedTeamThread &&
+                        teamServiceForRun !== null &&
+                        allocatedThreadId !== undefined
+                          ? teamServiceForRun.rollbackPreparedThreadAttribution(allocatedThreadId)
+                          : Effect.void,
+                      ),
+                    );
+                  if (teamServiceForRun !== null) {
+                    yield* teamServiceForRun.publishTeamAutomationThreadAttributed(
+                      launched.threadId,
+                    );
+                  }
+                  if (threadMode !== "new_thread") {
+                    yield* bindThread(active, launched.threadId);
+                  }
+                  return launched.threadId;
+                }),
               )
             : yield* Effect.exit(
-                // The stored selection only seeds fresh threads. A bound run
-                // follows the thread's current provider, so it passes none.
-                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
-                  Effect.as(ThreadId.make(active.threadId)),
-                ),
+                Effect.gen(function* () {
+                  const targetThreadId = ThreadId.make(active.threadId!);
+                  if (teamServiceForRun !== null) {
+                    yield* teamServiceForRun.requireTeamAutomationTurn({
+                      threadId: targetThreadId,
+                      turnId: `msg:${messageId}`,
+                      taskId: active.id,
+                      projectId: active.projectId,
+                    });
+                  }
+                  // The stored selection only seeds fresh threads. A bound run
+                  // follows the thread's current provider, so it passes none.
+                  yield* sendBound(targetThreadId, active.projectId, 2).pipe(
+                    Effect.onError(() =>
+                      teamServiceForRun !== null
+                        ? teamServiceForRun.rollbackRecordedTurnAttribution({
+                            threadId: targetThreadId,
+                            turnId: `msg:${messageId}`,
+                          })
+                        : Effect.void,
+                    ),
+                  );
+                  return targetThreadId;
+                }),
               );
 
         const runSucceeded = result._tag === "Success";
@@ -1464,7 +1537,7 @@ export const layer = Layer.effect(
 
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
-    )(function* (input) {
+    )(function* (input, options) {
       // A webhook task the policy blocks can still be edited while it is off.
       if (input.enabled && input.schedule.type === "webhook" && webhookPolicyBlock !== undefined) {
         return yield* taskError(
@@ -1622,13 +1695,46 @@ export const layer = Layer.effect(
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
       };
-      yield* saveTask(
-        task,
-        input.requireExisting === true,
-        scheduleUnchanged ? existingTask.schedule : null,
-        threadId === null && input.unbindThread === true ? (existingTask?.threadId ?? null) : null,
-        webhook,
-      );
+      const savedTeamMeta = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* saveTask(
+              task,
+              input.requireExisting === true,
+              scheduleUnchanged ? existingTask.schedule : null,
+              threadId === null && input.unbindThread === true
+                ? (existingTask?.threadId ?? null)
+                : null,
+              webhook,
+            );
+            if (options?.teamMeta !== undefined && Option.isSome(teamServiceOption)) {
+              return yield* teamServiceOption.value
+                .persistScheduledTaskMeta({
+                  taskId: task.id,
+                  ...options.teamMeta,
+                })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    taskError("Could not save team scheduled task metadata.", {
+                      taskId: task.id,
+                      cause,
+                    }),
+                  ),
+                );
+            }
+            return null;
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            isScheduledTaskError(cause)
+              ? cause
+              : taskError("Could not save schedule task.", { taskId: task.id, cause }),
+          ),
+        );
+      if (savedTeamMeta !== null && Option.isSome(teamServiceOption)) {
+        yield* teamServiceOption.value.publishScheduledTaskMeta(savedTeamMeta);
+      }
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
     });
@@ -1716,6 +1822,11 @@ export const layer = Layer.effect(
 
     const deleteTask: ScheduledTaskService["Service"]["delete"] = (input) =>
       deleteRow(input.id).pipe(
+        Effect.andThen(
+          Option.isSome(teamServiceOption)
+            ? teamServiceOption.value.deleteScheduledTaskMeta(input.id).pipe(Effect.ignore)
+            : Effect.void,
+        ),
         Effect.andThen(forgetWebhookTask(input.id)),
         Effect.andThen(notifyChanged),
         Effect.as({ id: input.id }),
@@ -1743,9 +1854,20 @@ export const layer = Layer.effect(
             taskError("Could not delete thread's schedule tasks.", { cause }),
           ),
         );
-      yield* Effect.forEach(removed, ({ task_id }) => forgetWebhookTask(task_id), {
-        discard: true,
-      });
+      yield* Effect.forEach(
+        removed,
+        ({ task_id }) =>
+          Effect.all(
+            [
+              forgetWebhookTask(task_id),
+              Option.isSome(teamServiceOption)
+                ? teamServiceOption.value.deleteScheduledTaskMeta(task_id).pipe(Effect.ignore)
+                : Effect.void,
+            ],
+            { discard: true },
+          ),
+        { discard: true },
+      );
       if (removed.length > 0) yield* notifyChanged;
     });
 

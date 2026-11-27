@@ -100,6 +100,9 @@ const make = Effect.gen(function* () {
     yield* McpInvocationContext.requireMcpCapability("issues");
     const projectId = requested ?? (yield* callerThread())?.projectId;
     if (projectId === undefined) return yield* new IssueProjectRequiredError();
+    yield* TeamMcpAccess.assertCanAccessProject(projectId).pipe(
+      Effect.mapError(() => new IssueProjectNotFoundError({ projectId })),
+    );
     return yield* issues.projectScope(projectId, select).pipe(
       Effect.catchTags({
         IssueUnavailableError: () => Effect.fail(new IssueProjectNotFoundError({ projectId })),
@@ -117,8 +120,17 @@ const make = Effect.gen(function* () {
   ) {
     yield* McpInvocationContext.requireMcpCapability("issues");
     if (input.url !== undefined) {
+      if (input.projectId !== undefined) {
+        const requestedProjectId = input.projectId;
+        yield* TeamMcpAccess.assertCanAccessProject(requestedProjectId).pipe(
+          Effect.mapError(() => new IssueProjectNotFoundError({ projectId: requestedProjectId })),
+        );
+      }
       const preferred = input.projectId ?? (yield* callerThread())?.projectId;
       const resolved = yield* issues.resolveUrl(input.url, preferred);
+      yield* TeamMcpAccess.assertCanAccessProject(resolved.projectId).pipe(
+        Effect.mapError(() => new IssueProjectNotFoundError({ projectId: resolved.projectId })),
+      );
       return { ...resolved, url: input.url } satisfies ResolvedTarget;
     }
     if (input.key === undefined) return yield* new IssueTargetIncompleteError();

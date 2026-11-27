@@ -463,6 +463,7 @@ it("shows queued author pseudo and restricts Send now strictly to thread creator
   const team = {
     id: teamId,
     name: "M4 Team",
+    displayName: "M4 Team",
     defaultViewId: viewId,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",

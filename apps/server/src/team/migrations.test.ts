@@ -26,6 +26,7 @@ describe("team sidecar migrations", () => {
       expect(tables.map((row) => row.name)).toEqual([
         "team_asset_revisions",
         "team_asset_tombstones",
+        "team_automation_turn_scopes",
         "team_environments",
         "team_github_automation_credentials",
         "team_github_member_credentials",
@@ -41,6 +42,7 @@ describe("team sidecar migrations", () => {
         "team_provider_usage",
         "team_providers",
         "team_relay_binding",
+        "team_scheduled_task_meta",
         "team_schema_migrations",
         "team_session_meta",
         "team_session_scope_ceilings",
@@ -54,11 +56,13 @@ describe("team sidecar migrations", () => {
         "team_workspaces",
       ]);
 
-      // Upstream migration ledger stays untouched.
+      // Upstream migration ledger stays untouched and foreign keys remain intact.
       const upstreamAfter = yield* sql<{ readonly count: number }>`
         SELECT COUNT(*) AS count FROM effect_sql_migrations
       `;
       expect(upstreamAfter[0]?.count).toBe(upstreamBefore[0]?.count);
+      const fkViolations = yield* sql`PRAGMA foreign_key_check`;
+      expect(fkViolations).toEqual([]);
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
   );
 

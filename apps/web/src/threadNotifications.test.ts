@@ -155,6 +155,7 @@ describe("team notification gating helpers", () => {
       team: {
         id: teamId,
         name: "Core",
+        displayName: "Core",
         defaultViewId: viewId,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
@@ -185,6 +186,8 @@ describe("team notification gating helpers", () => {
       assetsRevision: 0,
       myGitHubIdentity: null,
       automationGitHubIdentity: null,
+      scheduledTaskMetas: [],
+      scheduledTaskMetaByTaskId: new Map(),
       ...overrides,
     };
   };

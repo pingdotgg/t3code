@@ -16,6 +16,7 @@ import {
   redeemTeamInviteAndConnectEffect,
   resolveProjectTeamAssignment,
   resolveTeamThreadAcceptedNotes,
+  resolveTeamThreadCreatorPseudo,
   resolveTeamThreadEnvironmentAccessForClient,
   resolveTeamThreadNotes,
   resolveTeamThreadPendingNotes,
@@ -167,11 +168,7 @@ const teamThreadCreatorPseudoAtom = Atom.family((threadKey: string) =>
     const threadId = threadKey.slice(separatorIndex + 1) as ThreadId;
     const result = get(teamEnvironment.state(environmentId));
     if (result._tag !== "Success" || result.value.team === null) return null;
-    const attribution = result.value.attributionByThreadId.get(threadId);
-    if (!attribution) return null;
-    return (
-      result.value.memberById.get(attribution.creatorMemberId)?.pseudo ?? attribution.creatorPseudo
-    );
+    return resolveTeamThreadCreatorPseudo({ teamState: result.value, threadId });
   }).pipe(Atom.withLabel(`team:thread-creator-pseudo:${threadKey}`)),
 );
 

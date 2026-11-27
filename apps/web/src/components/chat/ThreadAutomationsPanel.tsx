@@ -8,11 +8,11 @@ import { CalendarClockIcon, PencilIcon, PlayIcon, Settings2Icon } from "lucide-r
 import { useState } from "react";
 import {
   AuthOrchestrationOperateScope,
-  canManageTeamViews,
   type EnvironmentId,
   type ScheduledTask,
   type ThreadId,
 } from "@t3tools/contracts";
+import { canCurrentMemberMutateTeamScheduledTask } from "@t3tools/client-runtime/team";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   isAtomCommandInterrupted,
@@ -82,9 +82,7 @@ export function ThreadAutomationsPanel(props: {
   const teamState = useTeamEnvironmentState(props.environmentId);
   if (
     teamState.team !== null &&
-    (teamState.currentMember === null ||
-      teamState.currentMember.status !== "active" ||
-      !canManageTeamViews(teamState.currentMember.role))
+    (teamState.currentMember === null || teamState.currentMember.status !== "active")
   ) {
     return null;
   }
@@ -95,6 +93,7 @@ function ThreadAutomationsPanelContent(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
+  const teamState = useTeamEnvironmentState(props.environmentId);
   const canOperate = useAtomValue(
     serverEnvironment.runScheduledTaskNow.permissionAtom(props.environmentId),
   );
@@ -130,9 +129,19 @@ function ThreadAutomationsPanelContent(props: {
     );
   };
 
+  const canMutateTask = (task: ScheduledTask) =>
+    canOperate &&
+    canCurrentMemberMutateTeamScheduledTask({
+      teamState,
+      taskId: task.id,
+      environmentId: props.environmentId,
+      boundThreadId: task.threadId,
+    });
+
   const toggleEnabled = async (task: ScheduledTask, enabled: boolean) => {
     if (
       busyTaskId !== null ||
+      !canMutateTask(task) ||
       !readEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope)
     )
       return;
@@ -150,6 +159,7 @@ function ThreadAutomationsPanelContent(props: {
   const runNow = async (task: ScheduledTask) => {
     if (
       busyTaskId !== null ||
+      !canMutateTask(task) ||
       !readEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope)
     )
       return;
@@ -196,65 +206,42 @@ function ThreadAutomationsPanelContent(props: {
       }
     >
       <ul className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0">
-        {boundTasks.map((task) => (
-          <li
-            key={task.id}
-            className={cn(
-              "group flex items-center rounded-lg py-1.5",
-              THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
-            )}
-          >
-            <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
-              <CalendarClockIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-              <span
-                className={cn(
-                  "absolute -right-1 -top-1 size-1.5 rounded-full",
-                  STATUS_DOT_CLASS[task.lastRunStatus],
-                )}
-                aria-hidden
-              />
-            </span>
-            <Tooltip>
-              <TooltipTrigger render={<div className="min-w-0 flex-1" />}>
-                <span className="block truncate text-sm font-medium text-foreground/80">
-                  {task.title}
-                </span>
-                <p className="truncate text-2xs text-muted-foreground">
-                  {taskScheduleLine(task, timestampFormat, tasksQuery.data?.timeZone, m)}
-                </p>
-              </TooltipTrigger>
-              <TooltipPopup side="left">
-                <p className="font-medium">{task.title}</p>
-                <p className="text-muted-foreground">
-                  {taskScheduleLine(task, timestampFormat, tasksQuery.data?.timeZone, m)}
-                </p>
-              </TooltipPopup>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <ThreadDetailsControl
-                    size="icon-xs"
-                    variant="ghost"
-                    part="icon"
-                    aria-label={gt("Edit {title}", { title: task.title })}
-                    onClick={() =>
-                      void navigate({
-                        to: "/settings/scheduled-tasks",
-                        search: { environmentId: props.environmentId, taskId: task.id },
-                      })
-                    }
-                  >
-                    <PencilIcon className="size-3.5" />
-                  </ThreadDetailsControl>
-                }
-              />
-              <TooltipPopup>
-                <T>Edit automation</T>
-              </TooltipPopup>
-            </Tooltip>
-            {/* Webhook tasks need a request from their URL. */}
-            {task.schedule.type === "webhook" ? null : (
+        {boundTasks.map((task) => {
+          const taskMutable = canMutateTask(task);
+          return (
+            <li
+              key={task.id}
+              className={cn(
+                "group flex items-center rounded-lg py-1.5",
+                THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
+              )}
+            >
+              <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
+                <CalendarClockIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                <span
+                  className={cn(
+                    "absolute -right-1 -top-1 size-1.5 rounded-full",
+                    STATUS_DOT_CLASS[task.lastRunStatus],
+                  )}
+                  aria-hidden
+                />
+              </span>
+              <Tooltip>
+                <TooltipTrigger render={<div className="min-w-0 flex-1" />}>
+                  <span className="block truncate text-sm font-medium text-foreground/80">
+                    {task.title}
+                  </span>
+                  <p className="truncate text-2xs text-muted-foreground">
+                    {taskScheduleLine(task, timestampFormat, tasksQuery.data?.timeZone, m)}
+                  </p>
+                </TooltipTrigger>
+                <TooltipPopup side="left">
+                  <p className="font-medium">{task.title}</p>
+                  <p className="text-muted-foreground">
+                    {taskScheduleLine(task, timestampFormat, tasksQuery.data?.timeZone, m)}
+                  </p>
+                </TooltipPopup>
+              </Tooltip>
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -262,33 +249,63 @@ function ThreadAutomationsPanelContent(props: {
                       size="icon-xs"
                       variant="ghost"
                       part="icon"
-                      aria-label={gt("Run {title} now", { title: task.title })}
-                      disabled={
-                        !canOperate || busyTaskId !== null || task.lastRunStatus === "running"
+                      aria-label={
+                        taskMutable
+                          ? gt("Edit {title}", { title: task.title })
+                          : gt("View {title}", { title: task.title })
                       }
-                      onClick={() => void runNow(task)}
+                      onClick={() =>
+                        void navigate({
+                          to: "/settings/scheduled-tasks",
+                          search: { environmentId: props.environmentId, taskId: task.id },
+                        })
+                      }
                     >
-                      <PlayIcon className="size-3.5" />
+                      <PencilIcon className="size-3.5" />
                     </ThreadDetailsControl>
                   }
                 />
                 <TooltipPopup>
-                  <T>Run now</T>
+                  {taskMutable ? <T>Edit automation</T> : <T>View automation</T>}
                 </TooltipPopup>
               </Tooltip>
-            )}
-            <Switch
-              checked={task.enabled}
-              disabled={!canOperate || busyTaskId !== null}
-              aria-label={
-                task.enabled
-                  ? gt("Pause {title}", { title: task.title })
-                  : gt("Resume {title}", { title: task.title })
-              }
-              onCheckedChange={(enabled) => void toggleEnabled(task, enabled)}
-            />
-          </li>
-        ))}
+              {/* Webhook tasks need a request from their URL. */}
+              {task.schedule.type === "webhook" ? null : (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <ThreadDetailsControl
+                        size="icon-xs"
+                        variant="ghost"
+                        part="icon"
+                        aria-label={gt("Run {title} now", { title: task.title })}
+                        disabled={
+                          !taskMutable || busyTaskId !== null || task.lastRunStatus === "running"
+                        }
+                        onClick={() => void runNow(task)}
+                      >
+                        <PlayIcon className="size-3.5" />
+                      </ThreadDetailsControl>
+                    }
+                  />
+                  <TooltipPopup>
+                    <T>Run now</T>
+                  </TooltipPopup>
+                </Tooltip>
+              )}
+              <Switch
+                checked={task.enabled}
+                disabled={!taskMutable || busyTaskId !== null}
+                aria-label={
+                  task.enabled
+                    ? gt("Pause {title}", { title: task.title })
+                    : gt("Resume {title}", { title: task.title })
+                }
+                onCheckedChange={(enabled) => void toggleEnabled(task, enabled)}
+              />
+            </li>
+          );
+        })}
       </ul>
       {/* Kept last: the details card treats a section whose last child is empty as empty. */}
       {tasksQuery.error !== null ? (

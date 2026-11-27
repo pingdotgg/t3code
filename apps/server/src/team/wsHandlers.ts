@@ -63,6 +63,9 @@ export function makeTeamWsRpcHandlers(
     [TEAM_WS_METHODS.teamInitialize]: (
       payload: Parameters<typeof teamService.initializeTeam>[0]["payload"],
     ) => teamService.initializeTeam({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamUpdateDisplayName]: (
+      payload: Parameters<typeof teamService.updateDisplayName>[0]["payload"],
+    ) => teamService.updateDisplayName({ sessionId, payload }),
     [TEAM_WS_METHODS.teamUpdateMyPseudo]: (
       payload: Parameters<typeof teamService.updateMyPseudo>[0]["payload"],
     ) => teamService.updateMyPseudo({ sessionId, payload }),

@@ -9,6 +9,7 @@ import {
   buildTeamJoinDeepLink,
   buildTeamJoinWebUrl,
   canAssignTeamRole,
+  canManageTeamDisplayName,
   canManageTeamInvites,
   normalizeTeamPseudo,
   parseTeamJoinLink,
@@ -153,6 +154,9 @@ export function TeamsSettings() {
   const canInitialize = useAtomValue(
     teamEnvironment.initialize.permissionAtom(selectedEnvironmentId),
   );
+  const canUpdateDisplayName = useAtomValue(
+    teamEnvironment.updateDisplayName.permissionAtom(selectedEnvironmentId),
+  );
   const canUpdatePseudo = useAtomValue(
     teamEnvironment.updateMyPseudo.permissionAtom(selectedEnvironmentId),
   );
@@ -164,6 +168,9 @@ export function TeamsSettings() {
   );
 
   const runInitialize = useAtomCommand(teamEnvironment.initialize, { reportFailure: false });
+  const runUpdateDisplayName = useAtomCommand(teamEnvironment.updateDisplayName, {
+    reportFailure: false,
+  });
   const runUpdateMyPseudo = useAtomCommand(teamEnvironment.updateMyPseudo, {
     reportFailure: false,
   });
@@ -171,8 +178,12 @@ export function TeamsSettings() {
   const runRevokeInvite = useAtomCommand(teamEnvironment.revokeInvite, { reportFailure: false });
 
   const [teamNameInput, setTeamNameInput] = useState("");
+  const [teamDisplayNameInput, setTeamDisplayNameInput] = useState("");
   const [ownerPseudoInput, setOwnerPseudoInput] = useState("");
   const [initializing, setInitializing] = useState(false);
+
+  const [displayNameDraft, setDisplayNameDraft] = useState<string | null>(null);
+  const [savingDisplayName, setSavingDisplayName] = useState(false);
 
   const [myPseudoDraft, setMyPseudoDraft] = useState<string | null>(null);
   const [savingPseudo, setSavingPseudo] = useState(false);
@@ -187,6 +198,8 @@ export function TeamsSettings() {
   const [joinLinkError, setJoinLinkError] = useState<string | null>(null);
 
   const currentMember = teamState.currentMember;
+  const activeDisplayNameValue =
+    displayNameDraft ?? teamState.team?.displayName ?? teamState.team?.name ?? "";
   const activePseudoValue = myPseudoDraft ?? currentMember?.pseudo ?? "";
   const assignableRoles = currentMember ? assignableTeamRoles(currentMember.role) : [];
   const effectiveInviteRole = assignableRoles.includes(inviteRole)
@@ -205,6 +218,7 @@ export function TeamsSettings() {
     event.preventDefault();
     if (selectedEnvironmentId === null) return;
     const trimmedName = teamNameInput.trim();
+    const trimmedDisplayName = teamDisplayNameInput.trim();
     const normalizedPseudo = normalizeTeamPseudo(ownerPseudoInput);
     if (trimmedName.length === 0) {
       reportError(gt("Could not create team"), new Error(gt("Enter a team name.")));
@@ -220,12 +234,18 @@ export function TeamsSettings() {
     setInitializing(true);
     const result = await runInitialize({
       environmentId: selectedEnvironmentId,
-      input: { name: trimmedName, ownerPseudo: normalizedPseudo },
+      input: {
+        name: trimmedName,
+        ...(trimmedDisplayName.length > 0 ? { displayName: trimmedDisplayName } : {}),
+        ownerPseudo: normalizedPseudo,
+      },
     });
     setInitializing(false);
     if (result._tag === "Success") {
       setTeamNameInput("");
+      setTeamDisplayNameInput("");
       setOwnerPseudoInput("");
+      setDisplayNameDraft(null);
       setMyPseudoDraft(null);
       toastManager.add({
         type: "success",
@@ -239,6 +259,36 @@ export function TeamsSettings() {
     }
     if (!isAtomCommandInterrupted(result)) {
       reportError(gt("Could not create team"), squashAtomCommandFailure(result));
+    }
+  };
+
+  const handleSaveDisplayName = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (selectedEnvironmentId === null) return;
+    const trimmed = activeDisplayNameValue.trim();
+    if (trimmed.length === 0) {
+      reportError(gt("Could not update display name"), new Error(gt("Enter a team display name.")));
+      return;
+    }
+    setSavingDisplayName(true);
+    const result = await runUpdateDisplayName({
+      environmentId: selectedEnvironmentId,
+      input: { displayName: trimmed },
+    });
+    setSavingDisplayName(false);
+    if (result._tag === "Success") {
+      setDisplayNameDraft(null);
+      toastManager.add({
+        type: "success",
+        title: gt("Team display name updated"),
+        description: gt("Team automation threads now display as {displayName}.", {
+          displayName: result.value.displayName,
+        }),
+      });
+      return;
+    }
+    if (!isAtomCommandInterrupted(result)) {
+      reportError(gt("Could not update display name"), squashAtomCommandFailure(result));
     }
   };
 
@@ -399,6 +449,7 @@ export function TeamsSettings() {
                 onValueChange={(value) => {
                   if (typeof value === "string") {
                     setSelectedEnvironmentIdOverride(value as EnvironmentId);
+                    setDisplayNameDraft(null);
                     setMyPseudoDraft(null);
                   }
                 }}
@@ -482,6 +533,28 @@ export function TeamsSettings() {
                   />
                 </div>
               </div>
+              <div className="space-y-1.5">
+                <label
+                  className="block text-xs font-medium text-foreground"
+                  htmlFor="team-init-display-name"
+                >
+                  <T>Display name (optional)</T>
+                </label>
+                <Input
+                  id="team-init-display-name"
+                  data-testid="team-init-display-name"
+                  value={teamDisplayNameInput}
+                  onChange={(event) => setTeamDisplayNameInput(event.currentTarget.value)}
+                  placeholder={teamNameInput.trim() || gt("Defaults to team name")}
+                  disabled={initializing || !canInitialize}
+                />
+                <p className="text-xs text-muted-foreground">
+                  <T>
+                    Defaults to the team name if left blank. Shown as the prefix on team-owned
+                    scheduled-task threads.
+                  </T>
+                </p>
+              </div>
               <div className="flex justify-end">
                 <Button
                   type="submit"
@@ -521,6 +594,52 @@ export function TeamsSettings() {
                 ) : null
               }
             />
+
+            <SettingsRow
+              id="teams-display-name"
+              title={gt("Team display name")}
+              description={gt(
+                "Shown as the prefix on team-owned scheduled-task threads (for example, {displayName}: Daily triage).",
+                { displayName: teamState.team.displayName },
+              )}
+              control={
+                currentMember && canManageTeamDisplayName(currentMember.role) ? undefined : (
+                  <Badge variant="outline" data-testid="team-display-name-value">
+                    {teamState.team.displayName}
+                  </Badge>
+                )
+              }
+            >
+              {currentMember && canManageTeamDisplayName(currentMember.role) ? (
+                <form
+                  className="mt-2 flex items-center gap-2 pb-3"
+                  onSubmit={(event) => void handleSaveDisplayName(event)}
+                >
+                  <div className="max-w-xs flex-1">
+                    <Input
+                      data-testid="team-display-name-input"
+                      value={activeDisplayNameValue}
+                      onChange={(event) => setDisplayNameDraft(event.currentTarget.value)}
+                      disabled={savingDisplayName || !canUpdateDisplayName}
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={
+                      savingDisplayName ||
+                      !canUpdateDisplayName ||
+                      activeDisplayNameValue.trim().length === 0 ||
+                      activeDisplayNameValue.trim() === teamState.team.displayName
+                    }
+                    data-testid="team-display-name-save"
+                  >
+                    {savingDisplayName ? <Spinner /> : null}
+                    <T>Save</T>
+                  </Button>
+                </form>
+              ) : null}
+            </SettingsRow>
 
             {currentMember ? (
               <SettingsRow

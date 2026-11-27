@@ -13468,5 +13468,31 @@
       "v": "v"
     }
   ],
-  "f947fce5db2e50d6": "Din GitHub-identitet"
+  "f947fce5db2e50d6": "Din GitHub-identitet",
+  "d97e97834d9daca8": "Visa {title}",
+  "dc16df827cd79560": "Visa automatisering",
+  "c36724cb93a21a54": "Visa uppgift",
+  "d0d2ad9792462271": "Målvy",
+  "aa6a5418188bcf59": "Standardvy",
+  "394f78d4634f44b1": "MCP-åtkomstnivå",
+  "19584b520a4cf4ac": "Förhöjd (admin-MCP-åtkomst)",
+  "9951087766f7f13d": "Minimal (begränsad till vy och projekt)",
+  "5932e39f562fbbdf": "Omfattning",
+  "43cc6cb2160c6829": "Förhöjd MCP",
+  "00513a3b28638818": "Visa",
+  "f2412357542f0270": "Webhook-URL och signeringshemlighet är dolda för din roll.",
+  "55355c820ab6f37a": "Den här uppgiften använder ägar-/admininställningar (låsta trådar eller förhöjd MCP-åtkomst) och är skrivskyddad för din roll.",
+  "74ef386a8c21d4c2": "Lås skapade trådar",
+  "a6763e92e96e3c82": "Endast ägare och administratörer kan skriva i trådar som startas av den här uppgiften.",
+  "5cfa9f784e140f07": "Minimal (begränsad till vy och projekt)",
+  "5aedf19bc7bf6f5d": "Förhöjd (admin-MCP-åtkomst)",
+  "6cfbfadf301a290b": "Kunde inte uppdatera visningsnamn",
+  "f9b36b20b5dfa079": "Ange ett visningsnamn för teamet.",
+  "10dafc730b8d7b27": "Teamets visningsnamn uppdaterat",
+  "07a77796f959b70c": "Teamets automatiseringstrådar visas nu som {displayName}.",
+  "3b20060b626a77d5": "Standard är teamnamnet",
+  "f83b990c1244d596": "Teamets visningsnamn",
+  "32bbfee4ac2f750f": "Visas som prefix på teamägda trådar för schemalagda uppgifter (till exempel {displayName}: Daily triage).",
+  "6c037e26ecbefe2e": "Visningsnamn (valfritt)",
+  "7d63b70705da219f": "Använder teamnamnet om det lämnas tomt. Visas som prefix på teamägda trådar för schemalagda uppgifter."
 }

@@ -13470,5 +13470,31 @@
       "v": "v"
     }
   ],
-  "f947fce5db2e50d6": "Your GitHub identity"
+  "f947fce5db2e50d6": "Your GitHub identity",
+  "d97e97834d9daca8": "View {title}",
+  "dc16df827cd79560": "View automation",
+  "c36724cb93a21a54": "View task",
+  "d0d2ad9792462271": "Target view",
+  "aa6a5418188bcf59": "Default view",
+  "394f78d4634f44b1": "MCP access level",
+  "19584b520a4cf4ac": "Elevated (admin MCP access)",
+  "9951087766f7f13d": "Minimal (scoped to view & project)",
+  "5932e39f562fbbdf": "Scope",
+  "43cc6cb2160c6829": "Elevated MCP",
+  "00513a3b28638818": "View",
+  "f2412357542f0270": "Webhook URL and signing secret are hidden for your role.",
+  "55355c820ab6f37a": "This task uses owner/admin settings (locked threads or elevated MCP access) and is read-only for your role.",
+  "74ef386a8c21d4c2": "Lock generated threads",
+  "a6763e92e96e3c82": "Only owners and admins can post in threads started by this task.",
+  "5cfa9f784e140f07": "Minimal (scoped to view & project)",
+  "5aedf19bc7bf6f5d": "Elevated (admin MCP access)",
+  "6cfbfadf301a290b": "Could not update display name",
+  "f9b36b20b5dfa079": "Enter a team display name.",
+  "10dafc730b8d7b27": "Team display name updated",
+  "07a77796f959b70c": "Team automation threads now display as {displayName}.",
+  "3b20060b626a77d5": "Defaults to team name",
+  "f83b990c1244d596": "Team display name",
+  "32bbfee4ac2f750f": "Shown as the prefix on team-owned scheduled-task threads (for example, {displayName}: Daily triage).",
+  "6c037e26ecbefe2e": "Display name (optional)",
+  "7d63b70705da219f": "Defaults to the team name if left blank. Shown as the prefix on team-owned scheduled-task threads."
 }

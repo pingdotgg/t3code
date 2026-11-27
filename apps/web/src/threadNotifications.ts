@@ -1,5 +1,6 @@
 import {
   formatTeamThreadTitle,
+  resolveTeamThreadCreatorPseudo,
   resolveTeamThreadNotificationDecision,
   shouldNotifyForTeamThread,
   type TeamEnvironmentState,
@@ -52,11 +53,7 @@ export function formatTeamNotificationThreadTitle(input: {
   readonly threadId: ThreadId;
 }): string {
   const { title, teamState, threadId } = input;
-  if (!teamState || teamState.team === null) return title;
-  const attribution = teamState.attributionByThreadId.get(threadId);
-  if (!attribution) return title;
-  const pseudo =
-    teamState.memberById.get(attribution.creatorMemberId)?.pseudo ?? attribution.creatorPseudo;
+  const pseudo = resolveTeamThreadCreatorPseudo({ teamState, threadId });
   return formatTeamThreadTitle(title, pseudo);
 }
 

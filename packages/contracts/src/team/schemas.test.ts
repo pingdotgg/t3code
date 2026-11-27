@@ -6,14 +6,22 @@ import {
   canAssignTeamRole,
   canChangeTeamMemberRole,
   canChangeThreadTeamView,
+  canManagePrivilegedTeamScheduledTasks,
   canManageTeamAutomationGitHub,
+  canManageTeamDisplayName,
   canManageTeamEnvironments,
   canManageTeamInvites,
   canManageTeamPreprompts,
   canManageTeamProjects,
   canManageTeamProviders,
+  canManageTeamScheduledTasks,
   canManageTeamSkills,
   canManageTeamViews,
+  canMemberMutateTeamScheduledTask,
+  canMemberReadTeamScheduledTask,
+  canMemberSeeTeamScheduledTaskWebhook,
+  resolveScheduledTaskScope,
+  resolveTeamDisplayName,
   defaultTeamProviderDeliveryStrategy,
   isTeamProviderInstanceId,
   isTeamProviderInstanceIdForTeam,
@@ -715,5 +723,340 @@ describe("Milestone 6 team providers, skills, and pre-prompts contracts", () => 
     expect(canManageTeamAutomationGitHub("admin")).toBe(true);
     expect(canManageTeamAutomationGitHub("modo")).toBe(false);
     expect(canManageTeamAutomationGitHub("regular")).toBe(false);
+  });
+});
+
+describe("Milestone 8 team displayName, scheduled-task scoping & RBAC, and team-owned threads", () => {
+  const owner = {
+    id: TeamMemberId.make("m8-owner"),
+    role: "owner" as const,
+    status: "active" as const,
+  };
+  const admin = {
+    id: TeamMemberId.make("m8-admin"),
+    role: "admin" as const,
+    status: "active" as const,
+  };
+  const modo = {
+    id: TeamMemberId.make("m8-modo"),
+    role: "modo" as const,
+    status: "active" as const,
+  };
+  const regular = {
+    id: TeamMemberId.make("m8-regular"),
+    role: "regular" as const,
+    status: "active" as const,
+  };
+  const openEnv = {
+    accessRule: { roles: ["owner", "admin", "modo", "regular"] as const, memberIds: [] },
+  };
+  const adminEnv = {
+    accessRule: { roles: ["owner", "admin"] as const, memberIds: [] },
+  };
+  const openView = {
+    readRule: { roles: ["owner", "admin", "modo", "regular"] as const, memberIds: [] },
+    postRule: { roles: ["owner", "admin", "modo", "regular"] as const, memberIds: [] },
+  };
+  const readOnlyView = {
+    readRule: { roles: ["owner", "admin", "modo", "regular"] as const, memberIds: [] },
+    postRule: { roles: ["owner", "admin"] as const, memberIds: [] },
+  };
+  const adminView = {
+    readRule: { roles: ["owner", "admin"] as const, memberIds: [] },
+    postRule: { roles: ["owner", "admin"] as const, memberIds: [] },
+  };
+
+  it("resolves team displayName (defaulting to name) and hidden personal scheduled-task scope", () => {
+    expect(resolveTeamDisplayName("Acme Corp", undefined)).toBe("Acme Corp");
+    expect(resolveTeamDisplayName("Acme Corp", "   ")).toBe("Acme Corp");
+    expect(resolveTeamDisplayName("Acme Corp", "  Acme Bot  ")).toBe("Acme Bot");
+
+    expect(canManageTeamDisplayName("owner")).toBe(true);
+    expect(canManageTeamDisplayName("admin")).toBe(true);
+    expect(canManageTeamDisplayName("modo")).toBe(false);
+    expect(canManageTeamDisplayName("regular")).toBe(false);
+
+    const envId = EnvironmentId.make("env-1");
+    const teamId = TeamId.make("team-1");
+    expect(resolveScheduledTaskScope(null, envId)).toEqual({
+      kind: "personal",
+      teamId: null,
+      environmentId: envId,
+    });
+    expect(resolveScheduledTaskScope(teamId, envId)).toEqual({
+      kind: "team",
+      teamId,
+      environmentId: envId,
+    });
+  });
+
+  it("enforces scheduled-task RBAC and anti-escalation across owner, admin, modo, and regular", () => {
+    expect(canManageTeamScheduledTasks("owner")).toBe(true);
+    expect(canManageTeamScheduledTasks("admin")).toBe(true);
+    expect(canManageTeamScheduledTasks("modo")).toBe(true);
+    expect(canManageTeamScheduledTasks("regular")).toBe(false);
+
+    expect(canManagePrivilegedTeamScheduledTasks("owner")).toBe(true);
+    expect(canManagePrivilegedTeamScheduledTasks("admin")).toBe(true);
+    expect(canManagePrivilegedTeamScheduledTasks("modo")).toBe(false);
+    expect(canManagePrivilegedTeamScheduledTasks("regular")).toBe(false);
+
+    // Read requires access to BOTH environment and view.
+    expect(
+      canMemberReadTeamScheduledTask({ member: regular, environment: openEnv, view: openView }),
+    ).toBe(true);
+    expect(
+      canMemberReadTeamScheduledTask({ member: regular, environment: adminEnv, view: openView }),
+    ).toBe(false);
+    expect(
+      canMemberReadTeamScheduledTask({ member: regular, environment: openEnv, view: adminView }),
+    ).toBe(false);
+
+    // Modo can mutate minimal unlocked tasks in accessible scope, but NOT elevated/locked ones.
+    expect(
+      canMemberMutateTeamScheduledTask({
+        member: modo,
+        environment: openEnv,
+        view: openView,
+        existingMeta: { locked: false, mcpAccessLevel: "minimal" },
+      }),
+    ).toBe(true);
+    expect(
+      canMemberMutateTeamScheduledTask({
+        member: modo,
+        environment: openEnv,
+        view: openView,
+        nextLocked: true,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberMutateTeamScheduledTask({
+        member: modo,
+        environment: openEnv,
+        view: openView,
+        nextMcpAccessLevel: "elevated",
+      }),
+    ).toBe(false);
+    expect(
+      canMemberMutateTeamScheduledTask({
+        member: modo,
+        environment: openEnv,
+        view: openView,
+        existingMeta: { locked: true, mcpAccessLevel: "minimal" },
+      }),
+    ).toBe(false);
+    expect(
+      canMemberMutateTeamScheduledTask({
+        member: modo,
+        environment: openEnv,
+        view: openView,
+        existingMeta: { locked: false, mcpAccessLevel: "elevated" },
+      }),
+    ).toBe(false);
+    expect(
+      canMemberMutateTeamScheduledTask({
+        member: admin,
+        environment: openEnv,
+        view: openView,
+        existingMeta: { locked: true, mcpAccessLevel: "elevated" },
+      }),
+    ).toBe(true);
+
+    // Webhook visibility mirrors mutation authority (redacted for regular and for modo on locked/elevated).
+    expect(
+      canMemberSeeTeamScheduledTaskWebhook({
+        member: regular,
+        environment: openEnv,
+        view: openView,
+        meta: { locked: false, mcpAccessLevel: "minimal" },
+      }),
+    ).toBe(false);
+    expect(
+      canMemberSeeTeamScheduledTaskWebhook({
+        member: modo,
+        environment: openEnv,
+        view: openView,
+        meta: { locked: false, mcpAccessLevel: "minimal" },
+      }),
+    ).toBe(true);
+    expect(
+      canMemberSeeTeamScheduledTaskWebhook({
+        member: modo,
+        environment: openEnv,
+        view: openView,
+        meta: { locked: false, mcpAccessLevel: "elevated" },
+      }),
+    ).toBe(false);
+    expect(
+      canMemberSeeTeamScheduledTaskWebhook({
+        member: owner,
+        environment: openEnv,
+        view: openView,
+        meta: { locked: true, mcpAccessLevel: "elevated" },
+      }),
+    ).toBe(true);
+  });
+
+  it("enforces posting, queueing, steering, interrupt, and notification rules on team-owned threads", () => {
+    const unlockedTeamThread = {
+      ownerKind: "team" as const,
+      creatorMemberId: null,
+      locked: false,
+    };
+    const lockedTeamThread = {
+      ownerKind: "team" as const,
+      creatorMemberId: null,
+      locked: true,
+    };
+
+    // Posting on unlocked team-owned thread: modo always allowed when view is readable, regular follows postRule.
+    expect(
+      resolveTeamThreadPostBlockReason({
+        member: modo,
+        attribution: unlockedTeamThread,
+        view: readOnlyView,
+      }),
+    ).toBe("ok");
+    expect(
+      resolveTeamThreadPostBlockReason({
+        member: regular,
+        attribution: unlockedTeamThread,
+        view: readOnlyView,
+      }),
+    ).toBe("view_read_only");
+    expect(
+      resolveTeamThreadPostBlockReason({
+        member: regular,
+        attribution: unlockedTeamThread,
+        view: openView,
+      }),
+    ).toBe("ok");
+    // Locked team-owned thread: owner/admin only.
+    expect(
+      resolveTeamThreadPostBlockReason({
+        member: modo,
+        attribution: lockedTeamThread,
+        view: openView,
+      }),
+    ).toBe("locked");
+    expect(
+      resolveTeamThreadPostBlockReason({
+        member: admin,
+        attribution: lockedTeamThread,
+        view: openView,
+      }),
+    ).toBe("ok");
+
+    // No member (not even owner) may steer or Send now on a team-owned thread or during an active team_automation turn.
+    expect(
+      canMemberSteerActiveTeamTurn({
+        member: owner,
+        attribution: unlockedTeamThread,
+        view: openView,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberPromoteTeamQueuedRun({
+        member: modo,
+        attribution: unlockedTeamThread,
+        view: openView,
+      }),
+    ).toBe(false);
+    const aliceMemberThread = {
+      ownerKind: "member" as const,
+      creatorMemberId: owner.id,
+      locked: false,
+    };
+    expect(
+      canMemberSteerActiveTeamTurn({
+        member: owner,
+        attribution: aliceMemberThread,
+        view: openView,
+        activeTurnAuthorKind: "team_automation",
+      }),
+    ).toBe(false);
+    expect(
+      canMemberPromoteTeamQueuedRun({
+        member: owner,
+        attribution: aliceMemberThread,
+        view: openView,
+        activeTurnAuthorKind: "team_automation",
+      }),
+    ).toBe(false);
+
+    // Interrupt: owner/admin retain explicit Interrupt on active automation runs; modo/regular cannot.
+    expect(
+      canMemberInterruptTeamTurn({
+        member: owner,
+        attribution: unlockedTeamThread,
+        view: openView,
+        activeTurnAuthorMemberId: null,
+      }),
+    ).toBe(true);
+    expect(
+      canMemberInterruptTeamTurn({
+        member: admin,
+        attribution: unlockedTeamThread,
+        view: openView,
+        activeTurnAuthorMemberId: null,
+      }),
+    ).toBe(true);
+    expect(
+      canMemberInterruptTeamTurn({
+        member: modo,
+        attribution: unlockedTeamThread,
+        view: openView,
+        activeTurnAuthorMemberId: null,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberInterruptTeamTurn({
+        member: regular,
+        attribution: unlockedTeamThread,
+        view: openView,
+        activeTurnAuthorMemberId: null,
+      }),
+    ).toBe(false);
+    // Human author of a follow-up turn in a team-owned thread can interrupt their own turn.
+    expect(
+      canMemberInterruptTeamTurn({
+        member: modo,
+        attribution: unlockedTeamThread,
+        view: openView,
+        activeTurnAuthorMemberId: modo.id,
+      }),
+    ).toBe(true);
+
+    // Notifications: zero default notifications for unfollowed team-owned threads; notifies when followed or own follow-up turn.
+    expect(
+      shouldNotifyTeamMemberForThread({
+        hasTeam: true,
+        memberId: owner.id,
+        ownerKind: "team",
+        creatorMemberId: null,
+        isFollowing: false,
+        activeTurnAuthorMemberId: null,
+      }),
+    ).toBe(false);
+    expect(
+      shouldNotifyTeamMemberForThread({
+        hasTeam: true,
+        memberId: modo.id,
+        ownerKind: "team",
+        creatorMemberId: null,
+        isFollowing: true,
+        activeTurnAuthorMemberId: null,
+      }),
+    ).toBe(true);
+    expect(
+      shouldNotifyTeamMemberForThread({
+        hasTeam: true,
+        memberId: modo.id,
+        ownerKind: "team",
+        creatorMemberId: null,
+        isFollowing: false,
+        activeTurnAuthorMemberId: modo.id,
+      }),
+    ).toBe(true);
   });
 });

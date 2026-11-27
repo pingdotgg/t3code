@@ -335,6 +335,20 @@ const make = Effect.gen(function* () {
     const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
     const threadId = input.threadId ?? scope.thread?.threadId;
     if (threadId === undefined) return yield* new PullRequestThreadRequiredError();
+    const scopedProjectId = yield* TeamMcpAccess.getMinimalAutomationProjectId().pipe(
+      Effect.mapError((cause) => new PullRequestLinkFailedError({ cause })),
+    );
+    if (Option.isSome(scopedProjectId)) {
+      const thread = yield* requireThread(PullRequestLinkFailedError, threadId);
+      const project = yield* projectOf(thread, PullRequestLinkFailedError);
+      if (project === undefined || project.id !== scopedProjectId.value) {
+        return yield* new PullRequestProjectNotFoundError({ repository: input.repository ?? "" });
+      }
+      const target = yield* resolveTarget(input, project);
+      if (projectForPullRequest([project], target, project) === undefined) {
+        return yield* new PullRequestProjectNotFoundError({ repository: target.repository });
+      }
+    }
     return yield* watches
       .setWatching({ threadId, target: input, watching, until: input.until })
       .pipe(
@@ -363,9 +377,15 @@ const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => null),
             Effect.map((shell) => shell ?? undefined),
           );
-    const known = yield* projects
+    const allKnown = yield* projects
       .listShells()
       .pipe(Effect.mapError((cause) => new PullRequestListFailedError({ cause })));
+    const scopedProjectId = yield* TeamMcpAccess.getMinimalAutomationProjectId().pipe(
+      Effect.mapError((cause) => new PullRequestListFailedError({ cause })),
+    );
+    const known = Option.isSome(scopedProjectId)
+      ? allKnown.filter((project) => project.id === scopedProjectId.value)
+      : allKnown;
     const callerProject =
       callerThread === undefined
         ? undefined
@@ -564,6 +584,16 @@ const make = Effect.gen(function* () {
           : { number: branchPullRequest.number, repository: branchPullRequest.repository };
     if (named === null) return yield* new PullRequestBranchHasNoneError();
     const target = yield* resolveTarget(named, project);
+    const scopedProjectId = yield* TeamMcpAccess.getMinimalAutomationProjectId().pipe(
+      Effect.mapError(forgeFailure),
+    );
+    if (
+      Option.isSome(scopedProjectId) &&
+      (project.id !== scopedProjectId.value ||
+        projectForPullRequest([project], target, project) === undefined)
+    ) {
+      return yield* new PullRequestProjectNotFoundError({ repository: target.repository });
+    }
     const ref: PullRequestRef = {
       projectId: project.id,
       host: target.host,
@@ -753,6 +783,17 @@ const make = Effect.gen(function* () {
             : {};
         const project = yield* projectOf(thread, PullRequestLinkFailedError);
         const target = yield* resolveTarget(input, project);
+        const scopedProjectId = yield* TeamMcpAccess.getMinimalAutomationProjectId().pipe(
+          Effect.mapError((cause) => new PullRequestLinkFailedError({ cause })),
+        );
+        if (
+          Option.isSome(scopedProjectId) &&
+          (project === undefined ||
+            project.id !== scopedProjectId.value ||
+            projectForPullRequest([project], target, project) === undefined)
+        ) {
+          return yield* new PullRequestProjectNotFoundError({ repository: target.repository });
+        }
         const existing = threadPullRequestsOf(thread).find((link) =>
           threadPullRequestKeysEqual(link, target),
         );
@@ -780,13 +821,31 @@ const make = Effect.gen(function* () {
     link_pull_requests: writesThread((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(PullRequestLinkFailedError, input.threadId);
+        const scopedProjectId = yield* TeamMcpAccess.getMinimalAutomationProjectId().pipe(
+          Effect.mapError((cause) => new PullRequestLinkFailedError({ cause })),
+        );
+        const scopedProject = Option.isSome(scopedProjectId)
+          ? yield* projectOf(thread, PullRequestLinkFailedError)
+          : undefined;
         const targets: Array<ResolvedTarget> = [];
         const invalidUrls: Array<string> = [];
         for (const url of input.urls) {
           const target = yield* resolveTarget({ url }, undefined).pipe(Effect.option);
           if (Option.isNone(target)) invalidUrls.push(url);
-          else if (!targets.some((seen) => threadPullRequestKeysEqual(seen, target.value)))
-            targets.push(target.value);
+          else {
+            if (
+              Option.isSome(scopedProjectId) &&
+              (scopedProject === undefined ||
+                scopedProject.id !== scopedProjectId.value ||
+                projectForPullRequest([scopedProject], target.value, scopedProject) === undefined)
+            ) {
+              return yield* new PullRequestProjectNotFoundError({
+                repository: target.value.repository,
+              });
+            }
+            if (!targets.some((seen) => threadPullRequestKeysEqual(seen, target.value)))
+              targets.push(target.value);
+          }
         }
         const links = threadPullRequestsOf(thread);
         const isLinked = (target: ResolvedTarget) =>
@@ -939,6 +998,18 @@ const make = Effect.gen(function* () {
                   }).message,
                 };
               }
+              const projectAccess = yield* Effect.result(
+                TeamMcpAccess.assertCanAccessProject(entry.project.id),
+              );
+              if (projectAccess._tag === "Failure") {
+                return {
+                  ...identity,
+                  outcome: "failed" as const,
+                  detail: new PullRequestProjectNotFoundError({
+                    repository: entry.target.repository,
+                  }).message,
+                };
+              }
               return yield* reviewGuides.generate(guideReference(entry.project, entry.target)).pipe(
                 Effect.map((result) => ({
                   ...identity,
@@ -965,14 +1036,25 @@ const make = Effect.gen(function* () {
         if (entry !== undefined && entry.target === null) {
           return yield* new PullRequestGuideFailedError({ detail: entry.failure ?? "" });
         }
+        const scopedProjectId = yield* TeamMcpAccess.getMinimalAutomationProjectId().pipe(
+          Effect.mapError((cause) => new PullRequestGuideFailedError({ detail: cause.message })),
+        );
         // Hosts readable without a checkout (GitHub, Bitbucket, Forgejo) are read through the
-        // caller's project; PullRequestService decides whether the host allows that.
-        const project = entry?.project ?? entry?.callerProject;
+        // caller's project; PullRequestService decides whether the host allows that. Minimal
+        // automations must match their single scoped project and cannot fall back to arbitrary repos.
+        const project = Option.isSome(scopedProjectId)
+          ? entry?.project
+          : (entry?.project ?? entry?.callerProject);
         if (entry === undefined || entry.target === null || project === undefined) {
           return yield* new PullRequestProjectNotFoundError({
             repository: entry?.target.repository ?? input.repository ?? "",
           });
         }
+        yield* TeamMcpAccess.assertCanAccessProject(project.id).pipe(
+          Effect.mapError(
+            () => new PullRequestProjectNotFoundError({ repository: entry.target!.repository }),
+          ),
+        );
         const target = entry.target;
         const result = yield* reviewGuides.get(guideReference(project, target)).pipe(
           Effect.mapError((error) =>

@@ -12,9 +12,12 @@ export {
 } from "./state.ts";
 export {
   canCurrentMemberChangeThreadView,
+  canCurrentMemberConfigurePrivilegedTeamScheduledTask,
+  canCurrentMemberCreateTeamScheduledTask,
   canCurrentMemberInterruptThread,
   canCurrentMemberLeaveThreadNote,
   canCurrentMemberManageQueuedRun,
+  canCurrentMemberMutateTeamScheduledTask,
   canCurrentMemberPromoteQueuedRun,
   canCurrentMemberResolveThreadNotes,
   canCurrentMemberSteerActiveTurn,
@@ -26,6 +29,7 @@ export {
   hasActiveTeamEnvironment,
   isFollowingTeamThread,
   isTeamColleagueThread,
+  isTeamOwnedThread,
   isTeamThreadLocked,
   listAccessibleTeamEnvironments,
   listAccessibleTeamViews,
@@ -34,6 +38,7 @@ export {
   resolveProjectTeamAssignment,
   resolveTeamDefaultView,
   resolveTeamQueuedRunAuthorPseudo,
+  resolveTeamScheduledTaskMeta,
   resolveTeamThreadCreatorPseudo,
   resolveTeamThreadEnvironmentAccessForClient,
   resolveTeamThreadNotes,

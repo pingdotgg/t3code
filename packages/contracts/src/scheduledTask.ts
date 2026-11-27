@@ -17,6 +17,7 @@ import {
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
+import { TeamScheduledTaskUpsertMetaInput } from "./team/schemas.ts";
 
 const TimeOfDay = TrimmedNonEmptyString.check(
   Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/),
@@ -238,6 +239,26 @@ export function scheduledTaskThreadMode(
   return task.threadMode ?? (task.threadId === null ? "new_thread" : "continue");
 }
 
+/** Resolves the destination thread id that `ScheduledTaskService.upsert` will persist. */
+export function resolveScheduledTaskEffectiveThreadId(
+  input: Pick<ScheduledTaskUpsertInput, "projectId" | "threadId" | "threadMode" | "unbindThread">,
+  existing: Pick<ScheduledTask, "projectId" | "threadId" | "threadMode"> | null,
+): ThreadId | null {
+  const threadMode =
+    input.threadMode ??
+    (() => {
+      const stored = existing === null ? "new_thread" : scheduledTaskThreadMode(existing);
+      return stored === "new_thread" && input.threadId != null ? "continue" : stored;
+    })();
+  const keptThreadId =
+    input.threadId ?? (input.unbindThread === true ? null : (existing?.threadId ?? null));
+  const movedOffThread =
+    existing !== null &&
+    existing.projectId !== input.projectId &&
+    keptThreadId === existing.threadId;
+  return threadMode === "new_thread" || movedOffThread ? null : keptThreadId;
+}
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -300,6 +321,8 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   createdBy: Schema.optional(OrchestrationV2Actor),
   creationSource: Schema.optional(OrchestrationV2CreationSource),
+  /** Optional team sidecar metadata (viewId, locked, mcpAccessLevel) for team environments. */
+  teamMeta: Schema.optionalKey(TeamScheduledTaskUpsertMetaInput),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 
