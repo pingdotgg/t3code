@@ -37,6 +37,7 @@ const retainedExclusionsAtom = Atom.make<
     {
       readonly refName: string | null;
       readonly excluded: ReadonlySet<string>;
+      readonly commitMessage: string;
       readonly createdBranch: string | null | undefined;
     }
   >
@@ -73,15 +74,20 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
     selectionKey === null ? undefined : entries.get(selectionKey),
   );
   const setRetainedExclusions = useAtomSet(retainedExclusionsAtom);
-  const [dialogCommitMessage, setDialogCommitMessage] = useState("");
+  const [dialogCommitMessage, setDialogCommitMessage] = useState(retained?.commitMessage ?? "");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(
     retained?.excluded ?? new Set(),
   );
   const [previousRetained, setPreviousRetained] = useState(retained);
   if (previousRetained !== retained) {
     setPreviousRetained(retained);
-    if (retained === undefined && previousRetained?.excluded === excludedFiles) {
-      setExcludedFiles(new Set());
+    if (retained === undefined) {
+      if (previousRetained?.excluded === excludedFiles) {
+        setExcludedFiles(new Set());
+      }
+      if (previousRetained?.commitMessage === dialogCommitMessage) {
+        setDialogCommitMessage("");
+      }
     }
   }
   const [selectionBranch, setSelectionBranch] = useState(
@@ -113,6 +119,7 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
     const submitted = {
       refName: selectionBranch,
       excluded: excludedFiles,
+      commitMessage: dialogCommitMessage,
       createdBranch: featureBranch ? null : createdBranch,
     };
     if (selectionKey !== null) {
