@@ -118,6 +118,7 @@ describe("TeamService", () => {
         assetsRevision: 0,
         myGitHubIdentity: null,
         automationGitHubIdentity: null,
+        githubAppConfig: null,
         scheduledTaskMetas: [],
       });
 

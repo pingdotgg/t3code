@@ -631,6 +631,47 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
       `;
     }),
   },
+  {
+    id: 9,
+    name: "TeamGitHubOAuthAndRefresh",
+    up: Effect.fn("TeamMigrations.TeamGitHubOAuthAndRefresh")(function* (sql: SqlClient.SqlClient) {
+      yield* sql`
+        CREATE TABLE IF NOT EXISTS team_github_app_config (
+          team_id TEXT PRIMARY KEY REFERENCES team_workspaces(id) ON DELETE CASCADE,
+          mode TEXT NOT NULL CHECK (mode IN ('oauth', 'github_app')),
+          client_id TEXT NOT NULL,
+          web_base_url TEXT NOT NULL,
+          api_base_url TEXT NOT NULL,
+          scopes TEXT NOT NULL DEFAULT '',
+          enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+          client_secret_key TEXT,
+          updated_by_member_id TEXT NOT NULL REFERENCES team_members(id),
+          updated_at TEXT NOT NULL
+        )
+      `;
+      const memberCredColumns = yield* sql<{ readonly name: string }>`
+        PRAGMA table_info(team_github_member_credentials)
+      `;
+      if (!memberCredColumns.some((column) => column.name === "token_expires_at")) {
+        yield* sql`ALTER TABLE team_github_member_credentials ADD COLUMN token_expires_at TEXT`;
+      }
+      if (!memberCredColumns.some((column) => column.name === "has_refresh_token")) {
+        yield* sql`
+          ALTER TABLE team_github_member_credentials
+          ADD COLUMN has_refresh_token INTEGER NOT NULL DEFAULT 0 CHECK (has_refresh_token IN (0, 1))
+        `;
+      }
+      if (!memberCredColumns.some((column) => column.name === "needs_reconnect")) {
+        yield* sql`
+          ALTER TABLE team_github_member_credentials
+          ADD COLUMN needs_reconnect INTEGER NOT NULL DEFAULT 0 CHECK (needs_reconnect IN (0, 1))
+        `;
+      }
+      if (!memberCredColumns.some((column) => column.name === "reconnect_reason")) {
+        yield* sql`ALTER TABLE team_github_member_credentials ADD COLUMN reconnect_reason TEXT`;
+      }
+    }),
+  },
 ];
 
 const migrationLocks = new WeakMap<SqlClient.SqlClient, Semaphore.Semaphore>();

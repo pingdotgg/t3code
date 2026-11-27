@@ -5,12 +5,15 @@ import * as NodeNet from "node:net";
 
 import {
   DEFAULT_GITHUB_API_BASE_URL,
+  DEFAULT_GITHUB_WEB_BASE_URL,
   TeamId,
   TeamMemberId,
   TeamOperationError,
   type TeamAutomationGitHubIdentity,
+  type TeamGitHubAppConfig,
   type TeamGitHubAuthMethod,
   type TeamGitHubIdentity,
+  type TeamGitHubOAuthMode,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -46,7 +49,10 @@ export const StoredTeamGitHubSecret = Schema.Struct({
   accessToken: Schema.String,
   refreshToken: Schema.optionalKey(Schema.String),
   expiresAt: Schema.optionalKey(Schema.String),
+  refreshTokenExpiresAt: Schema.optionalKey(Schema.String),
   tokenEndpoint: Schema.optionalKey(Schema.String),
+  webBaseUrl: Schema.optionalKey(Schema.String),
+  clientId: Schema.optionalKey(Schema.String),
   installationId: Schema.optionalKey(Schema.String),
   apiBaseUrl: Schema.String,
   githubLogin: Schema.String,
@@ -54,6 +60,16 @@ export const StoredTeamGitHubSecret = Schema.Struct({
   githubEmail: Schema.NullOr(Schema.String),
 });
 export type StoredTeamGitHubSecret = typeof StoredTeamGitHubSecret.Type;
+
+const StoredGitHubAppClientSecretPayload = Schema.Struct({
+  clientSecret: Schema.String,
+});
+const decodeStoredGitHubAppClientSecret = Schema.decodeUnknownOption(
+  Schema.fromJsonString(StoredGitHubAppClientSecretPayload),
+);
+const encodeStoredGitHubAppClientSecret = Schema.encodeSync(
+  Schema.fromJsonString(StoredGitHubAppClientSecretPayload),
+);
 
 const decodeStoredGitHubSecret = Schema.decodeUnknownOption(
   Schema.fromJsonString(StoredTeamGitHubSecret),
@@ -90,6 +106,10 @@ export function teamMemberGitHubSecretKey(teamId: TeamId, memberId: TeamMemberId
 
 export function teamAutomationGitHubSecretKey(teamId: TeamId): string {
   return `team-github-automation-${sanitizeSecretSegment(teamId)}`;
+}
+
+export function teamGitHubAppClientSecretKey(teamId: TeamId): string {
+  return `team-github-app-client-secret-${sanitizeSecretSegment(teamId)}`;
 }
 
 const getOrCreateEncryptionKey = Effect.fn("TeamGitHubRepository.getOrCreateEncryptionKey")(
@@ -234,6 +254,90 @@ export const removeTeamGitHubSecret = Effect.fn("TeamGitHubRepository.removeSecr
   );
 });
 
+function decryptGitHubAppClientSecretEnvelope(
+  key: Uint8Array,
+  secretKey: string,
+  envelope: typeof EncryptedSecretEnvelopeSchema.Type,
+): string | null {
+  try {
+    const iv = Buffer.from(envelope.iv, "base64");
+    const tag = Buffer.from(envelope.tag, "base64");
+    const ciphertext = Buffer.from(envelope.ciphertext, "base64");
+    if (iv.byteLength !== 12 || tag.byteLength !== 16) return null;
+    const decipher = NodeCrypto.createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAAD(Buffer.from(secretKey, "utf8"));
+    decipher.setAuthTag(tag);
+    const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString(
+      "utf8",
+    );
+    const parsed = decodeStoredGitHubAppClientSecret(plaintext);
+    return Option.isSome(parsed) ? parsed.value.clientSecret : null;
+  } catch {
+    return null;
+  }
+}
+
+export const readTeamGitHubAppClientSecret = Effect.fn("TeamGitHubRepository.readAppClientSecret")(
+  function* (
+    secrets: ServerSecretStore.ServerSecretStore["Service"],
+    secretKey: string,
+  ): Effect.fn.Return<string | null, TeamOperationError> {
+    const raw = yield* secrets.get(secretKey).pipe(
+      Effect.mapError(
+        () =>
+          new TeamOperationError({
+            code: "internal",
+            message: "Could not read GitHub App client secret from secret store.",
+          }),
+      ),
+    );
+    if (Option.isNone(raw)) return null;
+    const envelopeOpt = decodeEncryptedEnvelope(decoder.decode(raw.value));
+    if (Option.isNone(envelopeOpt)) return null;
+    const key = yield* getOrCreateEncryptionKey(secrets, false);
+    if (key === null) return null;
+    return decryptGitHubAppClientSecretEnvelope(key, secretKey, envelopeOpt.value);
+  },
+);
+
+export const writeTeamGitHubAppClientSecret = Effect.fn(
+  "TeamGitHubRepository.writeAppClientSecret",
+)(function* (
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
+  secretKey: string,
+  clientSecret: string,
+): Effect.fn.Return<void, TeamOperationError> {
+  const key = yield* getOrCreateEncryptionKey(secrets, true);
+  if (key === null) {
+    return yield* new TeamOperationError({
+      code: "internal",
+      message: "Could not initialize GitHub credential encryption key.",
+    });
+  }
+  const iv = NodeCrypto.randomBytes(12);
+  const cipher = NodeCrypto.createCipheriv("aes-256-gcm", key, iv);
+  cipher.setAAD(Buffer.from(secretKey, "utf8"));
+  const plaintext = encodeStoredGitHubAppClientSecret({ clientSecret });
+  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  const envelope = encodeEncryptedEnvelope({
+    v: 1,
+    alg: "aes-256-gcm",
+    iv: iv.toString("base64"),
+    tag: tag.toString("base64"),
+    ciphertext: ciphertext.toString("base64"),
+  });
+  yield* secrets.set(secretKey, encoder.encode(envelope)).pipe(
+    Effect.mapError(
+      () =>
+        new TeamOperationError({
+          code: "internal",
+          message: "Could not persist GitHub App client secret in secret store.",
+        }),
+    ),
+  );
+});
+
 function parseAllowedApiOrigins(explicit?: ReadonlyArray<string>): ReadonlySet<string> {
   const result = new Set<string>();
   const rawSources: Array<string> = [];
@@ -344,52 +448,56 @@ function isBlockedGitHubApiIp(rawIp: string): boolean {
   return true;
 }
 
-export const normalizeGitHubApiBaseUrl = Effect.fn("TeamGitHubRepository.normalizeApiBaseUrl")(
-  function* (
-    raw?: string | null,
-    options?: { readonly allowedApiOrigins?: ReadonlyArray<string> },
-  ): Effect.fn.Return<string, TeamOperationError> {
-    const trimmed = raw?.trim() ?? "";
+const normalizeGitHubBaseUrl = Effect.fn("TeamGitHubRepository.normalizeBaseUrl")(
+  function* (input: {
+    readonly raw?: string | null;
+    readonly defaultUrl: string;
+    readonly label: string;
+    readonly allowedApiOrigins?: ReadonlyArray<string>;
+  }): Effect.fn.Return<string, TeamOperationError> {
+    const trimmed = input.raw?.trim() ?? "";
     if (trimmed.length === 0) {
-      return DEFAULT_GITHUB_API_BASE_URL;
+      return input.defaultUrl;
     }
     const parsed = yield* Effect.try({
       try: () => new URL(trimmed),
       catch: () =>
         new TeamOperationError({
           code: "invalid_input",
-          message: "GitHub API base URL must be a valid https:// URL.",
+          message: `${input.label} must be a valid https:// URL.`,
         }),
     });
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return yield* new TeamOperationError({
         code: "invalid_input",
-        message: "GitHub API base URL must use https://.",
+        message: `${input.label} must use https://.`,
       });
     }
     if (parsed.username.length > 0 || parsed.password.length > 0) {
       return yield* new TeamOperationError({
         code: "invalid_input",
-        message: "GitHub API base URL must not contain embedded credentials.",
+        message: `${input.label} must not contain embedded credentials.`,
       });
     }
     if (parsed.search.length > 0 || parsed.hash.length > 0) {
       return yield* new TeamOperationError({
         code: "invalid_input",
-        message: "GitHub API base URL must not contain query parameters or fragments.",
+        message: `${input.label} must not contain query parameters or fragments.`,
       });
     }
-    const allowedOrigins = parseAllowedApiOrigins(options?.allowedApiOrigins);
+    const allowedOrigins = parseAllowedApiOrigins(input.allowedApiOrigins);
     const explicitlyAllowed = allowedOrigins.has(parsed.origin.toLowerCase());
     if (!explicitlyAllowed) {
       if (parsed.protocol !== "https:") {
         return yield* new TeamOperationError({
           code: "invalid_input",
-          message:
-            "GitHub API base URL must use https:// unless explicitly allowlisted by server configuration.",
+          message: `${input.label} must use https:// unless explicitly allowlisted by server configuration.`,
         });
       }
-      const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+      const hostname = parsed.hostname
+        .toLowerCase()
+        .replace(/^\[|\]$/g, "")
+        .replace(/\.+$/, "");
       if (
         hostname === "localhost" ||
         hostname.endsWith(".localhost") ||
@@ -397,12 +505,93 @@ export const normalizeGitHubApiBaseUrl = Effect.fn("TeamGitHubRepository.normali
       ) {
         return yield* new TeamOperationError({
           code: "invalid_input",
-          message:
-            "GitHub API base URL cannot target loopback, link-local, or private network addresses unless explicitly allowlisted.",
+          message: `${input.label} cannot target loopback, link-local, or private network addresses unless explicitly allowlisted.`,
         });
       }
     }
     return `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, "");
+  },
+);
+
+export const normalizeGitHubApiBaseUrl = Effect.fn("TeamGitHubRepository.normalizeApiBaseUrl")(
+  function* (
+    raw?: string | null,
+    options?: { readonly allowedApiOrigins?: ReadonlyArray<string> },
+  ): Effect.fn.Return<string, TeamOperationError> {
+    return yield* normalizeGitHubBaseUrl({
+      raw: raw ?? null,
+      defaultUrl: DEFAULT_GITHUB_API_BASE_URL,
+      label: "GitHub API base URL",
+      ...(options?.allowedApiOrigins === undefined
+        ? {}
+        : { allowedApiOrigins: options.allowedApiOrigins }),
+    });
+  },
+);
+
+export const normalizeGitHubWebBaseUrl = Effect.fn("TeamGitHubRepository.normalizeWebBaseUrl")(
+  function* (
+    raw?: string | null,
+    options?: { readonly allowedApiOrigins?: ReadonlyArray<string> },
+  ): Effect.fn.Return<string, TeamOperationError> {
+    return yield* normalizeGitHubBaseUrl({
+      raw: raw ?? null,
+      defaultUrl: DEFAULT_GITHUB_WEB_BASE_URL,
+      label: "GitHub web base URL",
+      ...(options?.allowedApiOrigins === undefined
+        ? {}
+        : { allowedApiOrigins: options.allowedApiOrigins }),
+    });
+  },
+);
+
+const TRUSTED_PUBLIC_GITHUB_ORIGINS: ReadonlySet<string> = new Set([
+  DEFAULT_GITHUB_API_BASE_URL,
+  DEFAULT_GITHUB_WEB_BASE_URL,
+]);
+
+/**
+ * Resolves DNS for custom GitHub hosts before issuing server-side outbound requests so DNS
+ * rebinding cannot target loopback, link-local metadata, or private RFC1918/ULA addresses.
+ */
+export const assertGitHubHostAllowed = Effect.fn("TeamGitHubRepository.assertHostAllowed")(
+  function* (input: {
+    readonly baseUrl: string;
+    readonly label?: string;
+    readonly allowedApiOrigins?: ReadonlyArray<string>;
+    readonly resolveHostAddresses?: (hostname: string) => Promise<ReadonlyArray<string>>;
+  }): Effect.fn.Return<void, TeamOperationError> {
+    const parsedBase = new URL(input.baseUrl);
+    const originLower = parsedBase.origin.toLowerCase();
+    const allowedOrigins = parseAllowedApiOrigins(input.allowedApiOrigins);
+    if (allowedOrigins.has(originLower) || TRUSTED_PUBLIC_GITHUB_ORIGINS.has(originLower)) {
+      return;
+    }
+    const label = input.label ?? "GitHub base URL";
+    const hostname = parsedBase.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    const resolvedAddresses = yield* Effect.tryPromise({
+      try: async () => {
+        if (input.resolveHostAddresses) {
+          return await input.resolveHostAddresses(hostname);
+        }
+        const entries = await NodeDnsPromises.lookup(hostname, { all: true, verbatim: true });
+        return entries.map((entry) => entry.address);
+      },
+      catch: () =>
+        new TeamOperationError({
+          code: "github_verification_failed",
+          message: `Could not resolve GitHub host ${hostname}.`,
+        }),
+    });
+    if (
+      resolvedAddresses.length === 0 ||
+      resolvedAddresses.some((address) => isBlockedGitHubApiIp(address))
+    ) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: `${label} resolves to a blocked loopback, link-local, or private network address.`,
+      });
+    }
   },
 );
 
@@ -460,36 +649,16 @@ export const verifyGitHubToken = Effect.fn("TeamGitHubRepository.verifyToken")(f
       ? undefined
       : { allowedApiOrigins: input.allowedApiOrigins },
   );
-  const parsedBase = new URL(apiBaseUrl);
-  const allowedOrigins = parseAllowedApiOrigins(input.allowedApiOrigins);
-  const explicitlyAllowed = allowedOrigins.has(parsedBase.origin.toLowerCase());
-  const hostname = parsedBase.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (!explicitlyAllowed && parsedBase.origin.toLowerCase() !== DEFAULT_GITHUB_API_BASE_URL) {
-    const resolvedAddresses = yield* Effect.tryPromise({
-      try: async () => {
-        if (input.resolveHostAddresses) {
-          return await input.resolveHostAddresses(hostname);
-        }
-        const entries = await NodeDnsPromises.lookup(hostname, { all: true, verbatim: true });
-        return entries.map((entry) => entry.address);
-      },
-      catch: () =>
-        new TeamOperationError({
-          code: "github_verification_failed",
-          message: `Could not resolve GitHub API host ${hostname}.`,
-        }),
-    });
-    if (
-      resolvedAddresses.length === 0 ||
-      resolvedAddresses.some((address) => isBlockedGitHubApiIp(address))
-    ) {
-      return yield* new TeamOperationError({
-        code: "invalid_input",
-        message:
-          "GitHub API base URL resolves to a blocked loopback, link-local, or private network address.",
-      });
-    }
-  }
+  yield* assertGitHubHostAllowed({
+    baseUrl: apiBaseUrl,
+    label: "GitHub API base URL",
+    ...(input.allowedApiOrigins === undefined
+      ? {}
+      : { allowedApiOrigins: input.allowedApiOrigins }),
+    ...(input.resolveHostAddresses === undefined
+      ? {}
+      : { resolveHostAddresses: input.resolveHostAddresses }),
+  });
   const headers = {
     authorization: `Bearer ${token}`,
     accept: "application/vnd.github+json",
@@ -606,6 +775,19 @@ export interface StoredAutomationGitHubRecord extends TeamAutomationGitHubIdenti
   readonly secretKey: string;
 }
 
+export interface StoredGitHubAppConfigRecord {
+  readonly teamId: TeamId;
+  readonly mode: TeamGitHubOAuthMode;
+  readonly clientId: string;
+  readonly webBaseUrl: string;
+  readonly apiBaseUrl: string;
+  readonly scopes: string;
+  readonly enabled: boolean;
+  readonly clientSecretKey: string | null;
+  readonly updatedByMemberId: TeamMemberId;
+  readonly updatedAt: string;
+}
+
 export function stripMemberGitHubSecretKey(record: StoredMemberGitHubRecord): TeamGitHubIdentity {
   return {
     authMethod: record.authMethod,
@@ -614,6 +796,27 @@ export function stripMemberGitHubSecretKey(record: StoredMemberGitHubRecord): Te
     githubEmail: record.githubEmail,
     apiBaseUrl: record.apiBaseUrl,
     connectedAt: record.connectedAt,
+    updatedAt: record.updatedAt,
+    ...(record.tokenExpiresAt !== undefined ? { tokenExpiresAt: record.tokenExpiresAt } : {}),
+    ...(record.hasRefreshToken !== undefined ? { hasRefreshToken: record.hasRefreshToken } : {}),
+    ...(record.needsReconnect !== undefined ? { needsReconnect: record.needsReconnect } : {}),
+    ...(record.reconnectReason !== undefined ? { reconnectReason: record.reconnectReason } : {}),
+  };
+}
+
+export function stripGitHubAppClientSecretKey(
+  record: StoredGitHubAppConfigRecord,
+  options?: { readonly includeUpdatedBy?: boolean },
+): TeamGitHubAppConfig {
+  return {
+    enabled: record.enabled,
+    mode: record.mode,
+    clientId: record.clientId,
+    webBaseUrl: record.webBaseUrl,
+    apiBaseUrl: record.apiBaseUrl,
+    scopes: record.scopes,
+    hasClientSecret: record.clientSecretKey !== null,
+    ...(options?.includeUpdatedBy === true ? { updatedByMemberId: record.updatedByMemberId } : {}),
     updatedAt: record.updatedAt,
   };
 }
@@ -644,6 +847,10 @@ interface MemberCredentialRow {
   readonly secret_key: string;
   readonly connected_at: string;
   readonly updated_at: string;
+  readonly token_expires_at: string | null;
+  readonly has_refresh_token: number;
+  readonly needs_reconnect: number;
+  readonly reconnect_reason: string | null;
 }
 
 interface AutomationCredentialRow {
@@ -659,6 +866,19 @@ interface AutomationCredentialRow {
   readonly updated_at: string;
 }
 
+interface GitHubAppConfigRow {
+  readonly team_id: string;
+  readonly mode: TeamGitHubOAuthMode;
+  readonly client_id: string;
+  readonly web_base_url: string;
+  readonly api_base_url: string;
+  readonly scopes: string;
+  readonly enabled: number;
+  readonly client_secret_key: string | null;
+  readonly updated_by_member_id: string;
+  readonly updated_at: string;
+}
+
 const mapMemberRow = (row: MemberCredentialRow): StoredMemberGitHubRecord => ({
   memberId: TeamMemberId.make(row.member_id),
   teamId: TeamId.make(row.team_id),
@@ -670,6 +890,10 @@ const mapMemberRow = (row: MemberCredentialRow): StoredMemberGitHubRecord => ({
   secretKey: row.secret_key,
   connectedAt: row.connected_at,
   updatedAt: row.updated_at,
+  ...(row.token_expires_at !== null ? { tokenExpiresAt: row.token_expires_at } : {}),
+  ...(row.has_refresh_token === 1 ? { hasRefreshToken: true } : {}),
+  ...(row.needs_reconnect === 1 ? { needsReconnect: true } : {}),
+  ...(row.reconnect_reason !== null ? { reconnectReason: row.reconnect_reason } : {}),
 });
 
 const mapAutomationRow = (row: AutomationCredentialRow): StoredAutomationGitHubRecord => ({
@@ -685,6 +909,28 @@ const mapAutomationRow = (row: AutomationCredentialRow): StoredAutomationGitHubR
   updatedAt: row.updated_at,
 });
 
+const mapAppConfigRow = (row: GitHubAppConfigRow): StoredGitHubAppConfigRecord => ({
+  teamId: TeamId.make(row.team_id),
+  mode: row.mode,
+  clientId: row.client_id,
+  webBaseUrl: row.web_base_url,
+  apiBaseUrl: row.api_base_url,
+  scopes: row.scopes,
+  enabled: row.enabled === 1,
+  clientSecretKey: row.client_secret_key,
+  updatedByMemberId: TeamMemberId.make(row.updated_by_member_id),
+  updatedAt: row.updated_at,
+});
+
+export interface UpdateMemberRefreshStateInput {
+  readonly memberId: TeamMemberId;
+  readonly expectedSecretKey: string;
+  readonly tokenExpiresAt: string | null;
+  readonly hasRefreshToken: boolean;
+  readonly needsReconnect: boolean;
+  readonly reconnectReason: string | null;
+}
+
 export class TeamGitHubRepository extends Context.Service<
   TeamGitHubRepository,
   {
@@ -694,6 +940,9 @@ export class TeamGitHubRepository extends Context.Service<
     readonly upsertMemberCredential: (
       record: StoredMemberGitHubRecord,
     ) => Effect.Effect<StoredMemberGitHubRecord, TeamGitHubRepositoryError>;
+    readonly updateMemberCredentialRefreshState: (
+      input: UpdateMemberRefreshStateInput,
+    ) => Effect.Effect<Option.Option<StoredMemberGitHubRecord>, TeamGitHubRepositoryError>;
     readonly deleteMemberCredential: (
       memberId: TeamMemberId,
       updatedAt?: string,
@@ -707,6 +956,18 @@ export class TeamGitHubRepository extends Context.Service<
     readonly deleteAutomationCredential: (
       teamId: TeamId,
     ) => Effect.Effect<Option.Option<string>, TeamGitHubRepositoryError>;
+    readonly getGitHubAppConfig: (
+      teamId: TeamId,
+    ) => Effect.Effect<Option.Option<StoredGitHubAppConfigRecord>, TeamGitHubRepositoryError>;
+    readonly upsertGitHubAppConfig: (
+      record: StoredGitHubAppConfigRecord,
+    ) => Effect.Effect<StoredGitHubAppConfigRecord, TeamGitHubRepositoryError>;
+    readonly deleteGitHubAppConfig: (
+      teamId: TeamId,
+    ) => Effect.Effect<
+      Option.Option<{ readonly clientSecretKey: string | null }>,
+      TeamGitHubRepositoryError
+    >;
   }
 >()("t3/team/TeamGitHubRepository") {}
 
@@ -724,7 +985,8 @@ const make = Effect.gen(function* () {
           "getMemberCredential",
           sql<MemberCredentialRow>`
           SELECT member_id, team_id, auth_method, github_login, github_name, github_email,
-                 api_base_url, secret_key, connected_at, updated_at
+                 api_base_url, secret_key, connected_at, updated_at,
+                 token_expires_at, has_refresh_token, needs_reconnect, reconnect_reason
           FROM team_github_member_credentials
           WHERE member_id = ${memberId}
           LIMIT 1
@@ -739,6 +1001,10 @@ const make = Effect.gen(function* () {
 
     upsertMemberCredential: Effect.fn("TeamGitHubRepository.upsertMemberCredential")(
       function* (record) {
+        const tokenExpiresAt = record.tokenExpiresAt ?? null;
+        const hasRefreshToken = record.hasRefreshToken === true ? 1 : 0;
+        const needsReconnect = record.needsReconnect === true ? 1 : 0;
+        const reconnectReason = record.reconnectReason ?? null;
         return yield* wrap(
           "upsertMemberCredential",
           sql.withTransaction(
@@ -746,7 +1012,8 @@ const make = Effect.gen(function* () {
               yield* sql`
               INSERT INTO team_github_member_credentials (
                 member_id, team_id, auth_method, github_login, github_name, github_email,
-                api_base_url, secret_key, connected_at, updated_at
+                api_base_url, secret_key, connected_at, updated_at,
+                token_expires_at, has_refresh_token, needs_reconnect, reconnect_reason
               )
               VALUES (
                 ${record.memberId},
@@ -758,7 +1025,11 @@ const make = Effect.gen(function* () {
                 ${record.apiBaseUrl},
                 ${record.secretKey},
                 ${record.connectedAt},
-                ${record.updatedAt}
+                ${record.updatedAt},
+                ${tokenExpiresAt},
+                ${hasRefreshToken},
+                ${needsReconnect},
+                ${reconnectReason}
               )
               ON CONFLICT(member_id) DO UPDATE SET
                 auth_method = excluded.auth_method,
@@ -767,7 +1038,11 @@ const make = Effect.gen(function* () {
                 github_email = excluded.github_email,
                 api_base_url = excluded.api_base_url,
                 secret_key = excluded.secret_key,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                token_expires_at = excluded.token_expires_at,
+                has_refresh_token = excluded.has_refresh_token,
+                needs_reconnect = excluded.needs_reconnect,
+                reconnect_reason = excluded.reconnect_reason
             `;
               yield* sql`
               UPDATE team_members
@@ -779,7 +1054,8 @@ const make = Effect.gen(function* () {
             `;
               const rows = yield* sql<MemberCredentialRow>`
               SELECT member_id, team_id, auth_method, github_login, github_name, github_email,
-                     api_base_url, secret_key, connected_at, updated_at
+                     api_base_url, secret_key, connected_at, updated_at,
+                     token_expires_at, has_refresh_token, needs_reconnect, reconnect_reason
               FROM team_github_member_credentials
               WHERE member_id = ${record.memberId}
               LIMIT 1
@@ -790,6 +1066,39 @@ const make = Effect.gen(function* () {
         );
       },
     ),
+
+    updateMemberCredentialRefreshState: Effect.fn(
+      "TeamGitHubRepository.updateMemberCredentialRefreshState",
+    )(function* (input) {
+      // Preserves `updated_at` so active turn leases continue seamlessly across server-side token refreshes,
+      // while guarding with `secret_key` CAS so stale refreshes never clobber a disconnect or PAT/OAuth rotation.
+      return yield* wrap(
+        "updateMemberCredentialRefreshState",
+        sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              UPDATE team_github_member_credentials
+              SET token_expires_at = ${input.tokenExpiresAt},
+                  has_refresh_token = ${input.hasRefreshToken ? 1 : 0},
+                  needs_reconnect = ${input.needsReconnect ? 1 : 0},
+                  reconnect_reason = ${input.reconnectReason}
+              WHERE member_id = ${input.memberId}
+                AND secret_key = ${input.expectedSecretKey}
+            `;
+            const rows = yield* sql<MemberCredentialRow>`
+              SELECT member_id, team_id, auth_method, github_login, github_name, github_email,
+                     api_base_url, secret_key, connected_at, updated_at,
+                     token_expires_at, has_refresh_token, needs_reconnect, reconnect_reason
+              FROM team_github_member_credentials
+              WHERE member_id = ${input.memberId}
+                AND secret_key = ${input.expectedSecretKey}
+              LIMIT 1
+            `;
+            return rows[0] !== undefined ? Option.some(mapMemberRow(rows[0])) : Option.none();
+          }),
+        ),
+      );
+    }),
 
     deleteMemberCredential: Effect.fn("TeamGitHubRepository.deleteMemberCredential")(
       function* (memberId, updatedAt) {
@@ -901,6 +1210,92 @@ const make = Effect.gen(function* () {
               `;
               return existing[0] !== undefined
                 ? Option.some(existing[0].secret_key)
+                : Option.none();
+            }),
+          ),
+        );
+      },
+    ),
+
+    getGitHubAppConfig: Effect.fn("TeamGitHubRepository.getGitHubAppConfig")(function* (teamId) {
+      return yield* wrap(
+        "getGitHubAppConfig",
+        sql<GitHubAppConfigRow>`
+          SELECT team_id, mode, client_id, web_base_url, api_base_url, scopes,
+                 enabled, client_secret_key, updated_by_member_id, updated_at
+          FROM team_github_app_config
+          WHERE team_id = ${teamId}
+          LIMIT 1
+        `.pipe(
+          Effect.map((rows) =>
+            rows[0] !== undefined ? Option.some(mapAppConfigRow(rows[0])) : Option.none(),
+          ),
+        ),
+      );
+    }),
+
+    upsertGitHubAppConfig: Effect.fn("TeamGitHubRepository.upsertGitHubAppConfig")(
+      function* (record) {
+        return yield* wrap(
+          "upsertGitHubAppConfig",
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                INSERT INTO team_github_app_config (
+                  team_id, mode, client_id, web_base_url, api_base_url, scopes,
+                  enabled, client_secret_key, updated_by_member_id, updated_at
+                )
+                VALUES (
+                  ${record.teamId},
+                  ${record.mode},
+                  ${record.clientId},
+                  ${record.webBaseUrl},
+                  ${record.apiBaseUrl},
+                  ${record.scopes},
+                  ${record.enabled ? 1 : 0},
+                  ${record.clientSecretKey},
+                  ${record.updatedByMemberId},
+                  ${record.updatedAt}
+                )
+                ON CONFLICT(team_id) DO UPDATE SET
+                  mode = excluded.mode,
+                  client_id = excluded.client_id,
+                  web_base_url = excluded.web_base_url,
+                  api_base_url = excluded.api_base_url,
+                  scopes = excluded.scopes,
+                  enabled = excluded.enabled,
+                  client_secret_key = excluded.client_secret_key,
+                  updated_by_member_id = excluded.updated_by_member_id,
+                  updated_at = excluded.updated_at
+              `;
+              const rows = yield* sql<GitHubAppConfigRow>`
+                SELECT team_id, mode, client_id, web_base_url, api_base_url, scopes,
+                       enabled, client_secret_key, updated_by_member_id, updated_at
+                FROM team_github_app_config
+                WHERE team_id = ${record.teamId}
+                LIMIT 1
+              `;
+              return rows[0] !== undefined ? mapAppConfigRow(rows[0]) : record;
+            }),
+          ),
+        );
+      },
+    ),
+
+    deleteGitHubAppConfig: Effect.fn("TeamGitHubRepository.deleteGitHubAppConfig")(
+      function* (teamId) {
+        return yield* wrap(
+          "deleteGitHubAppConfig",
+          sql.withTransaction(
+            Effect.gen(function* () {
+              const existing = yield* sql<{ readonly client_secret_key: string | null }>`
+                SELECT client_secret_key FROM team_github_app_config WHERE team_id = ${teamId} LIMIT 1
+              `;
+              yield* sql`
+                DELETE FROM team_github_app_config WHERE team_id = ${teamId}
+              `;
+              return existing[0] !== undefined
+                ? Option.some({ clientSecretKey: existing[0].client_secret_key })
                 : Option.none();
             }),
           ),

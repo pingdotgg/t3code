@@ -85,6 +85,7 @@ const makeTeamState = (
     assetsRevision: 0,
     myGitHubIdentity: null,
     automationGitHubIdentity: null,
+    githubAppConfig: null,
     scheduledTaskMetas: [],
     scheduledTaskMetaByTaskId: new Map(),
     queuedMessageNotifications: [],
@@ -108,6 +109,13 @@ const mockState = vi.hoisted(() => ({
   createMobilePairingHandler: vi.fn(),
   listMobilePairingsHandler: vi.fn(),
   revokeMobilePairingHandler: vi.fn(),
+  setGitHubAppConfigHandler: vi.fn(),
+  clearGitHubAppConfigHandler: vi.fn(),
+  startGitHubOAuthHandler: vi.fn(),
+  completeGitHubOAuthHandler: vi.fn(),
+  startGitHubDeviceFlowHandler: vi.fn(),
+  pollGitHubDeviceFlowHandler: vi.fn(),
+  cancelGitHubDeviceFlowHandler: vi.fn(),
 }));
 
 const alwaysAllowedAtom = Atom.make(true);
@@ -204,6 +212,19 @@ vi.mock(import("../../state/team"), async (original) => ({
       tag: "clearAutomationGitHub",
       permissionAtom: () => alwaysAllowedAtom,
     },
+    setGitHubAppConfig: { tag: "setGitHubAppConfig", permissionAtom: () => alwaysAllowedAtom },
+    clearGitHubAppConfig: { tag: "clearGitHubAppConfig", permissionAtom: () => alwaysAllowedAtom },
+    startGitHubOAuth: { tag: "startGitHubOAuth", permissionAtom: () => alwaysAllowedAtom },
+    completeGitHubOAuth: { tag: "completeGitHubOAuth", permissionAtom: () => alwaysAllowedAtom },
+    startGitHubDeviceFlow: {
+      tag: "startGitHubDeviceFlow",
+      permissionAtom: () => alwaysAllowedAtom,
+    },
+    pollGitHubDeviceFlow: { tag: "pollGitHubDeviceFlow", permissionAtom: () => alwaysAllowedAtom },
+    cancelGitHubDeviceFlow: {
+      tag: "cancelGitHubDeviceFlow",
+      permissionAtom: () => alwaysAllowedAtom,
+    },
   } as never,
 }));
 
@@ -234,6 +255,27 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
       }
       if (tag === "revokeMyMobilePairingLink") {
         return mockState.revokeMobilePairingHandler(args);
+      }
+      if (tag === "setGitHubAppConfig") {
+        return mockState.setGitHubAppConfigHandler(args);
+      }
+      if (tag === "clearGitHubAppConfig") {
+        return mockState.clearGitHubAppConfigHandler(args);
+      }
+      if (tag === "startGitHubOAuth") {
+        return mockState.startGitHubOAuthHandler(args);
+      }
+      if (tag === "completeGitHubOAuth") {
+        return mockState.completeGitHubOAuthHandler(args);
+      }
+      if (tag === "startGitHubDeviceFlow") {
+        return mockState.startGitHubDeviceFlowHandler(args);
+      }
+      if (tag === "pollGitHubDeviceFlow") {
+        return mockState.pollGitHubDeviceFlowHandler(args);
+      }
+      if (tag === "cancelGitHubDeviceFlow") {
+        return mockState.cancelGitHubDeviceFlowHandler(args);
       }
       return AsyncResult.success(undefined);
     });
@@ -406,5 +448,111 @@ describe("TeamsSettings", () => {
       .element(screen.getByTestId("team-display-name-value"))
       .toHaveTextContent("Team Gamma");
     expect(screen.getByTestId("team-display-name-input").query()).toBeNull();
+  });
+
+  it("lets owner configure GitHub App OAuth with callback URL helper, hides admin form from regular members, and surfaces one-click OAuth, device code, and reconnect required states", async () => {
+    mockState.setGitHubAppConfigHandler.mockReset().mockResolvedValueOnce(
+      AsyncResult.success({
+        enabled: true,
+        mode: "github_app",
+        clientId: "Iv1.testapp",
+        webBaseUrl: "https://github.com",
+        apiBaseUrl: "https://api.github.com",
+        scopes: "",
+        hasClientSecret: true,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    mockState.startGitHubDeviceFlowHandler.mockReset().mockResolvedValueOnce(
+      AsyncResult.success({
+        deviceFlowId: "ghdev_test_1",
+        userCode: "WXYZ-1234",
+        verificationUri: "https://github.com/login/device",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        intervalSeconds: 30,
+      }),
+    );
+    mockState.cancelGitHubDeviceFlowHandler
+      .mockReset()
+      .mockResolvedValueOnce(AsyncResult.success({ cancelled: true }));
+
+    const prevConfigC = teamStateC.githubAppConfig;
+    const prevIdentityC = teamStateC.myGitHubIdentity;
+    (teamStateC as { githubAppConfig: TeamEnvironmentState["githubAppConfig"] }).githubAppConfig = {
+      enabled: true,
+      mode: "github_app",
+      clientId: "Iv1.gamma",
+      webBaseUrl: "https://github.com",
+      apiBaseUrl: "https://api.github.com",
+      scopes: "",
+      hasClientSecret: true,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    (
+      teamStateC as { myGitHubIdentity: TeamEnvironmentState["myGitHubIdentity"] }
+    ).myGitHubIdentity = {
+      authMethod: "github_app",
+      githubLogin: "bob-gh",
+      githubName: "Bob Dev",
+      githubEmail: "bob@example.com",
+      apiBaseUrl: "https://api.github.com",
+      connectedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      needsReconnect: true,
+      reconnectReason: "GitHub authorization was revoked.",
+    };
+
+    try {
+      await using screen = await render(<TeamsSettings />);
+
+      // Owner on Server A sees the GitHub OAuth / GitHub App configuration form & callback URL helper.
+      await expect
+        .element(screen.getByTestId("team-github-app-callback-url"))
+        .toHaveValue(`${urlA}/api/team/github/oauth/callback`);
+      await screen.getByTestId("team-github-app-client-id-input").fill("Iv1.testapp");
+      await screen.getByTestId("team-github-app-client-secret-input").fill("secret_123");
+      await screen.getByTestId("team-github-app-save").click();
+
+      expect(mockState.setGitHubAppConfigHandler).toHaveBeenCalledWith({
+        environmentId: envA,
+        input: expect.objectContaining({
+          mode: "github_app",
+          clientId: "Iv1.testapp",
+          clientSecret: "secret_123",
+          enabled: true,
+        }),
+      });
+
+      // Switch to Server C (regular member) -> admin OAuth config form is hidden,
+      // member sees Reconnect required badge/banner + Sign in with GitHub + Use device code.
+      await screen.getByTestId("team-server-select").click();
+      await screen.getByRole("option", { name: /Server C/ }).click();
+
+      expect(screen.getByTestId("team-github-app-form").query()).toBeNull();
+      await expect
+        .element(screen.getByTestId("team-my-github-status"))
+        .toHaveTextContent("Reconnect required");
+      await expect
+        .element(screen.getByTestId("team-my-github-reconnect-banner"))
+        .toHaveTextContent("GitHub authorization was revoked.");
+      await expect.element(screen.getByTestId("team-my-github-oauth-signin")).toBeVisible();
+
+      // Start device code flow and verify user code renders and can be cancelled cleanly.
+      await screen.getByTestId("team-my-github-device-signin").click();
+      await expect
+        .element(screen.getByTestId("team-my-github-device-code"))
+        .toHaveTextContent("WXYZ-1234");
+      await screen.getByTestId("team-my-github-device-cancel").click();
+      expect(mockState.cancelGitHubDeviceFlowHandler).toHaveBeenCalledWith({
+        environmentId: envC,
+        input: { deviceFlowId: "ghdev_test_1" },
+      });
+    } finally {
+      (teamStateC as { githubAppConfig: TeamEnvironmentState["githubAppConfig"] }).githubAppConfig =
+        prevConfigC;
+      (
+        teamStateC as { myGitHubIdentity: TeamEnvironmentState["myGitHubIdentity"] }
+      ).myGitHubIdentity = prevIdentityC;
+    }
   });
 });

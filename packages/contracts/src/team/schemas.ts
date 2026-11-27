@@ -173,6 +173,11 @@ export function canManageTeamAutomationGitHub(role: TeamRole): boolean {
   return isTeamAdminRole(role);
 }
 
+/** Team GitHub OAuth / GitHub App configuration is restricted to owner/admin only. */
+export function canManageTeamGitHubAppConfig(role: TeamRole): boolean {
+  return isTeamAdminRole(role);
+}
+
 /** Editing team displayName is restricted to owner/admin. */
 export function canManageTeamDisplayName(role: TeamRole): boolean {
   return isTeamAdminRole(role);
@@ -1079,7 +1084,34 @@ export type TeamProviderLeaseResponse = typeof TeamProviderLeaseResponse.Type;
 export const TeamGitHubAuthMethod = Schema.Literals(["pat", "oauth", "github_app"]);
 export type TeamGitHubAuthMethod = typeof TeamGitHubAuthMethod.Type;
 
+export const TeamGitHubOAuthMode = Schema.Literals(["oauth", "github_app"]);
+export type TeamGitHubOAuthMode = typeof TeamGitHubOAuthMode.Type;
+
+export const DEFAULT_GITHUB_WEB_BASE_URL = "https://github.com";
 export const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
+export const DEFAULT_GITHUB_OAUTH_SCOPES = "repo read:user user:email";
+
+/**
+ * Safe read model for a team's GitHub OAuth / GitHub App configuration.
+ * Never exposes `clientSecret` — only a boolean `hasClientSecret` indicator.
+ */
+export const TeamGitHubAppConfig = Schema.Struct({
+  enabled: Schema.Boolean,
+  mode: TeamGitHubOAuthMode,
+  clientId: TrimmedNonEmptyString,
+  webBaseUrl: TrimmedNonEmptyString,
+  apiBaseUrl: TrimmedNonEmptyString,
+  scopes: Schema.String,
+  hasClientSecret: Schema.Boolean,
+  updatedByMemberId: Schema.optionalKey(TeamMemberId),
+  updatedAt: IsoDateTime,
+});
+export type TeamGitHubAppConfig = typeof TeamGitHubAppConfig.Type;
+
+export const TeamGitHubAppConfigUpdatedPayload = Schema.Struct({
+  config: Schema.NullOr(TeamGitHubAppConfig),
+});
+export type TeamGitHubAppConfigUpdatedPayload = typeof TeamGitHubAppConfigUpdatedPayload.Type;
 
 /**
  * Safe read model for a connected GitHub identity. Never includes raw tokens or secrets.
@@ -1092,6 +1124,10 @@ export const TeamGitHubIdentity = Schema.Struct({
   apiBaseUrl: TrimmedNonEmptyString,
   connectedAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  tokenExpiresAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
+  hasRefreshToken: Schema.optionalKey(Schema.Boolean),
+  needsReconnect: Schema.optionalKey(Schema.Boolean),
+  reconnectReason: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type TeamGitHubIdentity = typeof TeamGitHubIdentity.Type;
 
@@ -1150,6 +1186,93 @@ export const TeamClearAutomationGitHubResult = Schema.Struct({
   cleared: Schema.Boolean,
 });
 export type TeamClearAutomationGitHubResult = typeof TeamClearAutomationGitHubResult.Type;
+
+export const TeamSetGitHubAppConfigInput = Schema.Struct({
+  mode: TeamGitHubOAuthMode,
+  clientId: TrimmedNonEmptyString,
+  /** Write-only client secret; omit when updating to keep existing secret, or pass clearClientSecret: true. */
+  clientSecret: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  clearClientSecret: Schema.optionalKey(Schema.Boolean),
+  webBaseUrl: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  apiBaseUrl: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  scopes: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  enabled: Schema.optionalKey(Schema.Boolean),
+});
+export type TeamSetGitHubAppConfigInput = typeof TeamSetGitHubAppConfigInput.Type;
+
+export const TeamClearGitHubAppConfigResult = Schema.Struct({
+  cleared: Schema.Boolean,
+});
+export type TeamClearGitHubAppConfigResult = typeof TeamClearGitHubAppConfigResult.Type;
+
+export const TeamStartGitHubOAuthInput = Schema.Struct({
+  redirectBaseUrl: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  githubName: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  githubEmail: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type TeamStartGitHubOAuthInput = typeof TeamStartGitHubOAuthInput.Type;
+
+export const TeamStartGitHubOAuthResult = Schema.Struct({
+  authorizeUrl: TrimmedNonEmptyString,
+  state: TrimmedNonEmptyString,
+  expiresAt: IsoDateTime,
+  callbackUrl: TrimmedNonEmptyString,
+});
+export type TeamStartGitHubOAuthResult = typeof TeamStartGitHubOAuthResult.Type;
+
+export const TeamCompleteGitHubOAuthInput = Schema.Struct({
+  state: TrimmedNonEmptyString,
+  confirmationCode: TrimmedNonEmptyString,
+});
+export type TeamCompleteGitHubOAuthInput = typeof TeamCompleteGitHubOAuthInput.Type;
+
+export const TeamStartGitHubDeviceFlowInput = Schema.Struct({
+  githubName: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  githubEmail: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type TeamStartGitHubDeviceFlowInput = typeof TeamStartGitHubDeviceFlowInput.Type;
+
+export const TeamStartGitHubDeviceFlowResult = Schema.Struct({
+  deviceFlowId: TrimmedNonEmptyString,
+  userCode: TrimmedNonEmptyString,
+  verificationUri: TrimmedNonEmptyString,
+  verificationUriComplete: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  expiresAt: IsoDateTime,
+  intervalSeconds: PositiveInt,
+});
+export type TeamStartGitHubDeviceFlowResult = typeof TeamStartGitHubDeviceFlowResult.Type;
+
+export const TeamPollGitHubDeviceFlowInput = Schema.Struct({
+  deviceFlowId: TrimmedNonEmptyString,
+});
+export type TeamPollGitHubDeviceFlowInput = typeof TeamPollGitHubDeviceFlowInput.Type;
+
+export const TeamGitHubDeviceFlowStatus = Schema.Literals([
+  "pending",
+  "completed",
+  "expired",
+  "denied",
+  "failed",
+]);
+export type TeamGitHubDeviceFlowStatus = typeof TeamGitHubDeviceFlowStatus.Type;
+
+export const TeamPollGitHubDeviceFlowResult = Schema.Struct({
+  status: TeamGitHubDeviceFlowStatus,
+  intervalSeconds: PositiveInt,
+  identity: Schema.optionalKey(Schema.NullOr(TeamGitHubIdentity)),
+  errorMessage: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+export type TeamPollGitHubDeviceFlowResult = typeof TeamPollGitHubDeviceFlowResult.Type;
+
+export const TeamCancelGitHubDeviceFlowInput = Schema.Struct({
+  deviceFlowId: TrimmedNonEmptyString,
+});
+export type TeamCancelGitHubDeviceFlowInput = typeof TeamCancelGitHubDeviceFlowInput.Type;
+
+export const TeamCancelGitHubDeviceFlowResult = Schema.Struct({
+  cancelled: Schema.Boolean,
+});
+export type TeamCancelGitHubDeviceFlowResult = typeof TeamCancelGitHubDeviceFlowResult.Type;
 
 export const TeamGitHubTurnAuthorKind = Schema.Literals(["member", "team_automation"]);
 export type TeamGitHubTurnAuthorKind = typeof TeamGitHubTurnAuthorKind.Type;
@@ -1272,6 +1395,8 @@ export const TeamStateSnapshot = Schema.Struct({
   myGitHubIdentity: Schema.optionalKey(Schema.NullOr(TeamGitHubIdentity)),
   /** Visible only to `owner`/`admin` — null for `modo`/`regular`. */
   automationGitHubIdentity: Schema.optionalKey(Schema.NullOr(TeamAutomationGitHubIdentity)),
+  /** Safe team-level GitHub OAuth / GitHub App configuration (never includes `clientSecret`). */
+  githubAppConfig: Schema.optionalKey(Schema.NullOr(TeamGitHubAppConfig)),
   /** Sidecar metadata for team scheduled tasks visible to `currentMember`. */
   scheduledTaskMetas: Schema.optionalKey(Schema.Array(TeamScheduledTaskMeta)),
 });
@@ -1402,6 +1527,11 @@ export const TeamStateStreamEvent = Schema.Union([
     version: Schema.Literal(1),
     type: Schema.Literal("automationGitHubIdentityUpdated"),
     payload: TeamAutomationGitHubIdentityUpdatedPayload,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("githubAppConfigUpdated"),
+    payload: TeamGitHubAppConfigUpdatedPayload,
   }),
   Schema.Struct({
     version: Schema.Literal(1),
@@ -1969,6 +2099,9 @@ export const TeamOperationErrorCode = Schema.Literals([
   "skill_slug_taken",
   "remote_only_provider",
   "github_verification_failed",
+  "github_oauth_not_configured",
+  "github_oauth_failed",
+  "github_oauth_state_invalid",
   "invalid_input",
   "not_found",
   "internal",

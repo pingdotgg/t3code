@@ -1,11 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off -- lightweight HTTP + WebSocket upgrade reverse proxy & Fake Git HTTP/GitHub server per E2E run
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
 
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as EffectNodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, EnvironmentHttpApi, ProjectId, type TeamRole } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -119,6 +120,24 @@ export interface RecordedFakePullRequest {
   readonly token: string;
 }
 
+export interface FakeGitHubOAuthUser {
+  readonly id: number;
+  readonly login: string;
+  readonly name: string;
+  readonly email: string;
+}
+
+export interface FakeGitHubOAuthControl {
+  readonly setNextAuthorizeUser: (user: FakeGitHubOAuthUser) => void;
+  readonly setNextTokenExpiresIn: (seconds: number) => void;
+  readonly setRefreshRevoked: (revoked: boolean) => void;
+  readonly approveDeviceCode: (userCode: string, user?: FakeGitHubOAuthUser) => void;
+  readonly refreshHits: () => number;
+  readonly mintedAccessTokens: () => ReadonlyArray<string>;
+  readonly mintedRefreshTokens: () => ReadonlyArray<string>;
+  readonly authorizeHits: () => number;
+}
+
 export interface FakeGitHubHandle {
   readonly origin: string;
   readonly repoUrl: string;
@@ -128,6 +147,7 @@ export interface FakeGitHubHandle {
     readonly bob: string;
     readonly automation: string;
   };
+  readonly oauth: FakeGitHubOAuthControl;
   readonly gitRequests: () => ReadonlyArray<RecordedFakeGitRequest>;
   readonly apiRequests: () => ReadonlyArray<RecordedFakeGitHubApiRequest>;
   readonly createdPullRequests: () => ReadonlyArray<RecordedFakePullRequest>;
@@ -240,7 +260,7 @@ function startMemberOriginProxy(input: {
 
 const randomUuid = SecureRandom.SecureRandom.pipe(
   Effect.flatMap((random) => random.uuidV4()),
-  Effect.provide(NodeCrypto.layer),
+  Effect.provide(EffectNodeCrypto.layer),
 );
 
 const reservePort = NetService.NetService.pipe(
@@ -339,12 +359,7 @@ function startFakeGitHubServer(input: {
     automation: "PAT_BOT_M7_SECRET",
   } as const;
 
-  const usersByToken: Readonly<
-    Record<
-      string,
-      { readonly id: number; readonly login: string; readonly name: string; readonly email: string }
-    >
-  > = {
+  const usersByToken: Record<string, FakeGitHubOAuthUser> = {
     [tokens.alice]: {
       id: 101,
       login: "alice-gh",
@@ -363,6 +378,55 @@ function startFakeGitHubServer(input: {
       name: "Acme Automation",
       email: "bot@test.example",
     },
+  };
+
+  let oauthSeq = 0;
+  let authorizeHits = 0;
+  let refreshHits = 0;
+  let refreshRevoked = false;
+  let nextTokenExpiresIn = 28_800;
+  let nextAuthorizeUser: FakeGitHubOAuthUser = {
+    id: 401,
+    login: "alice-oauth",
+    name: "Alice OAuth",
+    email: "alice-oauth@test.example",
+  };
+  const mintedAccessTokens: Array<string> = [];
+  const mintedRefreshTokens: Array<string> = [];
+  const pendingAuthCodes = new Map<
+    string,
+    {
+      readonly clientId: string;
+      readonly codeChallenge: string;
+      readonly user: FakeGitHubOAuthUser;
+    }
+  >();
+  const activeRefreshTokens = new Map<string, FakeGitHubOAuthUser>();
+  const pendingDeviceCodes = new Map<
+    string,
+    {
+      readonly deviceCode: string;
+      readonly userCode: string;
+      readonly clientId: string;
+      approvedUser: FakeGitHubOAuthUser | null;
+    }
+  >();
+
+  const mintOAuthPair = (user: FakeGitHubOAuthUser) => {
+    oauthSeq += 1;
+    const accessToken = `ghu_e2e_${user.login}_${oauthSeq}`;
+    const refreshToken = `ghr_e2e_${user.login}_${oauthSeq}`;
+    usersByToken[accessToken] = user;
+    activeRefreshTokens.set(refreshToken, user);
+    mintedAccessTokens.push(accessToken);
+    mintedRefreshTokens.push(refreshToken);
+    return {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      token_type: "bearer",
+      expires_in: nextTokenExpiresIn,
+      refresh_token_expires_in: 15_897_600,
+    };
   };
 
   const gitProjectRoot = NodePath.join(input.rootDir, "fake-github");
@@ -400,6 +464,134 @@ function startFakeGitHubServer(input: {
         const bodyBuf = Buffer.concat(chunks);
         const fullUrl = new URL(req.url ?? "/", `http://127.0.0.1:${input.port}`);
         const pathname = fullUrl.pathname;
+
+        // Fake GitHub OAuth authorize endpoint (browser redirect with PKCE S256)
+        if (req.method === "GET" && pathname === "/login/oauth/authorize") {
+          authorizeHits += 1;
+          const clientId = fullUrl.searchParams.get("client_id") ?? "";
+          const redirectUri = fullUrl.searchParams.get("redirect_uri") ?? "";
+          const state = fullUrl.searchParams.get("state") ?? "";
+          const codeChallenge = fullUrl.searchParams.get("code_challenge") ?? "";
+          const method = fullUrl.searchParams.get("code_challenge_method") ?? "";
+          if (!clientId || !redirectUri || !state || !codeChallenge || method !== "S256") {
+            res.writeHead(400, { "content-type": "text/plain" });
+            res.end("Missing or invalid OAuth PKCE parameters");
+            return;
+          }
+          oauthSeq += 1;
+          const code = `gh_code_${oauthSeq}`;
+          pendingAuthCodes.set(code, {
+            clientId,
+            codeChallenge,
+            user: nextAuthorizeUser,
+          });
+          const callback = new URL(redirectUri);
+          callback.searchParams.set("code", code);
+          callback.searchParams.set("state", state);
+          res.writeHead(302, { location: callback.toString() });
+          res.end();
+          return;
+        }
+
+        // Fake GitHub RFC 8628 device authorization start endpoint
+        if (req.method === "POST" && pathname === "/login/device/code") {
+          const params = Object.fromEntries(
+            new URLSearchParams(bodyBuf.toString("utf8")).entries(),
+          );
+          if (!params.client_id) {
+            res.writeHead(400, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: "incorrect_client_credentials" }));
+            return;
+          }
+          oauthSeq += 1;
+          const deviceCode = `gh_dev_${oauthSeq}`;
+          const userCode = `TEAM-${String(1000 + oauthSeq).slice(-4)}`;
+          pendingDeviceCodes.set(deviceCode, {
+            deviceCode,
+            userCode,
+            clientId: params.client_id,
+            approvedUser: null,
+          });
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              device_code: deviceCode,
+              user_code: userCode,
+              verification_uri: `http://127.0.0.1:${input.port}/login/device`,
+              expires_in: 900,
+              interval: 1,
+            }),
+          );
+          return;
+        }
+
+        // Fake GitHub OAuth token exchange / refresh rotation / device poll endpoint
+        if (req.method === "POST" && pathname === "/login/oauth/access_token") {
+          const params = Object.fromEntries(
+            new URLSearchParams(bodyBuf.toString("utf8")).entries(),
+          );
+          if (params.grant_type === "refresh_token") {
+            refreshHits += 1;
+            const oldRt = params.refresh_token ?? "";
+            const owner = activeRefreshTokens.get(oldRt);
+            if (refreshRevoked || !owner) {
+              res.writeHead(200, { "content-type": "application/json" });
+              res.end(
+                JSON.stringify({
+                  error: "bad_refresh_token",
+                  error_description: "The refresh token passed is incorrect or revoked.",
+                }),
+              );
+              return;
+            }
+            activeRefreshTokens.delete(oldRt);
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify(mintOAuthPair(owner)));
+            return;
+          }
+          if (params.grant_type === "urn:ietf:params:oauth:grant-type:device_code") {
+            const entry = pendingDeviceCodes.get(params.device_code ?? "");
+            if (!entry) {
+              res.writeHead(200, { "content-type": "application/json" });
+              res.end(JSON.stringify({ error: "incorrect_device_code" }));
+              return;
+            }
+            if (entry.approvedUser === null) {
+              res.writeHead(200, { "content-type": "application/json" });
+              res.end(JSON.stringify({ error: "authorization_pending" }));
+              return;
+            }
+            pendingDeviceCodes.delete(entry.deviceCode);
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify(mintOAuthPair(entry.approvedUser)));
+            return;
+          }
+          const code = params.code ?? "";
+          const entry = pendingAuthCodes.get(code);
+          if (!entry) {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: "bad_verification_code" }));
+            return;
+          }
+          pendingAuthCodes.delete(code);
+          const verifier = params.code_verifier ?? "";
+          const computedChallenge = NodeCrypto.createHash("sha256")
+            .update(verifier, "ascii")
+            .digest("base64url");
+          if (computedChallenge !== entry.codeChallenge) {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(
+              JSON.stringify({
+                error: "invalid_grant",
+                error_description: "PKCE code_verifier mismatch.",
+              }),
+            );
+            return;
+          }
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(mintOAuthPair(entry.user)));
+          return;
+        }
 
         // Smart Git HTTP endpoint: /org/repo.git/*
         if (pathname.startsWith("/org/repo.git")) {
@@ -551,6 +743,33 @@ function startFakeGitHubServer(input: {
         repoUrl: `http://127.0.0.1:${input.port}/org/repo.git`,
         bareRepoPath,
         tokens,
+        oauth: {
+          setNextAuthorizeUser: (user) => {
+            nextAuthorizeUser = user;
+          },
+          setNextTokenExpiresIn: (seconds) => {
+            nextTokenExpiresIn = seconds;
+          },
+          setRefreshRevoked: (revoked) => {
+            refreshRevoked = revoked;
+          },
+          approveDeviceCode: (userCode, user) => {
+            for (const entry of pendingDeviceCodes.values()) {
+              if (entry.userCode === userCode) {
+                entry.approvedUser = user ?? {
+                  id: 502,
+                  login: "bob-device",
+                  name: "Bob Device",
+                  email: "bob-device@test.example",
+                };
+              }
+            }
+          },
+          refreshHits: () => refreshHits,
+          mintedAccessTokens: () => [...mintedAccessTokens],
+          mintedRefreshTokens: () => [...mintedRefreshTokens],
+          authorizeHits: () => authorizeHits,
+        },
         gitRequests: () => [...gitRequests],
         apiRequests: () => [...apiRequests],
         createdPullRequests: () => [...createdPullRequests],

@@ -193,6 +193,7 @@ describe("TeamGitHubHttp (/api/team/github-lease/*)", () => {
         const bobToken = (yield* team.issueLocalSyncToken(bobSessionId)).token;
 
         const testContext = yield* Effect.context<
+          | TeamService.TeamService
           | TeamRepository.TeamRepository
           | TeamAssetsRepository.TeamAssetsRepository
           | TeamGitHubBroker.TeamGitHubBroker
