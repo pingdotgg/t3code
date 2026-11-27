@@ -198,8 +198,8 @@ const abortReason = (signal: AbortSignal) =>
   signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
 
 /**
- * Where Chromium runs the native ceremony itself, a modal request runs only once the host
- * confirms this tab is on screen: Chromium opens the system dialog for a hidden guest too.
+ * Where Chromium runs the native ceremony itself, a modal request waits until the host shows
+ * this tab: Chromium opens the system dialog for a hidden guest too.
  */
 export function installPasskeyGate(allowed: () => Promise<unknown>) {
   if (typeof CredentialsContainer === "undefined") return;
@@ -210,8 +210,16 @@ export function installPasskeyGate(allowed: () => Promise<unknown>) {
       options?: CreationOptions & CredentialRequestOptions,
     ): Promise<Credential | null> {
       if (options?.publicKey && options.mediation !== "conditional") {
-        if (options.signal?.aborted) throw abortReason(options.signal);
-        const allow = await allowed().catch(() => false);
+        const signal = options.signal;
+        if (signal?.aborted) throw abortReason(signal);
+        const allow = await new Promise<unknown>((resolve, reject) => {
+          const onAbort = () => signal && reject(abortReason(signal));
+          signal?.addEventListener("abort", onAbort, { once: true });
+          allowed()
+            .catch(() => false)
+            .then(resolve)
+            .finally(() => signal?.removeEventListener("abort", onAbort));
+        });
         if (allow !== true) throw ceremonyError("NotAllowedError");
       }
       return Reflect.apply(native, this, [options]);

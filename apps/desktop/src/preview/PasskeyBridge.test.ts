@@ -207,4 +207,16 @@ describe("installPasskeyGate", () => {
     assert.strictEqual<unknown>(await credentials.get({ publicKey }), "native");
     assert.deepStrictEqual(native.mock.calls.at(-1), ["get", { publicKey }]);
   });
+
+  it("stops waiting for the host as soon as the page aborts", async () => {
+    const { native, credentials } = installGate(() => new Promise(() => {}));
+    const controller = new AbortController();
+    const request = credentials
+      .get({ publicKey: { challenge: new Uint8Array([1]) }, signal: controller.signal })
+      .catch((error: unknown) => error);
+    controller.abort();
+
+    assert.strictEqual(((await request) as DOMException).name, "AbortError");
+    assert.strictEqual(native.mock.calls.length, 0);
+  });
 });

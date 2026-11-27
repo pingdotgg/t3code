@@ -584,6 +584,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const tabsRef = yield* SynchronizedRef.make<ReadonlyMap<string, PreviewTabState>>(new Map());
   /** Tabs the renderer currently shows (panel or picture-in-picture), as it last reported. */
   const shownTabIds = new Set<string>();
+  const shownWaiters = new Map<string, Set<() => void>>();
+  const whenShown = (tabId: string) =>
+    shownTabIds.has(tabId)
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+          const waiters = shownWaiters.get(tabId) ?? new Set();
+          waiters.add(resolve);
+          shownWaiters.set(tabId, waiters);
+        });
   const attachedRef = yield* Ref.make<ReadonlyMap<number, ManagedListeners>>(new Map());
   const listenersRef = yield* Ref.make<ReadonlySet<Listener>>(new Set());
   const pointerEventListenersRef = yield* Ref.make<ReadonlySet<PointerEventListener>>(new Set());
@@ -1677,7 +1686,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.on(RECORDING_INPUT_CHANNEL, recordingInput);
         wc.ipc.on(PAGE_UNHANDLED_SHORTCUT_CHANNEL, pageUnhandledShortcut);
-        detachPasskeys = passkeys.attachGuest(wc, () => shownTabIds.has(tabId));
+        detachPasskeys = passkeys.attachGuest(wc, () => whenShown(tabId));
         wc.setWindowOpenHandler((details) => {
           const action = previewWindowOpenAction(details);
           if (action === "popup") {
@@ -1840,6 +1849,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (Option.isNone(tab)) return;
     const closedTab = tab.value;
     shownTabIds.delete(tabId);
+    shownWaiters.delete(tabId);
     if (closedTab.serverTab) {
       browserHost.setShown(closedTab.serverTab, undefined);
       browserHost.setCaptureDrawn(closedTab.serverTab, undefined);
@@ -2662,8 +2672,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const setShown = Effect.fn("PreviewManager.setShown")(function* (tabId: string, shown: boolean) {
-    if (shown) shownTabIds.add(tabId);
-    else shownTabIds.delete(tabId);
+    if (shown) {
+      shownTabIds.add(tabId);
+      for (const resolve of shownWaiters.get(tabId) ?? []) resolve();
+      shownWaiters.delete(tabId);
+    } else shownTabIds.delete(tabId);
     const serverTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.serverTab;
     if (serverTab) browserHost.setShown(serverTab, shown);
   });

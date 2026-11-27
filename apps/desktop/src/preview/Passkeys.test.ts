@@ -110,7 +110,7 @@ describe("PreviewPasskeys", () => {
         errorObject: new Error("native detail"),
       });
 
-      const detach = passkeys.attachGuest(guest, () => true);
+      const detach = passkeys.attachGuest(guest, () => Promise.resolve());
       const publicKey = { challenge: new Uint8Array([1]), rpId: "example.com" };
       const result = yield* call(PASSKEY_GET_CHANNEL, publicKey);
 
@@ -142,7 +142,7 @@ describe("PreviewPasskeys", () => {
     Effect.gen(function* () {
       const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
       const { guest, call } = makeGuest();
-      passkeys.attachGuest(guest, () => true);
+      passkeys.attachGuest(guest, () => Promise.resolve());
       webauthn.createCredential.mockResolvedValue({
         success: true,
         data: {
@@ -204,7 +204,7 @@ describe("PreviewPasskeys", () => {
     Effect.gen(function* () {
       const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
       const { guest, call } = makeGuest();
-      passkeys.attachGuest(guest, () => true);
+      passkeys.attachGuest(guest, () => Promise.resolve());
       const assertion = (credentialId: string) => ({
         success: true,
         data: {
@@ -244,14 +244,14 @@ describe("PreviewPasskeys", () => {
       const publicKey = { challenge: new Uint8Array([1]), rpId: "example.com" };
 
       const lan = makeGuest("http://192.168.1.5:3000");
-      passkeys.attachGuest(lan.guest, () => true);
+      passkeys.attachGuest(lan.guest, () => Promise.resolve());
       assert.deepStrictEqual(yield* lan.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
       const subdomain = makeGuest("http://app.localhost:3000");
-      passkeys.attachGuest(subdomain.guest, () => true);
+      passkeys.attachGuest(subdomain.guest, () => Promise.resolve());
       assert.deepStrictEqual(yield* subdomain.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
 
       const page = makeGuest();
-      passkeys.attachGuest(page.guest, () => true);
+      passkeys.attachGuest(page.guest, () => Promise.resolve());
       page.state.focused = false;
       assert.deepStrictEqual(yield* page.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
       assert.strictEqual(webauthn.getCredential.mock.calls.length, 0);
@@ -273,32 +273,30 @@ describe("PreviewPasskeys", () => {
     }).pipe(Effect.provide(bridgeLayer)),
   );
 
-  it.effect("serves no ceremony to a tab the renderer does not show", () =>
-    Effect.gen(function* () {
-      const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
-      const { guest, call } = makeGuest();
-      passkeys.attachGuest(guest, () => false);
-
-      const result = yield* call(PASSKEY_GET_CHANNEL, { challenge: new Uint8Array([1]) });
-
-      assert.deepStrictEqual(result, { success: false, error: "NotAllowedError" });
-      assert.strictEqual(webauthn.getCredential.mock.calls.length, 0);
-    }).pipe(Effect.provide(bridgeLayer)),
-  );
-
-  it.effect("on Windows, lets only a shown tab's main frame reach the native passkey dialog", () =>
+  it.effect("on Windows, holds a main frame's passkey request until its tab is shown", () =>
     Effect.gen(function* () {
       const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
       assert.isFalse(passkeys.bridgeEnabled);
       assert.isTrue(passkeys.gateEnabled);
       const { guest, handlers, call } = makeGuest();
-      let shown = true;
+      let show = () => {};
+      const shown = new Promise<void>((resolve) => {
+        show = resolve;
+      });
       const detach = passkeys.attachGuest(guest, () => shown);
 
-      assert.isTrue(yield* call(PASSKEY_GATE_CHANNEL, undefined));
       assert.isFalse(yield* call(PASSKEY_GATE_CHANNEL, undefined, {}));
-      shown = false;
-      assert.isFalse(yield* call(PASSKEY_GATE_CHANNEL, undefined));
+      let answer: unknown;
+      const pending = Promise.resolve(
+        handlers.get(PASSKEY_GATE_CHANNEL)?.({ senderFrame: guest.mainFrame }, undefined),
+      ).then((value) => {
+        answer = value;
+      });
+      yield* Effect.promise(() => Promise.resolve());
+      assert.isUndefined(answer, "a hidden tab's request must wait, not fail");
+      show();
+      yield* Effect.promise(() => pending);
+      assert.isTrue(answer);
 
       detach();
       assert.strictEqual(handlers.size, 0);
@@ -323,7 +321,7 @@ describe("PreviewPasskeys", () => {
       ]);
       assert.isFalse(entitled.bridgeEnabled);
       const { guest, handlers } = makeGuest();
-      entitled.attachGuest(guest, () => true);
+      entitled.attachGuest(guest, () => Promise.resolve());
       assert.strictEqual(handlers.size, 0);
 
       const unpackaged = yield* PreviewPasskeys.PreviewPasskeys.pipe(

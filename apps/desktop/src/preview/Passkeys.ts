@@ -52,7 +52,8 @@ export class PreviewPasskeys extends Context.Service<
     /** Runs after app ready. */
     readonly configure: Effect.Effect<void>;
     readonly installSessionHandlers: (session: Session) => void;
-    readonly attachGuest: (guest: WebContents, isShown: () => boolean) => () => void;
+    /** `whenShown` settles once the renderer shows this guest's tab. */
+    readonly attachGuest: (guest: WebContents, whenShown: () => Promise<void>) => () => void;
   }
 >()("@t3tools/desktop/preview/Passkeys/PreviewPasskeys") {}
 
@@ -162,14 +163,16 @@ const make = Effect.gen(function* () {
         );
       });
     },
-    attachGuest: (guest, isShown) => {
+    attachGuest: (guest, whenShown) => {
       if (backend === undefined) {
         if (!gateEnabled) return () => {};
         guest.ipc.removeHandler(PASSKEY_GATE_CHANNEL);
-        guest.ipc.handle(
-          PASSKEY_GATE_CHANNEL,
-          (event) => event.senderFrame === guest.mainFrame && isShown(),
-        );
+        // A hidden tab's request waits rather than fails, so a page that retries cannot loop.
+        guest.ipc.handle(PASSKEY_GATE_CHANNEL, async (event) => {
+          if (event.senderFrame !== guest.mainFrame) return false;
+          await whenShown();
+          return true;
+        });
         return () => guest.ipc.removeHandler(PASSKEY_GATE_CHANNEL);
       }
       let ceremonyPending = false;
@@ -183,7 +186,7 @@ const make = Effect.gen(function* () {
         if (!frame || frame !== guest.mainFrame) return notAllowed;
         // The page shares the preload's JS world; read the frame's committed origin before any await/navigation.
         const origin = frame.origin;
-        if (!isTrustworthyOrigin(origin) || ceremonyPending || !guest.isFocused() || !isShown()) {
+        if (!isTrustworthyOrigin(origin) || ceremonyPending || !guest.isFocused()) {
           return notAllowed;
         }
         if (typeof publicKey !== "object" || publicKey === null) {
