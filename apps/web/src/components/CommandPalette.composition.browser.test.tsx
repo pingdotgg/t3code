@@ -11,17 +11,24 @@ import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { AsyncResult } from "effect/reactivity";
 
+const createdProject = {
+  _tag: "Success",
+  value: { projectId: "project-created", workspaceRoot: "/workspace/new-project" },
+} as const;
+
 const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
   sourceControl: undefined as unknown,
   lookupRepository: vi.fn(),
-  createNewProject: vi.fn<() => Promise<boolean>>(),
+  createNewProject: vi.fn<() => Promise<typeof createdProject>>(),
+  openDraft: vi.fn<() => Promise<void>>(),
   addProject: vi.fn<() => Promise<{ _tag: "Success"; value: { projectId: string } }>>(),
 }));
 const setup = (deniedScope?: string, sourceControl?: unknown) => {
   scopes.denied = deniedScope;
   scopes.sourceControl = sourceControl;
-  scopes.createNewProject.mockReset().mockResolvedValue(false);
+  scopes.createNewProject.mockReset().mockResolvedValue(createdProject);
+  scopes.openDraft.mockReset().mockResolvedValue(undefined);
   scopes.addProject.mockReset().mockResolvedValue({
     _tag: "Success",
     value: { projectId: "project-cloned" },
@@ -66,13 +73,12 @@ vi.mock("../hooks/useSettings", async (original) => ({
 vi.mock("../hooks/useScratchProject", () => ({
   useScratchProject: () => ({ scratchEnvironmentId: () => null }),
 }));
-vi.mock("../hooks/useNewProject", () => ({ useNewProject: () => scopes.createNewProject }));
 vi.mock("../hooks/useHandleNewThread", () => ({
   useHandleNewThread: () => ({
     activeDraftThread: null,
     activeThread: null,
     defaultProjectRef: null,
-    handleNewThread: async () => undefined,
+    handleNewThread: scopes.openDraft,
   }),
   useNewThreadHandler: () => async () => undefined,
 }));
@@ -81,9 +87,12 @@ vi.mock("../connection/useDesktopLocalBootstraps", () => ({ useDesktopLocalBoots
 vi.mock("../state/use-atom-command", () => ({
   // The add-project destination step starts a clone and follows its project id.
   useAtomCommand: (command: unknown) =>
-    command === projectEnvironment.create || command === sourceControlEnvironment.startProjectClone
-      ? scopes.addProject
-      : async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
+    command === projectEnvironment.createNew
+      ? scopes.createNewProject
+      : command === projectEnvironment.create ||
+          command === sourceControlEnvironment.startProjectClone
+        ? scopes.addProject
+        : async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
   // Doubles as the add-project folder scan, which finds nothing to track.
@@ -270,10 +279,9 @@ describe.each([
   it.each(["going back", "reopening the palette"])("keeps the view after %s", async (leave) => {
     setup();
     const finished = Promise.withResolvers<void>();
-    scopes.createNewProject.mockImplementation(async () => {
-      await finished.promise;
-      return true;
-    });
+    const created = Promise.withResolvers<typeof createdProject>();
+    scopes.createNewProject.mockReturnValue(created.promise);
+    scopes.openDraft.mockReturnValue(finished.promise);
     scopes.addProject.mockImplementation(async () => {
       await finished.promise;
       return { _tag: "Success", value: { projectId: "project-added" } };
@@ -304,6 +312,13 @@ describe.each([
       await search.fill("another search");
     }
 
+    if (source === "New project") {
+      await act(async () => {
+        created.resolve(createdProject);
+        await created.promise;
+      });
+      expect(scopes.openDraft).toHaveBeenCalledOnce();
+    }
     await act(async () => {
       finished.resolve();
       await finished.promise;
