@@ -1284,8 +1284,21 @@ it("a new thread on a branch with changes opens them from thread details", async
     // AppRoot brings its own router.
     router: false,
   });
-  // The redesign's layer 1 thread details label this row View changes.
-  const changesRow = page.getByRole("button", { name: /^View changes\s*vs main\s*\+150/ });
+  // At this width layer 1 shows thread details as a popover, closed until opened, with
+  // View changes in its git actions menu.
+  await act(() =>
+    useRightPanelStore
+      .getState()
+      .setThreadPanelOpen(
+        scopeThreadRef(ENVIRONMENT_ID, ThreadId.make("thread-43905")),
+        "popover",
+        true,
+      ),
+  );
+  const gitMenu = page.getByRole("button", { name: "Git action options" });
+  await expect.element(gitMenu).toBeVisible();
+  await gitMenu.click();
+  const changesRow = page.getByRole("menuitem", { name: /^View changes\s*vs main\s*\+150/ });
   // The row already shows the branch's totals, so it has to open them.
   await expect.element(changesRow).toBeEnabled();
 
