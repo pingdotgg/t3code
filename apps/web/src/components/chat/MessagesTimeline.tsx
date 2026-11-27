@@ -226,7 +226,9 @@ function TimelineListFooter({
     const place = () => {
       const nextNatural = end.offsetHeight;
       const nextRows = rowsHeight();
-      held = Math.max(0, held + natural - nextNatural - Math.max(0, nextRows - rows));
+      // Rows are watched only while holding, so growth from before then fills nothing.
+      const grown = held > 0 ? Math.max(0, nextRows - rows) : 0;
+      held = Math.max(0, held + natural - nextNatural - grown);
       natural = nextNatural;
       rows = nextRows;
       // Measured after the rows' growth is taken out of the hold, not against the old hold.
