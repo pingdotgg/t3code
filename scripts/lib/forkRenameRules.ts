@@ -1284,8 +1284,8 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     id: "kept-repo-slug",
     class: "kept",
     reason:
-      "The GitHub repo slug jamesainslie/t3code: installed desktops, the CLI updater and npm publishing are bound to it.",
-    token: /jamesainslie\/t3code/,
+      "The current and former Lathe GitHub repo slugs are used by installers, updaters and npm publishing.",
+    token: /(?:latheworks|jamesainslie)\/t3code/,
   },
   {
     id: "wire-relay-package",

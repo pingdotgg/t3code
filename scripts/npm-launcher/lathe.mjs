@@ -100,7 +100,7 @@ async function download(url, file) {
 async function install(dir, key) {
   const suffix = `${version}-${key}.${process.platform === "win32" ? "zip" : "tar.gz"}`;
   const base = (
-    process.env.LATHE_RELEASE_BASE_URL || "https://github.com/jamesainslie/t3code/releases/download"
+    process.env.LATHE_RELEASE_BASE_URL || "https://github.com/latheworks/t3code/releases/download"
   ).replace(/\/+$/, "");
   const sums = await (await get(`${base}/v${version}/SHA256SUMS`)).text();
   const expected = /^([0-9a-f]{64})\s+\*?(.+)$/im;
@@ -207,7 +207,7 @@ async function main() {
   if (!SUPPORTED.includes(key)) {
     throw new Error(
       `no Lathe CLI build is available for ${key} (supported: ${SUPPORTED.join(", ")}).\n` +
-        "The desktop app is at https://github.com/jamesainslie/t3code/releases",
+        "The desktop app is at https://github.com/latheworks/t3code/releases",
     );
   }
   const dir = path.join(latheHome(), "runtime", "versions", version);

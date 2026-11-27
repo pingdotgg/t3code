@@ -1,4 +1,4 @@
-# Fork-local CI for jamesainslie/t3code on GitHub-hosted runners.
+# Fork-local CI for latheworks/t3code on Blacksmith runners.
 # Upstream .github/workflows/ci.yml is left untouched and disabled in repo settings.
 # Kept lean on purpose: no Rust or mobile jobs. Tests follow upstream's split
 # (shared Test, Test Web, sharded Test Server) because one job running every
@@ -21,7 +21,7 @@ concurrency:
 jobs:
   check:
     name: Check
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -81,7 +81,7 @@ jobs:
   # Every package except lathe (apps/server) and the web app, which get their own jobs.
   test:
     name: Test
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -122,7 +122,7 @@ jobs:
   # lost its Chromium page partway through, so the fork shards them three ways.
   test_web:
     name: Test Web ${{ matrix.shard }}
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -173,7 +173,7 @@ jobs:
   # (apps/server/src/testUtils/weightedShardSequencer.ts).
   test_server:
     name: Test Server ${{ matrix.shard }}
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -203,7 +203,7 @@ jobs:
 
   release_smoke:
     name: Release Smoke
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - name: Checkout

@@ -2,7 +2,7 @@
 # Installs the Lathe CLI from a GitHub Release archive. Needs only sh, tar,
 # sha256sum or shasum, and curl or wget; no Node, npm, or compiler.
 #
-#   curl -fsSL https://raw.githubusercontent.com/jamesainslie/t3code/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/latheworks/t3code/main/scripts/install.sh | sh
 #
 # Environment:
 #   LATHE_CHANNEL           release train to follow: stable, nightly, or preview
@@ -18,7 +18,7 @@
 # instead of fetching the release again.
 set -eu
 
-repo="jamesainslie/t3code"
+repo="latheworks/t3code"
 base_url="${LATHE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
 # A pre-rename ~/.t3f keeps serving while ~/.lathe is absent, like the app
 # itself (packages/shared/src/forkBaseDir.ts).

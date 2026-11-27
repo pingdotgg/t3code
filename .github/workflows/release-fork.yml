@@ -1,9 +1,9 @@
-# Fork-local release pipeline for jamesainslie/t3code on GitHub-hosted runners.
+# Fork-local release pipeline for latheworks/t3code on Blacksmith runners.
 # Upstream .github/workflows/release.yml is left untouched and disabled in repo
 # settings. Per-target desktop and CLI archive builds reuse upstream's
 # release-desktop.yml unchanged; only the job graph, runners, and identity
-# differ. npm publish uses OIDC trusted publishing configured on npmjs.com for
-# this workflow file (jamesainslie/t3code, release-fork.yml) on the launcher
+# differ. npm publish uses a GitHub-hosted runner for OIDC trusted publishing
+# configured on npmjs.com for latheworks/t3code and release-fork.yml on the launcher
 # package @jamesainslie/lathe.
 name: Release (fork)
 
@@ -53,7 +53,7 @@ jobs:
   check_changes:
     name: Check automatic nightly release
     if: github.event_name == 'schedule'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     outputs:
       has_changes: ${{ steps.check.outputs.result }}
@@ -77,7 +77,7 @@ jobs:
     if: |
       !failure() && !cancelled() &&
       (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       release_channel: ${{ steps.release_meta.outputs.release_channel }}
@@ -193,7 +193,7 @@ jobs:
     name: Release quality checks
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # Up to 15 minutes waiting on CI, then the full suite if CI did not pass.
     timeout-minutes: 60
     steps:
@@ -268,7 +268,7 @@ jobs:
     name: Build JS bundle
     needs: [preflight]
     if: ${{ !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     env:
       LATHE_CLERK_PUBLISHABLE_KEY: ${{ needs.preflight.outputs.clerk_publishable_key }}
@@ -332,10 +332,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # One job per platform and architecture on GitHub-hosted hardware of that
-  # architecture (see release-desktop.yml). Every job builds the desktop app;
-  # all but macOS x64 also build the CLI archive for their platform, so a
-  # target either ships fully or not at all. The fork ships no Windows builds.
+  # One job per platform and architecture. Both Mac jobs use Apple Silicon.
+  # Every job builds the desktop app. All but macOS x64 also build the CLI archive.
   desktop_mac_arm64:
     name: Desktop macOS arm64
     needs: [preflight, build_bundle]
@@ -352,7 +350,7 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.preflight.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.preflight.outputs.relay_url }}
       label: macOS arm64
-      runner: macos-26
+      runner: blacksmith-6vcpu-macos-26
       platform: mac
       target: dmg
       arch: arm64
@@ -376,7 +374,7 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.preflight.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.preflight.outputs.relay_url }}
       label: macOS x64
-      runner: macos-26
+      runner: blacksmith-6vcpu-macos-26
       platform: mac
       target: dmg
       arch: x64
@@ -400,7 +398,7 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.preflight.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.preflight.outputs.relay_url }}
       label: Linux x64
-      runner: ubuntu-24.04
+      runner: blacksmith-4vcpu-ubuntu-2404
       platform: linux
       target: AppImage
       arch: x64
@@ -424,7 +422,7 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.preflight.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.preflight.outputs.relay_url }}
       label: Linux arm64
-      runner: ubuntu-24.04-arm
+      runner: blacksmith-8vcpu-ubuntu-2404-arm
       platform: linux
       target: AppImage
       arch: arm64
@@ -444,7 +442,7 @@ jobs:
         desktop_linux_arm64,
       ]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.quality.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
       contents: write

@@ -11,13 +11,13 @@ launch Lathe and configure providers afterwards.
 ## Command line
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jamesainslie/t3code/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/latheworks/t3code/main/scripts/install.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/jamesainslie/t3code/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/latheworks/t3code/main/scripts/install.ps1 | iex
 ```
 
 This puts `lathe` in `~/.local/bin` and keeps its data in `~/.lathe`, beside
@@ -64,7 +64,7 @@ On an Intel Mac, use the desktop app, or build a server from source with
 Node.js 24 and `vp` ([Install vp](../operations/00_development.md#first-checkout)):
 
 ```bash
-git clone https://github.com/jamesainslie/t3code
+git clone https://github.com/latheworks/t3code
 cd lathe && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
@@ -74,7 +74,7 @@ update it with `git pull` and a rebuild.
 
 ## Desktop app
 
-Download a release from [GitHub Releases](https://github.com/jamesainslie/t3code/releases).
+Download a release from [GitHub Releases](https://github.com/latheworks/t3code/releases).
 The fork installs as **Lathe** with its own data directory, so it runs
 alongside the upstream desktop app. Builds are published for macOS (Apple
 Silicon and Intel) and Linux (AppImage and `.deb`, x64 and arm64).

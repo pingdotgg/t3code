@@ -156,10 +156,10 @@ describe("desktop update UI helpers", () => {
     "falls back to the fork's releases for an invalid configured repository: %s",
     (repository) => {
       expect(getDesktopUpdateReleaseHistoryUrl(repository)).toBe(
-        "https://github.com/jamesainslie/t3code/releases",
+        "https://github.com/latheworks/t3code/releases",
       );
       expect(getDesktopUpdateReleaseUrl("1.2.3", repository)).toBe(
-        "https://github.com/jamesainslie/t3code/releases/tag/v1.2.3",
+        "https://github.com/latheworks/t3code/releases/tag/v1.2.3",
       );
     },
   );

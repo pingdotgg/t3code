@@ -1,6 +1,6 @@
 /**
  * Fork identity: every value that must differ from upstream `pingdotgg/t3code` so this fork
- * (`jamesainslie/t3code`) installs and runs beside the upstream nightly. Upstream files consume it
+ * (`latheworks/t3code`) installs and runs beside the upstream nightly. Upstream files consume it
  * through one import and a one-line literal swap so merges stay mechanical. Keep it
  * dependency-free: the web bundle imports it too.
  */
@@ -34,10 +34,10 @@ export const FORK_IDENTITY = Object.freeze({
   author: "James Ainslie",
   artifactBaseName: "Lathe",
   appId: "us.ainslies.t3code",
-  repositoryUrl: "https://github.com/jamesainslie/t3code",
+  repositoryUrl: "https://github.com/latheworks/t3code",
   /** GitHub `owner/repo` whose releases host the CLI archives and SHA256SUMS. */
-  releaseRepository: "jamesainslie/t3code",
-  releasesUrl: "https://github.com/jamesainslie/t3code/releases",
+  releaseRepository: "latheworks/t3code",
+  releasesUrl: "https://github.com/latheworks/t3code/releases",
   urlHandlerDesktopEntryName: "lathe-url-handler.desktop",
   /**
    * electron-updater's download cache under the OS cache dir. electron-builder

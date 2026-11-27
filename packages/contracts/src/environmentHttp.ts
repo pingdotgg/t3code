@@ -562,7 +562,7 @@ export type LatheConnectTroubleshootingSection =
 export function latheConnectTroubleshootingUrl(
   section: LatheConnectTroubleshootingSection,
 ): string {
-  return `https://github.com/jamesainslie/t3code/blob/main/docs/user/lathe-connect-troubleshooting.md#${section}`;
+  return `https://github.com/latheworks/t3code/blob/main/docs/user/lathe-connect-troubleshooting.md#${section}`;
 }
 
 const REACHABILITY_SECTION = {
