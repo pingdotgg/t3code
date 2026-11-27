@@ -2822,7 +2822,7 @@
   "91e832d25ff2aba9": "{term, select, mr {Merge request} cr {Demande de modification} other {Pull request}} {number}",
   "bbb7d40a7ad7ab71": "Privé",
   "37f84b2c7830febb": "pile {position} sur {size}",
-  "0469747f4bb9caac": "{additions} ajouts, {deletions} suppressions",
+  "3920accacc91683e": "{additions, plural, =1 {{additions} ajout} other {{additions} ajouts}}, {deletions, plural, =1 {{deletions} suppression} other {{deletions} suppressions}}",
   "4e3cdb7e814e8962": "Touchez deux fois pour ouvrir. Appuyez longuement pour les actions rapides.",
   "d50c8bcf494b1158": "Voir la pièce jointe : {caption}",
   "868d7f357f06cdd2": "Reconnectez-vous pour fusionner.",

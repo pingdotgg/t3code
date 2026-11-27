@@ -2826,7 +2826,7 @@
   "91e832d25ff2aba9": "{term, select, mr {Merge Request {number}} cr {Änderungsanfrage {number}} other {Pull Request {number}}}",
   "bbb7d40a7ad7ab71": "Privat",
   "37f84b2c7830febb": "Stack {position} von {size}",
-  "0469747f4bb9caac": "{additions} Hinzufügungen, {deletions} Löschungen",
+  "3920accacc91683e": "{additions, plural, one {{additions} Hinzufügung} other {{additions} Hinzufügungen}}, {deletions, plural, one {{deletions} Löschung} other {{deletions} Löschungen}}",
   "4e3cdb7e814e8962": "Doppeltippen zum Öffnen. Gedrückt halten für Schnellaktionen.",
   "d50c8bcf494b1158": "Anhang ansehen: {caption}",
   "868d7f357f06cdd2": "Verbinde dich erneut, um zu mergen.",
