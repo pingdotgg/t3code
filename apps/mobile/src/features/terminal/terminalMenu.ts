@@ -1,6 +1,6 @@
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { DEFAULT_TERMINAL_ID, type ProjectScript } from "@t3tools/contracts";
-import { fileBasename } from "@t3tools/shared/path";
+import { fileBasename, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { nextTerminalId } from "@t3tools/shared/terminalLabels";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabelsCopy";
 import * as Arr from "effect/Array";
@@ -29,7 +29,15 @@ const terminalMenuSessionOrder = Order.make<TerminalMenuSession>((left, right) =
 });
 
 export function basename(input: string | null): string | null {
-  return input ? fileBasename(input) : null;
+  if (!input) {
+    return null;
+  }
+  // A backslash is a legal character in POSIX folder names, so only Windows paths split on it.
+  if (isWindowsAbsolutePath(input)) {
+    return fileBasename(input);
+  }
+  const normalized = input.replace(/\/+$/, "");
+  return normalized.length === 0 ? "/" : normalized.slice(normalized.lastIndexOf("/") + 1);
 }
 
 export function getTerminalStatusLabel(

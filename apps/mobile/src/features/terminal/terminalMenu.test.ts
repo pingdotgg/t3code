@@ -94,6 +94,7 @@ describe("basename", () => {
   it.each([
     ["C:\\wt\\repo\\", "repo"],
     ["/home/u/repo/", "repo"],
+    ["/home/u/team\\repo", "team\\repo"],
     ["/", "/"],
   ])("names %s as %s", (input, expected) => {
     expect(basename(input)).toBe(expected);
