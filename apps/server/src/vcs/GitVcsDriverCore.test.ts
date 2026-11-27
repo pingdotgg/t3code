@@ -11583,6 +11583,23 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("a husky shim with no script of its name above it is not a push hook", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        // Vite+ installs a shim for every hook; this project only wrote `.vite-hooks/pre-commit`.
+        const hooks = NodePath.join(repo.cwd, ".vite-hooks");
+        yield* git(repo.cwd, ["config", "core.hooksPath", ".vite-hooks/_"]);
+        NodeFS.mkdirSync(NodePath.join(hooks, "_"), { recursive: true });
+        for (const name of ["pre-commit", "pre-push"]) {
+          NodeFS.writeFileSync(NodePath.join(hooks, "_", name), HUSKY_SHIM, { mode: 0o755 });
+        }
+        NodeFS.writeFileSync(NodePath.join(hooks, "_", "h"), HUSKY_RUNNER);
+        NodeFS.writeFileSync(NodePath.join(hooks, "pre-commit"), "exit 0\n");
+
+        assert.isNull(yield* repo.driver.pushHooks(repo.cwd));
+      }),
+    );
+
     it.effect("pushes to the requested remote instead of the primary remote", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
