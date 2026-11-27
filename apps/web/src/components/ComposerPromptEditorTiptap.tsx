@@ -29,7 +29,13 @@ import {
   type Transaction,
 } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
-import { Fragment, Slice, type NodeType, type ResolvedPos } from "@tiptap/pm/model";
+import {
+  Fragment,
+  Slice,
+  type Node as ProseMirrorNode,
+  type NodeType,
+  type ResolvedPos,
+} from "@tiptap/pm/model";
 import type {
   AssistantCitation,
   ComposerContextClipboardFragment,
@@ -1289,10 +1295,9 @@ function ComposerPromptEditorTiptapInner(
                 return commands.insertContent(content);
               }
               // Open paragraph edges join the caret's line and the text after it, as typed lines do.
-              const open = (node: (typeof nodes)[number] | undefined) =>
-                node?.type.name === "paragraph" ? 1 : 0;
+              const open = (node: ProseMirrorNode) => (node.type.name === "paragraph" ? 1 : 0);
               tr.replaceSelection(
-                new Slice(Fragment.from(nodes), open(nodes[0]), open(nodes.at(-1))),
+                new Slice(Fragment.from(nodes), open(nodes[0]!), open(nodes.at(-1)!)),
               );
               return true;
             })
