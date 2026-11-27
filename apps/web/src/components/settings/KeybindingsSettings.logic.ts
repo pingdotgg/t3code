@@ -482,6 +482,8 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "terminal.splitVertical": msg("Terminal: Split Vertical"),
   "terminal.new": msg("Terminal: New"),
   "terminal.close": msg("Terminal: Close"),
+  "terminal.copy": msg("Terminal: Copy"),
+  "terminal.paste": msg("Terminal: Paste"),
   "terminal.previous": msg("Terminal: Previous"),
   "terminal.next": msg("Terminal: Next"),
   "rightPanel.toggle": msg("Right Panel: Toggle"),
