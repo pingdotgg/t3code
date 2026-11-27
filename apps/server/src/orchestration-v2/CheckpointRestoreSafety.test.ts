@@ -116,6 +116,8 @@ it.effect.each([
           }),
           Layer.mock(ProjectionStoreV2)({
             getThread: () => Effect.succeed(projection.thread),
+            getThreadRecords: () =>
+              Effect.succeed({ providerThreads: [], providerSessions: [] } as never),
             getCheckpointRollbackContext: () => Effect.succeed(projection),
             getShellSnapshot: () =>
               Effect.succeed({

@@ -1453,14 +1453,18 @@ export function providerThreadNativeConversationKey(
 /**
  * Whether a settled run reached its provider conversation and therefore requires native rollback
  * when discarded. Pre-start failures/interrupts/cancellations (`startedAt === null`) and runs
- * with no delivered provider turn did not mutate provider conversation history.
+ * with no delivered provider turn across any of their attempts did not mutate provider history.
  */
 export function didRunReachProvider(
-  run: Pick<OrchestrationV2Run, "status" | "startedAt" | "activeAttemptId">,
+  run: Pick<OrchestrationV2Run, "id" | "status" | "startedAt" | "activeAttemptId">,
   providerTurns?: ReadonlyArray<
     Pick<OrchestrationV2ProviderTurn, "id" | "runAttemptId" | "promptDropped">
   >,
-  attempts?: ReadonlyArray<Pick<OrchestrationV2RunAttempt, "id" | "providerTurnId">>,
+  attempts?: ReadonlyArray<
+    Pick<OrchestrationV2RunAttempt, "id" | "providerTurnId"> & {
+      readonly runId?: RunId | undefined;
+    }
+  >,
 ): boolean {
   if (run.status === "completed") return true;
   if (run.status !== "failed" && run.status !== "interrupted" && run.status !== "cancelled") {
@@ -1468,14 +1472,26 @@ export function didRunReachProvider(
   }
   if (run.startedAt === null) return false;
   if (providerTurns === undefined) return true;
-  if (run.activeAttemptId === null) return false;
-  const linkedProviderTurnId = attempts?.find(
-    (attempt) => attempt.id === run.activeAttemptId,
-  )?.providerTurnId;
+  const runAttemptIds = new Set<RunAttemptId>();
+  const linkedProviderTurnIds = new Set<ProviderTurnId>();
+  if (run.activeAttemptId !== null) {
+    runAttemptIds.add(run.activeAttemptId);
+  }
+  if (attempts !== undefined) {
+    for (const attempt of attempts) {
+      if (attempt.runId === run.id || attempt.id === run.activeAttemptId) {
+        runAttemptIds.add(attempt.id);
+        if (attempt.providerTurnId !== null) {
+          linkedProviderTurnIds.add(attempt.providerTurnId);
+        }
+      }
+    }
+  }
+  if (runAttemptIds.size === 0 && linkedProviderTurnIds.size === 0) return false;
   return providerTurns.some(
     (turn) =>
-      (turn.runAttemptId === run.activeAttemptId ||
-        (linkedProviderTurnId != null && turn.id === linkedProviderTurnId)) &&
+      ((turn.runAttemptId !== null && runAttemptIds.has(turn.runAttemptId)) ||
+        linkedProviderTurnIds.has(turn.id)) &&
       isDeliveredProviderTurn(turn),
   );
 }

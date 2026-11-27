@@ -7,6 +7,7 @@ import {
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ThreadProjection,
   ProviderThreadId,
   repositoryRewindCheckpoint,
   ThreadId,
@@ -714,20 +715,16 @@ export const layer: Layer.Layer<
               }),
             );
           }
-          // Reread spanning/abandoned rows under the lock so concurrent provider updates
-          // (e.g. pendingBackgroundTasks) are not overwritten by snapshots read before rollback.
-          const hasNonTargetUpdates =
-            spanningSnapshots.length > 0 || effectiveAbandonedProviderThreads.length > 0;
-          const freshRecords = hasNonTargetUpdates
-            ? yield* projections.getThreadRecords(
-                input.threadId,
-                failedSpanningConversationIds.size > 0
-                  ? ["providerThreads", "providerSessions"]
-                  : ["providerThreads"],
-              )
-            : undefined;
+          // Reread provider rows under the lock so concurrent updates (e.g. pendingBackgroundTasks
+          // or session ownership) are never overwritten by snapshots read before rollback.
+          const needsFreshSessions =
+            context.abandonedSessions.length > 0 || failedSpanningConversationIds.size > 0;
+          const freshRecords = yield* projections.getThreadRecords(
+            input.threadId,
+            needsFreshSessions ? ["providerThreads", "providerSessions"] : ["providerThreads"],
+          );
           const freshProviderThreadsById = new Map(
-            (freshRecords?.providerThreads ?? []).map((row) => [row.id, row]),
+            freshRecords.providerThreads.map((row) => [row.id, row]),
           );
           for (const spanning of spanningSnapshots) {
             const current = freshProviderThreadsById.get(spanning.providerThread.id);
@@ -773,6 +770,7 @@ export const layer: Layer.Layer<
               }),
             );
           }
+          const currentTarget = freshProviderThreadsById.get(providerThread.id);
           events.push(
             yield* makeEvent({
               type: "provider-thread.updated",
@@ -781,20 +779,27 @@ export const layer: Layer.Layer<
               providerInstanceId: providerThread.providerInstanceId,
               occurredAt: now,
               payload: {
+                ...(currentTarget ?? providerThread),
                 ...snapshot.providerThread,
+                ...(currentTarget?.pendingBackgroundTasks === undefined
+                  ? {}
+                  : { pendingBackgroundTasks: currentTarget.pendingBackgroundTasks }),
                 lastRunOrdinal: targetOrdinal === 0 ? null : targetOrdinal,
                 updatedAt: now,
               },
             }),
           );
           const effectiveAbandonedSessions = (() => {
-            if (failedSpanningConversationIds.size === 0 || freshRecords === undefined) {
-              return context.abandonedSessions;
+            if (!needsFreshSessions) {
+              return [];
             }
             const closedIds = new Set(effectiveAbandonedProviderThreads.map((row) => row.id));
             const retainedSessionIds = new Set<string>();
             if (providerThread.providerSessionId !== null) {
               retainedSessionIds.add(providerThread.providerSessionId);
+            }
+            if (snapshot.providerThread.providerSessionId !== null) {
+              retainedSessionIds.add(snapshot.providerThread.providerSessionId);
             }
             for (const row of freshRecords.providerThreads) {
               if (
@@ -807,10 +812,24 @@ export const layer: Layer.Layer<
                 retainedSessionIds.add(row.providerSessionId);
               }
             }
-            const byId = new Map(context.abandonedSessions.map((session) => [session.id, session]));
             const freshSessionsById = new Map(
               freshRecords.providerSessions.map((session) => [session.id, session]),
             );
+            const byId = new Map<
+              OrchestrationV2ThreadProjection["providerSessions"][number]["id"],
+              OrchestrationV2ThreadProjection["providerSessions"][number]
+            >();
+            for (const session of context.abandonedSessions) {
+              if (retainedSessionIds.has(session.id)) continue;
+              const currentSession = freshSessionsById.get(session.id) ?? session;
+              if (
+                currentSession.status !== "stopped" &&
+                currentSession.status !== "error" &&
+                !currentSession.capabilities.sessions.supportsMultipleProviderThreadsPerSession
+              ) {
+                byId.set(currentSession.id, currentSession);
+              }
+            }
             for (const abandoned of effectiveAbandonedProviderThreads) {
               const current = freshProviderThreadsById.get(abandoned.id) ?? abandoned;
               const sessionId = current.providerSessionId;

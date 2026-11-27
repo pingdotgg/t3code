@@ -309,8 +309,10 @@ export interface ProjectionCheckpointCaptureContext {
 const RollbackTargetAttempts = Schema.Array(
   Schema.Struct({
     ordinal: Schema.Number,
+    runId: Schema.optional(OrchestrationV2RunAttemptJsonSchema.fields.runId),
     id: OrchestrationV2RunAttemptJsonSchema.fields.id,
     providerTurnId: OrchestrationV2RunAttemptJsonSchema.fields.providerTurnId,
+    isActive: Schema.optional(Schema.Number),
   }),
 );
 const decodeRollbackTargetAttempts = Schema.decodeUnknownEffect(RollbackTargetAttempts);
@@ -351,10 +353,14 @@ export function classifyRollbackProviderThreads(input: {
   readonly retainedRuns: ReadonlyArray<OrchestrationV2Run>;
   readonly sessions: ReadonlyArray<OrchestrationV2ThreadProjection["providerSessions"][number]>;
   readonly providerTurns?: ReadonlyArray<
-    Pick<OrchestrationV2ProviderTurn, "id" | "runAttemptId" | "promptDropped">
+    Pick<OrchestrationV2ProviderTurn, "id" | "runAttemptId" | "promptDropped"> & {
+      readonly startedAt?: DateTime.Utc | null;
+    }
   >;
   readonly attempts?: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["attempts"][number], "id" | "providerTurnId">
+    Pick<OrchestrationV2ThreadProjection["attempts"][number], "id" | "providerTurnId"> & {
+      readonly runId?: RunId | undefined;
+    }
   >;
   readonly attemptByOrdinal?: ReadonlyMap<number, RollbackTargetAttempt>;
   readonly canRollbackProvider?: (providerThread: OrchestrationV2ProviderThread) => boolean;
@@ -409,10 +415,35 @@ export function classifyRollbackProviderThreads(input: {
     targetHasDeliveredDiscardedRun ||
     (input.targetOrdinal === 0 && input.runsToRollback.length === 0);
 
+  const nativeStartMillisForRun = (run: OrchestrationV2Run): number | null => {
+    let latestTurnMs: number | null = null;
+    if (input.providerTurns !== undefined && run.activeAttemptId !== null) {
+      const linkedTurnId = input.attempts?.find(
+        (attempt) => attempt.id === run.activeAttemptId,
+      )?.providerTurnId;
+      for (const turn of input.providerTurns) {
+        if (
+          turn.startedAt != null &&
+          (turn.runAttemptId === run.activeAttemptId ||
+            (linkedTurnId != null && turn.id === linkedTurnId))
+        ) {
+          const ms = DateTime.toEpochMillis(turn.startedAt);
+          if (latestTurnMs === null || ms > latestTurnMs) latestTurnMs = ms;
+        }
+      }
+    }
+    if (latestTurnMs !== null) return latestTurnMs;
+    return run.startedAt === null ? null : DateTime.toEpochMillis(run.startedAt);
+  };
+
   const retainedRunByThreadId = new Map<ProviderThreadId, OrchestrationV2Run>();
   const latestRetainedByConvKey = new Map<
     string,
-    { readonly threadId: ProviderThreadId; readonly ordinal: number }
+    {
+      readonly threadId: ProviderThreadId;
+      readonly ordinal: number;
+      readonly nativeStartMs: number | null;
+    }
   >();
   for (const run of input.retainedRuns) {
     if (
@@ -427,10 +458,21 @@ export function classifyRollbackProviderThreads(input: {
     }
     const convKey = convKeyByThreadId.get(run.providerThreadId) ?? run.providerThreadId;
     const prevConv = latestRetainedByConvKey.get(convKey);
-    if (prevConv === undefined || run.ordinal > prevConv.ordinal) {
+    const nativeStartMs = nativeStartMillisForRun(run);
+    // Prefer native start order across aliases so a spanning rewind never truncates a retained turn
+    // that executed later than another retained alias in native history.
+    const isLaterInNativeOrder =
+      prevConv === undefined ||
+      (nativeStartMs !== null &&
+      prevConv.nativeStartMs !== null &&
+      nativeStartMs !== prevConv.nativeStartMs
+        ? nativeStartMs > prevConv.nativeStartMs
+        : run.ordinal > prevConv.ordinal);
+    if (isLaterInNativeOrder) {
       latestRetainedByConvKey.set(convKey, {
         threadId: run.providerThreadId,
         ordinal: run.ordinal,
+        nativeStartMs,
       });
     }
   }
@@ -6842,10 +6884,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               rolledBackAttempts,
               staleRows,
             ] = yield* Effect.all([
-              sql`SELECT run.ordinal AS ordinal, attempt.attempt_id AS id, attempt.provider_turn_id AS "providerTurnId"
+              sql`SELECT run.ordinal AS ordinal,
+              attempt.run_id AS "runId",
+              attempt.attempt_id AS id,
+              attempt.provider_turn_id AS "providerTurnId",
+              CASE WHEN attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId') THEN 1 ELSE 0 END AS "isActive"
             FROM orchestration_v2_projection_run_attempts AS attempt
             JOIN orchestration_v2_projection_runs AS run
-              ON attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId')
+              ON attempt.run_id = run.run_id
             WHERE run.thread_id = ${threadId} AND run.ordinal >= ${targetOrdinal}
               AND run.status != 'rolled_back' AND attempt.thread_id = ${threadId}`,
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
@@ -6878,9 +6924,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY scope_id = ${scope.id} DESC, scope_id ASC, ordinal_within_scope ASC`,
             ]);
             const targetAttempts = yield* decodeRollbackTargetAttempts(attemptRows);
-            const attemptByOrdinal = new Map(
-              targetAttempts.map((attempt) => [attempt.ordinal, attempt]),
-            );
+            const rollbackAttempts: Array<RollbackTargetAttempt> = [...targetAttempts];
+            const attemptByOrdinal = new Map<number, RollbackTargetAttempt>();
+            for (const attempt of targetAttempts) {
+              if (attempt.isActive === 1 || !attemptByOrdinal.has(attempt.ordinal)) {
+                attemptByOrdinal.set(attempt.ordinal, attempt);
+              }
+            }
             const targetAttempt = attemptByOrdinal.get(targetOrdinal);
             const targetRun = (yield* decodeRows(decodeRunPayload, threadId)(targetRunRows))[0];
             const runsToRollback = yield* decodeRows(decodeRunPayload, threadId)(runRows);
@@ -6910,10 +6960,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND status IN ('completed', 'interrupted', 'failed', 'cancelled')
                 AND json_extract(payload_json, '$.providerThreadId') IN ${sql.in(potentialSpanningThreadIds)}
               ORDER BY ordinal ASC`,
-                sql`SELECT run.ordinal AS ordinal, attempt.attempt_id AS id, attempt.provider_turn_id AS "providerTurnId"
+                sql`SELECT run.ordinal AS ordinal,
+                attempt.run_id AS "runId",
+                attempt.attempt_id AS id,
+                attempt.provider_turn_id AS "providerTurnId",
+                CASE WHEN attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId') THEN 1 ELSE 0 END AS "isActive"
               FROM orchestration_v2_projection_run_attempts AS attempt
               JOIN orchestration_v2_projection_runs AS run
-                ON attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId')
+                ON attempt.run_id = run.run_id
               WHERE run.thread_id = ${threadId} AND run.ordinal < ${targetOrdinal}
                 AND run.status != 'rolled_back'
                 AND json_extract(run.payload_json, '$.providerThreadId') IN ${sql.in(potentialSpanningThreadIds)}
@@ -6923,7 +6977,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ...(yield* decodeRows(decodeRunPayload, threadId)(spanningRunRows)),
               );
               for (const attempt of yield* decodeRollbackTargetAttempts(spanningAttemptRows)) {
-                attemptByOrdinal.set(attempt.ordinal, attempt);
+                rollbackAttempts.push(attempt);
+                if (attempt.isActive === 1 || !attemptByOrdinal.has(attempt.ordinal)) {
+                  attemptByOrdinal.set(attempt.ordinal, attempt);
+                }
               }
             }
             const turnProviderThreadIds = Array.from(
@@ -6939,7 +6996,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             );
             const relevantAttemptIds = Array.from(
               new Set([
-                ...Array.from(attemptByOrdinal.values(), (attempt) => attempt.id),
+                ...rollbackAttempts.map((attempt) => attempt.id),
                 ...runsToRollback.flatMap((run) =>
                   run.activeAttemptId === null ? [] : [run.activeAttemptId],
                 ),
@@ -6950,7 +7007,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             );
             const relevantTurnIds = Array.from(
               new Set(
-                Array.from(attemptByOrdinal.values()).flatMap((attempt) =>
+                rollbackAttempts.flatMap((attempt) =>
                   attempt.providerTurnId === null ? [] : [attempt.providerTurnId],
                 ),
               ),
@@ -6981,7 +7038,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               turn.provider_turn_id ASC`,
             ]);
             const providerTurns = yield* decodeRows(decodeProviderTurnPayload, threadId)(turnRows);
-            const rollbackAttempts = Array.from(attemptByOrdinal.values());
             const classified = classifyRollbackProviderThreads({
               targetProviderThread: providerThread,
               activeProviderThreadId: thread.activeProviderThreadId,

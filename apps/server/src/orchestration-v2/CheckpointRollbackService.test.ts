@@ -292,6 +292,8 @@ it.effect.each([
           IdAllocator.layer,
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThread: () => Effect.succeed(projection.thread),
+            getThreadRecords: () =>
+              Effect.succeed({ providerThreads: [], providerSessions: [] } as never),
             getCheckpointRollbackContext: () => Effect.succeed(projection),
             getShellSnapshot: () =>
               Effect.succeed({
@@ -491,6 +493,8 @@ it.effect.each([
             IdAllocator.layer,
             Layer.mock(ProjectionStore.ProjectionStoreV2)({
               getThread: () => Effect.succeed(projection.thread),
+              getThreadRecords: () =>
+                Effect.succeed({ providerThreads: [], providerSessions: [] } as never),
               getCheckpointRollbackContext: () => Effect.succeed(projection),
               getShellSnapshot: () =>
                 Effect.succeed({
@@ -1181,6 +1185,83 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
             canRollbackProvider: () => false,
           });
           assert.isTrue(steeredResult.needsTargetProviderRollback);
+
+          // An earlier attempt of a restarted run that delivered a turn must still count as
+          // delivered even if the latest activeAttemptId failed before delivery.
+          const earlierAttemptResult = ProjectionStore.classifyRollbackProviderThreads({
+            targetProviderThread: grokAlias1,
+            activeProviderThreadId: targetThreadId,
+            targetOrdinal: 1,
+            rootProviderThreads: [grokAlias1, targetThread],
+            runsToRollback: [
+              makeRun(2, grokAlias1Id, "failed", now, RunAttemptId.make("att:retry-2-unsent")),
+            ],
+            retainedRuns: [makeRun(1, grokAlias1Id, "completed", now, RunAttemptId.make("att:1"))],
+            sessions: [],
+            providerTurns: [
+              { id: ProviderTurnId.make("turn:1"), runAttemptId: RunAttemptId.make("att:1") },
+              {
+                id: ProviderTurnId.make("turn:earlier-delivered"),
+                runAttemptId: RunAttemptId.make("att:initial-2-delivered"),
+              },
+            ],
+            attempts: [
+              {
+                id: RunAttemptId.make("att:initial-2-delivered"),
+                runId: RunId.make("run:2"),
+                providerTurnId: ProviderTurnId.make("turn:earlier-delivered"),
+              },
+              {
+                id: RunAttemptId.make("att:retry-2-unsent"),
+                runId: RunId.make("run:2"),
+                providerTurnId: null,
+              },
+            ],
+            canRollbackProvider: () => false,
+          });
+          assert.isTrue(earlierAttemptResult.needsTargetProviderRollback);
+
+          // When two retained aliases share a native conversation and the lower app-ordinal run
+          // actually started later in native history, pick the later-started alias as the cutoff.
+          const laterStartedAt = DateTime.add(now, { seconds: 10 });
+          const nativeOrderResult = ProjectionStore.classifyRollbackProviderThreads({
+            targetProviderThread: targetThread,
+            activeProviderThreadId: grokAlias2Id,
+            targetOrdinal: 3,
+            rootProviderThreads: [grokAlias1, grokAlias2, targetThread],
+            runsToRollback: [
+              makeRun(
+                4,
+                grokAlias2Id,
+                "completed",
+                DateTime.add(now, { seconds: 20 }),
+                RunAttemptId.make("att:4"),
+              ),
+            ],
+            retainedRuns: [
+              makeRun(1, grokAlias1Id, "completed", laterStartedAt, RunAttemptId.make("att:1")),
+              makeRun(2, grokAlias2Id, "completed", now, RunAttemptId.make("att:2")),
+              makeRun(3, targetThreadId, "completed", now, RunAttemptId.make("att:3")),
+            ],
+            sessions: [],
+            providerTurns: [
+              {
+                id: ProviderTurnId.make("turn:1"),
+                runAttemptId: RunAttemptId.make("att:1"),
+                startedAt: laterStartedAt,
+              },
+              {
+                id: ProviderTurnId.make("turn:2"),
+                runAttemptId: RunAttemptId.make("att:2"),
+                startedAt: now,
+              },
+            ],
+            canRollbackProvider: () => true,
+          });
+          const rollbackSpanning = nativeOrderResult.spanningProviderThreads.find(
+            (entry) => entry.needsRollback,
+          );
+          assert.equal(rollbackSpanning?.providerThread.id, grokAlias1Id);
         }),
     );
 
@@ -1303,7 +1384,10 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
                   getThreadRecords: () =>
                     Effect.succeed({
                       providerThreads: [
-                        targetThread,
+                        {
+                          ...targetThread,
+                          pendingBackgroundTasks: [freshBackgroundTask],
+                        },
                         spanningThread,
                         {
                           ...untouchedSpanningThread,
@@ -1315,6 +1399,15 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
                           id: spanningThread.providerSessionId,
                           driver: spanningThread.driver,
                           providerInstanceId: spanningThread.providerInstanceId,
+                          status: "ready",
+                          capabilities: {
+                            sessions: { supportsMultipleProviderThreadsPerSession: false },
+                          },
+                        },
+                        {
+                          id: untouchedSpanningThread.providerSessionId,
+                          driver: untouchedSpanningThread.driver,
+                          providerInstanceId: untouchedSpanningThread.providerInstanceId,
                           status: "ready",
                           capabilities: {
                             sessions: { supportsMultipleProviderThreadsPerSession: false },
@@ -1439,7 +1532,18 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
                         },
                       ],
                       abandonedProviderThreads: [],
-                      abandonedSessions: [],
+                      // Seed a stale abandoned session now owned by retained untouchedSpanningThread.
+                      abandonedSessions: [
+                        {
+                          id: untouchedSpanningThread.providerSessionId,
+                          driver: untouchedSpanningThread.driver,
+                          providerInstanceId: untouchedSpanningThread.providerInstanceId,
+                          status: "ready",
+                          capabilities: {
+                            sessions: { supportsMultipleProviderThreadsPerSession: false },
+                          },
+                        },
+                      ],
                       backgroundCheckSessions: [],
                     } as never),
                 }),
@@ -1490,11 +1594,28 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
             assert.equal(spanningUpdate.payload.status, "closed");
             assert.isNull(spanningUpdate.payload.lastRunOrdinal);
           }
-          // Exclusive session of the failed spanning thread is detached.
-          const detachedEvent = written.find((event) => event.type === "provider-session.detached");
-          assert.isDefined(detachedEvent);
+          // Exclusive session of the failed spanning thread is detached; stale seeded session now
+          // owned by retained untouchedSpanningThread is NOT detached.
+          const detachedEvents = written.filter(
+            (event) => event.type === "provider-session.detached",
+          );
+          assert.equal(detachedEvents.length, 1);
+          if (detachedEvents[0]?.type === "provider-session.detached") {
+            assert.equal(
+              detachedEvents[0].payload.providerSessionId,
+              spanningThread.providerSessionId,
+            );
+          }
           assert.deepEqual(writtenEffects, ["provider-session.detach"]);
-          // Non-rolled-back spanning row preserves fresh pendingBackgroundTasks read under lock.
+          // Target and non-rolled-back spanning rows preserve fresh pendingBackgroundTasks under lock.
+          const targetUpdate = written.find(
+            (event) =>
+              event.type === "provider-thread.updated" && event.payload.id === targetThreadId,
+          );
+          assert.isDefined(targetUpdate);
+          if (targetUpdate?.type === "provider-thread.updated") {
+            assert.deepEqual(targetUpdate.payload.pendingBackgroundTasks, [freshBackgroundTask]);
+          }
           const untouchedUpdate = written.find(
             (event) =>
               event.type === "provider-thread.updated" && event.payload.id === untouchedSpanningId,
