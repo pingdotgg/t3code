@@ -187,7 +187,7 @@ export default function FileBrowserPanel({
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
-  const downloadFile = useFileDownload(environmentId);
+  const downloadFile = useFileDownload(environmentId, "workspace-relative");
   const {
     entries: directoryEntries,
     load,

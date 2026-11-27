@@ -90,7 +90,7 @@ import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/envi
 import { hostEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { previewEnvironment } from "~/state/preview";
 import { serverEnvironment } from "~/state/server";
-import { useEnvironmentScope } from "~/state/session";
+import { readPreparedConnection, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
@@ -138,6 +138,7 @@ import {
   shouldShowFileExplorer,
   workspaceAssetResource,
 } from "./filePreviewMode";
+import { fileDownloadName } from "./fileDownloadName";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { changeFileSaveSession, useFileSaveSession } from "./fileSaveSessions";
 import { revisionedQuery } from "~/state/revisionedQuery";
@@ -393,7 +394,10 @@ function WorkspacePdfSaveAction(props: {
           setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
           const anchor = document.createElement("a");
           anchor.href = downloadUrl;
-          anchor.download = props.name.split(/[\\/]/).at(-1) || props.name;
+          anchor.download = fileDownloadName(
+            props.name,
+            readPreparedConnection(props.environmentId)?.descriptor?.platform.os,
+          );
           anchor.click();
         })()
           .catch((cause: unknown) =>
@@ -1859,7 +1863,7 @@ function FilePreviewPanelContent({
               document={isDocument}
               absolutePath={absolutePath}
               workspaceRoot={cwd}
-              name={relativePath.split(/[\\/]/).at(-1) || relativePath}
+              name={fileDownloadName(relativePath, serverConfig?.environment.platform.os)}
               workspaceMutationId={workspaceMutationId}
               refreshRevision={fileRefreshRevision}
             />
@@ -2073,7 +2077,10 @@ function LargeFileActions(props: {
             setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
             const anchor = document.createElement("a");
             anchor.href = downloadUrl;
-            anchor.download = props.name.split(/[\\/]/).at(-1) || props.name;
+            anchor.download = fileDownloadName(
+              props.name,
+              readPreparedConnection(props.environmentId)?.descriptor?.platform.os,
+            );
             anchor.click();
           })()
             .catch(showError)
