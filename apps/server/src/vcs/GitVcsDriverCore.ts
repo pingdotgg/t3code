@@ -1481,9 +1481,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           if (sandboxCheck.eligible) {
             sandboxWrapConfig = sandboxCheck;
           }
-          const isReadOnlyHookInspection =
-            commandInput.operation === "GitVcsDriver.pushHooks" ||
-            commandInput.operation === "GitVcsDriver.configuredHooks";
+          const isPushHooksLocationProbe =
+            commandInput.operation === "GitVcsDriver.pushHooks" &&
+            commandInput.args.length === 3 &&
+            commandInput.args[0] === "rev-parse" &&
+            commandInput.args[1] === "--git-path" &&
+            commandInput.args[2] === "hooks";
+          const isConfiguredHooksReadProbe =
+            commandInput.operation === "GitVcsDriver.configuredHooks" &&
+            commandInput.args.length === 4 &&
+            commandInput.args[0] === "config" &&
+            commandInput.args[1] === "--null" &&
+            commandInput.args[2] === "--get-regexp";
+          const isReadOnlyHookInspection = isPushHooksLocationProbe || isConfiguredHooksReadProbe;
           const isApprovedPush =
             hooksPolicy._tag === "approved-push" && input.pushes === true && limits !== undefined;
           const safeOverrides = yield* resolveSandboxSafeGitConfigEnv({
@@ -1491,7 +1501,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             env: longPathEnv,
             platform: hostPlatform,
             args: commandInput.args,
-            allowWorkspaceIncludes: sandboxCheck.eligible,
+            allowWorkspaceIncludes: sandboxCheck.eligible || isReadOnlyHookInspection,
             preserveHooksConfig: isReadOnlyHookInspection || isApprovedPush,
             runProbe: ({ args: probeArgs, cwd: probeCwd, env: probeEnv }) =>
               Effect.scoped(

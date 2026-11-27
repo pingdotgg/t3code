@@ -1938,12 +1938,62 @@ it.effect(
         const rwBinds = wrapped.args.filter((_, idx, arr) => arr[idx - 1] === "--bind");
         const roBinds = wrapped.args.filter((_, idx, arr) => arr[idx - 1] === "--ro-bind");
 
+        const markerPath = NodePath.join(paths.profileDir, ".t3-team-profile.json");
         expect(rwBinds).toContain(paths.profileDir);
+        expect(roBinds).toContain(markerPath);
         expect(roBinds).toContain(profileConfigDir);
         expect(roBinds).toContain(enabledPluginDir);
-        // `<teamProfile>/config` RO overlay MUST come after `<teamProfile>` RW bind.
+        // `<teamProfile>/.t3-team-profile.json` and `<teamProfile>/config` RO overlays MUST come after `<teamProfile>` RW bind.
+        expect(wrapped.args.indexOf(markerPath)).toBeGreaterThan(
+          wrapped.args.indexOf(paths.profileDir),
+        );
         expect(wrapped.args.indexOf(profileConfigDir)).toBeGreaterThan(
           wrapped.args.indexOf(paths.profileDir),
+        );
+        // Even if the marker were somehow tampered or removed, trusted `GEMINI_HOME` STILL locks `config` RO!
+        const originalMarkerText = NodeFS.readFileSync(markerPath, "utf8");
+        NodeFS.writeFileSync(markerPath, JSON.stringify({ driver: "other" }), "utf8");
+        const tamperedWrapped = yield* wrapCommandWithBwrap({
+          bwrapBinaryPath: "/usr/bin/bwrap",
+          command: "/bin/sh",
+          args: ["-c", "true"],
+          cwd: wtDir,
+          env: {
+            PATH: "/usr/bin:/bin",
+            HOME: fakeHome,
+            GEMINI_HOME: paths.profileDir,
+          },
+          ownStateDir,
+        });
+        const tamperedRoBinds = tamperedWrapped.args.filter(
+          (_, idx, arr) => arr[idx - 1] === "--ro-bind",
+        );
+        expect(tamperedRoBinds).toContain(profileConfigDir);
+        expect(tamperedRoBinds).not.toContain(enabledPluginDir);
+        NodeFS.writeFileSync(markerPath, originalMarkerText, "utf8");
+
+        // `buildBwrapArgs` must NOT skip `providerProfileRoSubpaths` even when stateDir lives under `/opt`.
+        const optArgs = buildBwrapArgs({
+          bwrapBinaryPath: "/usr/bin/bwrap",
+          cwd: "/workspace/repo",
+          chdir: "/workspace/repo",
+          providerProfileDirs: ["/opt/t3runner/providers/antigravity/abc"],
+          providerProfileRoSubpaths: [
+            "/opt/t3runner/providers/antigravity/abc/.t3-team-profile.json",
+            "/opt/t3runner/providers/antigravity/abc/config",
+          ],
+          toolCacheDirs: [],
+          extraRwBinds: [],
+          extraRoBinds: [],
+          socketPaths: [],
+          helperPaths: [],
+          command: "/bin/sh",
+          args: ["-c", "true"],
+        });
+        const optRoBinds = optArgs.filter((_, idx, arr) => arr[idx - 1] === "--ro-bind");
+        expect(optRoBinds).toContain("/opt/t3runner/providers/antigravity/abc/config");
+        expect(optRoBinds).toContain(
+          "/opt/t3runner/providers/antigravity/abc/.t3-team-profile.json",
         );
         // Personal ~/.gemini, personal auth tokens, disabled plugins, and rogue symlinks MUST NOT be bound!
         expect(roBinds).not.toContain(personalGeminiDir);
@@ -2164,8 +2214,8 @@ it.effect(
         expect(preservedPairs.has("hook.lint.enabled")).toBe(false);
         expect(preservedPairs.get("core.fsmonitor")).toBe("false");
 
-        // 3. Add a local `include.path` and verify sandboxable `GitVcsDriver.status` STILL succeeds
-        // under `teamBwrapSandbox: true` (never triggering unsandboxed `readConfiguredHooks` failure).
+        // 3. Add a local `include.path` and verify both `GitVcsDriver.pushHooks` AND sandboxable
+        // `GitVcsDriver.status` succeed under `teamBwrapSandbox: true`, discovering included hooks.
         const extraCfg = NodePath.join(repoDir, ".extra-gitconfig");
         NodeFS.writeFileSync(
           extraCfg,
@@ -2175,6 +2225,19 @@ it.effect(
         NodeChildProcess.execFileSync("git", ["config", "include.path", extraCfg], {
           cwd: repoDir,
         });
+
+        const discoveredWithInclude = yield* Effect.gen(function* () {
+          const vcs = yield* GitVcsDriver.GitVcsDriver;
+          return yield* vcs.pushHooks(repoDir);
+        }).pipe(Effect.provide(driverLayer));
+        expect(discoveredWithInclude).not.toBeNull();
+        expect(discoveredWithInclude!.files).toEqual([prePushHook]);
+        expect(discoveredWithInclude!.commands).toEqual(
+          expect.arrayContaining([
+            { name: "lint", command: "echo lint" },
+            { name: "included", command: "echo pwn" },
+          ]),
+        );
 
         const statusRes = yield* Effect.gen(function* () {
           const vcs = yield* GitVcsDriver.GitVcsDriver;

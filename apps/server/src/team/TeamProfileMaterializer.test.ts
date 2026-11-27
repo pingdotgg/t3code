@@ -622,6 +622,86 @@ describe("TeamProfileMaterializer", () => {
           });
           const restoredStat = yield* Effect.promise(() => NodeFSP.lstat(shadowedPath));
           expect(restoredStat.isSymbolicLink()).toBe(true);
+
+          // Tampered marker driver with identical assetsHash must be detected and restored (never skipped).
+          const markerPath = NodePath.join(paths.profileDir, ".t3-team-profile.json");
+          const originalMarker = JSON.parse(
+            yield* Effect.promise(() => NodeFSP.readFile(markerPath, "utf8")),
+          ) as { readonly driver: string; readonly assetsHash: string };
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(
+              markerPath,
+              `${JSON.stringify({ ...originalMarker, driver: "other" })}\n`,
+              "utf8",
+            ),
+          );
+          yield* materializeTeamProfileAssets({
+            stateDir,
+            teamId,
+            virtualInstanceId: virtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            skills: [],
+            preprompts: [],
+            revision: 1,
+            userHome: fakeHome,
+          });
+          const restoredMarker = JSON.parse(
+            yield* Effect.promise(() => NodeFSP.readFile(markerPath, "utf8")),
+          ) as { readonly driver: string };
+          expect(restoredMarker.driver).toBe("antigravity");
+
+          // Symlinked marker file must NOT overwrite the external target file.
+          const externalSecretFile = NodePath.join(externalHostDir, "untouched.txt");
+          yield* Effect.promise(async () => {
+            await NodeFSP.writeFile(externalSecretFile, "KEEP_ME", "utf8");
+            await NodeFSP.unlink(markerPath);
+            await NodeFSP.symlink(externalSecretFile, markerPath, "file");
+          });
+          yield* materializeTeamProfileAssets({
+            stateDir,
+            teamId,
+            virtualInstanceId: virtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            skills: [],
+            preprompts: [],
+            revision: 1,
+            userHome: fakeHome,
+          });
+          expect(yield* Effect.promise(() => NodeFSP.readFile(externalSecretFile, "utf8"))).toBe(
+            "KEEP_ME",
+          );
+          const markerPostStat = yield* Effect.promise(() => NodeFSP.lstat(markerPath));
+          expect(markerPostStat.isSymbolicLink()).toBe(false);
+
+          // Symlinked `antigravity-acp` parent dir must NOT redirect ephemeral lease token writes outside profile.
+          const acpDir = NodePath.join(paths.profileDir, "antigravity-acp");
+          yield* Effect.promise(async () => {
+            await NodeFSP.rm(acpDir, { recursive: true, force: true });
+            await NodeFSP.symlink(externalHostDir, acpDir, "dir");
+          });
+          yield* materializeEphemeralLeaseToken({
+            stateDir,
+            teamId,
+            virtualInstanceId: virtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            lease: {
+              providerInstanceId: ProviderInstanceId.make("team-agy"),
+              driver: ProviderDriverKind.make("antigravity"),
+              accessToken: "ya29.contained-token",
+              tokenType: "Bearer",
+              expiresAt: IsoDateTime.make("2099-01-01T00:00:00.000Z"),
+              expiresInSeconds: NonNegativeInt.make(3600),
+            },
+          });
+          const acpStat = yield* Effect.promise(() => NodeFSP.lstat(acpDir));
+          expect(acpStat.isSymbolicLink()).toBe(false);
+          expect(
+            yield* Effect.promise(() =>
+              NodeFSP.access(NodePath.join(externalHostDir, TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME))
+                .then(() => true)
+                .catch(() => false),
+            ),
+          ).toBe(false);
         } finally {
           yield* Effect.promise(() => NodeFSP.rm(tmp, { recursive: true, force: true }));
         }

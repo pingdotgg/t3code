@@ -30,6 +30,9 @@ const encodeJsonUnknown = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown
 const decodeProfileMarker = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
+      teamId: Schema.optionalKey(Schema.String),
+      virtualInstanceId: Schema.optionalKey(Schema.String),
+      driver: Schema.optionalKey(Schema.String),
       assetsHash: Schema.optionalKey(Schema.String),
     }),
   ),
@@ -206,6 +209,31 @@ async function syncDirectoryPersonalSkillLinks(input: {
     const existing = await NodeFSP.lstat(linkPath).catch(() => undefined);
     if (existing !== undefined) continue;
     await NodeFSP.symlink(sourcePath, linkPath, linkType).catch(() => undefined);
+  }
+}
+
+async function writeContainedAtomicFile(
+  rootRealDir: string,
+  filePath: string,
+  contents: string,
+): Promise<void> {
+  assertPathContainedWithin(rootRealDir, filePath);
+  const existing = await NodeFSP.lstat(filePath).catch(() => undefined);
+  if (existing !== undefined) {
+    if (existing.isSymbolicLink()) {
+      await NodeFSP.unlink(filePath);
+    } else if (!existing.isFile()) {
+      await NodeFSP.rm(filePath, { recursive: true, force: true });
+    }
+  }
+  const tempPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
+  assertPathContainedWithin(rootRealDir, tempPath);
+  try {
+    await NodeFSP.writeFile(tempPath, contents, { encoding: "utf8", mode: 0o600 });
+    await NodeFSP.rename(tempPath, filePath);
+  } catch (error) {
+    await NodeFSP.rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -445,12 +473,20 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
       Effect.gen(function* () {
         const alreadyUpToDate = yield* Effect.tryPromise({
           try: async () => {
-            const markerRaw = await NodeFSP.readFile(
-              NodePath.join(paths.profileDir, TEAM_PROFILE_MARKER_FILENAME),
-              "utf8",
-            );
+            const markerPath = NodePath.join(paths.profileDir, TEAM_PROFILE_MARKER_FILENAME);
+            const markerStat = await NodeFSP.lstat(markerPath);
+            if (markerStat.isSymbolicLink() || !markerStat.isFile()) {
+              return false;
+            }
+            const markerRaw = await NodeFSP.readFile(markerPath, "utf8");
             const markerOpt = decodeProfileMarker(markerRaw);
-            if (markerOpt._tag !== "Some" || markerOpt.value.assetsHash !== assetsHash) {
+            if (
+              markerOpt._tag !== "Some" ||
+              markerOpt.value.assetsHash !== assetsHash ||
+              markerOpt.value.driver !== input.driver ||
+              markerOpt.value.teamId !== input.teamId ||
+              markerOpt.value.virtualInstanceId !== input.virtualInstanceId
+            ) {
               return false;
             }
             const skillsStat = await NodeFSP.stat(paths.skillsDir);
@@ -633,9 +669,11 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
         // transient disk errors are automatically repaired on the next materialization pass.
         if (skillsMaterialized && instructionsMaterialized) {
           yield* Effect.tryPromise({
-            try: () =>
-              NodeFSP.writeFile(
-                NodePath.join(paths.profileDir, TEAM_PROFILE_MARKER_FILENAME),
+            try: async () => {
+              const realProfileDir = await NodeFSP.realpath(paths.profileDir);
+              await writeContainedAtomicFile(
+                realProfileDir,
+                NodePath.join(realProfileDir, TEAM_PROFILE_MARKER_FILENAME),
                 `${encodeJsonUnknown({
                   teamId: input.teamId,
                   virtualInstanceId: input.virtualInstanceId,
@@ -643,8 +681,8 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
                   revision: input.revision,
                   assetsHash,
                 })}\n`,
-                "utf8",
-              ),
+              );
+            },
             catch: () => undefined,
           }).pipe(Effect.ignore);
         }
@@ -681,7 +719,18 @@ export const materializeEphemeralLeaseToken = Effect.fn(
     virtualInstanceId: input.virtualInstanceId,
     driver: input.driver,
   });
-  const tokenPath = NodePath.join(paths.profileDir, ...primarySegments);
+
+  const resolveContainedTokenPath = async (): Promise<string> => {
+    await NodeFSP.mkdir(paths.profileDir, { recursive: true, mode: 0o700 });
+    const realProfileDir = await NodeFSP.realpath(paths.profileDir);
+    let parentDir = realProfileDir;
+    for (const segment of primarySegments.slice(0, -1)) {
+      parentDir = await ensureContainedRealDirectory(parentDir, NodePath.join(parentDir, segment));
+    }
+    const tokenPath = NodePath.join(parentDir, primarySegments.at(-1)!);
+    assertPathContainedWithin(parentDir, tokenPath);
+    return tokenPath;
+  };
 
   if (spec.ephemeralTokenFormat === "antigravity-oauth-json") {
     // Explicitly omit `refresh_token` so refresh credentials never touch a teammate's disk.
@@ -696,7 +745,10 @@ export const materializeEphemeralLeaseToken = Effect.fn(
       ...(input.lease.email ? { id_token_email: input.lease.email } : {}),
     };
     yield* Effect.tryPromise({
-      try: () => writeSecureTokenFile(tokenPath, `${encodeJsonUnknown(payload)}\n`, platform),
+      try: async () => {
+        const tokenPath = await resolveContainedTokenPath();
+        await writeSecureTokenFile(tokenPath, `${encodeJsonUnknown(payload)}\n`, platform);
+      },
       catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
     }).pipe(
       Effect.catch((cause) =>
@@ -720,7 +772,10 @@ export const materializeEphemeralLeaseToken = Effect.fn(
       },
     };
     yield* Effect.tryPromise({
-      try: () => writeSecureTokenFile(tokenPath, `${encodeJsonUnknown(payload)}\n`, platform),
+      try: async () => {
+        const tokenPath = await resolveContainedTokenPath();
+        await writeSecureTokenFile(tokenPath, `${encodeJsonUnknown(payload)}\n`, platform);
+      },
       catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
     }).pipe(
       Effect.catch((cause) =>
@@ -742,11 +797,27 @@ export const purgeEphemeralLeaseTokens = Effect.fn(
   readonly virtualInstanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
 }): Effect.fn.Return<void, never, Digest.Digest | Path.Path> {
+  const spec = getTeamHarnessProfile(input.driver);
   const paths = yield* resolveTeamProfilePaths(input);
   yield* Effect.tryPromise({
     try: async () => {
-      for (const tokenPath of paths.ephemeralTokenFiles) {
-        await NodeFSP.rm(tokenPath, { force: true }).catch(() => undefined);
+      const realProfileDir = await NodeFSP.realpath(paths.profileDir).catch(() => undefined);
+      if (realProfileDir === undefined) return;
+      for (const segments of spec.ephemeralTokenRelativePaths) {
+        let cursor = realProfileDir;
+        let escaped = false;
+        for (const segment of segments.slice(0, -1)) {
+          cursor = NodePath.join(cursor, segment);
+          const stat = await NodeFSP.lstat(cursor).catch(() => undefined);
+          if (stat === undefined || stat.isSymbolicLink() || !stat.isDirectory()) {
+            escaped = true;
+            break;
+          }
+        }
+        if (escaped) continue;
+        const leafPath = NodePath.join(cursor, segments.at(-1)!);
+        assertPathContainedWithin(realProfileDir, leafPath);
+        await NodeFSP.rm(leafPath, { force: true }).catch(() => undefined);
       }
     },
     catch: () => undefined,
