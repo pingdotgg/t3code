@@ -174,8 +174,8 @@ function PullRequestBodySegmentView({
     if (segment.kind === "markdown" || segment.media === "image") return markdown;
     const fallback = (
       <PullRequestAttachmentLink
-        url={segment.url}
-        hostLabel={hostMedia?.definition.label}
+        attachmentUrl={segment.url}
+        sourceControlHostLabel={hostMedia?.definition.label}
         label={segment.label}
       />
     );
@@ -219,18 +219,18 @@ function PullRequestBodySegmentView({
 }
 
 function PullRequestAttachmentLink({
-  url,
-  hostLabel,
+  attachmentUrl,
+  sourceControlHostLabel,
   label,
 }: {
-  url: string;
-  hostLabel: string | undefined;
+  attachmentUrl: string;
+  sourceControlHostLabel: string | undefined;
   label: string | undefined;
 }) {
   return (
     // Desktop converts blocked _blank navigation to openExternal.
     <a
-      href={url}
+      href={attachmentUrl}
       rel="noreferrer noopener"
       target="_blank"
       className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm hover:bg-muted/60"
@@ -239,7 +239,8 @@ function PullRequestAttachmentLink({
       <span className="min-w-0 flex-1 truncate">
         {label ?? (
           <T>
-            Open attachment on <Var>{hostLabel ?? new URL(url).hostname}</Var>
+            Open attachment on{" "}
+            <Var>{sourceControlHostLabel ?? new URL(attachmentUrl).hostname}</Var>
           </T>
         )}
       </span>
