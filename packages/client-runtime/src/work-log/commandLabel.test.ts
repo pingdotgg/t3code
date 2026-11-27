@@ -14,6 +14,8 @@ describe("commandProgramName", () => {
     ['"C:\\Program Files\\Git\\bin\\bash.exe" -lc "git status"', "git"],
     // regression: #9371 a multiline script whose later line re-quotes must still label its first program
     ["/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"", "git"],
+    ["bash -c $'ls\\nnpm test'", "ls"],
+    ["bash -c $'\\x6e\\160m test'", "npm"],
   ])("unwraps shell scripts without executing them: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -198,6 +200,16 @@ describe("commandDisplayText with Windows shell wrappers", () => {
     ['cmd.exe /c "npm test"', "npm test"],
     ['Bash.exe -lc "git status"', "git status"],
     ['"C:\\Program Files\\Git\\bin\\Bash.exe" -lc "rg foo"', "rg foo"],
+  ])("shows %j as %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+});
+
+describe("commandDisplayText with ANSI-C and locale quoting", () => {
+  it.each([
+    ["bash -c $'npm test'", "npm test"],
+    ["bash -c $'echo \\'hi\\'; ls'", "echo 'hi'; ls"],
+    ['bash -lc $"npm test"', "npm test"],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
   });
