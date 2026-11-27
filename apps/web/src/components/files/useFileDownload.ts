@@ -11,11 +11,11 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { downloadMedia } from "../media/mediaContent";
 import { toastManager } from "../ui/toast";
-import { fileDownloadName } from "./fileDownloadName";
+import { fileDownloadName, type FileDownloadPathKind } from "./fileDownloadName";
 
 export function useFileDownload(
   environmentId: EnvironmentId | null,
-  pathKind: "workspace-relative" | "host",
+  pathKind: FileDownloadPathKind,
 ) {
   const gt = useGT();
   const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
@@ -37,9 +37,10 @@ export function useFileDownload(
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
       const url = resolveAssetUrl(connection.httpBaseUrl, result.value.relativeUrl);
       if (!url) throw new Error(gt("The file could not be loaded. Try again."));
-      const hostOs =
-        pathKind === "host" ? (connection.descriptor?.platform.os ?? "unknown") : undefined;
-      await downloadMedia(url, fileDownloadName(path, hostOs));
+      await downloadMedia(
+        url,
+        fileDownloadName(path, pathKind, connection.descriptor?.platform.os),
+      );
     })().catch((cause: unknown) =>
       toastManager.add({
         type: "error",

@@ -1,6 +1,13 @@
 import type { ExecutionEnvironmentPlatformOs } from "@t3tools/contracts";
 
-export function fileDownloadName(path: string, hostOs?: ExecutionEnvironmentPlatformOs): string {
-  const separator = hostOs === "windows" || hostOs === "unknown" ? /[\\/]/ : "/";
+export type FileDownloadPathKind = "workspace-relative" | "host";
+
+export function fileDownloadName(
+  path: string,
+  pathKind: FileDownloadPathKind,
+  hostOs: ExecutionEnvironmentPlatformOs = "unknown",
+): string {
+  const separator =
+    pathKind === "host" && (hostOs === "windows" || hostOs === "unknown") ? /[\\/]/ : "/";
   return path.split(separator).at(-1) || path;
 }

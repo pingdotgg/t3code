@@ -1145,6 +1145,22 @@ function opened(positionKey: string, children: ReactNode) {
   );
 }
 
+it("saves a large file from a native Windows path before the host OS is known", async () => {
+  const path = "C:\\workspace\\large.log";
+  state.file = { relativePath: path, contents: "log", byteLength: 1_200_000, truncated: true };
+  state.mintUrl.mockResolvedValueOnce("data:text/plain,log");
+  const download = Promise.withResolvers<string>();
+  using _click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    download.resolve(this.download);
+  });
+
+  await using screen = await render(filePreview(path));
+  await screen.getByRole("button", { name: "Save file", exact: true }).click();
+  expect(await download.promise).toBe("large.log");
+});
+
 describe("large text scroll position", () => {
   const log = (count: number) => (
     <VirtualTablePreview

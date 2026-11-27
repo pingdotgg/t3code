@@ -280,6 +280,7 @@ export function WorkspaceBrowserPreview(props: {
   readonly absolutePath: string;
   readonly workspaceRoot: string;
   readonly title: string;
+  readonly downloadName: string;
   readonly workspaceMutationId: string | null;
 }) {
   const pdf = isPdfPreviewFile(props.absolutePath);
@@ -363,7 +364,7 @@ export function WorkspaceBrowserPreview(props: {
         <WorkspacePdfSaveAction
           environmentId={props.environmentId}
           resource={resource}
-          name={props.title}
+          name={props.downloadName}
         />
       }
     />
@@ -394,10 +395,7 @@ function WorkspacePdfSaveAction(props: {
           setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
           const anchor = document.createElement("a");
           anchor.href = downloadUrl;
-          anchor.download = fileDownloadName(
-            props.name,
-            readPreparedConnection(props.environmentId)?.descriptor?.platform.os,
-          );
+          anchor.download = props.name;
           anchor.click();
         })()
           .catch((cause: unknown) =>
@@ -1344,6 +1342,14 @@ function FilePreviewPanelContent({
   const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
   const isHostFile =
     attachment !== undefined || (relativePath !== null && isHostPath(relativePath));
+  const downloadName = fileDownloadName(
+    relativePath ?? "",
+    isHostFile ? "host" : "workspace-relative",
+    isHostFile
+      ? (serverConfig?.environment.platform.os ??
+          readPreparedConnection(environmentId)?.descriptor?.platform.os)
+      : undefined,
+  );
   const fileAccess = useFilesystemReadAccess(environmentId, m);
   const { canReadFiles } = fileAccess;
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
@@ -1721,6 +1727,7 @@ function FilePreviewPanelContent({
               absolutePath={absolutePath}
               draftCwd={draft ? cwd : null}
               name={relativePath}
+              downloadName={downloadName}
               copyContents={copyLargeText}
             />
           ) : null}
@@ -1831,6 +1838,7 @@ function FilePreviewPanelContent({
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               title={relativePath}
+              downloadName={downloadName}
               workspaceMutationId={workspaceMutationId}
             />
           ) : relativePath && absolutePath && showsLargeText ? (
@@ -1863,7 +1871,7 @@ function FilePreviewPanelContent({
               document={isDocument}
               absolutePath={absolutePath}
               workspaceRoot={cwd}
-              name={fileDownloadName(relativePath, serverConfig?.environment.platform.os)}
+              name={downloadName}
               workspaceMutationId={workspaceMutationId}
               refreshRevision={fileRefreshRevision}
             />
@@ -2031,6 +2039,7 @@ function LargeFileActions(props: {
   absolutePath: string;
   draftCwd: string | null;
   name: string;
+  downloadName: string;
   copyContents: RefObject<(() => Promise<string>) | null>;
 }) {
   const gt = useGT();
@@ -2077,10 +2086,7 @@ function LargeFileActions(props: {
             setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
             const anchor = document.createElement("a");
             anchor.href = downloadUrl;
-            anchor.download = fileDownloadName(
-              props.name,
-              readPreparedConnection(props.environmentId)?.descriptor?.platform.os,
-            );
+            anchor.download = props.downloadName;
             anchor.click();
           })()
             .catch(showError)
