@@ -601,7 +601,7 @@ class Terminal {
     if (code === 0x0a) this.newline();
     else if (code === 0x0d) this.col = 0;
     else if (code === 0x08) this.col = Math.max(0, this.col - 1);
-    else return false;
+    else return code === 0x07; // BEL has no screen effect.
     return true;
   }
 
@@ -625,8 +625,8 @@ class Terminal {
         const end = length === -1 ? -1 : start - 1 + length;
         let sequence = ESC + input.slice(start, end === -1 ? input.length : end);
         if (sequence[1] === "[") {
-          // Apply line controls now and leave them out of the CSI, including any pending fragment.
-          sequence = sequence.replace(/[\b\n\r]/gu, (control) => {
+          // Apply controls now and leave them out of the CSI, including any pending fragment.
+          sequence = sequence.replace(/[\u0007\b\n\r]/gu, (control) => {
             this.control(control.charCodeAt(0));
             return "";
           });
