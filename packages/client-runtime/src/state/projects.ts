@@ -23,7 +23,7 @@ function getAbsolutePathKind(value: string): "unix" | "windows" | null {
   return null;
 }
 
-function preferredPathSeparator(value: string): "/" | "\\" {
+export function preferredPathSeparator(value: string): "/" | "\\" {
   const absolutePathKind = getAbsolutePathKind(value);
   if (absolutePathKind === "windows") return "\\";
   if (absolutePathKind === "unix") return "/";

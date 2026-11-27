@@ -31,6 +31,7 @@ import * as AuthHttp from "../auth/http.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerHttp from "../http.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
@@ -78,6 +79,7 @@ const layerConfig = Layer.effect(
 const layerLinkProofRoutes = HttpApiBuilder.layer(LinkProofTestApi).pipe(
   Layer.provide([AuthHttp.layer, ConnectHttp.layer]),
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
+  Layer.provide(ServerHttp.layerApiBodyLimit),
   Layer.provide(CloudLink.layer),
   Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
   Layer.provide(EnvironmentKeys.layer),
@@ -301,6 +303,16 @@ describe("link proof over a non-loopback transport", () => {
       const { post } = yield* linkProofClient;
       const response = yield* post("/api/connect/link-proof", proofRequest);
       expect(response.status).toBe(401);
+    }),
+  );
+
+  it.effect("answers 413 to a relay proof body over the API limit", () =>
+    Effect.gen(function* () {
+      const { post } = yield* linkProofClient;
+      const payload = { proof: "x".repeat(ServerHttp.API_MAX_BODY_BYTES) };
+      for (const path of ["/api/t3-connect/health", "/api/t3-connect/mint-credential"]) {
+        expect((yield* post(path, payload)).status, path).toBe(413);
+      }
     }),
   );
 });
