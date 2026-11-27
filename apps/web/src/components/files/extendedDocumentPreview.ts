@@ -131,15 +131,14 @@ async function odfHtml(
         : ["", 0];
   const numbered =
     node.name === "text:list" &&
-    (listStyles
+    listStyles
       .get(nextList[0])
       ?.children.some(
         (level) =>
           level.name === "text:list-level-style-number" &&
           level.attrs["text:level"] === String(nextList[1]) &&
           !!level.attrs["style:num-format"],
-      ) ??
-      false);
+      );
   for (const child of node.children)
     children += await odfHtml(
       child,
