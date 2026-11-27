@@ -741,6 +741,16 @@ Third}`;
     );
   });
 
+  it("omits hidden ODT sections", async () => {
+    const xml =
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>Visible intro.</text:p><text:section text:style-name="Sect1" text:name="Internal" text:display="none"><text:p>Internal margin 42%.</text:p></text:section><text:section text:name="Shown" text:display="true"><text:p>Shown section.</text:p></text:section><text:p>Visible end.</text:p></office:text></office:body></office:document-content>';
+    const result = await openDocument(new JSZip().file("content.xml", xml), "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p>Visible intro.</p><p>Shown section.</p><p>Visible end.</p>",
+    );
+  });
+
   it("maps ODT heading outline levels to HTML heading tags", async () => {
     const xml =
       '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:h text:outline-level="1">1</text:h><text:h text:outline-level="2">2</text:h><text:h text:outline-level="3">3</text:h><text:h text:outline-level="6">6</text:h><text:h text:outline-level="10">10</text:h><text:h text:outline-level="0">0</text:h><text:h text:outline-level="1.5">1.5</text:h><text:h text:outline-level="abc">abc</text:h><text:h>none</text:h></office:text></office:body></office:document-content>';
@@ -1081,6 +1091,42 @@ Third}`;
       '<feFuncG type="discrete" tableValues="0 0.5 1">',
       '<feFuncB type="gamma" amplitude="2" exponent="3">',
     ]);
+  });
+
+  it("keeps the lighting and arithmetic composite of EPUB SVG bevels", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="badge" href="badge.svg" media-type="image/svg+xml"/></manifest><spine><itemref idref="badge"/></spine></package>',
+      )
+      .file(
+        "badge.svg",
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <filter id="bevel">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="2" result="blur"/>
+            <feSpecularLighting in="blur" surfaceScale="5" specularConstant="0.75" specularExponent="20" result="shine">
+              <fePointLight x="-5000" y="-10000" z="20000"/>
+            </feSpecularLighting>
+            <feDiffuseLighting in="blur" diffuseConstant="1" result="light">
+              <feSpotLight x="10" y="10" z="50" pointsAtX="50" pointsAtY="50" pointsAtZ="0" limitingConeAngle="30"/>
+            </feDiffuseLighting>
+            <feComposite in="SourceGraphic" in2="shine" operator="arithmetic" k1="0" k2="1" k3="1" k4="0"/>
+          </filter>
+          <rect width="80" height="80" fill="orange" filter="url(#bevel)"/>
+        </svg>`,
+      );
+    const book = await openEpub(archive);
+    const { html } = await book.page(0);
+    expect(html).toContain('<fePointLight x="-5000" y="-10000" z="20000">');
+    expect(html).toContain("<feDiffuseLighting ");
+    expect(html).toContain('diffuseConstant="1"');
+    expect(html).toContain("<feSpotLight ");
+    expect(html).toContain('pointsAtX="50" pointsAtY="50" pointsAtZ="0" limitingConeAngle="30"');
+    expect(html).toContain('operator="arithmetic" k1="0" k2="1" k3="1" k4="0"');
   });
 
   it("keeps embedded raster images in EPUB SVG artwork", async () => {
