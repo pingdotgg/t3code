@@ -7,7 +7,7 @@ export function PushHooksApprovalDetails({ pushHooks }: { pushHooks: ProviderApp
   const m = useMessages();
   return (
     <dl
-      className="grid min-w-0 grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-muted-foreground"
+      className="grid min-w-0 grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-meta text-muted-foreground"
       data-approval-detail="push-hooks"
     >
       {pushHooksApprovalRows(pushHooks, m).map((row, index) => (
