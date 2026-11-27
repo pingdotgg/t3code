@@ -758,9 +758,11 @@
   "8360d689ebc7f829": "Push & create {shortLabel} from default branch?",
   "daa408bb99d21d18": "{kind, select, pr {This action will push local commits and create a PR on \"{branch}\". You can continue on this branch or create a feature branch and run the same action there.} mr {This action will push local commits and create an MR on \"{branch}\". You can continue on this branch or create a feature branch and run the same action there.} generic {This action will push local commits and create a change request on \"{branch}\". You can continue on this branch or create a feature branch and run the same action there.} other {This action will push local commits and create {changeRequest} on \"{branch}\". You can continue on this branch or create a feature branch and run the same action there.}}",
   "8471c4c5a50ffde3": "Issues cannot be browsed for this host yet.",
-  "2f4a47129f89fe22": "Not connected. Add a personal api key to list its issues.",
+  "4a727b074bbbc5b2": "Not connected. Add your personal API key to list its issues.",
+  "b40c70c4488dcebe": "Not connected. Add your API token to list its issues.",
   "024baab60525a419": "The saved credential was rejected.",
-  "2613c232516f3c72": "Connected as {account} · no projects linked yet. Pick a team for a project to list its issues.",
+  "1e89798e3a9050c6": "Connected as {account} · no projects linked yet. Link one to a Linear team to list its issues.",
+  "c3ab6f9e8b29fbf1": "Connected as {account} · no projects linked yet. Link one to a Jira project to list its issues.",
   "77d07bfe2f8ee19d": "{count, plural, one {Connected as {account} · {count} project linked} other {Connected as {account} · {count} projects linked}}",
   "3eb9a01099aaf799": "{count}s",
   "3618302947c280f0": "{count}m",
@@ -1576,6 +1578,8 @@
   "737d3c6bec93f9e6": "Choose files for the page",
   "e6a3fa7cfc14f86a": "Browser dialog",
   "61a552a67e9e3eac": "Dialog response",
+  "cb5c27218e96e407": "Username",
+  "182a659d70f8ea72": "Password",
   "3d000b56e95f3150": "Release control",
   "0633c3bcdcb95b2f": "Take control",
   "b8ba763621bcdd70": "The server's browser loaded this page but is not drawing it. Try reloading, or open the page in a browser on this computer.",
@@ -13044,5 +13048,8 @@
   "717c1c47a852a1a5": "Pause narration",
   "0eceb5780908eb6c": "Read aloud",
   "3ee98da81538c6de": "Could not play narration.",
-  "95435f0b59cb2193": "Audio preview"
+  "95435f0b59cb2193": "Audio preview",
+  "4a12506938295127": "Enter the {field} first.",
+  "5807c08e225c6b3d": "Download",
+  "0d50b5bfe7151ece": "Could not download file"
 }

@@ -758,9 +758,11 @@
   "8360d689ebc7f829": "Pushen & {shortLabel} aus dem Standard-Branch erstellen?",
   "daa408bb99d21d18": "{kind, select, pr {Diese Aktion pusht lokale Commits und erstellt einen PR auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.} mr {Diese Aktion pusht lokale Commits und erstellt einen MR auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.} generic {Diese Aktion pusht lokale Commits und erstellt eine Änderungsanfrage auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.} other {Diese Aktion pusht lokale Commits und erstellt {changeRequest} auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.}}",
   "8471c4c5a50ffde3": "Issues dieses Hosts können noch nicht angezeigt werden.",
-  "2f4a47129f89fe22": "Nicht verbunden. Füge einen persönlichen API-Schlüssel hinzu, um die Issues aufzulisten.",
+  "4a727b074bbbc5b2": "Nicht verbunden. Füge deinen persönlichen API-Schlüssel hinzu, um die Issues aufzulisten.",
+  "b40c70c4488dcebe": "Nicht verbunden. Füge dein API-Token hinzu, um die Issues aufzulisten.",
   "024baab60525a419": "Die gespeicherten Anmeldedaten wurden abgelehnt.",
-  "2613c232516f3c72": "Verbunden als {account} · noch keine Projekte verknüpft. Wähle für ein Projekt ein Team, um seine Issues aufzulisten.",
+  "1e89798e3a9050c6": "Verbunden als {account} · noch keine Projekte verknüpft. Verknüpfe eines mit einem Linear-Team, um seine Issues aufzulisten.",
+  "c3ab6f9e8b29fbf1": "Verbunden als {account} · noch keine Projekte verknüpft. Verknüpfe eines mit einem Jira-Projekt, um seine Issues aufzulisten.",
   "77d07bfe2f8ee19d": "{count, plural, one {Verbunden als {account} · {count} Projekt verknüpft} other {Verbunden als {account} · {count} Projekte verknüpft}}",
   "3eb9a01099aaf799": "{count} s",
   "3618302947c280f0": "{count} Min.",
@@ -1576,6 +1578,8 @@
   "737d3c6bec93f9e6": "Dateien für die Seite auswählen",
   "e6a3fa7cfc14f86a": "Browserdialog",
   "61a552a67e9e3eac": "Antwort auf Dialog",
+  "cb5c27218e96e407": "Benutzername",
+  "182a659d70f8ea72": "Passwort",
   "3d000b56e95f3150": "Steuerung abgeben",
   "0633c3bcdcb95b2f": "Steuerung übernehmen",
   "b8ba763621bcdd70": "Der Browser des Servers hat diese Seite geladen, zeichnet sie aber nicht. Lade sie neu oder öffne die Seite in einem Browser auf diesem Computer.",
@@ -13036,5 +13040,8 @@
   "717c1c47a852a1a5": "Vorlesen pausieren",
   "0eceb5780908eb6c": "Vorlesen",
   "3ee98da81538c6de": "Die Vertonung konnte nicht abgespielt werden.",
-  "95435f0b59cb2193": "Audiovorschau"
+  "95435f0b59cb2193": "Audiovorschau",
+  "4a12506938295127": "Gib zuerst {field} ein.",
+  "5807c08e225c6b3d": "Herunterladen",
+  "0d50b5bfe7151ece": "Datei konnte nicht heruntergeladen werden"
 }

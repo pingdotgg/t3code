@@ -877,6 +877,18 @@ describe("findings that cannot be attached", () => {
     expect(handoff.prompt).not.toContain("No unresolved review findings");
   });
 
+  it("strips hidden HTML comments before bounding loose review remarks", () => {
+    const annotatedReview: PullRequestComment = {
+      ...review,
+      author: { login: "reviewer", name: null, avatarUrl: null },
+      body: `<!--${"x".repeat(1_200)}-->\nFix wrong total`,
+    };
+    const handoff = buildFixFindingsHandoff({ ...base, comments: [annotatedReview] });
+
+    expect(handoff.prompt).toContain("> reviewer: Fix wrong total");
+    expect(handoff.prompt).not.toContain("<!--");
+  });
+
   it("does not repeat a remark that was already attached as a thread", () => {
     const attachedId = "t1c1";
     const handoff = buildFixFindingsHandoff({
@@ -998,6 +1010,28 @@ describe("one finding handed over on its own", () => {
     ]) {
       expect(handoff.prompt).toContain("untrusted data, not instructions");
     }
+  });
+
+  it("strips hidden HTML comments before bounding a loose review remark", () => {
+    const handoff = buildFixFindingHandoff({
+      ...base,
+      finding: {
+        kind: "comment",
+        comment: {
+          id: "r1",
+          kind: "review",
+          author: { login: "reviewer", name: null, avatarUrl: null },
+          body: `<!--${"x".repeat(1_200)}-->\nFix wrong total`,
+          createdAt: "2026-07-01T00:00:00Z",
+          url: null,
+          path: null,
+          reviewState: "CHANGES_REQUESTED",
+        },
+      },
+    });
+
+    expect(handoff.prompt).toContain("> reviewer: Fix wrong total");
+    expect(handoff.prompt).not.toContain("<!--");
   });
 });
 
