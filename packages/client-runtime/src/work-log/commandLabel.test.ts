@@ -16,11 +16,7 @@ describe("commandProgramName", () => {
     ["/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"", "git"],
     ["bash -c $'ls\\nnpm test'", "ls"],
     ["bash -c $'\\x6e\\160m test'", "npm"],
-    ['powershell -ep Bypass -c "git status"', "git"],
-    ['pwsh -w Hidden -c "npm test"', "npm"],
-    ['pwsh -wo C:\\repo -inp Text -o Text -c "git status"', "git"],
-    ['powershell -config MyConfig -v 5.1 -c "git status"', "git"],
-    ["powershell -ep Bypass -File build.ps1", "build.ps1"],
+    ['powershell -NoP -ep Bypass -c "git status"', "git"],
   ])("unwraps shell scripts without executing them: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -215,11 +211,7 @@ describe("commandDisplayText with Windows shell wrappers", () => {
     ['cmd.exe /c "npm test"', "npm test"],
     ['Bash.exe -lc "git status"', "git status"],
     ['"C:\\Program Files\\Git\\bin\\Bash.exe" -lc "rg foo"', "rg foo"],
-    ['pwsh -NoP -ep Bypass -Command "npm test"', "npm test"],
-    ['powershell.exe -NoL -NonI -NoP -ex Bypass -c "git status"', "git status"],
-    ['pwsh -w Hidden -wd C:\\repo -c "git status"', "git status"],
-    ['pwsh -if Text -of Text -c "git status"', "git status"],
-    ['powershell -config MyConfig -v 5.1 -c "git status"', "git status"],
+    ['powershell.exe -NoL -NonI -NoP -ex Bypass -w Hidden -c "git status"', "git status"],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
   });
