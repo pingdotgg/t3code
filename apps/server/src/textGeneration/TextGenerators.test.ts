@@ -285,3 +285,30 @@ it.effect.each([
       }
     }),
 );
+
+it.effect("lists models from an OpenAI-compatible bare array using display_name", () =>
+  Effect.gen(function* () {
+    const upstream = vi.fn<typeof fetch>(async () =>
+      Response.json([
+        {
+          id: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+          object: "model",
+          created: 1733505268,
+          type: "chat",
+          display_name: "Llama 3.3 70B Instruct Turbo",
+          organization: "Meta",
+          context_length: 131072,
+        },
+        { id: "acme/named", name: "Preferred", display_name: "Fallback" },
+      ]),
+    );
+    const { listModels } = yield* TextGenerators.TextGenerators.pipe(Effect.provide(layer({})));
+    const { models } = yield* listModels({ id: ID }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, upstream),
+    );
+    expect(models).toEqual([
+      { id: "acme/named", name: "Preferred" },
+      { id: "meta-llama/Llama-3.3-70B-Instruct-Turbo", name: "Llama 3.3 70B Instruct Turbo" },
+    ]);
+  }),
+);

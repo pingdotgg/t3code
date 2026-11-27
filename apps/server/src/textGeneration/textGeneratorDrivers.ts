@@ -124,9 +124,9 @@ const withTimeout =
 const sortModels = (models: Iterable<TextGeneratorModel>) =>
   [...models].sort((left, right) => left.id.localeCompare(right.id));
 
-const readModel = (entry: { readonly id: string; readonly name?: string | undefined }) => {
+const readModel = (entry: typeof ModelEntry.Type) => {
   const id = entry.id.trim();
-  return id ? { id, name: entry.name?.trim() || id } : undefined;
+  return id ? { id, name: entry.name?.trim() || entry.display_name?.trim() || id } : undefined;
 };
 
 const ChatCompletion = Schema.Struct({
@@ -137,9 +137,13 @@ const ChatCompletion = Schema.Struct({
     }),
   ),
 });
-const OpenAIModelList = Schema.Struct({
-  data: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optional(Schema.String) })),
+const ModelEntry = Schema.Struct({
+  id: Schema.String,
+  name: Schema.optional(Schema.String),
+  display_name: Schema.optional(Schema.String),
 });
+const OpenAIModels = Schema.Array(ModelEntry);
+const OpenAIModelList = Schema.Union([Schema.Struct({ data: OpenAIModels }), OpenAIModels]);
 
 const openAICompatible: TextGeneratorDriver = {
   kind: "openaiCompatible",
@@ -170,7 +174,8 @@ const openAICompatible: TextGeneratorDriver = {
     let request = HttpClientRequest.get(endpoint(connection, "/models"));
     if (connection.apiKey) request = HttpClientRequest.bearerToken(request, connection.apiKey);
     return sendJson(label, request, OpenAIModelList).pipe(
-      Effect.map((list) => sortModels(list.data.flatMap((entry) => readModel(entry) ?? []))),
+      Effect.map((list) => ("data" in list ? list.data : list)),
+      Effect.map((list) => sortModels(list.flatMap((entry) => readModel(entry) ?? []))),
       withTimeout(label, LIST_MODELS_TIMEOUT),
     );
   },
