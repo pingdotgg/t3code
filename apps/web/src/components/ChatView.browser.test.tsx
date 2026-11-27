@@ -1190,15 +1190,11 @@ it("a new thread on a branch with changes opens them from thread details", async
     // AppRoot brings its own router.
     router: false,
   });
-  const changesRow = () =>
-    [...document.querySelectorAll("button")].find((button) =>
-      button.textContent?.startsWith("Changesvs main+150"),
-    );
-  await expect.poll(changesRow, { timeout: 5_000 }).toBeDefined();
+  const changesRow = page.getByRole("button", { name: /^Changes\s*vs main\s*\+150/ });
   // The row already shows the branch's totals, so it has to open them.
-  expect(changesRow()?.disabled).toBe(false);
+  await expect.element(changesRow).toBeEnabled();
 
-  changesRow()?.click();
+  await changesRow.click();
   // The panel reads the draft's checkout; without one it asks for a thread instead.
-  await expect.element(page.getByText("Loading changes..."), { timeout: 5_000 }).toBeVisible();
+  await expect.element(page.getByText("Loading changes...")).toBeVisible();
 });
