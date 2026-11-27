@@ -3595,6 +3595,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     (effect) => Effect.ignore(effect),
   );
 
+  // A launch without a message prepares its worktree with no run to queue behind. A message
+  // waits for it, outside the thread lock the bind needs, rather than start in the checkout.
+  const awaitLaunchWorktree = Effect.fn("Orchestrator.awaitLaunchWorktree")(
+    function* (threadId: ThreadId) {
+      if (!(yield* worktreeSetupTracker.workspaceIsHeld(threadId))) return;
+      const { thread, runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
+      if (thread.worktreePath !== null || runs.some(isActiveRun)) return;
+      yield* worktreeSetupTracker.awaitWorkspaceRelease(threadId);
+    },
+    (effect) => Effect.ignore(effect),
+  );
+
   const requeueUnreadSteers = Effect.fn("Orchestrator.requeueUnreadSteers")(function* (
     threadId: ThreadId,
     runIds?: ReadonlyArray<RunId>,
@@ -16940,6 +16952,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.sourcePoint.type === "latest_stable"
     ) {
       yield* awaitLatestRunCapture(command.sourceThreadId);
+    }
+    if (
+      command.type === "message.dispatch" &&
+      (command.dispatchMode.type === "start_immediately" ||
+        command.dispatchMode.type === "queue_after_active")
+    ) {
+      yield* awaitLaunchWorktree(command.threadId);
     }
     const dispatch = threadDispatch.withLock(
       commandThreadId(command),

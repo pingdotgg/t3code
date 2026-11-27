@@ -3427,9 +3427,10 @@ it.effect(
     }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("a message is refused while a launch is still preparing the worktree", () =>
+it.effect("a message waits for the worktree a launch is still preparing", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
     const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
     const threadId = ThreadId.make("thread:send-before-bind");
     yield* orchestrator.dispatch({
@@ -3446,7 +3447,7 @@ it.effect("a message is refused while a launch is still preparing the worktree",
       createdBy: "agent",
       creationSource: "mcp",
     });
-    yield* tracker.holdWorkspace(threadId).pipe(Effect.asVoid);
+    const release = yield* tracker.holdWorkspace(threadId);
 
     const sent = yield* orchestrator
       .dispatch({
@@ -3460,12 +3461,21 @@ it.effect("a message is refused while a launch is still preparing the worktree",
         createdBy: "agent",
         creationSource: "mcp",
       })
-      .pipe(Effect.result);
+      .pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    assert.deepEqual((yield* projections.getThreadProjection(threadId)).runs, []);
 
-    assert.isTrue(Result.isFailure(sent));
-    const projection = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("send-before-bind:workspace"),
       threadId,
-    );
-    assert.deepEqual(projection.runs, []);
+      worktreePath: "/repo-worktrees/t3-send-before-bind",
+    });
+    yield* release;
+    yield* Fiber.join(sent);
+
+    const projection = yield* projections.getThreadProjection(threadId);
+    assert.equal(projection.thread.worktreePath, "/repo-worktrees/t3-send-before-bind");
+    assert.lengthOf(projection.runs, 1);
   }).pipe(Effect.provide(Layer.mergeAll(layerTest, WorktreeSetupTracker.layer))),
 );
