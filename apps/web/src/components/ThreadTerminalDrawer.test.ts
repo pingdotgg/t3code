@@ -11,6 +11,7 @@ import {
   shouldHandleTerminalExit,
   synchronizeTerminalOutput,
   synchronizeTerminalSession,
+  terminalInputLifecycle,
 } from "./ThreadTerminalDrawer";
 
 describe("terminal selection actions", () => {
@@ -65,6 +66,9 @@ it("retains visible output and selection until a replacement subscription receiv
     type: "snapshot",
     snapshot: { ...snapshot, history: "host output\nobserved output" },
   });
+  // Each attach stream restarts lifecycleVersion, so a pending paste must also see the stream change.
+  expect(observed.lifecycleVersion).toBe(attached.lifecycleVersion);
+  expect(terminalInputLifecycle(observed)).not.toBe(terminalInputLifecycle(attached));
   const observedCursor = synchronizeTerminalOutput(terminal, observed, cursor);
   expect(terminal.resetAndWrite).toHaveBeenLastCalledWith("host output\nobserved output");
 
