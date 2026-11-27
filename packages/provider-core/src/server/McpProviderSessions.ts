@@ -75,8 +75,7 @@ export class McpProviderSessions extends Context.Service<
     readonly clear: (threadId: ThreadId) => Effect.Effect<void>;
     readonly recordHtmlRender: (
       threadId: ThreadId,
-      input: {
-        readonly html: string;
+      input: ({ readonly html: string } | { readonly openui: string }) & {
         readonly path?: string | undefined;
         readonly title: string;
         readonly height: number;
@@ -146,6 +145,7 @@ export class McpProviderSessions extends Context.Service<
 
 interface PageInput {
   readonly html?: unknown;
+  readonly openui?: unknown;
   readonly path?: unknown;
   readonly title?: unknown;
   readonly height?: unknown;
@@ -158,16 +158,20 @@ const matchingPageIndex = (kept: ReadonlyArray<KeptHtmlRender>, input: PageInput
       : input.height;
   const sameFrame = (page: KeptHtmlRender) => page.title === input.title && page.height === height;
   const path = input.path;
-  // The handler refuses a call with both sources, so it published nothing to recover. Its decoder
+  // The handler refuses a call with several sources, so it published nothing to recover. Its decoder
   // reads null as an omitted source.
-  if (path !== undefined && path !== null && input.html !== undefined && input.html !== null) {
+  const sources = [path, input.html, input.openui].filter(
+    (source) => source !== undefined && source !== null,
+  );
+  if (sources.length > 1) {
     return -1;
   }
   if (typeof path === "string" && path.length > 0) {
     // An edited file is published again under the same path; completions arrive in publish order.
     return kept.findIndex((page) => page.path === path && sameFrame(page));
   }
-  const html = input.html;
+  // An inline page and an OpenUI program are both matched by their text.
+  const html = input.html ?? input.openui;
   if (typeof html !== "string" || html.length === 0) {
     return -1;
   }
@@ -293,6 +297,7 @@ const make = Effect.gen(function* () {
     }),
     recordHtmlRender: Effect.fn("McpProviderSessions.recordHtmlRender")(
       function (threadId, input, reference) {
+        const text = "openui" in input ? input.openui : input.html;
         return Ref.update(htmlRenders, (current) =>
           new Map(current).set(
             threadId,
@@ -302,10 +307,10 @@ const make = Effect.gen(function* () {
                 path: input.path,
                 title: input.title,
                 height: input.height,
-                htmlLength: input.html.length,
-                htmlHash: hashText(input.html),
+                htmlLength: text.length,
+                htmlHash: hashText(text),
                 // Copy the tail so its backing storage cannot retain the entire HTML string.
-                htmlEnd: Buffer.from(input.html.slice(-KEPT_HTML_END_LENGTH), "utf16le").toString(
+                htmlEnd: Buffer.from(text.slice(-KEPT_HTML_END_LENGTH), "utf16le").toString(
                   "utf16le",
                 ),
                 reference,

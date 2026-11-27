@@ -160,6 +160,33 @@ describe("McpProviderSessions tool results", () => {
   );
 });
 
+describe("McpProviderSessions html renders", () => {
+  const threadId = ThreadId.make("thread-html-renders");
+  const reference = { attachmentId: "page", title: "Chart", height: 200 };
+
+  it.effect("recovers an OpenUI page by the program its call sent", () =>
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const call = { openui: "root = Card([chart])", title: "Chart", height: 200 };
+      yield* sessions.recordHtmlRender(threadId, call, reference);
+
+      assert.strictEqual(
+        yield* sessions.takeHtmlRender(threadId, { ...call, openui: "root = Card([table])" }),
+        undefined,
+      );
+      // A call with two sources is refused, so it published nothing to recover.
+      assert.strictEqual(
+        yield* sessions.takeHtmlRender(threadId, { ...call, html: "<p>Chart</p>" }),
+        undefined,
+      );
+      assert.deepEqual(
+        yield* sessions.takeHtmlRender(threadId, { ...call, html: null, path: null }),
+        reference,
+      );
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+  );
+});
+
 describe("McpProviderSessions approval requests", () => {
   const threadId = ThreadId.make("thread-approval-requests");
   const pushHooks = { branch: "tools", files: [".husky/pre-push"], commands: [] };

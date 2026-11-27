@@ -865,6 +865,23 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "openui-guide": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Read the OpenUI guide} other {Read the OpenUI guide {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to read the OpenUI guide} other {Tried to read the OpenUI guide {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "send-to-user": {
       const count = selected.length;
       label = done

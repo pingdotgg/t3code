@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import * as NodeModule from "node:module";
+
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -12,6 +14,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
 import { injectLinuxArm64Sea } from "../../../scripts/lib/linux-arm64-sea.ts";
+import { OPENUI_ASSET_FILES } from "../src/htmlRender/openUi.ts";
 import rootPackageJson from "../../../package.json" with { type: "json" };
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -88,6 +91,18 @@ const buildCmd = Command.make(
           shell: false,
         }),
       );
+
+      // html_render's openui source puts the renderer into each page it builds.
+      const openUiAssets = path.dirname(
+        NodeModule.createRequire(import.meta.url).resolve("@openuidev/browser-bundle"),
+      );
+      for (const file of Object.values(OPENUI_ASSET_FILES)) {
+        yield* fs.makeDirectory(path.join(serverDir, "dist/openui"), { recursive: true });
+        yield* fs.copyFile(
+          path.join(openUiAssets, file),
+          path.join(serverDir, "dist/openui", file),
+        );
+      }
 
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");

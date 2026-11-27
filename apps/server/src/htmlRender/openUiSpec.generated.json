@@ -1,0 +1,2287 @@
+{
+  "root": "Card",
+  "signatures": "Block = TextContent | MarkDownRenderer | CardHeader | Callout | TextCallout | CodeBlock | Image | ImageBlock | ImageGallery | Separator | HorizontalBarChart | RadarChart | PieChart | RadialChart | SingleStackedBarChart | ScatterChart | AreaChart | BarChart | LineChart | Table | TagBlock | Steps | InlineHeader | EntityList | SnippetCardBlock | OverviewCardBlock | ContextCardBlock | CompositeCardBlock | VisualCardBlock | ListBlock | SectionBlock | Tabs | Carousel\nCard(children: Block[]) — Vertical container for all content in a chat response. Children stack top to bottom automatically.\nCardHeader(title?: string, subtitle?: string) — Header with optional title and subtitle\nTextContent(text: string, size?: \"small\" | \"default\" | \"large\" | \"small-heavy\" | \"large-heavy\") — Text block. Supports markdown. Optional size: \"small\" | \"default\" | \"large\" | \"small-heavy\" | \"large-heavy\".\nMarkDownRenderer(textMarkdown: string, variant?: \"clear\" | \"card\" | \"sunk\") — Renders markdown text with optional container variant\nCallout(variant: \"info\" | \"warning\" | \"error\" | \"success\" | \"neutral\", title: string, description: string) — Callout banner.\nTextCallout(variant?: \"neutral\" | \"info\" | \"warning\" | \"success\" | \"danger\", title?: string, description?: string) — Text callout with variant, title, and description\nImage(alt: string, src?: string) — Image with alt text and optional URL\nImageBlock(src: string, alt?: string) — Image block with loading state\nImageGallery(images: {src: string, alt?: string, details?: string}[]) — Gallery grid of images with modal preview\nCodeBlock(language: string, codeString: string) — Syntax-highlighted code block\nSeparator(orientation?: \"horizontal\" | \"vertical\", decorative?: boolean) — Visual divider between content sections\nInlineHeader(heading: string, description?: string) — Compact section heading with an optional one-line description, for use inside cards.\nTable(columns: Col[]) — Data table — column-oriented. Each Col holds its own data array.\nCol(label: string, data: any, type?: \"string\" | \"number\") — Column definition — holds label + data array\nBarChart(labels: string[], series: Series[], variant?: \"grouped\" | \"stacked\", xLabel?: string, yLabel?: string, height?: number) — Vertical bars; use for comparing values across categories with one or more series\nLineChart(labels: string[], series: Series[], variant?: \"linear\" | \"natural\" | \"step\", xLabel?: string, yLabel?: string, height?: number) — Lines over categories; use for trends and continuous data over time\nAreaChart(labels: string[], series: Series[], variant?: \"linear\" | \"natural\" | \"step\", xLabel?: string, yLabel?: string, height?: number) — Filled area under lines; use for cumulative totals or volume trends over time\nRadarChart(labels: string[], series: Series[]) — Spider/web chart; use for comparing multiple variables across one or more entities\nHorizontalBarChart(labels: string[], series: Series[], variant?: \"grouped\" | \"stacked\", xLabel?: string, yLabel?: string) — Horizontal bars; prefer when category labels are long or for ranked lists\nSeries(category: string, values: number[]) — One data series\nPieChart(labels: string[], values: number[], variant?: \"pie\" | \"donut\", appearance?: \"circular\" | \"semiCircular\") — Circular slices; use plucked arrays: PieChart(data.categories, data.values)\nRadialChart(labels: string[], values: number[]) — Radial bars; use plucked arrays: RadialChart(data.categories, data.values)\nSingleStackedBarChart(labels: string[], values: number[]) — Single horizontal stacked bar; use plucked arrays: SingleStackedBarChart(data.categories, data.values)\nSlice(category: string, value: number) — One slice with label and numeric value\nScatterChart(datasets: ScatterSeries[], xLabel?: string, yLabel?: string) — X/Y scatter plot; use for correlations, distributions, and clustering\nScatterSeries(name: string, points: Point[]) — Named dataset\nPoint(x: number, y: number, z?: number) — Data point with numeric coordinates\nIcon(name: string, category?: string) — A lucide icon by kebab-case name (e.g. 'circle-check'). Optional category picks a topical fallback when the name doesn't resolve.\nListBlock(items: ListItem[], variant?: \"number\" | \"image\", size?: \"default\" | \"small\") — A list of items with number or image indicators. size small renders a compact list.\nListItem(title: string, subtitle?: string, image?: {src: string, alt: string}) — Item in a ListBlock — displays a title with an optional subtitle and image.\nSectionBlock(sections: SectionItem[], isFoldable?: boolean) — Collapsible accordion sections. Auto-opens sections as they stream in. Use SectionItem for each section.\nSectionItem(value: string, trigger: string, content: Block[]) — Section with a label and collapsible content — used inside SectionBlock\nTabs(items: TabItem[]) — Tabbed container\nTabItem(value: string, trigger: string, content: Block[]) — value is unique id, trigger is tab label, content is array of components\nAccordion(items: AccordionItem[]) — Collapsible sections\nAccordionItem(value: string, trigger: string, content: Block[]) — value is unique id, trigger is section title\nSteps(items: StepsItem[]) — Step-by-step guide\nStepsItem(title: string, details: string) — title and details text for one step\nCarousel(children: Block[][], variant?: \"card\" | \"sunk\") — Horizontal scrollable carousel\nTagBlock(tags: string[], size?: \"sm\" | \"md\" | \"lg\") — tags is an array of strings; optional size sm | md | lg\nTag(text: string, icon?: Icon, size?: \"sm\" | \"md\" | \"lg\", variant?: \"neutral\" | \"info\" | \"success\" | \"warning\" | \"danger\") — Styled tag/badge with optional Icon and variant\nEntityList(rows?: {left: string, right: string, rightVariant?: \"text\" | \"number\"}[], size?: \"small\" | \"default\", header?: {left: string, right: string, rightVariant?: \"text\" | \"number\"}, footer?: {left: string, right: string, rightVariant?: \"text\" | \"number\"}) — Two-column key/value rows (left label, right value). size 'default' supports optional header and footer rows; rightVariant 'number' uses tabular numbers.\nSnippetCardBlock(items: SnippetCardItem[], layout?: \"grid\", responsive?: boolean) — A responsive grid of compact label/value cards (2 per row) for showing several short facts side by side\nSnippetCardItem(id?: string, lhs: IconText | ImageText, rhs?: Text | BoldText) — One row-style snippet card: a label on the left (IconText or ImageText) and an optional value on the right (Text or BoldText).\nOverviewCardBlock(items: OverviewCardItem[], layout?: \"grid\" | \"carousel\", responsive?: boolean) — A grid or horizontal carousel of compact overview cards, each with a heading (icon/image/text) on top and an inline metric below\nOverviewCardItem(id?: string, top: IconText | ImageText | Text, bottom?: MetricIndicatorInline) — One overview card: a heading slot at the top (IconText, ImageText or Text) and an optional MetricIndicatorInline at the bottom.\nContextCardBlock(items: ContextCardItem[], layout?: \"grid\" | \"carousel\", responsive?: boolean) — A grid or carousel of compact tinted context cards (title or tag plus a short bold body)\nContextCardItem(id?: string, title: string | Tag, body?: string, bgColor?: \"gray\", bgImageSrc?: string, bgImageAlt?: string) — A single card inside a ContextCardBlock: a title (plain string or Tag), an optional markdown body, and an optional gray tint or background image.\nCompositeCardBlock(items: CompositeCardItem[], layout?: \"grid\" | \"carousel\", responsive?: boolean) — A two-per-row grid or carousel of rich cards, each with an optional header, stacked body content (text, metrics, charts, lists, tags) and a price footer\nCompositeCardItem(id?: string, header?: IconText | ImageText | ImageTextLarge | Text | Image, body?: (Text | BoldText | MetricIndicatorInline | IconText | Image | AreaChart | BarChart | LineChart | ListBlock | TagBlock | EntityList)[], footer?: {price?: BoldText | MetricIndicatorWithStrikethrough}) — A single card inside a CompositeCardBlock: an optional header (icon/image/text), a stack of body elements (text, metrics, charts, lists, tags), and an optional price footer.\nVisualCardBlock(items: VisualCardItem[], layout?: \"grid\" | \"carousel\", responsive?: boolean) — A grid or carousel of photo-first cards: a full-bleed background image with a tag on top and a bold text panel at the bottom\nVisualCardItem(body: BoldText, id?: string, bgImageSrc?: string, tag?: Tag, bgImageAlt?: string) — A single photo-first card inside a VisualCardBlock: a BoldText body panel, an optional Tag, and a background image (bgImageSrc must be a real URL; bgImageAlt is its alt text).\nText(variant?: \"text\" | \"number\", value: string, subtext?: string, subtextVariant?: \"text\" | \"number\" | \"metric\", size?: \"xs\" | \"sm\" | \"md\" | \"lg\") — Plain text line with optional subtext. variant 'number' uses tabular number styling; subtextVariant 'metric' colors a leading +/- subtext green/red.\nBoldText(variant?: \"text\" | \"number\", value: string, subtext?: string, subtextVariant?: \"text\" | \"number\" | \"metric\", size?: \"xs\" | \"sm\" | \"md\" | \"lg\") — Emphasized (bold) text line with optional subtext. variant 'number' uses tabular number styling; subtextVariant 'metric' colors a leading +/- subtext green/red.\nIconText(icon: Icon, iconVariant?: \"neutral\" | \"info\" | \"success\" | \"warning\" | \"danger\" | \"inverted\" | \"filled\" | \"soft\", iconSize?: \"xs\" | \"s\" | \"m\" | \"l\" | \"xl\" | \"sm\" | \"md\" | \"lg\", title: string, subtitle?: string, bold?: boolean, layout?: \"horizontal\" | \"vertical\") — An icon badge with a title and optional subtitle, laid out horizontally or vertically. iconVariant sets the badge color.\nImageText(src: string, alt?: string, title: string, subtitle?: string, bold?: boolean, layout?: \"horizontal\" | \"vertical\", imageSize?: number) — A small square image (thumbnail/avatar) with a title and optional subtitle. src must be a real image URL.\nImageTextLarge(src: string, alt?: string, title: string, subtitle?: string, bold?: boolean) — A full-width banner image above a bold title and optional subtitle. src must be a real image URL.\nMetricIndicatorInline(value: string, subtext?: string, trend?: {direction: \"up\" | \"down\", value: number}) — Headline metric value with an optional +/- percentage trend and subtext, all on one line.\nMetricIndicatorWithStrikethrough(value: string, subtext?: string, previousValue?: string, trend?: {direction: \"up\" | \"down\", value: number}) — Headline metric value with an optional struck-through previousValue, a +/- percentage trend, and subtext below.",
+  "schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "Card": {
+        "$ref": "#/$defs/Card"
+      },
+      "CardHeader": {
+        "$ref": "#/$defs/CardHeader"
+      },
+      "TextContent": {
+        "$ref": "#/$defs/TextContent"
+      },
+      "MarkDownRenderer": {
+        "$ref": "#/$defs/MarkDownRenderer"
+      },
+      "Callout": {
+        "$ref": "#/$defs/Callout"
+      },
+      "TextCallout": {
+        "$ref": "#/$defs/TextCallout"
+      },
+      "Image": {
+        "$ref": "#/$defs/Image"
+      },
+      "ImageBlock": {
+        "$ref": "#/$defs/ImageBlock"
+      },
+      "ImageGallery": {
+        "$ref": "#/$defs/ImageGallery"
+      },
+      "CodeBlock": {
+        "$ref": "#/$defs/CodeBlock"
+      },
+      "Separator": {
+        "$ref": "#/$defs/Separator"
+      },
+      "Table": {
+        "$ref": "#/$defs/Table"
+      },
+      "Col": {
+        "$ref": "#/$defs/Col"
+      },
+      "BarChart": {
+        "$ref": "#/$defs/BarChart"
+      },
+      "LineChart": {
+        "$ref": "#/$defs/LineChart"
+      },
+      "AreaChart": {
+        "$ref": "#/$defs/AreaChart"
+      },
+      "RadarChart": {
+        "$ref": "#/$defs/RadarChart"
+      },
+      "HorizontalBarChart": {
+        "$ref": "#/$defs/HorizontalBarChart"
+      },
+      "Series": {
+        "$ref": "#/$defs/Series"
+      },
+      "PieChart": {
+        "$ref": "#/$defs/PieChart"
+      },
+      "RadialChart": {
+        "$ref": "#/$defs/RadialChart"
+      },
+      "SingleStackedBarChart": {
+        "$ref": "#/$defs/SingleStackedBarChart"
+      },
+      "Slice": {
+        "$ref": "#/$defs/Slice"
+      },
+      "ScatterChart": {
+        "$ref": "#/$defs/ScatterChart"
+      },
+      "ScatterSeries": {
+        "$ref": "#/$defs/ScatterSeries"
+      },
+      "Point": {
+        "$ref": "#/$defs/Point"
+      },
+      "Form": {},
+      "FormControl": {},
+      "Label": {},
+      "Input": {},
+      "TextArea": {},
+      "Select": {},
+      "SelectItem": {},
+      "DatePicker": {},
+      "Slider": {},
+      "CheckBoxGroup": {},
+      "CheckBoxItem": {},
+      "RadioGroup": {},
+      "RadioItem": {},
+      "SwitchGroup": {},
+      "SwitchItem": {},
+      "Button": {},
+      "Buttons": {},
+      "ListBlock": {
+        "$ref": "#/$defs/ListBlock"
+      },
+      "ListItem": {
+        "$ref": "#/$defs/ListItem"
+      },
+      "FollowUpBlock": {},
+      "FollowUpItem": {},
+      "SectionBlock": {
+        "$ref": "#/$defs/SectionBlock"
+      },
+      "SectionItem": {
+        "$ref": "#/$defs/SectionItem"
+      },
+      "Tabs": {
+        "$ref": "#/$defs/Tabs"
+      },
+      "TabItem": {
+        "$ref": "#/$defs/TabItem"
+      },
+      "Accordion": {
+        "$ref": "#/$defs/Accordion"
+      },
+      "AccordionItem": {
+        "$ref": "#/$defs/AccordionItem"
+      },
+      "Steps": {
+        "$ref": "#/$defs/Steps"
+      },
+      "StepsItem": {
+        "$ref": "#/$defs/StepsItem"
+      },
+      "Carousel": {
+        "$ref": "#/$defs/Carousel"
+      },
+      "TagBlock": {
+        "$ref": "#/$defs/TagBlock"
+      },
+      "Tag": {
+        "$ref": "#/$defs/Tag"
+      },
+      "EntityList": {
+        "$ref": "#/$defs/EntityList"
+      },
+      "InlineHeader": {
+        "$ref": "#/$defs/InlineHeader"
+      },
+      "Icon": {
+        "$ref": "#/$defs/Icon"
+      },
+      "IconButton": {},
+      "EditableTable": {},
+      "ChipItem": {},
+      "Chips": {},
+      "OptionCard": {},
+      "OptionCards": {},
+      "Text": {
+        "$ref": "#/$defs/Text"
+      },
+      "BoldText": {
+        "$ref": "#/$defs/BoldText"
+      },
+      "IconText": {
+        "$ref": "#/$defs/IconText"
+      },
+      "ImageText": {
+        "$ref": "#/$defs/ImageText"
+      },
+      "ImageTextLarge": {
+        "$ref": "#/$defs/ImageTextLarge"
+      },
+      "MetricIndicatorInline": {
+        "$ref": "#/$defs/MetricIndicatorInline"
+      },
+      "MetricIndicatorWithStrikethrough": {
+        "$ref": "#/$defs/MetricIndicatorWithStrikethrough"
+      },
+      "SnippetCardItem": {
+        "$ref": "#/$defs/SnippetCardItem"
+      },
+      "SnippetCardBlock": {
+        "$ref": "#/$defs/SnippetCardBlock"
+      },
+      "OverviewCardItem": {
+        "$ref": "#/$defs/OverviewCardItem"
+      },
+      "OverviewCardBlock": {
+        "$ref": "#/$defs/OverviewCardBlock"
+      },
+      "ContextCardItem": {
+        "$ref": "#/$defs/ContextCardItem"
+      },
+      "ContextCardBlock": {
+        "$ref": "#/$defs/ContextCardBlock"
+      },
+      "CompositeCardItem": {
+        "$ref": "#/$defs/CompositeCardItem"
+      },
+      "CompositeCardBlock": {
+        "$ref": "#/$defs/CompositeCardBlock"
+      },
+      "VisualCardItem": {
+        "$ref": "#/$defs/VisualCardItem"
+      },
+      "VisualCardBlock": {
+        "$ref": "#/$defs/VisualCardBlock"
+      }
+    },
+    "required": [
+      "Card",
+      "CardHeader",
+      "TextContent",
+      "MarkDownRenderer",
+      "Callout",
+      "TextCallout",
+      "Image",
+      "ImageBlock",
+      "ImageGallery",
+      "CodeBlock",
+      "Separator",
+      "Table",
+      "Col",
+      "BarChart",
+      "LineChart",
+      "AreaChart",
+      "RadarChart",
+      "HorizontalBarChart",
+      "Series",
+      "PieChart",
+      "RadialChart",
+      "SingleStackedBarChart",
+      "Slice",
+      "ScatterChart",
+      "ScatterSeries",
+      "Point",
+      "Form",
+      "FormControl",
+      "Label",
+      "Input",
+      "TextArea",
+      "Select",
+      "SelectItem",
+      "DatePicker",
+      "Slider",
+      "CheckBoxGroup",
+      "CheckBoxItem",
+      "RadioGroup",
+      "RadioItem",
+      "SwitchGroup",
+      "SwitchItem",
+      "Button",
+      "Buttons",
+      "ListBlock",
+      "ListItem",
+      "FollowUpBlock",
+      "FollowUpItem",
+      "SectionBlock",
+      "SectionItem",
+      "Tabs",
+      "TabItem",
+      "Accordion",
+      "AccordionItem",
+      "Steps",
+      "StepsItem",
+      "Carousel",
+      "TagBlock",
+      "Tag",
+      "EntityList",
+      "InlineHeader",
+      "Icon",
+      "IconButton",
+      "EditableTable",
+      "ChipItem",
+      "Chips",
+      "OptionCard",
+      "OptionCards",
+      "Text",
+      "BoldText",
+      "IconText",
+      "ImageText",
+      "ImageTextLarge",
+      "MetricIndicatorInline",
+      "MetricIndicatorWithStrikethrough",
+      "SnippetCardItem",
+      "SnippetCardBlock",
+      "OverviewCardItem",
+      "OverviewCardBlock",
+      "ContextCardItem",
+      "ContextCardBlock",
+      "CompositeCardItem",
+      "CompositeCardBlock",
+      "VisualCardItem",
+      "VisualCardBlock"
+    ],
+    "additionalProperties": false,
+    "$defs": {
+      "Card": {
+        "type": "object",
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextContent"
+                },
+                {
+                  "$ref": "#/$defs/MarkDownRenderer"
+                },
+                {
+                  "$ref": "#/$defs/CardHeader"
+                },
+                {
+                  "$ref": "#/$defs/Callout"
+                },
+                {
+                  "$ref": "#/$defs/TextCallout"
+                },
+                {
+                  "$ref": "#/$defs/CodeBlock"
+                },
+                {
+                  "$ref": "#/$defs/Image"
+                },
+                {
+                  "$ref": "#/$defs/ImageBlock"
+                },
+                {
+                  "$ref": "#/$defs/ImageGallery"
+                },
+                {
+                  "$ref": "#/$defs/Separator"
+                },
+                {
+                  "$ref": "#/$defs/HorizontalBarChart"
+                },
+                {
+                  "$ref": "#/$defs/RadarChart"
+                },
+                {
+                  "$ref": "#/$defs/PieChart"
+                },
+                {
+                  "$ref": "#/$defs/RadialChart"
+                },
+                {
+                  "$ref": "#/$defs/SingleStackedBarChart"
+                },
+                {
+                  "$ref": "#/$defs/ScatterChart"
+                },
+                {
+                  "$ref": "#/$defs/AreaChart"
+                },
+                {
+                  "$ref": "#/$defs/BarChart"
+                },
+                {
+                  "$ref": "#/$defs/LineChart"
+                },
+                {
+                  "$ref": "#/$defs/Table"
+                },
+                {
+                  "$ref": "#/$defs/TagBlock"
+                },
+                {
+                  "$ref": "#/$defs/Steps"
+                },
+                {
+                  "$ref": "#/$defs/InlineHeader"
+                },
+                {
+                  "$ref": "#/$defs/EntityList"
+                },
+                {
+                  "$ref": "#/$defs/SnippetCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/OverviewCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/ContextCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/CompositeCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/VisualCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/ListBlock"
+                },
+                {
+                  "$ref": "#/$defs/SectionBlock"
+                },
+                {
+                  "$ref": "#/$defs/Tabs"
+                },
+                {
+                  "$ref": "#/$defs/Carousel"
+                }
+              ]
+            }
+          }
+        },
+        "required": ["children"],
+        "additionalProperties": false,
+        "description": "Vertical container for all content in a chat response. Children stack top to bottom automatically. Optional sources ([{ title, sourceName, url }]) render as a Sources strip at the bottom and back inline [n] citations in TextContent."
+      },
+      "TextContent": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "size": {
+            "type": "string",
+            "enum": ["small", "default", "large", "small-heavy", "large-heavy"]
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false,
+        "description": "Text block. Supports markdown. Optional size: \"small\" | \"default\" | \"large\" | \"small-heavy\" | \"large-heavy\"."
+      },
+      "MarkDownRenderer": {
+        "type": "object",
+        "properties": {
+          "textMarkdown": {
+            "type": "string"
+          },
+          "variant": {
+            "type": "string",
+            "enum": ["clear", "card", "sunk"]
+          }
+        },
+        "required": ["textMarkdown"],
+        "additionalProperties": false,
+        "description": "Renders markdown text with optional container variant"
+      },
+      "CardHeader": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Header with optional title and subtitle"
+      },
+      "Callout": {
+        "type": "object",
+        "properties": {
+          "variant": {
+            "type": "string",
+            "enum": ["info", "warning", "error", "success", "neutral"]
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        },
+        "required": ["variant", "title", "description"],
+        "additionalProperties": false,
+        "description": "Callout banner. Optional visible is a reactive $boolean — auto-dismisses after 3s by setting $visible to false."
+      },
+      "TextCallout": {
+        "type": "object",
+        "properties": {
+          "variant": {
+            "type": "string",
+            "enum": ["neutral", "info", "warning", "success", "danger"]
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Text callout with variant, title, and description"
+      },
+      "CodeBlock": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "type": "string"
+          },
+          "codeString": {
+            "type": "string"
+          }
+        },
+        "required": ["language", "codeString"],
+        "additionalProperties": false,
+        "description": "Syntax-highlighted code block"
+      },
+      "Image": {
+        "type": "object",
+        "properties": {
+          "alt": {
+            "type": "string"
+          },
+          "src": {
+            "type": "string"
+          }
+        },
+        "required": ["alt"],
+        "additionalProperties": false,
+        "description": "Image with alt text and optional URL"
+      },
+      "ImageBlock": {
+        "type": "object",
+        "properties": {
+          "src": {
+            "type": "string"
+          },
+          "alt": {
+            "type": "string"
+          }
+        },
+        "required": ["src"],
+        "additionalProperties": false,
+        "description": "Image block with loading state"
+      },
+      "ImageGallery": {
+        "type": "object",
+        "properties": {
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "src": {
+                  "type": "string"
+                },
+                "alt": {
+                  "type": "string"
+                },
+                "details": {
+                  "type": "string"
+                }
+              },
+              "required": ["src"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["images"],
+        "additionalProperties": false,
+        "description": "Gallery grid of images with modal preview"
+      },
+      "Separator": {
+        "type": "object",
+        "properties": {
+          "orientation": {
+            "type": "string",
+            "enum": ["horizontal", "vertical"]
+          },
+          "decorative": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Visual divider between content sections"
+      },
+      "HorizontalBarChart": {
+        "type": "object",
+        "properties": {
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Series"
+            }
+          },
+          "variant": {
+            "type": "string",
+            "enum": ["grouped", "stacked"]
+          },
+          "xLabel": {
+            "type": "string"
+          },
+          "yLabel": {
+            "type": "string"
+          }
+        },
+        "required": ["labels", "series"],
+        "additionalProperties": false,
+        "description": "Horizontal bars; prefer when category labels are long or for ranked lists"
+      },
+      "Series": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": ["category", "values"],
+        "additionalProperties": false,
+        "description": "One data series"
+      },
+      "RadarChart": {
+        "type": "object",
+        "properties": {
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Series"
+            }
+          }
+        },
+        "required": ["labels", "series"],
+        "additionalProperties": false,
+        "description": "Spider/web chart; use for comparing multiple variables across one or more entities"
+      },
+      "PieChart": {
+        "type": "object",
+        "properties": {
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "variant": {
+            "type": "string",
+            "enum": ["pie", "donut"]
+          },
+          "appearance": {
+            "type": "string",
+            "enum": ["circular", "semiCircular"]
+          }
+        },
+        "required": ["labels", "values"],
+        "additionalProperties": false,
+        "description": "Circular slices; use plucked arrays: PieChart(data.categories, data.values)"
+      },
+      "RadialChart": {
+        "type": "object",
+        "properties": {
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": ["labels", "values"],
+        "additionalProperties": false,
+        "description": "Radial bars; use plucked arrays: RadialChart(data.categories, data.values)"
+      },
+      "SingleStackedBarChart": {
+        "type": "object",
+        "properties": {
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": ["labels", "values"],
+        "additionalProperties": false,
+        "description": "Single horizontal stacked bar; use plucked arrays: SingleStackedBarChart(data.categories, data.values)"
+      },
+      "ScatterChart": {
+        "type": "object",
+        "properties": {
+          "datasets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/ScatterSeries"
+            }
+          },
+          "xLabel": {
+            "type": "string"
+          },
+          "yLabel": {
+            "type": "string"
+          }
+        },
+        "required": ["datasets"],
+        "additionalProperties": false,
+        "description": "X/Y scatter plot; use for correlations, distributions, and clustering"
+      },
+      "ScatterSeries": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Point"
+            }
+          }
+        },
+        "required": ["name", "points"],
+        "additionalProperties": false,
+        "description": "Named dataset"
+      },
+      "Point": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          },
+          "z": {
+            "type": "number"
+          }
+        },
+        "required": ["x", "y"],
+        "additionalProperties": false,
+        "description": "Data point with numeric coordinates"
+      },
+      "AreaChart": {
+        "type": "object",
+        "properties": {
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Series"
+            }
+          },
+          "variant": {
+            "type": "string",
+            "enum": ["linear", "natural", "step"]
+          },
+          "xLabel": {
+            "type": "string"
+          },
+          "yLabel": {
+            "type": "string"
+          },
+          "height": {
+            "type": "number"
+          }
+        },
+        "required": ["labels", "series"],
+        "additionalProperties": false,
+        "description": "Filled area under lines; use for cumulative totals or volume trends over time"
+      },
+      "BarChart": {
+        "type": "object",
+        "properties": {
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Series"
+            }
+          },
+          "variant": {
+            "type": "string",
+            "enum": ["grouped", "stacked"]
+          },
+          "xLabel": {
+            "type": "string"
+          },
+          "yLabel": {
+            "type": "string"
+          },
+          "height": {
+            "type": "number"
+          }
+        },
+        "required": ["labels", "series"],
+        "additionalProperties": false,
+        "description": "Vertical bars; use for comparing values across categories with one or more series"
+      },
+      "LineChart": {
+        "type": "object",
+        "properties": {
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Series"
+            }
+          },
+          "variant": {
+            "type": "string",
+            "enum": ["linear", "natural", "step"]
+          },
+          "xLabel": {
+            "type": "string"
+          },
+          "yLabel": {
+            "type": "string"
+          },
+          "height": {
+            "type": "number"
+          }
+        },
+        "required": ["labels", "series"],
+        "additionalProperties": false,
+        "description": "Lines over categories; use for trends and continuous data over time"
+      },
+      "Table": {
+        "type": "object",
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Col"
+            }
+          }
+        },
+        "required": ["columns"],
+        "additionalProperties": false,
+        "description": "Data table — column-oriented. Each Col holds its own data array."
+      },
+      "Col": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "data": {},
+          "type": {
+            "type": "string",
+            "enum": ["string", "number", "action"]
+          }
+        },
+        "required": ["label", "data"],
+        "additionalProperties": false,
+        "description": "Column definition — holds label + data array"
+      },
+      "TagBlock": {
+        "type": "object",
+        "properties": {
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "size": {
+            "type": "string",
+            "enum": ["sm", "md", "lg"]
+          }
+        },
+        "required": ["tags"],
+        "additionalProperties": false,
+        "description": "tags is an array of strings; optional size sm | md | lg"
+      },
+      "ActionExpression": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "open_url"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": ["type", "url"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "continue_conversation"
+              },
+              "context": {
+                "type": "string"
+              }
+            },
+            "required": ["type"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "params": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": ["type"],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "Icon": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false,
+        "description": "A lucide icon by kebab-case name (e.g. 'circle-check'). Optional category picks a topical fallback when the name doesn't resolve."
+      },
+      "Steps": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/StepsItem"
+            }
+          }
+        },
+        "required": ["items"],
+        "additionalProperties": false,
+        "description": "Step-by-step guide"
+      },
+      "StepsItem": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "details": {
+            "type": "string"
+          }
+        },
+        "required": ["title", "details"],
+        "additionalProperties": false,
+        "description": "title and details text for one step"
+      },
+      "InlineHeader": {
+        "type": "object",
+        "properties": {
+          "heading": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": ["heading"],
+        "additionalProperties": false,
+        "description": "Compact section heading with an optional one-line description, for use inside cards."
+      },
+      "EntityList": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "left": {
+                  "type": "string"
+                },
+                "right": {
+                  "type": "string"
+                },
+                "rightVariant": {
+                  "default": "text",
+                  "type": "string",
+                  "enum": ["text", "number"]
+                }
+              },
+              "required": ["left", "right", "rightVariant"],
+              "additionalProperties": false
+            }
+          },
+          "size": {
+            "default": "default",
+            "type": "string",
+            "enum": ["small", "default"]
+          },
+          "header": {
+            "type": "object",
+            "properties": {
+              "left": {
+                "type": "string"
+              },
+              "right": {
+                "type": "string"
+              },
+              "rightVariant": {
+                "default": "text",
+                "type": "string",
+                "enum": ["text", "number"]
+              }
+            },
+            "required": ["left", "right", "rightVariant"],
+            "additionalProperties": false
+          },
+          "footer": {
+            "type": "object",
+            "properties": {
+              "left": {
+                "type": "string"
+              },
+              "right": {
+                "type": "string"
+              },
+              "rightVariant": {
+                "default": "text",
+                "type": "string",
+                "enum": ["text", "number"]
+              }
+            },
+            "required": ["left", "right", "rightVariant"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["rows", "size"],
+        "additionalProperties": false,
+        "description": "Two-column key/value rows (left label, right value). size 'default' supports optional header and footer rows; rightVariant 'number' uses tabular numbers."
+      },
+      "SnippetCardBlock": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "minItems": 2,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/SnippetCardItem"
+            }
+          },
+          "layout": {
+            "default": "grid",
+            "type": "string",
+            "enum": ["grid"]
+          },
+          "responsive": {
+            "default": true,
+            "type": "boolean"
+          },
+          "action": {
+            "$ref": "#/$defs/ActionExpression"
+          },
+          "gap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": ["items", "layout", "responsive"],
+        "additionalProperties": false,
+        "description": "A responsive grid of compact label/value cards (2 per row) for showing several short facts side by side; optionally clickable with a shared action."
+      },
+      "SnippetCardItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "lhs": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/IconText"
+              },
+              {
+                "$ref": "#/$defs/ImageText"
+              }
+            ]
+          },
+          "rhs": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Text"
+              },
+              {
+                "$ref": "#/$defs/BoldText"
+              }
+            ]
+          }
+        },
+        "required": ["lhs"],
+        "additionalProperties": false,
+        "description": "One row-style snippet card: a label on the left (IconText or ImageText) and an optional value on the right (Text or BoldText)."
+      },
+      "IconText": {
+        "type": "object",
+        "properties": {
+          "icon": {
+            "$ref": "#/$defs/Icon"
+          },
+          "iconVariant": {
+            "default": "neutral",
+            "type": "string",
+            "enum": [
+              "neutral",
+              "info",
+              "success",
+              "warning",
+              "danger",
+              "inverted",
+              "filled",
+              "soft"
+            ]
+          },
+          "iconSize": {
+            "default": "m",
+            "type": "string",
+            "enum": ["xs", "s", "m", "l", "xl", "sm", "md", "lg"]
+          },
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": "string"
+          },
+          "bold": {
+            "default": false,
+            "type": "boolean"
+          },
+          "layout": {
+            "default": "horizontal",
+            "type": "string",
+            "enum": ["horizontal", "vertical"]
+          }
+        },
+        "required": ["icon", "iconVariant", "iconSize", "title", "bold", "layout"],
+        "additionalProperties": false,
+        "description": "An icon badge with a title and optional subtitle, laid out horizontally or vertically. iconVariant sets the badge color."
+      },
+      "ImageText": {
+        "type": "object",
+        "properties": {
+          "src": {
+            "type": "string"
+          },
+          "alt": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": "string"
+          },
+          "bold": {
+            "default": false,
+            "type": "boolean"
+          },
+          "layout": {
+            "default": "horizontal",
+            "type": "string",
+            "enum": ["horizontal", "vertical"]
+          },
+          "imageSize": {
+            "type": "number"
+          }
+        },
+        "required": ["src", "title", "bold", "layout"],
+        "additionalProperties": false,
+        "description": "A small square image (thumbnail/avatar) with a title and optional subtitle. src must be a real image URL."
+      },
+      "Text": {
+        "type": "object",
+        "properties": {
+          "variant": {
+            "default": "text",
+            "type": "string",
+            "enum": ["text", "number"]
+          },
+          "value": {
+            "type": "string"
+          },
+          "subtext": {
+            "type": "string"
+          },
+          "subtextVariant": {
+            "default": "text",
+            "type": "string",
+            "enum": ["text", "number", "metric"]
+          },
+          "size": {
+            "default": "sm",
+            "type": "string",
+            "enum": ["xs", "sm", "md", "lg"]
+          }
+        },
+        "required": ["variant", "value", "subtextVariant", "size"],
+        "additionalProperties": false,
+        "description": "Plain text line with optional subtext. variant 'number' uses tabular number styling; subtextVariant 'metric' colors a leading +/- subtext green/red."
+      },
+      "BoldText": {
+        "type": "object",
+        "properties": {
+          "variant": {
+            "default": "text",
+            "type": "string",
+            "enum": ["text", "number"]
+          },
+          "value": {
+            "type": "string"
+          },
+          "subtext": {
+            "type": "string"
+          },
+          "subtextVariant": {
+            "default": "text",
+            "type": "string",
+            "enum": ["text", "number", "metric"]
+          },
+          "size": {
+            "default": "sm",
+            "type": "string",
+            "enum": ["xs", "sm", "md", "lg"]
+          }
+        },
+        "required": ["variant", "value", "subtextVariant", "size"],
+        "additionalProperties": false,
+        "description": "Emphasized (bold) text line with optional subtext. variant 'number' uses tabular number styling; subtextVariant 'metric' colors a leading +/- subtext green/red."
+      },
+      "OverviewCardBlock": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "minItems": 2,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/OverviewCardItem"
+            }
+          },
+          "layout": {
+            "default": "grid",
+            "type": "string",
+            "enum": ["grid", "carousel"]
+          },
+          "responsive": {
+            "default": true,
+            "type": "boolean"
+          },
+          "action": {
+            "$ref": "#/$defs/ActionExpression"
+          },
+          "gap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": ["items", "layout", "responsive"],
+        "additionalProperties": false,
+        "description": "A grid or horizontal carousel of compact overview cards, each with a heading (icon/image/text) on top and an inline metric below; optionally clickable with a shared action."
+      },
+      "OverviewCardItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "top": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/IconText"
+              },
+              {
+                "$ref": "#/$defs/ImageText"
+              },
+              {
+                "$ref": "#/$defs/Text"
+              }
+            ]
+          },
+          "bottom": {
+            "$ref": "#/$defs/MetricIndicatorInline"
+          }
+        },
+        "required": ["top"],
+        "additionalProperties": false,
+        "description": "One overview card: a heading slot at the top (IconText, ImageText or Text) and an optional MetricIndicatorInline at the bottom."
+      },
+      "MetricIndicatorInline": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "subtext": {
+            "type": "string"
+          },
+          "trend": {
+            "type": "object",
+            "properties": {
+              "direction": {
+                "type": "string",
+                "enum": ["up", "down"]
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": ["direction", "value"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["value"],
+        "additionalProperties": false,
+        "description": "Headline metric value with an optional +/- percentage trend and subtext, all on one line."
+      },
+      "ContextCardBlock": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "minItems": 2,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/ContextCardItem"
+            }
+          },
+          "layout": {
+            "default": "grid",
+            "type": "string",
+            "enum": ["grid", "carousel"]
+          },
+          "responsive": {
+            "default": true,
+            "type": "boolean"
+          },
+          "action": {
+            "$ref": "#/$defs/ActionExpression"
+          },
+          "gap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": ["items", "layout", "responsive"],
+        "additionalProperties": false,
+        "description": "A grid or carousel of compact tinted context cards (title or tag plus a short bold body); an optional action makes every card clickable."
+      },
+      "ContextCardItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/Tag"
+              }
+            ]
+          },
+          "body": {
+            "type": "string"
+          },
+          "bgColor": {
+            "type": "string",
+            "enum": ["gray"]
+          },
+          "bgImageSrc": {
+            "type": "string"
+          },
+          "bgImageAlt": {
+            "type": "string"
+          }
+        },
+        "required": ["title"],
+        "additionalProperties": false,
+        "description": "A single card inside a ContextCardBlock: a title (plain string or Tag), an optional markdown body, and an optional gray tint or background image."
+      },
+      "Tag": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "icon": {
+            "$ref": "#/$defs/Icon"
+          },
+          "size": {
+            "type": "string",
+            "enum": ["sm", "md", "lg"]
+          },
+          "variant": {
+            "type": "string",
+            "enum": ["neutral", "info", "success", "warning", "danger"]
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false,
+        "description": "Styled tag/badge with optional Icon and variant"
+      },
+      "CompositeCardBlock": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "minItems": 2,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/CompositeCardItem"
+            }
+          },
+          "layout": {
+            "default": "grid",
+            "type": "string",
+            "enum": ["grid", "carousel"]
+          },
+          "responsive": {
+            "default": true,
+            "type": "boolean"
+          },
+          "action": {
+            "$ref": "#/$defs/ActionExpression"
+          },
+          "gap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": ["items", "layout", "responsive"],
+        "additionalProperties": false,
+        "description": "A two-per-row grid or carousel of rich cards, each with an optional header, stacked body content (text, metrics, charts, lists, tags) and a price/button footer; an optional action makes every card clickable."
+      },
+      "CompositeCardItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "header": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/IconText"
+              },
+              {
+                "$ref": "#/$defs/ImageText"
+              },
+              {
+                "$ref": "#/$defs/ImageTextLarge"
+              },
+              {
+                "$ref": "#/$defs/Text"
+              },
+              {
+                "$ref": "#/$defs/Image"
+              }
+            ]
+          },
+          "body": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Text"
+                },
+                {
+                  "$ref": "#/$defs/BoldText"
+                },
+                {
+                  "$ref": "#/$defs/MetricIndicatorInline"
+                },
+                {
+                  "$ref": "#/$defs/IconText"
+                },
+                {
+                  "$ref": "#/$defs/Image"
+                },
+                {
+                  "$ref": "#/$defs/AreaChart"
+                },
+                {
+                  "$ref": "#/$defs/BarChart"
+                },
+                {
+                  "$ref": "#/$defs/LineChart"
+                },
+                {
+                  "$ref": "#/$defs/ListBlock"
+                },
+                {
+                  "$ref": "#/$defs/TagBlock"
+                },
+                {
+                  "$ref": "#/$defs/EntityList"
+                }
+              ]
+            }
+          },
+          "footer": {
+            "type": "object",
+            "properties": {
+              "price": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BoldText"
+                  },
+                  {
+                    "$ref": "#/$defs/MetricIndicatorWithStrikethrough"
+                  }
+                ]
+              },
+              "button": {}
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "description": "A single card inside a CompositeCardBlock: an optional header (icon/image/text), a stack of body elements (text, metrics, charts, lists, tags), and an optional price/button footer."
+      },
+      "ImageTextLarge": {
+        "type": "object",
+        "properties": {
+          "src": {
+            "type": "string"
+          },
+          "alt": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": "string"
+          },
+          "bold": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": ["src", "title", "bold"],
+        "additionalProperties": false,
+        "description": "A full-width banner image above a bold title and optional subtitle. src must be a real image URL."
+      },
+      "ListBlock": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/ListItem"
+            }
+          },
+          "variant": {
+            "type": "string",
+            "enum": ["number", "image"]
+          },
+          "size": {
+            "type": "string",
+            "enum": ["default", "small"]
+          }
+        },
+        "required": ["items"],
+        "additionalProperties": false,
+        "description": "A list of items with number or image indicators. Each item can optionally have an action. size small renders a compact list."
+      },
+      "ListItem": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "subtitle": {
+            "type": "string"
+          },
+          "image": {
+            "type": "object",
+            "properties": {
+              "src": {
+                "type": "string"
+              },
+              "alt": {
+                "type": "string"
+              }
+            },
+            "required": ["src", "alt"],
+            "additionalProperties": false
+          },
+          "actionLabel": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/$defs/ActionExpression"
+          }
+        },
+        "required": ["title"],
+        "additionalProperties": false,
+        "description": "Item in a ListBlock — displays a title with an optional subtitle and image. When action is provided, the item becomes clickable."
+      },
+      "MetricIndicatorWithStrikethrough": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "subtext": {
+            "type": "string"
+          },
+          "previousValue": {
+            "type": "string"
+          },
+          "trend": {
+            "type": "object",
+            "properties": {
+              "direction": {
+                "type": "string",
+                "enum": ["up", "down"]
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": ["direction", "value"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["value"],
+        "additionalProperties": false,
+        "description": "Headline metric value with an optional struck-through previousValue, a +/- percentage trend, and subtext below."
+      },
+      "VisualCardBlock": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "minItems": 2,
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/VisualCardItem"
+            }
+          },
+          "layout": {
+            "default": "grid",
+            "type": "string",
+            "enum": ["grid", "carousel"]
+          },
+          "responsive": {
+            "default": true,
+            "type": "boolean"
+          },
+          "action": {
+            "$ref": "#/$defs/ActionExpression"
+          },
+          "gap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": ["items", "layout", "responsive"],
+        "additionalProperties": false,
+        "description": "A grid or carousel of photo-first cards: a full-bleed background image with a tag on top and a bold text panel at the bottom; an optional action makes every card clickable."
+      },
+      "VisualCardItem": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/BoldText"
+          },
+          "id": {
+            "type": "string"
+          },
+          "bgImageSrc": {
+            "type": "string"
+          },
+          "tag": {
+            "$ref": "#/$defs/Tag"
+          },
+          "bgImageAlt": {
+            "type": "string"
+          }
+        },
+        "required": ["body"],
+        "additionalProperties": false,
+        "description": "A single photo-first card inside a VisualCardBlock: a BoldText body panel, an optional Tag, and a background image (bgImageSrc must be a real URL; bgImageAlt is its alt text)."
+      },
+      "SectionBlock": {
+        "type": "object",
+        "properties": {
+          "sections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/SectionItem"
+            }
+          },
+          "isFoldable": {
+            "type": "boolean"
+          }
+        },
+        "required": ["sections"],
+        "additionalProperties": false,
+        "description": "Collapsible accordion sections. Auto-opens sections as they stream in. Use SectionItem for each section."
+      },
+      "SectionItem": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string"
+          },
+          "content": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextContent"
+                },
+                {
+                  "$ref": "#/$defs/MarkDownRenderer"
+                },
+                {
+                  "$ref": "#/$defs/CardHeader"
+                },
+                {
+                  "$ref": "#/$defs/Callout"
+                },
+                {
+                  "$ref": "#/$defs/TextCallout"
+                },
+                {
+                  "$ref": "#/$defs/CodeBlock"
+                },
+                {
+                  "$ref": "#/$defs/Image"
+                },
+                {
+                  "$ref": "#/$defs/ImageBlock"
+                },
+                {
+                  "$ref": "#/$defs/ImageGallery"
+                },
+                {
+                  "$ref": "#/$defs/Separator"
+                },
+                {
+                  "$ref": "#/$defs/HorizontalBarChart"
+                },
+                {
+                  "$ref": "#/$defs/RadarChart"
+                },
+                {
+                  "$ref": "#/$defs/PieChart"
+                },
+                {
+                  "$ref": "#/$defs/RadialChart"
+                },
+                {
+                  "$ref": "#/$defs/SingleStackedBarChart"
+                },
+                {
+                  "$ref": "#/$defs/ScatterChart"
+                },
+                {
+                  "$ref": "#/$defs/AreaChart"
+                },
+                {
+                  "$ref": "#/$defs/BarChart"
+                },
+                {
+                  "$ref": "#/$defs/LineChart"
+                },
+                {
+                  "$ref": "#/$defs/Table"
+                },
+                {
+                  "$ref": "#/$defs/TagBlock"
+                },
+                {
+                  "$ref": "#/$defs/Steps"
+                },
+                {
+                  "$ref": "#/$defs/InlineHeader"
+                },
+                {
+                  "$ref": "#/$defs/EntityList"
+                },
+                {
+                  "$ref": "#/$defs/SnippetCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/OverviewCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/ContextCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/CompositeCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/VisualCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/ListBlock"
+                },
+                {
+                  "$ref": "#/$defs/Tabs"
+                },
+                {
+                  "$ref": "#/$defs/Accordion"
+                }
+              ]
+            }
+          }
+        },
+        "required": ["value", "trigger", "content"],
+        "additionalProperties": false,
+        "description": "Section with a label and collapsible content — used inside SectionBlock"
+      },
+      "Tabs": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/TabItem"
+            }
+          }
+        },
+        "required": ["items"],
+        "additionalProperties": false,
+        "description": "Tabbed container"
+      },
+      "TabItem": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string"
+          },
+          "content": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextContent"
+                },
+                {
+                  "$ref": "#/$defs/MarkDownRenderer"
+                },
+                {
+                  "$ref": "#/$defs/CardHeader"
+                },
+                {
+                  "$ref": "#/$defs/Callout"
+                },
+                {
+                  "$ref": "#/$defs/TextCallout"
+                },
+                {
+                  "$ref": "#/$defs/CodeBlock"
+                },
+                {
+                  "$ref": "#/$defs/Image"
+                },
+                {
+                  "$ref": "#/$defs/ImageBlock"
+                },
+                {
+                  "$ref": "#/$defs/ImageGallery"
+                },
+                {
+                  "$ref": "#/$defs/Separator"
+                },
+                {
+                  "$ref": "#/$defs/HorizontalBarChart"
+                },
+                {
+                  "$ref": "#/$defs/RadarChart"
+                },
+                {
+                  "$ref": "#/$defs/PieChart"
+                },
+                {
+                  "$ref": "#/$defs/RadialChart"
+                },
+                {
+                  "$ref": "#/$defs/SingleStackedBarChart"
+                },
+                {
+                  "$ref": "#/$defs/ScatterChart"
+                },
+                {
+                  "$ref": "#/$defs/AreaChart"
+                },
+                {
+                  "$ref": "#/$defs/BarChart"
+                },
+                {
+                  "$ref": "#/$defs/LineChart"
+                },
+                {
+                  "$ref": "#/$defs/Table"
+                },
+                {
+                  "$ref": "#/$defs/TagBlock"
+                },
+                {
+                  "$ref": "#/$defs/Steps"
+                },
+                {
+                  "$ref": "#/$defs/InlineHeader"
+                },
+                {
+                  "$ref": "#/$defs/EntityList"
+                },
+                {
+                  "$ref": "#/$defs/SnippetCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/OverviewCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/ContextCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/CompositeCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/VisualCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/ListBlock"
+                },
+                {
+                  "$ref": "#/$defs/Accordion"
+                }
+              ]
+            }
+          }
+        },
+        "required": ["value", "trigger", "content"],
+        "additionalProperties": false,
+        "description": "value is unique id, trigger is tab label, content is array of components"
+      },
+      "Accordion": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/AccordionItem"
+            }
+          }
+        },
+        "required": ["items"],
+        "additionalProperties": false,
+        "description": "Collapsible sections"
+      },
+      "AccordionItem": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string"
+          },
+          "content": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextContent"
+                },
+                {
+                  "$ref": "#/$defs/MarkDownRenderer"
+                },
+                {
+                  "$ref": "#/$defs/CardHeader"
+                },
+                {
+                  "$ref": "#/$defs/Callout"
+                },
+                {
+                  "$ref": "#/$defs/TextCallout"
+                },
+                {
+                  "$ref": "#/$defs/CodeBlock"
+                },
+                {
+                  "$ref": "#/$defs/Image"
+                },
+                {
+                  "$ref": "#/$defs/ImageBlock"
+                },
+                {
+                  "$ref": "#/$defs/ImageGallery"
+                },
+                {
+                  "$ref": "#/$defs/Separator"
+                },
+                {
+                  "$ref": "#/$defs/HorizontalBarChart"
+                },
+                {
+                  "$ref": "#/$defs/RadarChart"
+                },
+                {
+                  "$ref": "#/$defs/PieChart"
+                },
+                {
+                  "$ref": "#/$defs/RadialChart"
+                },
+                {
+                  "$ref": "#/$defs/SingleStackedBarChart"
+                },
+                {
+                  "$ref": "#/$defs/ScatterChart"
+                },
+                {
+                  "$ref": "#/$defs/AreaChart"
+                },
+                {
+                  "$ref": "#/$defs/BarChart"
+                },
+                {
+                  "$ref": "#/$defs/LineChart"
+                },
+                {
+                  "$ref": "#/$defs/Table"
+                },
+                {
+                  "$ref": "#/$defs/TagBlock"
+                },
+                {
+                  "$ref": "#/$defs/Steps"
+                },
+                {
+                  "$ref": "#/$defs/InlineHeader"
+                },
+                {
+                  "$ref": "#/$defs/EntityList"
+                },
+                {
+                  "$ref": "#/$defs/SnippetCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/OverviewCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/ContextCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/CompositeCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/VisualCardBlock"
+                },
+                {
+                  "$ref": "#/$defs/ListBlock"
+                }
+              ]
+            }
+          }
+        },
+        "required": ["value", "trigger", "content"],
+        "additionalProperties": false,
+        "description": "value is unique id, trigger is section title"
+      },
+      "Carousel": {
+        "type": "object",
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TextContent"
+                  },
+                  {
+                    "$ref": "#/$defs/MarkDownRenderer"
+                  },
+                  {
+                    "$ref": "#/$defs/CardHeader"
+                  },
+                  {
+                    "$ref": "#/$defs/Callout"
+                  },
+                  {
+                    "$ref": "#/$defs/TextCallout"
+                  },
+                  {
+                    "$ref": "#/$defs/CodeBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/Image"
+                  },
+                  {
+                    "$ref": "#/$defs/ImageBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/ImageGallery"
+                  },
+                  {
+                    "$ref": "#/$defs/Separator"
+                  },
+                  {
+                    "$ref": "#/$defs/HorizontalBarChart"
+                  },
+                  {
+                    "$ref": "#/$defs/RadarChart"
+                  },
+                  {
+                    "$ref": "#/$defs/PieChart"
+                  },
+                  {
+                    "$ref": "#/$defs/RadialChart"
+                  },
+                  {
+                    "$ref": "#/$defs/SingleStackedBarChart"
+                  },
+                  {
+                    "$ref": "#/$defs/ScatterChart"
+                  },
+                  {
+                    "$ref": "#/$defs/AreaChart"
+                  },
+                  {
+                    "$ref": "#/$defs/BarChart"
+                  },
+                  {
+                    "$ref": "#/$defs/LineChart"
+                  },
+                  {
+                    "$ref": "#/$defs/Table"
+                  },
+                  {
+                    "$ref": "#/$defs/TagBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/Steps"
+                  },
+                  {
+                    "$ref": "#/$defs/InlineHeader"
+                  },
+                  {
+                    "$ref": "#/$defs/EntityList"
+                  },
+                  {
+                    "$ref": "#/$defs/SnippetCardBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/OverviewCardBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/ContextCardBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/CompositeCardBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/VisualCardBlock"
+                  },
+                  {
+                    "$ref": "#/$defs/ListBlock"
+                  }
+                ]
+              }
+            }
+          },
+          "variant": {
+            "type": "string",
+            "enum": ["card", "sunk"]
+          }
+        },
+        "required": ["children"],
+        "additionalProperties": false,
+        "description": "Horizontal scrollable carousel"
+      },
+      "Slice": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number"
+          }
+        },
+        "required": ["category", "value"],
+        "additionalProperties": false,
+        "description": "One slice with label and numeric value"
+      }
+    }
+  }
+}

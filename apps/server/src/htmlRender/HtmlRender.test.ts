@@ -196,6 +196,44 @@ describe("HtmlRender", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("publishes an OpenUI program as a self-contained page that its call recovers", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const config = yield* ServerConfig.ServerConfig;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-openui-" });
+      const png = path.join(directory, "shot.png");
+      yield* fileSystem.writeFile(png, PNG_BYTES);
+      const threadId = ThreadId.make("thread-openui");
+      const input = {
+        openui: `root = Card([ImageBlock("${png}", "Shot")])`,
+        title: "Shot",
+        height: 200,
+      };
+
+      const reference = yield* htmlRender.publish({ threadId, ...input });
+      const page = yield* fileSystem.readFileString(
+        resolveAttachmentPathById({
+          attachmentsDir: config.attachmentsDir,
+          attachmentId: reference.attachmentId,
+        })!,
+      );
+      expect(page).toContain(`ImageBlock("data:image/png;base64,${Base64.encode(PNG_BYTES)}"`);
+      expect(page).toContain("window.__OpenUI");
+      expect(page).toContain('<style id="t3-theme">');
+      // A provider that loses the tool result finds the page again by the arguments it sent.
+      expect(yield* sessions.takeHtmlRender(threadId, input)).toEqual(reference);
+
+      const error = yield* htmlRender
+        .publish({ threadId, ...input, openui: "root = Card([missing])" })
+        .pipe(Effect.flip);
+      expect(error).toBeInstanceOf(HtmlRender.HtmlRenderOpenUiError);
+      expect(error.message).toContain("missing");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("publishes the prepared page as an html thread attachment", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
