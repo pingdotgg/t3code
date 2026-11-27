@@ -56,6 +56,8 @@ describe("embeddedScripts", () => {
 
   it.each([
     [`bash -Ec 'echo hi'`, "shellscript", "echo hi"],
+    [`bash -euo pipefail -c 'echo hi'`, "shellscript", "echo hi"],
+    [`bash +x -c 'echo hi'`, "shellscript", "echo hi"],
     [`python3 -c 'print(1)'`, "python", "print(1)"],
     [`py -3 -c 'print(1)'`, "python", "print(1)"],
     [`"C:\\Program Files\\Python312\\python.exe" -c 'print(1)'`, "python", "print(1)"],
