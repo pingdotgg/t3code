@@ -465,6 +465,22 @@ it("appends the server zone only to fixed-time schedule labels", () => {
   );
 });
 
+it("labels the weekdays a schedule runs on, whatever order or repeats it stores", () => {
+  const label = (weekdays: Array<number>) =>
+    scheduleLabel(
+      { type: "fixed_time", timeOfDay: "09:00", weekdays },
+      "24-hour",
+      undefined,
+      null,
+      undefined,
+      "en-US",
+    );
+  const at = clock(false, 9, 0);
+  expect(label([1, 1, 2, 3, 4])).toBe(`Mon, Tue, Wed, Thu at ${at}`);
+  expect(label([0, 1, 2, 3, 4, 5, 6])).toBe(`Daily at ${at}`);
+  expect(label([5, 1, 3])).toBe(`Mon, Wed, Fri at ${at}`);
+});
+
 it("shows schedule times in the Time format setting", () => {
   const daily = { type: "fixed_time", timeOfDay: "17:30" } as const;
   expect(scheduleLabel(daily, "24-hour")).toBe(`Daily at ${clock(false, 17, 30)}`);

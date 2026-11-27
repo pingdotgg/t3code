@@ -22,6 +22,7 @@ import { msg } from "gt-react";
 import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  canMarkLatestRunUnread,
   isThreadTriageAction,
   threadActionRequiresOperate,
   type ThreadActionMenuId,
@@ -152,7 +153,7 @@ export function useThreadActionMenu(input: {
       canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
       isRegeneratingTitle,
       isRunning: !threadRuntimeCanArchive(thread.runtime),
-      hasCompletedRun: thread.latestRun?.completedAt != null,
+      hasCompletedRun: canMarkLatestRunUnread(thread.latestRun),
       supports,
       snoozePresets,
       canShareWithGuest,

@@ -339,6 +339,9 @@ export function matchesPullRequestFilters(
       (filters.review === "none"
         ? entry.reviewDecision === undefined
         : entry.reviewDecision === filters.review)) &&
+    (filters.checks === undefined ||
+      entry.checksState === undefined ||
+      entry.checksState === filters.checks) &&
     (filters.labels === undefined || filters.labels.every((group) => group.some(holds))) &&
     (filters.excludedLabels === undefined || !filters.excludedLabels.some(holds)) &&
     (filters.author === undefined ||

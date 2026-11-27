@@ -931,7 +931,7 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
   return (
     <Navigator
       screenLayout={(props) => <GuardedScreenLayout {...props} />}
-      screenOptions={({ route, navigation }) => {
+      screenOptions={({ route, navigation, theme }) => {
         const title =
           route.name === "Home"
             ? getCompactBrandHeaderOptions(undefined, resolve).title
@@ -940,6 +940,9 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
               : resolve(ROUTE_TITLES[route.name]);
         return {
           ...(title === undefined ? {} : { title }),
+          // In release builds react-native-screens decides the iOS status bar style, and its
+          // "auto" style can follow the phone's appearance instead of the app's theme.
+          ...(Platform.OS === "ios" ? { statusBarStyle: theme.dark ? "light" : "dark" } : {}),
           ...(Platform.OS === "android"
             ? {
                 animation: androidWorkspaceDestinationAnimation(
