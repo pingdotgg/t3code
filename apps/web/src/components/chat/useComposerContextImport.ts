@@ -323,14 +323,12 @@ export function useComposerContextImport(input: {
     pendingDraftWork.begin(importTargetKey);
     const releaseRequests = questionRequests ? appAtomRegistry.mount(questionRequests) : undefined;
     if (questionAttachmentTarget) changeQuestionAttachmentPreparation(questionAttachmentTarget, 1);
-    try {
-      await runAttachmentImport(record, localId, sourceEnvironmentId, importTargetKey);
-    } finally {
+    await runAttachmentImport(record, localId, sourceEnvironmentId, importTargetKey).finally(() => {
       if (questionAttachmentTarget)
         changeQuestionAttachmentPreparation(questionAttachmentTarget, -1);
       releaseRequests?.();
       pendingDraftWork.end(importTargetKey);
-    }
+    });
   };
   const importContextRecords = (
     records: ReadonlyArray<ComposerContextRecord>,
