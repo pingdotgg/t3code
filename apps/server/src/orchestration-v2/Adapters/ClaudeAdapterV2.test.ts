@@ -16696,6 +16696,44 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // A resume Claude rejects with "No message found" must not leave the thread unable to start fresh.
+  it.effect("a resume Claude rejects before the turn starts is not left as background work", () =>
+    Effect.gen(function* () {
+      const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+        "claude-query-rejects-resume-point",
+        Stream.make(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000004401",
+            result: "",
+            numTurns: 0,
+            subtype: "error_during_execution",
+            isError: true,
+            errors: ["No message found with message.uuid of: 00000000-0000-4000-8000-000000004400"],
+            terminalReason: null,
+          }),
+        ),
+      );
+      const started = yield* harness.runtime.startTurn(harness.turnInput("a", 1)).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(started));
+      if (harness.runtime.hasPendingBackgroundWork === undefined) {
+        return yield* Effect.die("Claude adapter runtime must expose hasPendingBackgroundWork.");
+      }
+      assert.isFalse(
+        yield* harness.runtime.hasPendingBackgroundWork,
+        "the rejected resume's result was kept as background work, so a fresh session is refused",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("fails a turn whose Claude query ends before its first frame", () =>
     Effect.gen(function* () {
       const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
