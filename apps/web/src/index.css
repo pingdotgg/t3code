@@ -621,9 +621,23 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+@media (width >= 48rem) {
+  /* Connected pane bars sit at the pane's top edge, so their notch cuts need
+     no CSS anchor positioning (anchor-scope/--pane-notch doubles layout cost
+     and dirties layout on every frame of the joined tab slide). */
+  :root:not(.black-chrome)
+    [data-slot="sidebar"][data-variant="inset"]
+    ~ [data-slot="sidebar-inset"]
+    [data-layout-pane-id][data-pane-notched]
+    > [data-pane-cut$="notch"] {
+    display: flex;
+    top: var(--pane-notch-height);
+  }
+}
+
 @supports (anchor-scope: --pane-notch) {
   @media (width >= 48rem) {
-    [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"] {
+    .black-chrome [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"] {
       & [data-layout-pane-id] {
         anchor-scope: --pane-notch;
       }
@@ -636,27 +650,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
         display: flex;
         top: calc(anchor(--pane-notch top) + var(--pane-notch-height));
       }
-    }
 
-    .black-chrome
-      [data-slot="sidebar"][data-variant="inset"]
-      ~ [data-slot="sidebar-inset"]
-      [data-layout-pane-id][data-pane-notched]
-      > [data-pane-cut="end-notch"] {
-      right: calc(anchor(--pane-notch right) + 1rem);
-    }
+      & [data-layout-pane-id][data-pane-notched] > [data-pane-cut="end-notch"] {
+        right: calc(anchor(--pane-notch right) + 1rem);
+      }
 
-    .black-chrome
-      [data-slot="sidebar"][data-variant="inset"]
-      ~ [data-slot="sidebar-inset"]
-      [data-layout-pane-id][data-pane-notched]
-      > [data-pane-cut="start-after-notch"],
-    .black-chrome
-      [data-slot="sidebar"][data-variant="inset"]
-      ~ [data-slot="sidebar-inset"]
-      [data-layout-pane-id][data-pane-notched]
-      > [data-pane-cut="end-before-notch"] {
-      display: none;
+      & [data-layout-pane-id][data-pane-notched] > [data-pane-cut="start-after-notch"],
+      & [data-layout-pane-id][data-pane-notched] > [data-pane-cut="end-before-notch"] {
+        display: none;
+      }
     }
   }
 }
