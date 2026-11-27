@@ -42,6 +42,7 @@ import { Input } from "~/components/ui/input";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
@@ -319,6 +320,11 @@ export function ServerBrowserSurface(props: {
   };
 
   const focusInput = () => inputRef.current?.focus({ preventScroll: true });
+  const focusAuthUsername = useStableCallback((field: HTMLInputElement | null) => {
+    if (field && document.activeElement === inputRef.current) {
+      field.focus({ preventScroll: true });
+    }
+  });
 
   useImperativeHandle(
     ref,
@@ -957,6 +963,8 @@ export function ServerBrowserSurface(props: {
                 {control.dialog.type === "auth" ? (
                   <>
                     <Input
+                      key={control.dialog.authChallengeId}
+                      ref={focusAuthUsername}
                       aria-label={gt("Username")}
                       placeholder={gt("Username")}
                       autoComplete="off"
