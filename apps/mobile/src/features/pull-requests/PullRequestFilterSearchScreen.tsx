@@ -88,10 +88,13 @@ export function PullRequestFilterSearchScreen({
     ),
     query,
   });
-  const colors = {
-    ...pullRequestLabelColors(hosted.values.flatMap((options) => options.labels)),
-    ...labelColors,
-  };
+  const hostedColors = pullRequestLabelColors(hosted.values.flatMap((options) => options.labels));
+  // A label picked from an earlier search keeps its dot once the host answers a new query without it.
+  const [seenColors, setSeenColors] = useState(hostedColors);
+  if (Object.entries(hostedColors).some(([name, color]) => seenColors[name] !== color)) {
+    setSeenColors((previous) => ({ ...previous, ...hostedColors }));
+  }
+  const colors = { ...seenColors, ...labelColors };
   const isSelected = (value: string) =>
     selected.some((held) => held.toLowerCase() === value.toLowerCase());
   const choose = (value: string) => {

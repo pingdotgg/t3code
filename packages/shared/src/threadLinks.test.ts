@@ -231,6 +231,8 @@ describe("thread links", () => {
       ["> Stray ` tick", "---", `${after} and \`code\``],
       ["Use `example", "```" + hidden + "`", after],
       ["\\\\``" + after + "`"],
+      [`Use \`example\r${hidden} end\`. Stray \` tick\r\r${after}\rand \`code\``],
+      [`Stray \` tick\r# ${after}\rand \`code\``],
     ]) {
       const joined = markdown.join("\n");
       expect(threadLinkRefs(joined, local)).toEqual([ref("env-1", "t1")]);
