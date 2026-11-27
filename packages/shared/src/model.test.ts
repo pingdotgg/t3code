@@ -14,6 +14,9 @@ import {
   readCustomModelEntries,
   modelSelectionsEqual,
   pickModelSelection,
+  customOrchestrationSelection,
+  draftModelPickMatchesThread,
+  storedModelSelectionsEqual,
   withImplicitFastModeDefault,
 } from "./model.ts";
 
@@ -101,6 +104,21 @@ describe("descriptor helpers", () => {
       }),
     ).toBe(false);
     expect(modelSelectionsEqual(left, { ...reordered, model: "gpt-5.5" })).toBe(false);
+  });
+
+  it("treats entering or leaving Custom Orchestration as a change to save", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const plain = createModelSelection(codex, "gpt-5.4", [
+      { id: "reasoningEffort", value: "high" },
+    ]);
+    const orchestrated = customOrchestrationSelection(plain);
+
+    // A provider runs both the same way; only what is saved differs.
+    expect(modelSelectionsEqual(plain, orchestrated)).toBe(true);
+    expect(storedModelSelectionsEqual(plain, orchestrated)).toBe(false);
+    expect(draftModelPickMatchesThread(plain, orchestrated)).toBe(false);
+    expect(draftModelPickMatchesThread(orchestrated, orchestrated)).toBe(true);
+    expect(pickModelSelection(orchestrated, codex, "gpt-5.4")).toEqual(plain);
   });
 
   it("keeps the options when the current model is picked again", () => {

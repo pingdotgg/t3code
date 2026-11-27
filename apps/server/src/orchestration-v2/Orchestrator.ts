@@ -85,7 +85,7 @@ import {
   managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { modelSelectionsEqual, storedModelSelectionsEqual } from "@t3tools/shared/model";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import {
@@ -3281,7 +3281,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : "Provider or model selection changed.";
       yield* writeSystemEvents(
         [
-          ...(selectionChanged
+          ...(!storedModelSelectionsEqual(
+            projection.thread.modelSelection,
+            queuedRun.modelSelection,
+          )
             ? [
                 {
                   type:
@@ -6751,7 +6754,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         steerCarriesSelection &&
         (instanceChanged ||
-          !modelSelectionsEqual(input.projection.thread.modelSelection, input.modelSelection))
+          !storedModelSelectionsEqual(input.projection.thread.modelSelection, input.modelSelection))
       ) {
         yield* emitEvent({
           type: instanceChanged ? "thread.provider-switched" : "thread.model-selection-updated",
@@ -7088,7 +7091,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: { ...currentRootNode, status: "interrupted", completedAt: now },
       });
     }
-    if (selectionChanged) {
+    // A user's steer may only enter or leave Custom Orchestration, which no provider sees.
+    if (
+      selectionChanged ||
+      (input.delegatedCompletion === undefined &&
+        input.notification === undefined &&
+        input.projection.thread.modelSelection.orchestration !== input.modelSelection.orchestration)
+    ) {
       yield* emitEvent({
         type: providerInstanceChanged
           ? "thread.provider-switched"
@@ -8526,7 +8535,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     const now = yield* DateTime.now;
     if (
-      !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
+      !storedModelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
       projection.thread.providerInstanceId !== modelSelection.instanceId
     ) {
       yield* emit(

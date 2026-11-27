@@ -1,3 +1,4 @@
+import { customOrchestrationSelection } from "@t3tools/shared/model";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { UnifiedSettings } from "@t3tools/contracts";
 import { useMessages } from "gt-react";
@@ -188,7 +189,9 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       !resolvedModel ||
       (instanceId === shownInstanceId &&
         shownSelection.instanceId === instanceId &&
-        shownSelection.model === resolvedModel)
+        shownSelection.model === resolvedModel &&
+        // Picking the orchestrator's own model leaves Custom Orchestration.
+        shownSelection.orchestration === undefined)
     ) {
       // Re-picking the shown model keeps its options and saves it again if that save failed.
       if (resolvedModel && !isLocalDraftThread) applyThreadModelPick(composerDraftTarget);
@@ -240,6 +243,19 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     if (options?.focusComposer !== false) scheduleComposerFocus();
   };
   const onProviderModelSelectStable = useStableCallback(onProviderModelSelect);
+  const onCustomOrchestrationSelect = (orchestrator: ModelSelection) => {
+    if (!activeThread) return;
+    cancelHeldComposerSend(composerTargetKey(composerDraftTarget));
+    const next = customOrchestrationSelection(orchestrator);
+    setComposerDraftModelSelection(composerDraftTarget, next, {
+      explicit: true,
+      replaceOptions: true,
+    });
+    setStickyComposerModelSelection(next);
+    if (!isLocalDraftThread) applyThreadModelPick(composerDraftTarget);
+    scheduleComposerFocus();
+  };
+  const onCustomOrchestrationSelectStable = useStableCallback(onCustomOrchestrationSelect);
   const onEnvModeChange = (mode: DraftThreadEnvMode) => {
     if (multipleModelSelections !== null) return;
     cancelHeldComposerSend(composerTargetKey(composerDraftTarget));
@@ -288,6 +304,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     handleRuntimeModeChangeStable,
     onEnvModeChangeStable,
     onProviderModelSelectStable,
+    onCustomOrchestrationSelectStable,
     onStartFromOriginChange,
     openProviderSetupStable,
   };

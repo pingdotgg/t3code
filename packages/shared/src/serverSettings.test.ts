@@ -906,6 +906,82 @@ describe("serverSettings helpers", () => {
   });
 });
 
+describe("Custom Orchestration settings", () => {
+  const orchestrator = createModelSelection(ProviderInstanceId.make("claudeAgent"), "model-a", [
+    { id: "effort", value: "high" },
+  ]);
+
+  it("replaces the whole block, so old options and removed entries do not survive", () => {
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      customOrchestration: {
+        orchestrator: { modelSelection: orchestrator, fallbacks: [orchestrator] },
+        tasks: [
+          {
+            id: "deep",
+            name: "Deep",
+            description: "",
+            modelSelection: orchestrator,
+            fallbacks: [],
+          },
+        ],
+        commands: [],
+      },
+    });
+    const replacement = {
+      orchestrator: {
+        modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "model-b"),
+        fallbacks: [],
+      },
+      tasks: [],
+      commands: [],
+    };
+
+    expect(
+      applyServerSettingsPatch(current, { customOrchestration: replacement }).customOrchestration,
+    ).toEqual(replacement);
+  });
+
+  it("rejects a command that would shadow the harness's own review", () => {
+    const patch = (name: string) => ({
+      customOrchestration: {
+        orchestrator: null,
+        tasks: [],
+        commands: [{ name, instructions: "", reviewers: [{ modelSelection: orchestrator }] }],
+      },
+    });
+
+    expect(() => decodeServerSettingsPatch(patch("extreme-review"))).not.toThrow();
+    expect(() => decodeServerSettingsPatch(patch("review"))).toThrow();
+    expect(() => decodeServerSettingsPatch(patch("Extreme Review"))).toThrow();
+  });
+
+  it("caps how many fallbacks a write may configure", () => {
+    const patch = (count: number) => ({
+      customOrchestration: {
+        orchestrator: {
+          modelSelection: orchestrator,
+          fallbacks: Array.from({ length: count }, () => orchestrator),
+        },
+        tasks: [],
+        commands: [],
+      },
+    });
+
+    expect(() => decodeServerSettingsPatch(patch(3))).not.toThrow();
+    expect(() => decodeServerSettingsPatch(patch(4))).toThrow();
+  });
+
+  it("keeps the rest of the settings file when a stored command name is unusable", () => {
+    const settings = decodeServerSettings({
+      addProjectBaseDirectory: "/work",
+      customOrchestration: { commands: [{ name: "review", reviewers: [] }] },
+    });
+
+    expect(settings.addProjectBaseDirectory).toBe("/work");
+    expect(settings.customOrchestration.orchestrator).toBeNull();
+  });
+});
+
 describe("worktreesDirectory", () => {
   it("remembers previous custom locations so their worktrees stay managed", () => {
     const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { worktreesDirectory: "/a" });

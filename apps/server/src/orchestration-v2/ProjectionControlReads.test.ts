@@ -30,6 +30,7 @@ import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 
 const threadId = ThreadId.make("thread:control-reads");
@@ -395,7 +396,12 @@ it.effect.each(storageCases)(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
             Layer.provide(
-              Layer.mergeAll(layerSessions, layerEvents, McpAppModelContext.layerEmpty),
+              Layer.mergeAll(
+                layerSessions,
+                layerEvents,
+                McpAppModelContext.layerEmpty,
+                ServerSettings.layerTest(),
+              ),
             ),
           ),
         ),

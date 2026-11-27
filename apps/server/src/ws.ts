@@ -1967,6 +1967,7 @@ export const layerWsRpc = (
           threadFind: true,
           threadFindProgressive: true,
           secretProviderSettings: true,
+          customOrchestration: true,
           secretReferences: true,
           secretRequestReferences: true,
           featureFlags: {
