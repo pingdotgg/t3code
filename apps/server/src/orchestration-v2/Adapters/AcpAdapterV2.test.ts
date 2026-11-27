@@ -1838,7 +1838,7 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect(
-    "re-checks prompt outcome before deferred finalize and discards stale in-flight checks",
+    "bounds deferred outcome checks and lets Stop claim the turn before a hidden failure",
     () =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1868,6 +1868,7 @@ describe("AcpAdapterV2", () => {
         let nextOutcome: () => Effect.Effect<PromptOutcome | undefined> = () => Effect.undefined;
         const promptSettled = yield* Queue.unbounded<void>();
         const deferredScheduled = yield* Queue.unbounded<void>();
+        let beforeDeferredFailureFinalize: () => Effect.Effect<void> = () => Effect.void;
         let nextDeferredFinalized: Deferred.Deferred<void> | undefined;
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
@@ -1877,6 +1878,7 @@ describe("AcpAdapterV2", () => {
               Queue.offer(promptSettled, undefined).pipe(Effect.asVoid),
             onDeferredFinalizeScheduled: () =>
               Queue.offer(deferredScheduled, undefined).pipe(Effect.asVoid),
+            beforeDeferredFailureFinalize: () => beforeDeferredFailureFinalize(),
             afterDeferredFinalize: () => {
               const milestone = nextDeferredFinalized;
               nextDeferredFinalized = undefined;
@@ -1889,6 +1891,7 @@ describe("AcpAdapterV2", () => {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
             deferFinalizeForBackgroundWork: true,
+            preserveRuntimeOnSettledInterrupt: true,
             extractSubagentUpdate: (toolCall) => {
               const status = subagentStatuses.get(toolCall.toolCallId);
               if (status === undefined) return undefined;
@@ -2006,12 +2009,8 @@ describe("AcpAdapterV2", () => {
         assert.deepEqual(promptRuntimes, [1, 2], "hidden deferred failure must restart runtime");
 
         const workRaceStarted = yield* Deferred.make<void>();
-        const releaseWorkRace = yield* Deferred.make<void>();
         nextOutcome = () =>
-          Deferred.succeed(workRaceStarted, undefined).pipe(
-            Effect.andThen(Deferred.await(releaseWorkRace)),
-            Effect.as({ failure: quota, threadDisposition: "reusable" }),
-          );
+          Deferred.succeed(workRaceStarted, undefined).pipe(Effect.andThen(Effect.never));
         yield* emitSubagent("tool-call-generic-1", "completed");
         yield* Queue.take(deferredScheduled);
         yield* TestClock.adjust("3000 millis");
@@ -2021,8 +2020,8 @@ describe("AcpAdapterV2", () => {
         const workRaceSettled = yield* Deferred.make<void>();
         nextDeferredFinalized = workRaceSettled;
         nextOutcome = () => Effect.undefined;
-        yield* Deferred.succeed(releaseWorkRace, undefined);
-        // Settle the exact blocked attempt while the second subagent still holds the turn open.
+        // The first check times out while the second subagent still holds the turn open.
+        yield* TestClock.adjust("5 seconds");
         yield* Deferred.await(workRaceSettled);
         assert.deepEqual(yield* Queue.clear(terminals), []);
 
@@ -2035,50 +2034,61 @@ describe("AcpAdapterV2", () => {
         subagentStatuses.set("tool-call-generic-1", "running");
         yield* startTurn(3);
         yield* Queue.take(promptSettled);
-        assert.deepEqual(
-          promptRuntimes,
-          [1, 2, 2],
-          "discarded deferred failure must not restart runtime",
-        );
+        assert.deepEqual(promptRuntimes, [1, 2, 2], "stale timeout must not restart runtime");
 
         const interruptRaceStarted = yield* Deferred.make<void>();
         const releaseInterruptRace = yield* Deferred.make<void>();
-        nextOutcome = () =>
+        nextOutcome = () => Effect.succeed({ failure: quota, threadDisposition: "broken" });
+        beforeDeferredFailureFinalize = () =>
           Deferred.succeed(interruptRaceStarted, undefined).pipe(
             Effect.andThen(Deferred.await(releaseInterruptRace)),
-            Effect.as({ failure: quota, threadDisposition: "reusable" }),
           );
         yield* emitSubagent("tool-call-generic-1", "completed");
         yield* Queue.take(deferredScheduled);
         yield* TestClock.adjust("3000 millis");
         yield* Deferred.await(interruptRaceStarted);
 
-        yield* runtime.interruptTurn({
-          providerThread,
-          providerTurnId: idAllocator.derive.providerTurn({
-            driver: ACP_TEST_DRIVER,
-            nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:3"),
-          }),
-        });
-        const thirdTerminal = yield* Queue.take(terminals);
-        assert.equal(thirdTerminal.status, "interrupted");
-
+        const stop = yield* runtime
+          .interruptTurn({
+            providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ACP_TEST_DRIVER,
+              nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:3"),
+            }),
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
         const interruptRaceSettled = yield* Deferred.make<void>();
         nextDeferredFinalized = interruptRaceSettled;
         nextOutcome = () => Effect.undefined;
         yield* Deferred.succeed(releaseInterruptRace, undefined);
+        yield* Fiber.join(stop);
+        const thirdTerminal = yield* Queue.take(terminals);
+        assert.equal(thirdTerminal.status, "interrupted");
+        assert.equal(thirdTerminal.threadDisposition, "reusable");
         yield* Deferred.await(interruptRaceSettled);
         assert.deepEqual(yield* Queue.clear(terminals), []);
 
-        subagentStatuses.set("tool-call-generic-1", "completed");
+        subagentStatuses.set("tool-call-generic-1", "running");
         yield* startTurn(4);
+        yield* Queue.take(promptSettled);
+        const timedCheckStarted = yield* Deferred.make<void>();
+        nextOutcome = () =>
+          Deferred.succeed(timedCheckStarted, undefined).pipe(Effect.andThen(Effect.never));
+        yield* emitSubagent("tool-call-generic-1", "completed");
+        yield* Queue.take(deferredScheduled);
+        yield* TestClock.adjust("3000 millis");
+        yield* Deferred.await(timedCheckStarted);
+        yield* TestClock.adjust("4999 millis");
+        assert.deepEqual(yield* Queue.clear(terminals), []);
+        yield* TestClock.adjust("1 millis");
+
         const fourthTerminal = yield* Queue.take(terminals);
         assert.equal(fourthTerminal.status, "completed");
-        assert.deepEqual(
-          promptRuntimes,
-          [1, 2, 2, 2],
-          "interrupted deferred check must not restart runtime",
-        );
+        nextOutcome = () => Effect.undefined;
+        yield* startTurn(5);
+        const fifthTerminal = yield* Queue.take(terminals);
+        assert.equal(fifthTerminal.status, "completed");
+        assert.deepEqual(promptRuntimes, [1, 2, 2, 2, 2]);
       }).pipe(Effect.provide(layerTest)),
   );
 
