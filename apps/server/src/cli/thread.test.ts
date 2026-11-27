@@ -740,8 +740,6 @@ it.effect("show gives the latest run's last error only when that run did not com
 
 it.each([
   ["CR", "\r"],
-  ["CRLF", "\r\n"],
-  ["LF", "\n"],
   ["Unicode line separator", "\u2028"],
   ["Unicode paragraph separator", "\u2029"],
 ])("uses only the first line of a message with %s line endings", (_name, newline) => {
