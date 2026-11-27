@@ -13,6 +13,7 @@ import {
   makeManualOnlyProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
+import type { ProviderMaintenanceManagedAction } from "@t3tools/provider-core/server/maintenance";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -121,7 +122,7 @@ const INSTALLING_PHASES: ReadonlySet<ProviderInstallState["phase"]> = new Set([
  */
 function antigravityMaintenanceCapabilities(
   state: ProviderInstallState | undefined,
-  managedUpdate: Effect.Effect<void, Error>,
+  run: ProviderMaintenanceManagedAction["run"],
 ): ProviderMaintenanceCapabilities {
   const manual = makeManualOnlyProviderMaintenanceCapabilities({
     provider: DRIVER,
@@ -132,23 +133,25 @@ function antigravityMaintenanceCapabilities(
     ...manual,
     latestVersion: state.version,
     compareVersions: (current, latest) => (current === latest ? 0 : -1),
-    managedUpdate: { lockKey: `${DRIVER}-managed`, run: managedUpdate },
+    managedUpdate: { lockKey: `${DRIVER}-managed`, run },
   };
 }
 
+// The install state names the active runtime; the snapshot's version waits for the next probe.
 function withVersionAdvisory(
   snapshot: ServerProvider,
-  capabilities: ProviderMaintenanceCapabilities,
+  state: ProviderInstallState | undefined,
+  run: ProviderMaintenanceManagedAction["run"],
 ): ServerProvider {
-  if (capabilities.latestVersion == null) return snapshot;
+  if (state?.installedVersion == null || state.version === null) return snapshot;
   return {
     ...snapshot,
     versionAdvisory: createProviderVersionAdvisory({
       driver: DRIVER,
-      currentVersion: snapshot.version,
-      latestVersion: capabilities.latestVersion,
+      currentVersion: state.installedVersion,
+      latestVersion: state.version,
       checkedAt: snapshot.checkedAt,
-      maintenanceCapabilities: capabilities,
+      maintenanceCapabilities: antigravityMaintenanceCapabilities(state, run),
     }),
   };
 }
@@ -274,23 +277,30 @@ export const AntigravityDriver: ProviderDriver<
       continuationGroupKey: continuationIdentity.continuationKey,
     });
     // A custom executable path takes precedence over the managed runtime.
-    const usesManagedRuntime = settings.binaryPath.trim() === "";
-    const updateManagedRuntime = Effect.gen(function* () {
+    const managedRuntimeState = installation.state.pipe(
+      Effect.map((state) => (settings.binaryPath.trim() === "" ? state : undefined)),
+    );
+    const updateManagedRuntime: ProviderMaintenanceManagedAction["run"] = Effect.fn(
+      "AntigravityDriver.updateManagedRuntime",
+    )(function* (onProgress) {
       const started = yield* installation.start;
-      const finished =
-        started.operationId === null
-          ? started
-          : Option.getOrElse(
-              yield* installation.changes.pipe(
-                Stream.filter(
-                  (state) =>
-                    state.operationId !== started.operationId ||
-                    !INSTALLING_PHASES.has(state.phase),
-                ),
-                Stream.runHead,
-              ),
-              () => started,
-            );
+      // Download progress repeats one state many times, so each phase reports once.
+      const finished = yield* installation.changes.pipe(
+        Stream.takeUntil(
+          (state) =>
+            state.operationId !== started.operationId || !INSTALLING_PHASES.has(state.phase),
+        ),
+        Stream.changesWith(
+          (previous, next) => previous.phase === next.phase && previous.message === next.message,
+        ),
+        Stream.tap((state) =>
+          state.message !== null && INSTALLING_PHASES.has(state.phase)
+            ? onProgress(state.message)
+            : Effect.void,
+        ),
+        Stream.runLast,
+        Effect.map(Option.getOrElse(() => started)),
+      );
       if (finished.phase !== "succeeded") {
         return yield* new AntigravityInstallation.AntigravityInstallationError({
           operation: "update",
@@ -298,21 +308,16 @@ export const AntigravityDriver: ProviderDriver<
         });
       }
     });
-    const resolveMaintenance = installation.state.pipe(
-      Effect.map((state) =>
-        antigravityMaintenanceCapabilities(
-          usesManagedRuntime ? state : undefined,
-          updateManagedRuntime,
-        ),
-      ),
+    const resolveMaintenance = managedRuntimeState.pipe(
+      Effect.map((state) => antigravityMaintenanceCapabilities(state, updateManagedRuntime)),
     );
     const classifyModels = (draft: ServerProviderDraft) =>
-      Effect.zipWith(
-        currentCatalog.pipe(
-          Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
+      Effect.zipWith(currentCatalog, managedRuntimeState, (catalog, state) =>
+        withVersionAdvisory(
+          stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog)),
+          state,
+          updateManagedRuntime,
         ),
-        resolveMaintenance,
-        withVersionAdvisory,
       );
 
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
@@ -685,6 +690,11 @@ export const AntigravityDriver: ProviderDriver<
           detail: authConfigIssue,
         });
       }
+      // Rate-limited and gated on the update-checks setting inside the installation. Runs before
+      // resolution, so a runtime this release refuses is still offered its update.
+      if ((yield* managedRuntimeState)?.installedVersion != null) {
+        yield* Effect.forkIn(installation.checkForUpdate, driverScope);
+      }
       const executable = yield* installation.resolve(settings.binaryPath, processEnvironment).pipe(
         Effect.mapError(
           (cause) =>
@@ -696,10 +706,6 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
-      // Rate-limited and gated on the update-checks setting inside the installation.
-      if (executable.source === "managed") {
-        yield* Effect.forkIn(installation.checkForUpdate, driverScope);
-      }
       const previousRejection = rejectedExternalRuntime;
       const identity =
         executable.version === null && previousRejection
@@ -908,6 +914,12 @@ export const AntigravityDriver: ProviderDriver<
       textGeneration,
       auth: authFlow.controller,
       refreshModels,
+      // The probe never spawns, so only a session reports the models the new runtime serves.
+      afterUpdate: provider.snapshot.getSnapshot.pipe(
+        Effect.flatMap((snapshot) =>
+          snapshot.auth.status === "authenticated" ? Effect.ignore(refreshModels()) : Effect.void,
+        ),
+      ),
     } satisfies ProviderInstance;
   }),
 };

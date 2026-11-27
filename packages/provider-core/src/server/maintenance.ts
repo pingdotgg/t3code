@@ -25,8 +25,10 @@ export interface ProviderMaintenanceCapabilities {
 
 export interface ProviderMaintenanceManagedAction {
   readonly lockKey: string;
-  /** Completes once the new runtime is installed. */
-  readonly run: Effect.Effect<void, Error>;
+  /** Completes once the new runtime is installed. `onProgress` takes each step's status line. */
+  readonly run: (
+    onProgress: (message: string) => Effect.Effect<void>,
+  ) => Effect.Effect<void, Error>;
 }
 
 export interface ProviderMaintenanceCommandAction {

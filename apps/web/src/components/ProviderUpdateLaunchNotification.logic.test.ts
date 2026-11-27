@@ -145,6 +145,8 @@ describe("provider update launch notification logic", () => {
 
     expect(canOneClickUpdateProviderCandidate(candidate, [candidate])).toBe(true);
     expect(canOneClickUpdateProviderCandidate(manual, [manual])).toBe(false);
+    expect(isProviderSettingsUpdateCandidate(candidate)).toBe(true);
+    expect(isProviderSettingsUpdateCandidate(manual)).toBe(false);
   });
 
   it("keeps the inline update action available while a provider update is already running", () => {

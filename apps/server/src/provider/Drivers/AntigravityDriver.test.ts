@@ -18,14 +18,17 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
@@ -80,6 +83,13 @@ const noManagedRuntime: ProviderInstallState = {
   message: null,
 };
 
+const outdatedManagedRuntime: ProviderInstallState = {
+  ...noManagedRuntime,
+  version: "1.5.18",
+  installedVersion: "1.5.17",
+  canRemove: true,
+};
+
 const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   options: {
     readonly config?: Partial<AntigravitySettings>;
@@ -87,6 +97,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     /** Extra instance variables, such as ones a parent T3 turn already exported. */
     readonly environment?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
     readonly installState?: ProviderInstallState;
+    /** The states an install started by `start` passes through, the first one included. */
+    readonly installSteps?: ReadonlyArray<ProviderInstallState>;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -175,11 +187,16 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     handle: ChildProcessSpawner.ChildProcessHandle;
   }> = [];
 
-  const installState = options.installState ?? noManagedRuntime;
+  const installState = yield* SubscriptionRef.make(options.installState ?? noManagedRuntime);
+  const installSteps = options.installSteps ?? [];
   const layerInstallation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
     managedDirectory: root,
-    state: Effect.succeed(installState),
-    changes: Stream.make(installState),
+    state: SubscriptionRef.get(installState),
+    changes:
+      installSteps.length > 0
+        ? Stream.fromIterable(installSteps)
+        : SubscriptionRef.changes(installState),
+    start: Effect.succeed(installSteps[0] ?? noManagedRuntime),
     checkForUpdate: Effect.void,
     compatibility: (version) =>
       Effect.succeed(
@@ -297,6 +314,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     second,
     signedOut,
     controls,
+    installState,
     acquisitions,
     releases,
     launches,
@@ -644,27 +662,78 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
     "reports an outdated managed runtime as a provider update (#43402)",
     () =>
       Effect.gen(function* () {
-        const h = yield* makeHarness({
-          installState: {
-            driver: ProviderDriverKind.make("antigravity"),
-            operationId: null,
-            phase: "idle",
-            downloadedBytes: 0,
-            totalBytes: null,
-            version: "1.5.18",
-            installedVersion: "1.5.17",
-            canRemove: true,
-            message: null,
-          },
-        });
+        const h = yield* makeHarness({ installState: outdatedManagedRuntime });
         h.controls.selected = yield* h.makeExecutable("1.5.17", { agentVersion: "1.5.17" });
         yield* h.refresh();
         const snapshot = yield* h.instance.snapshot.getSnapshot;
         expect(snapshot.versionAdvisory?.status).toBe("behind_latest");
         expect(snapshot.versionAdvisory?.latestVersion).toBe("1.5.18");
         expect(snapshot.versionAdvisory?.canUpdate).toBe(true);
+        // An install replaces the runtime before the next probe reads its version.
+        yield* SubscriptionRef.set(h.installState, {
+          ...outdatedManagedRuntime,
+          installedVersion: "1.5.18",
+        });
+        expect((yield* h.instance.snapshot.getSnapshot).versionAdvisory?.status).toBe("current");
         yield* h.assertClosed;
       }),
+  );
+
+  for (const finished of [
+    { phase: "succeeded", message: null },
+    { phase: "failed", message: "The download failed its checksum check." },
+  ] as const) {
+    it.effect.skipIf(windowsHost)(
+      `updates the managed runtime through its installer and reports each phase: ${finished.phase}`,
+      () =>
+        Effect.gen(function* () {
+          const step = (
+            phase: ProviderInstallState["phase"],
+            message: string | null,
+            downloadedBytes = 0,
+          ) => ({
+            ...outdatedManagedRuntime,
+            operationId: "install-1",
+            phase,
+            message,
+            downloadedBytes,
+          });
+          const h = yield* makeHarness({
+            installState: outdatedManagedRuntime,
+            installSteps: [
+              step("downloading", "Downloading.", 1),
+              step("downloading", "Downloading.", 2),
+              step("verifying", "Checking."),
+              step(finished.phase, finished.message),
+            ],
+          });
+          const update = (yield* h.instance.snapshot.resolveMaintenance()).managedUpdate;
+          if (!update) return yield* Effect.die("The managed runtime has no update action.");
+          const progress: Array<string> = [];
+          const exit = yield* update
+            .run((message) => Effect.sync(() => void progress.push(message)))
+            .pipe(Effect.exit);
+          expect(progress).toEqual(["Downloading.", "Checking."]);
+          expect(Exit.isSuccess(exit)).toBe(finished.phase === "succeeded");
+          if (Exit.isFailure(exit)) {
+            expect(Cause.squash(exit.cause)).toMatchObject({ message: finished.message });
+          }
+        }),
+    );
+  }
+
+  it.effect.skipIf(windowsHost)("reloads models after an update only when signed in", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const afterUpdate = h.instance.afterUpdate ?? Effect.die("Antigravity has no update hook.");
+      yield* afterUpdate;
+      expect(h.launches).toHaveLength(0);
+      yield* h.refresh();
+      const launched = h.launches.length;
+      yield* afterUpdate;
+      expect(h.launches.length).toBeGreaterThan(launched);
+      yield* h.assertClosed;
+    }),
   );
 
   it.effect.skipIf(windowsHost)("keeps the previous catalog when executable resolution fails", () =>

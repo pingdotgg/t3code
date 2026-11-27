@@ -569,23 +569,23 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               }
             }
 
-            const sharingInstances = yield* instancesSharingInstallation(
-              instanceId,
-              provider,
-              lockKey,
-            );
-            yield* setRunningMessage("Waiting for running provider work to finish.");
-            const result = yield* installationGate.update(
-              sharingInstances,
-              command
-                ? setRunningMessage(`Running ${describeCommand(command)}`).pipe(
-                    Effect.andThen(runMaintenanceCommand(command, setRunningMessage)),
-                  )
-                : setRunningMessage("Installing the latest version").pipe(
-                    Effect.andThen(managedUpdate!.run),
-                    Effect.as(MANAGED_UPDATE_SUCCEEDED),
+            const result = yield* command
+              ? setRunningMessage("Waiting for running provider work to finish.").pipe(
+                  Effect.andThen(instancesSharingInstallation(instanceId, provider, lockKey)),
+                  Effect.flatMap((sharingInstances) =>
+                    installationGate.update(
+                      sharingInstances,
+                      setRunningMessage(`Running ${describeCommand(command)}`).pipe(
+                        Effect.andThen(runMaintenanceCommand(command, setRunningMessage)),
+                      ),
+                    ),
                   ),
-            );
+                )
+              : // A managed install lands beside the runtime that open sessions hold, so nothing drains.
+                setRunningMessage("Installing the latest version").pipe(
+                  Effect.andThen(managedUpdate!.run(setRunningMessage)),
+                  Effect.as(MANAGED_UPDATE_SUCCEEDED),
+                );
             const finishedAt = yield* nowIso;
             if (result.exitCode !== 0) {
               yield* Effect.logWarning("Provider update command failed", {
