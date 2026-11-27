@@ -36,3 +36,20 @@ describe("tab stops in notebook redraws", () => {
     expect(terminalOutputCollapseRedraws(input)).toBe(expected);
   });
 });
+
+describe("tab stops after erasing trimmed command output", () => {
+  it.each([
+    ["\r\u001b[2K", "        Z"],
+    ["\r\u001b[K", "        Z"],
+    ["\r\u001b[J", "        Z"],
+    ["\n\u001b[1J\u001b[A", "        Z\n"],
+  ])("restores the default tab stop after %j", (erase, expected) => {
+    const trimmed = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, "x".repeat(17), 16);
+    expect(appendTerminalOutput(trimmed, erase + "\tZ", 16).text).toBe(expected);
+  });
+});
+
+it("ignores a snapshot tab offset in raw command output", () => {
+  const raw = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, "a\u001b[>7 t\tZ");
+  expect(raw.text).toBe("a       Z");
+});
