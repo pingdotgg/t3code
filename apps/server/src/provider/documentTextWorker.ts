@@ -22,6 +22,7 @@ type TextPart =
   | typeof CELL_END
   | typeof LINE_START
   | typeof THEMATIC_BREAK
+  | { columnGap: number }
   | { imageDescription: string }
   | { fallback: string }
   | { notebookOutput: Iterable<string> };
@@ -76,7 +77,7 @@ interface XmlNode {
   hasSelectedChoice?: boolean;
   epubTable?: boolean;
   mathmlFirstChildSeen?: boolean;
-  epubNavigation?: boolean;
+  epubBlock?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -183,10 +184,10 @@ function xml(source: string, extension: string): XmlNode {
       node.mathmlFirstChildSeen = false;
     if (
       extension === ".epub" &&
-      node.name === "nav" &&
+      ["nav", "details", "summary"].includes(node.name) &&
       isXhtmlElement(tag.name, stack, rootTagName)
     )
-      node.epubNavigation = true;
+      node.epubBlock = true;
     if (
       (node.name === "AlternateContent" || node.name === "Choice") &&
       namespaceOf(tag.name, stack) === MARKUP_COMPATIBILITY_NS
@@ -392,7 +393,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield "\n";
     } else if (
       child.hasText &&
-      (child.epubNavigation ||
+      (child.epubBlock ||
         [
           "blockquote",
           "figure",
@@ -571,7 +572,7 @@ function* table(node: XmlNode): Generator<TextPart, void> {
         for (let i = 0; i < count; i++) {
           column += span;
           if (column > 512) throw new Truncation("Column limit");
-          if (gap) yield "\t".repeat(gap);
+          if (gap) yield { columnGap: gap };
           gap = span;
           // LibreOffice hides the contents a merge covers; the cell still holds its column.
           if (covered(cell)) continue;
@@ -1245,8 +1246,12 @@ export async function extractDocumentText(path: string, extension: string): Prom
       }
       let raw: string;
       let isImageDescription = false;
+      let isColumnGap = false;
       if (typeof part === "string") raw = part;
-      else if ("imageDescription" in part) {
+      else if ("columnGap" in part) {
+        raw = "\t".repeat(part.columnGap);
+        isColumnGap = true;
+      } else if ("imageDescription" in part) {
         raw = part.imageDescription;
         isImageDescription = true;
       } else if ("notebookOutput" in part) {
@@ -1314,6 +1319,8 @@ export async function extractDocumentText(path: string, extension: string): Prom
           value = "";
         }
       } else {
+        // Trim leading text whitespace here so leading table column gaps survive trimEnd().
+        if (!result && !isColumnGap) value = value.trimStart();
         midLine = endsMidLine(value) ?? midLine;
       }
       result += value;
@@ -1332,7 +1339,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
     if (!(error instanceof Truncation)) throw error;
     truncated = true;
   }
-  result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trim();
+  result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trimEnd();
   if (!result && !truncated) throw new Error("No text extracted");
   return truncated ? result.replace(TRAILING_HIGH_SURROGATE, "").trimEnd() + TRUNCATED : result;
 }
