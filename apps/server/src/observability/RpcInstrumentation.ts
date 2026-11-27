@@ -332,6 +332,7 @@ const RPC_AGGREGATES = {
   [TEAM_WS_METHODS.teamSetGitHubAppConfig]: "team",
   [TEAM_WS_METHODS.teamClearGitHubAppConfig]: "team",
   [TEAM_WS_METHODS.teamStartGitHubOAuth]: "team",
+  [TEAM_WS_METHODS.teamCompleteGitHubOAuth]: "team",
   [TEAM_WS_METHODS.teamStartGitHubDeviceFlow]: "team",
   [TEAM_WS_METHODS.teamPollGitHubDeviceFlow]: "team",
   [TEAM_WS_METHODS.teamCancelGitHubDeviceFlow]: "team",

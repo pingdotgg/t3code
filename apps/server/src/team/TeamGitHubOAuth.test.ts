@@ -43,7 +43,24 @@ interface MockOAuthGitHubServer {
   readonly refreshHits: () => number;
   readonly tokenExchangeBodies: () => ReadonlyArray<Record<string, string>>;
   readonly setRefreshRevoked: (revoked: boolean) => void;
+  readonly setRefreshMode: (
+    mode: "normal" | "revoked" | "transient_503" | "rate_limit_403" | "redirect_302",
+  ) => void;
+  readonly setDeviceVerificationOverride: (
+    override: {
+      readonly verificationUri?: string;
+      readonly verificationUriComplete?: string;
+    } | null,
+  ) => void;
+  readonly registerPat: (
+    token: string,
+    user: { readonly login: string; readonly name: string; readonly email: string },
+  ) => void;
   readonly holdNextRefresh: () => {
+    readonly entered: Promise<void>;
+    readonly release: () => void;
+  };
+  readonly holdNextDevicePoll: () => {
     readonly entered: Promise<void>;
     readonly release: () => void;
   };
@@ -94,8 +111,17 @@ function startMockOAuthGitHubServer(): Promise<MockOAuthGitHubServer> {
 
   let tokenSeq = 0;
   let refreshHits = 0;
-  let refreshRevoked = false;
+  let refreshMode: "normal" | "revoked" | "transient_503" | "rate_limit_403" | "redirect_302" =
+    "normal";
+  let deviceVerificationOverride: {
+    readonly verificationUri?: string;
+    readonly verificationUriComplete?: string;
+  } | null = null;
   let pendingRefreshGate: {
+    readonly onEntered: () => void;
+    readonly waitRelease: Promise<void>;
+  } | null = null;
+  let pendingDevicePollGate: {
     readonly onEntered: () => void;
     readonly waitRelease: Promise<void>;
   } | null = null;
@@ -161,7 +187,12 @@ function startMockOAuthGitHubServer(): Promise<MockOAuthGitHubServer> {
             JSON.stringify({
               device_code: deviceCode,
               user_code: userCode,
-              verification_uri: `http://127.0.0.1:${(server.address() as { port: number }).port}/login/device`,
+              verification_uri:
+                deviceVerificationOverride?.verificationUri ??
+                `http://127.0.0.1:${(server.address() as { port: number }).port}/login/device`,
+              ...(deviceVerificationOverride?.verificationUriComplete !== undefined
+                ? { verification_uri_complete: deviceVerificationOverride.verificationUriComplete }
+                : {}),
               expires_in: 900,
               interval: 1,
             }),
@@ -177,7 +208,27 @@ function startMockOAuthGitHubServer(): Promise<MockOAuthGitHubServer> {
           if (params.grant_type === "refresh_token") {
             const respond = () => {
               refreshHits += 1;
-              if (refreshRevoked) {
+              if (refreshMode === "redirect_302") {
+                res.writeHead(302, { location: "http://169.254.169.254/latest/meta-data" });
+                res.end();
+                return;
+              }
+              if (refreshMode === "transient_503") {
+                res.writeHead(503, { "content-type": "application/json" });
+                res.end(
+                  JSON.stringify({
+                    error: "temporarily_unavailable",
+                    error_description: "GitHub is temporarily unavailable.",
+                  }),
+                );
+                return;
+              }
+              if (refreshMode === "rate_limit_403") {
+                res.writeHead(403, { "content-type": "application/json" });
+                res.end(JSON.stringify({ message: "API rate limit exceeded" }));
+                return;
+              }
+              if (refreshMode === "revoked") {
                 res.writeHead(200, { "content-type": "application/json" });
                 res.end(
                   JSON.stringify({
@@ -221,40 +272,50 @@ function startMockOAuthGitHubServer(): Promise<MockOAuthGitHubServer> {
 
           // 2. Device code grant
           if (params.grant_type === "urn:ietf:params:oauth:grant-type:device_code") {
-            const entry = deviceCodes.get(params.device_code ?? "");
-            if (!entry) {
-              res.writeHead(200, { "content-type": "application/json" });
-              res.end(JSON.stringify({ error: "incorrect_device_code" }));
-              return;
-            }
-            if (entry.nextError !== null) {
-              const err = entry.nextError;
-              if (err === "slow_down") {
-                entry.nextError = "authorization_pending";
+            const respondDevice = () => {
+              const entry = deviceCodes.get(params.device_code ?? "");
+              if (!entry) {
                 res.writeHead(200, { "content-type": "application/json" });
-                res.end(JSON.stringify({ error: "slow_down", interval: 6 }));
+                res.end(JSON.stringify({ error: "incorrect_device_code" }));
+                return;
+              }
+              if (entry.nextError !== null) {
+                const err = entry.nextError;
+                if (err === "slow_down") {
+                  entry.nextError = "authorization_pending";
+                  res.writeHead(200, { "content-type": "application/json" });
+                  res.end(JSON.stringify({ error: "slow_down", interval: 6 }));
+                  return;
+                }
+                res.writeHead(200, { "content-type": "application/json" });
+                res.end(JSON.stringify({ error: err }));
+                return;
+              }
+              if (entry.authorizedLogin) {
+                deviceCodes.delete(entry.deviceCode);
+                const pair = mintTokenPair(
+                  {
+                    login: entry.authorizedLogin,
+                    name: `${entry.authorizedLogin} Device`,
+                    email: `${entry.authorizedLogin}@device.example`,
+                  },
+                  { expiresIn: nextExpiresIn, withRefreshToken: true },
+                );
+                res.writeHead(200, { "content-type": "application/json" });
+                res.end(JSON.stringify(pair));
                 return;
               }
               res.writeHead(200, { "content-type": "application/json" });
-              res.end(JSON.stringify({ error: err }));
-              return;
+              res.end(JSON.stringify({ error: "authorization_pending" }));
+            };
+            const gate = pendingDevicePollGate;
+            if (gate !== null) {
+              pendingDevicePollGate = null;
+              gate.onEntered();
+              void gate.waitRelease.then(respondDevice);
+            } else {
+              respondDevice();
             }
-            if (entry.authorizedLogin) {
-              deviceCodes.delete(entry.deviceCode);
-              const pair = mintTokenPair(
-                {
-                  login: entry.authorizedLogin,
-                  name: `${entry.authorizedLogin} Device`,
-                  email: `${entry.authorizedLogin}@device.example`,
-                },
-                { expiresIn: nextExpiresIn, withRefreshToken: true },
-              );
-              res.writeHead(200, { "content-type": "application/json" });
-              res.end(JSON.stringify(pair));
-              return;
-            }
-            res.writeHead(200, { "content-type": "application/json" });
-            res.end(JSON.stringify({ error: "authorization_pending" }));
             return;
           }
 
@@ -328,7 +389,22 @@ function startMockOAuthGitHubServer(): Promise<MockOAuthGitHubServer> {
         refreshHits: () => refreshHits,
         tokenExchangeBodies: () => [...tokenExchangeBodies],
         setRefreshRevoked: (v) => {
-          refreshRevoked = v;
+          refreshMode = v ? "revoked" : "normal";
+        },
+        setRefreshMode: (mode) => {
+          refreshMode = mode;
+        },
+        setDeviceVerificationOverride: (override) => {
+          deviceVerificationOverride = override;
+        },
+        registerPat: (token, user) => {
+          tokenSeq += 1;
+          usersByToken.set(token, {
+            id: 2000 + tokenSeq,
+            login: user.login,
+            name: user.name,
+            email: user.email,
+          });
         },
         holdNextRefresh: () => {
           let onEntered!: () => void;
@@ -340,6 +416,18 @@ function startMockOAuthGitHubServer(): Promise<MockOAuthGitHubServer> {
             release = r;
           });
           pendingRefreshGate = { onEntered, waitRelease };
+          return { entered, release };
+        },
+        holdNextDevicePoll: () => {
+          let onEntered!: () => void;
+          let release!: () => void;
+          const entered = new Promise<void>((r) => {
+            onEntered = r;
+          });
+          const waitRelease = new Promise<void>((r) => {
+            release = r;
+          });
+          pendingDevicePollGate = { onEntered, waitRelease };
           return { entered, release };
         },
         setNextExpiresIn: (s) => {
@@ -488,7 +576,7 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
           expect(bobSetRes.failure.code).toBe("forbidden");
         }
 
-        // Rejects SSRF / private IP / plain HTTP when not allowlisted.
+        // Rejects SSRF / private IP / trailing-dot localhost / plain HTTP when not allowlisted.
         const ssrfRes = yield* Effect.result(
           team.setGitHubAppConfig({
             sessionId: aliceSession.sessionId,
@@ -501,6 +589,18 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
           }),
         );
         expect(ssrfRes._tag).toBe("Failure");
+        const trailingDotLocalhostRes = yield* Effect.result(
+          team.setGitHubAppConfig({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              mode: "github_app",
+              clientId: "Iv1.ssrf2",
+              webBaseUrl: "https://localhost.",
+              apiBaseUrl: "https://api.localhost.",
+            },
+          }),
+        );
+        expect(trailingDotLocalhostRes._tag).toBe("Failure");
 
         // Owner configures GitHub App OAuth with client_secret (encrypted in ServerSecretStore).
         const savedConfig = yield* team.setGitHubAppConfig({
@@ -530,14 +630,6 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
         expect(bobState.githubAppConfig?.updatedByMemberId).toBeUndefined();
         expect(JSON.stringify(bobState)).not.toContain("SUPER_SECRET_CLIENT_KEY");
 
-        // Subscribe Bob to live events before completing browser OAuth callback.
-        const bobEventFiber = yield* team.streamState(bobSessionId).pipe(
-          Stream.filter((ev) => ev.type === "myGitHubIdentityUpdated"),
-          Stream.take(1),
-          Stream.runCollect,
-          Effect.forkChild,
-        );
-
         const started = yield* team.startGitHubOAuth({
           sessionId: bobSessionId,
           payload: { redirectBaseUrl: "http://127.0.0.1:41999" },
@@ -546,6 +638,7 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
         expect(authUrl.pathname).toBe("/login/oauth/authorize");
         expect(authUrl.searchParams.get("client_id")).toBe("Iv1.acme1234");
         expect(authUrl.searchParams.get("code_challenge_method")).toBe("S256");
+        expect(authUrl.searchParams.get("scope")).toBeNull();
         expect(authUrl.searchParams.get("redirect_uri")).toBe(
           "http://127.0.0.1:41999/api/team/github/oauth/callback",
         );
@@ -575,11 +668,165 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
         );
         yield* Effect.addFinalizer(() => Effect.promise(() => dispose()));
 
+        // Cross-session protection: Alice's cookie hitting Bob's callback MUST fail closed with 403.
+        const startedCross = yield* team.startGitHubOAuth({
+          sessionId: bobSessionId,
+          payload: { redirectBaseUrl: "http://127.0.0.1:41999" },
+        });
+        const crossSessionRes = yield* Effect.promise(() =>
+          handler(
+            new Request(
+              `http://127.0.0.1:41999/api/team/github/oauth/callback?code=code_bob_1&state=${encodeURIComponent(startedCross.state)}`,
+              {
+                method: "GET",
+                headers: {
+                  cookie: `${sessionStore.cookieName}=${aliceSession.token}`,
+                },
+              },
+            ),
+          ),
+        );
+        expect(crossSessionRes.status).toBe(403);
+        expect((yield* team.getState(bobSessionId)).myGitHubIdentity).toBeNull();
+
+        // Callback error with untrusted HTML payload is escaped safely (XSS protection).
+        const startedErr = yield* team.startGitHubOAuth({
+          sessionId: bobSessionId,
+          payload: { redirectBaseUrl: "http://127.0.0.1:41999" },
+        });
+        const errRes = yield* Effect.promise(() =>
+          handler(
+            new Request(
+              `http://127.0.0.1:41999/api/team/github/oauth/callback?error=access_denied&error_description=${encodeURIComponent("<script>alert(1)</script>")}&state=${encodeURIComponent(startedErr.state)}`,
+              { method: "GET" },
+            ),
+          ),
+        );
+        expect(errRes.status).toBe(502);
+        const errHtml = yield* Effect.promise(() => errRes.text());
+        expect(errHtml).not.toContain("<script>");
+        expect(errHtml).toContain("&lt;script&gt;");
+
+        // Unauthenticated callback (no cookie, e.g., external browser or phishing link) NEVER attaches
+        // credentials on GET; it requires authenticated confirmation by the initiating session.
+        const startedUnauth = yield* team.startGitHubOAuth({
+          sessionId: bobSessionId,
+          payload: { redirectBaseUrl: "http://127.0.0.1:41999" },
+        });
+        const unauthChallenge = new URL(startedUnauth.authorizeUrl).searchParams.get(
+          "code_challenge",
+        )!;
+        mockGitHub.registerAuthCode({
+          code: "code_bob_confirm",
+          codeChallenge: unauthChallenge,
+          login: "bob-confirmed",
+          name: "Bob Confirmed",
+          email: "bob-confirmed@oauth.example",
+          expiresIn: 28_800,
+          withRefreshToken: true,
+        });
+        const unauthRes = yield* Effect.promise(() =>
+          handler(
+            new Request(
+              `http://127.0.0.1:41999/api/team/github/oauth/callback?code=code_bob_confirm&state=${encodeURIComponent(startedUnauth.state)}`,
+              { method: "GET" },
+            ),
+          ),
+        );
+        expect(unauthRes.status).toBe(200);
+        const unauthHtml = yield* Effect.promise(() => unauthRes.text());
+        expect(unauthHtml).toContain("Confirmation required");
+        const confirmCodeMatch = /data-testid="github-oauth-confirmation-code">([^<]+)</.exec(
+          unauthHtml,
+        );
+        expect(confirmCodeMatch?.[1]).toBeTruthy();
+        const confirmCode = confirmCodeMatch![1]!;
+        // Credentials are NOT attached before authenticated confirmation!
+        expect((yield* team.getState(bobSessionId)).myGitHubIdentity).toBeNull();
+        // Another member (Alice) cannot confirm Bob's pending OAuth flow.
+        const aliceStealConfirm = yield* Effect.result(
+          team.completeGitHubOAuth({
+            sessionId: aliceSession.sessionId,
+            payload: { state: startedUnauth.state, confirmationCode: confirmCode },
+          }),
+        );
+        expect(aliceStealConfirm._tag).toBe("Failure");
+        if (aliceStealConfirm._tag === "Failure") {
+          expect(aliceStealConfirm.failure.code).toBe("forbidden");
+        }
+        // Bob confirming with a wrong code burns the single-attempt confirmation record.
+        const wrongCodeRes = yield* Effect.result(
+          team.completeGitHubOAuth({
+            sessionId: bobSessionId,
+            payload: { state: startedUnauth.state, confirmationCode: "ZZZZ-ZZZZ" },
+          }),
+        );
+        expect(wrongCodeRes._tag).toBe("Failure");
+        const replayAfterWrong = yield* Effect.result(
+          team.completeGitHubOAuth({
+            sessionId: bobSessionId,
+            payload: { state: startedUnauth.state, confirmationCode: confirmCode },
+          }),
+        );
+        expect(replayAfterWrong._tag).toBe("Failure");
+
+        // Fresh unauthenticated callback confirmed by Bob's authenticated session succeeds (desktop/DPoP flow).
+        const startedDesktopConfirm = yield* team.startGitHubOAuth({
+          sessionId: bobSessionId,
+          payload: { redirectBaseUrl: "http://127.0.0.1:41999" },
+        });
+        mockGitHub.registerAuthCode({
+          code: "code_bob_desktop_ok",
+          codeChallenge: new URL(startedDesktopConfirm.authorizeUrl).searchParams.get(
+            "code_challenge",
+          )!,
+          login: "bob-desktop-oauth",
+          name: "Bob Desktop",
+          email: "bob-desktop@oauth.example",
+          expiresIn: 28_800,
+          withRefreshToken: true,
+        });
+        const desktopCbRes = yield* Effect.promise(() =>
+          handler(
+            new Request(
+              `http://127.0.0.1:41999/api/team/github/oauth/callback?code=code_bob_desktop_ok&state=${encodeURIComponent(startedDesktopConfirm.state)}`,
+              { method: "GET" },
+            ),
+          ),
+        );
+        expect(desktopCbRes.status).toBe(200);
+        const desktopConfirmCode = /data-testid="github-oauth-confirmation-code">([^<]+)</.exec(
+          yield* Effect.promise(() => desktopCbRes.text()),
+        )![1]!;
+        const confirmedIdentity = yield* team.completeGitHubOAuth({
+          sessionId: bobSessionId,
+          payload: {
+            state: startedDesktopConfirm.state,
+            confirmationCode: desktopConfirmCode,
+          },
+        });
+        expect(confirmedIdentity.githubLogin).toBe("bob-desktop-oauth");
+        expect(confirmedIdentity.hasRefreshToken).toBe(true);
+
+        // Subscribe Bob to live events before completing same-session cookie browser OAuth callback.
+        const bobEventFiber = yield* team.streamState(bobSessionId).pipe(
+          Stream.filter((ev) => ev.type === "myGitHubIdentityUpdated"),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        // Same-session browser cookie completes immediately in 1 click!
         const callbackRes = yield* Effect.promise(() =>
           handler(
             new Request(
               `http://127.0.0.1:41999/api/team/github/oauth/callback?code=code_bob_1&state=${encodeURIComponent(started.state)}`,
-              { method: "GET" },
+              {
+                method: "GET",
+                headers: {
+                  cookie: `${sessionStore.cookieName}=${bobJoined.accessToken}`,
+                },
+              },
             ),
           ),
         );
@@ -755,6 +1002,56 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
           payload: { deviceFlowId: started3.deviceFlowId },
         });
         expect(pollDenied.status).toBe("denied");
+
+        // Hostile verification_uri / verification_uri_complete on another origin MUST be rejected.
+        mockGitHub.setDeviceVerificationOverride({
+          verificationUri: "https://evil.example/phish",
+        });
+        const hostileUriRes = yield* Effect.result(
+          team.startGitHubDeviceFlow({
+            sessionId: bobSessionId,
+            payload: {},
+          }),
+        );
+        expect(hostileUriRes._tag).toBe("Failure");
+        mockGitHub.setDeviceVerificationOverride({
+          verificationUri: `${mockGitHub.baseUrl}/login/device`,
+          verificationUriComplete: "https://evil.example/phish?code=123",
+        });
+        const hostileCompleteUriRes = yield* Effect.result(
+          team.startGitHubDeviceFlow({
+            sessionId: bobSessionId,
+            payload: {},
+          }),
+        );
+        expect(hostileCompleteUriRes._tag).toBe("Failure");
+        mockGitHub.setDeviceVerificationOverride(null);
+
+        // In-flight cancel during outbound device token exchange MUST abort credential persistence.
+        const startedInFlight = yield* team.startGitHubDeviceFlow({
+          sessionId: bobSessionId,
+          payload: {},
+        });
+        mockGitHub.authorizeDeviceCode(startedInFlight.userCode, "bob-cancelled");
+        const pollGate = mockGitHub.holdNextDevicePoll();
+        const inFlightPollFiber = yield* Effect.forkChild(
+          Effect.result(
+            team.pollGitHubDeviceFlow({
+              sessionId: bobSessionId,
+              payload: { deviceFlowId: startedInFlight.deviceFlowId },
+            }),
+          ),
+        );
+        yield* Effect.promise(() => pollGate.entered);
+        const cancelInFlight = yield* team.cancelGitHubDeviceFlow({
+          sessionId: bobSessionId,
+          payload: { deviceFlowId: startedInFlight.deviceFlowId },
+        });
+        expect(cancelInFlight.cancelled).toBe(true);
+        pollGate.release();
+        const inFlightOutcome = yield* Fiber.join(inFlightPollFiber);
+        expect(inFlightOutcome._tag).toBe("Failure");
+        expect((yield* team.getState(bobSessionId)).myGitHubIdentity).toBeNull();
       }).pipe(Effect.provide(makeFullTestLayer())),
   );
 
@@ -834,6 +1131,7 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
         yield* team.completeGitHubOAuthCallback({
           code: "code_alice_short",
           state: started.state,
+          callbackSessionId: aliceSession.sessionId,
         });
 
         mockGitHub.setNextExpiresIn(28_800);
@@ -901,6 +1199,73 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
         expect(serializedLeasePayload).not.toContain("refresh_token");
         expect(serializedLeasePayload).not.toContain("CLIENT_SECRET_STAY_ON_HUB");
 
+        // Transient refresh errors (503 temporarily_unavailable, 403 rate limit, 302 redirect)
+        // MUST preserve stored refresh_token and return the still-valid access token without needsReconnect.
+        const beforeTransientSecret = yield* TeamGitHubRepository.readTeamGitHubSecret(
+          secrets,
+          credRecord.secretKey,
+        );
+        const nowMsTransient = yield* Clock.currentTimeMillis;
+        yield* TeamGitHubRepository.writeTeamGitHubSecret(secrets, credRecord.secretKey, {
+          ...beforeTransientSecret!,
+          expiresAt: DateTime.formatIso(DateTime.makeUnsafe(nowMsTransient + 90_000)),
+        });
+        for (const transientMode of ["transient_503", "rate_limit_403", "redirect_302"] as const) {
+          mockGitHub.setRefreshMode(transientMode);
+          const transientResolved = yield* broker.resolveRemoteTurnLease({
+            leaseId: issued.leaseId!,
+            leaseToken: issued.leaseToken!,
+            environmentId: remoteEnvId,
+            threadId,
+            turnId: "turn-1",
+          });
+          expect(transientResolved?.token).toBe(beforeTransientSecret!.accessToken);
+          const secretStillIntact = yield* TeamGitHubRepository.readTeamGitHubSecret(
+            secrets,
+            credRecord.secretKey,
+          );
+          expect(secretStillIntact?.refreshToken).toBe(beforeTransientSecret!.refreshToken);
+          expect(
+            (yield* team.getState(aliceSession.sessionId)).myGitHubIdentity?.needsReconnect,
+          ).toBeUndefined();
+        }
+        mockGitHub.setRefreshMode("normal");
+
+        // Changing clientId on team config MUST NOT send the stored refresh_token to the mismatched client.
+        const hitsBeforeConfigSwap = mockGitHub.refreshHits();
+        yield* team.setGitHubAppConfig({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            mode: "github_app",
+            clientId: "Iv1.other_app",
+            clientSecret: "CLIENT_SECRET_STAY_ON_HUB",
+            webBaseUrl: mockGitHub.baseUrl,
+            apiBaseUrl: mockGitHub.baseUrl,
+            enabled: true,
+          },
+        });
+        const mismatchResolved = yield* broker.resolveRemoteTurnLease({
+          leaseId: issued.leaseId!,
+          leaseToken: issued.leaseToken!,
+          environmentId: remoteEnvId,
+          threadId,
+          turnId: "turn-1",
+        });
+        expect(mismatchResolved?.token).toBe(beforeTransientSecret!.accessToken);
+        expect(mockGitHub.refreshHits()).toBe(hitsBeforeConfigSwap);
+        // Restore original clientId for revocation test.
+        yield* team.setGitHubAppConfig({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            mode: "github_app",
+            clientId: "Iv1.refresh123",
+            clientSecret: "CLIENT_SECRET_STAY_ON_HUB",
+            webBaseUrl: mockGitHub.baseUrl,
+            apiBaseUrl: mockGitHub.baseUrl,
+            enabled: true,
+          },
+        });
+
         // Now simulate revoked GitHub App authorization + expired token -> must fail closed & set needsReconnect!
         mockGitHub.setRefreshRevoked(true);
         const latestSecret = yield* TeamGitHubRepository.readTeamGitHubSecret(
@@ -934,7 +1299,8 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
         expect(aliceStateAfterRevoke.myGitHubIdentity?.needsReconnect).toBe(true);
         expect(aliceStateAfterRevoke.myGitHubIdentity?.reconnectReason).toContain("refresh token");
 
-        // Reconnect and verify disconnecting immediately revokes active local & remote turn leases.
+        // Reconnect and verify in-flight refresh racing with PAT rotation does NOT clobber the new PAT,
+        // and in-flight refresh racing with disconnect does NOT resurrect a deleted secret.
         mockGitHub.setRefreshRevoked(false);
         const startedReconnect = yield* team.startGitHubOAuth({
           sessionId: aliceSession.sessionId,
@@ -949,17 +1315,114 @@ describe("TeamGitHubOAuth (Phase 7b)", () => {
           login: "alice-app",
           name: "Alice App",
           email: "alice@app.example",
-          expiresIn: 28_800,
+          expiresIn: 60,
           withRefreshToken: true,
         });
         yield* team.completeGitHubOAuthCallback({
           code: "code_alice_reconnect",
           state: startedReconnect.state,
+          callbackSessionId: aliceSession.sessionId,
         });
 
         const aliceReconnectedState = yield* team.getState(aliceSession.sessionId);
         expect(aliceReconnectedState.myGitHubIdentity?.needsReconnect).toBeUndefined();
         expect(aliceReconnectedState.myGitHubIdentity?.hasRefreshToken).toBe(true);
+
+        // Race 1: Hold an OAuth refresh that will return bad_refresh_token; rotate Alice to a PAT while in flight.
+        mockGitHub.setRefreshRevoked(true);
+        const patRaceGate = mockGitHub.holdNextRefresh();
+        const oldRefreshFiber = yield* Effect.forkChild(
+          broker.issueRemoteTurnLease({
+            teamId: init.team.id,
+            environmentId: remoteEnvId,
+            threadId,
+            turnId: "turn-pat-race",
+            authorKind: "member",
+            authorMemberId: init.owner.id,
+          }),
+        );
+        yield* Effect.promise(() => patRaceGate.entered);
+        mockGitHub.registerPat("github_pat_fresh_alice", {
+          login: "alice-pat",
+          name: "Alice PAT",
+          email: "alice@pat.example",
+        });
+        yield* team.connectMyGitHub({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            token: "github_pat_fresh_alice",
+            apiBaseUrl: mockGitHub.baseUrl,
+          },
+        });
+        patRaceGate.release();
+        yield* Fiber.join(oldRefreshFiber);
+        // The replacement PAT MUST remain connected with needsReconnect unset!
+        const afterPatRaceState = yield* team.getState(aliceSession.sessionId);
+        expect(afterPatRaceState.myGitHubIdentity?.authMethod).toBe("pat");
+        expect(afterPatRaceState.myGitHubIdentity?.githubLogin).toBe("alice-pat");
+        expect(afterPatRaceState.myGitHubIdentity?.needsReconnect).toBeUndefined();
+
+        // Race 2: Reconnect short-lived OAuth, hold a succeeding refresh, disconnect while in flight ->
+        // must return null and MUST NOT resurrect the deleted secret in ServerSecretStore!
+        mockGitHub.setRefreshRevoked(false);
+        const startedRace2 = yield* team.startGitHubOAuth({
+          sessionId: aliceSession.sessionId,
+          payload: { redirectBaseUrl: "http://127.0.0.1:41999" },
+        });
+        mockGitHub.registerAuthCode({
+          code: "code_alice_race2",
+          codeChallenge: new URL(startedRace2.authorizeUrl).searchParams.get("code_challenge")!,
+          login: "alice-app",
+          name: "Alice App",
+          email: "alice@app.example",
+          expiresIn: 60,
+          withRefreshToken: true,
+        });
+        yield* team.completeGitHubOAuthCallback({
+          code: "code_alice_race2",
+          state: startedRace2.state,
+          callbackSessionId: aliceSession.sessionId,
+        });
+        const race2Cred = Option.getOrThrow(yield* githubRepo.getMemberCredential(init.owner.id));
+        const disconnectRaceGate = mockGitHub.holdNextRefresh();
+        const disconnectRaceFiber = yield* Effect.forkChild(
+          broker.issueRemoteTurnLease({
+            teamId: init.team.id,
+            environmentId: remoteEnvId,
+            threadId,
+            turnId: "turn-disconnect-race",
+            authorKind: "member",
+            authorMemberId: init.owner.id,
+          }),
+        );
+        yield* Effect.promise(() => disconnectRaceGate.entered);
+        yield* team.disconnectMyGitHub({ sessionId: aliceSession.sessionId });
+        disconnectRaceGate.release();
+        const disconnectRaceLease = yield* Fiber.join(disconnectRaceFiber);
+        expect(disconnectRaceLease.hasCredential).toBe(false);
+        expect(
+          yield* TeamGitHubRepository.readTeamGitHubSecret(secrets, race2Cred.secretKey),
+        ).toBeNull();
+
+        // Final sequential reconnect + disconnect immediately revokes active local & remote turn leases.
+        const startedFinal = yield* team.startGitHubOAuth({
+          sessionId: aliceSession.sessionId,
+          payload: { redirectBaseUrl: "http://127.0.0.1:41999" },
+        });
+        mockGitHub.registerAuthCode({
+          code: "code_alice_final",
+          codeChallenge: new URL(startedFinal.authorizeUrl).searchParams.get("code_challenge")!,
+          login: "alice-app",
+          name: "Alice App",
+          email: "alice@app.example",
+          expiresIn: 28_800,
+          withRefreshToken: true,
+        });
+        yield* team.completeGitHubOAuthCallback({
+          code: "code_alice_final",
+          state: startedFinal.state,
+          callbackSessionId: aliceSession.sessionId,
+        });
 
         const leaseBeforeDisconnect = yield* broker.issueRemoteTurnLease({
           teamId: init.team.id,

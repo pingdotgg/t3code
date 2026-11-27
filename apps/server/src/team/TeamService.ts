@@ -93,6 +93,7 @@ import {
   type TeamCancelGitHubDeviceFlowResult,
   type TeamClearAutomationGitHubResult,
   type TeamClearGitHubAppConfigResult,
+  type TeamCompleteGitHubOAuthInput,
   type TeamConnectMyGitHubInput,
   type TeamConsumeAcceptedNotesInput,
   type TeamConsumeAcceptedNotesResult,
@@ -1113,10 +1114,23 @@ export class TeamService extends Context.Service<
       readonly state?: string | null;
       readonly error?: string | null;
       readonly errorDescription?: string | null;
+      readonly callbackSessionId: AuthSessionId | null;
     }) => Effect.Effect<
-      { readonly identity: TeamGitHubIdentity; readonly mode: TeamGitHubOAuthMode },
+      | {
+          readonly status: "connected";
+          readonly identity: TeamGitHubIdentity;
+          readonly mode: TeamGitHubOAuthMode;
+        }
+      | {
+          readonly status: "confirmation_required";
+          readonly confirmationCode: string;
+        },
       TeamOperationError
     >;
+    readonly completeGitHubOAuth: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamCompleteGitHubOAuthInput;
+    }) => Effect.Effect<TeamGitHubIdentity, TeamOperationError>;
     readonly startGitHubDeviceFlow: (input: {
       readonly sessionId: AuthSessionId;
       readonly payload: TeamStartGitHubDeviceFlowInput;
@@ -2419,7 +2433,6 @@ const make = Effect.gen(function* () {
           .pipe(Effect.ignore);
       }
       TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, updatedMember.id);
-      TeamGitHubOAuth.clearMemberGitHubRefreshLock(team.id, updatedMember.id);
       if (updatedMember.status === "removed" && Option.isSome(githubRepositoryOption)) {
         const removedSecretKeyOpt = yield* githubRepositoryOption.value
           .deleteMemberCredential(updatedMember.id)
@@ -10068,6 +10081,7 @@ const make = Effect.gen(function* () {
     }
     const authMethod = input.payload.authMethod ?? "pat";
     const { githubRepo, secrets, httpClient } = yield* requireGitHubDeps();
+    TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, actor.id);
     const verified = yield* TeamGitHubRepository.verifyGitHubToken({
       httpClient,
       token: input.payload.token,
@@ -10146,7 +10160,6 @@ const make = Effect.gen(function* () {
     }
     const { githubRepo, secrets } = yield* requireGitHubDeps();
     TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, actor.id);
-    TeamGitHubOAuth.clearMemberGitHubRefreshLock(team.id, actor.id);
     const nowIso = DateTime.formatIso(yield* DateTime.now);
     const removedSecretKeyOpt = yield* githubRepo
       .deleteMemberCredential(actor.id, nowIso)
@@ -10273,16 +10286,114 @@ const make = Effect.gen(function* () {
     return { cleared: Option.isSome(removedSecretKeyOpt) };
   });
 
+  const assertOAuthFlowStillAuthorized = Effect.fn("TeamService.assertOAuthFlowStillAuthorized")(
+    function* (input: {
+      readonly teamId: TeamId;
+      readonly memberId: TeamMemberId;
+      readonly sessionId: AuthSessionId;
+      readonly mode: TeamGitHubOAuthMode;
+      readonly clientId: string;
+      readonly webBaseUrl: string;
+      readonly apiBaseUrl: string;
+      readonly memberGeneration: number;
+      readonly teamGeneration: number;
+      readonly isCancelled?: () => boolean;
+    }): Effect.fn.Return<TeamGitHubRepository.StoredGitHubAppConfigRecord, TeamOperationError> {
+      if (
+        input.isCancelled?.() === true ||
+        TeamGitHubOAuth.getMemberOAuthGeneration(githubOAuthFlowStore, input.memberId) !==
+          input.memberGeneration ||
+        TeamGitHubOAuth.getTeamOAuthGeneration(githubOAuthFlowStore, input.teamId) !==
+          input.teamGeneration
+      ) {
+        return yield* new TeamOperationError({
+          code: "github_oauth_state_invalid",
+          message: "GitHub sign-in was cancelled or superseded before completion.",
+        });
+      }
+      const team = yield* requireWorkspace();
+      if (team.id !== input.teamId) {
+        return yield* new TeamOperationError({
+          code: "github_oauth_state_invalid",
+          message: "GitHub OAuth state does not match the active team.",
+        });
+      }
+      if (Option.isSome(authSessionsOption)) {
+        const sessionOpt = yield* authSessionsOption.value
+          .getById({ sessionId: input.sessionId })
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        if (
+          Option.isNone(sessionOpt) ||
+          sessionOpt.value.revokedAt !== null ||
+          DateTime.toEpochMillis(sessionOpt.value.expiresAt) <= nowMs
+        ) {
+          return yield* new TeamOperationError({
+            code: "forbidden",
+            message: "The session that initiated GitHub sign-in has expired or been revoked.",
+          });
+        }
+      }
+      const bindingOpt = yield* repository
+        .getSessionBinding(input.sessionId)
+        .pipe(Effect.mapError(toInternalError));
+      if (
+        Option.isNone(bindingOpt) ||
+        bindingOpt.value.teamId !== input.teamId ||
+        bindingOpt.value.memberId !== input.memberId
+      ) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message:
+            "The session that initiated GitHub sign-in is no longer bound to your member account.",
+        });
+      }
+      const memberOpt = yield* repository
+        .getMemberById(input.memberId)
+        .pipe(Effect.mapError(toInternalError));
+      if (
+        Option.isNone(memberOpt) ||
+        memberOpt.value.teamId !== input.teamId ||
+        memberOpt.value.status !== "active"
+      ) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "Your team membership is no longer active.",
+        });
+      }
+      const { githubRepo } = yield* requireGitHubDeps();
+      const configOpt = yield* githubRepo
+        .getGitHubAppConfig(team.id)
+        .pipe(Effect.mapError(toInternalError));
+      if (
+        Option.isNone(configOpt) ||
+        !configOpt.value.enabled ||
+        configOpt.value.clientId !== input.clientId ||
+        configOpt.value.mode !== input.mode ||
+        configOpt.value.webBaseUrl !== input.webBaseUrl ||
+        configOpt.value.apiBaseUrl !== input.apiBaseUrl
+      ) {
+        return yield* new TeamOperationError({
+          code: "github_oauth_not_configured",
+          message: "Team GitHub OAuth / GitHub App configuration was changed or disabled.",
+        });
+      }
+      return configOpt.value;
+    },
+  );
+
   const persistMemberOAuthCredential = Effect.fn("TeamService.persistMemberOAuthCredential")(
     function* (input: {
       readonly teamId: TeamId;
       readonly memberId: TeamMemberId;
       readonly mode: TeamGitHubOAuthMode;
+      readonly clientId: string;
       readonly webBaseUrl: string;
       readonly apiBaseUrl: string;
       readonly tokenSet: TeamGitHubOAuth.ExchangedGitHubTokenSet;
       readonly githubNameOverride: string | null;
       readonly githubEmailOverride: string | null;
+      readonly verifyStillAuthorized: Effect.Effect<unknown, TeamOperationError>;
     }) {
       const { githubRepo, secrets, httpClient } = yield* requireGitHubDeps();
       const verified = yield* TeamGitHubRepository.verifyGitHubToken({
@@ -10292,6 +10403,9 @@ const make = Effect.gen(function* () {
         githubNameOverride: input.githubNameOverride,
         githubEmailOverride: input.githubEmailOverride,
       });
+      // Re-validate session, membership, config, and cancellation generation right before committing
+      // so any concurrent disconnect, suspension, cancellation, or config change aborts cleanly.
+      yield* input.verifyStillAuthorized;
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       const existingOpt = yield* githubRepo
         .getMemberCredential(input.memberId)
@@ -10310,6 +10424,7 @@ const make = Effect.gen(function* () {
           : {}),
         tokenEndpoint: `${input.webBaseUrl}/login/oauth/access_token`,
         webBaseUrl: input.webBaseUrl,
+        clientId: input.clientId,
         apiBaseUrl: verified.apiBaseUrl,
         githubLogin: verified.githubLogin,
         githubName: verified.githubName,
@@ -10385,11 +10500,11 @@ const make = Effect.gen(function* () {
       rawApiBase.length > 0 ? rawApiBase : defaultApiBase,
     );
     const scopes =
-      input.payload.scopes !== undefined && input.payload.scopes !== null
-        ? input.payload.scopes.trim()
-        : input.payload.mode === "oauth"
-          ? DEFAULT_GITHUB_OAUTH_SCOPES
-          : "";
+      input.payload.mode === "github_app"
+        ? ""
+        : input.payload.scopes !== undefined && input.payload.scopes !== null
+          ? input.payload.scopes.trim()
+          : DEFAULT_GITHUB_OAUTH_SCOPES;
     const enabled = input.payload.enabled ?? true;
     const existingOpt = yield* githubRepo
       .getGitHubAppConfig(team.id)
@@ -10514,7 +10629,8 @@ const make = Effect.gen(function* () {
         const rawHost = serverConfigOption.value.host?.trim() ?? "127.0.0.1";
         const host =
           rawHost === "0.0.0.0" || rawHost === "::" || rawHost === "[::]" ? "127.0.0.1" : rawHost;
-        redirectBaseUrl = `http://${host}:${serverConfigOption.value.port}`;
+        const formattedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+        redirectBaseUrl = `http://${formattedHost}:${serverConfigOption.value.port}`;
       } else {
         return yield* new TeamOperationError({
           code: "invalid_input",
@@ -10534,12 +10650,61 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const exchangeAndPersistBrowserOAuth = Effect.fn("TeamService.exchangeAndPersistBrowserOAuth")(
+    function* (input: {
+      readonly pending: TeamGitHubOAuth.PendingBrowserOAuthState;
+      readonly code: string;
+    }) {
+      const verifyStillAuthorized = assertOAuthFlowStillAuthorized({
+        teamId: input.pending.teamId,
+        memberId: input.pending.memberId,
+        sessionId: input.pending.sessionId,
+        mode: input.pending.mode,
+        clientId: input.pending.clientId,
+        webBaseUrl: input.pending.webBaseUrl,
+        apiBaseUrl: input.pending.apiBaseUrl,
+        memberGeneration: input.pending.memberGeneration,
+        teamGeneration: input.pending.teamGeneration,
+      });
+      const currentConfig = yield* verifyStillAuthorized;
+      const { secrets, httpClient } = yield* requireGitHubDeps();
+      const clientSecret = currentConfig.clientSecretKey
+        ? yield* TeamGitHubRepository.readTeamGitHubAppClientSecret(
+            secrets,
+            currentConfig.clientSecretKey,
+          )
+        : null;
+      const tokenSet = yield* TeamGitHubOAuth.exchangeGitHubAuthorizationCode({
+        httpClient,
+        webBaseUrl: input.pending.webBaseUrl,
+        clientId: input.pending.clientId,
+        clientSecret,
+        code: input.code,
+        redirectUri: input.pending.redirectUri,
+        codeVerifier: input.pending.codeVerifier,
+      });
+      return yield* persistMemberOAuthCredential({
+        teamId: input.pending.teamId,
+        memberId: input.pending.memberId,
+        mode: input.pending.mode,
+        clientId: input.pending.clientId,
+        webBaseUrl: input.pending.webBaseUrl,
+        apiBaseUrl: input.pending.apiBaseUrl,
+        tokenSet,
+        githubNameOverride: input.pending.githubNameOverride,
+        githubEmailOverride: input.pending.githubEmailOverride,
+        verifyStillAuthorized,
+      });
+    },
+  );
+
   const completeGitHubOAuthCallback = Effect.fn("TeamService.completeGitHubOAuthCallback")(
     function* (input: {
       readonly code?: string | null;
       readonly state?: string | null;
       readonly error?: string | null;
       readonly errorDescription?: string | null;
+      readonly callbackSessionId: AuthSessionId | null;
     }) {
       const pending = yield* TeamGitHubOAuth.consumePendingBrowserOAuthState(
         githubOAuthFlowStore,
@@ -10560,103 +10725,73 @@ const make = Effect.gen(function* () {
           message: "Missing GitHub OAuth authorization code.",
         });
       }
-      const team = yield* requireWorkspace();
-      if (team.id !== pending.teamId) {
-        return yield* new TeamOperationError({
-          code: "github_oauth_state_invalid",
-          message: "GitHub OAuth state does not match the active team.",
-        });
-      }
-      // Verify the originating member session is still active & bound to the same member.
-      if (Option.isSome(authSessionsOption)) {
-        const sessionOpt = yield* authSessionsOption.value
-          .getById({ sessionId: pending.sessionId })
-          .pipe(Effect.orElseSucceed(() => Option.none()));
-        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-        if (
-          Option.isNone(sessionOpt) ||
-          sessionOpt.value.revokedAt !== null ||
-          DateTime.toEpochMillis(sessionOpt.value.expiresAt) <= nowMs
-        ) {
-          return yield* new TeamOperationError({
-            code: "forbidden",
-            message: "The session that initiated GitHub sign-in has expired or been revoked.",
-          });
-        }
-      }
-      const bindingOpt = yield* repository
-        .getSessionBinding(pending.sessionId)
-        .pipe(Effect.mapError(toInternalError));
-      if (
-        Option.isNone(bindingOpt) ||
-        bindingOpt.value.teamId !== pending.teamId ||
-        bindingOpt.value.memberId !== pending.memberId
-      ) {
+      yield* assertOAuthFlowStillAuthorized({
+        teamId: pending.teamId,
+        memberId: pending.memberId,
+        sessionId: pending.sessionId,
+        mode: pending.mode,
+        clientId: pending.clientId,
+        webBaseUrl: pending.webBaseUrl,
+        apiBaseUrl: pending.apiBaseUrl,
+        memberGeneration: pending.memberGeneration,
+        teamGeneration: pending.teamGeneration,
+      });
+
+      // Prevent cross-user OAuth login CSRF: reject callbacks from a different authenticated browser
+      // session, and require explicit authenticated confirmation when no matching browser cookie is present.
+      if (input.callbackSessionId !== null && input.callbackSessionId !== pending.sessionId) {
         return yield* new TeamOperationError({
           code: "forbidden",
           message:
-            "The session that initiated GitHub sign-in is no longer bound to your member account.",
+            "GitHub OAuth callback session does not match the member session that started sign-in.",
         });
       }
-      const memberOpt = yield* repository
-        .getMemberById(pending.memberId)
-        .pipe(Effect.mapError(toInternalError));
-      if (
-        Option.isNone(memberOpt) ||
-        memberOpt.value.teamId !== pending.teamId ||
-        memberOpt.value.status !== "active"
-      ) {
-        return yield* new TeamOperationError({
-          code: "forbidden",
-          message: "Your team membership is no longer active.",
+      if (input.callbackSessionId === null) {
+        const { confirmationCode } = yield* TeamGitHubOAuth.createPendingBrowserOAuthConfirmation({
+          store: githubOAuthFlowStore,
+          pending,
+          authorizationCode: code,
         });
+        return {
+          status: "confirmation_required" as const,
+          confirmationCode,
+        };
       }
 
-      const { githubRepo, secrets, httpClient } = yield* requireGitHubDeps();
-      const configOpt = yield* githubRepo
-        .getGitHubAppConfig(team.id)
-        .pipe(Effect.mapError(toInternalError));
-      if (
-        Option.isNone(configOpt) ||
-        !configOpt.value.enabled ||
-        configOpt.value.clientId !== pending.clientId ||
-        configOpt.value.mode !== pending.mode ||
-        configOpt.value.webBaseUrl !== pending.webBaseUrl ||
-        configOpt.value.apiBaseUrl !== pending.apiBaseUrl
-      ) {
-        return yield* new TeamOperationError({
-          code: "github_oauth_not_configured",
-          message: "Team GitHub OAuth / GitHub App configuration was changed or disabled.",
-        });
-      }
-      const clientSecret = configOpt.value.clientSecretKey
-        ? yield* TeamGitHubRepository.readTeamGitHubAppClientSecret(
-            secrets,
-            configOpt.value.clientSecretKey,
-          )
-        : null;
-      const tokenSet = yield* TeamGitHubOAuth.exchangeGitHubAuthorizationCode({
-        httpClient,
-        webBaseUrl: pending.webBaseUrl,
-        clientId: pending.clientId,
-        clientSecret,
-        code,
-        redirectUri: pending.redirectUri,
-        codeVerifier: pending.codeVerifier,
-      });
-      const identity = yield* persistMemberOAuthCredential({
-        teamId: team.id,
-        memberId: pending.memberId,
+      const identity = yield* exchangeAndPersistBrowserOAuth({ pending, code });
+      return {
+        status: "connected" as const,
+        identity,
         mode: pending.mode,
-        webBaseUrl: pending.webBaseUrl,
-        apiBaseUrl: pending.apiBaseUrl,
-        tokenSet,
-        githubNameOverride: pending.githubNameOverride,
-        githubEmailOverride: pending.githubEmailOverride,
-      });
-      return { identity, mode: pending.mode };
+      };
     },
   );
+
+  const completeGitHubOAuth = Effect.fn("TeamService.completeGitHubOAuth")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamCompleteGitHubOAuthInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "This session does not belong to the active team.",
+      });
+    }
+    const confirmed = yield* TeamGitHubOAuth.consumePendingBrowserOAuthConfirmation({
+      store: githubOAuthFlowStore,
+      state: input.payload.state,
+      confirmationCode: input.payload.confirmationCode,
+      teamId: team.id,
+      memberId: actor.id,
+      sessionId: input.sessionId,
+    });
+    return yield* exchangeAndPersistBrowserOAuth({
+      pending: confirmed.pending,
+      code: confirmed.authorizationCode,
+    });
+  });
 
   const startGitHubDeviceFlow = Effect.fn("TeamService.startGitHubDeviceFlow")(function* (input: {
     readonly sessionId: AuthSessionId;
@@ -10724,11 +10859,24 @@ const make = Effect.gen(function* () {
       teamId: team.id,
       memberId: actor.id,
       mode: outcome.flow.mode,
+      clientId: outcome.flow.clientId,
       webBaseUrl: outcome.flow.webBaseUrl,
       apiBaseUrl: outcome.flow.apiBaseUrl,
       tokenSet: outcome.tokenSet,
       githubNameOverride: outcome.flow.githubNameOverride,
       githubEmailOverride: outcome.flow.githubEmailOverride,
+      verifyStillAuthorized: assertOAuthFlowStillAuthorized({
+        teamId: outcome.flow.teamId,
+        memberId: outcome.flow.memberId,
+        sessionId: outcome.flow.sessionId,
+        mode: outcome.flow.mode,
+        clientId: outcome.flow.clientId,
+        webBaseUrl: outcome.flow.webBaseUrl,
+        apiBaseUrl: outcome.flow.apiBaseUrl,
+        memberGeneration: outcome.flow.memberGeneration,
+        teamGeneration: outcome.flow.teamGeneration,
+        isCancelled: () => outcome.flow.cancelled,
+      }),
     });
     return {
       status: "completed" as const,
@@ -10756,6 +10904,7 @@ const make = Effect.gen(function* () {
       flow.memberId === actor.id &&
       flow.sessionId === input.sessionId
     ) {
+      flow.cancelled = true;
       githubOAuthFlowStore.deviceFlows.delete(input.payload.deviceFlowId);
       return { cancelled: true };
     }
@@ -10937,6 +11086,7 @@ const make = Effect.gen(function* () {
     clearGitHubAppConfig,
     startGitHubOAuth,
     completeGitHubOAuthCallback,
+    completeGitHubOAuth,
     startGitHubDeviceFlow,
     pollGitHubDeviceFlow,
     cancelGitHubDeviceFlow,

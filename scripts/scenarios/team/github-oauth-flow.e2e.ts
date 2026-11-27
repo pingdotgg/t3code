@@ -215,6 +215,56 @@ async function createInviteAndJoin(input: {
     .waitFor({ state: "visible", timeout: 20_000 });
 }
 
+async function completeBrowserOAuthFromSettings(input: {
+  readonly settingsPage: TeamMemberHandle["page"];
+  readonly context: TeamMemberHandle["context"];
+  readonly expectedLogin: string;
+  readonly expectUnconnectedBeforeConfirm?: boolean;
+}) {
+  const { settingsPage, context, expectedLogin, expectUnconnectedBeforeConfirm = false } = input;
+  const popupPromise = context.waitForEvent("page");
+  await settingsPage.getByTestId("team-my-github-oauth-signin").click();
+  const popup = await popupPromise;
+  await popup.waitForLoadState("domcontentloaded", { timeout: 15_000 });
+  await expect
+    .poll(
+      async () => {
+        const text =
+          (await popup
+            .locator("body")
+            .textContent()
+            .catch(() => "")) ?? "";
+        return (
+          text.includes(`Connected as @${expectedLogin}`) || text.includes("Confirmation required")
+        );
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+
+  const codeLocator = popup.getByTestId("github-oauth-confirmation-code");
+  if ((await codeLocator.count()) > 0) {
+    const confirmationCode = ((await codeLocator.textContent()) ?? "").trim();
+    expect(confirmationCode).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    if (expectUnconnectedBeforeConfirm) {
+      expect(
+        (await settingsPage
+          .getByTestId("team-my-github-status")
+          .textContent()
+          .catch(() => "")) ?? "",
+      ).toContain("Not connected");
+    }
+    await popup.close();
+    await settingsPage
+      .getByTestId("team-my-github-oauth-confirm-input")
+      .waitFor({ state: "visible", timeout: 10_000 });
+    await settingsPage.getByTestId("team-my-github-oauth-confirm-input").fill(confirmationCode);
+    await settingsPage.getByTestId("team-my-github-oauth-confirm-submit").click();
+    return;
+  }
+  await popup.close();
+}
+
 test("Milestone 7 Phase 7b: GitHub App OAuth + PKCE, RFC 8628 device flow, automatic short-lived token refresh rotation, needsReconnect fail-closed, and disconnect lease revocation", async ({
   app,
 }) => {
@@ -317,24 +367,13 @@ test("Milestone 7 Phase 7b: GitHub App OAuth + PKCE, RFC 8628 device flow, autom
   });
   fakeGitHub.oauth.setNextTokenExpiresIn(60);
 
-  // 3. Alice clicks one-click "Sign in with GitHub" -> popup hits Fake GitHub -> redirects to Team Server callback -> connects!
-  const popupPromise = alice.context.waitForEvent("page");
-  await alice.page.getByTestId("team-my-github-oauth-signin").click();
-  const popup = await popupPromise;
-  await popup.waitForLoadState("domcontentloaded", { timeout: 15_000 });
-  await expect
-    .poll(
-      async () =>
-        (await popup
-          .locator("body")
-          .textContent()
-          .catch(() => "")) ?? "",
-      {
-        timeout: 15_000,
-      },
-    )
-    .toContain("Connected as @alice-oauth");
-  await popup.close();
+  // 3. Alice clicks "Sign in with GitHub" -> popup hits Fake GitHub -> redirects to Team Server callback -> confirms & connects!
+  await completeBrowserOAuthFromSettings({
+    settingsPage: alice.page,
+    context: alice.context,
+    expectedLogin: "alice-oauth",
+    expectUnconnectedBeforeConfirm: true,
+  });
 
   await expect
     .poll(
@@ -448,21 +487,14 @@ test("Milestone 7 Phase 7b: GitHub App OAuth + PKCE, RFC 8628 device flow, autom
   await reauthTab
     .getByTestId("team-my-github-oauth-signin")
     .waitFor({ state: "visible", timeout: 15_000 });
-  const reauthPopupPromise = alice.context.waitForEvent("page");
-  await reauthTab.getByTestId("team-my-github-oauth-signin").click();
-  const reauthPopup = await reauthPopupPromise;
-  await reauthPopup.waitForLoadState("domcontentloaded", { timeout: 15_000 });
+  await completeBrowserOAuthFromSettings({
+    settingsPage: reauthTab,
+    context: alice.context,
+    expectedLogin: "alice-oauth",
+  });
   await expect
-    .poll(
-      async () =>
-        (await reauthPopup
-          .locator("body")
-          .textContent()
-          .catch(() => "")) ?? "",
-      { timeout: 15_000 },
-    )
-    .toContain("Connected as @alice-oauth");
-  await reauthPopup.close();
+    .poll(() => fakeGitHub.oauth.mintedAccessTokens().length, { timeout: 15_000 })
+    .toBeGreaterThanOrEqual(4);
   await reauthTab.close();
 
   fakeGitHub.oauth.setRefreshRevoked(true);
@@ -499,26 +531,14 @@ test("Milestone 7 Phase 7b: GitHub App OAuth + PKCE, RFC 8628 device flow, autom
     .getByTestId("team-my-github-reconnect-banner")
     .waitFor({ state: "visible", timeout: 10_000 });
 
-  // 7. Reconnect Alice via one-click OAuth, start a HOLD_TURN, then Disconnect -> active turn lease revoked immediately!
+  // 7. Reconnect Alice via OAuth, start a HOLD_TURN, then Disconnect -> active turn lease revoked immediately!
   fakeGitHub.oauth.setRefreshRevoked(false);
   fakeGitHub.oauth.setNextTokenExpiresIn(28_800);
-  const popupPromise2 = alice.context.waitForEvent("page");
-  await alice.page.getByTestId("team-my-github-oauth-signin").click();
-  const popup2 = await popupPromise2;
-  await popup2.waitForLoadState("domcontentloaded", { timeout: 15_000 });
-  await expect
-    .poll(
-      async () =>
-        (await popup2
-          .locator("body")
-          .textContent()
-          .catch(() => "")) ?? "",
-      {
-        timeout: 15_000,
-      },
-    )
-    .toContain("Connected as @alice-oauth");
-  await popup2.close();
+  await completeBrowserOAuthFromSettings({
+    settingsPage: alice.page,
+    context: alice.context,
+    expectedLogin: "alice-oauth",
+  });
 
   await expect
     .poll(

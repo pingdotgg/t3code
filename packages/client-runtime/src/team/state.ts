@@ -940,6 +940,10 @@ export function createTeamEnvironmentAtoms<R, E>(
       label: "environment-data:team:start-github-oauth",
       tag: TEAM_WS_METHODS.teamStartGitHubOAuth,
     }),
+    completeGitHubOAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:complete-github-oauth",
+      tag: TEAM_WS_METHODS.teamCompleteGitHubOAuth,
+    }),
     startGitHubDeviceFlow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:start-github-device-flow",
       tag: TEAM_WS_METHODS.teamStartGitHubDeviceFlow,

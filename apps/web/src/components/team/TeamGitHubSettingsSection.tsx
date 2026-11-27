@@ -163,6 +163,9 @@ export function TeamGitHubSettingsSection({
   const runStartGitHubOAuth = useAtomCommand(teamEnvironment.startGitHubOAuth, {
     reportFailure: false,
   });
+  const runCompleteGitHubOAuth = useAtomCommand(teamEnvironment.completeGitHubOAuth, {
+    reportFailure: false,
+  });
   const runStartGitHubDeviceFlow = useAtomCommand(teamEnvironment.startGitHubDeviceFlow, {
     reportFailure: false,
   });
@@ -184,8 +187,11 @@ export function TeamGitHubSettingsSection({
 
   // Member OAuth & Device flow state
   const [startingOAuth, setStartingOAuth] = useState(false);
+  const [completingOAuth, setCompletingOAuth] = useState(false);
+  const [oauthConfirmationCode, setOAuthConfirmationCode] = useState("");
   const [pendingOAuth, setPendingOAuth] = useState<{
     readonly authorizeUrl: string;
+    readonly state: string;
     readonly connectedUpdatedAtBefore: string | null;
   } | null>(null);
   const [startingDeviceFlow, setStartingDeviceFlow] = useState(false);
@@ -321,11 +327,13 @@ export function TeamGitHubSettingsSection({
         ...(effectiveAppApiBaseUrl.trim().length > 0
           ? { apiBaseUrl: effectiveAppApiBaseUrl.trim() }
           : { apiBaseUrl: null }),
-        ...(appScopesDraft !== null
-          ? { scopes: appScopesDraft.trim() }
-          : githubAppConfig !== null
-            ? { scopes: githubAppConfig.scopes }
-            : {}),
+        ...(effectiveAppMode === "github_app"
+          ? {}
+          : appScopesDraft !== null
+            ? { scopes: appScopesDraft.trim() }
+            : githubAppConfig !== null && githubAppConfig.mode === "oauth"
+              ? { scopes: githubAppConfig.scopes }
+              : {}),
       },
     });
     setSavingAppConfig(false);
@@ -391,8 +399,10 @@ export function TeamGitHubSettingsSection({
     setStartingOAuth(false);
     if (result._tag === "Success") {
       const authorizeUrl = result.value.authorizeUrl;
+      setOAuthConfirmationCode("");
       setPendingOAuth({
         authorizeUrl,
+        state: result.value.state,
         connectedUpdatedAtBefore: myGitHubIdentity?.updatedAt ?? null,
       });
       try {
@@ -414,6 +424,37 @@ export function TeamGitHubSettingsSection({
     pendingWindow?.close();
     if (!isAtomCommandInterrupted(result)) {
       reportError(gt("Could not start GitHub sign-in"), squashAtomCommandFailure(result));
+    }
+  };
+
+  const handleCompleteBrowserOAuth = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!pendingOAuth) return;
+    const confirmationCode = oauthConfirmationCode.trim();
+    if (confirmationCode.length === 0) return;
+    setCompletingOAuth(true);
+    const result = await runCompleteGitHubOAuth({
+      environmentId,
+      input: {
+        state: pendingOAuth.state,
+        confirmationCode,
+      },
+    });
+    setCompletingOAuth(false);
+    if (result._tag === "Success") {
+      setPendingOAuth(null);
+      setOAuthConfirmationCode("");
+      toastManager.add({
+        type: "success",
+        title: gt("GitHub identity connected"),
+        description: gt("Turns you start will authenticate and commit as @{login}.", {
+          login: result.value.githubLogin,
+        }),
+      });
+      return;
+    }
+    if (!isAtomCommandInterrupted(result)) {
+      reportError(gt("Could not finish GitHub sign-in"), squashAtomCommandFailure(result));
     }
   };
 
@@ -446,6 +487,7 @@ export function TeamGitHubSettingsSection({
 
     void (async () => {
       let intervalSeconds = Math.max(1, flow.intervalSeconds);
+      let consecutiveTransportFailures = 0;
       while (!abortController.signal.aborted) {
         const shouldContinue = await waitAbortable(intervalSeconds * 1_000, abortController.signal);
         if (!shouldContinue || abortController.signal.aborted) return;
@@ -456,12 +498,26 @@ export function TeamGitHubSettingsSection({
         });
         if (abortController.signal.aborted) return;
         if (pollResult._tag !== "Success") {
+          const failure = squashAtomCommandFailure(pollResult);
+          const isDomainError =
+            typeof failure === "object" &&
+            failure !== null &&
+            "_tag" in failure &&
+            (failure._tag === "TeamOperationError" ||
+              failure._tag === "EnvironmentAuthorizationError");
+          if (!isDomainError && !isAtomCommandInterrupted(pollResult)) {
+            consecutiveTransportFailures += 1;
+            if (consecutiveTransportFailures < 3) {
+              continue;
+            }
+          }
           setActiveDeviceFlow(null);
           if (!isAtomCommandInterrupted(pollResult)) {
-            reportError(gt("GitHub device sign-in failed"), squashAtomCommandFailure(pollResult));
+            reportError(gt("GitHub device sign-in failed"), failure);
           }
           return;
         }
+        consecutiveTransportFailures = 0;
         const outcome = pollResult.value;
         intervalSeconds = Math.max(1, outcome.intervalSeconds);
         if (outcome.status === "pending") {
@@ -837,6 +893,34 @@ export function TeamGitHubSettingsSection({
                     {oauthUrlCopied ? gt("Copied") : gt("Copy link")}
                   </Button>
                 </div>
+                <form
+                  className="flex flex-wrap items-center gap-2 border-t border-border/50 pt-2"
+                  onSubmit={(event) => void handleCompleteBrowserOAuth(event)}
+                  data-testid="team-my-github-oauth-confirm-form"
+                >
+                  <Input
+                    size="sm"
+                    className="max-w-44"
+                    value={oauthConfirmationCode}
+                    onChange={(event) => setOAuthConfirmationCode(event.target.value)}
+                    placeholder={gt("Confirmation code")}
+                    disabled={completingOAuth}
+                    data-testid="team-my-github-oauth-confirm-input"
+                  />
+                  <Button
+                    type="submit"
+                    size="xs"
+                    variant="secondary"
+                    disabled={completingOAuth || oauthConfirmationCode.trim().length === 0}
+                    data-testid="team-my-github-oauth-confirm-submit"
+                  >
+                    {completingOAuth ? <Spinner /> : <CheckIcon />}
+                    <T>Confirm sign-in</T>
+                  </Button>
+                  <span className="text-2xs text-muted-foreground">
+                    <T>Only needed if the callback page shows a one-time confirmation code.</T>
+                  </span>
+                </form>
               </div>
             ) : null}
 
@@ -1064,6 +1148,7 @@ export function TeamGitHubSettingsSection({
                 </label>
                 <Select
                   value={effectiveAppMode}
+                  disabled={savingAppConfig || !canManageAppConfig}
                   onValueChange={(value) => {
                     if (value === "github_app" || value === "oauth") {
                       setAppModeDraft(value);

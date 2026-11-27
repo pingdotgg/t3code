@@ -380,12 +380,15 @@ const handleRevokeRemoteLease = Effect.fn("TeamGitHubHttp.revoke")(function* () 
 
 const handleGitHubOAuthCallback = Effect.fn("TeamGitHubHttp.oauthCallback")(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
+  const auth = yield* EnvironmentAuth.EnvironmentAuth;
   const teamService = yield* TeamService.TeamService;
   const parsedUrl = new URL(request.url, "http://localhost");
   const code = parsedUrl.searchParams.get("code");
   const state = parsedUrl.searchParams.get("state");
   const error = parsedUrl.searchParams.get("error");
   const errorDescription = parsedUrl.searchParams.get("error_description");
+  const callbackSession = yield* auth.authenticateHttpRequest(request).pipe(Effect.option);
+  const callbackSessionId = Option.isSome(callbackSession) ? callbackSession.value.sessionId : null;
 
   const result = yield* Effect.result(
     teamService.completeGitHubOAuthCallback({
@@ -393,15 +396,22 @@ const handleGitHubOAuthCallback = Effect.fn("TeamGitHubHttp.oauthCallback")(func
       state,
       error,
       errorDescription,
+      callbackSessionId,
     }),
   );
 
   if (result._tag === "Success") {
-    const html = TeamGitHubOAuth.renderGitHubOAuthCallbackHtml({
-      ok: true,
-      githubLogin: result.success.identity.githubLogin,
-      mode: result.success.mode,
-    });
+    const html =
+      result.success.status === "connected"
+        ? TeamGitHubOAuth.renderGitHubOAuthCallbackHtml({
+            ok: true,
+            githubLogin: result.success.identity.githubLogin,
+            mode: result.success.mode,
+          })
+        : TeamGitHubOAuth.renderGitHubOAuthCallbackHtml({
+            ok: "confirm",
+            confirmationCode: result.success.confirmationCode,
+          });
     return HttpServerResponse.text(html, {
       status: 200,
       contentType: "text/html; charset=utf-8",

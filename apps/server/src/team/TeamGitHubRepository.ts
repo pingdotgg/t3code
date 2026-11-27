@@ -52,6 +52,7 @@ export const StoredTeamGitHubSecret = Schema.Struct({
   refreshTokenExpiresAt: Schema.optionalKey(Schema.String),
   tokenEndpoint: Schema.optionalKey(Schema.String),
   webBaseUrl: Schema.optionalKey(Schema.String),
+  clientId: Schema.optionalKey(Schema.String),
   installationId: Schema.optionalKey(Schema.String),
   apiBaseUrl: Schema.String,
   githubLogin: Schema.String,
@@ -493,7 +494,10 @@ const normalizeGitHubBaseUrl = Effect.fn("TeamGitHubRepository.normalizeBaseUrl"
           message: `${input.label} must use https:// unless explicitly allowlisted by server configuration.`,
         });
       }
-      const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+      const hostname = parsed.hostname
+        .toLowerCase()
+        .replace(/^\[|\]$/g, "")
+        .replace(/\.+$/, "");
       if (
         hostname === "localhost" ||
         hostname.endsWith(".localhost") ||
@@ -920,6 +924,7 @@ const mapAppConfigRow = (row: GitHubAppConfigRow): StoredGitHubAppConfigRecord =
 
 export interface UpdateMemberRefreshStateInput {
   readonly memberId: TeamMemberId;
+  readonly expectedSecretKey: string;
   readonly tokenExpiresAt: string | null;
   readonly hasRefreshToken: boolean;
   readonly needsReconnect: boolean;
@@ -1065,7 +1070,8 @@ const make = Effect.gen(function* () {
     updateMemberCredentialRefreshState: Effect.fn(
       "TeamGitHubRepository.updateMemberCredentialRefreshState",
     )(function* (input) {
-      // Preserves `updated_at` so active turn leases continue seamlessly across server-side token refreshes.
+      // Preserves `updated_at` so active turn leases continue seamlessly across server-side token refreshes,
+      // while guarding with `secret_key` CAS so stale refreshes never clobber a disconnect or PAT/OAuth rotation.
       return yield* wrap(
         "updateMemberCredentialRefreshState",
         sql.withTransaction(
@@ -1077,6 +1083,7 @@ const make = Effect.gen(function* () {
                   needs_reconnect = ${input.needsReconnect ? 1 : 0},
                   reconnect_reason = ${input.reconnectReason}
               WHERE member_id = ${input.memberId}
+                AND secret_key = ${input.expectedSecretKey}
             `;
             const rows = yield* sql<MemberCredentialRow>`
               SELECT member_id, team_id, auth_method, github_login, github_name, github_email,
@@ -1084,6 +1091,7 @@ const make = Effect.gen(function* () {
                      token_expires_at, has_refresh_token, needs_reconnect, reconnect_reason
               FROM team_github_member_credentials
               WHERE member_id = ${input.memberId}
+                AND secret_key = ${input.expectedSecretKey}
               LIMIT 1
             `;
             return rows[0] !== undefined ? Option.some(mapMemberRow(rows[0])) : Option.none();

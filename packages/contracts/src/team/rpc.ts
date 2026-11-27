@@ -16,6 +16,7 @@ import {
   TeamCancelGitHubDeviceFlowResult,
   TeamClearAutomationGitHubResult,
   TeamClearGitHubAppConfigResult,
+  TeamCompleteGitHubOAuthInput,
   TeamConnectMyGitHubInput,
   TeamConsumeAcceptedNotesInput,
   TeamConsumeAcceptedNotesResult,
@@ -161,6 +162,7 @@ export const TEAM_WS_METHODS = {
   teamSetGitHubAppConfig: "team.setGitHubAppConfig",
   teamClearGitHubAppConfig: "team.clearGitHubAppConfig",
   teamStartGitHubOAuth: "team.startGitHubOAuth",
+  teamCompleteGitHubOAuth: "team.completeGitHubOAuth",
   teamStartGitHubDeviceFlow: "team.startGitHubDeviceFlow",
   teamPollGitHubDeviceFlow: "team.pollGitHubDeviceFlow",
   teamCancelGitHubDeviceFlow: "team.cancelGitHubDeviceFlow",
@@ -214,6 +216,7 @@ export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamSetGitHubAppConfig]: AuthAccessWriteScope,
   [TEAM_WS_METHODS.teamClearGitHubAppConfig]: AuthAccessWriteScope,
   [TEAM_WS_METHODS.teamStartGitHubOAuth]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamCompleteGitHubOAuth]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamStartGitHubDeviceFlow]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamPollGitHubDeviceFlow]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamCancelGitHubDeviceFlow]: AuthOrchestrationOperateScope,
@@ -557,6 +560,12 @@ const WsTeamStartGitHubOAuthRpc = Rpc.make(TEAM_WS_METHODS.teamStartGitHubOAuth,
   error: TeamRpcError,
 });
 
+const WsTeamCompleteGitHubOAuthRpc = Rpc.make(TEAM_WS_METHODS.teamCompleteGitHubOAuth, {
+  payload: TeamCompleteGitHubOAuthInput,
+  success: TeamGitHubIdentity,
+  error: TeamRpcError,
+});
+
 const WsTeamStartGitHubDeviceFlowRpc = Rpc.make(TEAM_WS_METHODS.teamStartGitHubDeviceFlow, {
   payload: TeamStartGitHubDeviceFlowInput,
   success: TeamStartGitHubDeviceFlowResult,
@@ -630,6 +639,7 @@ export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamSetGitHubAppConfigRpc,
   WsTeamClearGitHubAppConfigRpc,
   WsTeamStartGitHubOAuthRpc,
+  WsTeamCompleteGitHubOAuthRpc,
   WsTeamStartGitHubDeviceFlowRpc,
   WsTeamPollGitHubDeviceFlowRpc,
   WsTeamCancelGitHubDeviceFlowRpc,

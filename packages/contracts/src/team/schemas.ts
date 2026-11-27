@@ -1220,6 +1220,12 @@ export const TeamStartGitHubOAuthResult = Schema.Struct({
 });
 export type TeamStartGitHubOAuthResult = typeof TeamStartGitHubOAuthResult.Type;
 
+export const TeamCompleteGitHubOAuthInput = Schema.Struct({
+  state: TrimmedNonEmptyString,
+  confirmationCode: TrimmedNonEmptyString,
+});
+export type TeamCompleteGitHubOAuthInput = typeof TeamCompleteGitHubOAuthInput.Type;
+
 export const TeamStartGitHubDeviceFlowInput = Schema.Struct({
   githubName: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   githubEmail: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),

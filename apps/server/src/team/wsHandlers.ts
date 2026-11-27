@@ -317,6 +317,9 @@ export function makeTeamWsRpcHandlers(
     [TEAM_WS_METHODS.teamStartGitHubOAuth]: (
       payload: Parameters<typeof teamService.startGitHubOAuth>[0]["payload"],
     ) => teamService.startGitHubOAuth({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamCompleteGitHubOAuth]: (
+      payload: Parameters<typeof teamService.completeGitHubOAuth>[0]["payload"],
+    ) => teamService.completeGitHubOAuth({ sessionId, payload }),
     [TEAM_WS_METHODS.teamStartGitHubDeviceFlow]: (
       payload: Parameters<typeof teamService.startGitHubDeviceFlow>[0]["payload"],
     ) => teamService.startGitHubDeviceFlow({ sessionId, payload }),

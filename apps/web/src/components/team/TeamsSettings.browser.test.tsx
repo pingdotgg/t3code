@@ -112,6 +112,7 @@ const mockState = vi.hoisted(() => ({
   setGitHubAppConfigHandler: vi.fn(),
   clearGitHubAppConfigHandler: vi.fn(),
   startGitHubOAuthHandler: vi.fn(),
+  completeGitHubOAuthHandler: vi.fn(),
   startGitHubDeviceFlowHandler: vi.fn(),
   pollGitHubDeviceFlowHandler: vi.fn(),
   cancelGitHubDeviceFlowHandler: vi.fn(),
@@ -214,6 +215,7 @@ vi.mock(import("../../state/team"), async (original) => ({
     setGitHubAppConfig: { tag: "setGitHubAppConfig", permissionAtom: () => alwaysAllowedAtom },
     clearGitHubAppConfig: { tag: "clearGitHubAppConfig", permissionAtom: () => alwaysAllowedAtom },
     startGitHubOAuth: { tag: "startGitHubOAuth", permissionAtom: () => alwaysAllowedAtom },
+    completeGitHubOAuth: { tag: "completeGitHubOAuth", permissionAtom: () => alwaysAllowedAtom },
     startGitHubDeviceFlow: {
       tag: "startGitHubDeviceFlow",
       permissionAtom: () => alwaysAllowedAtom,
@@ -262,6 +264,9 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
       }
       if (tag === "startGitHubOAuth") {
         return mockState.startGitHubOAuthHandler(args);
+      }
+      if (tag === "completeGitHubOAuth") {
+        return mockState.completeGitHubOAuthHandler(args);
       }
       if (tag === "startGitHubDeviceFlow") {
         return mockState.startGitHubDeviceFlowHandler(args);
