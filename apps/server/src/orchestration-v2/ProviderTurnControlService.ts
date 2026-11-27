@@ -23,6 +23,7 @@ import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { withVisualReplyInstructions } from "./visualReply.ts";
 
 const yieldToRuntime = Effect.yieldNow.pipe(
   Effect.andThen(
@@ -464,12 +465,15 @@ export const layer: Layer.Layer<
               ...(appContext.length === 0 ? {} : { appContext }),
               message: {
                 messageId: message.id,
-                text: withMessageSenderNote(
+                text: withVisualReplyInstructions(
                   message,
-                  projectComposerContextForProvider({
-                    text: message.text,
-                    records: message.context?.records ?? [],
-                  }),
+                  withMessageSenderNote(
+                    message,
+                    projectComposerContextForProvider({
+                      text: message.text,
+                      records: message.context?.records ?? [],
+                    }),
+                  ),
                 ),
                 attachments: message.attachments,
                 createdBy: message.createdBy,

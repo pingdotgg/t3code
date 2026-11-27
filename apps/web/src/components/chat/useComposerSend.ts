@@ -96,6 +96,7 @@ import {
   previewAnnotationContextReference,
   responseContextReference,
 } from "../../lib/composerContextRecords";
+import { readVisualReply } from "../../lib/visualReply";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { runMobileComposerTransition } from "./draftHeroTransition";
@@ -699,6 +700,7 @@ export function useComposerSend(input: ComposerSendInput) {
             text: snapshot.messageText || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
             context: buildMessageContext({
               ...snapshot,
+              visualReply: readVisualReply(),
               attachments: snapshot.attachments.map((attachment, index) => ({
                 attachment,
                 attachmentId: attachmentIds[index]!,
@@ -1085,8 +1087,11 @@ export function useComposerSend(input: ComposerSendInput) {
     // Records bind attachments by the id each side knows: the local id for the optimistic
     // row, the upload id (or local id on the data-URL path) on the wire; the server
     // rebinds them to the persisted id.
+    // Read once, so a click during an upload cannot split what is shown from what is sent.
+    const visualReply = readVisualReply();
     const buildOutgoingMessageContext = (attachmentIds: ReadonlyArray<string>) =>
       buildMessageContext({
+        visualReply,
         terminalContexts: composerTerminalContextsSnapshot,
         reviewComments: composerReviewCommentsSnapshot,
         previewAnnotations: composerPreviewAnnotationsSnapshot,
