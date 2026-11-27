@@ -2105,7 +2105,7 @@ it.effect(
 );
 
 it.effect.each([
-  { resume: "native resume", supportsNativeResume: true, minutes: 2 },
+  { resume: "native resume", supportsNativeResume: true, minutes: 30 },
   { resume: "no native resume", supportsNativeResume: false, minutes: 30 },
 ])(
   "ProviderSessionManagerV2 releases an idle session with $resume after $minutes minutes",
