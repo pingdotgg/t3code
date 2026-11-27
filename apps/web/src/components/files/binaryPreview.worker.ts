@@ -180,7 +180,7 @@ async function handle(input: BinaryWorkerRequest) {
         .slice(0, 50) ?? [];
     const fields = columns.map((name) => {
       const field = quote(name);
-      return `CASE WHEN typeof(${field}) = 'blob' THEN '[blob: ' || length(${field}) || ' bytes]' ELSE substr(CAST(${field} AS TEXT), 1, 1024) END`;
+      return `CASE WHEN typeof(${field}) = 'blob' THEN '[blob: ' || length(${field}) || CASE length(${field}) WHEN 1 THEN ' byte]' ELSE ' bytes]' END ELSE substr(CAST(${field} AS TEXT), 1, 1024) END`;
     });
     const result = database.exec(
       `SELECT ${fields.join(",")} FROM ${quote(input.table)} LIMIT ${SQLITE_PAGE_SIZE} OFFSET ${input.page * SQLITE_PAGE_SIZE}`,
@@ -237,7 +237,9 @@ async function handle(input: BinaryWorkerRequest) {
           path,
           size: file.bytes.length,
           directory: file.directory,
-          modified: Number.isNaN(file.date.getTime()) ? null : file.date.toISOString(),
+          // ZIP stores wall-clock time without a zone, while JSZip reads those fields as UTC.
+          // Omitting "Z" marks the timestamp as wall-clock so the viewer formats its calendar date.
+          modified: Number.isNaN(file.date.getTime()) ? null : file.date.toISOString().slice(0, -1),
         };
       });
     } else if (/\.(gz|tgz)$/i.test(input.name) || new Uint8Array(input.bytes)[0] === 0x1f) {

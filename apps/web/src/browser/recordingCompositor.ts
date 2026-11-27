@@ -55,8 +55,9 @@ export async function createRecordingCompositor(
     decorations.draw(context, width, height, now);
     context.restore();
     window.clearTimeout(timer);
-    const next = decorations.nextRedraw(now);
-    if (next !== null) timer = window.setTimeout(draw, next);
+    // captureStream only emits on a draw; repainting an idle frame lets the encoder sharpen it.
+    const idle = 1000 / options.frameRate;
+    timer = window.setTimeout(draw, Math.min(decorations.nextRedraw(now) ?? idle, idle));
   };
   const frame = () => {
     if (disposed) return;

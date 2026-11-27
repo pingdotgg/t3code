@@ -10,6 +10,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Scope from "effect/Scope";
@@ -31,6 +32,7 @@ import {
 import type { AcpSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import packageJson from "../../../package.json" with { type: "json" };
+import { TOOL_CALL, TOOL_SEARCH } from "../../mcp/McpToolExposure.ts";
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
 export interface AntigravityAcpRuntimeInput extends Omit<
@@ -51,15 +53,13 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   /** Serve `fs/read_text_file` from T3 instead of the agent's native reader. */
   readonly clientFileReads?: boolean;
   readonly clientCapabilities?: AcpSessionRuntime.AcpSessionRuntimeOptions["clientCapabilities"];
-  /** The installed version, known before `initialize`; it picks the client name. */
-  readonly runtimeVersion?: string | null;
   /** Conversational sessions only; helpers and probes leave the system prompt untouched. */
   readonly sessionSystemPromptAppend?: string;
   readonly authMethod?: AntigravityAuthMethod;
 }
 
 function parseAntigravityVersion(version: string | null | undefined) {
-  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
+  const match = /^(?:v|agy_acp_server_)?(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
   return match === null ? undefined : [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
@@ -72,7 +72,7 @@ function compareVersions(left: ReadonlyArray<number>, right: ReadonlyArray<numbe
 }
 
 // `agy acp` 1.5.1 offers every model to every ACP client; older runtimes allowlist editors.
-const OPEN_MODEL_ACCESS_RELEASE = [1, 5, 1] as const;
+export const OPEN_MODEL_ACCESS_RELEASE = [1, 5, 1] as const;
 // `agy acp` 1.5.0 steers a running turn with the next prompt; the 1.4 harness queues it.
 const PROMPT_STEERING_RELEASE = [1, 5, 0] as const;
 
@@ -81,6 +81,12 @@ export const antigravitySteersWithPrompt = (
 ) => {
   const parsed = parseAntigravityVersion(initializeResult.agentInfo?.version);
   return parsed !== undefined && compareVersions(parsed, PROMPT_STEERING_RELEASE) >= 0;
+};
+
+/** Whether a runtime that reported its version serves T3 Code, not only allowlisted editors. */
+export const antigravityServesT3Code = (version: string) => {
+  const parsed = parseAntigravityVersion(version);
+  return parsed === undefined || compareVersions(parsed, OPEN_MODEL_ACCESS_RELEASE) >= 0;
 };
 
 export const antigravityAppendsSystemPrompt = (
@@ -103,14 +109,6 @@ export function antigravitySessionMeta(
     : undefined;
 }
 
-/** Older releases offer non-Gemini models only to allowlisted clients such as Zed. */
-export function antigravityClientInfo(version: string | null | undefined) {
-  const parsed = parseAntigravityVersion(version);
-  return parsed !== undefined && compareVersions(parsed, OPEN_MODEL_ACCESS_RELEASE) >= 0
-    ? { name: "t3-code", title: "T3 Code", version: packageJson.version }
-    : { name: "zed", version: "0.0.0" };
-}
-
 export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(function* (
   input: AntigravityAcpRuntimeInput,
 ): Effect.fn.Return<
@@ -125,7 +123,7 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       authenticateEagerly: true,
       resumeMethod: "resume",
       cancelBehavior: "wait-for-prompt",
-      clientInfo: antigravityClientInfo(input.runtimeVersion),
+      clientInfo: { name: "t3-code", title: "T3 Code", version: packageJson.version },
       sessionMeta: (initializeResult) =>
         antigravitySessionMeta(initializeResult, input.sessionSystemPromptAppend),
       clientCapabilities: {
@@ -187,18 +185,39 @@ export function antigravitySessionMode(
 // MCP server's tool of the same name would pass.
 const ANTIGRAVITY_T3_MCP_TITLE = /^Run mcp_t3-code_(?<tool>[A-Za-z0-9_]+)\??$/;
 
+// call_mcp_tool is the one call whose rawInput names a server and tool; in every other call
+// rawInput is the tool's own arguments.
+const ANTIGRAVITY_PROXIED_MCP_TITLE = /^MCP Tool (?<tool>[A-Za-z0-9_]+)\??$/;
+
+const isAntigravityT3McpTool = (
+  tool: string,
+  toolArgs: Record<string, unknown> | undefined,
+): boolean => {
+  if (T3_MCP_TOOL_NAMES.has(tool) || tool === TOOL_SEARCH) return true;
+  if (tool !== TOOL_CALL) return false;
+  const target = typeof toolArgs?.name === "string" ? toolArgs.name.trim() : "";
+  return (
+    target.length > 0 &&
+    target !== TOOL_CALL &&
+    target !== TOOL_SEARCH &&
+    T3_MCP_TOOL_NAMES.has(target)
+  );
+};
+
 function isAntigravityT3McpRequest(request: EffectAcpSchema.RequestPermissionRequest): boolean {
+  const title = request.toolCall.title?.trim() ?? "";
   const rawInput = unknownRecord(request.toolCall.rawInput);
-  if (rawInput?.ServerName !== undefined) {
+  const proxiedTool = ANTIGRAVITY_PROXIED_MCP_TITLE.exec(title)?.groups?.tool;
+  if (proxiedTool !== undefined) {
     return (
-      rawInput.ServerName === "t3-code" &&
-      typeof rawInput.ToolName === "string" &&
-      T3_MCP_TOOL_NAMES.has(rawInput.ToolName)
+      rawInput?.ServerName === "t3-code" &&
+      rawInput.ToolName === proxiedTool &&
+      isAntigravityT3McpTool(proxiedTool, unknownRecord(rawInput.Arguments))
     );
   }
   if (typeof rawInput?.CommandLine === "string") return false;
-  const tool = ANTIGRAVITY_T3_MCP_TITLE.exec(request.toolCall.title?.trim() ?? "")?.groups?.tool;
-  return tool !== undefined && T3_MCP_TOOL_NAMES.has(tool);
+  const tool = ANTIGRAVITY_T3_MCP_TITLE.exec(title)?.groups?.tool;
+  return tool !== undefined && isAntigravityT3McpTool(tool, rawInput);
 }
 
 export function antigravityPermissionDisposition(
@@ -521,19 +540,15 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
           : bytes[0] === 0xfe && bytes[1] === 0xff
             ? "UTF-16BE"
             : "UTF-8";
-      const decoded = yield* Effect.try({
-        try: () => new TextDecoder(encoding, { fatal: true }).decode(bytes),
-        catch: () =>
-          EffectAcpErrors.AcpRequestError.invalidParams(
-            `Attachment '${attachment.name}' is not a ${encoding} text file.`,
-          ),
-      });
-      if (decoded.includes("\0")) {
-        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-          `Attachment '${attachment.name}' contains binary data.`,
-        );
+      const decoded = Option.liftThrowable((data: Uint8Array) =>
+        new TextDecoder(encoding, { fatal: true }).decode(data),
+      )(bytes);
+      // Other encodings and binary data stay path-only so the agent reads them with its own tools.
+      if (Option.isNone(decoded) || decoded.value.includes("\0")) {
+        totalBytes -= bytes.length;
+        continue;
       }
-      blocks.push({ type: "resource", resource: { uri, mimeType, text: decoded } });
+      blocks.push({ type: "resource", resource: { uri, mimeType, text: decoded.value } });
     }
   }
   if (blocks.length === 0) {

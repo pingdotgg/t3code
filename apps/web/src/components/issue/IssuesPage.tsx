@@ -34,7 +34,7 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { Fragment, useEffect, useEffectEvent, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { IssueDetailPanel } from "~/components/issue/IssueDetailPanel";
@@ -62,7 +62,7 @@ import { ISSUE_SAVED_VIEWS } from "./issueSavedViews";
 import { SavedViewsMenu } from "~/components/SavedViewsMenu";
 import { PullRequestCompactFilterMenu } from "../pullRequest/PullRequestCompactFilterMenu";
 import { PullRequestsUnavailableState } from "~/components/pullRequest/PullRequestsUnavailableState";
-import { RightPanelTabs } from "~/components/RightPanelTabs";
+import { RightPanelTabs, type RightPanelTabsHandle } from "~/components/RightPanelTabs";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "~/components/WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "~/components/WorkspacePageContainer";
 import { WorkspacePageHeader } from "~/components/WorkspacePageHeader";
@@ -463,9 +463,12 @@ export function IssuesPage() {
     search.selectedEnvironmentId,
   ]);
 
-  const closeSurface = (surface: RightPanelSurface) => {
+  const closeSurfaces = (surfaces: readonly RightPanelSurface[]) => {
     if (rightPanelRef === null) return;
-    useRightPanelStore.getState().closeSurface(rightPanelRef, surface.id);
+    useRightPanelStore.getState().closeSurfaces(
+      rightPanelRef,
+      surfaces.map((surface) => surface.id),
+    );
     selectSurfaceInUrl(
       selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, rightPanelRef),
     );
@@ -482,15 +485,20 @@ export function IssuesPage() {
     selectSurfaceInUrl(panelSurface);
   };
 
+  const rightPanelTabsRef = useRef<RightPanelTabsHandle>(null);
   const onRightPanelKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || isCommandPaletteOpen() || panelSurface === null) return;
     const command = resolveShortcutCommand(event, keybindings, {
       context: { ...getShortcutContext(), rightPanelOpen: rightPanelState.isOpen },
     });
-    if (command !== "rightPanel.toggle") return;
+    if (command === "rightPanel.close" && !rightPanelState.isOpen) return;
+    if (command !== "rightPanel.toggle" && command !== "rightPanel.close") return;
     event.preventDefault();
     event.stopPropagation();
-    if (!event.repeat) toggleRightPanel();
+    if (event.repeat) return;
+    if (command === "rightPanel.close") {
+      if (!rightPanelTabsRef.current?.closeSelectedTabs()) closeSurfaces([panelSurface]);
+    } else toggleRightPanel();
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the document right panel shortcut
@@ -787,6 +795,7 @@ export function IssuesPage() {
         panelEnvironmentId !== null &&
         rightPanelRef !== null ? (
           <RightPanelTabs
+            ref={rightPanelTabsRef}
             mode="inline"
             open={rightPanelState.isOpen}
             keybindings={keybindings}
@@ -804,7 +813,8 @@ export function IssuesPage() {
               useRightPanelStore.getState().activateSurface(rightPanelRef, surface.id);
               selectSurfaceInUrl(surface);
             }}
-            onCloseSurface={closeSurface}
+            onCloseSurface={(surface) => closeSurfaces([surface])}
+            onCloseSelectedSurfaces={closeSurfaces}
             onCloseOtherSurfaces={(surface) => {
               useRightPanelStore.getState().closeOtherSurfaces(rightPanelRef, surface.id);
               selectSurfaceInUrl(surface);
@@ -822,8 +832,8 @@ export function IssuesPage() {
               useRightPanelStore.getState().closeAllSurfaces(rightPanelRef);
               selectSurfaceInUrl(null);
             }}
-            onMoveSurface={(surfaceId, toIndex) =>
-              useRightPanelStore.getState().moveSurface(rightPanelRef, surfaceId, toIndex)
+            onMoveSurfaces={(surfaceIds, targetId) =>
+              useRightPanelStore.getState().moveSurfaces(rightPanelRef, surfaceIds, targetId)
             }
             onCopyFilePath={() => undefined}
             onAddBrowser={() => undefined}

@@ -39,6 +39,7 @@ describe("HistorySwipeNavigation", () => {
     ["scrolling over a streamed preview keeps the thread", "server-browser", 0, -130, false],
     ["swiping back over a panel without overflow navigates", "none", 0, -130, true],
     ["a swipe that started in a closed dialog keeps the thread", "closed-dialog", 0, -130, false],
+    ["swiping back over an open alert dialog keeps the thread", "alertdialog", 0, -130, false],
   ] as const)("%s", async (_name, scroller, scrollLeft, deltaX, navigates) => {
     navigateHistory.mockReset();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
@@ -50,6 +51,7 @@ describe("HistorySwipeNavigation", () => {
     if (scroller === "preview-panel") panel.setAttribute("data-preview-panel-mode", "inline");
     if (scroller === "preview-viewport") panel.setAttribute("data-preview-viewport", "tab");
     if (scroller === "server-browser") panel.setAttribute("data-server-browser-surface", "tab");
+    if (scroller === "alertdialog") panel.setAttribute("role", "alertdialog");
     viewport.style.cssText = `width: 200px; overflow-x: ${noOverflow ? "visible" : "auto"}`;
     const content = viewport.appendChild(document.createElement("div"));
     content.style.cssText = `height: 20px; width: ${noOverflow ? 100 : 1000}px`;
