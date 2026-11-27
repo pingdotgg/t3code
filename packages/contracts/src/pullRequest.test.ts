@@ -165,59 +165,22 @@ describe("resolvePullRequestAuthorFilter", () => {
 });
 
 describe("PullRequestSubmitReviewInput", () => {
-  it("preserves leading and trailing whitespace in inline comment paths", () => {
-    const codec = Schema.toCodecJson(PullRequestSubmitReviewInput);
-    const input: PullRequestSubmitReviewInput = {
-      projectId: ProjectId.make("project-1"),
-      repository: "pingdotgg/t3code",
-      number: 1,
-      verdict: "comment",
-      body: "",
-      comments: [
-        {
-          path: " note.txt",
-          oldPath: "old.txt ",
-          position: { kind: "added", newLine: 1 },
-          body: "Check filename spacing.",
-        },
-      ],
-    };
+  const codec = Schema.toCodecJson(PullRequestSubmitReviewInput);
+  const withPaths = (path: string, oldPath: string) => ({
+    projectId: ProjectId.make("project-1"),
+    repository: "pingdotgg/t3code",
+    number: 1,
+    verdict: "comment" as const,
+    body: "",
+    comments: [{ path, oldPath, position: { kind: "added" as const, newLine: 1 }, body: "x" }],
+  });
 
-    const encoded = Schema.encodeSync(codec)(input);
-    expect(encoded).toMatchObject({
-      comments: [{ path: " note.txt", oldPath: "old.txt " }],
-    });
-    expect(Schema.decodeSync(codec)(encoded)).toStrictEqual(input);
-
-    const spaceOnly: PullRequestSubmitReviewInput = {
-      ...input,
-      comments: [
-        {
-          path: " ",
-          oldPath: "  ",
-          position: { kind: "deleted", oldLine: 1 },
-          body: "Whitespace-only filenames are valid.",
-        },
-      ],
-    };
-    const encodedSpaceOnly = Schema.encodeSync(codec)(spaceOnly);
-    expect(encodedSpaceOnly).toMatchObject({
-      comments: [{ path: " ", oldPath: "  " }],
-    });
-    expect(Schema.decodeSync(codec)(encodedSpaceOnly)).toStrictEqual(spaceOnly);
-
-    expect(() =>
-      Schema.decodeUnknownSync(codec)({
-        ...input,
-        comments: [{ ...input.comments[0], path: "" }],
-      }),
-    ).toThrow();
-    expect(() =>
-      Schema.decodeUnknownSync(codec)({
-        ...input,
-        comments: [{ ...input.comments[0], oldPath: "" }],
-      }),
-    ).toThrow();
+  it("keeps whitespace in inline comment paths, since filenames may contain it", () => {
+    for (const input of [withPaths(" note.txt", "old.txt "), withPaths(" ", "  ")]) {
+      expect(Schema.decodeSync(codec)(Schema.encodeSync(codec)(input))).toStrictEqual(input);
+    }
+    expect(() => Schema.decodeSync(codec)(withPaths("", "old.txt"))).toThrow();
+    expect(() => Schema.decodeSync(codec)(withPaths("note.txt", ""))).toThrow();
   });
 });
 
