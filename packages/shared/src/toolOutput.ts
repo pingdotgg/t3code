@@ -29,6 +29,14 @@ const MAX_PULL_REQUEST_ITEMS = 100;
 const MAX_CONTENT_BLOCKS = 32;
 const MAX_ENVELOPE_DEPTH = 4;
 const MAX_ENVELOPE_NODES = 128;
+export const PREVIEW_SNAPSHOT_TOOL_NAME = "preview_snapshot";
+const DEVICE_SCREENSHOT_TOOL_NAME = "device_screenshot";
+export const HTML_PREVIEW_TOOL_NAME = "html_preview";
+const MAX_SCREENSHOT_PATH_LENGTH = 4_096;
+const MAX_VISUAL_SUMMARY_TEXT_LENGTH = 4_096;
+const MAX_VISUAL_TOOL_METADATA_BYTES = 32_768;
+const RASTER_IMAGE_PATH_PATTERN = /\.(?:png|jpe?g|gif|webp)$/i;
+const BASE64_IMAGE_DATA_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
 const encoder = new TextEncoder();
 // Antigravity's terminal tool prefixes an `acp-mcp-call` result's stdout with timestamps and exit status.
 const TERMINAL_OUTPUT_MARKER = "\nCommand output:\n";
@@ -289,21 +297,245 @@ export function previewRecordingIdFromToolItem(item: {
   return result.failed || budget.exceeded ? undefined : boundedId(result.data?.id);
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Predicate.isObject(value) && !Array.isArray(value);
+}
+
+function recordIndicatesFailure(record: Record<string, unknown>): boolean {
+  return (
+    record.isError === true ||
+    record.is_error === true ||
+    record._tag === "OrchestratorMcpFailure" ||
+    record.error != null
+  );
+}
+
+function isRasterScreenshotPath(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  return (
+    trimmed.length > 0 &&
+    trimmed.length <= MAX_SCREENSHOT_PATH_LENGTH &&
+    !/[\r\n\0]/.test(trimmed) &&
+    RASTER_IMAGE_PATH_PATTERN.test(trimmed)
+  );
+}
+
+function parseBoundedJsonRecord(text: string): Record<string, unknown> | undefined {
+  if (text.length > MAX_VISUAL_TOOL_METADATA_BYTES) return undefined;
+  if (encoder.encode(text).byteLength > MAX_VISUAL_TOOL_METADATA_BYTES) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return isPlainRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readVisualMetadataRecord(value: unknown): {
+  readonly record?: Record<string, unknown>;
+  readonly failed: boolean;
+} {
+  if (typeof value === "string") {
+    const parsed = parseBoundedJsonRecord(value);
+    return parsed === undefined
+      ? { failed: false }
+      : { record: parsed, failed: recordIndicatesFailure(parsed) };
+  }
+  if (Array.isArray(value)) {
+    let record: Record<string, unknown> | undefined;
+    let failed = false;
+    const limit = Math.min(value.length, MAX_CONTENT_BLOCKS);
+    for (let index = 0; index < limit; index += 1) {
+      const block = value[index];
+      if (!isPlainRecord(block)) continue;
+      if (recordIndicatesFailure(block)) failed = true;
+      const text = isPlainRecord(block.text) ? block.text.text : block.text;
+      if (typeof text !== "string") continue;
+      const parsed = parseBoundedJsonRecord(text);
+      if (parsed !== undefined) {
+        if (recordIndicatesFailure(parsed)) failed = true;
+        if (Object.keys(parsed).length > 0) record = parsed;
+      }
+    }
+    return { ...(record === undefined ? {} : { record }), failed };
+  }
+  if (!isPlainRecord(value)) return { failed: false };
+  const failed = recordIndicatesFailure(value);
+  if (isPlainRecord(value.structuredContent) && Object.keys(value.structuredContent).length > 0) {
+    return {
+      record: value.structuredContent,
+      failed: failed || recordIndicatesFailure(value.structuredContent),
+    };
+  }
+  if (Array.isArray(value.content)) {
+    const nested = readVisualMetadataRecord(value.content);
+    return { ...nested, failed: failed || nested.failed };
+  }
+  if (
+    value.type === "image" ||
+    value.type === "text" ||
+    value.type === "resource" ||
+    value.type === "resource_link"
+  ) {
+    return { failed };
+  }
+  return Object.keys(value).length > 0 ? { record: value, failed } : { failed };
+}
+
+function cleanScreenshotMetadata(value: unknown): Record<string, unknown> | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const next: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "data" || key === "blob" || key === "base64") continue;
+    next[key] = entry;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function sanitizeVisualToolMetadata(
+  record: Record<string, unknown>,
+  tool: string,
+  hasImages: boolean,
+): Record<string, unknown> | undefined {
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    // Drop server-only fields (`fullScreenshot`, `omitted`) so structuredContent and content-only
+    // bounded snapshots normalize identically across ACP runtimes.
+    if (key === "fullScreenshot" || key === "omitted") continue;
+    if (key === "screenshot") {
+      const meta = cleanScreenshotMetadata(entry);
+      if (meta !== undefined) cleaned.screenshot = meta;
+      continue;
+    }
+    cleaned[key] = entry;
+  }
+  const recognized =
+    tool === PREVIEW_SNAPSHOT_TOOL_NAME
+      ? typeof cleaned.url === "string" ||
+        isRasterScreenshotPath(cleaned.screenshotPath) ||
+        isPlainRecord(cleaned.screenshot)
+      : isPlainRecord(cleaned.screenshot) || (hasImages && Object.keys(cleaned).length > 0);
+  if (!recognized) return undefined;
+  let encoded: string | undefined;
+  try {
+    encoded = JSON.stringify(cleaned);
+  } catch {
+    return undefined;
+  }
+  if (
+    encoded !== undefined &&
+    encoder.encode(encoded).byteLength <= MAX_VISUAL_TOOL_METADATA_BYTES
+  ) {
+    return cleaned;
+  }
+  const summary: Record<string, unknown> = {};
+  if (typeof cleaned.url === "string")
+    summary.url = cleaned.url.slice(0, MAX_VISUAL_SUMMARY_TEXT_LENGTH);
+  if (typeof cleaned.title === "string")
+    summary.title = cleaned.title.slice(0, MAX_VISUAL_SUMMARY_TEXT_LENGTH);
+  if (isRasterScreenshotPath(cleaned.screenshotPath)) {
+    summary.screenshotPath = cleaned.screenshotPath.trim();
+  }
+  if (isPlainRecord(cleaned.screenshot)) summary.screenshot = cleaned.screenshot;
+  if (Object.keys(summary).length === 0) return undefined;
+  try {
+    return encoder.encode(JSON.stringify(summary)).byteLength <= MAX_VISUAL_TOOL_METADATA_BYTES
+      ? summary
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function isVisualT3McpTool(toolName: string | null | undefined): boolean {
+  const resolved = resolveT3McpToolId(toolName);
+  return (
+    resolved === PREVIEW_SNAPSHOT_TOOL_NAME ||
+    resolved === DEVICE_SCREENSHOT_TOOL_NAME ||
+    resolved === HTML_PREVIEW_TOOL_NAME
+  );
+}
+
+function hasValidImageBase64Data(data: string | undefined): data is string {
+  return (
+    data !== undefined &&
+    data.length > 0 &&
+    data.length <= MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH &&
+    data.length % 4 === 0 &&
+    BASE64_IMAGE_DATA_PATTERN.test(data)
+  );
+}
+
+/** True when a tool output carries at least one inline image with valid bounded base64 bytes. */
+export function hasUsableToolOutputImages(value: unknown): boolean {
+  return toolOutputImages(value).some((image) => hasValidImageBase64Data(image.data));
+}
+
+/** The saved screenshot path reported by `preview_snapshot({ save: true })`. */
+export function previewSnapshotScreenshotPath(item: {
+  readonly toolName: string | null | undefined;
+  readonly output?: unknown;
+}): string | undefined {
+  if (resolveT3McpToolId(item.toolName) !== PREVIEW_SNAPSHOT_TOOL_NAME) return undefined;
+  const visual = readVisualMetadataRecord(item.output);
+  if (visual.failed || visual.record === undefined) return undefined;
+  return isRasterScreenshotPath(visual.record.screenshotPath)
+    ? visual.record.screenshotPath.trim()
+    : undefined;
+}
+
 /**
  * Compact structured result a T3 MCP tool carries on its turn item.
- * Preserves every metadata field clients, summaries, and attachment retention read.
+ * Preserves every metadata field clients, summaries, and attachment retention read; when
+ * `includeVisual` is enabled for ACP recovery, also keeps bounded screenshot/snapshot outputs.
  */
 export function compactT3McpToolOutput(
   toolName: string | null | undefined,
   value: unknown,
+  options?: { readonly includeVisual?: boolean },
 ): Record<string, unknown> | undefined {
   const resolved = resolveT3McpToolId(toolName);
   if (resolved === null) return undefined;
   const compact = compactDynamicToolOutput(value);
-  if (resolved === "preview_recording_stop" && !compact?.isError) {
+  if (compact?.isError) return { ...compact };
+  if (resolved === "preview_recording_stop") {
     const recordingId = previewRecordingIdFromToolItem({ toolName: resolved, output: value });
     if (recordingId !== undefined) {
       return { ...compact, id: recordingId };
+    }
+  }
+  if (options?.includeVisual === true && isVisualT3McpTool(resolved)) {
+    const visual = readVisualMetadataRecord(value);
+    if (visual.failed) {
+      return { ...compact, isError: true };
+    }
+    const images = toolOutputImages(value).flatMap((image) =>
+      hasValidImageBase64Data(image.data)
+        ? [{ type: "image" as const, mimeType: image.mimeType, data: image.data }]
+        : [],
+    );
+    const metadata =
+      visual.record === undefined
+        ? undefined
+        : sanitizeVisualToolMetadata(visual.record, resolved, images.length > 0);
+    if (resolved === DEVICE_SCREENSHOT_TOOL_NAME || resolved === HTML_PREVIEW_TOOL_NAME) {
+      if (images.length === 0) return compact === undefined ? undefined : { ...compact };
+      return {
+        ...compact,
+        content: images,
+        ...(metadata === undefined ? {} : { structuredContent: metadata }),
+      };
+    }
+    if (images.length > 0) {
+      return {
+        ...compact,
+        content: images,
+        ...(metadata === undefined ? {} : { structuredContent: metadata }),
+      };
+    }
+    if (metadata !== undefined) {
+      return compact === undefined ? metadata : { ...metadata, ...compact };
     }
   }
   return compact === undefined ? undefined : { ...compact };
