@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   idleDesktopTab: false,
   idleDesktopOverlay: false,
   loading: false,
+  hardReload: vi.fn(async (_tabId: string): Promise<void> => undefined),
   nativeServerTab: false,
   streamedServerTab: false,
   serverEpoch: null as string | null,
@@ -64,7 +65,7 @@ vi.mock(import("./previewBridge"), async (original) => ({
     refresh: vi.fn(async () => undefined),
     goBack: vi.fn(async () => undefined),
     goForward: vi.fn(async () => undefined),
-    hardReload: vi.fn(async () => undefined),
+    hardReload: mocks.hardReload,
     openDevTools: vi.fn(async () => undefined),
     setColorScheme: vi.fn(async () => undefined),
     zoomIn: vi.fn(async () => undefined),
@@ -406,6 +407,17 @@ describe("PreviewView", () => {
       _tag: "freeform",
       ...resolveResponsiveBrowserViewportSize(rect, 1),
     });
+  });
+
+  it("hard reloads a natively rendered server tab through the desktop", async () => {
+    setup();
+    mocks.nativeServerTab = true;
+    await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+
+    await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Hard reload" }));
+
+    await vi.waitFor(() => expect(mocks.hardReload).toHaveBeenCalledTimes(1));
   });
 
   it("focuses and selects the address from forwarded desktop actions only while visible", async () => {
