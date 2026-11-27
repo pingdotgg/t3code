@@ -16,6 +16,7 @@ import {
   formatShortcutLabel,
   isRichTextBoldShortcut,
   isSidebarToggleShortcut,
+  isTerminalClearShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   resolveChatShortcutCommand,
@@ -943,6 +944,23 @@ describe("isRichTextBoldShortcut", () => {
     const modB = event({ key: "b", metaKey: true });
     assert.isFalse(isRichTextBoldShortcut(modB, { isCollapsed: true }));
     assert.isFalse(isRichTextBoldShortcut(modB, null));
+  });
+});
+
+describe("isTerminalClearShortcut", () => {
+  it("clears on non-Latin layouts using the physical key code", () => {
+    assert.isTrue(
+      isTerminalClearShortcut(event({ key: "л", code: "KeyK", metaKey: true }), "MacIntel"),
+    );
+    assert.isTrue(
+      isTerminalClearShortcut(event({ key: "д", code: "KeyL", ctrlKey: true }), "Linux x86_64"),
+    );
+  });
+
+  it("follows the letter a Latin layout types, not the physical key", () => {
+    assert.isFalse(
+      isTerminalClearShortcut(event({ key: "x", code: "KeyK", metaKey: true }), "MacIntel"),
+    );
   });
 });
 
