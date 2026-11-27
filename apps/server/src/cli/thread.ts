@@ -406,29 +406,27 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   const containing = containingRoots(target, requestedPath)[0]?.project;
   if (containing !== undefined) return containing;
   const projectNotFound = () => new ThreadProjectNotFoundError({ identifier });
-  let gitDirectory = target;
-  let checkoutTarget = target;
-  // Git needs an existing cwd even if the requested path doesn't exist yet.
-  while (true) {
-    const info = yield* fileSystem.stat(gitDirectory).pipe(
+  const statIfExists = (value: string) =>
+    fileSystem.stat(value).pipe(
       Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
       Effect.mapError(projectNotFound),
     );
-    if (info?.type === "Directory") {
-      if (gitDirectory !== target) {
-        const parent = yield* realPath(gitDirectory);
-        checkoutTarget = path.join(parent, path.relative(gitDirectory, target));
-        gitDirectory = parent;
-      }
-      break;
-    }
-    const parent = path.dirname(gitDirectory);
-    if (info?.type === "File" && gitDirectory === target) {
-      gitDirectory = parent;
-      break;
-    }
-    if (info !== undefined || parent === gitDirectory) return yield* projectNotFound();
-    gitDirectory = parent;
+  // Git needs an existing cwd, so a path that doesn't exist yet resolves
+  // through its nearest existing ancestor.
+  let existing = target;
+  let info = yield* statIfExists(existing);
+  while (info === undefined) {
+    const parent = path.dirname(existing);
+    if (parent === existing) return yield* projectNotFound();
+    existing = parent;
+    info = yield* statIfExists(existing);
+  }
+  let gitDirectory = info.type === "File" ? path.dirname(target) : target;
+  let checkoutTarget = target;
+  if (existing !== target) {
+    if (info.type !== "Directory") return yield* projectNotFound();
+    gitDirectory = yield* realPath(existing);
+    checkoutTarget = path.join(gitDirectory, path.relative(existing, target));
   }
   const listed = yield* listGitCheckouts(gitDirectory).pipe(
     Effect.flatMap((paths) => Effect.forEach(paths, realPath)),

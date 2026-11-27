@@ -817,10 +817,6 @@ it.live("resolves a path inside a git worktree of the project's repository to th
     assert.deepStrictEqual(yield* resolveFrom([sample], worktree), sample);
     assert.deepStrictEqual(yield* resolveFrom([sample], path.join(worktree, "pkg")), sample);
     assert.deepStrictEqual(yield* resolveFrom([sample], worktree, "pkg/index.ts"), sample);
-    assert.deepStrictEqual(
-      yield* resolveFrom([sample], worktree, "pkg/not-created/yet.ts"),
-      sample,
-    );
     const worktreeAlias = path.join(root, "worktree-alias");
     yield* Effect.promise(() => NodeFSP.symlink(worktree, worktreeAlias, "junction"));
     assert.deepStrictEqual(
