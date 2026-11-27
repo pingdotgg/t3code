@@ -4,18 +4,18 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 
 ## Progress Overview
 
-| Milestone        | Scope                                                                    | Status           |
-| ---------------- | ------------------------------------------------------------------------ | ---------------- |
-| **Milestone 1**  | Team Foundation, Member Identity & Pseudo Attribution                    | Merged (PR #1)   |
-| **Milestone 2**  | Notifications & Thread Following                                         | Merged (PR #2)   |
-| **Milestone 3**  | RBAC, Views, Posting Rules & Thread Locking                              | Merged (PR #3)   |
-| **Milestone 4**  | Agent Privilege Containment, Mid-Turn Queueing & Turn Interrupt Controls | Merged (PR #4)   |
-| **Milestone 5**  | Team Projects, Remote Environments, Local Sync & Thread Notes            | Merged (PR #5)   |
-| **Milestone 6**  | Zero-Config Team Providers, Team Skills & Pre-Prompts                    | Merged (PR #6)   |
-| **Milestone 7**  | Per-Turn GitHub Identity Forwarding                                      | Merged (PR #7)   |
-| **Milestone 8**  | Team Scheduled Tasks (`(team, env)` Scoping & Team Automation Ownership) | **Next (Final)** |
-| **Milestone 9a** | Server-Side Upstream Mobile Compatibility Layer (No Mobile Fork)         | Merged (PR #8)   |
-| **Milestone 9b** | Optional Linux `bwrap` Worktree Sandboxing & `/proc` `hidepid=2` Runbook | Merged (PR #9)   |
+| Milestone        | Scope                                                                    | Status          |
+| ---------------- | ------------------------------------------------------------------------ | --------------- |
+| **Milestone 1**  | Team Foundation, Member Identity & Pseudo Attribution                    | Merged (PR #1)  |
+| **Milestone 2**  | Notifications & Thread Following                                         | Merged (PR #2)  |
+| **Milestone 3**  | RBAC, Views, Posting Rules & Thread Locking                              | Merged (PR #3)  |
+| **Milestone 4**  | Agent Privilege Containment, Mid-Turn Queueing & Turn Interrupt Controls | Merged (PR #4)  |
+| **Milestone 5**  | Team Projects, Remote Environments, Local Sync & Thread Notes            | Merged (PR #5)  |
+| **Milestone 6**  | Zero-Config Team Providers, Team Skills & Pre-Prompts                    | Merged (PR #6)  |
+| **Milestone 7**  | Per-Turn GitHub Identity Forwarding                                      | Merged (PR #7)  |
+| **Milestone 8**  | Team Scheduled Tasks (`(team, env)` Scoping & Team Automation Ownership) | Merged (PR #10) |
+| **Milestone 9a** | Server-Side Upstream Mobile Compatibility Layer (No Mobile Fork)         | Merged (PR #8)  |
+| **Milestone 9b** | Optional Linux `bwrap` Worktree Sandboxing & `/proc` `hidepid=2` Runbook | Merged (PR #9)  |
 
 ---
 
@@ -233,7 +233,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 
 ---
 
-## Milestone 8 — Team Scheduled Tasks (`(team, env)` Scoping, Team Automation Ownership & Final Integration)
+## Milestone 8 — Team Scheduled Tasks (`(team, env)` Scoping, Team Automation Ownership & Final Integration) _(Merged — PR #10)_
 
 **Goal:** Deliver `(team, environment)` scheduled tasks with full team RBAC, mandatory-default team `displayName`, team-owned threads (`ownerKind: "team"`), safe `team-automation` MCP & GitHub isolation, and complete cross-feature integration across M1–M9b (including upstream mobile compatibility, team providers, session recycle, and full E2E verification) while keeping personal scheduled tasks 100% upstream-identical.
 
@@ -293,7 +293,8 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 - **Milestone 9b — Optional Linux `bwrap` Worktree Sandboxing & `/proc` `hidepid=2` Hardening _(Merged — PR #9)_:**
   - Opt-in fail-closed `--team-bwrap-sandbox` / `T3CODE_TEAM_BWRAP_SANDBOX=1` (`apps/server/src/team/bwrapSandbox.ts`) isolating per-worktree, provider-profile, and per-turn broker/MCP socket binds (including M7's `TeamGitHubBroker` sockets/helpers), `capabilities.teamBwrapSandbox`, and the full Linux hardening runbook in [hub-runner-deployment.md](./hub-runner-deployment.md).
 
-> **Optional future follow-ups (post-roadmap):**
+> **Follow-up items (post-M8):**
 >
+> - **`modo` `Interrupt` + queued-message notification to creator/active-turn author:** Extend `canMemberInterruptTeamTurn` & UI explicit `Interrupt` controls so `modo` can also interrupt active turns on **unlocked** threads they can read (including colleagues' turns and unlocked team scheduled-task runs, immediately revoking active GitHub leases), and emit a server + client notification to the **thread creator** and **active turn author** whenever another member queues a message during an active turn so the creator can inspect it and click **`Send now`** if acceptable.
 > - Milestone 7 Phase 7b: GitHub OAuth / GitHub App user-to-server token flow (M7 shipped fine-grained PATs with an extensible `authMethod` schema).
 > - Release packaging dry-run (`teams-release.yml`) for cutting the first tagged Teams release (`v0.1.12-teams.1`).
