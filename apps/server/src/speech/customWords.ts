@@ -183,12 +183,19 @@ export function makeSpeechTextCorrector(
     `(?<!${WORD_CHARACTER})(?:${spellings.map(({ spelling }) => escapePattern(spelling)).join("|")})(?!${WORD_CHARACTER})`,
     "giv",
   );
+  const resolveReplacement = (matched: string) => {
+    const exact = lookup.get(matched.toLocaleLowerCase());
+    if (exact !== undefined) return exact;
+    // Unicode `iv` uses simple case folding, which can differ from toLocaleLowerCase() (e.g. ς/σ, ſ/s).
+    const folded = new RegExp(`^(?:${escapePattern(matched)})$`, "iv");
+    return spellings.find(({ spelling }) => folded.test(spelling))?.term ?? matched;
+  };
   return (text: string) => {
     let output = "";
     let cursor = 0;
     for (const match of text.matchAll(pattern)) {
       output += apply(text.slice(cursor, match.index));
-      output += lookup.get(match[0].toLocaleLowerCase()) ?? match[0];
+      output += resolveReplacement(match[0]);
       cursor = match.index + match[0].length;
     }
     return output + apply(text.slice(cursor));
