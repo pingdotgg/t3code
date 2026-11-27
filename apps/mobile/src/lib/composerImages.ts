@@ -229,7 +229,7 @@ export async function persistComposerAttachmentFile(
   return destination.uri;
 }
 
-async function ownedComposerImageAttachment(input: {
+export async function ownedComposerImageAttachment(input: {
   readonly fileUri: string;
   readonly name: string;
   readonly mimeType: string;

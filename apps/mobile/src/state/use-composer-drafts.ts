@@ -465,6 +465,7 @@ export interface ComposerDraftContent {
   readonly context?: OrchestrationMessageContext;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly sourceShareId?: string;
+  readonly restoreFileReferences?: true;
 }
 
 export interface ComposerDraftWorkspaceSelection {
@@ -1841,7 +1842,9 @@ export function mergeComposerDraftContentState(
         context,
         ...(importedShareIds ? { importedShareIds } : {}),
       },
-      content.sourceShareId ? attachments.slice(existing.attachments.length) : [],
+      content.sourceShareId || content.restoreFileReferences
+        ? attachments.slice(existing.attachments.length)
+        : [],
     ),
   };
 }

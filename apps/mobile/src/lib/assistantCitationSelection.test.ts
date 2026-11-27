@@ -1,5 +1,8 @@
 import { expect, it } from "vite-plus/test";
-import { collectMobileAssistantTextSelectors } from "./assistantCitationSelection";
+import {
+  captureMobileAssistantMessageOpening,
+  collectMobileAssistantTextSelectors,
+} from "./assistantCitationSelection";
 import {
   findAssistantCitationText,
   serializeAssistantCitation,
@@ -105,4 +108,12 @@ it("uses the web math representation around a selected passage", () => {
     "after",
   );
   expect(display?.selector.prefix).toBe("Before \\[ x \\] ");
+});
+
+it("uses the rendered response opening without cutting an emoji in half", () => {
+  const opening = captureMobileAssistantMessageOpening(
+    `![image](image.png)\n\n**${"a".repeat(299)}**😀 more`,
+  );
+  expect(opening?.text).toBe("a".repeat(299));
+  expect(opening?.suffix).toContain("😀 more");
 });

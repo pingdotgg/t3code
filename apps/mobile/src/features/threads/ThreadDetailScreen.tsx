@@ -1,3 +1,9 @@
+import { responseSubagents } from "@t3tools/client-runtime/state/subagentRuntime";
+import {
+  collectComposerContextReferences,
+  formatComposerContextReference,
+  responseContextRecord,
+} from "@t3tools/shared/composerContextReferences";
 import { ChildThreadApprovals } from "./ChildThreadApprovals";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
@@ -136,10 +142,11 @@ import {
   getComposerDraftSnapshot,
   setFreshSessionPending,
   insertComposerDraftText,
+  insertComposerDraftContext,
 } from "../../state/use-composer-drafts";
 import { assistantCitationDraftWithinLimit } from "../../lib/composerContext";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
-import type { AssistantCitation } from "@t3tools/contracts";
+import type { AssistantCitation, ResponseContextRecord } from "@t3tools/contracts";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import {
   ANDROID_READING_MAX_WIDTH,
@@ -212,6 +219,7 @@ import {
 } from "./ThreadComposer";
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
+import { useThreadRewind } from "./useThreadRewind";
 import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
@@ -1311,10 +1319,32 @@ function ThreadDetailBody(
       : (appAtomRegistry.get(
           environmentThreadDetails.pendingRequestsAtom(props.selectedThreadDetailRef),
         )?.approvals ?? []);
+  const conversationProvider = props.serverConfig?.providers.find(
+    (provider) => provider.instanceId === selectedInstanceId,
+  );
+  const rewind = useThreadRewind({
+    threadRef: props.selectedThreadDetailRef,
+    enabled:
+      props.canOperateThread &&
+      props.composerDraftKey === selectedThreadKey &&
+      !isProviderSubagent &&
+      !composerSlotHidden &&
+      !props.activeThreadBusy &&
+      !props.dispatchingMessageId &&
+      conversationProvider != null &&
+      conversationProvider.supportsConversationRollback !== false,
+    hasMoreHistory: props.historyControls?.hasMoreHistory === true,
+    threadScope,
+    onRestore: (length) => {
+      composerEditorRef.current?.focus();
+      composerEditorRef.current?.setSelection({ start: length, end: length });
+    },
+  });
   const handleSendMessage = async (
     followUp?: ActiveTurnComposerAction,
     stillSendable?: () => boolean,
   ) => {
+    if (rewind.isBusy()) return null;
     const scope = threadScope.current.signal;
     const targetThreadKey = selectedThreadKey;
     const hasUserMessage = selectedThreadFeed.some(
@@ -1431,6 +1461,7 @@ function ThreadDetailBody(
   };
 
   const canCiteAssistantText =
+    !rewind.busy &&
     props.composerDraftKey !== null &&
     !isProviderSubagent &&
     !composerSlotHidden &&
@@ -1456,6 +1487,48 @@ function ThreadDetailBody(
       return;
     }
     insertComposerDraftText(props.composerDraftKey, value, target);
+    composerEditorRef.current?.focus();
+  };
+
+  const handleReplyToResponse = (response: Pick<ResponseContextRecord, "citation" | "itemId">) => {
+    const { composerDraftKey, selectedThreadDetailRef } = props;
+    if (!canCiteAssistantText || composerDraftKey === null || selectedThreadDetailRef === null)
+      return;
+    const projection = appAtomRegistry.get(
+      environmentThreadDetails.quietThreadAtom(selectedThreadDetailRef),
+    )?.projection;
+    const subagents = projection
+      ? responseSubagents(
+          projection,
+          response.itemId,
+          (child) =>
+            appAtomRegistry.get(
+              environmentThreadShells.quietThreadShellAtom({
+                environmentId: child.environmentId ?? props.environmentId,
+                threadId: child.threadId,
+              }),
+            )?.title,
+        )
+      : [];
+    const record = responseContextRecord({ ...response, subagents });
+    const { text } = getComposerDraftSnapshot(composerDraftKey);
+    if (!collectComposerContextReferences(text).some((ref) => ref.contextId === record.contextId)) {
+      const inserted = insertComposerDraftContext(
+        composerDraftKey,
+        {
+          text: formatComposerContextReference(record),
+          context: { version: 1, records: [record] },
+        },
+        { text, start: text.length, end: text.length },
+      );
+      if (!inserted) {
+        Dialog.alert(
+          gt("Could not add reply"),
+          gt("Remove a context item from the draft and try again."),
+        );
+        return;
+      }
+    }
     composerEditorRef.current?.focus();
   };
 
@@ -1603,6 +1676,9 @@ function ThreadDetailBody(
                   onIsAtEndChange={setIsAtEnd}
                   skills={selectedProviderSkills}
                   onCiteAssistantText={canCiteAssistantText ? handleCiteAssistantText : undefined}
+                  onReplyToResponse={canCiteAssistantText ? handleReplyToResponse : undefined}
+                  rewindTargets={rewind.targets}
+                  onRewindMessage={rewind.onRewind}
                   onUseArtifactTemplate={handleUseArtifactTemplate}
                 />
               </ColumnWidth>
@@ -1987,7 +2063,7 @@ function ThreadDetailBody(
                               ? gt("Starting the task…")
                               : null
                         }
-                        interactionLocked={props.draftMode?.interactionLocked}
+                        interactionLocked={rewind.busy || props.draftMode?.interactionLocked}
                         draftKey={props.composerDraftKey ?? undefined}
                         followUpBehavior={
                           props.activePendingApprovals.length > 0 &&

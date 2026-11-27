@@ -1,5 +1,8 @@
 import { markdownMathRanges } from "@t3tools/shared/markdownMath";
-import { createAssistantTextSelector } from "@t3tools/shared/assistantCitations";
+import {
+  assistantMessageOpening,
+  createAssistantTextSelector,
+} from "@t3tools/shared/assistantCitations";
 import {
   splitCodexArtifactTemplateMarkdown,
   renderCodexInlineDirectivesAsMarkdown,
@@ -84,6 +87,14 @@ function citationSegments(
         : [],
     );
   });
+}
+
+export function captureMobileAssistantMessageOpening(markdown: string) {
+  const text = citationSegments(markdown)
+    .map((segment) => segment.text)
+    .filter((text) => text.trim())
+    .join("\n");
+  return assistantMessageOpening(text.trim() ? text : markdown);
 }
 
 function occurrences(text: string, quote: string): number[] {
