@@ -559,6 +559,117 @@ export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(normalizedMarkdown(markdown));
 }
 
+export function splitMarkdownTables(markdown: string) {
+  if (!markdown.includes("|") || !markdown.split(/\r\n|\r|\n/).some(isTableDelimiterRow)) return;
+  const document = parser.parse(markdown);
+  if (!document.children.some((node) => node.type === "table")) return;
+  const blocks: Array<
+    | { kind: "markdown"; offset: number; markdown: string }
+    | {
+        kind: "table";
+        offset: number;
+        markdown: string;
+        align: NonNullable<Extract<RootContent, { type: "table" }>["align"]>;
+        rows: Array<{
+          offset: number;
+          cells: Array<{ markdown: string; text: string; linkUrls: string[] }>;
+        }>;
+      }
+  > = [];
+  const definitions = markdownReferenceDefinitions(markdown);
+  const definitionUrls = new Map<string, string>();
+  const collectDefinitions = (node: MarkdownNode) => {
+    if (node.type === "definition" && !definitionUrls.has(node.identifier)) {
+      definitionUrls.set(node.identifier, node.url);
+    }
+    if ("children" in node) node.children.forEach(collectDefinitions);
+  };
+  const linkUrls = (node: MarkdownNode): string[] => {
+    if (node.type === "link") return [node.url];
+    if (node.type === "linkReference") {
+      const url = definitionUrls.get(node.identifier);
+      return url ? [url] : [];
+    }
+    return "children" in node ? node.children.flatMap(linkUrls) : [];
+  };
+  collectDefinitions(document);
+  const text = (node: MarkdownNode): string =>
+    "children" in node
+      ? node.children.map(text).join("")
+      : "value" in node && node.type !== "html"
+        ? node.value
+        : "alt" in node
+          ? (node.alt ?? "")
+          : node.type === "break"
+            ? "\n"
+            : "";
+  const appendProse = (start: number, end: number) => {
+    const fragment = markdown.slice(start, end);
+    if (fragment.trim()) {
+      blocks.push({
+        kind: "markdown",
+        offset: start,
+        markdown: withReferenceDefinitions(fragment, definitions),
+      });
+    }
+  };
+  const tableCellCodeEdits = (node: MarkdownNode, offset: number): MarkdownEdit[] => {
+    if (node.type === "inlineCode") {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start === undefined || end === undefined) return [];
+      const raw = markdown.slice(start, end);
+      return raw.includes("\\|")
+        ? [{ start: start - offset, end: end - offset, content: raw.replaceAll("\\|", "|") }]
+        : [];
+    }
+    return "children" in node
+      ? node.children.flatMap((child) => tableCellCodeEdits(child, offset))
+      : [];
+  };
+  let cursor = 0;
+  for (const node of document.children) {
+    if (node.type !== "table" || !node.align) continue;
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start === undefined || end === undefined) continue;
+    appendProse(cursor, start);
+    blocks.push({
+      kind: "table",
+      offset: start,
+      markdown: withReferenceDefinitions(markdown.slice(start, end), definitions),
+      align: node.align,
+      rows: node.children.map((row, rowIndex) => ({
+        offset: row.position?.start.offset ?? start + rowIndex,
+        cells: row.children.map((cell) => {
+          const first = cell.children[0];
+          const offset = first?.position?.start.offset ?? 0;
+          let content = applyMarkdownEdits(
+            markdown.slice(offset, cell.children.at(-1)?.position?.end.offset ?? offset),
+            tableCellCodeEdits(cell, offset),
+          );
+          // The cell is rendered as its own paragraph. Keep leading block punctuation literal.
+          if (first?.type === "text") {
+            content = content.replace(
+              /^([#>+*=~-]|\d+(?=[.)]))/,
+              (prefix) => `&#${prefix.charCodeAt(0)};${prefix.slice(1)}`,
+            );
+          }
+          return {
+            markdown: withReferenceDefinitions(content, definitions),
+            text: text(cell),
+            linkUrls: linkUrls(cell),
+          };
+        }),
+      })),
+    });
+    cursor = end;
+  }
+  if (cursor === 0) return;
+  appendProse(cursor, markdown.length);
+  return { blocks, links: [...new Set(linkUrls(document))] };
+}
+
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
   return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
 }

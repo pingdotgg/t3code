@@ -1,7 +1,44 @@
 import { describe, expect, it } from "vite-plus/test";
-import { markdownWithTableBreaks } from "./markdownDocument";
+import { markdownWithTableBreaks, splitMarkdownTables } from "./markdownDocument";
 
 const table = "| Company | Fit |\n|---|---|\n| Acme | A |";
+
+it("keeps cell inline markup, empty columns, and cross-block link definitions", () => {
+  const markdown = [
+    "Before [link][reference].",
+    "",
+    "| Name | Fit |",
+    "| --- | ---: |",
+    "| **Acme** \\| [link][reference] | |",
+    "| # These are cell contents |",
+    "",
+    "After.",
+    "",
+    "[reference]: https://example.com",
+  ].join("\n");
+  const result = splitMarkdownTables(markdown);
+  expect(result?.links).toEqual(["https://example.com"]);
+  expect(result?.blocks.map((block) => block.kind)).toEqual(["markdown", "table", "markdown"]);
+  expect(result?.blocks[1]).toMatchObject({
+    kind: "table",
+    align: [null, "right"],
+    rows: [
+      { cells: [{ text: "Name" }, { text: "Fit" }] },
+      {
+        cells: [
+          {
+            text: "Acme | link",
+            markdown: "[reference]: https://example.com\n\n**Acme** \\| [link][reference]",
+          },
+          { markdown: "", text: "" },
+        ],
+      },
+      { cells: [{ markdown: "&#35; These are cell contents", text: "# These are cell contents" }] },
+    ],
+  });
+  expect(splitMarkdownTables(table)?.blocks[0]?.kind).toBe("table");
+  expect(splitMarkdownTables(`\`\`\`md\n${table}\n\`\`\``)).toBeUndefined();
+});
 
 describe("tables right under a line of text", () => {
   it("separates a table from the paragraph it interrupts", () => {

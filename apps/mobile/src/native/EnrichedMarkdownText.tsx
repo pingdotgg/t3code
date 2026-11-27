@@ -11,10 +11,26 @@ import {
   markdownWithInlineFileLinks,
   markdownWithTableBreaks,
   markdownWithTextDirection,
+  splitMarkdownTables,
 } from "../lib/markdownDocument";
 import { useGT } from "gt-react-native";
-import { isValidElement, useMemo, useState, type ReactElement, type ReactNode } from "react";
-import { Platform, Share, StyleSheet, useWindowDimensions, View } from "react-native";
+import {
+  isValidElement,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+import {
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import {
   EnrichedMarkdownText,
   type AccessibilityLabels,
@@ -31,6 +47,8 @@ import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { Menu } from "../components/ui/Menu";
+import { SymbolView } from "../components/ui/AppSymbol";
+import { Button } from "../components/ui/Button";
 import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
 import { useRetryingImageSource } from "./useRetryingImageSource";
 import * as Dialog from "../components/ui/Dialog";
@@ -288,6 +306,11 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       markdown: markdownWithTextDirection(markdownWithTableBreaks(files.markdown)),
     };
   }, [props.markdown, fileEmbedLabel]);
+  const tableSelectionEnabled = Platform.OS === "ios" && props.onCiteText !== undefined;
+  const tableDocument = useMemo(
+    () => (tableSelectionEnabled ? splitMarkdownTables(markdown) : undefined),
+    [markdown, tableSelectionEnabled],
+  );
   const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
   const onLinksChange = (links: MarkdownLinkOccurrence[]) => {
     const urls = [...new Set(links.map((link) => link.url))];
@@ -310,9 +333,10 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         : "",
     [markdown, textLinkRegex],
   );
+  const documentLinks = tableDocument?.links ?? parsedLinkUrls;
   const linkUrls = textLinkKey
-    ? [...new Set([...parsedLinkUrls, ...textLinkKey.split("\n")])]
-    : parsedLinkUrls;
+    ? [...new Set([...documentLinks, ...textLinkKey.split("\n")])]
+    : documentLinks;
   const { linkVariants, linkPillContent } = useEnrichedLinkVariants(linkUrls, props, fileHrefs);
   const linkRecognition = useMemo(() => ({ text: textLinkRegex ?? undefined }), [textLinkRegex]);
   const [activeMenu, setActiveMenu] = useState<{
@@ -451,6 +475,52 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           }
         : undefined;
 
+    const nativeProps: ComponentProps<typeof EnrichedMarkdownText> = {
+      markdown,
+      markdownStyle,
+      writingDirection: props.writingDirection,
+      onLinksChange,
+      renderers,
+      resolveImageSource: resolveNativeImageSource,
+      onImagePress:
+        props.onImagePress || props.onLinkPress
+          ? ({ url }) => (props.onImagePress ?? props.onLinkPress)?.(url)
+          : undefined,
+      linkRecognition,
+      containerStyle: { flexShrink: 1, minWidth: 0 },
+      flavor: "github",
+      selectable: true,
+      contextMenuItems: props.onCiteText
+        ? [
+            {
+              text: gt("Cite", { $context: "verb, quote selected text" }),
+              icon: "quote.bubble",
+              onPress: ({ text }) => props.onCiteText?.(text),
+            },
+          ]
+        : undefined,
+      selectionClipboard,
+      selectionMenuConfig,
+      selectionColor: props.textStyle.selectionColor,
+      selectionHandleColor: props.textStyle.selectionHandleColor,
+      md4cFlags: {
+        latexMath: mathRenderingEnabled,
+        hardSoftBreaks: props.preserveSoftBreaks ?? false,
+        admonitions: true,
+        preserveWindowsPaths: true,
+      },
+      enableTaskListItemToggle: props.onTaskListItemPress !== undefined,
+      onTaskListItemPress: props.onTaskListItemPress,
+      enableCodeBlockWrapToggle: true,
+      spoilerOverlay: "solid",
+      onLinkPress:
+        props.onLinkPress || props.onImagePress ? ({ url }) => onLinkPress(url) : undefined,
+      onLinkLongPress,
+      linkContextMenuItems,
+      linkPillContent,
+      accessibilityLabels,
+    };
+
     return (
       <View
         style={{
@@ -460,55 +530,28 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           marginBottom: props.marginBottom,
         }}
       >
-        <EnrichedMarkdownText
-          markdown={markdown}
-          markdownStyle={markdownStyle}
-          writingDirection={props.writingDirection}
-          onLinksChange={onLinksChange}
-          renderers={renderers}
-          resolveImageSource={resolveNativeImageSource}
-          onImagePress={
-            props.onImagePress || props.onLinkPress
-              ? ({ url }) => (props.onImagePress ?? props.onLinkPress)?.(url)
-              : undefined
-          }
-          linkRecognition={linkRecognition}
-          containerStyle={{ flexShrink: 1, minWidth: 0 }}
-          flavor="github"
-          selectable
-          contextMenuItems={
-            props.onCiteText
-              ? [
-                  {
-                    text: gt("Cite", { $context: "verb, quote selected text" }),
-                    icon: "quote.bubble",
-                    onPress: ({ text }) => props.onCiteText?.(text),
-                  },
-                ]
-              : undefined
-          }
-          selectionClipboard={selectionClipboard}
-          selectionMenuConfig={selectionMenuConfig}
-          selectionColor={props.textStyle.selectionColor}
-          selectionHandleColor={props.textStyle.selectionHandleColor}
-          md4cFlags={{
-            latexMath: mathRenderingEnabled,
-            hardSoftBreaks: props.preserveSoftBreaks ?? false,
-            admonitions: true,
-            preserveWindowsPaths: true,
-          }}
-          enableTaskListItemToggle={props.onTaskListItemPress !== undefined}
-          onTaskListItemPress={props.onTaskListItemPress}
-          enableCodeBlockWrapToggle
-          spoilerOverlay="solid"
-          onLinkPress={
-            props.onLinkPress || props.onImagePress ? ({ url }) => onLinkPress(url) : undefined
-          }
-          onLinkLongPress={onLinkLongPress}
-          linkContextMenuItems={linkContextMenuItems}
-          linkPillContent={linkPillContent}
-          accessibilityLabels={accessibilityLabels}
-        />
+        {tableDocument === undefined ? (
+          <EnrichedMarkdownText {...nativeProps} />
+        ) : (
+          tableDocument.blocks.map((block) =>
+            block.kind === "table" ? (
+              <SelectableMarkdownTable
+                key={block.offset}
+                block={block}
+                nativeProps={nativeProps}
+                fontScale={fontScale}
+              />
+            ) : (
+              <EnrichedMarkdownText
+                key={block.offset}
+                {...nativeProps}
+                markdown={block.markdown}
+                onLinksChange={undefined}
+                allowTrailingMargin
+              />
+            ),
+          )
+        )}
       </View>
     );
   };
@@ -533,6 +576,196 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     </Menu>
   ) : (
     renderMarkdown()
+  );
+}
+
+function SelectableMarkdownTable({
+  block,
+  nativeProps,
+  fontScale,
+}: {
+  readonly block: Extract<
+    NonNullable<ReturnType<typeof splitMarkdownTables>>["blocks"][number],
+    { kind: "table" }
+  >;
+  readonly nativeProps: ComponentProps<typeof EnrichedMarkdownText>;
+  readonly fontScale: number;
+}) {
+  const gt = useGT();
+  const [selectingText, setSelectingText] = useState(false);
+  const table = nativeProps.markdownStyle?.table;
+  if (!table) return <EnrichedMarkdownText {...nativeProps} markdown={block.markdown} />;
+  const horizontalPadding = table.cellPaddingHorizontal ?? 10;
+  const borderWidth = table.borderWidth ?? StyleSheet.hairlineWidth;
+  const columns = block.align.map((align, column) => ({
+    key: `column-${column}`,
+    align,
+    width: block.rows.reduce(
+      (width, row) =>
+        Math.min(
+          300 * fontScale,
+          Math.max(
+            width,
+            (row.cells[column]?.text.replace(
+              /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu,
+              "xx",
+            ).length ?? 0) *
+              (table.fontSize ?? 14) *
+              fontScale *
+              0.56 +
+              horizontalPadding * 2,
+          ),
+        ),
+      64 * fontScale,
+    ),
+  }));
+  const tableWidth = columns.reduce((width, column) => width + column.width, borderWidth * 2);
+  const copyLabel = gt("Copy", { $context: "verb" });
+  const copyMarkdownLabel = gt("Copy as Markdown");
+  const selectTextLabel = gt("Select text");
+  const hasLinks = block.rows.some((row) => row.cells.some((cell) => cell.linkUrls.length > 0));
+  const linkContextMenuItems = Object.fromEntries(
+    Object.entries(nativeProps.linkContextMenuItems ?? {}).map(([pattern, actions]) => [
+      pattern,
+      [
+        { text: selectTextLabel, icon: "text.cursor", onPress: () => setSelectingText(true) },
+        ...actions,
+      ],
+    ]),
+  );
+  const contextMenuItems = selectingText
+    ? nativeProps.contextMenuItems?.map((item) => ({
+        ...item,
+        onPress: (event: Parameters<typeof item.onPress>[0]) => {
+          setSelectingText(false);
+          item.onPress(event);
+        },
+      }))
+    : nativeProps.contextMenuItems;
+  return (
+    <View
+      style={{
+        width: tableWidth,
+        maxWidth: "100%",
+        marginTop: table.marginTop,
+        marginBottom: table.marginBottom,
+      }}
+    >
+      <ScrollView horizontal directionalLockEnabled>
+        <View
+          style={{
+            borderColor: table.borderColor,
+            borderWidth,
+            borderRadius: table.borderRadius,
+            overflow: "hidden",
+          }}
+        >
+          {block.rows.map((row, rowIndex) => (
+            <View
+              key={row.offset}
+              style={{
+                flexDirection: "row",
+                borderTopWidth: rowIndex === 0 ? 0 : borderWidth,
+                borderColor: table.borderColor,
+                backgroundColor: rowIndex === 0 ? table.headerBackgroundColor : undefined,
+              }}
+            >
+              {columns.map(({ key, width, align }, column) => {
+                const cell = row.cells[column];
+                const isSelecting = selectingText && (cell?.linkUrls.length ?? 0) > 0;
+                return (
+                  <View
+                    key={key}
+                    style={{
+                      width,
+                      paddingHorizontal: horizontalPadding,
+                      paddingVertical: table.cellPaddingVertical,
+                      borderStartWidth: column === 0 ? 0 : borderWidth,
+                      borderColor: table.borderColor,
+                    }}
+                  >
+                    {cell?.markdown ? (
+                      <EnrichedMarkdownText
+                        {...nativeProps}
+                        markdown={
+                          isSelecting
+                            ? Array.from(
+                                cell.text,
+                                (character) => `&#${character.codePointAt(0)};`,
+                              ).join("")
+                            : cell.markdown
+                        }
+                        markdownStyle={{
+                          ...nativeProps.markdownStyle,
+                          paragraph: {
+                            ...nativeProps.markdownStyle?.paragraph,
+                            fontFamily: rowIndex === 0 ? table.headerFontFamily : table.fontFamily,
+                            color: rowIndex === 0 ? table.headerTextColor : table.color,
+                            textAlign: align ?? undefined,
+                            marginBottom: 0,
+                          },
+                        }}
+                        onLinksChange={undefined}
+                        linkRecognition={isSelecting ? undefined : nativeProps.linkRecognition}
+                        linkContextMenuItems={isSelecting ? undefined : linkContextMenuItems}
+                        contextMenuItems={contextMenuItems}
+                      />
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+      <View style={{ alignSelf: "flex-end" }}>
+        {selectingText ? (
+          <Button
+            label={gt("Done selecting")}
+            tone="secondary"
+            onPress={() => setSelectingText(false)}
+          />
+        ) : (
+          <Menu
+            actions={[
+              ...(hasLinks
+                ? [{ id: "select-text", title: selectTextLabel, image: "text.cursor" }]
+                : []),
+              { id: "copy", title: copyLabel, image: "doc.on.doc" },
+              { id: "markdown", title: copyMarkdownLabel, image: "doc.text" },
+            ]}
+            onPressAction={({ nativeEvent }) => {
+              if (nativeEvent.event === "select-text") {
+                setSelectingText(true);
+                return;
+              }
+              copyTextWithHaptic(
+                nativeEvent.event === "markdown"
+                  ? block.markdown
+                  : block.rows
+                      .map((row) =>
+                        columns.map((_, column) => row.cells[column]?.text ?? "").join("\t"),
+                      )
+                      .join("\n"),
+              );
+            }}
+          >
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={gt("More actions")}
+              style={{
+                minWidth: 44,
+                minHeight: 44,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <SymbolView name="ellipsis" size={16} tintColor={table.color} />
+            </Pressable>
+          </Menu>
+        )}
+      </View>
+    </View>
   );
 }
 

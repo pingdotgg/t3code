@@ -90,6 +90,16 @@ it("rejects unmappable or blank selections instead of inventing a source", () =>
   expect(collectMobileAssistantTextSelectors("quote quote", "missing", "quote")).toEqual([]);
 });
 
+it("anchors a partial selection inside a formatted table cell to the assistant reply", () => {
+  const markdown = "Summary\n\n| Result |\n| --- |\n| **12** [tests passed](https://example.com) |";
+  const [choice] = collectMobileAssistantTextSelectors(markdown, "0:0", "tests");
+  expect(choice?.selector.text).toBe("tests");
+  expect(findAssistantCitationText("Summary Result 12 tests passed", choice!.selector)).toEqual({
+    start: 18,
+    end: 23,
+  });
+});
+
 it("uses the web math representation around a selected passage", () => {
   for (const formula of ["$x$", "\\(x\\)"]) {
     const [choice] = collectMobileAssistantTextSelectors(`Before ${formula} after`, "0:0", "after");
