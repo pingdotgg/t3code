@@ -1733,6 +1733,44 @@ export function useComposerSend(input: ComposerSendInput) {
           sendSnapshot.replyTo !== null;
         const firstImage = sendSnapshot.images[0];
         let restored = false;
+        const copyAction = hasText
+          ? {
+              children: m(msg("Copy message")),
+              onClick: () => {
+                void writeTextToClipboard(failedText, {
+                  target: "failed message",
+                  unavailableMessage: msg(
+                    "Clipboard API is unavailable while copying failed message.",
+                  ),
+                  failureMessage: msg("Failed to copy failed message to the clipboard."),
+                }).catch(() => undefined);
+              },
+            }
+          : undefined;
+        const restoreAction = canRestore
+          ? {
+              children: m(msg("Restore failed draft")),
+              onClick: () => {
+                if (
+                  sendInFlightRef.current ||
+                  countPreparingComposerImages(composerTargetKey(composerDraftTarget)) > 0 ||
+                  composerDraftHasUserContent(
+                    useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+                  )
+                ) {
+                  toastManager.add({
+                    type: "info",
+                    title: m(msg("Finish or stash your current draft before restoring.")),
+                  });
+                  return;
+                }
+                restoreFailedSend();
+                restored = true;
+                toastManager.close(failedSendToastId);
+              },
+            }
+          : undefined;
+        const actionProps = restoreAction ?? copyAction;
         const failedSendToastId = toastManager.add({
           ...stackedThreadToast({
             type: "error",
@@ -1746,39 +1784,15 @@ export function useComposerSend(input: ComposerSendInput) {
             timeout: 0,
             data: {
               hideCopyButton: true,
-              ...(canRestore
-                ? {
-                    secondaryActionProps: {
-                      children: m(msg("Restore failed draft")),
-                      onClick: () => {
-                        if (
-                          sendInFlightRef.current ||
-                          countPreparingComposerImages(composerTargetKey(composerDraftTarget)) >
-                            0 ||
-                          composerDraftHasUserContent(
-                            useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-                          )
-                        ) {
-                          toastManager.add({
-                            type: "info",
-                            title: m(msg("Finish or stash your current draft before restoring.")),
-                          });
-                          return;
-                        }
-                        restoreFailedSend();
-                        restored = true;
-                        toastManager.close(failedSendToastId);
-                      },
-                    },
-                  }
-                : {}),
+              ...(restoreAction && copyAction ? { secondaryActionProps: copyAction } : {}),
               ...(firstImage
                 ? {
                     additionalActions: [
                       {
                         id: firstImage.id,
                         props: {
-                          children: m(msg("Preview {name}", { name: firstImage.name })),
+                          "aria-label": m(msg("Preview {name}", { name: firstImage.name })),
+                          children: m(msg("Preview")),
                           onClick: () => {
                             const threadKey = currentRouteThreadKeyRef.current;
                             if (threadKey === null) return;
@@ -1800,22 +1814,7 @@ export function useComposerSend(input: ComposerSendInput) {
                   }
                 : {}),
             },
-            ...(hasText
-              ? {
-                  actionProps: {
-                    children: m(msg("Copy message")),
-                    onClick: () => {
-                      void writeTextToClipboard(failedText, {
-                        target: "failed message",
-                        unavailableMessage: msg(
-                          "Clipboard API is unavailable while copying failed message.",
-                        ),
-                        failureMessage: msg("Failed to copy failed message to the clipboard."),
-                      }).catch(() => undefined);
-                    },
-                  },
-                }
-              : {}),
+            ...(actionProps ? { actionProps } : {}),
           }),
           onClose: () => {
             if (!restored) releaseDraftAttachments(sendSnapshot.attachments);

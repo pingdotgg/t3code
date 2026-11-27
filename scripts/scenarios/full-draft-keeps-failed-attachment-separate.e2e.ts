@@ -119,7 +119,6 @@ test(
       .toBe(true);
 
     await screen.getByRole("button", "Close image preview", { exact: true }).tap();
-    await editor.tap();
     await browser.keyboard.press("Control+s");
     await expect(editor).toHaveText("");
     await screen.getByRole("button", "Restore failed draft", { exact: true }).tap();
