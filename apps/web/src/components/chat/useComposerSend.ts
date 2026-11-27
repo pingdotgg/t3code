@@ -10,6 +10,7 @@ import {
   resolveBackgroundDraftWorkspaceOptions,
   shouldDockDraftHeroForSubmission,
   buildExpiredTerminalContextToastCopy,
+  cloneComposerImageForRetry,
   deriveComposerSendState,
   boundAttachmentIds,
   formatOutgoingPrompt,
@@ -1695,13 +1696,12 @@ export function useComposerSend(input: ComposerSendInput) {
         const next = existing.filter((message) => message.id !== messageIdForSend);
         return next.length === existing.length ? existing : next;
       });
-      // A restored draft clones its images, so the sent copies are no longer used.
-      optimisticBlobPreviews.release(optimisticMessage);
-      if (
-        composerDraftHasUserContent(
-          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-        )
-      ) {
+      const draftStore = useComposerDraftStore.getState();
+      if (composerDraftHasUserContent(draftStore.getComposerDraft(composerDraftTarget))) {
+        draftStore.addImages(
+          composerDraftTarget,
+          sendSnapshot.images.map(cloneComposerImageForRetry),
+        );
         // A draft typed meanwhile keeps the composer, so the failed text stays reachable here.
         const failedText = sendSnapshot.draftText;
         const hasText = failedText.trim().length > 0;
@@ -1753,6 +1753,8 @@ export function useComposerSend(input: ComposerSendInput) {
           });
         }
       }
+      // Recovered images have their own previews.
+      optimisticBlobPreviews.release(optimisticMessage);
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
         setThreadError(
