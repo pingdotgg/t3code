@@ -1462,10 +1462,14 @@ describe("PreviewManager", () => {
             });
           });
 
-          yield* manager.navigate("tab_guarded_stay", "https://example.com/elsewhere");
+          const opened = yield* manager.navigate(
+            "tab_guarded_stay",
+            "https://example.com/elsewhere",
+          );
           yield* changes.until(() => answered && statuses.at(-1)?.kind === "Success");
           yield* flushMicrotasks();
 
+          expect(opened).toBe(false);
           expect(preview.loadURL).toHaveBeenCalledTimes(1);
           expect(statuses.at(-1)).toMatchObject({ kind: "Success", url: "http://localhost:3200/" });
         }),
@@ -1556,6 +1560,35 @@ describe("PreviewManager", () => {
           yield* flushMicrotasks();
 
           expect(showMessageBox).not.toHaveBeenCalled();
+        }),
+      ),
+    );
+
+    effectIt.effect("opens the typed address on Leave", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const preview = yield* openGuardedTab(manager, "tab_guarded_address");
+          showMessageBox.mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+          const unloads: Array<ReturnType<typeof blockUnload>> = [];
+          preview.loadURL.mockImplementation(async (url: string) => {
+            const unload = blockUnload(preview);
+            unloads.push(unload);
+            if (unload.preventDefault.mock.calls.length > 0) return;
+            throw Object.assign(new Error(`ERR_ABORTED (-3) loading '${url}'`), {
+              errno: -3,
+              code: "ERR_ABORTED",
+              url,
+            });
+          });
+
+          const opened = yield* manager.navigate("tab_guarded_address", "https://example.com/next");
+
+          expect(opened).toBe(true);
+          expect(preview.loadURL.mock.calls.map(([url]) => url)).toEqual([
+            "https://example.com/next",
+            "https://example.com/next",
+          ]);
+          expect(unloads[1]?.preventDefault).toHaveBeenCalledTimes(1);
         }),
       ),
     );

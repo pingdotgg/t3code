@@ -142,6 +142,15 @@ const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
 const BUSY_PAGE_PROBE_MS = 1_000;
 // Long enough for a page's beforeunload handler to answer; an older attempt is not retried.
 const LEAVE_ATTEMPT_TTL_MS = 10_000;
+
+interface LeaveAttempt {
+  /** Returns false when the action no longer applies, so Leave must not skip the guard. */
+  readonly retry: () => boolean;
+  readonly expiresAt: number;
+  /** Set once the page's guard blocked this attempt; `decision` then settles with the answer. */
+  blocked: boolean;
+  readonly decision?: Deferred.Deferred<boolean>;
+}
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
@@ -611,18 +620,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   // Electron cancels a beforeunload-guarded unload unless `will-prevent-unload` calls preventDefault
   // synchronously, and a sync dialog would stall the main process. So a person's blocked action is
   // recorded here, the prompt is async, and Leave repeats the action with the guard skipped once.
-  const leaveAttempts = new Map<
-    number,
-    { readonly retry: () => boolean; readonly expiresAt: number }
-  >();
+  const leaveAttempts = new Map<number, LeaveAttempt>();
   const confirmedLeaves = new Map<number, number>();
   const leavePromptsOpen = new Set<number>();
-  /** `retry` returns false when the action no longer applies, so Leave must not skip the guard. */
-  const armLeave = (wc: Electron.WebContents, retry: () => boolean) => {
-    leaveAttempts.set(wc.id, {
+  const armLeave = (
+    wc: Electron.WebContents,
+    retry: () => boolean,
+    decision?: Deferred.Deferred<boolean>,
+  ) => {
+    const leave: LeaveAttempt = {
       retry,
       expiresAt: runSync(Clock.currentTimeMillis) + LEAVE_ATTEMPT_TTL_MS,
-    });
+      blocked: false,
+      ...(decision ? { decision } : {}),
+    };
+    leaveAttempts.set(wc.id, leave);
+    return leave;
   };
   const navigateAway = (wc: Electron.WebContents, action: () => void) => {
     armLeave(wc, () => {
@@ -1358,13 +1371,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         Effect.ensuring(Effect.sync(() => void leavePromptsOpen.delete(wc.id))),
       );
       // Navigation and detach both advance documentId; Leave answers only the page that asked.
-      if (!leave || wc.isDestroyed() || documentId !== askedDocumentId) return;
+      if (!leave || wc.isDestroyed() || documentId !== askedDocumentId) return false;
       confirmedLeaves.set(wc.id, (yield* Clock.currentTimeMillis) + LEAVE_ATTEMPT_TTL_MS);
       const retried = yield* attempt(
         { operation: "leavePage.retry", tabId, webContentsId: wc.id },
         retry,
       ).pipe(Effect.orElseSucceed(() => false));
       if (!retried) confirmedLeaves.delete(wc.id);
+      return retried;
     });
     const unloadPrevented = (event: Electron.Event) => {
       const now = runSync(Clock.currentTimeMillis);
@@ -1378,9 +1392,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       leaveAttempts.delete(wc.id);
       // A blocked loadURL already set the tab to Loading the new address.
       sync();
-      if (!pending || now > pending.expiresAt || leavePromptsOpen.has(wc.id)) return;
+      if (!pending) return;
+      pending.blocked = true;
+      const settle = (left: boolean) => {
+        if (pending.decision) Deferred.doneUnsafe(pending.decision, Effect.succeed(left));
+      };
+      if (now > pending.expiresAt || leavePromptsOpen.has(wc.id)) {
+        settle(false);
+        return;
+      }
       leavePromptsOpen.add(wc.id);
-      runFork(confirmLeave(pending.retry, documentId).pipe(Effect.ignore));
+      runFork(
+        confirmLeave(pending.retry, documentId).pipe(
+          Effect.onExit((exit) => Effect.sync(() => settle(Exit.isSuccess(exit) && exit.value))),
+          Effect.ignore,
+        ),
+      );
     };
     const audioStateChanged = (
       event: Electron.Event<Electron.WebContentsAudioStateChangedEventParams>,
@@ -2292,32 +2319,43 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ] as const;
     });
     yield* emitIfCurrent(tabId, pending);
-    if (pending.webContentsId == null) return;
+    if (pending.webContentsId == null) return true;
     const webContentsId = pending.webContentsId;
     const wc = webContents.fromId(webContentsId);
     if (!wc || wc.isDestroyed()) {
       yield* detachDestroyedWebContents(tabId, webContentsId);
-      return;
+      return true;
     }
     yield* leaveBusyPage(wc);
     if (wc.getURL() === url) {
       yield* attempt({ operation: "navigate.reload", tabId, webContentsId: wc.id }, () =>
         navigateAway(wc, () => wc.reload()),
       );
-      return;
+      return true;
     }
-    yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () => {
-      // A retry after Leave has no caller to report to; its failures show as tab state.
-      armLeave(wc, () => {
-        void wc.loadURL(url).catch(() => undefined);
-        return true;
-      });
-      return wc.loadURL(url);
-    }).pipe(
-      // A blocked unload (the leave prompt takes over) and a superseding navigation both reject with ERR_ABORTED.
+    const decision = yield* Deferred.make<boolean>();
+    let leave: LeaveAttempt | undefined;
+    return yield* attemptPromise(
+      { operation: "navigate.loadURL", tabId, webContentsId: wc.id },
+      () => {
+        leave = armLeave(
+          wc,
+          () => {
+            // The Leave retry reports through tab state; the caller already has its answer.
+            void wc.loadURL(url).catch(() => undefined);
+            return true;
+          },
+          decision,
+        );
+        return wc.loadURL(url);
+      },
+    ).pipe(
+      Effect.as(true),
+      // A blocked unload and a superseding navigation both reject with ERR_ABORTED; only the
+      // blocked one waits for the leave prompt, and Stay means the address never opened.
       Effect.catchIf(
         (error) => Predicate.hasProperty(error.cause, "errno") && error.cause.errno === -3,
-        () => Effect.void,
+        () => (leave?.blocked ? Deferred.await(decision) : Effect.succeed(true)),
       ),
     );
   });
@@ -4059,7 +4097,8 @@ export class PreviewManager extends Context.Service<
       webContentsId: number,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly prepareWebview: (webContents: Electron.WebContents) => Effect.Effect<void>;
-    readonly navigate: (tabId: string, url: string) => Effect.Effect<void, PreviewManagerError>;
+    /** Fails on load errors; resolves false when the page's leave prompt kept it (Stay). */
+    readonly navigate: (tabId: string, url: string) => Effect.Effect<boolean, PreviewManagerError>;
     readonly goBack: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly goForward: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly refresh: (tabId: string) => Effect.Effect<void, PreviewManagerError>;

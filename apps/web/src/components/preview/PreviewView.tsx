@@ -287,7 +287,7 @@ export function PreviewView({
       return activeProfileId;
     }
     if (runtimeTabId && previewBridge) {
-      await previewBridge.navigate(runtimeTabId, resolvedUrl);
+      if (!(await previewBridge.navigate(runtimeTabId, resolvedUrl))) return null;
       rememberPreviewUrl(threadRef, resolvedUrl);
       focusPreviewPage(runtimeTabId);
       return activeProfileId;
