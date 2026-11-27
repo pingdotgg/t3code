@@ -1474,7 +1474,11 @@ describe("attachment HTML preview recovery", () => {
 describe("document output sanitization", () => {
   it("renders uppercase Roman markers on ordered list items", async () => {
     await using screen = await render(
-      <DocumentPages html={'<ol type="I"><li>Prepare the site</li></ol>'} name="procedure.odt" />,
+      <DocumentPages
+        html={'<ol type="I"><li>Prepare the site</li></ol>'}
+        name="procedure.odt"
+        output
+      />,
     );
     const frame = screen.container.querySelector("iframe")!;
     await vi.waitFor(() => {
