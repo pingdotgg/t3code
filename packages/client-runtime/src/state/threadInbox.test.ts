@@ -109,7 +109,7 @@ describe("createInboxReturnTracker", () => {
       completedAt: "1970-01-01T00:00:09.000Z",
       assistantMessageId: null,
     };
-    const runtime = thread("a", true).runtime;
+    const runtime = thread("a", true).runtime!;
     const waitingOnSubagent = {
       ...thread("a", false),
       latestRun,
