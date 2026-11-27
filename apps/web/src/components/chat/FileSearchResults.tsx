@@ -51,7 +51,7 @@ function MatchedLine(props: { readonly text: string; readonly matchers: Readonly
   if (ranges.length === 0) return props.text;
   return splitSearchText(props.text, ranges).map((part) =>
     part.highlighted ? (
-      <mark key={part.start} className="surface-selected-soft font-semibold text-strong-foreground">
+      <mark key={part.start} className="surface-selected-soft text-strong-foreground">
         {part.text}
       </mark>
     ) : (
