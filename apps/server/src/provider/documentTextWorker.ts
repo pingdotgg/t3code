@@ -623,13 +623,19 @@ function wordCharacterStyleVisibility(styles: XmlNode): WordStyleRunHidden | und
     }
   }
   if (![...character.values()].some((style) => style.vanish)) return;
+  // pPr precedes a paragraph's runs, so the first run settles its style for the rest.
+  const paragraphStyles = new WeakMap<XmlNode, string | undefined>();
   return (id, ancestors) => {
     if (!wordStyleToggled(character, id)) return false;
     // Table styles also toggle; leave those combinations to the editor.
     if (tableCanToggle && ancestors.some((ancestor) => ancestor.name === "tbl")) return false;
     const owner = ancestors.findLast((ancestor) => ancestor.name === "p");
-    const named = childNamed(childNamed(owner, "pPr"), "pStyle")?.attrs.val;
-    const paragraphId = named && paragraph.has(named) ? named : defaultParagraph;
+    let paragraphId = owner && paragraphStyles.get(owner);
+    if (!owner || !paragraphStyles.has(owner)) {
+      const named = childNamed(childNamed(owner, "pPr"), "pStyle")?.attrs.val;
+      paragraphId = named && paragraph.has(named) ? named : defaultParagraph;
+      if (owner) paragraphStyles.set(owner, paragraphId);
+    }
     return paragraphId === undefined || wordStyleToggled(paragraph, paragraphId) === false;
   };
 }
