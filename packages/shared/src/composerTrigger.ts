@@ -95,7 +95,7 @@ export function isCurrencyAmountQuery(query: string): boolean {
 
 export function detectComposerPullRequestTrigger(token: string, cursor: number) {
   if (/^[@\p{Sc}]/u.test(token)) return null;
-  const match = /(?:^|\p{Ps})#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
+  const match = /(?:^|\p{Ps})#([\p{L}\p{N}][\p{L}\p{M}\p{N}_-]*)?$/u.exec(token);
   if (!match) return null;
   const query = match[1] ?? "";
   return {

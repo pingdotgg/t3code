@@ -181,13 +181,16 @@ export function useComposerPullRequestSearch(input: {
         limit: 20,
       });
     }
-    const words = (query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+    const words = (query ?? "").normalize("NFC").toLowerCase().split(/\s+/).filter(Boolean);
     const found = [...(exactEntry ? [exactEntry] : []), ...(list.data?.entries ?? [])].filter(
       (entry) =>
         entry.projectId === input.projectId &&
         entry.repository.toLowerCase() === input.repository?.toLowerCase() &&
         words.every((word) =>
-          `${entry.title} ${entry.headBranch} ${entry.baseBranch}`.toLowerCase().includes(word),
+          `${entry.title} ${entry.headBranch} ${entry.baseBranch}`
+            .normalize("NFC")
+            .toLowerCase()
+            .includes(word),
         ),
     );
     const unique = new Map<string, (typeof found)[number]>();

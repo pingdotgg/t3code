@@ -289,9 +289,10 @@ function isAuthoredByViewer(entry: ScopedEntry, viewers: PullRequestViewers): bo
 }
 
 export function matchesPullRequestQuery(entry: PullRequestListEntry, query: string): boolean {
-  const normalizedQuery = query.trim().toLowerCase();
+  const normalizedQuery = query.normalize("NFC").trim().toLowerCase();
   if (normalizedQuery.length === 0) return true;
   return `#${entry.number} ${entry.title} ${entry.repository} ${entry.headBranch} ${entry.author?.login ?? ""}`
+    .normalize("NFC")
     .toLowerCase()
     .includes(normalizedQuery);
 }
@@ -736,19 +737,19 @@ export function resolveSelectedEnvironmentId<Id extends string>(
 
 /** Host search also matches bodies and commits absent from visible row fields. */
 export function scorePullRequestMatch(entry: PullRequestListEntry, query: string): number {
-  const needle = query.trim().toLowerCase();
+  const needle = query.normalize("NFC").trim().toLowerCase();
   if (needle.length === 0) return 0;
   const number = needle.replace(/^#/u, "");
   if (String(entry.number) === number) return 100;
 
-  const title = entry.title.toLowerCase();
+  const title = entry.title.normalize("NFC").toLowerCase();
   const terms = needle.split(/\s+/u).filter((term) => term.length > 0);
   if (title === needle) return 90;
   if (title.includes(needle)) return 80;
   if (terms.length > 1 && terms.every((term) => title.includes(term))) return 70;
-  if (entry.headBranch.toLowerCase().includes(needle)) return 60;
-  if ((entry.author?.login ?? "").toLowerCase().includes(needle)) return 50;
-  if (entry.repository.toLowerCase().includes(needle)) return 40;
+  if (entry.headBranch.normalize("NFC").toLowerCase().includes(needle)) return 60;
+  if ((entry.author?.login ?? "").normalize("NFC").toLowerCase().includes(needle)) return 50;
+  if (entry.repository.normalize("NFC").toLowerCase().includes(needle)) return 40;
   if (terms.some((term) => title.includes(term))) return 30;
   return 10;
 }

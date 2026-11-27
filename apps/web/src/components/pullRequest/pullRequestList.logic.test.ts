@@ -15,6 +15,7 @@ import {
   filterPullRequestsByInvolvement,
   findProjectForRepository,
   findScopedProject,
+  matchesPullRequestQuery,
   mergePullRequestLists,
   pullRequestEntryKey,
   pullRequestListAnsweredEmpty,
@@ -190,6 +191,7 @@ describe("ranking what a search found", () => {
   it.each([
     ["welcome wizard", "Add the welcome wizard"],
     ["24", "Upgrade Node to 24"],
+    ["cafe\u0301", "Fix caf\u00e9"],
   ])(
     "puts the pull request whose title says %j above one that merely mentions it",
     (query, title) => {
@@ -204,6 +206,13 @@ describe("ranking what a search found", () => {
       ).toEqual([1, 2]);
     },
   );
+
+  it("matches pull requests across NFC and NFD Unicode forms", () => {
+    const precomposed = row({ number: 1, title: "Fix caf\u00e9" });
+    const decomposed = row({ number: 2, title: "Fix cafe\u0301" });
+    expect(matchesPullRequestQuery(precomposed, "cafe\u0301")).toBe(true);
+    expect(matchesPullRequestQuery(decomposed, "caf\u00e9")).toBe(true);
+  });
 
   it("keeps loaded partial-word matches the host's whole-word search missed, after its answer", () => {
     const bilal = { login: "bilal", name: null, avatarUrl: null };
