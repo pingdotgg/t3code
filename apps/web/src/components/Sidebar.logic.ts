@@ -3,7 +3,7 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
+import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
@@ -40,7 +40,6 @@ import {
   type ThreadSortInput,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { SidebarThreadSummary, Thread } from "../types";
-import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { THREAD_STATUS_TEXT } from "@t3tools/client-runtime/state/thread-activity-announcement";
 import { observeIntersection } from "../lib/observeIntersection";
@@ -1174,13 +1173,18 @@ export function searchSidebarThreads<
 }
 
 export function pullRequestMatchesSearchQuery(
-  pullRequest: Parameters<typeof threadPullRequestSearchTerms>[0],
+  pullRequest: Parameters<typeof threadSearchPullRequests>[0],
   query: string,
 ): boolean {
-  const normalizedQuery = normalizeSearchText(query);
+  const normalizedQuery = foldSearchQuery(query);
   if (normalizedQuery.length === 0) return false;
-  const haystack = normalizeSearchText(threadPullRequestSearchTerms(pullRequest).join(" "));
-  return normalizedQuery.split(" ").every((token) => haystack.includes(token));
+  // Matched as thread search matches them, so a "pr" prefix or quotes still show the number.
+  const subject = {
+    title: "",
+    activityAt: null,
+    pullRequests: threadSearchPullRequests(pullRequest),
+  };
+  return scoreThreadSearch(normalizedQuery, subject, 0, { picks: false }) !== null;
 }
 
 export const ADD_PROJECT_SCOPE_ITEM_VALUE = "add-project";
