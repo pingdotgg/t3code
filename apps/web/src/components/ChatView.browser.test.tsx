@@ -194,7 +194,7 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
       createdAt: issue.linkedAt,
       updatedAt: issue.linkedAt,
       closedAt: null,
-      assignees: [],
+      assignees: isCompleted ? [] : [{ login: "alex", name: "Alex Chen", avatarUrl: null }],
       labels: [],
       commentCount: 3,
       projectTitle: "render",
@@ -287,6 +287,8 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
     .getByRole("region", { name: "Linked issues" })
     .getByRole("link", { name: issueName });
   await expect.element(issueRow.getByRole("img", { name: "Open" })).toBeVisible();
+  await expect.element(issueRow.getByText("sam", { exact: true })).toBeVisible();
+  await expect.element(issueRow.getByRole("img", { name: "Assignees: Alex Chen" })).toBeVisible();
   await expect.element(issueRow.getByRole("img", { name: "3 comments" })).toBeVisible();
   await expect.element(issueRow.getByRole("img", { name: "Linear" })).toBeVisible();
   await expect.element(issueRow.getByText(issue.scope, { exact: true })).toBeVisible();
@@ -306,14 +308,18 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   await userEvent.click(page.getByRole("button", { name: issue.key, exact: true }));
   await vi.waitFor(() => expect(issueScroller().scrollTop).toBe(issueScrollTop));
   await act(() => useRightPanelStore.getState().close(scopeThreadRef(ENVIRONMENT_ID, linked.id)));
+  const threadDetails = page.getByRole("region", { name: "Thread details" });
+  const compactRow = threadDetails.getByRole("link", { name: issueName, exact: true });
+  await expect.element(compactRow).toBeVisible();
   await expect
-    .element(
-      page.getByRole("region", { name: "Thread details" }).getByRole("link", {
-        name: issueName,
-        exact: true,
-      }),
-    )
+    .element(threadDetails.getByRole("img", { name: "Assignees: Alex Chen" }))
     .toBeVisible();
+  await userEvent.hover(compactRow);
+  await vi.waitFor(() =>
+    expect(
+      document.querySelector('[data-slot="tooltip-popup"] [aria-label="Assignees: Alex Chen"]'),
+    ).toBeVisible(),
+  );
 });
 
 it("a machine chip stashed in one thread restores with its machine in another", async () => {
