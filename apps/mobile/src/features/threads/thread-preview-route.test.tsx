@@ -50,9 +50,7 @@ vi.mock("../../lib/useMobileNavigationTheme", () => ({
 it.each(["switch host thread", "close inspector", "change inspector target"] as const)(
   "leaves the workspace alone when a pending inspector fork finishes after %s",
   async (action) => {
-    const testEnvironment = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
-    const previousActEnvironment = testEnvironment.IS_REACT_ACT_ENVIRONMENT;
-    testEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     host.state = { threadId: "main" };
     const root = createRoot(document.createElement("div"));
     const forkReady = Promise.withResolvers<void>();
@@ -98,7 +96,6 @@ it.each(["switch host thread", "close inspector", "change inspector target"] as 
       expect(openFork).not.toHaveBeenCalled();
     } finally {
       act(() => root.unmount());
-      testEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
     }
   },
 );
