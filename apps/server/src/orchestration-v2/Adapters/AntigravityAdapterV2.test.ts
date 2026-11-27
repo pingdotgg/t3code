@@ -855,7 +855,8 @@ describe("AntigravityAdapterV2 silent prompts", () => {
         )
         .pipe(Effect.forkScoped);
       yield* Deferred.await(replied);
-      yield* TestClock.adjust("16 minutes");
+      // Exactly the deadline: a longer jump would also fire the outcome check's own timeout.
+      yield* TestClock.adjust("15 minutes");
       const ended = Option.getOrUndefined(yield* Fiber.join(terminal));
       assert.equal(
         ended?.type === "turn.terminal" && ended.status,
