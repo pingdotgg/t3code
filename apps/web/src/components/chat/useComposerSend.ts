@@ -75,6 +75,7 @@ import {
   clearBackgroundDraftSubmissionByRef,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
+  resolveLiveComposerDraftTarget,
   restoreFailedDraftThread,
   checkoutPullRequestUrlToLink,
   composerDraftHasUserContent,
@@ -110,6 +111,7 @@ import {
   referencedThreadContexts,
 } from "./composerSend.logic";
 import { useMultipleModelSend } from "./useMultipleModelSend";
+import { openExpandedImagePreview } from "./ExpandedImageDialog";
 import type { SideChatMessage } from "./useSideChat";
 import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
@@ -1697,48 +1699,9 @@ export function useComposerSend(input: ComposerSendInput) {
       });
       // A restored draft clones its images, so the sent copies are no longer used.
       optimisticBlobPreviews.release(optimisticMessage);
-      if (
-        composerDraftHasUserContent(
-          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-        )
-      ) {
-        // A draft typed meanwhile keeps the composer, so the failed text stays reachable here.
-        const failedText = sendSnapshot.draftText;
-        const hasText = failedText.trim().length > 0;
-        // An image-only message has nothing to copy, but its failure still needs a notice.
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: isAtomCommandInterrupted(failure)
-              ? m(msg("Message may not have been sent"))
-              : m(msg("Message not sent")),
-            description: hasText
-              ? m(msg("Your new draft was kept. Copy the failed message to send it again."))
-              : m(msg("Your new draft was kept.")),
-            // The toast holds the only trace of the failed message, so it stays until dismissed.
-            timeout: 0,
-            data: { hideCopyButton: true },
-            ...(hasText
-              ? {
-                  actionProps: {
-                    children: m(msg("Copy message")),
-                    onClick: () => {
-                      void writeTextToClipboard(failedText, {
-                        target: "failed message",
-                        unavailableMessage: msg(
-                          "Clipboard API is unavailable while copying failed message.",
-                        ),
-                        failureMessage: msg("Failed to copy failed message to the clipboard."),
-                      }).catch(() => undefined);
-                    },
-                  },
-                }
-              : {}),
-          }),
-        );
-      } else {
-        const retryComposerImages = restoreComposerDraft(composerDraftTarget, sendSnapshot);
-        if (currentRouteThreadKeyRef.current === routeThreadKey) {
+      const restoreFailedSend = (target: ComposerThreadTarget, threadKey: string) => {
+        const retryComposerImages = restoreComposerDraft(target, sendSnapshot);
+        if (currentRouteThreadKeyRef.current === threadKey) {
           promptRef.current = sendSnapshot.draftText;
           composerImagesRef.current = retryComposerImages;
           composerFilesRef.current = composerFilesSnapshot;
@@ -1752,6 +1715,124 @@ export function useComposerSend(input: ComposerSendInput) {
             detectTrigger: true,
           });
         }
+      };
+      const hasNewDraftContent = (target: ComposerThreadTarget) =>
+        countPreparingComposerImages(composerTargetKey(target)) > 0 ||
+        composerDraftHasUserContent(useComposerDraftStore.getState().getComposerDraft(target));
+      if (hasNewDraftContent(composerDraftTarget)) {
+        // A draft typed meanwhile keeps the composer, so the failed text stays reachable here.
+        const failedText = sendSnapshot.draftText;
+        const hasText = failedText.trim().length > 0;
+        const canRestore =
+          sendSnapshot.attachments.length > 0 ||
+          sendSnapshot.terminalContexts.length > 0 ||
+          sendSnapshot.previewAnnotations.length > 0 ||
+          sendSnapshot.reviewComments.length > 0 ||
+          sendSnapshot.threadContexts.length > 0 ||
+          sendSnapshot.environmentContexts.length > 0 ||
+          sendSnapshot.replyTo !== null;
+        const firstImage = sendSnapshot.images[0];
+        let restored = false;
+        const copyAction = hasText
+          ? {
+              children: m(msg("Copy message")),
+              onClick: () => {
+                void writeTextToClipboard(failedText, {
+                  target: "failed message",
+                  unavailableMessage: msg(
+                    "Clipboard API is unavailable while copying failed message.",
+                  ),
+                  failureMessage: msg("Failed to copy failed message to the clipboard."),
+                }).catch(() => undefined);
+              },
+            }
+          : undefined;
+        const restoreAction = canRestore
+          ? {
+              children: m(msg("Restore failed draft")),
+              onClick: () => {
+                const liveTarget = resolveLiveComposerDraftTarget(composerDraftTarget);
+                if (liveTarget === null) {
+                  toastManager.add({
+                    type: "info",
+                    title: m(msg("The original draft was discarded.")),
+                  });
+                  return;
+                }
+                // A local draft prepares images under its draft id and sends under its thread key.
+                const localDraft =
+                  typeof liveTarget === "string"
+                    ? useComposerDraftStore.getState().getDraftSession(liveTarget)
+                    : null;
+                const liveThreadKey = localDraft
+                  ? scopedThreadKey(scopeThreadRef(localDraft.environmentId, localDraft.threadId))
+                  : composerTargetKey(liveTarget);
+                if (
+                  draftSendState(liveThreadKey).sendInFlight.current ||
+                  hasNewDraftContent(liveTarget)
+                ) {
+                  toastManager.add({
+                    type: "info",
+                    title: m(msg("Finish or stash your current draft before restoring.")),
+                  });
+                  return;
+                }
+                restoreFailedSend(liveTarget, liveThreadKey);
+                restored = true;
+                toastManager.close(failedSendToastId);
+              },
+            }
+          : undefined;
+        const actionProps = restoreAction ?? copyAction;
+        const failedSendToastId = toastManager.add({
+          ...stackedThreadToast({
+            type: "error",
+            title: isAtomCommandInterrupted(failure)
+              ? m(msg("Message may not have been sent"))
+              : m(msg("Message not sent")),
+            description: hasText
+              ? m(msg("Your new draft was kept. Copy the failed message to send it again."))
+              : m(msg("Your new draft was kept.")),
+            // The toast holds the only trace of the failed message, so it stays until dismissed.
+            timeout: 0,
+            data: {
+              hideCopyButton: true,
+              ...(restoreAction && copyAction ? { secondaryActionProps: copyAction } : {}),
+              ...(firstImage
+                ? {
+                    additionalActions: [
+                      {
+                        id: firstImage.id,
+                        props: {
+                          "aria-label": m(msg("Preview {name}", { name: firstImage.name })),
+                          children: m(msg("Preview")),
+                          onClick: () => {
+                            openExpandedImagePreview(null, {
+                              images: [
+                                {
+                                  src: URL.createObjectURL(firstImage.file),
+                                  name: firstImage.name,
+                                  mimeType: firstImage.mimeType,
+                                  ownsSrc: true,
+                                },
+                              ],
+                              index: 0,
+                            });
+                          },
+                        },
+                      },
+                    ],
+                  }
+                : {}),
+            },
+            ...(actionProps ? { actionProps } : {}),
+          }),
+          onClose: () => {
+            if (!restored) releaseDraftAttachments(sendSnapshot.attachments);
+          },
+        });
+      } else {
+        restoreFailedSend(composerDraftTarget, routeThreadKey);
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);

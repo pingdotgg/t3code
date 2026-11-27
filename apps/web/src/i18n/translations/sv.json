@@ -13050,5 +13050,9 @@
   "95435f0b59cb2193": "Ljudförhandsvisning",
   "4a12506938295127": "Ange {field} först.",
   "5807c08e225c6b3d": "Ladda ned",
-  "0d50b5bfe7151ece": "Det gick inte att ladda ned filen"
+  "0d50b5bfe7151ece": "Det gick inte att ladda ned filen",
+  "fda0d29cc723370d": "Återställ utkastet som inte kunde skickas",
+  "aec0f1166ba54cb1": "Slutför eller lägg undan det aktuella utkastet innan du återställer det tidigare.",
+  "bf0f37f53a4e2d62": "Förhandsvisning",
+  "4060f3a1882e1bdc": "Det ursprungliga utkastet har kasserats."
 }

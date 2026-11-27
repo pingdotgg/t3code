@@ -13043,5 +13043,9 @@
   "95435f0b59cb2193": "Prévia de áudio",
   "4a12506938295127": "Informe primeiro {field}.",
   "5807c08e225c6b3d": "Baixar",
-  "0d50b5bfe7151ece": "Não foi possível baixar o arquivo"
+  "0d50b5bfe7151ece": "Não foi possível baixar o arquivo",
+  "fda0d29cc723370d": "Restaurar rascunho não enviado",
+  "aec0f1166ba54cb1": "Conclua ou guarde o rascunho atual antes de restaurar o anterior.",
+  "bf0f37f53a4e2d62": "Pré-visualizar",
+  "4060f3a1882e1bdc": "O rascunho original foi descartado."
 }
