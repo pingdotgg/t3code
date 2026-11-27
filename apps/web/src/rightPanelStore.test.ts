@@ -1022,9 +1022,9 @@ describe("rightPanelStore", () => {
     ).toEqual(["file:attachment:shared-id", "attachment:shared-id"]);
   });
 
-  it.each([false, true])(
-    "assigns a fresh line request after closing a file tab (hydrated: %s)",
-    async (hydrated) => {
+  it.each(["none", "next", "maximum"])(
+    "assigns a fresh line request after closing a file tab (persisted ID: %s)",
+    async (persisted) => {
       const store = useRightPanelStore.getState();
       const requestId = () => {
         const surface = selectActiveRightPanelSurface(
@@ -1034,7 +1034,9 @@ describe("rightPanelStore", () => {
         if (surface?.kind !== "file") return expect.unreachable();
         return surface.revealRequestId;
       };
-      if (hydrated) {
+      if (persisted !== "none") {
+        store.openFile(refA, "seed.log", 42);
+        const persistedId = persisted === "maximum" ? Number.MAX_SAFE_INTEGER : requestId() + 1;
         useRightPanelStore.setState({
           byThreadKey: {
             [scopedThreadKey(refA)]: {
@@ -1046,7 +1048,7 @@ describe("rightPanelStore", () => {
                   kind: "file",
                   relativePath: "app.log",
                   revealLine: 42,
-                  revealRequestId: 10_000,
+                  revealRequestId: persistedId,
                 },
               ],
             },
@@ -1060,7 +1062,12 @@ describe("rightPanelStore", () => {
       store.closeSurface(refA, "file:app.log");
 
       store.openFile(refA, "app.log", 42);
-      expect(requestId()).toBeGreaterThan(first);
+      const reopened = requestId();
+      expect(reopened).not.toBe(first);
+      expect(Number.isSafeInteger(reopened)).toBe(true);
+      store.openFile(refA, "app.log", 42);
+      expect(requestId()).not.toBe(reopened);
+      expect(Number.isSafeInteger(requestId())).toBe(true);
     },
   );
 
