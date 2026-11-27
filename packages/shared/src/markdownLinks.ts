@@ -470,46 +470,204 @@ function parseFilePathLink(path: string, hash: string): FilePathPosition | null 
     : null;
 }
 
-const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
-
 const BACKTICK_RUN_PATTERN = /`+/g;
 
+function collectLineCodeSpans(line: string, spans: string[]) {
+  const runs = line.includes("`") ? [...line.matchAll(BACKTICK_RUN_PATTERN)] : [];
+  if (runs.length < 2) return;
+  const runsByLength = new Map<number, number[]>();
+  for (const [i, run] of runs.entries()) {
+    const indexes = runsByLength.get(run[0].length);
+    if (indexes) indexes.push(i);
+    else runsByLength.set(run[0].length, [i]);
+  }
+  const cursorByLength = new Map<number, number>();
+  let textStart = 0;
+  for (let i = 0; i < runs.length; i += 1) {
+    const run = runs[i]!;
+    let backslashes = 0;
+    while (run.index - backslashes > textStart && line[run.index - backslashes - 1] === "\\") {
+      backslashes += 1;
+    }
+    // An escaped backtick is literal outside code spans; only closers keep backslashes literal.
+    const length = run[0].length - (backslashes % 2);
+    const candidates = runsByLength.get(length) ?? [];
+    let cursor = cursorByLength.get(length) ?? 0;
+    while (cursor < candidates.length && candidates[cursor]! <= i) cursor += 1;
+    cursorByLength.set(length, cursor);
+    const close = candidates[cursor];
+    if (length === 0 || close === undefined) continue;
+    const span = line.slice(run.index + run[0].length, runs[close]!.index).trim();
+    if (span) spans.push(span);
+    i = close;
+    textStart = runs[close]!.index + runs[close]![0].length;
+  }
+}
+
+// A backtick fence's info string cannot contain a backtick: "```a```" is a code span.
+const FENCE_OPENER_PATTERN = /^(`{3,}(?![^`]*`)|~{3,})/;
+const FENCE_CLOSER_PATTERN = /^(`{3,}|~{3,}) *$/;
+const LIST_MARKER_PATTERN = /^(?:[-+*]|(\d{1,9})[.)])( +|$)/;
+const THEMATIC_BREAK_PATTERN = /^([-*_]) *(?:\1 *){2,}$/;
+const ATX_HEADING_PATTERN = /^#{1,6}(?: |$)/;
+const SETEXT_UNDERLINE_PATTERN = /^(?:=+|-+) *$/;
+// What ends a paragraph, so a line starting with one is never its lazy continuation.
+const PARAGRAPH_INTERRUPTION_PATTERN =
+  /^(?:>|`{3,}(?![^`]*`)|~{3,}|(?:[-+*]|\d{1,9}[.)])(?: |$)|#{1,6}(?: |$)|([-*_]) *(?:\1 *){2,}$)/;
+
+const BLOCKQUOTE = 0;
+
+/**
+ * Inline code spans outside fenced code. Blockquotes and list items are tracked line by line as
+ * CommonMark nests them, because a fence closes only at its own container's indentation and ends
+ * with that container. A full parse would be exact but costs about 100x this scan, which runs on
+ * every streamed chunk.
+ */
 export function extractInlineCodeSpans(text: string): string[] {
+  if (!text.includes("`")) return [];
   const spans: string[] = [];
-  const segments = text.split(FENCED_CODE_SEGMENT_PATTERN);
-  for (let index = 0; index < segments.length; index += 2) {
-    const segment = segments[index] ?? "";
-    if (!segment.includes("`")) continue;
-    for (const line of segment.split("\n")) {
-      const runs = line.includes("`") ? [...line.matchAll(BACKTICK_RUN_PATTERN)] : [];
-      if (runs.length < 2) continue;
-      const runsByLength = new Map<number, number[]>();
-      for (const [i, run] of runs.entries()) {
-        const indexes = runsByLength.get(run[0].length);
-        if (indexes) indexes.push(i);
-        else runsByLength.set(run[0].length, [i]);
+  // Open containers, outermost first: BLOCKQUOTE, or a list item's content indentation.
+  const containers: number[] = [];
+  let fence: { marker: string; indented: boolean } | null = null;
+  // Whether the previous line left a paragraph open, and whether indented code is still open:
+  // micromark lets neither be interrupted by an empty list item or one not numbered 1.
+  let paragraph = false;
+  let indentedCode = false;
+  // Depth of an item that has only its marker so far; a blank line next ends it.
+  let emptyItemDepth = 0;
+  for (const line of text.split("\n")) {
+    let source = line.endsWith("\r") ? line.slice(0, -1) : line;
+    if (source.includes("\t")) {
+      let column = 0;
+      source = source.replace(/\t|[^\t]+/g, (part) => {
+        const expanded = part === "\t" ? " ".repeat(4 - (column % 4)) : part;
+        column += expanded.length;
+        return expanded;
+      });
+    }
+    let position = 0;
+    let indent = 0;
+    let content = "";
+    const readIndent = () => {
+      indent = 0;
+      while (source[position + indent] === " ") indent += 1;
+      content = source.slice(position + indent);
+    };
+    const enterBlockquote = () => {
+      position += indent + 1;
+      if (source[position] === " ") position += 1;
+    };
+
+    const blankEndsItemAt = emptyItemDepth - 1;
+    emptyItemDepth = 0;
+    const containerCount = containers.length;
+    let matched = 0;
+    for (; matched < containers.length; matched += 1) {
+      const container = containers[matched]!;
+      readIndent();
+      if (container === BLOCKQUOTE) {
+        if (indent > 3 || content[0] !== ">") break;
+        enterBlockquote();
+      } else if (content === "") {
+        if (matched === blankEndsItemAt) break;
+      } else if (indent >= container) {
+        position += container;
+      } else {
+        break;
       }
-      const cursorByLength = new Map<number, number>();
-      let textStart = 0;
-      for (let i = 0; i < runs.length; i += 1) {
-        const run = runs[i]!;
-        let backslashes = 0;
-        while (run.index - backslashes > textStart && line[run.index - backslashes - 1] === "\\") {
-          backslashes += 1;
+    }
+    readIndent();
+
+    if (fence) {
+      if (matched === containers.length) {
+        if (content === "") continue;
+        // A fence written inside indented code ends with that code.
+        if (!fence.indented || indent >= 4) {
+          const closer = FENCE_CLOSER_PATTERN.exec(content)?.[1];
+          if (
+            closer?.startsWith(fence.marker[0]!) &&
+            closer.length >= fence.marker.length &&
+            (fence.indented || indent <= 3)
+          ) {
+            fence = null;
+            paragraph = false;
+          }
+          continue;
         }
-        // An escaped backtick is literal outside code spans; only closers keep backslashes literal.
-        const length = run[0].length - (backslashes % 2);
-        const candidates = runsByLength.get(length) ?? [];
-        let cursor = cursorByLength.get(length) ?? 0;
-        while (cursor < candidates.length && candidates[cursor]! <= i) cursor += 1;
-        cursorByLength.set(length, cursor);
-        const close = candidates[cursor];
-        if (length === 0 || close === undefined) continue;
-        const span = line.slice(run.index + run[0].length, runs[close]!.index).trim();
-        if (span) spans.push(span);
-        i = close;
-        textStart = runs[close]!.index + runs[close]![0].length;
       }
+      fence = null;
+      paragraph = false;
+    }
+
+    if (matched < containers.length) {
+      if (
+        paragraph &&
+        content !== "" &&
+        (indent >= 4 || !PARAGRAPH_INTERRUPTION_PATTERN.test(content))
+      ) {
+        collectLineCodeSpans(line, spans);
+        continue;
+      }
+      containers.length = matched;
+      paragraph = false;
+      indentedCode = false;
+    }
+    // micromark decides this once per line, and not at all on a line that closed a container.
+    const interrupts = paragraph || indentedCode;
+    const closedContainer = matched < containerCount;
+
+    for (;;) {
+      if (content === "") {
+        paragraph = false;
+        break;
+      }
+      const opener = FENCE_OPENER_PATTERN.exec(content)?.[1];
+      if (indent >= 4) {
+        if (!paragraph && !closedContainer) indentedCode = true;
+        // Indented code is not skipped, but a fence shown inside it still hides its lines. Inside
+        // a paragraph an indented line is text, where only a backtick run opens code (a span).
+        if (opener && (!paragraph || opener[0] === "`")) fence = { marker: opener, indented: true };
+        else collectLineCodeSpans(line, spans);
+        break;
+      }
+      indentedCode = false;
+      if (opener) {
+        fence = { marker: opener, indented: false };
+        break;
+      }
+      if (content[0] === ">") {
+        containers.push(BLOCKQUOTE);
+        enterBlockquote();
+        paragraph = false;
+        readIndent();
+        continue;
+      }
+      if (THEMATIC_BREAK_PATTERN.test(content)) {
+        paragraph = false;
+        break;
+      }
+      const item = LIST_MARKER_PATTERN.exec(content);
+      const emptyItem = item?.[0].length === content.length;
+      // Only a non-empty item, numbered 1 if ordered, starts a list in the middle of a block.
+      if (
+        item &&
+        !(interrupts && (emptyItem || (item[1] !== undefined && Number(item[1]) !== 1)))
+      ) {
+        const padding = item[2]!.length;
+        const width = item[0].length - padding + (emptyItem || padding > 4 ? 1 : padding);
+        containers.push(indent + width);
+        if (emptyItem) emptyItemDepth = containers.length;
+        position += indent + width;
+        paragraph = false;
+        readIndent();
+        continue;
+      }
+      collectLineCodeSpans(line, spans);
+      paragraph = !(
+        ATX_HEADING_PATTERN.test(content) ||
+        (paragraph && SETEXT_UNDERLINE_PATTERN.test(content))
+      );
+      break;
     }
   }
   return spans;

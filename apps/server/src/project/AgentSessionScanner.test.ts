@@ -4353,4 +4353,156 @@ describe("parseAgentSessionTranscript", () => {
         : { title: thread.title, texts: thread.messages.map((message) => message.text) },
     ).toEqual(expected);
   });
+
+  it.each([
+    {
+      source: "claudeAgent" as const,
+      records: (first: string, blank: string, code: string) => [
+        { type: "user", sessionId: "claude-session", message: { role: "user", content: first } },
+        { type: "user", sessionId: "claude-session", message: { role: "user", content: blank } },
+        {
+          type: "user",
+          sessionId: "claude-session",
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: blank },
+              { type: "text", text: code },
+            ],
+          },
+        },
+        {
+          type: "assistant",
+          sessionId: "claude-session",
+          message: { role: "assistant", content: [{ type: "text", text: code }] },
+        },
+      ],
+    },
+    {
+      source: "codex" as const,
+      records: (first: string, blank: string, code: string) => [
+        { type: "session_meta", payload: { id: "codex-session" } },
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: first }],
+          },
+        },
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: blank }],
+          },
+        },
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              { type: "input_text", text: blank },
+              { type: "input_text", text: code },
+            ],
+          },
+        },
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: code }],
+          },
+        },
+      ],
+    },
+    {
+      source: "pi" as const,
+      records: (first: string, blank: string, code: string) => [
+        { type: "session", id: "pi-session" },
+        { type: "message", message: { role: "user", content: first } },
+        { type: "message", message: { role: "user", content: blank } },
+        {
+          type: "message",
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: blank },
+              { type: "text", text: code },
+            ],
+          },
+        },
+        {
+          type: "message",
+          message: { role: "assistant", content: [{ type: "text", text: code }] },
+        },
+      ],
+    },
+  ])(
+    "preserves leading indentation while dropping blank lines and empty blocks for $source",
+    ({ source, records }) => {
+      const first = "\n  - fix the importer\n    - nested\n";
+      const code = "\n    const x = 1;\n    return x;\n";
+      const thread = AgentSessionScanner.parseAgentSessionTranscript({
+        contents: records(first, "  \n\t ", code)
+          .map((record) => encodeTranscriptRecord(record))
+          .join("\n"),
+        source,
+        providerInstanceId: ProviderInstanceId.make(source),
+        fallbackSessionId: `${source}-session`,
+        lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+      });
+
+      expect(thread?.title).toBe("- fix the importer");
+      expect(thread?.messages.map(({ role, text }) => ({ role, text }))).toEqual([
+        { role: "user", text: "  - fix the importer\n    - nested" },
+        { role: "user", text: "    const x = 1;\n    return x;" },
+        { role: "assistant", text: "    const x = 1;\n    return x;" },
+      ]);
+    },
+  );
+
+  it("hides generated response context in a turn whose Codex prompt is indented", () => {
+    const prompt = "    indented prompt";
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+            content: [
+              { type: "input_text", text: "<environment_context>\n</environment_context>" },
+            ],
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: prompt },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+            content: [{ type: "input_text", text: prompt }],
+          },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.messages.map(({ role, text }) => ({ role, text }))).toEqual([
+      { role: "user", text: prompt },
+    ]);
+  });
 });

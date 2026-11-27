@@ -321,14 +321,16 @@ function isTextContentBlock(block: typeof TranscriptContentBlock.Type): boolean 
   return block.type === "text" || block.type === "input_text" || block.type === "output_text";
 }
 
+const trimBlankLines = (text: string) => text.replace(/^\s*\n/, "").trimEnd();
+
 function extractText(
   content: string | ReadonlyArray<typeof TranscriptContentBlock.Type> | undefined,
 ): string {
-  if (typeof content === "string") return content.trim();
+  if (typeof content === "string") return trimBlankLines(content);
   if (content === undefined) return "";
   return content
     .filter(isTextContentBlock)
-    .map((block) => block.text?.trim() ?? "")
+    .map((block) => trimBlankLines(block.text ?? ""))
     .filter((text) => text.length > 0)
     .join("\n");
 }
@@ -639,7 +641,7 @@ function parseAgentSessionRecords(
         const turnId = codexTurnId(record.payload.internal_chat_message_metadata_passthrough);
         const text = extractText(record.payload.content);
         if (turnId !== null && text.length > 0) {
-          responseUsersInTurn.push({ index: recordIndex, turnId, text });
+          responseUsersInTurn.push({ index: recordIndex, turnId, text: text.trim() });
         }
       }
     }
