@@ -1530,6 +1530,42 @@ describe("question answer paths", () => {
           exact: "Default style combination",
         },
         {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml": [
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p>',
+              "<w:r><w:t>The north region</w:t></w:r>",
+              '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="1"/></w:r>',
+              '<w:r><w:t xml:space="preserve"> is ready. The south region</w:t></w:r>',
+              '<w:r><w:rPr><w:rStyle w:val="EndnoteReference"/></w:rPr><w:endnoteReference w:id="1"/></w:r>',
+              '<w:r><w:t xml:space="preserve"> is ready.</w:t></w:r>',
+              "</w:p></w:body></w:document>",
+            ].join(""),
+            "word/_rels/document.xml.rels": [
+              "<Relationships>",
+              '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>',
+              '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/>',
+              "</Relationships>",
+            ].join(""),
+            "word/footnotes.xml": [
+              '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+              '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>',
+              '<w:footnote w:id="1"><w:p><w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> Inspect the seals.</w:t></w:r></w:p>',
+              "<w:p><w:r><w:t>Do not reopen.</w:t></w:r></w:p></w:footnote>",
+              "</w:footnotes>",
+            ].join(""),
+            "word/endnotes.xml": [
+              '<w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+              '<w:endnote w:id="1"><w:p><w:r><w:endnoteRef/></w:r><w:r><w:t xml:space="preserve"> Check power.</w:t></w:r></w:p></w:endnote>',
+              "</w:endnotes>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "The north region[Note: Inspect the seals.\nDo not reopen.] is ready. The south region[Note: Check power.] is ready.",
+        },
+        {
           ext: "odt",
           parts: {
             "content.xml":
@@ -1587,6 +1623,51 @@ describe("question answer paths", () => {
           exact:
             "Use the north entrance.\nBring your badge.\nVisitor parking.\nLoading dock.\nEmergency contacts.\nCurrent instructions.",
         },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml": [
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:s="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:foreign="urn:example">',
+              '<office:automatic-styles><s:style s:name="T1" s:family="text"><s:text-properties text:display="none"/></s:style>',
+              '<s:style s:name="T2" s:family="text" s:parent-style-name="Retired"/>',
+              '<s:style s:name="T3" s:family="text"><s:text-properties foreign:display="none"/></s:style>',
+              '<s:style s:name="Base" s:family="text"><s:text-properties text:display="none"/></s:style>',
+              '<s:style s:name="Child" s:family="text" s:parent-style-name="Base"/></office:automatic-styles>',
+              "<office:body><office:text>",
+              '<text:p>Use <text:span text:style-name="T1">the obsolete west or <text:line-break/></text:span> the north entrance.</text:p>',
+              '<text:p>Wait near the <text:span text:style-name="T2">old blue or </text:span>red marker.</text:p>',
+              '<text:p>Bring your <text:span text:style-name="Retired">draft <text:span text:style-name="Published">badge</text:span> or permit</text:span>.</text:p>',
+              '<text:p><text:span text:style-name="T3">Visible control</text:span>.</text:p>',
+              '<text:p>Keep <text:span text:style-name="Child">common parent</text:span>.</text:p>',
+              "</office:text></office:body></office:document-content>",
+            ].join(""),
+            "styles.xml": [
+              '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"><office:styles>',
+              '<style:style style:name="Retired" style:family="text"><style:text-properties t:display="none"/></style:style>',
+              '<style:style style:name="Published" style:family="text" style:parent-style-name="Retired"><style:text-properties t:display="true"/></style:style>',
+              '<style:style style:name="Base" style:family="text"><style:text-properties t:display="true"/></style:style>',
+              "</office:styles></office:document-styles>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "Use the north entrance.\nWait near the red marker.\nBring your badge.\nVisible control.\nKeep common parent.",
+        },
+        ...["<mismatch>", "<nested>".repeat(129) + "</nested>".repeat(129)].map((trailer) => ({
+          ext: "odt",
+          parts: {
+            "styles.xml":
+              '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:s="urn:oasis:names:tc:opendocument:xmlns:style:1.0"><office:styles>' +
+              '<s:style s:name="Retired" s:family="text"><s:text-properties text:display="none"/></s:style></office:styles>' +
+              trailer +
+              "</office:document-styles>",
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>Bring your <text:span text:style-name="Retired">badge</text:span>.</text:p></office:text></office:body></office:document-content>',
+          },
+          expected: [],
+          exact: "Bring your badge.",
+        })),
         {
           ext: "odt",
           bounded: true,
