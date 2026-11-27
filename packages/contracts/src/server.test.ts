@@ -12,10 +12,26 @@ import {
   serverProviderDeltas,
   ServerProviders,
 } from "./server.ts";
+import { ProviderOptionDescriptor } from "./model.ts";
 import { ServerSettings } from "./settings.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 const decodeServerProviders = Schema.decodeUnknownSync(ServerProviders);
+
+describe("provider option descriptor wire format", () => {
+  it("accepts null for descriptors without a special role", () => {
+    const encode = Schema.encodeSync(ProviderOptionDescriptor);
+    expect(
+      encode({
+        id: "sandbox",
+        label: "Sandbox",
+        type: "select",
+        options: [{ id: "workspace", label: "Workspace" }],
+        role: null,
+      }),
+    ).toMatchObject({ role: null });
+  });
+});
 
 const baseProviderSnapshot = {
   instanceId: "codex",

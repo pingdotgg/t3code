@@ -3,6 +3,23 @@ import { describe, expect, it } from "@effect/vitest";
 import { ACP_SESSION_MODE_OPTION_ID, acpProviderOptionDescriptors } from "./sessionConfig.ts";
 
 describe("acpProviderOptionDescriptors", () => {
+  it("sets an explicit null role for ordinary select options", () => {
+    const [descriptor] = acpProviderOptionDescriptors({
+      configOptions: [
+        {
+          id: "sandbox",
+          name: "Sandbox",
+          type: "select",
+          currentValue: "workspace",
+          options: [{ value: "workspace", name: "Workspace" }],
+        },
+      ],
+      modeState: undefined,
+    });
+
+    expect(descriptor).toMatchObject({ id: "sandbox", role: null });
+  });
+
   it("maps non-model select options and excludes model and collaboration categories", () => {
     const descriptors = acpProviderOptionDescriptors({
       configOptions: [
@@ -96,6 +113,7 @@ describe("acpProviderOptionDescriptors", () => {
           { id: "full", label: "Full" },
         ],
         currentValue: "workspace",
+        role: null,
       },
     ]);
   });

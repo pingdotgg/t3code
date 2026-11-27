@@ -108,7 +108,7 @@ export function acpProviderOptionDescriptors(input: {
       ...(currentValue && choices.some((choice) => choice.id === currentValue)
         ? { currentValue }
         : {}),
-      ...(isThoughtLevel ? { role: "reasoning" as const } : {}),
+      role: isThoughtLevel ? "reasoning" : null,
     });
     if (descriptors.length === MAX_OPTION_DESCRIPTORS) return descriptors;
   }
