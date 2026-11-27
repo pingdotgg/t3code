@@ -1786,6 +1786,14 @@ export const resolveIdleCompaction = (
   return override === "default" ? globalIdleCompaction(settings) : override;
 };
 
+export const ProjectActionSettingsSnapshot = Schema.Struct({
+  defaultProjectScripts: ServerSettings.fields.defaultProjectScripts,
+  projectScriptOverrides: ServerSettings.fields.projectScriptOverrides,
+  projectActionsById: Schema.Record(ProjectId, Schema.Array(ProjectScript)),
+  projectSettingsFolded: Schema.Boolean,
+});
+export type ProjectActionSettingsSnapshot = typeof ProjectActionSettingsSnapshot.Type;
+
 export const ServerSettingsOperation = Schema.Literals([
   "normalize",
   "check-exists",
@@ -1801,6 +1809,7 @@ export const ServerSettingsOperation = Schema.Literals([
   "write-file",
   "prepare-directory",
   "write-managed-setting",
+  "check-project-actions",
   "use-disallowed-provider",
 ]);
 export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
@@ -1825,6 +1834,9 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
   },
 ) {
   override get message(): string {
+    if (this.operation === "check-project-actions") {
+      return "Project actions changed while saving. Review the current actions and try again.";
+    }
     if (this.operation === "write-managed-setting") {
       return `${this.managedSetting ?? "This setting"} is managed by ${this.managedBy ?? "your organization"} and cannot be changed.`;
     }

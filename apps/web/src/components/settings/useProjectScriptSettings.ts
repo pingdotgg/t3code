@@ -9,12 +9,15 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   type EnvironmentId,
-  type ProjectId,
+  ProjectId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ServerSettings,
 } from "@t3tools/contracts";
-import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
+import {
+  projectActionSettingsSnapshot,
+  resolveProjectScripts,
+} from "@t3tools/shared/projectScripts";
 import { clearProjectSettingsOverrides } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -60,8 +63,8 @@ interface ProjectScriptSettingsTarget {
   project?: { id: ProjectId; scripts: readonly ProjectScript[] };
 }
 
-function targetKey({ environmentId, project }: ProjectScriptSettingsTarget): string {
-  return JSON.stringify([environmentId, project?.id]);
+function targetKey(environmentId: EnvironmentId, projectId?: ProjectId): string {
+  return JSON.stringify([environmentId, projectId]);
 }
 
 function targetScripts({ settings, project }: ProjectScriptSettingsTarget) {
@@ -135,29 +138,67 @@ export function useProjectScriptSettings(targets: readonly ProjectScriptSettings
   ): Promise<AtomCommandResult<void, unknown>> {
     if (
       creation &&
-      targets.some(
-        (target) =>
-          !creation.acknowledgedTargets.has(targetKey(target)) &&
-          targetScripts(target).some((script) => script.id === creation.id),
-      )
+      targets.some((target) => {
+        const { environmentId, settings } = target;
+        const claims = projectActionSettingsSnapshot(settings);
+        const claimed = (scripts: readonly ProjectScript[]) =>
+          scripts.some((script) => script.id === creation.id);
+        const claimedOutsideCreation = (projectId: ProjectId, scripts: readonly ProjectScript[]) =>
+          !creation.acknowledgedTargets.has(targetKey(environmentId, projectId)) &&
+          claimed(scripts);
+        if (
+          (!creation.acknowledgedTargets.has(targetKey(environmentId)) &&
+            claimed(claims.defaultProjectScripts)) ||
+          Object.entries(claims.projectActionsById).some(([projectId, scripts]) =>
+            claimedOutsideCreation(ProjectId.make(projectId), scripts),
+          )
+        )
+          return true;
+        if (claims.projectSettingsFolded) return false;
+        if (
+          Object.entries(claims.projectScriptOverrides).some(
+            ([projectId, scripts]) =>
+              scripts !== null &&
+              claims.projectActionsById[ProjectId.make(projectId)] === undefined &&
+              claimedOutsideCreation(ProjectId.make(projectId), scripts),
+          )
+        )
+          return true;
+
+        const environmentProjects = [
+          ...projects.filter((project) => project.environmentId === environmentId),
+          ...targets.flatMap((target) =>
+            target.environmentId === environmentId && target.project ? [target.project] : [],
+          ),
+        ];
+        return environmentProjects.some(
+          ({ id, scripts }) =>
+            claims.projectActionsById[id] === undefined &&
+            claims.projectScriptOverrides[id] === undefined &&
+            claimedOutsideCreation(id, scripts),
+        );
+      })
     ) {
       return reportScriptFailure(
         AsyncResult.failure(
           Cause.fail(
-            new Error(m(msg("Another action already uses this ID in a selected checkout."))),
+            new Error(m(msg("Another action on a selected machine already uses this ID."))),
           ),
         ),
       );
     }
 
+    const savedSettings = new Map<EnvironmentId, ServerSettings>();
     for (const target of targets) {
-      const { environmentId, settings, keybindings, project } = target;
-      const current = targetScripts(target);
+      const { environmentId, keybindings, project } = target;
+      const settings = savedSettings.get(environmentId) ?? target.settings;
+      const current = targetScripts({ ...target, settings });
       const nextScripts = transform(current);
       const effectiveScripts = nextScripts ?? settings.defaultProjectScripts;
       const result = await updateSettings({
         environmentId,
         input: {
+          ...(creation ? { expectedProjectActions: projectActionSettingsSnapshot(settings) } : {}),
           patch: project
             ? {
                 projectSettingsOverrides: {
@@ -177,7 +218,8 @@ export function useProjectScriptSettings(targets: readonly ProjectScriptSettings
       });
       if (result._tag === "Failure") return reportScriptFailure(result);
       if (creation) {
-        creation.acknowledgedTargets.add(targetKey(target));
+        savedSettings.set(environmentId, result.value);
+        creation.acknowledgedTargets.add(targetKey(environmentId, project?.id));
         creation.onActionCreated?.({
           id: creation.id,
           acknowledgedTargets: new Set(creation.acknowledgedTargets),

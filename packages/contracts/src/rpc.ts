@@ -422,6 +422,7 @@ import {
   ServerSettings,
   ServerSettingsError,
   ClientServerSettingsPatch,
+  ProjectActionSettingsSnapshot,
   ListTextGeneratorModelsInput,
   ListTextGeneratorModelsResult,
   TextGeneratorError,
@@ -1046,6 +1047,7 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({
     patch: ClientServerSettingsPatch,
     providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
+    expectedProjectActions: Schema.optionalKey(ProjectActionSettingsSnapshot),
   }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),

@@ -1,3 +1,5 @@
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import type { ServerSettingsPatch } from "@t3tools/contracts/settings";
 import { act, render } from "../../../test/render";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -135,25 +137,54 @@ function setup() {
 }
 
 describe("useProjectScriptSettings", () => {
-  it.each(["shortcut", "import", "collision"] as const)(
+  it.each([
+    "shortcut",
+    "import",
+    "collision",
+    "unselected collision",
+    "default collision",
+  ] as const)(
     "retries a partial %s save without overwriting another checkout's action",
     async (failure) => {
       setup();
+      let saved = DEFAULT_SERVER_SETTINGS;
+      commands.updateSettings.mockImplementation(
+        ({ input }: { input: { patch: ServerSettingsPatch } }) => {
+          saved = applyServerSettingsPatch(saved, input.patch);
+          return Promise.resolve(AsyncResult.success(saved));
+        },
+      );
       const failureResult = AsyncResult.failure(Cause.fail(new Error("Temporary save failure")));
       if (failure === "import") {
         commands.updateSettings
-          .mockResolvedValueOnce(AsyncResult.success(undefined))
+          .mockResolvedValueOnce(AsyncResult.success(DEFAULT_SERVER_SETTINGS))
           .mockResolvedValueOnce(failureResult);
       } else {
         commands.upsertKeybinding.mockResolvedValueOnce(failureResult);
       }
       const projects = [ProjectId.make("first"), ProjectId.make("second")];
+      const collision = { ...lint, command: "another command" };
+      const collides = failure.endsWith("collision");
       let settings: ProjectScriptSettings | undefined;
       const renderTargets = (firstScripts: readonly ProjectScript[]) => (
         <Probe
           targets={projects.map((id, index) => ({
             environmentId,
-            settings: DEFAULT_SERVER_SETTINGS,
+            settings:
+              firstScripts.length && failure === "unselected collision"
+                ? {
+                    ...DEFAULT_SERVER_SETTINGS,
+                    projectSettingsOverrides: {
+                      unselected: { defaultProjectScripts: [collision] },
+                    },
+                  }
+                : firstScripts.length && failure === "default collision"
+                  ? {
+                      ...DEFAULT_SERVER_SETTINGS,
+                      defaultProjectScripts: [collision],
+                      projectSettingsOverrides: { [id]: { defaultProjectScripts: [] } },
+                    }
+                  : DEFAULT_SERVER_SETTINGS,
             keybindings: [],
             project: {
               id,
@@ -161,7 +192,7 @@ describe("useProjectScriptSettings", () => {
                 index === 0
                   ? firstScripts
                   : firstScripts.length && failure === "collision"
-                    ? [{ ...lint, command: "another command" }]
+                    ? [collision]
                     : [],
             },
           }))}
@@ -186,9 +217,9 @@ describe("useProjectScriptSettings", () => {
       await act(async () => {
         expect(
           (await settings!.submit(creation.id, editedDraft, onActionCreated, creation))._tag,
-        ).toBe(failure === "collision" ? "Failure" : "Success");
+        ).toBe(collides ? "Failure" : "Success");
       });
-      if (failure === "collision") {
+      if (collides) {
         expect(commands.updateSettings).toHaveBeenCalledTimes(1);
         expect(commands.upsertKeybinding).toHaveBeenCalledTimes(1);
         return;
@@ -199,7 +230,7 @@ describe("useProjectScriptSettings", () => {
       for (const [index, id] of projects.entries()) {
         expect(commands.updateSettings).toHaveBeenNthCalledWith(initialWrites + index + 1, {
           environmentId,
-          input: {
+          input: expect.objectContaining({
             patch: {
               projectSettingsOverrides: {
                 [id]: {
@@ -209,7 +240,7 @@ describe("useProjectScriptSettings", () => {
                 },
               },
             },
-          },
+          }),
         });
       }
       expect(commands.upsertKeybinding).toHaveBeenCalledTimes(failure === "import" ? 0 : 3);

@@ -12080,7 +12080,7 @@
   "49ab4bbf2971d31b": "No machine can switch to {label} now. This only saves the track.",
   "b3659c3917b3c6b0": "This connection cannot test device hosts.",
   "89ef4eae0e856d40": "Failed to save project actions",
-  "de99dbdfa0334043": "Another action already uses this ID in a selected checkout.",
+  "f01a193c305a7aa6": "Another action on a selected machine already uses this ID.",
   "0e4cd25642a2df00": "No available machine, or another action change is saving.",
   "3eca4140f377b50b": "Actions not saved",
   "c4e527f7d77ebe84": "This connection cannot change environment settings.",
