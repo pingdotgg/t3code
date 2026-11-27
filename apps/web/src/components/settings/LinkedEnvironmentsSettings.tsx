@@ -329,8 +329,20 @@ export function LinkEnvironmentDialog({
   const throughCandidate =
     prefilledThrough ?? (targetId === null || canMint ? null : (routes.get(targetId) ?? null));
   const via = useEnvironment(throughCandidate?.viaEnvironmentId ?? null);
+  // The environment holding the link refuses a level this client's session there does not hold.
+  const mayPairThrough = useAtomValue(
+    peerLinkEnvironment.pairLink.permissionAtom(
+      throughCandidate?.viaEnvironmentId ?? null,
+      throughCandidate === null
+        ? undefined
+        : { environmentId: throughCandidate.environmentId, access },
+    ),
+  );
   const through =
-    throughCandidate !== null && via !== null && !throughFailed.has(throughCandidate.environmentId)
+    throughCandidate !== null &&
+    via !== null &&
+    mayPairThrough &&
+    !throughFailed.has(throughCandidate.environmentId)
       ? throughCandidate
       : null;
   const linkBack = useLinkBackOffers(environmentId, targetId === null ? [] : [targetId], open);

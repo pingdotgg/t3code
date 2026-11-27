@@ -1,15 +1,18 @@
 import { assert, describe, expect, it } from "vite-plus/test";
-import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { STATIC_KEYBINDING_COMMANDS, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   compileResolvedKeybindingsConfig,
+  mergeWithDefaultKeybindings,
   parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
 
+import type { MessageResolver } from "../../i18n/messages";
 import { resolveShortcutCommand } from "../../keybindings";
 
 import {
   buildKeybindingRows,
   buildWhenVariableOptions,
+  commandLabel,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
@@ -38,6 +41,44 @@ describe("KeybindingsSettings.logic", () => {
     expect(after.find((row) => row.command === "chat.new")?.id).not.toBe(
       before.find((row) => row.command === "chat.new")?.id,
     );
+  });
+
+  it("resets an edited shortcut to the built-in one its command no longer has", () => {
+    const rows = buildKeybindingRows(
+      mergeWithDefaultKeybindings(
+        compileResolvedKeybindingsConfig([
+          { command: "chat.new", key: "mod+n", when: "!terminalFocus" },
+          { command: "chat.new", key: "f8", when: "!terminalFocus" },
+        ]),
+      ),
+    );
+    expect(
+      rows
+        .filter((row) => row.command === "chat.new")
+        .map(({ key, defaultKey }) => ({ key, defaultKey })),
+    ).toEqual([
+      { key: "f8", defaultKey: "mod+shift+o" },
+      { key: "mod+n", defaultKey: "mod+n" },
+    ]);
+    const unassigned = buildKeybindingRows(
+      mergeWithDefaultKeybindings(
+        compileResolvedKeybindingsConfig([
+          { command: "chat.new", key: "mod+n", when: "!terminalFocus" },
+          { command: "chat.new", key: "mod+shift+o", when: "false" },
+          { command: "chat.new", key: "f8", when: "!terminalFocus" },
+        ]),
+      ),
+    );
+    expect(unassigned.find((row) => row.key === "f8")?.defaultKey).toBe("mod+n");
+  });
+
+  it("gives every built-in command a translatable label", () => {
+    const translated = (() => "translated") as unknown as MessageResolver;
+    expect(
+      STATIC_KEYBINDING_COMMANDS.filter(
+        (command) => commandLabel(command, translated) !== "translated",
+      ),
+    ).toEqual([]);
   });
 
   it("shares a stable editor for resolved duplicates but separates commands, shortcuts, and conditions", () => {
@@ -298,10 +339,15 @@ describe("KeybindingsSettings.logic", () => {
         },
       },
     });
-    const previewOpenDraft = parseWhenExpressionDraft("previewOpen && !previewFocus");
-    assert(previewOpenDraft.ok);
-    expect(unknownWhenVariables(previewOpenDraft.value)).toEqual([]);
-    expect(buildWhenVariableOptions()).toContain("previewOpen");
+    for (const [expression, condition] of [
+      ["previewOpen && !previewFocus", "previewOpen"],
+      ["composerFocus && turnRunning && composerEmpty", "composerEmpty"],
+    ] as const) {
+      const draft = parseWhenExpressionDraft(expression);
+      assert(draft.ok);
+      expect(unknownWhenVariables(draft.value)).toEqual([]);
+      expect(buildWhenVariableOptions()).toContain(condition);
+    }
     expect(parseWhenExpressionDraft("editorFocus &&")).toEqual({
       ok: false,
       message: "Use variables with !, &&, ||, and parentheses.",
@@ -391,6 +437,18 @@ describe("KeybindingsSettings.logic", () => {
     expect(
       keybindingConflictLabels(rows, { rowId: "new", key: "ctrl+k", when: "" }, expected.platform),
     ).toEqual(["Chat: New Local", ...expected.ctrl].toSorted());
+  });
+
+  it("treats a true condition like no condition when reporting conflicts", () => {
+    const rows = buildKeybindingRows(
+      compileResolvedKeybindingsConfig([
+        { command: "chat.new", key: "mod+k", when: "true" },
+        { command: "chat.newLocal", key: "mod+k", when: "terminalFocus" },
+      ]),
+      "Linux x86_64",
+    );
+
+    expect(rows.map((row) => row.conflicts)).toEqual([["Chat: New Local"], ["Chat: New"]]);
   });
 
   it("keeps mod and ctrl shortcuts apart when their when contexts differ", () => {

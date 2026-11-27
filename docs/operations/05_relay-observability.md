@@ -13,6 +13,7 @@ Threshold monitors in [`infra/relay/src/monitoring.ts`](../../infra/relay/src/mo
 - **Push delivery failing:** Inspect `relay.apns_deliveries.process_signed_job` or `relay.fcm.process` errors—an expired APNs key or FCM service account fails every job.
 - **Traffic dropped:** Check `https://relay.t3.codes/health` first.
 - **Tunnel cleanup stopped / deletions failing:** Check `relay.managed_endpoint_reaper.sweep` spans and Cloudflare API errors. To pause cleanup during an incident, set `RELAY_TUNNEL_CLEANUP_MODE=off` and redeploy the relay (see [Managed tunnel cleanup rollout](./03_release.md#managed-tunnel-cleanup-rollout)).
+- **Account deletions failing:** A Clerk account deletion keeps failing. `select * from relay_account_deletions where completed_at is null order by attempts desc` shows which, and the failed `relay.account_deletion.delete_account` span under each `relay.account_deletion.process_pending` sweep names the stage (usually Cloudflare tunnel teardown). The row stays and retries every 5 minutes until it succeeds.
 
 ## Mobile crashes and errors
 

@@ -12,6 +12,7 @@ import * as Dialog from "../components/ui/Dialog";
 import { msg } from "gt-react-native";
 import { m } from "../i18n/messages";
 import { appAtomRegistry } from "./atom-registry";
+import { activeComposerDraftKey, getQueuedRunEdit, isQueuedRunEditSaving } from "./queued-run-edit";
 import { readEnvironmentScope } from "./session";
 import { environmentThreadShells, threadEnvironment } from "./threads";
 import {
@@ -21,13 +22,24 @@ import {
 
 /** Sets an existing thread's pick on the thread, so any next turn runs on it. */
 export function selectThreadModel(
-  ref: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId },
+  ref: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+    readonly draftKey?: string;
+  },
   value: ModelSelection,
 ): void {
   const threadKey = scopedThreadKey(ref.environmentId, ref.threadId);
   // Its own object, so an older reply for an equal pick cannot release this one.
   const modelSelection = { ...value };
-  updateComposerDraftSettings(threadKey, { modelSelection });
+  const draftKey = activeComposerDraftKey(
+    threadKey,
+    ref.draftKey ?? threadKey,
+    getQueuedRunEdit(threadKey),
+  );
+  if (draftKey !== threadKey && isQueuedRunEditSaving(threadKey)) return;
+  updateComposerDraftSettings(draftKey, { modelSelection });
+  if (draftKey !== threadKey) return;
   const thread = appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
   // Another instance replaces the live session, which may hold an open question; that pick
   // still waits for a sent message.
