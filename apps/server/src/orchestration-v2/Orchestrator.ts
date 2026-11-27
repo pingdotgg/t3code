@@ -4180,6 +4180,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       activeProviderThreadId: null,
       // The first turn hands imported history to the provider like a V1 import.
       ...(importedHistory === undefined ? {} : { historyOrigin: "v1_import" }),
+      ...(importedHistory === undefined
+        ? {}
+        : {
+            continuedFrom: {
+              environmentId: importedHistory.source.environmentId,
+              threadId: importedHistory.source.threadId,
+              title: importedHistory.source.title,
+              // An older sender sends no label.
+              label: importedHistory.source.label ?? importedHistory.source.environmentId,
+            },
+          }),
       pullRequests: [],
       ...(command.linkOrigin === undefined ? {} : { linkOrigin: command.linkOrigin }),
       // Only stamped work names a remote parent, so a client cannot claim one.

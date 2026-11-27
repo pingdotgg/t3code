@@ -1987,6 +1987,9 @@ export function threadShellFromProjection(
       ? {}
       : { delegatedFrom: projection.thread.delegatedFrom }),
     ...(projection.thread.movedTo == null ? {} : { movedTo: projection.thread.movedTo }),
+    ...(projection.thread.continuedFrom == null
+      ? {}
+      : { continuedFrom: projection.thread.continuedFrom }),
     ...(projection.thread.workflowRun === undefined
       ? {}
       : { workflowRun: projection.thread.workflowRun }),
@@ -2309,6 +2312,9 @@ function shellFromState(input: {
       ? {}
       : { delegatedFrom: input.state.thread.delegatedFrom }),
     ...(input.state.thread.movedTo == null ? {} : { movedTo: input.state.thread.movedTo }),
+    ...(input.state.thread.continuedFrom == null
+      ? {}
+      : { continuedFrom: input.state.thread.continuedFrom }),
     ...(input.state.thread.workflowRun === undefined
       ? {}
       : { workflowRun: input.state.thread.workflowRun }),

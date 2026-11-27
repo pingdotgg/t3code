@@ -5742,5 +5742,6 @@
   "10af830a8050bba0": "Öffnet den Thread auf diesem Rechner",
   "89e899ed840385f7": "Auf {label} verschoben",
   "5863e5a932c8cc75": "Hier weiterarbeiten",
-  "896c0087ed1e3b4d": "Committe und pushe diesen Branch zuerst selbst."
+  "896c0087ed1e3b4d": "Committe und pushe diesen Branch zuerst selbst.",
+  "a21623dc5926515c": "Fortgesetzt von {label}"
 }

@@ -13070,5 +13070,8 @@
   "6ba4cfbd0c498161": "Déplacé vers {machine}",
   "b3a063307e54fd0c": "Impossible de supprimer la note « Déplacé »",
   "5863e5a932c8cc75": "Continuer à travailler ici",
-  "00e460ab5809aff7": "Poussez les modifications depuis un client qui le peut, ou poussez-les vous-même."
+  "00e460ab5809aff7": "Poussez les modifications depuis un client qui le peut, ou poussez-les vous-même.",
+  "f8aec46ce9386c0a": "Suite de {title} sur {label}",
+  "a21623dc5926515c": "Suite d’un fil sur {label}",
+  "a81b3dffb373ae4d": "Suite d’un fil sur {label}. Connectez-vous à cette machine pour ouvrir le fil."
 }

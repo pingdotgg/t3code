@@ -194,6 +194,8 @@ export const OrchestrationV2ImportedHistory = Schema.Struct({
     environmentId: EnvironmentId,
     threadId: ThreadId,
     title: Schema.String,
+    /** Absent from older senders. */
+    label: Schema.optional(Schema.String),
   }),
 });
 export type OrchestrationV2ImportedHistory = typeof OrchestrationV2ImportedHistory.Type;
@@ -211,6 +213,18 @@ export const OrchestrationV2ThreadMovedTo = Schema.Struct({
   movedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2ThreadMovedTo = typeof OrchestrationV2ThreadMovedTo.Type;
+
+/**
+ * The thread in a linked environment this thread continued from, and that
+ * environment's label, for a client that cannot reach it.
+ */
+export const OrchestrationV2ThreadContinuedFrom = Schema.Struct({
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  title: Schema.String,
+  label: Schema.String,
+});
+export type OrchestrationV2ThreadContinuedFrom = typeof OrchestrationV2ThreadContinuedFrom.Type;
 
 /**
  * The thread in a linked environment whose agent sent this message here, and its title
@@ -610,6 +624,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
   /** Absent on threads written before threads could move; read as not moved. */
   movedTo: Schema.optional(Schema.NullOr(OrchestrationV2ThreadMovedTo)),
+  /** Absent on threads written before threads could continue here; read as not continued. */
+  continuedFrom: Schema.optional(Schema.NullOr(OrchestrationV2ThreadContinuedFrom)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -2549,6 +2565,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   /** Absent from older servers; read as not moved. */
   movedTo: Schema.optional(Schema.NullOr(OrchestrationV2ThreadMovedTo)),
+  /** Absent from older servers; read as not continued. */
+  continuedFrom: Schema.optional(Schema.NullOr(OrchestrationV2ThreadContinuedFrom)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

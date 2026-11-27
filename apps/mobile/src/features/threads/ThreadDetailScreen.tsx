@@ -219,6 +219,10 @@ import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { useOpenThreadLink } from "./useOpenThreadLink";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { resolveLinkedThreadOpen } from "@t3tools/client-runtime/linked-thread";
+import type { OrchestrationV2ThreadContinuedFrom } from "@t3tools/contracts";
+import { useEnvironments } from "../../state/environments";
+import { useLinkedEnvironments } from "../../state/peerLinks";
 import { Button } from "../../components/ui/Button";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText } from "../../components/ui/AppText";
@@ -387,6 +391,56 @@ function ThreadMovedBanner(props: {
         disabled={busy || !props.canOperateThread}
         onPress={() => void keepWorkingHere()}
       />
+    </View>
+  );
+}
+
+/** Names the machine this thread continues from, and opens the thread there when this app can. */
+function ThreadContinuedFromRow(props: {
+  readonly thread: EnvironmentThreadShell;
+  readonly continuedFrom: OrchestrationV2ThreadContinuedFrom;
+}) {
+  const gt = useGT();
+  const { continuedFrom } = props;
+  const openThreadLink = useOpenThreadLink(props.thread.environmentId);
+  const linkedEnvironments = useLinkedEnvironments(props.thread.environmentId, [
+    continuedFrom.environmentId,
+  ]);
+  const { environments } = useEnvironments();
+  const own = environments.find(
+    (environment) => environment.environmentId === continuedFrom.environmentId,
+  );
+  const canOpen =
+    resolveLinkedThreadOpen({
+      environmentId: continuedFrom.environmentId,
+      viaEnvironmentId: props.thread.environmentId,
+      own: own && { connected: own.connection.phase === "connected" },
+      linked: linkedEnvironments.has(continuedFrom.environmentId),
+    }) !== "unavailable";
+  const text = gt("Continued from {label}", { label: own?.label ?? continuedFrom.label });
+  return (
+    <View className="flex-row items-center gap-2 px-4 pb-2">
+      <SymbolView name="laptopcomputer" size={12} tintColorClassName="accent-foreground-muted" />
+      {canOpen ? (
+        <AppText
+          accessibilityRole="link"
+          accessibilityHint={gt("Opens the thread on that machine")}
+          className="min-w-0 flex-1 text-xs text-foreground-muted underline"
+          numberOfLines={1}
+          onPress={() =>
+            openThreadLink(
+              scopeThreadRef(continuedFrom.environmentId, continuedFrom.threadId),
+              continuedFrom.title,
+            )
+          }
+        >
+          {text}
+        </AppText>
+      ) : (
+        <AppText className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
+          {text}
+        </AppText>
+      )}
     </View>
   );
 }
@@ -1810,6 +1864,12 @@ function ThreadDetailBody(
                       threadRef={props.selectedThreadDetailRef}
                       canOperateThread={props.canOperateThread}
                     />
+                    {props.selectedThread.continuedFrom === null ? null : (
+                      <ThreadContinuedFromRow
+                        thread={props.selectedThread}
+                        continuedFrom={props.selectedThread.continuedFrom}
+                      />
+                    )}
                     <ThreadMovedBanner
                       thread={props.selectedThread}
                       canOperateThread={props.canOperateThread}

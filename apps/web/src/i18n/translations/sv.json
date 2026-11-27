@@ -13077,5 +13077,8 @@
   "6ba4cfbd0c498161": "Flyttad till {machine}",
   "b3a063307e54fd0c": "Kunde inte ta bort ”Flyttad”-notisen",
   "5863e5a932c8cc75": "Fortsätt arbeta här",
-  "00e460ab5809aff7": "Pusha ändringarna från en klient som kan, eller pusha dem själv."
+  "00e460ab5809aff7": "Pusha ändringarna från en klient som kan, eller pusha dem själv.",
+  "f8aec46ce9386c0a": "Fortsatt från {title} på {label}",
+  "a21623dc5926515c": "Fortsatt från {label}",
+  "a81b3dffb373ae4d": "Fortsatt från {label}. Anslut till den för att öppna tråden."
 }

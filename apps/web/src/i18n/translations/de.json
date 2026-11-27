@@ -13070,5 +13070,8 @@
   "6ba4cfbd0c498161": "Auf {machine} verschoben",
   "b3a063307e54fd0c": "Der Hinweis „Verschoben“ konnte nicht entfernt werden",
   "5863e5a932c8cc75": "Hier weiterarbeiten",
-  "00e460ab5809aff7": "Pushe die Änderungen von einem Client, der das kann, oder pushe sie selbst."
+  "00e460ab5809aff7": "Pushe die Änderungen von einem Client, der das kann, oder pushe sie selbst.",
+  "f8aec46ce9386c0a": "Fortgesetzt von {title} auf {label}",
+  "a21623dc5926515c": "Fortgesetzt von {label}",
+  "a81b3dffb373ae4d": "Fortgesetzt von {label}. Verbinde dich damit, um den Thread zu öffnen."
 }

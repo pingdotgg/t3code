@@ -13078,5 +13078,8 @@
   "6ba4cfbd0c498161": "Moved to {machine}",
   "b3a063307e54fd0c": "Could not remove the Moved note",
   "5863e5a932c8cc75": "Keep working here",
-  "00e460ab5809aff7": "Push the changes from a client that can, or push them yourself."
+  "00e460ab5809aff7": "Push the changes from a client that can, or push them yourself.",
+  "f8aec46ce9386c0a": "Continued from {title} on {label}",
+  "a21623dc5926515c": "Continued from {label}",
+  "a81b3dffb373ae4d": "Continued from {label}. Connect to it to open the thread."
 }

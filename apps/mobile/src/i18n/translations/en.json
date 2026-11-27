@@ -5744,5 +5744,6 @@
   "10af830a8050bba0": "Opens the thread on that machine",
   "89e899ed840385f7": "Moved to {label}",
   "5863e5a932c8cc75": "Keep working here",
-  "896c0087ed1e3b4d": "Commit and push this branch yourself first."
+  "896c0087ed1e3b4d": "Commit and push this branch yourself first.",
+  "a21623dc5926515c": "Continued from {label}"
 }

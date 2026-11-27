@@ -34,6 +34,9 @@ const layer = ProviderReplayHarness.layerWithRegistry(
   { runEffectWorker: false },
 );
 
+const laptop = EnvironmentId.make("laptop");
+const laptopThreadId = ThreadId.make("laptop-thread");
+
 const importedHistory: OrchestrationV2ImportedHistory = {
   messages: [
     {
@@ -44,17 +47,12 @@ const importedHistory: OrchestrationV2ImportedHistory = {
     { role: "assistant", text: "Noted: PELICAN.", createdAt: "2026-11-01T10:00:05.000Z" },
   ],
   omittedCount: 3,
-  source: {
-    environmentId: EnvironmentId.make("laptop"),
-    threadId: ThreadId.make("laptop-thread"),
-    title: "Code word",
-  },
+  source: { environmentId: laptop, threadId: laptopThreadId, title: "Code word", label: "Laptop" },
 };
 
-function createCommand(
-  threadId: ThreadId,
-  extra: Partial<Extract<OrchestrationV2Command, { readonly type: "thread.create" }>> = {},
-): OrchestrationV2Command {
+type ThreadCreateCommand = Extract<OrchestrationV2Command, { readonly type: "thread.create" }>;
+
+function plainCreateCommand(threadId: ThreadId): ThreadCreateCommand {
   return {
     type: "thread.create",
     commandId: CommandId.make(`${threadId}:create`),
@@ -68,9 +66,14 @@ function createCommand(
     worktreePath: null,
     createdBy: "system",
     creationSource: "server",
-    importedHistory,
-    ...extra,
   };
+}
+
+function createCommand(
+  threadId: ThreadId,
+  extra: Partial<ThreadCreateCommand> = {},
+): ThreadCreateCommand {
+  return { ...plainCreateCommand(threadId), importedHistory, ...extra };
 }
 
 it.effect("a thread created with imported history holds its messages in order", () =>
@@ -150,5 +153,67 @@ it.effect("rejects imported history sent with an imported native thread", () =>
     assert.include(String(error.cause), "Imported history cannot come with a native thread");
     const missing = yield* orchestrator.getThreadProjection(threadId).pipe(Effect.flip);
     assert.isDefined(missing);
+  }).pipe(Effect.provide(layer)),
+);
+
+const createAndReadContinuedFrom = Effect.fn("createAndReadContinuedFrom")(function* (
+  command: ThreadCreateCommand,
+) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  yield* orchestrator.dispatch(command);
+  const projection = yield* orchestrator.getThreadProjection(command.threadId);
+  const shell = yield* orchestrator.getThreadShell(command.threadId);
+  return {
+    thread: projection.thread.continuedFrom ?? null,
+    shell: shell?.continuedFrom ?? null,
+  };
+});
+
+it.effect("a thread created with imported history shows where it continued from", () =>
+  Effect.gen(function* () {
+    const continuedFrom = {
+      environmentId: laptop,
+      threadId: laptopThreadId,
+      title: "Code word",
+      label: "Laptop",
+    };
+
+    const read = yield* createAndReadContinuedFrom(
+      createCommand(ThreadId.make("imported-history-continued-from")),
+    );
+
+    assert.deepEqual(read, { thread: continuedFrom, shell: continuedFrom });
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("an older sender with no label shows its environment id as the label", () =>
+  Effect.gen(function* () {
+    const continuedFrom = {
+      environmentId: laptop,
+      threadId: laptopThreadId,
+      title: "Code word",
+      label: "laptop",
+    };
+
+    const read = yield* createAndReadContinuedFrom(
+      createCommand(ThreadId.make("imported-history-no-label"), {
+        importedHistory: {
+          ...importedHistory,
+          source: { environmentId: laptop, threadId: laptopThreadId, title: "Code word" },
+        },
+      }),
+    );
+
+    assert.deepEqual(read, { thread: continuedFrom, shell: continuedFrom });
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("a thread created without imported history continued from nowhere", () =>
+  Effect.gen(function* () {
+    const read = yield* createAndReadContinuedFrom(
+      plainCreateCommand(ThreadId.make("plain-thread")),
+    );
+
+    assert.deepEqual(read, { thread: null, shell: null });
   }).pipe(Effect.provide(layer)),
 );

@@ -13070,5 +13070,8 @@
   "6ba4cfbd0c498161": "Movida para {machine}",
   "b3a063307e54fd0c": "Não foi possível remover o aviso \"Movida\"",
   "5863e5a932c8cc75": "Continuar trabalhando aqui",
-  "00e460ab5809aff7": "Faça push das alterações de um cliente que possa, ou faça você mesmo."
+  "00e460ab5809aff7": "Faça push das alterações de um cliente que possa, ou faça você mesmo.",
+  "f8aec46ce9386c0a": "Continuado de {title} em {label}",
+  "a21623dc5926515c": "Continuado de {label}",
+  "a81b3dffb373ae4d": "Continuado de {label}. Conecte-se a ele para abrir o thread."
 }

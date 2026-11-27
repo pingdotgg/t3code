@@ -36,6 +36,7 @@ import {
   type OrchestrationV2DelegatedFrom,
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
+  type OrchestrationV2ThreadContinuedFrom,
   type OrchestrationV2ThreadShell,
   type ScopedThreadRef,
   type ServerProvider,
@@ -47,6 +48,7 @@ import * as DateTime from "effect/DateTime";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
+  ArrowRightLeftIcon,
   BotIcon,
   ChevronDownIcon,
   CornerLeftUpIcon,
@@ -485,6 +487,73 @@ function DelegatedFromRow(props: {
   );
 }
 
+/**
+ * The thread on a linked environment that this one continues. It opens there when this client is
+ * connected to that environment, else read-only through this one.
+ */
+function ContinuedFromRow(props: {
+  readonly continuedFrom: OrchestrationV2ThreadContinuedFrom;
+  /** The thread that continues it; its environment holds the link and its panel shows the read. */
+  readonly panelRef: ScopedThreadRef;
+  readonly anyInstanceBadge: boolean;
+}) {
+  const gt = useGT();
+  const { continuedFrom } = props;
+  const environment = useEnvironment(continuedFrom.environmentId);
+  const source = useQuietThreadShell(
+    scopeThreadRef(continuedFrom.environmentId, continuedFrom.threadId),
+  );
+  const label = environment?.label ?? continuedFrom.label;
+  const title = source?.title ?? continuedFrom.title;
+  const opener = useLinkedThreadOpener(props.panelRef, continuedFrom, title);
+  const trigger = useSideThreadTrigger();
+  return (
+    <li className="group relative flex h-8 items-center rounded-lg">
+      <Tooltip>
+        <TooltipTrigger
+          delay={200}
+          render={
+            <ThreadDetailsControl
+              size="sm"
+              variant="ghost"
+              part="row"
+              aria-label={gt("Continued from {title} on {label}", { title, label })}
+              aria-disabled={opener === null || undefined}
+              {...(opener ? trigger(opener.open, { panel: opener.mode === "linked" }) : {})}
+            />
+          }
+        >
+          <ThreadRelationshipIcon
+            anyInstanceBadge={props.anyInstanceBadge}
+            fallbackIcon={ArrowRightLeftIcon}
+            status={null}
+          />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
+              {title}
+            </span>
+          </span>
+          <span className="max-w-1/2 shrink-0 truncate text-2xs text-muted-foreground">
+            <T>
+              on <Var>{label}</Var>
+            </T>
+          </span>
+        </TooltipTrigger>
+        <TooltipPopup side="left">
+          <LineageTooltipContent
+            title={title}
+            hint={
+              opener === null
+                ? gt("Continued from {label}. Connect to it to open the thread.", { label })
+                : gt("Continued from {label}", { label })
+            }
+          />
+        </TooltipPopup>
+      </Tooltip>
+    </li>
+  );
+}
+
 export function ThreadRelationshipsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -676,6 +745,7 @@ export function ThreadRelationshipsPanel(props: {
 
   // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = currentThread?.delegatedFrom;
+  const continuedFrom = currentThread?.continuedFrom ?? null;
 
   const lineageVisible =
     props.showLineage &&
@@ -686,6 +756,7 @@ export function ThreadRelationshipsPanel(props: {
       remoteActive.length > 0 ||
       remotePrevious.length > 0 ||
       delegatedFrom !== undefined ||
+      continuedFrom !== null ||
       // Disconnect lives in this heading, so a thread with only side chats still shows it.
       (canDetach && sideChats.length > 0));
   const sideChatsVisible = props.showSideChats && sideChats.length > 0;
@@ -1075,7 +1146,8 @@ export function ThreadRelationshipsPanel(props: {
             related.length > 0 ||
             active.length > 0 ||
             remoteActive.length > 0 ||
-            delegatedFrom !== undefined
+            delegatedFrom !== undefined ||
+            continuedFrom !== null
           }
           data-thread-relationships-panel
           actions={
@@ -1104,13 +1176,22 @@ export function ThreadRelationshipsPanel(props: {
             ) : null
           }
         >
-          {delegatedFrom === undefined ? null : (
+          {delegatedFrom === undefined && continuedFrom === null ? null : (
             <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
-              <DelegatedFromRow
-                delegatedFrom={delegatedFrom}
-                fallbackLabel={currentThread?.linkOrigin?.label}
-                anyInstanceBadge={hasInstanceBadge(providerEntries)}
-              />
+              {delegatedFrom === undefined ? null : (
+                <DelegatedFromRow
+                  delegatedFrom={delegatedFrom}
+                  fallbackLabel={currentThread?.linkOrigin?.label}
+                  anyInstanceBadge={hasInstanceBadge(providerEntries)}
+                />
+              )}
+              {continuedFrom === null ? null : (
+                <ContinuedFromRow
+                  continuedFrom={continuedFrom}
+                  panelRef={ref}
+                  anyInstanceBadge={hasInstanceBadge(providerEntries)}
+                />
+              )}
             </ThreadLineageRowList>
           )}
           {groups.map((group) => (

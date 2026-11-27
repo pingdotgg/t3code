@@ -40,6 +40,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+import { descriptorOf } from "./PeerLinks.testkit.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 import * as ThreadContinuation from "./ThreadContinuation.ts";
 
@@ -392,6 +393,7 @@ const layerFakes = (world: Scenario) =>
         ),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
           getEnvironmentId: Effect.succeed(laptop),
+          getDescriptor: Effect.succeed(descriptorOf(laptop, "Laptop")),
         }),
       );
     }),
@@ -484,6 +486,7 @@ const ThreadContinuationArguments = Schema.Struct({
       environmentId: Schema.String,
       threadId: Schema.String,
       title: Schema.String,
+      label: Schema.optional(Schema.String),
     }),
   }),
 });
@@ -604,6 +607,7 @@ it.effect(
         environmentId: laptop,
         threadId,
         title: "Fix login",
+        label: "Laptop",
       });
       assert.deepEqual(
         sent.importedHistory.messages.map((message) => [message.role, message.text]),

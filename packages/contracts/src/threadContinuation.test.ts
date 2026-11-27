@@ -29,6 +29,7 @@ const roundTrip = <S extends Schema.Codec<unknown, unknown>>(schema: S, value: u
   Schema.encodeSync(schema)(Schema.decodeUnknownSync(schema)(value));
 
 const isImportedHistory = Schema.is(OrchestrationV2ImportedHistory);
+const decodeImportedHistory = Schema.decodeUnknownSync(OrchestrationV2ImportedHistory);
 
 describe("thread continuation inputs", () => {
   it("round trips a continue request with a first message", () => {
@@ -108,29 +109,62 @@ describe("imported history caps", () => {
   });
 });
 
-describe("thread moved marker", () => {
-  const storedThread = {
-    id: "thread-src",
-    projectId: "project-1",
-    title: "Fix login",
-    providerInstanceId: "codex",
-    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    activeProviderThreadId: null,
-    lineage: { rootThreadId: "thread-src", parentThreadId: null, relationshipToParent: null },
-    forkedFrom: null,
-    createdBy: "user",
-    creationSource: "web",
-    createdAt: "2026-11-27T09:00:00.000Z",
-    updatedAt: "2026-11-27T09:00:00.000Z",
-    archivedAt: null,
-    deletedAt: null,
-  };
-  const decodeThread = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
+describe("imported history source", () => {
+  it("decodes a source from an older sender without a label", () => {
+    expect(decodeImportedHistory(history([])).source.label).toBeUndefined();
+  });
 
+  it("decodes the label of the environment the thread came from", () => {
+    const input = history([]);
+    const decoded = decodeImportedHistory({ ...input, source: { ...input.source, label: "PC" } });
+    expect(decoded.source.label).toBe("PC");
+  });
+});
+
+const storedThread = {
+  id: "thread-src",
+  projectId: "project-1",
+  title: "Fix login",
+  providerInstanceId: "codex",
+  modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: null,
+  worktreePath: null,
+  activeProviderThreadId: null,
+  lineage: { rootThreadId: "thread-src", parentThreadId: null, relationshipToParent: null },
+  forkedFrom: null,
+  createdBy: "user",
+  creationSource: "web",
+  createdAt: "2026-11-27T09:00:00.000Z",
+  updatedAt: "2026-11-27T09:00:00.000Z",
+  archivedAt: null,
+  deletedAt: null,
+};
+const decodeThread = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
+
+describe("thread continued-from link", () => {
+  it("decodes a thread stored before threads could continue here", () => {
+    expect(decodeThread(storedThread).continuedFrom).toBeUndefined();
+  });
+
+  it("decodes the link to the thread it came from", () => {
+    const continuedFrom = {
+      environmentId: "env-pc",
+      threadId: "thread-src",
+      title: "Fix login",
+      label: "PC",
+    };
+    expect(decodeThread({ ...storedThread, continuedFrom }).continuedFrom).toEqual({
+      environmentId: "env-pc",
+      threadId: "thread-src",
+      title: "Fix login",
+      label: "PC",
+    });
+  });
+});
+
+describe("thread moved marker", () => {
   it("decodes a thread stored before threads could move", () => {
     expect(decodeThread(storedThread).movedTo).toBeUndefined();
   });

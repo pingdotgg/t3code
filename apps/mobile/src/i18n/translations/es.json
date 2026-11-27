@@ -5736,5 +5736,6 @@
   "10af830a8050bba0": "Abre el hilo en esa máquina",
   "89e899ed840385f7": "Movido a {label}",
   "5863e5a932c8cc75": "Seguir trabajando aquí",
-  "896c0087ed1e3b4d": "Primero haz commit y push de esta rama tú mismo."
+  "896c0087ed1e3b4d": "Primero haz commit y push de esta rama tú mismo.",
+  "a21623dc5926515c": "Continuado desde {label}"
 }

@@ -170,6 +170,8 @@ export interface EnvironmentThreadShell {
   readonly delegatedFrom: OrchestrationV2ThreadShell["delegatedFrom"] | null;
   /** The thread in a linked environment this one continued on, until work goes on here. */
   readonly movedTo: import("@t3tools/contracts").OrchestrationV2ThreadMovedTo | null;
+  /** The thread in a linked environment this one continues. */
+  readonly continuedFrom: import("@t3tools/contracts").OrchestrationV2ThreadContinuedFrom | null;
   /** The workflow run this thread is an agent step of, if it is one. */
   readonly workflowRun: OrchestrationV2ThreadShell["workflowRun"] | null;
   readonly activeProviderThreadId: OrchestrationV2ThreadShell["activeProviderThreadId"];
@@ -325,6 +327,7 @@ export function presentThreadShell(
     linkOrigin: thread.linkOrigin ?? null,
     delegatedFrom: thread.delegatedFrom ?? null,
     movedTo: thread.movedTo ?? null,
+    continuedFrom: thread.continuedFrom ?? null,
     workflowRun: thread.workflowRun ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     latestRun,

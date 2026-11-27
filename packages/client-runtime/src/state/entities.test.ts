@@ -131,6 +131,25 @@ describe("V2 client presentation", () => {
     expect(presentThreadShell(environmentId, v2ThreadShell).movedTo).toBeNull();
   });
 
+  it("presents where a thread continued from, and an older server's shell as not continued", () => {
+    const continuedFrom = {
+      environmentId: EnvironmentId.make("environment-desktop"),
+      threadId: ThreadId.make("thread-on-desktop"),
+      title: "Original thread",
+      label: "Desktop",
+    };
+
+    expect(
+      presentThreadShell(environmentId, { ...v2ThreadShell, continuedFrom }).continuedFrom,
+    ).toEqual({
+      environmentId: "environment-desktop",
+      threadId: "thread-on-desktop",
+      title: "Original thread",
+      label: "Desktop",
+    });
+    expect(presentThreadShell(environmentId, v2ThreadShell).continuedFrom).toBeNull();
+  });
+
   it.each([
     { kinds: ["command"], expected: "completed" },
     { kinds: ["command", "subagent"], expected: "idle" },

@@ -181,9 +181,8 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const crypto = yield* Digest.Digest;
   const fileSystem = yield* FileSystem.FileSystem;
-  const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
-    Effect.flatMap((environment) => environment.getEnvironmentId),
-  );
+  const environment = yield* ServerEnvironment.ServerEnvironment;
+  const hereId = yield* environment.getEnvironmentId;
 
   const newCommandId = random.uuidV4().pipe(
     Effect.map((uuid) => CommandId.make(`thread-continuation:${uuid}`)),
@@ -328,6 +327,7 @@ const make = Effect.gen(function* () {
       }
       const pushed = yield* pushedBranch(input, { cwd, projectId: thread.projectId });
       const transcript = selectTranscriptForTransfer(messages);
+      const here = yield* environment.getDescriptor;
       const pushRemote = { name: pushed.remoteName, url: pushed.remoteUrl };
       const receiveInput: ThreadReceiveInput = {
         repository: {
@@ -341,7 +341,12 @@ const make = Effect.gen(function* () {
         modelSelection: thread.modelSelection,
         importedHistory: {
           ...transcript,
-          source: { environmentId: hereId, threadId: thread.id, title: thread.title },
+          source: {
+            environmentId: hereId,
+            threadId: thread.id,
+            title: thread.title,
+            label: here.label,
+          },
         },
         ...(input.message === undefined ? {} : { message: input.message }),
       };
