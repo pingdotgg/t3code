@@ -180,6 +180,24 @@ it.effect("hook paths go only to a caller at the broadest mode", () =>
   }),
 );
 
+it.effect("a refused outside MCP client is told its connection's access is the limit", () =>
+  Effect.gen(function* () {
+    const refused = yield* call({
+      action: "start",
+      workflow: "missing",
+      idempotencyKey: "trial",
+    }).pipe(
+      Effect.provide(
+        handlersWith({}, { client: { sessionId: "session-3", label: "Codex", access: "auto" } }),
+      ),
+    );
+    expect(refused).toMatchObject({ code: "capability_denied" });
+    const { message } = refused as { message: string };
+    expect(message).toContain("Codex");
+    expect(message).toMatch(/thread/i);
+  }),
+);
+
 it.effect("under an administrator's ceiling, a caller at the ceiling starts runs", () =>
   Effect.gen(function* () {
     const start = { action: "start", workflow: "release", idempotencyKey: "trial" };
