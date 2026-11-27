@@ -33,6 +33,19 @@ describe("absolute paths in prose", () => {
 });
 
 describe("inline code that names a file", () => {
+  it("links paths with routing punctuation, like the shared file-link parser", () => {
+    for (const path of [
+      "app/(auth)/login/page.tsx",
+      "src/routes/[id]/+page.svelte",
+      "app/routes/posts.$id.tsx",
+      "node_modules/@scope/pkg/index.js",
+    ]) {
+      expect(rewrite(`Edit \`${path}\`.`), path).toBe(
+        `Edit [${path.replace(/[[\]]/g, "\\$&")}](<${path.replace(/[[\]]/g, "\\$&")}>).`,
+      );
+    }
+  });
+
   it.each([
     [
       "file links",
