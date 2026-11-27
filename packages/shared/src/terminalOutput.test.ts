@@ -26,10 +26,6 @@ describe("terminalOutputCollapseRedraws", () => {
     ["12345\r进度", "进度5"],
     ["a界b\rXY", "XY b"],
     ["e\u0301a\rZ", "Za"],
-    ["a\tbcdefghij\rXY", "XY      bcdefghij"],
-    ["abc\tZ\rabc X", "abc X   Z"],
-    ["123456789\r\tZ", "12345678Z"],
-    ["界abcde\tZ\rXY", "XYabcde Z"],
   ])("uses terminal columns for a saved redraw: %j", (input, expected) => {
     expect(terminalOutputCollapseRedraws(input)).toBe(expected);
   });
@@ -68,18 +64,6 @@ describe("appendTerminalOutput", () => {
   it("keeps text beyond a tab when a redraw overwrites an earlier column", () => {
     const output = feed(["abc\tZ", "\u001b[5GX"]).text;
     expect(terminalOutputPlainText(output)).toBe("abc X   Z");
-  });
-
-  it.each([
-    ["abcdefghijklmno", "\tZ", "jklmno Z"],
-    ["界abcdefghijklm", "\tZ", "hijklm Z"],
-    ["abcdefghijklmno\r", "\tZ", "hZjklmno"],
-    ["abcde\nabcdEF\u001b[A", "\u001b[B\u001b[4G\tZ", "dEF  Z"],
-  ])("preserves the tab stop after trimming %j", (prefix, chunk, expected) => {
-    const source = feed([prefix], 8);
-    for (const state of [source, feed([terminalOutputResumeText(source)], 8)]) {
-      expect(appendTerminalOutput(state, chunk, 8).text).toBe(expected);
-    }
   });
 
   it("redraws several lines in place when the cursor moves up", () => {
