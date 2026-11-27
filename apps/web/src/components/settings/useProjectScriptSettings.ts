@@ -119,7 +119,8 @@ export function useProjectScriptSettings(
     keybinding: string | null | undefined,
     onSettingsSaved: (() => void) | undefined,
   ): Promise<AtomCommandResult<void, unknown>> {
-    for (const [index, { environmentId, settings, keybindings, project }] of targets.entries()) {
+    let onFirstWrite = onSettingsSaved;
+    for (const { environmentId, settings, keybindings, project } of targets) {
       const current = project
         ? resolveProjectScripts(settings, project)
         : settings.defaultProjectScripts;
@@ -146,7 +147,8 @@ export function useProjectScriptSettings(
         },
       });
       if (result._tag === "Failure") return reportScriptFailure(result);
-      if (index === 0) onSettingsSaved?.();
+      onFirstWrite?.();
+      onFirstWrite = undefined;
       const changedIds = scriptId
         ? [scriptId]
         : current
