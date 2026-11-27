@@ -25,6 +25,7 @@ import { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import * as OpenCode2Client from "@t3tools/provider-opencode/server/v2/OpenCode2Client";
 import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2Server";
+import { PiDriver } from "@t3tools/provider-pi/server";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
@@ -351,6 +352,65 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(yield* registry.getInstance(siblingId)).toBe(sibling);
         expect(closed).toBe(1);
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([{ displayName: "Renamed" }, { accentColor: "#ff0000" }])(
+    "keeps the live instance when only %o changes",
+    (presentation) =>
+      Effect.gen(function* () {
+        let closed = 0;
+        const driver: typeof CodexDriver = {
+          ...CodexDriver,
+          create: (input) =>
+            Effect.gen(function* () {
+              const instance = yield* CodexDriver.create(input);
+              yield* Effect.addFinalizer(() => Effect.sync(() => closed++));
+              return instance;
+            }),
+        };
+        const instanceId = ProviderInstanceId.make("account-a");
+        const entry = {
+          driver: CodexDriver.driverKind,
+          enabled: false,
+          displayName: "Account A",
+          config: makeCodexConfig({}),
+        };
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [instanceId]: entry },
+        });
+        const instance = yield* registry.getInstance(instanceId);
+        const changes = yield* registry.subscribeChanges;
+        yield* mutator.reconcile({ [instanceId]: { ...entry, ...presentation } });
+        expect(closed).toBe(0);
+        expect(yield* registry.getInstance(instanceId)).toBe(instance);
+        yield* PubSub.take(changes);
+        expect(yield* instance!.snapshot.getSnapshot).toMatchObject(presentation);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("restores the default Pi name after clearing a saved custom label", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("pi-account");
+      const entry = {
+        driver: PiDriver.driverKind,
+        enabled: true,
+        config: { ...PiDriver.defaultConfig(), binaryPath: "unused-pi" },
+      };
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
+        drivers: [PiDriver],
+        configMap: { [instanceId]: { ...entry, displayName: "My Pi account" } },
+      });
+      const initial = yield* registry.getInstance(instanceId);
+      const before = yield* initial!.snapshot.getSnapshot;
+      expect(before.displayName).toBe("My Pi account");
+
+      yield* mutator.reconcile({ [instanceId]: entry });
+
+      const updated = yield* registry.getInstance(instanceId);
+      const after = yield* updated!.snapshot.getSnapshot;
+      expect(after.displayName).toBe("Pi");
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
@@ -919,7 +979,10 @@ it.effect("publishes a refreshed OpenCode catalog while its previous server is b
   Effect.gen(function* () {
     const instanceId = ProviderInstanceId.make("opencode");
     const driverKind = ProviderDriverKind.make("opencode");
-    const servers = new Map<ProviderInstance, OpenCode2Server.OpenCode2Server["Service"]>();
+    const servers = new Map<
+      ProviderInstance["retireInferenceCatalog"],
+      OpenCode2Server.OpenCode2Server["Service"]
+    >();
     const running = new Set<string>();
     let port = 4000;
     const runtime = Layer.mock(OpenCodeRuntime.OpenCodeRuntime)({
@@ -961,7 +1024,7 @@ it.effect("publishes a refreshed OpenCode catalog while its previous server is b
             inferenceCatalog: config.inferenceModels,
             retireInferenceCatalog: server.retire,
           } as ProviderInstance;
-          servers.set(instance, server);
+          servers.set(instance.retireInferenceCatalog, server);
           return instance;
         }).pipe(
           Effect.provide(
@@ -1018,7 +1081,7 @@ it.effect("publishes a refreshed OpenCode catalog while its previous server is b
       configMap: configMap(initial),
     });
     const oldInstance = (yield* registry.getInstance(instanceId))!;
-    const oldServer = servers.get(oldInstance)!;
+    const oldServer = servers.get(oldInstance.retireInferenceCatalog)!;
     const firstBorrowed = yield* Deferred.make<string>();
     const finishTurn = yield* Deferred.make<void>();
     const turn = yield* oldServer
@@ -1031,7 +1094,7 @@ it.effect("publishes a refreshed OpenCode catalog while its previous server is b
     expect(running.has(firstUrl)).toBe(true);
     const newInstance = (yield* registry.getInstance(instanceId))!;
     expect(newInstance.inferenceCatalog).toEqual(updated);
-    const newServer = servers.get(newInstance)!;
+    const newServer = servers.get(newInstance.retireInferenceCatalog)!;
     const nextUrl = yield* newServer.withConnection(({ url }) => Effect.succeed(url));
     expect(nextUrl).not.toBe(firstUrl);
     yield* Deferred.succeed(finishTurn, undefined);

@@ -111,7 +111,7 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
                 calls.pairingCredential.push(payload);
                 return yield* (
                   scenario.pairingCredential?.(payload) ??
-                    unexpectedEndpoint("auth.pairingCredential")
+                  unexpectedEndpoint("auth.pairingCredential")
                 );
               }),
             )

@@ -7,6 +7,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
+import { DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
@@ -238,6 +239,62 @@ it.effect("keeps a daemon record its missing agent CLI cannot stop", () =>
         expect((await start(exited)).stderr).toContain("Android SDK was not found");
         await expect(NodeFSP.access(daemonFile)).rejects.toThrow();
       } finally {
+        await NodeFSP.rm(home, { recursive: true, force: true });
+      }
+    });
+  }),
+);
+
+it.effect("starts the hub requiring a session token and reports the one it printed", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    yield* Effect.promise(async () => {
+      const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-hub-"));
+      const run = (mode: "start" | "stop") =>
+        NodeChildProcess.spawnSync(process.execPath, [], {
+          input: remoteDeviceScript("owner", mode),
+          env: {
+            HOME: home,
+            PATH: `${NodePath.join(home, "bin")}:/usr/bin:/bin`,
+            ANDROID_HOME: NodePath.join(home, "sdk"),
+          },
+          encoding: "utf8",
+        });
+      try {
+        const state = NodePath.join(home, ".t3/device/hosts/owner");
+        const install = NodePath.join(
+          home,
+          ".t3/device/tools",
+          `expo-device-hub@${DEVICE_HUB_VERSION}`,
+        );
+        const entry = NodePath.join(install, "node_modules/expo-device-hub/dist/server/cli.mjs");
+        await completeSdk(NodePath.join(home, "sdk"));
+        await NodeFSP.mkdir(NodePath.dirname(entry), { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(install, ".install-complete"), DEVICE_HUB_VERSION);
+        // Stands in for the hub: it serves /readyz and prints its startup link.
+        await NodeFSP.writeFile(
+          entry,
+          `import * as http from "node:http";
+const args = process.argv.slice(2);
+const token = args.includes("--require-token") ? "printed-token" : undefined;
+http.createServer((_request, response) => response.end("ok")).listen(Number(args[args.indexOf("--port") + 1]), "127.0.0.1", () => {
+  console.log("  Local:   http://localhost/" + (token ? "?token=" + token : ""));
+  console.log("state-dir=" + process.env.EXPO_DEVICE_HUB_STATE_DIR);
+});`,
+        );
+
+        const started = run("start");
+        expect(started.stderr).toBe("");
+        expect(JSON.parse(started.stdout).hubToken).toBe("printed-token");
+        expect(
+          JSON.parse(await NodeFSP.readFile(NodePath.join(state, "hub.json"), "utf8")).token,
+        ).toBe("printed-token");
+        expect((await NodeFSP.stat(NodePath.join(state, "hub.log"))).mode & 0o077).toBe(0);
+        expect(await NodeFSP.readFile(NodePath.join(state, "hub.log"), "utf8")).toContain(
+          `state-dir=${state}\n`,
+        );
+      } finally {
+        run("stop");
         await NodeFSP.rm(home, { recursive: true, force: true });
       }
     });

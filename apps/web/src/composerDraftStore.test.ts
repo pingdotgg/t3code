@@ -1277,6 +1277,20 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("keeps a picked workspace marked as picked when a draft moves environment", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId, envMode: "local" });
+    store.setDraftThreadContext(draftId, { envMode: "local", workspaceExplicit: true });
+
+    store.setDraftThreadContext(draftId, { projectRef: remoteProjectRef });
+
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
+      environmentId: OTHER_TEST_ENVIRONMENT_ID,
+      envMode: "local",
+      workspaceExplicit: true,
+    });
+  });
+
   it("clears stale upload metadata when retargeting a draft to another environment", () => {
     const store = useComposerDraftStore.getState();
     const hydratedFile: ComposerFileAttachment = {

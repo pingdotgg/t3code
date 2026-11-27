@@ -857,6 +857,18 @@ describe("server state projection", () => {
     expect(
       serverUpdateStateForProgressEvent("0.0.30", "0.0.31", {
         type: "complete",
+        result: { targetVersion: "0.0.31", method: "boot-service", updateId: "update-1" },
+      }),
+    ).toEqual({
+      status: "running",
+      stage: "resuming",
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+      updateId: "update-1",
+    });
+    expect(
+      serverUpdateStateForProgressEvent("0.0.30", "0.0.31", {
+        type: "complete",
         result: { targetVersion: "0.0.31", method: "desktop-app", desktopUpdateToken: "token" },
       }).stage,
     ).toBe("installing");

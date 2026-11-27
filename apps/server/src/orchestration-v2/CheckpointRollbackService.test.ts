@@ -86,6 +86,7 @@ it.effect.each(["initial", "waiting"])(
         worktreePath: process.cwd(),
         activeProviderThreadId: providerThreadId,
         modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+        deletedAt: null,
       },
       providerThread: { id: providerThreadId, providerSessionId, providerInstanceId },
       checkpoint: {
@@ -264,6 +265,7 @@ it.effect.each([
         branch,
         activeProviderThreadId: providerThreadId,
         modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+        deletedAt: null,
       },
       providerThread,
       providerSession: undefined,
@@ -563,6 +565,7 @@ it.effect.each([
           branch: "feature/rollback-reservation",
           activeProviderThreadId: providerThreadId,
           modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+          deletedAt: null,
         },
         providerThread: {
           id: providerThreadId,
@@ -1308,6 +1311,27 @@ it.layer(layerRollbackHistory.pipe(Layer.provideMerge(SqlitePersistence.layerMem
           records.providerThreads[0]?.nativeThreadRef?.nativeId,
           "native-before-restart",
         );
+      }),
+    );
+
+    it.effect("skips a pending rollback once the thread is deleted", () =>
+      Effect.gen(function* () {
+        const history = yield* seedRollbackHistory();
+        const thread = yield* history.store.getThread(history.threadId);
+        yield* history.store.apply({
+          id: EventId.make("rollback-history-deleted"),
+          type: "thread.deleted",
+          threadId: history.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: history.now,
+          payload: { ...thread, deletedAt: history.now, updatedAt: history.now },
+        });
+
+        yield* history.rollback(2);
+
+        assert.deepEqual(history.rollbackCounts, []);
+        assert.deepEqual(history.restored, []);
+        assert.deepEqual(history.committed, []);
       }),
     );
   },

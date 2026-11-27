@@ -487,10 +487,13 @@ export function IssuesPage() {
     const command = resolveShortcutCommand(event, keybindings, {
       context: { ...getShortcutContext(), rightPanelOpen: rightPanelState.isOpen },
     });
-    if (command !== "rightPanel.toggle") return;
+    if (command === "rightPanel.close" && !rightPanelState.isOpen) return;
+    if (command !== "rightPanel.toggle" && command !== "rightPanel.close") return;
     event.preventDefault();
     event.stopPropagation();
-    if (!event.repeat) toggleRightPanel();
+    if (event.repeat) return;
+    if (command === "rightPanel.close") closeSurface(panelSurface);
+    else toggleRightPanel();
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the document right panel shortcut

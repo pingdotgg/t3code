@@ -2001,7 +2001,13 @@ describe("group conversations", () => {
               yield* until(
                 orchestrator
                   .getThreadProjection(threadId)
-                  .pipe(Effect.map((p) => p.runs.at(-1)?.status === "completed")),
+                  .pipe(
+                    Effect.map(
+                      (p) =>
+                        p.runs.at(-1)?.status === "completed" &&
+                        p.checkpoints.some((checkpoint) => checkpoint.runId === p.runs.at(-1)?.id),
+                    ),
+                  ),
               );
               const warmed = yield* orchestrator.getThreadProjection(threadId);
               const checkpoint = warmed.checkpoints.at(-1)!;

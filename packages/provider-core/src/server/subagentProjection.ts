@@ -404,7 +404,7 @@ export function subagentHoldsCompletion(
 export function delegatedTaskProgress(projection: {
   readonly runs: OrchestrationV2ThreadProjection["runs"];
   readonly messages: ReadonlyArray<
-    Pick<OrchestrationV2ConversationMessage, "runId" | "notification">
+    Pick<OrchestrationV2ConversationMessage, "runId" | "notification" | "createdBy">
   >;
   readonly subagents: ReadonlyArray<
     Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
@@ -422,9 +422,17 @@ export function delegatedTaskProgress(projection: {
       run.status !== "rolled_back" &&
       !isOrchestrationV2PublicationRun(run),
   );
-  const active = workRuns.some(
-    (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
+  const held = (run: OrchestrationV2Run) => run.status === "queued" && run.queueHeld === true;
+  const active = workRuns.some((run) => !terminal(run.status) && !held(run));
+  // Held wakes wait on nobody, but a held message the user wrote is the child's next work.
+  const userRunIds = new Set(
+    projection.messages.flatMap((message) =>
+      message.createdBy === "user" && message.notification === undefined && message.runId !== null
+        ? [message.runId]
+        : [],
+    ),
   );
+  const awaitsUserRun = workRuns.some((run) => held(run) && userRunIds.has(run.id));
   const children =
     projection.subagents.some(subagentHoldsCompletion) ||
     projection.providerThreads.some((thread) =>
@@ -435,12 +443,14 @@ export function delegatedTaskProgress(projection: {
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];
   return {
     state:
-      active || resultRun === undefined
+      active || awaitsUserRun || resultRun === undefined
         ? ("working" as const)
         : children
           ? ("waiting_for_children" as const)
           : ("result_available" as const),
     resultRun,
+    /** Working only because of a held message the user wrote, which a cancel does not wait for. */
+    onlyAwaitsUserRun: awaitsUserRun && !active && resultRun !== undefined,
   };
 }
 

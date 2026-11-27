@@ -54,6 +54,7 @@ import {
 import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { LinkRequestCard } from "./LinkRequestCard";
+import { FeedbackRequestCard } from "./FeedbackRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import {
@@ -75,9 +76,6 @@ import {
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
-import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
-import { turnChanges } from "@t3tools/client-runtime/state/thread-repositories";
-import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   AuthFilesystemReadScope,
@@ -102,6 +100,7 @@ import {
   hostedThreadLink,
   parseThreadLinkHref,
   trimThreadAutolinkPadding,
+  threadLinkRefs,
 } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
@@ -126,6 +125,7 @@ import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-im
 import {
   contextCompactionTokenCounts,
   resolveViewedImageAsset,
+  viewedImageMarkdownSource,
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   renderCodexInlineDirectivesAsMarkdown,
@@ -228,8 +228,6 @@ import {
 } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "./CopyTextButton";
 import { useRememberMessage } from "../../components/useRememberMessage";
-import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
-import { setReviewSelectedSectionId } from "../review/reviewState";
 import { Menu } from "../../components/ui/Menu";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useBarInset, useContentTopInset } from "../../components/ui/useBarInset";
@@ -263,6 +261,7 @@ import {
   isContextCompactionActivityGroup,
   isContextHandoffActivityGroup,
   isLinkRequestActivityGroup,
+  isFeedbackRequestActivityGroup,
   isSecretRequestActivityGroup,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
@@ -359,6 +358,12 @@ import {
   THREAD_FEED_MAINTAIN_SCROLL_AT_END_THRESHOLD,
 } from "./threadFeedEndFollow";
 import { useMessageTimeFormatter } from "./useMessageTimeFormatter";
+import { perfProbe, type PerfProbe } from "../development/perf-probe-hooks";
+
+const linkedThreadEnvironmentIds = (markdown: string, environmentId: EnvironmentId) =>
+  hasThreadLinks(markdown)
+    ? threadLinkRefs(markdown, environmentId).map((ref) => ref.environmentId)
+    : [];
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // iOS blockquotes and selectable text measure separately; definite bubble width matches UIKit's drawing width.
@@ -1353,7 +1358,10 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   const liveMarkdown = useLiveThreadLinkLabels(
     trimThreadAutolinkPadding(props.markdown),
     props.environmentId,
-    useLinkedEnvironments(hasThreadLinks(props.markdown) ? props.environmentId : null),
+    useLinkedEnvironments(
+      hasThreadLinks(props.markdown) ? props.environmentId : null,
+      linkedThreadEnvironmentIds(props.markdown, props.environmentId),
+    ),
   );
   const [quoteSelection, setQuoteSelection] = useState<{
     markdown: string;
@@ -2028,7 +2036,6 @@ function renderFeedEntry(
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleUserMessage: (rowId: string, anchorKey: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
-    readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
@@ -2124,12 +2131,6 @@ function renderFeedEntry(
             onOpenDetails={props.onOpenSetupDetails}
           />
         ) : null}
-        {entry.checkpointSummary ? (
-          <TurnDiffStat
-            checkpoint={entry.checkpointSummary}
-            onOpenTurnDiff={props.onOpenTurnDiff}
-          />
-        ) : null}
       </View>
     );
   }
@@ -2141,6 +2142,7 @@ function renderFeedEntry(
         iconSubtleColor={iconSubtleColor}
         label={entry.label}
         providerStartingLabel={entry.providerStartingLabel}
+        providerStartingDriver={entry.providerStartingDriver}
       />
     );
   }
@@ -2180,9 +2182,20 @@ function renderFeedEntry(
     const thumbnailWidth = Math.floor((props.contentWidth - VIEWED_IMAGE_GAP) / 2);
     return (
       <View className="flex-row flex-wrap pb-2" style={{ gap: VIEWED_IMAGE_GAP }}>
-        {entry.paths.map((path) => (
+        {entry.images.map(({ path, pending }) => (
           <View key={path} style={{ width: thumbnailWidth }}>
-            {props.renderViewedImage({ href: path, alt: null, title: null })}
+            {pending ? (
+              // The running Read may not have written the file yet, so hold its frame unrequested.
+              <ThreadMarkdownImageView
+                uri={null}
+                sourceKey={path}
+                unavailable={false}
+                alt={null}
+                onPressPreview={props.onPressPreview}
+              />
+            ) : (
+              props.renderViewedImage({ href: path, alt: null, title: null })
+            )}
           </View>
         ))}
       </View>
@@ -2221,14 +2234,6 @@ function renderFeedEntry(
         hasFailure={entry.hasFailure}
         shimmer={entry.shimmer}
         thought={entry.thought}
-        trailing={
-          entry.checkpointSummary ? (
-            <TurnDiffStat
-              checkpoint={entry.checkpointSummary}
-              onOpenTurnDiff={props.onOpenTurnDiff}
-            />
-          ) : null
-        }
         onToggle={() => props.onToggleWorkGroup(entry.groupId, entry.id)}
       />
     );
@@ -2248,6 +2253,16 @@ function renderFeedEntry(
   if (entry.type === "activity-group" && isSecretRequestActivityGroup(entry)) {
     return (
       <SecretRequestCard
+        environmentId={props.environmentId}
+        projectedItem={entry.activities[0]!.projectedItem}
+        iconColor={iconSubtleColor}
+      />
+    );
+  }
+
+  if (entry.type === "activity-group" && isFeedbackRequestActivityGroup(entry)) {
+    return (
+      <FeedbackRequestCard
         environmentId={props.environmentId}
         projectedItem={entry.activities[0]!.projectedItem}
         iconColor={iconSubtleColor}
@@ -2765,12 +2780,6 @@ function renderFeedEntry(
           onPressPreview={props.onPressPreview}
           onPlaybackStart={props.onPlaybackStart}
         />
-        {showAssistantMeta && message.checkpointSummary ? (
-          <TurnDiffStat
-            checkpoint={message.checkpointSummary}
-            onOpenTurnDiff={props.onOpenTurnDiff}
-          />
-        ) : null}
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
             {props.onRememberMessage ? (
@@ -2844,60 +2853,6 @@ function renderFeedEntry(
   );
 }
 
-function TurnDiffStat(props: {
-  readonly checkpoint: ThreadCheckpointSummary;
-  readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
-}) {
-  const gt = useGT();
-  const { repositories, rootFiles, totals } = turnChanges(props.checkpoint);
-  const { additions, deletions } = totals;
-  const folderCount = repositories.length + (rootFiles.length > 0 ? 1 : 0);
-  const repositoriesLabel =
-    repositories.length === 0
-      ? null
-      : folderCount === 1
-        ? repositories[0]!.name
-        : gt("{count} repos", { count: folderCount });
-  const changedIn =
-    repositories.length === 0
-      ? null
-      : [
-          ...(rootFiles.length > 0 ? [gt("this folder")] : []),
-          ...repositories.map((repository) => repository.name),
-        ].join(", ");
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={
-        changedIn === null
-          ? gt(
-              "{files, plural, one {Review {files} file changed, {additions} additions, {deletions} deletions} other {Review {files} files changed, {additions} additions, {deletions} deletions}}",
-              { files: totals.count, additions, deletions },
-            )
-          : gt(
-              "{files, plural, one {Review {files} file changed in {folders}, {additions} additions, {deletions} deletions} other {Review {files} files changed in {folders}, {additions} additions, {deletions} deletions}}",
-              { files: totals.count, folders: changedIn, additions, deletions },
-            )
-      }
-      onPress={() => props.onOpenTurnDiff(props.checkpoint)}
-      className="min-h-11 shrink-0 flex-row items-center gap-2 px-2 active:bg-subtle"
-    >
-      {repositoriesLabel ? (
-        <Text className="max-w-28 text-xs text-foreground-muted" numberOfLines={1}>
-          {repositoriesLabel}
-        </Text>
-      ) : null}
-      <Text className="font-t3-medium text-xs tabular-nums text-adaptive-emerald-700-300">
-        +{formatDiffCount(additions)}
-      </Text>
-      <Text className="font-t3-medium text-xs tabular-nums text-adaptive-rose-700-300">
-        −{formatDiffCount(deletions)}
-      </Text>
-      <SymbolView name="chevron.right" size={12} tintColorClassName="accent-foreground-muted" />
-    </Pressable>
-  );
-}
-
 type UserMessageContentProps = {
   readonly text: string;
   readonly group?: ThreadGroup | null;
@@ -2920,7 +2875,10 @@ function UserMessageContent(props: UserMessageContentProps) {
   const liveText = useLiveThreadLinkLabels(
     props.text,
     props.environmentId,
-    useLinkedEnvironments(hasThreadLinks(props.text) ? props.environmentId : null),
+    useLinkedEnvironments(
+      hasThreadLinks(props.text) ? props.environmentId : null,
+      linkedThreadEnvironmentIds(props.text, props.environmentId),
+    ),
   );
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
   const text = replaceComposerContextReferences(liveText, (ref) => {
@@ -3245,6 +3203,14 @@ function DisclosureRow(props: {
 // instead of at width 0 and again when the new feed's own layout reports the same width.
 let lastSplitViewport: { windowWidth: number; width: number; height: number } | null = null;
 
+/** Tells mobile:metrics' probe the commit that first showed this thread's rows. */
+function PerfContentMark(props: { readonly probe: PerfProbe; readonly thread: string }) {
+  const { probe, thread } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the visible commit to the dev-only perf probe
+  useLayoutEffect(() => probe.contentShown(thread), [probe, thread]);
+  return null;
+}
+
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const [group, setGroup] = useState(props.group);
   if (!sameThreadGroup(group, props.group)) setGroup(props.group);
@@ -3274,19 +3240,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const [retainedMediaRowId, setRetainedMediaRowId] = useState<string | null>(null);
   const focused = useIsFocused();
   if (!focused && retainedMediaRowId !== null) setRetainedMediaRowId(null);
-  const onOpenTurnDiff = useCallback(
-    (checkpoint: ThreadCheckpointSummary) => {
-      setReviewSelectedSectionId(
-        scopedThreadKey(props.environmentId, props.threadId),
-        getReviewSectionIdForCheckpoint(checkpoint),
-      );
-      navigation.navigate("ThreadReview", {
-        environmentId: props.environmentId,
-        threadId: props.threadId,
-      });
-    },
-    [navigation, props.environmentId, props.threadId],
-  );
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
@@ -3888,7 +3841,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       workspaceRoot: props.workspaceRoot,
     });
     const media = viewedImage
-      ? resolveMarkdownMediaPreview(image.href, {
+      ? resolveMarkdownMediaPreview(viewedImageMarkdownSource(image.href), {
           environmentId: props.environmentId,
           threadId: props.threadId,
           workspaceRoot: props.workspaceRoot,
@@ -4332,7 +4285,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (entry.type === "html-render") {
       return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
     }
-    if (workRowSizing.fixedRowHeight === undefined || entry.checkpointSummary) {
+    if (workRowSizing.fixedRowHeight === undefined) {
       return undefined;
     }
     switch (entry.type) {
@@ -4444,7 +4397,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onToggleWorkRow,
             onToggleUserMessage,
             onToggleTurnFold,
-            onOpenTurnDiff,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,
             markdownLinkHandlers,
@@ -4508,6 +4460,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           className="flex-1"
           style={splitLayout && viewportWidth > 0 ? { width: viewportWidth } : undefined}
         >
+          {perfProbe && !settling && props.feed.length > 0 ? (
+            <PerfContentMark key={feedThreadKey} probe={perfProbe} thread={feedThreadKey} />
+          ) : null}
           {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
           <KeyboardAwareLegendList
             ref={attachList}

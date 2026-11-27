@@ -20,6 +20,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import type { MigrationError } from "effect/sql/Migrator";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
@@ -44,6 +45,7 @@ import * as ThreadViewers from "../ThreadViewers.ts";
 import * as EventStore from "../EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
+import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -73,6 +75,7 @@ import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
 import * as ThreadForkService from "../ThreadForkService.ts";
+import { ThreadWorktreeRestore } from "../../workspace/restoreMissingWorktree.ts";
 import {
   runOrchestratorV2Scenario,
   type OrchestratorV2ScenarioStepError,
@@ -158,6 +161,7 @@ export function makeReplayServerConfig(
       providerStatusCacheDir,
       worktreesDir,
       worktreeCheckoutCacheDir: path.join(providerStatusCacheDir, "worktree-checkouts"),
+      workflowsDir: path.join(baseDir, "workflows"),
       attachmentsDir,
       codeIndexDir: path.join(stateDir, "code-index"),
       browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
@@ -325,11 +329,29 @@ export function layerWithRegistry<Error>(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
+  // A thread without a worktree would otherwise fall back to process.cwd(), so checkpoints
+  // would run git against the checkout running the tests and race its other users.
+  const layerScenarioWorkspacePolicy = Layer.effect(
+    RuntimePolicy.RuntimePolicyV2,
+    Effect.gen(function* () {
+      const workspace = yield* checkpointWorkspace(
+        scenario.name.replace(/[^a-z0-9_-]+/gi, "-"),
+      ).pipe(Effect.orDie);
+      return {
+        resolve: (input) =>
+          Effect.succeed({
+            runtimeMode: input.thread.runtimeMode,
+            interactionMode: input.thread.interactionMode,
+            cwd: input.thread.worktreePath ?? workspace,
+          }),
+      };
+    }),
+  );
   const layerRuntimeBase =
     scenario.runtimePolicyOverride === undefined
-      ? RuntimePolicy.layer
+      ? layerScenarioWorkspacePolicy
       : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
-          Layer.provide(RuntimePolicy.layer),
+          Layer.provide(layerScenarioWorkspacePolicy),
         );
   const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
   // Share one continuation queue across adapters, orchestrator, and worker through layer memoization.
@@ -453,6 +475,48 @@ export function layerWithRegistry<Error>(
   const layerProviderSwitchServiceProvided = ProviderSwitchService.layer.pipe(
     Layer.provide(layerProvidedRegistry),
   );
+  const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        McpAppModelContext.layerEmpty,
+        PreviewAgentActivity.layer,
+        layerCheckpointServiceProvided,
+        layerEventSinkProvided,
+        IdAllocator.layer,
+        layerProviderEventIngestorProvided,
+        layerServerSettings,
+        layerStores,
+        ThreadCommandExecutor.layer,
+      ),
+    ),
+  );
+  const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectKnowledge.ProjectKnowledge)({
+          nativeDeliveryEstimate: () => Effect.succeed(0),
+          readDeliveryState: () =>
+            Effect.succeed({ sent: false, sentThisAttempt: false, uncertain: false }),
+          readSentDeliveries: () => Effect.succeed([]),
+          recordViews: () => Effect.void,
+          recall: () => Effect.succeed({ _tag: "Skipped", reason: "no_match" }),
+        }),
+        layerContextHandoffServiceProvided,
+        layerEventSinkProvided,
+        IdAllocator.layer,
+        layerStores,
+        layerProviderSessionManagerProvided,
+        Layer.mock(ProviderAuthService.ProviderAuthService)({
+          tryHandlePromptCommand: () => Effect.succeed(false),
+        }),
+        layerRunExecutionServiceProvided,
+        layerRuntime,
+        layerServerConfig,
+        layerServerSettings,
+        Layer.mock(ThreadWorktreeRestore)({ takeRecreated: () => Effect.undefined }),
+      ),
+    ),
+  );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
     Layer.provide(
       Layer.mock(ProjectKnowledge.ProjectKnowledge)({
@@ -535,47 +599,7 @@ export function layerWithRegistry<Error>(
       ),
     ),
   );
-  const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        McpAppModelContext.layerEmpty,
-        PreviewAgentActivity.layer,
-        layerCheckpointServiceProvided,
-        layerEventSinkProvided,
-        IdAllocator.layer,
-        layerProviderEventIngestorProvided,
-        layerServerSettings,
-        layerStores,
-        ThreadCommandExecutor.layer,
-      ),
-    ),
-  );
-  const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.mock(ProjectKnowledge.ProjectKnowledge)({
-          nativeDeliveryEstimate: () => Effect.succeed(0),
-          readDeliveryState: () =>
-            Effect.succeed({ sent: false, sentThisAttempt: false, uncertain: false }),
-          readSentDeliveries: () => Effect.succeed([]),
-          recordViews: () => Effect.void,
-          recall: () => Effect.succeed({ _tag: "Skipped", reason: "no_match" }),
-        }),
-        layerContextHandoffServiceProvided,
-        layerEventSinkProvided,
-        IdAllocator.layer,
-        layerStores,
-        layerProviderSessionManagerProvided,
-        Layer.mock(ProviderAuthService.ProviderAuthService)({
-          tryHandlePromptCommand: () => Effect.succeed(false),
-        }),
-        layerRunExecutionServiceProvided,
-        layerRuntime,
-        layerServerConfig,
-        layerServerSettings,
-      ),
-    ),
-  );
+
   const layerThreadManagementProvided = Layer.unwrap(
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -615,6 +639,7 @@ export function layerWithRegistry<Error>(
         layerServerSettings,
         layerThreadManagementProvided,
         layerStores,
+        ProjectionMaintenance.layer.pipe(Layer.provide(layerDatabase)),
       ),
     ),
   );

@@ -13,6 +13,7 @@ export function ComposerEditor({
   group: _group,
   selection,
   onPasteImages,
+  onPasteImagesPending: _onPasteImagesPending,
   onPasteText: _onPasteText,
   style,
   textStyle,

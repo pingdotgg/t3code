@@ -2923,17 +2923,32 @@ it.effect("does not admit later ancestor history through a portable fork handoff
       });
     const source = yield* projections.getThreadRecords(sourceThread, ["runs", "attempts"]);
     const throughRun = source.runs.find((run) => run.id === sourceRun)!;
+    const targetThread = ThreadId.make("portable-target");
+    yield* projections.apply({
+      id: EventId.make("portable-target-created"),
+      type: "thread.created",
+      threadId: targetThread,
+      providerInstanceId: instanceId,
+      occurredAt: at,
+      payload: {
+        ...threadPayload,
+        id: targetThread,
+        forkedFrom: { type: "run", threadId: sourceThread, runId: sourceRun },
+      },
+    });
+    const target = yield* projections.getThreadRecords(targetThread, []);
     const sourceItems = yield* ContextHandoffService.readForkHistoryItems(
       projections,
       source,
       throughRun,
+      target.thread,
     );
     assert.isFalse(sourceItems.some((entry) => entry.id === itemId(1)));
     const covered = ContextHandoffService.visibleDeltaRunOrdinals(source, sourceItems);
     assert.deepEqual(covered, { from: 3, to: 3 });
     const handoffs = yield* ContextHandoffService.ContextHandoffServiceV2;
     const portable = yield* handoffs.prepareProviderHandoff({
-      threadId: ThreadId.make("portable-target"),
+      threadId: targetThread,
       targetRunId: RunId.make("portable-target-run"),
       transferId: null,
       fromProviderThreadIds: [],

@@ -32,7 +32,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { KeyboardController } from "react-native-keyboard-controller";
+import { KeyboardController, KeyboardStickyView } from "react-native-keyboard-controller";
 
 import {
   AuthOrchestrationOperateScope,
@@ -91,7 +91,12 @@ import {
   resolveNewTaskBranchLabel,
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
-import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
+import {
+  handedShareIdAtom,
+  incomingShareImports,
+  noHandedShareIdAtom,
+  useIncomingShare,
+} from "../sharing/IncomingShareProvider";
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -320,12 +325,19 @@ export function NewTaskDraftScreen(props: {
     !incomingShare &&
     !hasImportedIncomingShare,
   );
-  const shareImportTarget = (() => {
-    if (!props.incomingShareId || flowKey === undefined || !flow.draftKey) return null;
-    if (!selectedProject || !incomingShare || isIncomingShareAwaitingServerConfig) return null;
+  // The route's share was prepared for the draft's initial project; a handed share joins whichever project is selected.
+  const importTargetFor = (share: typeof incomingShare, requireInitialProject: boolean) => {
+    if (flowKey === undefined || !flow.draftKey || !selectedProject || !share) return null;
+    if (
+      share.attachments.some((attachment) => attachment.type === "file") &&
+      selectedEnvironmentServerConfig === null
+    ) {
+      return null;
+    }
     const initialEnvironmentId = props.initialProjectRef?.environmentId;
     const initialProjectId = props.initialProjectRef?.projectId;
     if (
+      requireInitialProject &&
       initialEnvironmentId &&
       initialProjectId &&
       (selectedProject.environmentId !== initialEnvironmentId ||
@@ -341,9 +353,24 @@ export function NewTaskDraftScreen(props: {
         environmentId: String(selectedProject.environmentId),
         projectId: String(selectedProject.id),
       },
-      shareId: incomingShare.id,
+      shareId: share.id,
     };
-  })();
+  };
+  const shareImportTarget = props.incomingShareId ? importTargetFor(incomingShare, true) : null;
+  const handedShareId = useAtomValue(
+    flowKey === undefined ? noHandedShareIdAtom : handedShareIdAtom(flowKey),
+  );
+  // A share handed to this open draft merges in once the route's own share has finished. Not while
+  // submitting: the post-submit clear would drop content the queued message doesn't contain.
+  const handedShareImportTarget =
+    handedShareId && handedShareId !== props.incomingShareId && !incomingShare && !flow.submitting
+      ? importTargetFor(getShare(handedShareId), false)
+      : null;
+  useAtomValue(
+    handedShareImportTarget === null
+      ? idleShareImportPhaseAtom
+      : incomingShareImports.phaseAtom(handedShareImportTarget),
+  );
   const shareImportPhase = useAtomValue(
     shareImportTarget === null
       ? idleShareImportPhaseAtom
@@ -1013,30 +1040,32 @@ export function NewTaskDraftScreen(props: {
   if (!flow.selectedModel) {
     return (
       <ThreadScreenFallback header={<AppBar title={gt("New thread")} onBack={goBack} />}>
-        <View className="flex-1 justify-end gap-3 p-4">
-          {environmentControl}
-          <Text className="text-foreground-muted">
-            {environmentConnected && selectedEnvironmentServerConfig ? (
-              <T>
-                Your draft is saved on this device. <Var>{selectedEnvironmentLabel}</Var> has no
-                model available. Install or sign in to a provider there to choose one.
-              </T>
-            ) : (
-              <T>
-                Your draft is saved on this device. Connect to an environment to choose its first
-                model.
-              </T>
-            )}
-          </Text>
-          <ComposerEditor
-            draftKey={flow.draftKey}
-            value={flow.prompt}
-            onChangeText={flow.setPrompt}
-            placeholder={gt("Ask anything")}
-            multiline
-            style={{ minHeight: 64 }}
-          />
-        </View>
+        <KeyboardStickyView pointerEvents="box-none" style={{ flex: 1 }}>
+          <View pointerEvents="box-none" className="flex-1 justify-end gap-3 p-4">
+            {environmentControl}
+            <Text className="text-foreground-muted">
+              {environmentConnected && selectedEnvironmentServerConfig ? (
+                <T>
+                  Your draft is saved on this device. <Var>{selectedEnvironmentLabel}</Var> has no
+                  model available. Install or sign in to a provider there to choose one.
+                </T>
+              ) : (
+                <T>
+                  Your draft is saved on this device. Connect to an environment to choose its first
+                  model.
+                </T>
+              )}
+            </Text>
+            <ComposerEditor
+              draftKey={flow.draftKey}
+              value={flow.prompt}
+              onChangeText={flow.setPrompt}
+              placeholder={gt("Ask anything")}
+              multiline
+              style={{ minHeight: 64 }}
+            />
+          </View>
+        </KeyboardStickyView>
       </ThreadScreenFallback>
     );
   }

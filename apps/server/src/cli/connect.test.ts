@@ -278,3 +278,65 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     );
   },
 );
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))(
+  "t3 connect link next step",
+  (it) => {
+    it.effect("tells the user to restart a server that is already running, not to start one", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-connect-link-test-" });
+        const relayClientPath = `${baseDir}/bin/cloudflared`;
+        yield* fs.makeDirectory(`${baseDir}/bin`, { recursive: true });
+        yield* fs.writeFileString(
+          relayClientPath,
+          `#!/bin/sh\necho "cloudflared version ${RelayClient.CLOUDFLARED_VERSION}"\n`,
+        );
+        yield* fs.chmod(relayClientPath, 0o755);
+        yield* fs.makeDirectory(`${baseDir}/userdata/secrets`, { recursive: true });
+        yield* fs.writeFileString(
+          `${baseDir}/userdata/secrets/cloud-cli-oauth-token.bin`,
+          JSON.stringify({
+            accessToken: "access",
+            refreshToken: "refresh",
+            expiresAtEpochMs: 4_102_444_800_000,
+            identity: "user@example.com",
+          }),
+        );
+        const state = yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: 3773,
+        });
+        yield* persistServerRuntimeState({
+          path: `${baseDir}/userdata/server-runtime.json`,
+          state: { ...state, pid: process.pid },
+        });
+
+        yield* Command.runWith(makeCli({ cloudEnabled: true }), { version: "0.0.0" })([
+          "connect",
+          "link",
+          "--headless",
+          "--base-dir",
+          baseDir,
+        ]).pipe(
+          Effect.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({ env: { T3CODE_CLOUDFLARED_PATH: relayClientPath } }),
+            ),
+          ),
+        );
+
+        const printed = (yield* TestConsole.logLines).join("\n");
+        const restart = yield* resolveHostCliCommand("service restart", ["--base-dir", baseDir]);
+        const serve = yield* resolveHostCliCommand("serve", ["--base-dir", baseDir]);
+        assert.include(printed, "✓ Authorized as user@example.com");
+        assert.include(printed, `\`${restart.command}\``);
+        assert.notInclude(printed, `\`${serve.command}\``);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provide(Layer.fresh(TestConsole.layer)),
+      ),
+    );
+  },
+);

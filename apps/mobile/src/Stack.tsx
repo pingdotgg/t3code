@@ -144,6 +144,8 @@ import { SettingsProjectGroupingRouteScreen } from "./features/settings/Settings
 import { SettingsProjectOverviewRouteScreen } from "./features/settings/SettingsProjectOverviewRouteScreen";
 import { UsageLimitAccountScreen } from "./features/usage/UsageLimitsPooled";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
+import { WorkflowRunRouteScreen } from "./features/workflows/WorkflowRunRouteScreen";
+import { WorkflowStepSheet } from "./features/workflows/WorkflowStepSheet";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
 import { SettingsNotificationsRouteScreen } from "./features/settings/SettingsNotificationsRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
@@ -215,6 +217,7 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   NewTaskRepositories: msg("Repositories"),
   AddProject: msg("Add project"),
   ThreadFiles: msg("Files"),
+  WorkflowRun: msg("Run", { $context: "noun, page title for one workflow run" }),
   SettingsLegal: msg("Legal"),
   ConnectOnboarding: msg("Set up {product}", { product: "T3 Connect" }),
   Connections: msg("Environments"),
@@ -806,6 +809,15 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadQueue: createNativeStackScreen({
       screen: ThreadQueueSheet,
       options: sheetRoute({ detent: 0.65, androidMaxDetent: 0.95 }),
+    }),
+    WorkflowRun: createNativeStackScreen({
+      screen: WorkflowRunRouteScreen,
+      linking: { path: "workflows/:environmentId/:runId" },
+      options: pageRoute(),
+    }),
+    WorkflowStep: createNativeStackScreen({
+      screen: WorkflowStepSheet,
+      options: sheetRoute({ detent: 0.6, androidMaxDetent: 0.95 }),
     }),
     ThreadBackgroundWork: createNativeStackScreen({
       screen: ThreadBackgroundWorkSheet,

@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { claudeTelemetryOptOut } from "@t3tools/provider-core/server/providerTelemetry";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
@@ -69,6 +70,7 @@ function withFakeClaudeEnv<A, E, R>(
     imageAttemptLog?: string;
     configDirMustBe?: string;
     cwdMustNotBe?: string;
+    settingsLog?: string;
     claudeConfig?: Partial<ClaudeSettings>;
   },
   effectFn: (textGeneration: ProviderTextGeneration) => Effect.Effect<A, E, R>,
@@ -93,6 +95,7 @@ function withFakeClaudeEnv<A, E, R>(
       T3_FAKE_CLAUDE_IMAGE_REJECTION: input.imageRejection,
       T3_FAKE_CLAUDE_IMAGE_ATTEMPT_LOG: input.imageAttemptLog,
       T3_FAKE_CLAUDE_CWD_MUST_NOT_BE: input.cwdMustNotBe,
+      T3_FAKE_CLAUDE_SETTINGS_LOG: input.settingsLog,
       T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE: input.configDirMustBe,
     };
     const environment: NodeJS.ProcessEnv = {
@@ -115,29 +118,101 @@ function withFakeClaudeEnv<A, E, R>(
   }).pipe(Effect.scoped);
 }
 
+const reviewGuideInput = {
+  number: 12,
+  title: "Review a change",
+  description: "",
+  baseBranch: "main",
+  baseCommit: "base",
+  settledReview: "",
+  modelSelection: createModelSelection(
+    ProviderInstanceId.make("claudeAgent"),
+    SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+  ),
+};
+
 it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
-  it.effect("loads only user settings when generating review guides", () =>
-    withFakeClaudeEnv(
-      {
-        output: JSON.stringify({ structured_output: { stops: [] } }),
-        argsMustContain: "--setting-sources user",
-        expectedTools: "Read,Grep,Glob,Bash",
-      },
-      (textGeneration) =>
-        textGeneration.generateReviewGuide({
-          cwd: process.cwd(),
-          number: 12,
-          title: "Review a change",
-          description: "",
-          baseBranch: "main",
-          baseCommit: "base",
-          settledReview: "",
-          modelSelection: createModelSelection(
-            ProviderInstanceId.make("claudeAgent"),
-            SYNTHETIC_CLAUDE_CAPABLE_MODEL,
-          ),
+  it.effect("reads a relative settings path for a review guide from the project folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-guide-" });
+      const project = path.join(root, "project");
+      const checkout = path.join(root, "checkout");
+      for (const [directory, origin] of [
+        [project, "project"],
+        [checkout, "checkout"],
+      ] as const) {
+        yield* fs.makeDirectory(directory);
+        yield* fs.writeFileString(
+          path.join(directory, "claude.json"),
+          JSON.stringify({ env: { ORIGIN: origin } }),
+        );
+      }
+      const settingsLog = path.join(root, "settings.json");
+      yield* withFakeClaudeEnv(
+        {
+          output: JSON.stringify({ structured_output: { stops: [] } }),
+          expectedTools: "Read,Grep,Glob,Bash",
+          settingsLog,
+          claudeConfig: { homePath: path.join(root, "home"), launchArgs: "--settings claude.json" },
+        },
+        (textGeneration) =>
+          textGeneration.generateReviewGuide({
+            ...reviewGuideInput,
+            cwd: checkout,
+            projectCwd: project,
+          }),
+      );
+      expect(JSON.parse(yield* fs.readFileString(settingsLog))).toEqual({
+        env: { ORIGIN: "project", ...claudeTelemetryOptOut },
+        disableAllHooks: true,
+      });
+    }),
+  );
+
+  it.effect("gives a review guide the user's settings without their pre-approved tools", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-guide-" });
+      const home = path.join(root, "home");
+      yield* fs.makeDirectory(home);
+      yield* fs.writeFileString(
+        path.join(home, "settings.json"),
+        JSON.stringify({
+          env: { ENDPOINT: "user", SHARED: "user" },
+          permissions: { allow: ["Bash(touch:*)"], deny: ["Read(./private/**)"] },
         }),
-    ),
+      );
+      const settingsLog = path.join(root, "settings.json");
+      const launchSettings = JSON.stringify({
+        env: { SHARED: "launch" },
+        permissions: { allow: ["Bash(npm test:*)"], deny: ["Read(./keys/**)"] },
+      });
+      yield* withFakeClaudeEnv(
+        {
+          output: JSON.stringify({ structured_output: { stops: [] } }),
+          // The CLI loads no settings file of its own.
+          argsMustContain: "--setting-sources  --disable-slash-commands",
+          argsMustNotContain: "ENDPOINT",
+          expectedTools: "Read,Grep,Glob,Bash",
+          settingsLog,
+          claudeConfig: { homePath: home, launchArgs: `--settings '${launchSettings}'` },
+        },
+        (textGeneration) =>
+          textGeneration.generateReviewGuide({
+            ...reviewGuideInput,
+            cwd: process.cwd(),
+            projectCwd: process.cwd(),
+          }),
+      );
+      expect(JSON.parse(yield* fs.readFileString(settingsLog))).toEqual({
+        env: { ENDPOINT: "user", SHARED: "launch", ...claudeTelemetryOptOut },
+        permissions: { deny: ["Read(./private/**)", "Read(./keys/**)"] },
+        disableAllHooks: true,
+      });
+    }),
   );
 
   it.effect(

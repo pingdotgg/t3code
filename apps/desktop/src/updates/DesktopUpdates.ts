@@ -51,6 +51,7 @@ import {
   reduceDesktopUpdateStateOnCheckStart,
   reduceDesktopUpdateStateOnDownloadComplete,
   reduceDesktopUpdateStateOnDownloadFailure,
+  reduceDesktopUpdateStateOnDownloadLost,
   reduceDesktopUpdateStateOnDownloadProgress,
   reduceDesktopUpdateStateOnDownloadStart,
   reduceDesktopUpdateStateOnInstallFailure,
@@ -80,6 +81,7 @@ const UpdateInfo = Schema.Struct({
   releaseNotes: Schema.optional(Schema.Unknown),
   releaseName: Schema.optional(Schema.NullOr(Schema.String)),
   releaseDate: Schema.optional(Schema.String),
+  downloadedFile: Schema.optional(Schema.String),
 });
 
 const DownloadProgressInfo = Schema.Struct({
@@ -242,7 +244,8 @@ function redactMessage(message: string): string {
       /\b[\w-]*(?:token|password|secret|credential|api[_-]?key)[\w-]*\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
       "[redacted credential]",
     )
-    .slice(0, 512);
+    .slice(0, 512)
+    .replace(/\p{Surrogate}$/u, "");
 }
 
 function summarizeCause(cause: unknown, depth: number): string {
@@ -279,7 +282,9 @@ function summarizeCause(cause: unknown, depth: number): string {
 
 export function describeUpdateErrorCause(cause: unknown): string {
   try {
-    return summarizeCause(cause, 0).slice(0, 1024);
+    return summarizeCause(cause, 0)
+      .slice(0, 1024)
+      .replace(/\p{Surrogate}$/u, "");
   } catch {
     return "UnknownError";
   }
@@ -403,6 +408,7 @@ export const make = Effect.gen(function* () {
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const notAppliedVersionRef = yield* Ref.make(Option.none<string>());
+  const downloadedFileRef = yield* Ref.make(Option.none<string>());
   // The release a track switch's database check cleared. A build crosses to another track only
   // through such a switch, and never below that release: version order alone cannot tell whether
   // a Stable knows a Nightly's migrations.
@@ -997,6 +1003,19 @@ export const make = Effect.gen(function* () {
       }),
     ).pipe(Effect.withSpan("desktop.updates.installDownloadedUpdate"));
 
+  const downloadedFileMissing = Ref.get(downloadedFileRef).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.succeed(false),
+        onSome: (path) =>
+          fileSystem.exists(path).pipe(
+            Effect.map((exists) => !exists),
+            Effect.orElseSucceed(() => false),
+          ),
+      }),
+    ),
+  );
+
   const installWithExpectedVersion = Effect.fn("desktop.updates.install")(function* (
     expectedVersion?: string,
   ) {
@@ -1008,10 +1027,35 @@ export const make = Effect.gen(function* () {
         state: yield* Ref.get(updateStateRef),
       };
     }
+    let installVersion = expectedVersion;
     const retained = yield* Ref.get(updateStateRef);
-    if (
+    const retainedVersion = retained.downloadedVersion;
+    const retainsExpectedDownload =
+      retainedVersion !== null &&
+      (expectedVersion === undefined || retainedVersion === expectedVersion);
+    // A cache cleaner can delete the archive; Squirrel.Mac would then fail every install attempt.
+    if (retainsExpectedDownload && (yield* downloadedFileMissing)) {
+      yield* logUpdaterWarning("the downloaded update file is gone; downloading it again", {
+        version: retainedVersion,
+      });
+      yield* updateState(reduceDesktopUpdateStateOnDownloadLost);
+      const download = yield* downloadAvailableUpdate(true);
+      if (!download.completed) {
+        return {
+          accepted: download.accepted,
+          completed: false,
+          failed: download.accepted,
+          state: yield* Ref.get(updateStateRef),
+        };
+      }
+      if (expectedVersion !== undefined) {
+        installVersion = (yield* Ref.get(updateStateRef)).downloadedVersion ?? expectedVersion;
+      }
+    } else if (
+      // A download can be hours old: a release published since replaces it before restarting.
+      // A prepared install pins its version, so it does not re-check.
       expectedVersion === undefined &&
-      retained.downloadedVersion !== null &&
+      retainsExpectedDownload &&
       (yield* checkForUpdates(
         "install",
         "acquire",
@@ -1023,7 +1067,7 @@ export const make = Effect.gen(function* () {
       // electron-updater compares a stale feed with the running build, not the retained download.
       if (
         refreshed.availableVersion === null ||
-        compareSemverVersions(refreshed.availableVersion, retained.downloadedVersion) <= 0
+        compareSemverVersions(refreshed.availableVersion, retainedVersion) <= 0
       ) {
         yield* setState(retained);
       } else {
@@ -1038,7 +1082,7 @@ export const make = Effect.gen(function* () {
         }
       }
     }
-    const result = yield* installDownloadedUpdate(expectedVersion);
+    const result = yield* installDownloadedUpdate(installVersion);
     return {
       accepted: result.accepted,
       completed: result.completed,
@@ -1249,6 +1293,7 @@ export const make = Effect.gen(function* () {
             }
             return;
           }
+          yield* Ref.set(downloadedFileRef, Option.fromNullishOr(info.downloadedFile));
           yield* setState(reduceDesktopUpdateStateOnDownloadComplete(state, info.version));
           yield* logUpdaterInfo("update downloaded", { version: info.version });
         }),

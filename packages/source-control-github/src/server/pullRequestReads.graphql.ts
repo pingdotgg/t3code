@@ -1084,9 +1084,19 @@ export const NodePullRequestReview = Schema.Struct({
 })
 export interface NodePullRequestReview extends Schema.Struct.Type<typeof NodePullRequestReview.fields> {}
 
+/** A threaded list of comments for a given pull request. */
+export const PullRequestReviewThread = Schema.Struct({
+  __typename: Schema.Literal("PullRequestReviewThread"),
+  /** The Node ID of the PullRequestReviewThread object */
+  id: Shared.ID,
+  /** Identifies the pull request associated with this thread. */
+  threadPullRequest: PullRequestNodeIdRepositoryPullRequestPullRequest
+})
+export interface PullRequestReviewThread extends Schema.Struct.Type<typeof PullRequestReviewThread.fields> {}
+
 /** An object with an ID. */
 export const PullRequestSubjectNodeNodeOther = Schema.Struct({
-  __typename: GraphQL.otherTypename<Shared.Typename.Node>()(["IssueComment", "PullRequestReviewComment", "PullRequestReview"]),
+  __typename: GraphQL.otherTypename<Shared.Typename.Node>()(["IssueComment", "PullRequestReviewComment", "PullRequestReview", "PullRequestReviewThread"]),
   /** ID of the object. */
   id: Shared.ID
 })
@@ -1103,7 +1113,7 @@ export const PullRequestSubject = GraphQL.query("PullRequestSubject", {
     ],
     selections: [
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){id}}"] },
-      { name: "node", body: ["(id:$", "subjectId", "){__typename id...on IssueComment{pullRequest{id}}...on PullRequestReviewComment{reviewCommentPullRequest:pullRequest{id}}...on PullRequestReview{reviewPullRequest:pullRequest{id}}}"] }
+      { name: "node", body: ["(id:$", "subjectId", "){__typename id...on IssueComment{pullRequest{id}}...on PullRequestReviewComment{reviewCommentPullRequest:pullRequest{id}}...on PullRequestReview{reviewPullRequest:pullRequest{id}}...on PullRequestReviewThread{threadPullRequest:pullRequest{id}}}"] }
     ],
     fragments: []
   },
@@ -1121,6 +1131,7 @@ export const PullRequestSubject = GraphQL.query("PullRequestSubject", {
       NodeIssueComment,
       PullRequestReviewComment,
       NodePullRequestReview,
+      PullRequestReviewThread,
       PullRequestSubjectNodeNodeOther
     ]))
   })

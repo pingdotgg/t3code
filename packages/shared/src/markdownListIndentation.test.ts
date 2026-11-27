@@ -5,11 +5,16 @@ import remarkRehype from "remark-rehype";
 import { type PluggableList, unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
+import { remarkCodexDirectives } from "./codexMarkdownDirectives.ts";
 import { remarkNormalizeListItemIndentation } from "./markdownListIndentation.ts";
 
 const processor = unified()
   .use(remarkParse)
-  .use([remarkGfm, remarkNormalizeListItemIndentation] satisfies PluggableList)
+  .use([
+    remarkGfm,
+    remarkNormalizeListItemIndentation,
+    remarkCodexDirectives,
+  ] satisfies PluggableList)
   .use(remarkRehype, { allowDangerousHtml: true });
 
 function renderMarkdown(markdown: string): string {
@@ -19,6 +24,12 @@ function renderMarkdown(markdown: string): string {
 }
 
 describe("remarkNormalizeListItemIndentation", () => {
+  it("renders a leading directive in over-indented list content", () => {
+    expect(renderMarkdown('-       :codex-file-citation{path="src/a.ts"}')).toBe(
+      '<ul>\n<li><a href="src/a.ts">a.ts</a></li>\n</ul>',
+    );
+  });
+
   it("renders same-line over-indented list content as list text", () => {
     const html = renderMarkdown(`why did you do this?
 

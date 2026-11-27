@@ -9,6 +9,7 @@ import { compactMetricAttributes, outcomeFromExit } from "./Attributes.ts";
 
 export const rpcRequestsTotal = Metric.counter("t3_rpc_requests_total", {
   description: "Total RPC requests handled by the websocket RPC server.",
+  incremental: true,
 });
 
 export const rpcRequestDuration = Metric.timer("t3_rpc_request_duration", {
@@ -17,6 +18,7 @@ export const rpcRequestDuration = Metric.timer("t3_rpc_request_duration", {
 
 export const orchestrationCommandsTotal = Metric.counter("t3_orchestration_commands_total", {
   description: "Total orchestration commands dispatched, by outcome.",
+  incremental: true,
 });
 
 export const orchestrationCommandDuration = Metric.timer("t3_orchestration_command_duration", {
@@ -27,6 +29,7 @@ export const orchestrationEffectClaimsTotal = Metric.counter(
   "t3_orchestration_effect_claims_total",
   {
     description: "Total completed orchestration effect outbox claim attempts by result.",
+    incremental: true,
   },
 );
 
@@ -48,10 +51,12 @@ export const otlpExportAttemptFailuresTotal = Metric.counter(
 
 export const providerSessionsTotal = Metric.counter("t3_provider_sessions_total", {
   description: "Total provider session lifecycle operations.",
+  incremental: true,
 });
 
 export const providerTurnsTotal = Metric.counter("t3_provider_turns_total", {
   description: "Total provider turn lifecycle operations.",
+  incremental: true,
 });
 
 export const providerTurnDuration = Metric.timer("t3_provider_turn_duration", {
@@ -84,6 +89,7 @@ export const serverEventLoopDelayMax = Metric.gauge("t3_server_event_loop_delay_
 
 export const runsTotal = Metric.counter("t3_runs_total", {
   description: "Runs that finished, by outcome. A later rollback does not count again.",
+  incremental: true,
 });
 
 export const runDuration = Metric.timer("t3_run_duration", {
@@ -96,6 +102,7 @@ export const runQueueWait = Metric.timer("t3_run_queue_wait", {
 
 export const gitCommandsTotal = Metric.counter("t3_git_commands_total", {
   description: "Total git commands executed by the server runtime.",
+  incremental: true,
 });
 
 export const gitCommandDuration = Metric.timer("t3_git_command_duration", {
@@ -104,10 +111,12 @@ export const gitCommandDuration = Metric.timer("t3_git_command_duration", {
 
 export const terminalSessionsTotal = Metric.counter("t3_terminal_sessions_total", {
   description: "Total terminal sessions started.",
+  incremental: true,
 });
 
 export const webhookDeliveriesTotal = Metric.counter("t3_webhook_deliveries_total", {
   description: "Webhook requests handled, by outcome and source.",
+  incremental: true,
 });
 
 export const webhookDeliveryDuration = Metric.timer("t3_webhook_delivery_duration", {
@@ -121,19 +130,23 @@ export const webhookHeldDelay = Metric.timer("t3_webhook_held_delay", {
 
 export const webhookRunsTotal = Metric.counter("t3_webhook_runs_total", {
   description: "Runs started from webhook deliveries, by outcome.",
+  incremental: true,
 });
 
 export const agentForgeCommandsTotal = Metric.counter("t3_agent_forge_commands_total", {
   description:
     "Forge CLI commands agents ran, by forge, kind, read intent, provider and whether they bypassed T3.",
+  incremental: true,
 });
 
 export const secretRequestsTotal = Metric.counter("t3_secret_requests_total", {
   description: "Secrets agents asked users for, by how each request ended.",
+  incremental: true,
 });
 
 export const secretRefsConsumedTotal = Metric.counter("t3_secret_refs_consumed_total", {
   description: "Secret refs tools tried to use, by result.",
+  incremental: true,
 });
 
 export const metricAttributes = (

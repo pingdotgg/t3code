@@ -25,6 +25,16 @@ const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   filesystemMetadata: vi.fn(),
 }));
 const parsedSources = vi.hoisted(() => [] as string[]);
+const nativeFileDrag = vi.hoisted(() => ({ enabled: false }));
+vi.mock(import("../useNativeFileDrag"), async (original) => {
+  const actual = await original();
+  return {
+    useNativeFileDrag: (...args: Parameters<typeof actual.useNativeFileDrag>) => {
+      const drag = actual.useNativeFileDrag(...args);
+      return nativeFileDrag.enabled ? { ...drag, draggable: true } : drag;
+    },
+  };
+});
 vi.mock(import("../markdown/wordsHast"), async (original) => {
   const actual = await original();
   return {
@@ -89,6 +99,17 @@ vi.mock(import("../state/filesystem"), async (original) => {
       environmentId === deniedEnvironmentId
         ? { canReadFiles: false, isPending: false, error: null }
         : actual.useFilesystemReadAccess(environmentId)) as never,
+  };
+});
+const threadWorktrees = vi.hoisted(() => new Map<string, string>());
+vi.mock(import("../state/entities"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    readThreadShell: ((ref: { threadId: string }) => {
+      const worktreePath = threadWorktrees.get(ref.threadId);
+      return worktreePath === undefined ? actual.readThreadShell(ref as never) : { worktreePath };
+    }) as never,
   };
 });
 vi.mock(import("../remoteOpen"), async (original) => ({
@@ -170,7 +191,9 @@ function setup() {
   appearance.value = "light";
   parsedSources.length = 0;
   settingsOverrides.mathRenderingEnabled = false;
+  nativeFileDrag.enabled = false;
   renderDiagram.mockReset();
+  threadWorktrees.clear();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
   filesystemMetadata.mockReset().mockResolvedValue(AsyncResult.success({ entries: [null] }));
 }
@@ -293,19 +316,37 @@ it("sizes a raw HTML image by width and height written with px units", async () 
   expect({ width, height }).toEqual({ width: 14, height: 7 });
 });
 
-it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
+it("fades a streaming reply's blocks in once, not again when it remounts", async () => {
   setup();
+  const isFading = (element: Element) =>
+    element.getAnimations().some((animation) => animation instanceof CSSTransition);
   const message = (
-    <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\nStill growing"} isStreaming />
+    <ChatMarkdown
+      cwd="/tmp/project"
+      text={"Finished block\n\nStill growing"}
+      isStreaming
+      streamingId="remounted-reply"
+    />
   );
   {
     await using first = await render(
-      <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\n"} isStreaming />,
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"Finished block\n\n"}
+        isStreaming
+        streamingId="remounted-reply"
+      />,
+    );
+    await vi.waitFor(() =>
+      expect(isFading(first.getByText("Finished block").element())).toBe(true),
     );
     await first.rerender(message);
+    await vi.waitFor(() => expect(isFading(first.getByText("Still growing").element())).toBe(true));
   }
   await using screen = await render(message);
-  await expect.element(screen.getByText("Still growing")).toBeVisible();
+  await expect
+    .element(screen.getByText("Still growing"))
+    .toHaveStyle({ opacity: "1", transitionDuration: "0s" });
   expect(parsedSources.filter((source) => source.includes("Finished block"))).toHaveLength(1);
 });
 
@@ -569,6 +610,27 @@ describe("ChatMarkdown workspace file opens", () => {
 
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
     expect(workspaceSearch).toHaveBeenCalledOnce();
+  });
+
+  it("opens a path from markdown rendered in another checkout under that checkout", async () => {
+    setup();
+    const scratchThread = { ...threadRef, threadId: ThreadId.make("scratch-thread") };
+    threadWorktrees.set(scratchThread.threadId, "/scratch/thread");
+    filesystemMetadata.mockResolvedValue(AsyncResult.success({ entries: [{ kind: "file" }] }));
+    using openFile = vi.spyOn(useRightPanelStore.getState(), "openFile");
+    await using screen = await renderText("[State](packages/state/filesystem.ts)", {
+      cwd: "/repo-a",
+      threadRef: scratchThread,
+    });
+    await act(async () => screen.container.querySelector("a")!.click());
+
+    await vi.waitFor(() =>
+      expect(openFile).toHaveBeenCalledExactlyOnceWith(
+        scratchThread,
+        "/repo-a/packages/state/filesystem.ts",
+        undefined,
+      ),
+    );
   });
 
   it.each([
@@ -886,6 +948,43 @@ describe("ChatMarkdown inline code selection", () => {
       );
     }
     expect(selections).toEqual(lines);
+  });
+
+  it("selects the whole line on triple-click beside a desktop-draggable inline-code file chip", async () => {
+    setup();
+    // Desktop on macOS and Windows makes local file chips draggable for native file drags.
+    nativeFileDrag.enabled = true;
+    filesystemMetadata.mockResolvedValue(AsyncResult.success({ entries: [{ kind: "file" }] }));
+    await using screen = await renderText(
+      "The template (`config/app.yaml.example`) and two docs still say 5 fps.",
+      {
+        threadRef: {
+          environmentId: EnvironmentId.make("workspace"),
+          threadId: ThreadId.make("thread"),
+        },
+      },
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen.container.querySelector("a.chat-markdown-file-link")?.getAttribute("draggable"),
+      ).toBe("true"),
+    );
+    const paragraph = screen.container.querySelector("p")!;
+    const text = [...paragraph.childNodes].find((node) =>
+      node.textContent?.includes("and two docs"),
+    )!;
+    const range = document.createRange();
+    range.setStart(text, text.textContent!.indexOf("and"));
+    range.setEnd(text, text.textContent!.indexOf("and") + 3);
+    const wordBox = range.getBoundingClientRect();
+    const paragraphBox = paragraph.getBoundingClientRect();
+    await userEvent.tripleClick(paragraph, {
+      position: {
+        x: wordBox.left - paragraphBox.left + wordBox.width / 2,
+        y: wordBox.top - paragraphBox.top + wordBox.height / 2,
+      },
+    });
+    expect(window.getSelection()?.toString().trim()).toBe(paragraph.textContent?.trim());
   });
 });
 

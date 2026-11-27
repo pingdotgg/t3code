@@ -79,7 +79,11 @@ export const makeIsWorktreeContainer = Effect.gen(function* () {
       if (hasIndex) return false;
     }
 
-    const worktrees = yield* git(["worktree", "list", "--porcelain", "-z"]);
+    // Pre-2.36 Git rejects worktree list -z; normalize its line output to NUL records.
+    const worktrees =
+      (yield* git(["worktree", "list", "--porcelain", "-z"])) ??
+      (yield* git(["worktree", "list", "--porcelain"]))?.replaceAll("\n", "\0") ??
+      null;
     if (worktrees === null) return false;
     // The first entry is the main worktree, which Git reports as the metadata directory here.
     const linkedWorktreePaths = splitNul(worktrees)

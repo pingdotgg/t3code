@@ -1,3 +1,4 @@
+import type { AgentFeedbackMode } from "@t3tools/contracts";
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
 import type { CodexComputerUseAvailability } from "./CodexComputerUse.ts";
 import * as Schema from "effect/Schema";
@@ -34,6 +35,7 @@ const toolInstructions = (availability: boolean | T3CodeToolAvailability): strin
 };
 
 export interface CodexRuntimeInfo {
+  readonly agentFeedback?: AgentFeedbackMode;
   readonly model: string;
   readonly modelName?: string | undefined;
   readonly reasoningEffort?: string | undefined;

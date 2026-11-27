@@ -47,6 +47,7 @@ import {
   PullRequestTargetIncompleteError,
   PullRequestHostRequiredError,
   PullRequestUrlUnavailableError,
+  PullRequestRepositoryInvalidError,
 } from "../../../pullRequest/pullRequestTarget.ts";
 import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
@@ -187,6 +188,7 @@ export const PullRequestToolError = Schema.Union([
   PullRequestTargetIncompleteError,
   PullRequestHostRequiredError,
   PullRequestUrlUnavailableError,
+  PullRequestRepositoryInvalidError,
   PullRequestThreadRequiredError,
   PullRequestLinkFailedError,
   PullRequestUnlinkFailedError,
@@ -673,6 +675,7 @@ export const CreatePullRequestResult = Schema.Struct({
   created: Schema.Boolean.annotate({
     description: "False when the branch already had an open PR.",
   }),
+  note: Schema.optional(Schema.String),
   next: Schema.optional(Schema.String),
 });
 export type CreatePullRequestResult = typeof CreatePullRequestResult.Type;
@@ -824,10 +827,12 @@ export const ReviewLineComment = Schema.Struct({
 export type ReviewLineComment = typeof ReviewLineComment.Type;
 
 const ReviewPullRequestTool = Tool.make("pull_request_review", {
-  description: "Approve, request changes or comment, optionally with line comments.",
+  description:
+    "Submit a review: approve, request changes, or comment, with optional line comments. Approving needs expectedHeadSha (headSha in pull_request_read). Refuses if the head moved from it.",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     verdict: PullRequestReviewVerdict,
+    expectedHeadSha: Schema.optional(TrimmedNonEmptyString),
     body: Schema.optional(Schema.String),
     comments: Schema.optional(Schema.Array(ReviewLineComment).check(Schema.isMaxLength(50))),
   }),
@@ -856,7 +861,7 @@ const MergePullRequestTool = Tool.make("pull_request_merge", {
     ),
     stack: Schema.optional(
       Schema.Boolean.annotate({
-        description: "Merge this and all open layers below. Incompatible with auto.",
+        description: "Merge this PR and every open stack layer below it at once.",
       }),
     ),
   }),

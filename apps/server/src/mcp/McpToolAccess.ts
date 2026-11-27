@@ -33,6 +33,7 @@ import {
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import {
+  assertBroadestAccess,
   assertFullAccess,
   assertLiveCaller,
   assertTargetWithinLimits,
@@ -192,6 +193,24 @@ export const writes = <P, A, E, R>(
       ),
     () => orchestratingCaller,
   );
+
+/**
+ * Drives work that runs for this environment's owner in modes its definition picks, such as a
+ * workflow run. `what` names it in a refusal, after "can" or "cannot".
+ */
+export const writesOwnerWork = <P, A, E, R>(
+  what: string,
+  handle: (params: P) => Effect.Effect<A, E, R>,
+) => {
+  const check = orchestratingCaller.pipe(
+    Effect.tap((caller) => assertNotLinked(caller, what)),
+    Effect.tap((caller) => assertBroadestAccess(caller, what)),
+  );
+  return declare(
+    (params: P) => check.pipe(Effect.flatMap(() => handle(params))),
+    () => check,
+  );
+};
 
 /** Requires handler capability checks, not thread control; linked work is refused the same way. */
 export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>

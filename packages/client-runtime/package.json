@@ -75,6 +75,10 @@
       "types": "./src/contractLabels.ts",
       "default": "./src/contractLabels.ts"
     },
+    "./workflows": {
+      "types": "./src/workflows.ts",
+      "default": "./src/workflows.ts"
+    },
     "./locales": {
       "types": "./src/locales.ts",
       "default": "./src/locales.ts"
@@ -131,6 +135,10 @@
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
     },
+    "./feedback-request": {
+      "types": "./src/feedbackRequest.ts",
+      "default": "./src/feedbackRequest.ts"
+    },
     "./link-batch": {
       "types": "./src/linkBatch.ts",
       "default": "./src/linkBatch.ts"
@@ -166,6 +174,10 @@
     "./authorization": {
       "types": "./src/authorization/index.ts",
       "default": "./src/authorization/index.ts"
+    },
+    "./connect-device-notices": {
+      "types": "./src/connectDeviceNotices.ts",
+      "default": "./src/connectDeviceNotices.ts"
     },
     "./environment": {
       "types": "./src/environment/index.ts",

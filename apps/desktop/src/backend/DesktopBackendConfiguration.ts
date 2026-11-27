@@ -3,6 +3,11 @@ import * as NodeOS from "node:os";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
 import { PSTACK_SOURCE_ROOT_ENV } from "@t3tools/shared/pstack";
+import {
+  DESKTOP_READINESS_CHALLENGE_PARAM,
+  DESKTOP_READINESS_PROOF_PATH,
+  isValidDesktopReadinessProof,
+} from "@t3tools/shared/desktopReadinessProof";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -90,6 +95,7 @@ const WSL_FORWARDED_ENV_NAMES = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "T3CODE_TELEMETRY_ENABLED",
+  "DO_NOT_TRACK",
   "T3CODE_FEATURE_FLAGS",
   // Otherwise the WSL server keeps exporting to endpoints from the bootstrap.
   "T3CODE_OTEL_SDK_DISABLED",
@@ -599,10 +605,16 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
   },
 );
 
+interface LaunchReadiness {
+  readonly secret: string;
+  readonly probe: Effect.Effect<DesktopBackendManager.BackendReadinessProbe>;
+}
+
 const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl")(function* (
   input: SharedBootstrapInput & {
     readonly port: number;
     readonly distro: string | null;
+    readonly readiness: LaunchReadiness;
   },
 ): Effect.fn.Return<
   DesktopBackendManager.DesktopBackendStartConfig,
@@ -628,6 +640,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     host: wslBindHost,
     desktopBootstrapToken: input.bootstrapToken,
     desktopBootstrapSecret: input.bootstrapSecret,
+    desktopReadinessSecret: input.readiness.secret,
     // PortSchema rejects 0 even when Tailscale Serve is disabled.
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
@@ -717,6 +730,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     bootstrap,
     bootstrapDelivery: "stdin" as const,
     httpBaseUrl,
+    // wsl.exe carries no control channel, so the backend proves over HTTP that it is this launch.
+    readinessProbe: input.readiness.probe,
     captureOutput: true,
     ...(runningDistro !== null ? { runningDistro } : {}),
   };
@@ -809,6 +824,22 @@ export const make = Effect.gen(function* () {
     }),
   );
 
+  // A secret per launch: only the backend started with it can pass that launch's probe.
+  const makeLaunchReadiness = Effect.gen(function* () {
+    const secret = Hex.encode(yield* random.randomBytes(32));
+    const probe = Effect.gen(function* () {
+      const challenge = Hex.encode(yield* random.randomBytes(16).pipe(Effect.orDie));
+      return {
+        path: `${DESKTOP_READINESS_PROOF_PATH}?${DESKTOP_READINESS_CHALLENGE_PARAM}=${challenge}`,
+        accept: (body: string) =>
+          isValidDesktopReadinessProof(secret, challenge, body).pipe(
+            Effect.provideService(Mac.Mac, mac),
+          ),
+      };
+    });
+    return { secret, probe } satisfies LaunchReadiness;
+  });
+
   const sharedInputs = Effect.gen(function* () {
     const bootstrapSecret = yield* getOrCreateBootstrapSecret;
     const bootstrapToken = yield* currentDesktopBootstrapToken(
@@ -836,6 +867,7 @@ export const make = Effect.gen(function* () {
       ...shared,
       port: backendExposure.port,
       distro: persistedSettings.wslDistro,
+      readiness: yield* makeLaunchReadiness,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
@@ -909,7 +941,8 @@ export const make = Effect.gen(function* () {
     resolveWsl: Effect.fnUntraced(
       function* (input) {
         const shared = yield* sharedInputs;
-        return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
+        const readiness = yield* makeLaunchReadiness;
+        return yield* resolveWslStartConfig({ ...shared, ...input, readiness }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
           Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
           Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),

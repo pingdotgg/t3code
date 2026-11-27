@@ -1,7 +1,6 @@
 # Install T3 Code
 
-T3 Code runs coding agents on your computer and lets you control them from its
-desktop, web, or mobile app. Set up the machine where the agents will work first.
+T3 Code runs coding agents on your computer (or server) and lets you control them from the desktop app, web app, or mobile app. Install T3 Code on the machine where your agents will run first.
 
 These instructions install the **ScriptedAlchemy fork**. Its
 [GitHub Releases](https://github.com/ScriptedAlchemy/t3code/releases) currently
@@ -11,16 +10,15 @@ community packages, and mobile store apps have their own release paths.
 
 ## Requirements
 
-You need an installed, authenticated provider before starting a thread. You can
-launch T3 Code and configure providers afterwards.
+You need at least one installed, authenticated coding agent (provider) before starting a thread. You can launch T3 Code first and set up providers from the [Welcome page](./welcome-page.md) or **Settings → Providers**.
 
 ## Command line
+
+Install the `t3` command to `~/.local/bin`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ScriptedAlchemy/t3code/main/scripts/install.sh | sh
 ```
-
-On Windows, in PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/ScriptedAlchemy/t3code/main/scripts/install.ps1 | iex
@@ -33,15 +31,15 @@ away; add the folder to your `PATH` for new windows. If a `t3` that the
 installer or the desktop app did not create is already there, it leaves that
 one alone and stops. This fork defaults to Nightly. Set `T3CODE_VERSION` to pin a release.
 
-| Task                                  | Command                                                                 |
-| ------------------------------------- | ----------------------------------------------------------------------- |
-| Start the server and open the web app | `t3`                                                                    |
-| Start the server without a browser    | `t3 serve`                                                              |
-| Use it from your other devices        | `t3 up` ([details](./remote-access.md))                                 |
-| Keep it running in the background     | `t3 service install` ([details](./background-service.md))               |
-| Move to the newest release            | `t3 update`                                                             |
-| Reclaim database space                | `t3 doctor` ([details](./background-service.md#reclaim-database-space)) |
-| Remove it again                       | `t3 uninstall`                                                          |
+| Task                          | Command                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------- |
+| Start server and open web app | `t3` (or `t3 ./my-project`)                                             |
+| Start server without browser  | `t3 serve`                                                              |
+| Set up remote access          | `t3 up` ([Remote access](./remote-access.md))                           |
+| Run in the background         | `t3 service install` ([Background service](./background-service.md))    |
+| Update                        | `t3 update`                                                             |
+| Reclaim database space        | `t3 doctor` ([Details](./background-service.md#reclaim-database-space)) |
+| Uninstall                     | `t3 uninstall`                                                          |
 
 Run `t3 help` or `t3 --help` for the full reference. To start in a new working
 directory, use an explicit path such as `t3 ./my-project`. A bare directory name
@@ -58,18 +56,13 @@ or build from this repository to run the fork.
 
 ### Intel Macs
 
-There is no `t3` executable for Intel Macs (the desktop app is available). To
-run a server there, build it from source with `vp`, which provides the Node version it needs
-([Install vp](../operations/development.md#first-checkout)):
+There is no standalone `t3` binary for Intel Macs—use the desktop app, or build a server from source with `vp` ([development runbook](../operations/00_development.md#first-checkout)):
 
 ```bash
 git clone https://github.com/ScriptedAlchemy/t3code
 cd t3code && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
-
-`t3 update` and the background service do not apply to a server run this way;
-update it with `git pull` and a rebuild.
 
 ## Desktop app
 
@@ -161,30 +154,7 @@ An existing npm installation runs upstream T3 Code.
 
 ### Windows Subsystem for Linux
 
-Choose a WSL distro in **Settings → Sharing & access** to run agents and projects
-there. Install the provider CLIs inside that distro. T3 Code installs its own
-server runtime there automatically; the first launch after an app update can
-take longer.
-
-### Open a project from a terminal
-
-With the desktop app already running on the same machine:
-
-```bash
-t3 app
-```
-
-This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `t3 app ../my-project`, to open another directory. It requires
-the desktop app, so a standalone server or an SSH session is not enough. If the
-command cannot reach the app, start or update the desktop app and try again.
-
-### Drop a folder on the sidebar
-
-Drag one or more folders from Finder, Explorer, or your file manager onto the
-sidebar. Each one opens as a project on this computer, the same as `t3 app`.
-Files dropped on a thread still attach to that thread. Browsers do not share
-folder paths, so in the web app use **Add project** instead.
+Select a WSL distro in **Settings → Sharing & access** to run agents and projects inside WSL (install provider CLIs inside that distro). T3 Code manages its own server runtime inside WSL automatically.
 
 ## Mobile app
 
@@ -223,110 +193,52 @@ before sharing.
 
 ## Providers
 
-Open **Settings → Providers** in the web or desktop app, select the environment,
-and enable the provider you want. Installation, login, and configuration belong
-to that environment's machine, even when you connect from a phone or another
-computer.
+Open **Settings → Providers** (web or desktop), select the environment, and enable the providers you use. Installation and sign-in always happen on the **environment's machine**.
 
-| Provider    | Install and authenticate                                                                                                                                  |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Codex       | [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), or install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`. |
-| Claude      | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`.                                                              |
-| Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                                                                                     |
-| Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                                                                                        |
-| Kiro        | Install [Kiro CLI](https://kiro.dev/docs/cli/), then run `kiro-cli login`.                                                                                |
-| OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
-| Antigravity | Install and sign in with Google from T3 Code's provider settings.                                                                                         |
-| Pi          | Install [Pi](./providers-pi.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                                                        |
-| Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
-| fx          | Install [fx](https://fx.sh) with `curl -fsSL https://fx.sh/setup.sh \| bash`, then run `fx login`.                                                        |
+| Provider         | Install and authenticate                                                                                                 | Guide                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------- |
+| **Codex**        | Connect with ChatGPT in Settings, or install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`. | [Codex](./providers-codex.md)             |
+| **Claude**       | Install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`.                               | [Claude](./providers-claude.md)           |
+| **Cursor**       | Sign in in Settings or install [Cursor CLI](https://cursor.com/cli) and run `agent login`.                               | [Cursor](./cursor.md)                     |
+| **Grok Build**   | Install [Grok Build CLI](https://x.ai/cli) and run `grok login`.                                                         | [Grok](./providers-grok.md)               |
+| **Antigravity**  | Install managed runtime and sign in with Google in Settings.                                                             | [Antigravity](./providers-antigravity.md) |
+| **OpenCode**     | Install [OpenCode](https://opencode.ai) and run `opencode auth login`.                                                   | [OpenCode](./providers-opencode.md)       |
+| **Kiro**         | Install [Kiro CLI](https://kiro.dev/docs/cli/) and run `kiro-cli login`.                                                 | [Kiro](./providers-kiro.md)               |
+| **Pi**           | Install [Pi](./providers-pi.md) (Node.js 22.19+) and run `pi` → `/login`.                                                | [Pi](./providers-pi.md)                   |
+| **Muse Code**    | Install [Muse Code](https://dev.meta.ai/docs/muse-code) and run `muse login`.                                            | [Muse Code](./providers-muse.md)          |
+| **fx**           | Install [fx](https://fx.sh) and run `fx login`.                                                                          | [fx](./providers-fx.md)                   |
+| **ACP Registry** | Add GitHub Copilot and other agents in **Settings → Providers → Add provider → Show more**.                              | [ACP](./providers-acp.md)                 |
 
-Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
-**Binary path** in provider settings, especially when using a version manager.
-Cursor's executable is `cursor-agent`, although its login command is
-`agent login`. Codex connected through ChatGPT and Antigravity can use their
-managed runtimes without a `PATH` entry.
-
-T3 Code warns when a provider version has known compatibility problems with your
-release. Check **Settings → Providers** on that environment for the recommended
-version or range. When its package manager supports installing a specific version,
-you can install the recommendation there. Otherwise use the provider's installer
-on the environment's machine. An unlisted version is unverified.
-
-When a provider CLI is behind its latest release, its provider card shows the
-available version. **Update now** runs the installer that owns the CLI
-(Homebrew, mise, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or
-the CLI's own update command when T3 Code cannot tell. Claude, Codex, and
-OpenCode installs T3 Code cannot identify stay manual: update them through the
-installer you used. T3 Code runs `mise upgrade`
-only for a tool your mise config requests as `latest` when the provider's binary
-path is a mise shim or under the tool's `installs/<tool>/latest` link; update a
-pinned version, or a path into one version's directory, through mise yourself.
-Update a CLI installed with Nix through Nix.
-Cursor and Antigravity update with T3 Code. Homebrew and Chocolatey installs
-compare against the version their package manager offers, which can trail the
-npm release; update Claude installed with Chocolatey through Chocolatey.
-
-The managed runtimes for Antigravity and for Codex connected through ChatGPT
-first install the release T3 Code tested. When T3 Code finds a newer compatible
-release, their setup in **Settings → Providers** offers an update.
-
-Add another provider instance for a separate account or configuration. Each
-instance can have its own environment variables, such as API keys or a custom
-base URL. Mark secret values as sensitive; after saving, T3 Code does not display
-their original values.
-
-For provider-specific setup and accounts, see [Codex](./providers-codex.md),
-[Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
-[Antigravity](./providers-antigravity.md), [Kiro](./providers-kiro.md),
-[Pi](./providers-pi.md), [Muse Code](./providers-muse.md), and [fx](./providers-fx.md).
+- **Binary path**: If a CLI isn't on the server's `PATH` (common with version managers), set **Binary path** in the provider's settings.
+- **Updates**: Click **Update now** on outdated provider cards (supports Homebrew, mise `latest`, npm/pnpm/Yarn/Bun/Volta/Vite+, or the CLI's own updater; update Nix, Chocolatey, or pinned mise installs manually).
+- **Multiple instances**: Add extra provider instances for separate accounts, API keys, or custom endpoints (mark secret env vars as sensitive).
 
 ### Provider check timeouts
 
-If a provider works in its CLI but T3 Code reports a timeout while checking it,
-allow more time in the T3 server's environment. For example, give Codex and
-Claude readiness checks 60 seconds:
+If a working CLI times out during T3 Code's readiness check, increase its probe deadline (in milliseconds) in the server's environment (or systemd override / `service.env`) and restart:
 
 ```bash
 T3CODE_CODEX_PROBE_TIMEOUT_MS=60000 T3CODE_CLAUDE_PROBE_TIMEOUT_MS=60000 t3 serve
 ```
 
-For a remote environment, set these on the machine running the T3 server.
-Keep them in your launcher or service configuration to retain them across
-updates, then restart the server. For systemd, add
-`Environment=T3CODE_CODEX_PROBE_TIMEOUT_MS=60000` under `[Service]` in a service
-override, reload systemd, and restart the service. Provider instances can also
-set their own overrides in Settings → Providers.
-
-Each variable extends that provider's readiness-probe deadlines; a phase whose
-default is already longer keeps its default. Providers with several phases can
-take longer than one deadline in total. Values must be whole milliseconds no
-greater than 2147483647; unset or invalid values keep the defaults.
-
-| Provider            | Environment variable                   |
-| ------------------- | -------------------------------------- |
-| Codex               | `T3CODE_CODEX_PROBE_TIMEOUT_MS`        |
-| Claude              | `T3CODE_CLAUDE_PROBE_TIMEOUT_MS`       |
-| Cursor              | `T3CODE_CURSOR_PROBE_TIMEOUT_MS`       |
-| Antigravity         | `T3CODE_ANTIGRAVITY_PROBE_TIMEOUT_MS`  |
-| Grok                | `T3CODE_GROK_PROBE_TIMEOUT_MS`         |
-| Kiro                | `T3CODE_KIRO_PROBE_TIMEOUT_MS`         |
-| fx                  | `T3CODE_FX_PROBE_TIMEOUT_MS`           |
-| Pi                  | `T3CODE_PI_PROBE_TIMEOUT_MS`           |
-| Muse Code           | `T3CODE_MUSE_PROBE_TIMEOUT_MS`         |
-| OpenCode            | `T3CODE_OPENCODE_PROBE_TIMEOUT_MS`     |
-| ACP Registry agents | `T3CODE_ACP_REGISTRY_PROBE_TIMEOUT_MS` |
-
-Longer deadlines also take longer to report a stalled check. These overrides
-cover readiness and discovery, including OpenCode server startup. Usage and
-config enrichment retain their own shorter limits. Turn execution, package
-installation, update checks, and shutdown limits keep their existing behavior.
+| Provider     | Environment variable                   |
+| ------------ | -------------------------------------- |
+| Codex        | `T3CODE_CODEX_PROBE_TIMEOUT_MS`        |
+| Claude       | `T3CODE_CLAUDE_PROBE_TIMEOUT_MS`       |
+| Cursor       | `T3CODE_CURSOR_PROBE_TIMEOUT_MS`       |
+| Antigravity  | `T3CODE_ANTIGRAVITY_PROBE_TIMEOUT_MS`  |
+| Grok         | `T3CODE_GROK_PROBE_TIMEOUT_MS`         |
+| Kiro         | `T3CODE_KIRO_PROBE_TIMEOUT_MS`         |
+| fx           | `T3CODE_FX_PROBE_TIMEOUT_MS`           |
+| Pi           | `T3CODE_PI_PROBE_TIMEOUT_MS`           |
+| Muse Code    | `T3CODE_MUSE_PROBE_TIMEOUT_MS`         |
+| OpenCode     | `T3CODE_OPENCODE_PROBE_TIMEOUT_MS`     |
+| ACP Registry | `T3CODE_ACP_REGISTRY_PROBE_TIMEOUT_MS` |
 
 ## Next steps
 
+- [User guide index](./README.md): overview of how T3 Code works.
 - [Working with threads](./thread-sidebar.md): start tasks and organize parallel work.
-- [Permission modes](./permission-modes.md): choose when agents ask before acting.
+- [Permission modes](./permission-modes.md): control when agents ask before acting.
 - [Remote access](./remote-access.md): connect from another device.
-- [Running in the background](./background-service.md): keep a host available.
-- [Updating T3 Code](./updating.md): update the app and connected servers.
-- [Managed policy](./managed-policy.md): configure T3 Code for everyone on a machine.
+- [Updating T3 Code](./updating.md): keep apps, servers, and providers up to date.

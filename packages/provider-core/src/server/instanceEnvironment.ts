@@ -1,4 +1,5 @@
 import type { ProviderInstanceEnvironment } from "@t3tools/contracts";
+import { stripAppImageRuntimeEnv } from "@t3tools/shared/appImageRuntimeEnv";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -11,10 +12,12 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,
 ) {
+  // Commands the agent runs inherit this env; the AppImage mount's libraries would shadow the system's.
+  const hostEnv = stripAppImageRuntimeEnv(baseEnv);
   const home = yield* HostProcess.HomeDirectory;
   const platform = yield* HostProcess.Platform;
   const windows = platform === "win32";
-  const next: NodeJS.ProcessEnv = environment?.length ? { ...baseEnv } : baseEnv;
+  const next: NodeJS.ProcessEnv = environment?.length ? { ...hostEnv } : hostEnv;
   for (const variable of environment ?? []) {
     // An unresolved secret reference carries no value; the registry resolves it for the provider.
     if (typeof variable.value !== "string") continue;

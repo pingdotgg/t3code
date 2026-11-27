@@ -1080,7 +1080,8 @@ describe("RpcSessionFactory", () => {
       const error = yield* Fiber.join(readyFiber);
       expect(error).toMatchObject({
         reason: "configuration",
-        message: "Connected environment environment-2 does not match environment-1.",
+        message:
+          "This address now runs a different T3 Code install (environment-2, not environment-1). Remove this connection and add it again.",
       });
       expect((yield* Fiber.join(configFiber))._tag).toBe("RpcClientError");
       expect((yield* Fiber.join(customConfigFiber))._tag).toBe("RpcClientError");
@@ -1149,6 +1150,49 @@ describe("RpcSessionFactory", () => {
       yield* connectWith({ ...ENCODED_SERVER_CONFIG, serverTime: "1970-01-01T01:00:00.000Z" });
       expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
       yield* connectWith(ENCODED_SERVER_CONFIG);
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(0);
+    }),
+  );
+
+  it.effect("refreshes the host clock when a liveness probe returns serverTime", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const ready = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket, {
+        ...ENCODED_SERVER_CONFIG,
+        serverTime: "1970-01-01T01:00:00.000Z",
+      });
+      yield* Fiber.join(ready);
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
+
+      const legacyProbe = yield* Effect.forkChild(session.probe);
+      const legacyRequest = yield* awaitRequest(socket, 1);
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Exit",
+          requestId: legacyRequest.id,
+          exit: { _tag: "Success", value: {} },
+        }),
+      );
+      yield* Fiber.join(legacyProbe);
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
+
+      const probe = yield* Effect.forkChild(session.probe);
+      const probeRequest = yield* awaitRequest(socket, 2);
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Exit",
+          requestId: probeRequest.id,
+          exit: {
+            _tag: "Success",
+            value: { serverTime: "1970-01-01T00:00:00.000Z" },
+          },
+        }),
+      );
+      yield* Fiber.join(probe);
       expect(toServerClock(PREPARED.environmentId, 0)).toBe(0);
     }),
   );

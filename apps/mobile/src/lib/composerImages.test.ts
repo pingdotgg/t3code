@@ -116,6 +116,11 @@ vi.mock("expo-file-system", () => ({
   Paths: { document: "file:///documents" },
 }));
 
+vi.mock("expo-crypto", () => ({
+  CryptoDigestAlgorithm: { SHA256: "SHA-256" },
+  digestStringAsync: async (_algorithm: string, data: string) => `sha256:${data}`,
+}));
+
 vi.mock("./uuid", () => ({
   uuidv4: () => "attachment-id",
 }));
@@ -154,6 +159,7 @@ describe("native pasted image cleanup", () => {
         mimeType: "image/jpeg",
         fileUri: `${STORED}-pasted-image.jpeg`,
         previewUri: `${STORED}-pasted-image.jpeg`,
+        contentDigest: "sha256:aGVsbG8=",
       }),
     ]);
     expect(attachments[0]).not.toHaveProperty("dataUrl");

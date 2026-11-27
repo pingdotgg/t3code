@@ -454,10 +454,7 @@ export interface PullRequestProviderApi {
 
   readonly getChangeRequestChecks?: (
     input: ProviderRepositoryRef & { readonly number: number },
-  ) => Effect.Effect<
-    Pick<PullRequestChecks, "state" | "checks" | "headSha" | "observedAt">,
-    PullRequestProviderError
-  >;
+  ) => Effect.Effect<PullRequestChecks, PullRequestProviderError>;
 
   readonly getChangeRequest: (
     input: ProviderRepositoryRef & { readonly number: number },
@@ -634,6 +631,8 @@ export interface PullRequestProviderApi {
       readonly verdict: PullRequestReviewVerdict;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+      /** Hosts that can pin a review to a head commit do; the caller has already checked it. */
+      readonly expectedHeadSha?: string;
     },
   ) => Effect.Effect<void, PullRequestProviderError>;
 

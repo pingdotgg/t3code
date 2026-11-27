@@ -40,7 +40,6 @@ import type {
 import { buildExpandedImagePreview } from "./ExpandedImagePreview";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   ContextChipPopover as UserMessageContextPopover,
   FileChip,
@@ -75,6 +74,7 @@ import {
 } from "../../reviewCommentContext";
 import { TimelineRowCtx } from "./timelineRowContext";
 import { userMessageFileLabel } from "./TimelineUserMessageRow.logic";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 function UserMessageMentionChip(props: {
   record: Extract<KnownComposerContextRecord, { kind: "mention" }>;
@@ -86,38 +86,39 @@ function UserMessageMentionChip(props: {
     resolvePathLinkTarget(props.record.path, ctx.workspaceRoot ?? ""),
   );
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <ContextChip
-            {...nativeDrag}
-            kind={documentChipKindForFileName(props.record.path) ?? "mention"}
-            render={<button type="button" />}
-            aria-label={gt("Preview {name}", { name: props.record.path })}
-            data-markdown-copy={props.copyMarkdown}
-            onClick={() => {
-              if (ctx.threadRef)
-                useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
-            }}
-          >
-            <WorkspaceEntryIcon
-              path={props.record.path}
-              environmentId={ctx.activeThreadEnvironmentId}
-              cwd={ctx.workspaceRoot}
-              theme={ctx.resolvedTheme}
-            />
-            <ContextChipLabel>{props.record.label}</ContextChipLabel>
-          </ContextChip>
-        }
-      />
-      <TooltipPopup className="pointer-events-auto">
-        <WorkspaceEntryTooltip
-          path={props.record.path}
-          environmentId={ctx.activeThreadEnvironmentId}
-          cwd={ctx.workspaceRoot}
-        />
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <ContextChip
+          {...nativeDrag}
+          kind={documentChipKindForFileName(props.record.path) ?? "mention"}
+          render={<button type="button" />}
+          aria-label={gt("Preview {name}", { name: props.record.path })}
+          data-markdown-copy={props.copyMarkdown}
+          onClick={() => {
+            if (ctx.threadRef)
+              useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
+          }}
+        >
+          <WorkspaceEntryIcon
+            path={props.record.path}
+            environmentId={ctx.activeThreadEnvironmentId}
+            cwd={ctx.workspaceRoot}
+            theme={ctx.resolvedTheme}
+          />
+          <ContextChipLabel>{props.record.label}</ContextChipLabel>
+        </ContextChip>
+      }
+      label={
+        <>
+          <WorkspaceEntryTooltip
+            path={props.record.path}
+            environmentId={ctx.activeThreadEnvironmentId}
+            cwd={ctx.workspaceRoot}
+          />
+        </>
+      }
+      className="pointer-events-auto"
+    />
   );
 }
 
@@ -482,7 +483,6 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         record.kind === "terminal" ? (
           <span data-markdown-copy={context.copyMarkdown}>
             <TerminalContextInlineChip
-              label={record.label}
               terminalLabel={record.terminalLabel}
               lineStart={record.lineStart}
               lineEnd={record.lineEnd}

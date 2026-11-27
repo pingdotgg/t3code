@@ -159,6 +159,18 @@ describe("V2 preview upgrade", () => {
         [128, "TaskFolders"],
         [129, "WorktreePathKeyIndex"],
         [130, "DeferredSlashCommandIndex"],
+        [131, "AgentFeedback"],
+        [132, "IssueTrackerAccounts"],
+        [133, "Workflows"],
+        [134, "SupersededRunAttemptIndex"],
+        [135, "LayoutCommandApprovals"],
+        [136, "WorkflowSkippedRuns"],
+        [137, "WorkflowRunIndexes"],
+        [138, "WorkflowRunTags"],
+        [139, "ForkHistoryMembership"],
+        [140, "WorkflowMailSender"],
+        [141, "WorkflowPools"],
+        [142, "WorkflowRunSubject"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -312,6 +324,18 @@ describe("V2 preview upgrade", () => {
         [128, "TaskFolders"],
         [129, "WorktreePathKeyIndex"],
         [130, "DeferredSlashCommandIndex"],
+        [131, "AgentFeedback"],
+        [132, "IssueTrackerAccounts"],
+        [133, "Workflows"],
+        [134, "SupersededRunAttemptIndex"],
+        [135, "LayoutCommandApprovals"],
+        [136, "WorkflowSkippedRuns"],
+        [137, "WorkflowRunIndexes"],
+        [138, "WorkflowRunTags"],
+        [139, "ForkHistoryMembership"],
+        [140, "WorkflowMailSender"],
+        [141, "WorkflowPools"],
+        [142, "WorkflowRunSubject"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

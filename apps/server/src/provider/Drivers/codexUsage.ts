@@ -148,6 +148,9 @@ export const CodexScanState = Schema.Struct({
   ),
   requestLedgerActive: Schema.mutableKey(Schema.optionalKey(Schema.Boolean)),
   malformedRecords: Schema.mutableKey(TokenCount),
+  malformedRecordTimestamps: Schema.mutableKey(
+    Schema.optionalKey(Schema.mutable(Schema.Array(Schema.Finite))),
+  ),
   sawSessionMeta: Schema.mutableKey(Schema.Boolean),
   modelProvider: Schema.mutableKey(Schema.String),
   turnId: Schema.mutableKey(Schema.String),
@@ -331,7 +334,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
   // A valid snapshot remains the next baseline even when its paired request is malformed.
   if (cumulative !== null) rebaseCodexUsage(state, cumulative, timestampMs);
   if (last === null || (hasCumulative && cumulative === null)) {
-    state.malformedRecords += 1;
+    noteMalformedRecord(state, timestampMs);
     return [];
   }
 
@@ -351,7 +354,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
   }
 
   if (last.total_tokens !== last.input_tokens + last.output_tokens) {
-    state.malformedRecords += 1;
+    noteMalformedRecord(state, timestampMs);
     return [];
   }
 
@@ -397,12 +400,12 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
           state.lastCumulativeUsage = previous;
           if (pending !== undefined) state.unreportedRequests = pending;
         }
-        state.malformedRecords += 1;
+        noteMalformedRecord(state, timestampMs);
         return [];
       }
       unreported = bridged;
     } else if (!restarted && rewound) {
-      state.malformedRecords += discardedRequests(pending, last);
+      noteMalformedRecord(state, timestampMs, discardedRequests(pending, last));
     }
     if (restarted) state.sequenceStartSignature = sequenceStart;
   } else {
@@ -410,7 +413,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
     // Advance expected totals for billed legacy requests so a cumulative re-emission is stale.
     const advanced = advanceCodexUsage(previous, last);
     if (advanced === null) {
-      state.malformedRecords += 1;
+      noteMalformedRecord(state, timestampMs);
       return [];
     }
     state.lastCumulativeUsage = advanced;
@@ -422,6 +425,12 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
     ...unreported.map((request) => codexRequestRecord(state, request.usage, request)),
     codexRequestRecord(state, last, codexAttribution(state, timestampMs)),
   ];
+}
+
+function noteMalformedRecord(state: CodexScanState, timestampMs: number, count = 1) {
+  state.malformedRecords += count;
+  const timestamps = (state.malformedRecordTimestamps ??= []);
+  for (let index = 0; index < count; index++) timestamps.push(timestampMs);
 }
 
 function codexAttribution(state: CodexScanState, timestampMs: number): CodexRequestAttribution {
@@ -509,7 +518,7 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
   parseLine: parseCodexLine,
   parseProjected: parseCodexRecord,
   state: { initial: initialCodexScanState, schema: CodexScanState },
-  readMalformedRecords: (state) => state.malformedRecords,
+  readMalformedRecords: (state) => state.malformedRecordTimestamps ?? [],
   // A rollout that moved after it was read leaves a copy in both places.
   sharedSessionsAcrossFiles: true,
 };

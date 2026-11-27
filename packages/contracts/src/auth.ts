@@ -537,6 +537,8 @@ export const AuthSessionState = Schema.Struct({
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
   permissions: authScopeResponseFields.permissions,
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
+  /** This client's own session, so it can tell what it did from what another client did. */
+  sessionId: Schema.optionalKey(AuthSessionId),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
 export type AuthSessionState = typeof AuthSessionState.Type;
