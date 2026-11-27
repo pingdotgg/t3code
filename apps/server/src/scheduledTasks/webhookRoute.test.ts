@@ -319,7 +319,7 @@ describe("webhook route", () => {
     }
   });
 
-  it("refuses HEAD probes without triggering the hook", async () => {
+  it("refuses HEAD probes and browser subresource loads without triggering the hook", async () => {
     let calls = 0;
     const { handler, dispose } = handlerFor(() => {
       calls += 1;
@@ -337,9 +337,22 @@ describe("webhook route", () => {
       expect(response.headers.get("allow")).toBe("GET, POST, PUT, PATCH");
       expect(response.headers.get("x-t3-hook-outcome")).toBe("method_not_allowed");
       expect(calls).toBe(0);
+      for (const dest of ["image", "script", "video", "style", "iframe"]) {
+        const embedded = await handler(
+          new Request("http://env.local/api/hooks/id/tok", { headers: { "sec-fetch-dest": dest } }),
+        );
+        expect(embedded.status).toBe(403);
+      }
+      expect(calls).toBe(0);
       const get = await handler(new Request("http://env.local/api/hooks/id/tok"));
       expect(get.status).toBe(202);
-      expect(calls).toBe(1);
+      for (const dest of ["document", "empty"]) {
+        const chosen = await handler(
+          new Request("http://env.local/api/hooks/id/tok", { headers: { "sec-fetch-dest": dest } }),
+        );
+        expect(chosen.status).toBe(202);
+      }
+      expect(calls).toBe(3);
     } finally {
       await dispose();
     }
