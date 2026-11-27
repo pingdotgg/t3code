@@ -288,6 +288,10 @@ describe("extractMarkdownLinkHrefs", () => {
     ["~~~\n[a](./a/README.md)\n\n~~~\n[b](./b/README.md)", ["./b/README.md"]],
     ["Type `` ``` `` then [a](./a/README.md)", ["./a/README.md"]],
     ["\\``[a](./a/README.md)` [b](./b/README.md)", ["./b/README.md"]],
+    ["```\n```js\n[a](./a/README.md)\n```\n[b](./b/README.md)", ["./b/README.md"]],
+    ["- ```\n  [a](./a/README.md)\n  ```\n\n[b](./b/README.md)", ["./b/README.md"]],
+    ["> ```\n> [a](./a/README.md)\n> ```\n\n[b](./b/README.md)", ["./b/README.md"]],
+    ["- ```\n  [a](./a/README.md)\n\n[b](./b/README.md)", ["./b/README.md"]],
   ])("skips links inside code in %s", (markdown, hrefs) => {
     expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
   });
