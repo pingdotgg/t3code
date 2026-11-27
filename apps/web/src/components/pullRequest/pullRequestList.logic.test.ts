@@ -29,6 +29,7 @@ import {
   selectedPullRequestAuthor,
   selectedPullRequestLabels,
   pullRequestLabelChoices,
+  rememberPullRequestAuthors,
   rememberPullRequestLabels,
   rankPullRequestMatches,
   rankPullRequestsBlockedOnAuthor,
@@ -1028,5 +1029,20 @@ describe("filter picker choices", () => {
       { name: "release-blocker", color: "b60205", count: 0 },
     ]);
     expect(rememberPullRequestLabels(next, [{ name: "docs", color: "0075ca" }])).toBe(next);
+  });
+
+  it("keeps a host-only author's avatar after the host answers a new search without them", () => {
+    const juliana = { login: "Juliana", name: "Juliana", avatarUrl: "https://host/juliana.png" };
+    const first = rememberPullRequestAuthors([], [juliana]);
+    const next = rememberPullRequestAuthors(first, [actor("theo")]);
+
+    expect(selectedPullRequestAuthor([], next, "juliana")?.actor).toEqual(juliana);
+    expect(rememberPullRequestAuthors(next, [actor("theo")])).toBe(next);
+    expect(rememberPullRequestAuthors(next, [])).toBe(next);
+
+    const moved = { ...juliana, avatarUrl: "https://host/juliana-new.png" };
+    expect(
+      selectedPullRequestAuthor([], rememberPullRequestAuthors(first, [moved]), "juliana")?.actor,
+    ).toEqual(moved);
   });
 });
