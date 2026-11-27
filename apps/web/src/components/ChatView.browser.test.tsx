@@ -19,6 +19,7 @@ import {
 import type * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { expect, it, vi } from "vite-plus/test";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
 
@@ -1148,4 +1149,52 @@ it("opening Settings without a page event closes the composer model picker and p
   await act(() => router.navigate({ to: "/settings" }));
   await expect.element(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
   await expect.element(permissions).not.toBeInTheDocument();
+});
+
+it("a new thread on a branch with changes opens them from thread details", async () => {
+  using _environment = installFakeEnvironment([]);
+  using _status = answerRpc(WS_METHODS.subscribeVcsStatus, () =>
+    Stream.concat(
+      Stream.make({
+        _tag: "snapshot" as const,
+        local: {
+          isRepo: true,
+          hasPrimaryRemote: false,
+          isDefaultRef: false,
+          refName: "feature",
+          hasWorkingTreeChanges: false,
+          workingTree: { files: [], insertions: 0, deletions: 0 },
+          branchChanges: { baseRef: "main", insertions: 150, deletions: 97 },
+        },
+        remote: null,
+      }),
+      Stream.never,
+    ),
+  );
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-43905");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make("thread-43905"),
+      // Its own checkout, so the status subscription is this test's and not an earlier one's.
+      worktreePath: "/workspace/render-43905",
+    });
+
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const changesRow = page.getByRole("button", { name: /^Changes\s*vs main\s*\+150/ });
+  // The row already shows the branch's totals, so it has to open them.
+  await expect.element(changesRow).toBeEnabled();
+
+  await changesRow.click();
+  // The panel reads the draft's checkout; without one it asks for a thread instead.
+  await expect.element(page.getByText("Loading changes...")).toBeVisible();
 });
