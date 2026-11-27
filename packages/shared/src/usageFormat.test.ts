@@ -242,6 +242,13 @@ describe("token formatting", () => {
     expect(formatTokens(999_999_999)).toBe("1B");
     expect(formatTokens(-999_999)).toBe("-1M");
   });
+
+  it("drops trailing zeros after the decimal point", () => {
+    expect(formatTokens(1_500)).toBe("1.5K");
+    expect(formatTokens(12_000)).toBe("12K");
+    expect(formatTokens(2_340_000)).toBe("2.34M");
+    expect(formatTokens(100_000)).toBe("100K");
+  });
 });
 
 describe("localized usage source messages", () => {
