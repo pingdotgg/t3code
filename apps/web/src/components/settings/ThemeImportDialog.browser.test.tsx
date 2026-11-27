@@ -243,14 +243,14 @@ it.each([
     { ...theme("a".repeat(47)), id: "custom-id" },
     { ...theme("a".repeat(47), "#f97316"), id: "custom-id" },
     `${"a".repeat(47)}🌙.json`,
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (1)",
+    `${"a".repeat(44)} (1)`,
   ],
   [
     "the same label after truncating at a space",
     { ...theme("a".repeat(46)), id: "custom-id" },
     { ...theme("a".repeat(46), "#f97316"), id: "custom-id" },
     `${"a".repeat(46)} 🌙.json`,
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (1)",
+    `${"a".repeat(44)} (1)`,
   ],
 ])(
   "does not split a surrogate pair when naming a kept copy after its file (%s)",
