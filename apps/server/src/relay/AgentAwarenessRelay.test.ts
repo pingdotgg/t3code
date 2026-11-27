@@ -1542,10 +1542,11 @@ describe("AgentAwarenessRelay team notification gating", () => {
     () =>
       Effect.gen(function* () {
         let allowThread = true;
+        let allowQueued = true;
         const triggers = yield* PubSub.unbounded<TeamService.TeamNotificationTriggerEvent>();
         const teamService = {
           shouldPublishRelayNotificationForThread: () => Effect.sync(() => allowThread),
-          shouldPublishRelayQueuedMessageNotification: () => Effect.succeed(true),
+          shouldPublishRelayQueuedMessageNotification: () => Effect.sync(() => allowQueued),
           formatUpstreamCompatThreadTitle: (_threadId: ThreadId, title: string) =>
             Effect.succeed(`alice: ${title}`),
           subscribeNotificationEvents: () => Stream.fromPubSub(triggers),
@@ -1608,10 +1609,23 @@ describe("AgentAwarenessRelay team notification gating", () => {
         assert.isTrue(liveRows.has(`${THREAD_ID}:queued:run-queued-approval-4`));
         assert.isTrue(liveRows.has(`${THREAD_ID}:queued:run-queued-approval-5`));
 
-        // Revoking access to the thread immediately tombstones its remaining synthetic rows
-        // without waiting for the 5-minute TTL.
-        const countBeforeRevoke = publications.length;
+        // When latestRunId advances to the queued run (so shouldPublishRelayNotificationForThread
+        // becomes false for an active turn author who doesn't own/follow the thread), the synthetic
+        // queued-message notifications MUST NOT self-tombstone.
+        const countBeforeRunAdvance = publications.length;
         allowThread = false;
+        yield* relay.publishThread(THREAD_ID);
+        yield* relay.drain;
+        const advanceTombstones = publications
+          .slice(countBeforeRunAdvance)
+          .filter((entry) => entry.state === null)
+          .map((entry) => extractPublishedThreadId(entry.url));
+        assert.deepEqual(advanceTombstones, []);
+
+        // Revoking access to the thread (shouldPublishRelayQueuedMessageNotification -> false)
+        // immediately tombstones its remaining synthetic rows without waiting for the 5-minute TTL.
+        const countBeforeRevoke = publications.length;
+        allowQueued = false;
         yield* relay.publishThread(THREAD_ID);
         yield* relay.drain;
         const revokeTombstones = publications
@@ -1627,6 +1641,7 @@ describe("AgentAwarenessRelay team notification gating", () => {
         // Once the thread completes, late queued-message triggers are skipped so idle/completed
         // cards are never resurrected.
         allowThread = true;
+        allowQueued = true;
         currentShell = shell({ status: "completed", title: "Deploy prod" });
         const countBeforeCompleted = publications.length;
         yield* PubSub.publish(triggers, {
@@ -1642,6 +1657,95 @@ describe("AgentAwarenessRelay team notification gating", () => {
         yield* Effect.yieldNow;
         yield* relay.drain;
         assert.equal(publications.length, countBeforeCompleted);
+      }),
+  );
+
+  it.effect(
+    "flushes all synthetic queued rows when publishing is disabled, retries transient tombstone failures, and preserves cleanup across credential rotation",
+    () =>
+      Effect.gen(function* () {
+        const triggers = yield* PubSub.unbounded<TeamService.TeamNotificationTriggerEvent>();
+        const teamService = {
+          shouldPublishRelayNotificationForThread: () => Effect.succeed(true),
+          shouldPublishRelayQueuedMessageNotification: () => Effect.succeed(true),
+          formatUpstreamCompatThreadTitle: (_threadId: ThreadId, title: string) =>
+            Effect.succeed(`alice: ${title}`),
+          subscribeNotificationEvents: () => Stream.fromPubSub(triggers),
+        } as unknown as TeamService.TeamService["Service"];
+
+        let failNextTombstone = true;
+        const { relay, publications, secrets } = yield* makeTestRelay({
+          readShell: () => Effect.succeed(shell({ status: "running", title: "Release" })),
+          teamService,
+          respond: (attempt) => {
+            // Fail the first tombstone (attempt #3) once to prove non-blocking retry recovery.
+            if (attempt === 3 && failNextTombstone) {
+              failNextTombstone = false;
+              return new Response("upstream timeout", { status: 503 });
+            }
+            return Response.json({ ok: true, deliveries: [] });
+          },
+        });
+        const extractPublishedThreadId = (url: string) =>
+          decodeURIComponent(url.split("/threads/")[1]?.split("/")[0] ?? "");
+
+        yield* relay.start();
+        yield* Effect.yieldNow;
+
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: THREAD_ID,
+          queuedRunId: "run-disable-1",
+          senderMemberId: null,
+          senderPseudo: "bob",
+          recipientMemberIds: [],
+          messagePreview: "First",
+          createdAt: "2026-04-06T12:01:00.000Z",
+        });
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: THREAD_ID,
+          queuedRunId: "run-disable-2",
+          senderMemberId: null,
+          senderPseudo: "charlie",
+          recipientMemberIds: [],
+          messagePreview: "Second",
+          createdAt: "2026-04-06T12:02:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        assert.equal(publications.length, 2);
+
+        // Rotate credential on the same relay AND disable publishing: BOTH rows must still be
+        // tombstoned (the first fails transiently with 503 and retries 1s later; the second
+        // succeeds immediately with the rotated credential).
+        yield* secrets.set(
+          RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+          new TextEncoder().encode("credential-rotated"),
+        );
+        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+        yield* relay.publishThread(THREAD_ID);
+        yield* relay.drain;
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        const successfulTombstones = publications
+          .slice(2)
+          .filter((entry) => entry.state === null)
+          .map((entry) => ({
+            id: extractPublishedThreadId(entry.url),
+            auth: entry.authorization,
+          }));
+        // Attempt #3 failed (row 1), attempt #4 succeeded (row 2), retry attempt #5 succeeded (row 1).
+        assert.equal(successfulTombstones.length, 3);
+        assert.isTrue(
+          successfulTombstones.every((entry) => entry.auth === "Bearer credential-rotated"),
+        );
+        assert.deepEqual([...new Set(successfulTombstones.map((entry) => entry.id))].toSorted(), [
+          `${THREAD_ID}:queued:run-disable-1`,
+          `${THREAD_ID}:queued:run-disable-2`,
+        ]);
       }),
   );
 });

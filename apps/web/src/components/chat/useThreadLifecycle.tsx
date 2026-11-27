@@ -159,7 +159,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     routeThreadKey,
     currentRouteThreadKeyRef,
     canOperateThread,
-    canInterruptTurn = true,
+    canInterruptTurn = canOperateThread,
     clientSettingsHydrated,
     activeThread,
     activeThreadId,
@@ -644,8 +644,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
           tasks: activeBackgroundTasks,
           turnItems,
           // Interrupt stops the active run first, not this work; the composer owns that Stop.
-          stopDisabled:
-            runIsLive || !canOperateThread || !canInterruptTurn || isStoppingBackgroundWork,
+          stopDisabled: runIsLive || !canInterruptTurn || isStoppingBackgroundWork,
           stopping: isStoppingBackgroundWork,
           onStop: handleStopBackgroundWorkStable,
           onOpenThread: onOpenRelatedThreadStable,

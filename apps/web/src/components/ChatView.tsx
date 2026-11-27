@@ -2689,6 +2689,7 @@ export default function ChatView(props: ChatViewProps) {
     currentRouteThreadKeyRef,
     canOperateThread: effectiveCanOperateThread,
     canInterruptTurn:
+      canOperateThread &&
       canExecuteActiveTeamThreadEnv &&
       (routeKind !== "server" || teamThreadTurnControls.canInterrupt),
     clientSettingsHydrated,
