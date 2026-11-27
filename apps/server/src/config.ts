@@ -5,7 +5,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as LogLevel from "effect/LogLevel";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import type * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import type { OtlpEndpointSource } from "@t3tools/contracts";
@@ -223,6 +225,29 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
   }
 });
 
+const TEST_DIRECTORY_REMOVE_ATTEMPTS = 20;
+
+// A provider or CLI fixture can still be writing into a test directory when its scope closes, which
+// makes removing that directory fail with ENOTEMPTY. Retry briefly, then leave it to the OS.
+export const removeTestDirectory = (remove: Effect.Effect<void, PlatformError.PlatformError>) =>
+  remove.pipe(
+    Effect.retry({
+      times: TEST_DIRECTORY_REMOVE_ATTEMPTS - 1,
+      schedule: Schedule.spaced("25 millis"),
+    }),
+    Effect.catch((cause) => Effect.logWarning("Left a test directory behind.", { cause })),
+  );
+
+const makeTestDirectory = (prefix: string) =>
+  Effect.acquireRelease(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return { fs, directory: yield* fs.makeTempDirectory({ prefix }) };
+    }),
+    ({ fs, directory }) =>
+      removeTestDirectory(fs.remove(directory, { recursive: true, force: true })),
+  ).pipe(Effect.map(({ directory }) => directory));
+
 const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
   cwd: string,
   baseDirOrPrefix: string | { readonly prefix: string },
@@ -234,7 +259,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
       ? baseDirOrPrefix
       : // macOS temp dirs live under the /var -> /private/var symlink; storage cleanup's
         // symlink guards compare resolved paths, so generated test dirs must be real paths.
-        yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix }));
+        yield* fs.realPath(yield* makeTestDirectory(baseDirOrPrefix.prefix));
   const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
   yield* ensureServerDirectories(derivedPaths);
 
