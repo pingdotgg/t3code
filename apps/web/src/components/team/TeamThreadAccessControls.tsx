@@ -20,9 +20,12 @@ export function TeamThreadAccessControls({
 }) {
   const gt = useGT();
   const access = useTeamThreadAccessState(environmentId, threadId);
-  const canSetViewScope = useAtomValue(teamEnvironment.setThreadView.permissionAtom(environmentId));
+  const targetTeamEnvironmentId = access.teamEnvironmentId ?? environmentId;
+  const canSetViewScope = useAtomValue(
+    teamEnvironment.setThreadView.permissionAtom(targetTeamEnvironmentId),
+  );
   const canSetLockScope = useAtomValue(
-    teamEnvironment.setThreadLocked.permissionAtom(environmentId),
+    teamEnvironment.setThreadLocked.permissionAtom(targetTeamEnvironmentId),
   );
   const { setThreadView, setThreadLocked } = useTeamThreadAccessActions();
   const [pendingViewKey, setPendingViewKey] = useState<string | null>(null);
@@ -30,7 +33,7 @@ export function TeamThreadAccessControls({
 
   if (!access.isTeamThread) return null;
 
-  const currentThreadKey = `${environmentId}:${threadId}`;
+  const currentThreadKey = `${targetTeamEnvironmentId}:${threadId}`;
   const isUpdatingView = pendingViewKey === currentThreadKey;
   const isUpdatingLock = pendingLockKey === currentThreadKey;
   const canEditView = access.canChangeView && canSetViewScope && access.accessibleViews.length > 0;
@@ -39,14 +42,20 @@ export function TeamThreadAccessControls({
   const handleSelectView = async (viewId: TeamViewId) => {
     if (isUpdatingView || !canEditView || access.view?.id === viewId) return;
     setPendingViewKey(currentThreadKey);
-    await setThreadView({ environmentId, threadId, viewId }).catch(() => false);
+    await setThreadView({ environmentId: targetTeamEnvironmentId, threadId, viewId }).catch(
+      () => false,
+    );
     setPendingViewKey((active) => (active === currentThreadKey ? null : active));
   };
 
   const handleToggleLock = async () => {
     if (isUpdatingLock || !canEditLock) return;
     setPendingLockKey(currentThreadKey);
-    await setThreadLocked({ environmentId, threadId, locked: !access.locked }).catch(() => false);
+    await setThreadLocked({
+      environmentId: targetTeamEnvironmentId,
+      threadId,
+      locked: !access.locked,
+    }).catch(() => false);
     setPendingLockKey((active) => (active === currentThreadKey ? null : active));
   };
 

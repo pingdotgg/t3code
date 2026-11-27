@@ -134,6 +134,7 @@ import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
 import { ensureWorktreeLayoutApproved } from "../../worktreeLayoutApproval";
 import {
+  clearPendingLocalThreadLocked,
   clearPendingLocalThreadViewId,
   clearTeamDraftAccessOptions,
   readTeamDraftAccessOptions,
@@ -141,6 +142,7 @@ import {
   readTeamThreadNoteMode,
   readTeamThreadNotesForSend,
   readTeamThreadPostPermission,
+  setPendingLocalThreadLocked,
   setPendingLocalThreadViewId,
   setTeamThreadNoteMode,
   teamEnvironment,
@@ -1765,9 +1767,9 @@ export function useComposerSend(input: ComposerSendInput) {
           teamAcceptedNoteRefs = refs;
         }
       }
-      const shouldSetPendingLocalDraftView = Boolean(
+      const isLocalTeamDraft = Boolean(
         isLocalDraftThread &&
-        teamDraftAccess?.viewId &&
+        (teamDraftAccess?.viewId != null || teamDraftAccess?.locked === true) &&
         readTeamThreadNotesForSend({
           environmentId,
           threadId: threadIdForSend,
@@ -1775,10 +1777,17 @@ export function useComposerSend(input: ComposerSendInput) {
           connectedEnvironmentIds,
         }).isViewingOnLocalExecutionEnvironment,
       );
+      const shouldSetPendingLocalDraftView = Boolean(isLocalTeamDraft && teamDraftAccess?.viewId);
+      const shouldSetPendingLocalDraftLocked = Boolean(
+        isLocalTeamDraft && teamDraftAccess?.locked === true,
+      );
       if (failure === null) {
         if (shouldSetPendingLocalDraftView && teamDraftAccess?.viewId) {
           // Preserve restricted-View selection when TeamLocalThreadSyncCoordinator mirrors a local draft.
           setPendingLocalThreadViewId(threadIdForSend, teamDraftAccess.viewId);
+        }
+        if (shouldSetPendingLocalDraftLocked) {
+          setPendingLocalThreadLocked(threadIdForSend, true);
         }
         if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
         const startPromise = startThreadTurn({
@@ -1835,6 +1844,9 @@ export function useComposerSend(input: ComposerSendInput) {
           failure = startResult;
           if (shouldSetPendingLocalDraftView) {
             clearPendingLocalThreadViewId(threadIdForSend);
+          }
+          if (shouldSetPendingLocalDraftLocked) {
+            clearPendingLocalThreadLocked(threadIdForSend);
           }
           if (localNoteReservation !== null) {
             void releaseAcceptedTeamNotes({

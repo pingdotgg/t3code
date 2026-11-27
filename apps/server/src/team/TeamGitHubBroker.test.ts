@@ -1949,6 +1949,20 @@ describe("TeamGitHubBroker", () => {
             createdAt: "2026-11-26T12:00:00.000Z",
             updatedAt: "2026-11-26T12:00:00.000Z",
           });
+          yield* repo.recordThreadAttribution({
+            threadId: remoteThreadId,
+            teamId: init.team.id,
+            creatorMemberId: init.owner.id,
+            viewId: init.team.defaultViewId,
+            executionEnvironmentId: remoteEnvId,
+            createdAt: "2026-11-26T12:00:00.000Z",
+          });
+          yield* repo.recordTurnAttribution({
+            turnId: remoteTurnId,
+            threadId: remoteThreadId,
+            authorMemberId: init.owner.id,
+            createdAt: "2026-11-26T12:00:00.000Z",
+          });
           const localSyncToken = (yield* team.issueLocalSyncToken(aliceSession.sessionId)).token;
 
           const teamContext = yield* Effect.context<

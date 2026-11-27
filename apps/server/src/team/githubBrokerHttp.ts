@@ -5,10 +5,13 @@ import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   canMemberAccessTeamEnvironment,
+  canMemberInterruptTeamTurn,
+  canMemberReadTeamView,
   isTeamAdminRole,
   TeamGitHubRemoteLeaseIssueRequest,
   TeamGitHubRemoteLeaseResolveRequest,
   TeamGitHubRemoteLeaseRevokeRequest,
+  type AuthSessionId,
   type TeamMember,
   type TeamWorkspace,
 } from "@t3tools/contracts";
@@ -20,12 +23,22 @@ import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as TeamAssetsRepository from "./TeamAssetsRepository.ts";
 import * as TeamGitHubBroker from "./TeamGitHubBroker.ts";
 import * as TeamGitHubOAuth from "./TeamGitHubOAuth.ts";
+import { localSyncMirroredRunId } from "./TeamLocalSyncService.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 import * as TeamService from "./TeamService.ts";
+
+const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "failed",
+  "interrupted",
+  "cancelled",
+  "rolled_back",
+]);
 
 const GITHUB_LEASE_ISSUE_PATH = "/api/team/github-lease/issue";
 const GITHUB_LEASE_RESOLVE_PATH = "/api/team/github-lease/resolve";
@@ -82,6 +95,7 @@ type LeaseAuthOutcome =
       readonly ok: true;
       readonly team: TeamWorkspace;
       readonly member: TeamMember;
+      readonly sessionId: AuthSessionId;
       readonly scopes: ReadonlyArray<string>;
     }
   | {
@@ -166,7 +180,13 @@ const authenticateLeaseCaller = Effect.fn("TeamGitHubHttp.authenticateCaller")(f
           message: "Your team membership is no longer active.",
         };
       }
-      return { ok: true, team, member: memberOpt.value, scopes: sessionOpt.value.scopes };
+      return {
+        ok: true,
+        team,
+        member: memberOpt.value,
+        sessionId: tokenRecord.sessionId,
+        scopes: sessionOpt.value.scopes,
+      };
     }
   }
 
@@ -201,7 +221,13 @@ const authenticateLeaseCaller = Effect.fn("TeamGitHubHttp.authenticateCaller")(f
       message: "Your team membership is no longer active.",
     };
   }
-  return { ok: true, team, member: memberOpt.value, scopes: sessionResult.success.scopes };
+  return {
+    ok: true,
+    team,
+    member: memberOpt.value,
+    sessionId: sessionResult.success.sessionId,
+    scopes: sessionResult.success.scopes,
+  };
 });
 
 const handleIssueRemoteLease = Effect.fn("TeamGitHubHttp.issue")(function* () {
@@ -256,19 +282,8 @@ const handleIssueRemoteLease = Effect.fn("TeamGitHubHttp.issue")(function* () {
           "Only owner and admin sessions with access:write may issue team automation GitHub leases.",
       });
     }
-    const issued = yield* broker.issueRemoteTurnLease({
-      teamId: auth.team.id,
-      environmentId: payload.environmentId,
-      threadId: payload.threadId,
-      turnId: payload.turnId,
-      authorKind: "team_automation",
-      authorMemberId: null,
-    });
-    return jsonResponse(200, issued);
-  }
-
-  // Strictly bind human remote turn leases to the authenticated member — never allow spoofing another memberId.
-  if (
+  } else if (
+    // Strictly bind human remote turn leases to the authenticated member — never allow spoofing another memberId.
     payload.authorMemberId !== undefined &&
     payload.authorMemberId !== null &&
     payload.authorMemberId !== auth.member.id
@@ -279,13 +294,101 @@ const handleIssueRemoteLease = Effect.fn("TeamGitHubHttp.issue")(function* () {
     });
   }
 
+  // Verify server-side thread & turn attribution before issuing any remote lease so a member
+  // cannot pre-reserve or DoS another author's (environmentId, threadId, turnId) tuple.
+  const threadAttrOpt = yield* teamRepo
+    .getThreadAttribution(payload.threadId)
+    .pipe(Effect.orElseSucceed(() => Option.none()));
+  if (Option.isNone(threadAttrOpt) || threadAttrOpt.value.teamId !== auth.team.id) {
+    return jsonResponse(404, {
+      code: "not_found",
+      message: "Thread attribution could not be found for this GitHub turn lease.",
+    });
+  }
+  const threadAttr = threadAttrOpt.value;
+  if (
+    threadAttr.executionEnvironmentId !== null &&
+    threadAttr.executionEnvironmentId !== payload.environmentId
+  ) {
+    return jsonResponse(403, {
+      code: "forbidden",
+      message: "Target environment does not match the thread's execution environment.",
+    });
+  }
+  const mirroredRunId = localSyncMirroredRunId(payload.threadId, payload.turnId);
+  const directTurnAttrOpt = yield* teamRepo
+    .getTurnAttribution(payload.turnId)
+    .pipe(Effect.orElseSucceed(() => Option.none()));
+  const turnAttrOpt = Option.isSome(directTurnAttrOpt)
+    ? directTurnAttrOpt
+    : yield* teamRepo
+        .getTurnAttribution(mirroredRunId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+  if (Option.isNone(turnAttrOpt)) {
+    return jsonResponse(404, {
+      code: "not_found",
+      message: "Turn attribution could not be found for this GitHub turn lease.",
+    });
+  }
+  const turnAttr = turnAttrOpt.value;
+  if (turnAttr.threadId !== payload.threadId) {
+    return jsonResponse(403, {
+      code: "forbidden",
+      message: "Turn does not belong to the requested thread.",
+    });
+  }
+  if (authorKind === "team_automation") {
+    if (turnAttr.authorKind !== "team_automation") {
+      return jsonResponse(403, {
+        code: "forbidden",
+        message: "Turn is not attributed to team automation.",
+      });
+    }
+  } else {
+    if (turnAttr.authorKind !== "member" || turnAttr.authorMemberId !== auth.member.id) {
+      return jsonResponse(403, {
+        code: "forbidden",
+        message: "Cannot request a GitHub turn lease for a turn attributed to another author.",
+      });
+    }
+    const viewOpt = yield* teamRepo
+      .getViewById(threadAttr.viewId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    const view =
+      Option.isSome(viewOpt) && viewOpt.value.teamId === auth.team.id ? viewOpt.value : null;
+    if (!canMemberReadTeamView(auth.member, view)) {
+      return jsonResponse(403, {
+        code: "forbidden",
+        message: "You do not have permission to access this thread's view.",
+      });
+    }
+  }
+
+  const projectionStoreOpt = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
+  if (Option.isSome(projectionStoreOpt)) {
+    const projection = yield* projectionStoreOpt.value.getThreadProjection(payload.threadId).pipe(
+      Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+      Effect.orElseSucceed(() => null),
+    );
+    const matchedRun = projection?.runs.find(
+      (run) => run.id === payload.turnId || run.id === mirroredRunId,
+    );
+    if (matchedRun !== undefined && TERMINAL_RUN_STATUSES.has(matchedRun.status)) {
+      return jsonResponse(403, {
+        code: "turn_not_active",
+        message: "Cannot issue a GitHub lease for a completed or inactive turn.",
+      });
+    }
+  }
+
   const issued = yield* broker.issueRemoteTurnLease({
     teamId: auth.team.id,
     environmentId: payload.environmentId,
     threadId: payload.threadId,
     turnId: payload.turnId,
-    authorKind: "member",
-    authorMemberId: auth.member.id,
+    authorKind,
+    authorMemberId: authorKind === "team_automation" ? null : auth.member.id,
+    issuingSessionId: auth.sessionId,
   });
   return jsonResponse(200, issued);
 });
@@ -367,13 +470,45 @@ const handleRevokeRemoteLease = Effect.fn("TeamGitHubHttp.revoke")(function* () 
       message: "Session lacks orchestration:operate scope required to revoke GitHub turn leases.",
     });
   }
+  const teamRepo = yield* TeamRepository.TeamRepository;
   const revoked = yield* broker.revokeRemoteTurnLease({
+    teamId: auth.team.id,
     ...(payload.leaseId !== undefined ? { leaseId: payload.leaseId } : {}),
     ...(payload.environmentId !== undefined ? { environmentId: payload.environmentId } : {}),
     ...(payload.threadId !== undefined ? { threadId: payload.threadId } : {}),
     ...(payload.turnId !== undefined ? { turnId: payload.turnId } : {}),
-    // Non-admin members may only revoke their own remote leases; owner/admin may revoke any team turn lease.
-    ...(!isTeamAdminRole(auth.member.role) ? { authorizedMemberId: auth.member.id } : {}),
+    // Owner/admin may revoke any team turn lease; modo may revoke their own leases or leases on
+    // unlocked readable threads they can interrupt; regular members may only revoke their own.
+    ...(isTeamAdminRole(auth.member.role)
+      ? {}
+      : auth.member.role === "modo"
+        ? {
+            authorizeLease: Effect.fn("TeamGitHubHttp.authorizeModoLeaseRevoke")(function* (lease) {
+              if (lease.authorKind === "member" && lease.authorMemberId === auth.member.id) {
+                return true;
+              }
+              const threadAttrOpt = yield* teamRepo
+                .getThreadAttribution(lease.threadId)
+                .pipe(Effect.orElseSucceed(() => Option.none()));
+              if (Option.isNone(threadAttrOpt) || threadAttrOpt.value.teamId !== auth.team.id) {
+                return false;
+              }
+              const viewOpt = yield* teamRepo
+                .getViewById(threadAttrOpt.value.viewId)
+                .pipe(Effect.orElseSucceed(() => Option.none()));
+              const view =
+                Option.isSome(viewOpt) && viewOpt.value.teamId === auth.team.id
+                  ? viewOpt.value
+                  : null;
+              return canMemberInterruptTeamTurn({
+                member: auth.member,
+                attribution: threadAttrOpt.value,
+                view,
+                activeTurnAuthorMemberId: lease.authorMemberId,
+              });
+            }),
+          }
+        : { authorizedMemberId: auth.member.id }),
   });
   return jsonResponse(200, { revoked });
 });

@@ -3,6 +3,7 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   extractProjectRepoIdentityKey,
+  isTeamHubOnlyServerConfig,
   listAccessibleTeamEnvironments,
   resolveProjectTeamAssignment,
 } from "@t3tools/client-runtime/team";
@@ -59,8 +60,9 @@ export function useLogicalProjectEnvironments(
   ) => {
     if (seenEnvIds.has(environmentId)) return;
     if (isEnvBlockedByTeamAcl(environmentId)) return;
-    seenEnvIds.add(environmentId);
     const environment = environmentById.get(environmentId) ?? null;
+    if (isTeamHubOnlyServerConfig(environment?.serverConfig)) return;
+    seenEnvIds.add(environmentId);
     envs.push({
       environmentId,
       projectId,

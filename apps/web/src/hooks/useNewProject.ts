@@ -7,6 +7,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { extractProjectRepoIdentityKey } from "@t3tools/client-runtime/team";
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
@@ -80,6 +81,7 @@ export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Pro
     readonly name: string;
     readonly publishTo: NewProjectPublishTarget | null;
     readonly assignToTeam?: boolean;
+    readonly teamEnvironmentId?: EnvironmentId | null;
   }): Promise<boolean> => {
     const result = await createNew({
       environmentId: input.environmentId,
@@ -99,9 +101,11 @@ export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Pro
     }
 
     const { projectId, workspaceRoot, commitError } = result.value;
-    if (input.assignToTeam) {
+    const targetTeamEnvironmentId = input.teamEnvironmentId ?? input.environmentId;
+    const assignDirectly = input.assignToTeam && targetTeamEnvironmentId === input.environmentId;
+    if (assignDirectly) {
       void assignProjectToTeam({
-        environmentId: input.environmentId,
+        environmentId: targetTeamEnvironmentId,
         input: { projectId, defaultViewId: null },
       });
     }
@@ -149,6 +153,17 @@ export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Pro
       );
       return null;
     });
+    if (input.assignToTeam && !assignDirectly) {
+      const repoIdentityKey = extractProjectRepoIdentityKey(project?.repositoryIdentity);
+      void assignProjectToTeam({
+        environmentId: targetTeamEnvironmentId,
+        input: {
+          projectId,
+          defaultViewId: null,
+          ...(repoIdentityKey !== null ? { repoIdentityKey } : {}),
+        },
+      });
+    }
     if (project === null) return true;
     await openProject(projectRef).catch((error: unknown) => {
       toastManager.add(

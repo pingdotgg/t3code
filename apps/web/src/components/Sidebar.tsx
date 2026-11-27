@@ -262,6 +262,7 @@ import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrom
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import {
   hasActiveTeamEnvironment,
+  isDuplicateMirroredLocalTeamThread,
   shouldShowThreadInTeamFilter,
 } from "@t3tools/client-runtime/team";
 import {
@@ -514,8 +515,24 @@ function useSidebarThreads(input: {
   const teamStatesByEnvironment = useTeamStatesByEnvironment();
   const showColleaguesThreads = useShowColleaguesThreads();
   const showFollowedThreadsOnly = useShowFollowedThreadsOnly();
-  const teamFilteredThreads = hasActiveTeamEnvironment(teamStatesByEnvironment)
-    ? threads.filter((thread) =>
+  const teamFilteredThreads = (() => {
+    if (!hasActiveTeamEnvironment(teamStatesByEnvironment)) {
+      return threads;
+    }
+    const liveLocalThreadKeys = new Set<string>();
+    for (const thread of threads) {
+      if (teamStatesByEnvironment.get(thread.environmentId)?.team == null) {
+        liveLocalThreadKeys.add(`${thread.environmentId}\0${thread.id}`);
+      }
+    }
+    return threads.filter(
+      (thread) =>
+        !isDuplicateMirroredLocalTeamThread({
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+          teamStates: teamStatesByEnvironment,
+          liveLocalThreadKeys,
+        }) &&
         shouldShowThreadInTeamFilter({
           environmentId: thread.environmentId,
           threadId: thread.id,
@@ -523,8 +540,8 @@ function useSidebarThreads(input: {
           showColleaguesThreads,
           followedOnly: showFollowedThreadsOnly,
         }),
-      )
-    : threads;
+    );
+  })();
 
   const partition = partitionSidebarThreads({
     threads: teamFilteredThreads,
@@ -2816,7 +2833,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         if (clicked.value?.startsWith("team-view:")) {
           await setTeamThreadView({
-            environmentId: threadRef.environmentId,
+            environmentId: teamAccessActions.teamEnvironmentId ?? threadRef.environmentId,
             threadId: threadRef.threadId,
             viewId: clicked.value.slice("team-view:".length) as TeamViewId,
           });
@@ -2887,7 +2904,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "team-lock":
           case "team-unlock":
             await setTeamThreadLocked({
-              environmentId: threadRef.environmentId,
+              environmentId: teamAccessActions.teamEnvironmentId ?? threadRef.environmentId,
               threadId: threadRef.threadId,
               locked: clicked.value === "team-lock",
             });

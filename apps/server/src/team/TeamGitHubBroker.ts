@@ -14,6 +14,7 @@ import {
   TeamId,
   TeamMemberId,
   ThreadId,
+  type AuthSessionId,
   type ProviderSessionId,
   type TeamGitHubAuthMethod,
   type TeamGitHubIdentity,
@@ -39,8 +40,11 @@ import * as Scope from "effect/Scope";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as TeamGitHubOAuth from "./TeamGitHubOAuth.ts";
 import * as TeamGitHubRepository from "./TeamGitHubRepository.ts";
+import { localSyncMirroredRunId } from "./TeamLocalSyncService.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 import * as TeamService from "./TeamService.ts";
 
@@ -48,6 +52,15 @@ import * as TeamService from "./TeamService.ts";
 const UNIX_SOCKET_PATH_BYTES = 100;
 const MAX_BROKER_REQUEST_BYTES = 16 * 1024;
 const DEFAULT_TURN_LEASE_TTL_MS = 15 * 60 * 1000;
+const DEFAULT_REMOTE_LEASE_MAX_LIFETIME_MS = 4 * 60 * 60 * 1000;
+const MAX_REMOTE_LEASE_LIFETIME_MS = 4 * 60 * 60 * 1000;
+const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "failed",
+  "interrupted",
+  "cancelled",
+  "rolled_back",
+]);
 
 const TEAM_GH_BROKER_ENDPOINT_ENV = "T3_TEAM_GH_BROKER_ENDPOINT";
 const TEAM_GH_BROKER_TOKEN_ENV = TEAM_GITHUB_BROKER_TOKEN_ENV;
@@ -1286,9 +1299,11 @@ interface IssuedRemoteTurnLease {
   readonly turnId: string;
   readonly authorKind: TeamGitHubTurnAuthorKind;
   readonly authorMemberId: TeamMemberId | null;
+  readonly issuingSessionId: AuthSessionId | null;
   readonly credentialUpdatedAt: string;
   readonly expiresAt: IsoDateTime;
   readonly expiresAtMs: number;
+  readonly maxExpiresAtMs: number;
   readonly revoked: boolean;
 }
 
@@ -1417,7 +1432,9 @@ export interface IssueRemoteTurnLeaseInput {
   readonly turnId: string;
   readonly authorKind: TeamGitHubTurnAuthorKind;
   readonly authorMemberId: TeamMemberId | null;
+  readonly issuingSessionId?: AuthSessionId | null;
   readonly ttlMs?: number;
+  readonly maxLifetimeMs?: number;
 }
 
 export interface ResolveRemoteTurnLeaseInput {
@@ -1483,6 +1500,7 @@ export class TeamGitHubBroker extends Context.Service<
       readonly ttlMs?: number;
     }) => Effect.Effect<boolean>;
     readonly revokeMemberLeases: (memberId: TeamMemberId) => Effect.Effect<void>;
+    readonly revokeSessionLeases: (sessionId: AuthSessionId) => Effect.Effect<void>;
     readonly revokeAutomationLeases: (teamId: TeamId) => Effect.Effect<void>;
     readonly revokeEnvironmentLeases: (input: {
       readonly teamId: TeamId;
@@ -1503,12 +1521,21 @@ export class TeamGitHubBroker extends Context.Service<
       input: ResolveRemoteTurnLeaseInput & { readonly ttlMs?: number },
     ) => Effect.Effect<{ readonly expiresAt: IsoDateTime } | null>;
     readonly revokeRemoteTurnLease: (input: {
+      readonly teamId?: TeamId;
       readonly leaseId?: string;
       readonly leaseToken?: string;
       readonly environmentId?: EnvironmentId;
       readonly threadId?: ThreadId;
       readonly turnId?: string;
       readonly authorizedMemberId?: TeamMemberId;
+      readonly authorizeLease?: (lease: {
+        readonly teamId: TeamId;
+        readonly environmentId: EnvironmentId;
+        readonly threadId: ThreadId;
+        readonly turnId: string;
+        readonly authorKind: TeamGitHubTurnAuthorKind;
+        readonly authorMemberId: TeamMemberId | null;
+      }) => Effect.Effect<boolean>;
     }) => Effect.Effect<boolean>;
   }
 >()("t3/team/TeamGitHubBroker") {}
@@ -1523,6 +1550,47 @@ const make = Effect.gen(function* () {
   const githubRepoOption = yield* Effect.serviceOption(TeamGitHubRepository.TeamGitHubRepository);
   const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
   const httpClientOption = yield* Effect.serviceOption(HttpClient.HttpClient);
+  const authSessionsOption = yield* Effect.serviceOption(AuthSessions.AuthSessionRepository);
+  const projectionStoreOption = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
+
+  const isIssuingSessionActive = Effect.fn("TeamGitHubBroker.isIssuingSessionActive")(function* (
+    sessionId: AuthSessionId | null,
+    nowMs: number,
+  ): Effect.fn.Return<boolean> {
+    if (sessionId === null || Option.isNone(authSessionsOption)) {
+      return true;
+    }
+    const sessionOpt = yield* authSessionsOption.value
+      .getById({ sessionId })
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isNone(sessionOpt)) {
+      return false;
+    }
+    const session = sessionOpt.value;
+    return session.revokedAt === null && DateTime.toEpochMillis(session.expiresAt) > nowMs;
+  });
+
+  const isTurnStillActive = Effect.fn("TeamGitHubBroker.isTurnStillActive")(function* (
+    threadId: ThreadId,
+    turnId: string,
+  ): Effect.fn.Return<boolean> {
+    if (Option.isNone(projectionStoreOption)) {
+      return true;
+    }
+    const projection = yield* projectionStoreOption.value.getThreadProjection(threadId).pipe(
+      Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+      Effect.orElseSucceed(() => null),
+    );
+    if (projection === null) {
+      return true;
+    }
+    const mirroredRunId = localSyncMirroredRunId(threadId, turnId);
+    const matchedRun = projection.runs.find((run) => run.id === turnId || run.id === mirroredRunId);
+    if (matchedRun !== undefined && TERMINAL_RUN_STATUSES.has(matchedRun.status)) {
+      return false;
+    }
+    return true;
+  });
 
   const channelsRef = yield* Ref.make<ReadonlyMap<string, SessionBrokerChannel>>(new Map());
   const activeTurnLeasesRef = yield* Ref.make<ReadonlyMap<string, ActiveTurnLease>>(new Map());
@@ -2909,6 +2977,21 @@ const make = Effect.gen(function* () {
       });
     }),
     revokeMemberLeases,
+    revokeSessionLeases: Effect.fn("TeamGitHubBroker.revokeSessionLeases")(function* (
+      sessionId: AuthSessionId,
+    ) {
+      yield* Ref.update(remoteLeasesRef, (current) => {
+        let changed = false;
+        const next = new Map(current);
+        for (const [leaseId, lease] of next) {
+          if (lease.issuingSessionId === sessionId) {
+            next.delete(leaseId);
+            changed = true;
+          }
+        }
+        return changed ? next : current;
+      });
+    }),
     revokeAutomationLeases,
     revokeEnvironmentLeases,
 
@@ -2924,7 +3007,14 @@ const make = Effect.gen(function* () {
       for (const lease of remoteLeases.values()) {
         if (lease.threadId !== input.threadId) continue;
         if (input.turnId != null && lease.turnId !== input.turnId) continue;
-        if (!lease.revoked && lease.expiresAtMs > nowMs) return true;
+        if (lease.revoked || lease.expiresAtMs <= nowMs || lease.maxExpiresAtMs <= nowMs) {
+          continue;
+        }
+        const sessionOk = yield* isIssuingSessionActive(lease.issuingSessionId, nowMs);
+        if (!sessionOk) continue;
+        const turnOk = yield* isTurnStillActive(lease.threadId, lease.turnId);
+        if (!turnOk) continue;
+        return true;
       }
       return false;
     }),
@@ -3015,7 +3105,15 @@ const make = Effect.gen(function* () {
         1_000,
         Math.min(input.ttlMs ?? DEFAULT_TURN_LEASE_TTL_MS, 60 * 60 * 1000),
       );
-      const expiresAtMs = nowMs + ttlMs;
+      const maxLifetimeMs = Math.max(
+        1_000,
+        Math.min(
+          input.maxLifetimeMs ?? DEFAULT_REMOTE_LEASE_MAX_LIFETIME_MS,
+          MAX_REMOTE_LEASE_LIFETIME_MS,
+        ),
+      );
+      const maxExpiresAtMs = nowMs + maxLifetimeMs;
+      const expiresAtMs = Math.min(nowMs + ttlMs, maxExpiresAtMs);
       const expiresAt = IsoDateTime.make(DateTime.formatIso(DateTime.makeUnsafe(expiresAtMs)));
       const leaseId = `ghlease_${NodeCrypto.randomUUID()}`;
       const leaseToken = `t3ghl_${NodeCrypto.randomBytes(32).toString("base64url")}`;
@@ -3029,9 +3127,11 @@ const make = Effect.gen(function* () {
         turnId: input.turnId,
         authorKind: input.authorKind,
         authorMemberId: input.authorMemberId,
+        issuingSessionId: input.issuingSessionId ?? null,
         credentialUpdatedAt,
         expiresAt,
         expiresAtMs,
+        maxExpiresAtMs,
         revoked: false,
       };
 
@@ -3040,7 +3140,7 @@ const make = Effect.gen(function* () {
         (current): readonly [boolean, ReadonlyMap<string, IssuedRemoteTurnLease>] => {
           const next = new Map(current);
           for (const [existingId, existing] of next) {
-            if (existing.expiresAtMs <= nowMs) {
+            if (existing.expiresAtMs <= nowMs || existing.maxExpiresAtMs <= nowMs) {
               next.delete(existingId);
               continue;
             }
@@ -3087,7 +3187,17 @@ const make = Effect.gen(function* () {
       const nowMs = yield* Clock.currentTimeMillis;
       const leases = yield* Ref.get(remoteLeasesRef);
       const lease = leases.get(input.leaseId);
-      if (lease === undefined || lease.revoked || lease.expiresAtMs <= nowMs) {
+      if (lease === undefined) {
+        return null;
+      }
+      const invalidate = Ref.update(remoteLeasesRef, (current) => {
+        if (!current.has(input.leaseId)) return current;
+        const next = new Map(current);
+        next.delete(input.leaseId);
+        return next;
+      });
+      if (lease.revoked || lease.expiresAtMs <= nowMs || lease.maxExpiresAtMs <= nowMs) {
+        yield* invalidate;
         return null;
       }
       if (
@@ -3100,6 +3210,14 @@ const make = Effect.gen(function* () {
       if (!timingSafeStringEqual(sha256Hex(input.leaseToken), lease.leaseTokenHash)) {
         return null;
       }
+      if (!(yield* isIssuingSessionActive(lease.issuingSessionId, nowMs))) {
+        yield* invalidate;
+        return null;
+      }
+      if (!(yield* isTurnStillActive(lease.threadId, lease.turnId))) {
+        yield* invalidate;
+        return null;
+      }
       if (Option.isSome(teamRepoOption)) {
         const envOpt = yield* teamRepoOption.value
           .getEnvironmentByEnvironmentId({
@@ -3108,10 +3226,14 @@ const make = Effect.gen(function* () {
           })
           .pipe(Effect.orElseSucceed(() => Option.none()));
         if (Option.isNone(envOpt)) {
+          yield* invalidate;
           return null;
         }
         if (lease.authorKind === "member") {
-          if (lease.authorMemberId === null) return null;
+          if (lease.authorMemberId === null) {
+            yield* invalidate;
+            return null;
+          }
           const memberOpt = yield* teamRepoOption.value
             .getMemberById(lease.authorMemberId)
             .pipe(Effect.orElseSucceed(() => Option.none()));
@@ -3121,6 +3243,7 @@ const make = Effect.gen(function* () {
             memberOpt.value.status !== "active" ||
             !canMemberAccessTeamEnvironment(memberOpt.value, envOpt.value)
           ) {
+            yield* invalidate;
             return null;
           }
         }
@@ -3132,6 +3255,7 @@ const make = Effect.gen(function* () {
         expectedUpdatedAt: lease.credentialUpdatedAt,
       });
       if (resolved === null) {
+        yield* invalidate;
         return null;
       }
       return {
@@ -3148,7 +3272,17 @@ const make = Effect.gen(function* () {
     renewRemoteTurnLease: Effect.fn("TeamGitHubBroker.renewRemoteTurnLease")(function* (input) {
       const nowMs = yield* Clock.currentTimeMillis;
       const lease = (yield* Ref.get(remoteLeasesRef)).get(input.leaseId);
-      if (lease === undefined || lease.revoked || lease.expiresAtMs <= nowMs) {
+      if (lease === undefined) {
+        return null;
+      }
+      const invalidate = Ref.update(remoteLeasesRef, (current) => {
+        if (!current.has(input.leaseId)) return current;
+        const next = new Map(current);
+        next.delete(input.leaseId);
+        return next;
+      });
+      if (lease.revoked || lease.expiresAtMs <= nowMs || lease.maxExpiresAtMs <= nowMs) {
+        yield* invalidate;
         return null;
       }
       if (
@@ -3161,12 +3295,14 @@ const make = Effect.gen(function* () {
       if (!timingSafeStringEqual(sha256Hex(input.leaseToken), lease.leaseTokenHash)) {
         return null;
       }
-      const invalidate = Ref.update(remoteLeasesRef, (current) => {
-        if (!current.has(input.leaseId)) return current;
-        const next = new Map(current);
-        next.delete(input.leaseId);
-        return next;
-      });
+      if (!(yield* isIssuingSessionActive(lease.issuingSessionId, nowMs))) {
+        yield* invalidate;
+        return null;
+      }
+      if (!(yield* isTurnStillActive(lease.threadId, lease.turnId))) {
+        yield* invalidate;
+        return null;
+      }
       if (Option.isSome(teamRepoOption)) {
         const envOpt = yield* teamRepoOption.value
           .getEnvironmentByEnvironmentId({
@@ -3211,7 +3347,12 @@ const make = Effect.gen(function* () {
         1_000,
         Math.min(input.ttlMs ?? DEFAULT_TURN_LEASE_TTL_MS, 60 * 60 * 1000),
       );
-      const nextExpiresAtMs = (yield* Clock.currentTimeMillis) + ttlMs;
+      const renewNowMs = yield* Clock.currentTimeMillis;
+      if (lease.maxExpiresAtMs <= renewNowMs) {
+        yield* invalidate;
+        return null;
+      }
+      const nextExpiresAtMs = Math.min(renewNowMs + ttlMs, lease.maxExpiresAtMs);
       const nextExpiresAt = IsoDateTime.make(
         DateTime.formatIso(DateTime.makeUnsafe(nextExpiresAtMs)),
       );
@@ -3240,29 +3381,50 @@ const make = Effect.gen(function* () {
       }
       const presentedTokenHash =
         input.leaseToken !== undefined ? sha256Hex(input.leaseToken) : null;
+      const snapshot = yield* Ref.get(remoteLeasesRef);
+      const candidateIds = new Set<string>();
+      for (const [leaseId, lease] of snapshot) {
+        if (input.teamId !== undefined && lease.teamId !== input.teamId) continue;
+        if (input.leaseId !== undefined && lease.leaseId !== input.leaseId) continue;
+        if (input.environmentId !== undefined && lease.environmentId !== input.environmentId)
+          continue;
+        if (input.threadId !== undefined && lease.threadId !== input.threadId) continue;
+        if (input.turnId !== undefined && lease.turnId !== input.turnId) continue;
+        if (
+          presentedTokenHash !== null &&
+          !timingSafeStringEqual(presentedTokenHash, lease.leaseTokenHash)
+        ) {
+          continue;
+        }
+        if (
+          input.authorizedMemberId !== undefined &&
+          (lease.authorKind !== "member" || lease.authorMemberId !== input.authorizedMemberId)
+        ) {
+          continue;
+        }
+        if (input.authorizeLease !== undefined) {
+          const allowed = yield* input.authorizeLease({
+            teamId: lease.teamId,
+            environmentId: lease.environmentId,
+            threadId: lease.threadId,
+            turnId: lease.turnId,
+            authorKind: lease.authorKind,
+            authorMemberId: lease.authorMemberId,
+          });
+          if (!allowed) continue;
+        }
+        candidateIds.add(leaseId);
+      }
+      if (candidateIds.size === 0) {
+        return false;
+      }
       let revokedAny = false;
       yield* Ref.update(remoteLeasesRef, (current) => {
         const next = new Map(current);
-        for (const [leaseId, lease] of next) {
-          if (input.leaseId !== undefined && lease.leaseId !== input.leaseId) continue;
-          if (input.environmentId !== undefined && lease.environmentId !== input.environmentId)
-            continue;
-          if (input.threadId !== undefined && lease.threadId !== input.threadId) continue;
-          if (input.turnId !== undefined && lease.turnId !== input.turnId) continue;
-          if (
-            presentedTokenHash !== null &&
-            !timingSafeStringEqual(presentedTokenHash, lease.leaseTokenHash)
-          ) {
-            continue;
+        for (const leaseId of candidateIds) {
+          if (next.delete(leaseId)) {
+            revokedAny = true;
           }
-          if (
-            input.authorizedMemberId !== undefined &&
-            (lease.authorKind !== "member" || lease.authorMemberId !== input.authorizedMemberId)
-          ) {
-            continue;
-          }
-          next.delete(leaseId);
-          revokedAny = true;
         }
         return revokedAny ? next : current;
       });

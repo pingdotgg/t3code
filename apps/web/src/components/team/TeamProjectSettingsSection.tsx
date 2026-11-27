@@ -7,6 +7,7 @@ import {
 import {
   extractProjectRepoIdentityKey,
   listAccessibleTeamViews,
+  resolveOwningTeamEnvironment,
   resolveProjectTeamAssignment,
 } from "@t3tools/client-runtime/team";
 import { canManageTeamProjects, type EnvironmentId, type TeamViewId } from "@t3tools/contracts";
@@ -41,10 +42,29 @@ export function TeamProjectSettingsSection({
     ([, state]) => state.team !== null && state.currentMember !== null,
   );
 
-  // Find a project checkout that lives on a Team Server (or correlates to one via repo identity).
+  // Find a project checkout that lives on a Team Server or an attached runner (`t3runner`).
   const directTeamMember =
     members.find((member) => teamStates.get(member.environmentId)?.team != null) ?? null;
-  const primaryMember = directTeamMember ?? members[0] ?? null;
+  const resolvedTeamMemberEntry =
+    directTeamMember !== null
+      ? {
+          member: directTeamMember,
+          owning: resolveOwningTeamEnvironment({
+            environmentId: directTeamMember.environmentId,
+            teamStates,
+          })!,
+        }
+      : (members
+          .map((member) => {
+            const owning = resolveOwningTeamEnvironment({
+              environmentId: member.environmentId,
+              teamStates,
+            });
+            return owning ? { member, owning } : null;
+          })
+          .find((entry) => entry !== null) ?? null);
+  const assignableMember = resolvedTeamMemberEntry?.member ?? null;
+  const primaryMember = assignableMember ?? members[0] ?? null;
   const currentAssignment =
     members
       .map((member) =>
@@ -60,7 +80,9 @@ export function TeamProjectSettingsSection({
       .find((entry) => entry !== null) ?? null;
 
   const targetTeamEnvId: EnvironmentId | null =
-    currentAssignment?.teamEnvironmentId ?? directTeamMember?.environmentId ?? null;
+    currentAssignment?.teamEnvironmentId ??
+    resolvedTeamMemberEntry?.owning.teamEnvironmentId ??
+    null;
   const targetTeamState = targetTeamEnvId ? (teamStates.get(targetTeamEnvId) ?? null) : null;
   const canAssignScope = useAtomValue(
     teamEnvironment.assignProject.permissionAtom(targetTeamEnvId),
@@ -72,7 +94,8 @@ export function TeamProjectSettingsSection({
     return null;
   }
   const canManage =
-    directTeamMember !== null &&
+    assignableMember !== null &&
+    targetTeamEnvId !== null &&
     targetTeamState?.currentMember != null &&
     targetTeamState.currentMember.status === "active" &&
     canManageTeamProjects(targetTeamState.currentMember.role) &&
@@ -93,13 +116,13 @@ export function TeamProjectSettingsSection({
     currentAssignment?.assignment.defaultViewId ?? TEAM_DEFAULT_VIEW_VALUE;
 
   const handleTeamChange = async (value: string | null) => {
-    if (!value || !directTeamMember) return;
+    if (!value || !assignableMember) return;
     setSaving(true);
     if (value === PERSONAL_VALUE) {
       if (currentAssignment) {
         const result = await unassignProject({
           environmentId: currentAssignment.teamEnvironmentId,
-          input: { projectId: directTeamMember.id },
+          input: { projectId: currentAssignment.assignment.projectId },
         });
         setSaving(false);
         if (result._tag === "Success") {
@@ -120,7 +143,7 @@ export function TeamProjectSettingsSection({
     const result = await assignProject({
       environmentId: envId,
       input: {
-        projectId: directTeamMember.id,
+        projectId: assignableMember.id,
         defaultViewId: null,
         ...(repoKey !== null ? { repoIdentityKey: repoKey } : {}),
       },
@@ -138,13 +161,13 @@ export function TeamProjectSettingsSection({
   };
 
   const handleDefaultViewChange = async (value: string | null) => {
-    if (!value || !currentAssignment || !directTeamMember) return;
+    if (!value || !currentAssignment || !assignableMember) return;
     setSaving(true);
     const nextViewId = value === TEAM_DEFAULT_VIEW_VALUE ? null : (value as TeamViewId);
     const result = await assignProject({
       environmentId: currentAssignment.teamEnvironmentId,
       input: {
-        projectId: directTeamMember.id,
+        projectId: currentAssignment.assignment.projectId,
         defaultViewId: nextViewId,
         ...(repoKey !== null ? { repoIdentityKey: repoKey } : {}),
       },
@@ -191,10 +214,8 @@ export function TeamProjectSettingsSection({
                 <SelectItem value={PERSONAL_VALUE}>
                   <T>Personal (none)</T>
                 </SelectItem>
-                {directTeamMember && targetTeamState?.team ? (
-                  <SelectItem value={directTeamMember.environmentId}>
-                    {targetTeamState.team.name}
-                  </SelectItem>
+                {targetTeamEnvId && targetTeamState?.team ? (
+                  <SelectItem value={targetTeamEnvId}>{targetTeamState.team.name}</SelectItem>
                 ) : null}
               </SelectPopup>
             </Select>

@@ -1189,6 +1189,33 @@ const make = Effect.gen(function* () {
   };
   const noteStateLock = yield* Semaphore.make(1);
   const notifyQueuedMessageLock = yield* Semaphore.make(1);
+  const localSyncThreadLocks = new Map<
+    ThreadId,
+    { readonly sem: Semaphore.Semaphore; count: number }
+  >();
+  const withLocalSyncThreadLock = <A, E, R>(
+    threadId: ThreadId,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        let entry = localSyncThreadLocks.get(threadId);
+        if (!entry) {
+          entry = { sem: Semaphore.makeUnsafe(1), count: 0 };
+          localSyncThreadLocks.set(threadId, entry);
+        }
+        entry.count += 1;
+        return entry;
+      }),
+      (entry) => entry.sem.withPermits(1)(effect),
+      (entry) =>
+        Effect.sync(() => {
+          entry.count -= 1;
+          if (entry.count <= 0 && localSyncThreadLocks.get(threadId) === entry) {
+            localSyncThreadLocks.delete(threadId);
+          }
+        }),
+    );
   const MAX_REMOTE_PAIRING_PERMITS = 1024;
   // Shared (1 permit) for remote pairing issuance, exclusive (all permits) for ACL/member/detach
   // revocations so in-flight pairing calls finish before revokeSubject/unlink run.
@@ -8074,152 +8101,247 @@ const make = Effect.gen(function* () {
         message: "Local threads can only be synced to projects assigned to this team.",
       });
     }
-    const existingAttribution = yield* repository
-      .getThreadAttribution(input.payload.threadId)
-      .pipe(Effect.mapError(toInternalError));
-    if (Option.isNone(existingAttribution) && input.projectionStore !== undefined) {
-      const existingProjection = yield* input.projectionStore
-        .getThreadProjection(input.payload.threadId)
-        .pipe(
-          Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
-          Effect.mapError(toInternalError),
+    return yield* withLocalSyncThreadLock(
+      input.payload.threadId,
+      Effect.gen(function* () {
+        const existingAttribution = yield* repository
+          .getThreadAttribution(input.payload.threadId)
+          .pipe(Effect.mapError(toInternalError));
+        const incomingUpdatedMs = DateTime.toEpochMillis(
+          DateTime.makeUnsafe(input.payload.updatedAt),
         );
-      if (existingProjection !== null) {
-        return yield* new TeamOperationError({
-          code: "forbidden",
-          message: "Cannot overwrite an existing Team Server thread via local sync.",
-        });
-      }
-    }
-    const resolvedViewId = yield* resolveDefaultViewIdForProject(
-      team,
-      input.payload.projectId,
-      input.payload.viewId,
-    );
-    const viewOption = yield* repository
-      .getViewById(resolvedViewId)
-      .pipe(Effect.mapError(toInternalError));
-    const view =
-      Option.isSome(viewOption) && viewOption.value.teamId === team.id ? viewOption.value : null;
-    const locked = input.payload.locked === true;
-    if (!canMemberCreateThreadInTeamView(actor, view, locked)) {
-      return yield* new TeamOperationError({
-        code: "forbidden",
-        message: "You do not have permission to sync a thread into this view.",
-      });
-    }
-    const label =
-      input.payload.executionEnvironmentLabel?.trim() || `${actor.pseudo}'s local environment`;
-    const attributionOption = yield* repository
-      .upsertLocalSyncedThreadAttribution({
-        threadId: input.payload.threadId,
-        teamId: team.id,
-        creatorMemberId: actor.id,
-        viewId: resolvedViewId,
-        locked,
-        lockedByMemberId: locked ? actor.id : null,
-        executionEnvironmentId: input.payload.executionEnvironmentId,
-        executionEnvironmentLabel: label,
-        createdAt: input.payload.createdAt,
-      })
-      .pipe(
-        Effect.catchTags({
-          TeamMemberForbiddenError: (error) =>
-            Effect.fail(
-              new TeamOperationError({
+        const incomingSyncSeq = input.payload.syncSeq;
+
+        let resolvedViewId: TeamViewId;
+        let locked: boolean;
+        let existingWatermark: TeamRepository.TeamLocalSyncWatermark | null = null;
+
+        if (Option.isSome(existingAttribution)) {
+          const existing = existingAttribution.value;
+          if (
+            existing.teamId !== team.id ||
+            existing.isLocalSynced !== true ||
+            existing.creatorMemberId !== actor.id
+          ) {
+            return yield* new TeamOperationError({
+              code: "forbidden",
+              message: "Only the owner of a local-synced thread can update its synced state.",
+            });
+          }
+          const persistedViewOption = yield* repository
+            .getViewById(existing.viewId)
+            .pipe(Effect.mapError(toInternalError));
+          const persistedView =
+            Option.isSome(persistedViewOption) && persistedViewOption.value.teamId === team.id
+              ? persistedViewOption.value
+              : null;
+          const postBlockReason = resolveTeamThreadPostBlockReason({
+            member: actor,
+            attribution: existing,
+            view: persistedView,
+          });
+          if (postBlockReason !== "ok") {
+            return yield* new TeamOperationError({
+              code: "forbidden",
+              message:
+                postBlockReason === "locked"
+                  ? "This thread is locked. Only team owners and admins can sync updates."
+                  : "You do not have permission to sync updates to this thread in its current view.",
+            });
+          }
+          const watermarkOption = yield* repository
+            .getLocalSyncWatermark(input.payload.threadId)
+            .pipe(Effect.mapError(toInternalError));
+          if (Option.isSome(watermarkOption)) {
+            existingWatermark = watermarkOption.value;
+            const lastUpdatedMs = DateTime.toEpochMillis(
+              DateTime.makeUnsafe(existingWatermark.lastUpdatedAt),
+            );
+            const isStaleTimestamp = incomingUpdatedMs < lastUpdatedMs;
+            const isStaleSeq =
+              incomingUpdatedMs === lastUpdatedMs &&
+              incomingSyncSeq !== undefined &&
+              existingWatermark.lastSyncSeq > 0 &&
+              incomingSyncSeq < existingWatermark.lastSyncSeq;
+            if (isStaleTimestamp || isStaleSeq) {
+              return { attribution: existing } satisfies TeamSyncLocalThreadResult;
+            }
+          }
+          resolvedViewId = existing.viewId;
+          locked = existing.locked;
+        } else {
+          if (input.projectionStore !== undefined) {
+            const existingProjection = yield* input.projectionStore
+              .getThreadProjection(input.payload.threadId)
+              .pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                }),
+                Effect.mapError(toInternalError),
+              );
+            if (existingProjection !== null) {
+              return yield* new TeamOperationError({
                 code: "forbidden",
-                message: error.message,
-              }),
-            ),
-          TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
-        }),
-      );
-    if (Option.isNone(attributionOption)) {
-      return yield* new TeamOperationError({
-        code: "internal",
-        message: "Failed to persist local-synced thread metadata.",
-      });
-    }
-    if (input.eventSink !== undefined && input.projectionStore !== undefined) {
-      yield* mirrorLocalThreadSnapshotToEventSink({
-        eventSink: input.eventSink,
-        projectionStore: input.projectionStore,
-        random,
-        sync: input.payload,
-      }).pipe(Effect.mapError(toInternalError));
-    }
-    // Record turn attributions, relink msg:<userMessageId> note anchors to mirrored run IDs, and
-    // re-anchor pending notes once for the highest-ordinal brand-new local run.
-    let highestInsertedRun: { readonly ordinal: number; readonly mirroredRunId: string } | null =
-      null;
-    for (const run of input.payload.runs) {
-      const mirroredRunId = localSyncMirroredRunId(input.payload.threadId, run.id);
-      const mirroredMessageId = localSyncMirroredMessageId(
-        input.payload.threadId,
-        run.userMessageId,
-      );
-      const inserted = yield* repository
-        .recordTurnAttribution({
-          turnId: mirroredRunId,
-          threadId: input.payload.threadId,
-          authorMemberId: actor.id,
-          createdAt: run.createdAt,
-        })
-        .pipe(Effect.orElseSucceed(() => false));
-      if (inserted) {
-        if (highestInsertedRun === null || run.ordinal >= highestInsertedRun.ordinal) {
-          highestInsertedRun = { ordinal: run.ordinal, mirroredRunId };
+                message: "Cannot overwrite an existing Team Server thread via local sync.",
+              });
+            }
+          }
+          resolvedViewId = yield* resolveDefaultViewIdForProject(
+            team,
+            input.payload.projectId,
+            input.payload.viewId,
+          );
+          const viewOption = yield* repository
+            .getViewById(resolvedViewId)
+            .pipe(Effect.mapError(toInternalError));
+          const view =
+            Option.isSome(viewOption) && viewOption.value.teamId === team.id
+              ? viewOption.value
+              : null;
+          locked = input.payload.locked === true;
+          if (!canMemberCreateThreadInTeamView(actor, view, locked)) {
+            return yield* new TeamOperationError({
+              code: "forbidden",
+              message: "You do not have permission to sync a thread into this view.",
+            });
+          }
+        }
+
+        const label =
+          input.payload.executionEnvironmentLabel?.trim() || `${actor.pseudo}'s local environment`;
+        const attributionOption = yield* repository
+          .upsertLocalSyncedThreadAttribution({
+            threadId: input.payload.threadId,
+            teamId: team.id,
+            creatorMemberId: actor.id,
+            viewId: resolvedViewId,
+            locked,
+            lockedByMemberId: locked ? actor.id : null,
+            executionEnvironmentId: input.payload.executionEnvironmentId,
+            executionEnvironmentLabel: label,
+            createdAt: input.payload.createdAt,
+          })
+          .pipe(
+            Effect.catchTags({
+              TeamMemberForbiddenError: (error) =>
+                Effect.fail(
+                  new TeamOperationError({
+                    code: "forbidden",
+                    message: error.message,
+                  }),
+                ),
+              TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+            }),
+          );
+        if (Option.isNone(attributionOption)) {
+          return yield* new TeamOperationError({
+            code: "internal",
+            message: "Failed to persist local-synced thread metadata.",
+          });
+        }
+        if (input.eventSink !== undefined && input.projectionStore !== undefined) {
+          const mirrorResult = yield* mirrorLocalThreadSnapshotToEventSink({
+            eventSink: input.eventSink,
+            projectionStore: input.projectionStore,
+            random,
+            sync: input.payload,
+          }).pipe(Effect.mapError(toInternalError));
+          if (!mirrorResult.applied) {
+            return { attribution: attributionOption.value } satisfies TeamSyncLocalThreadResult;
+          }
+        }
+        const nowIso = DateTime.formatIso(yield* DateTime.now);
+        const nextSyncSeq =
+          existingWatermark !== null &&
+          DateTime.toEpochMillis(DateTime.makeUnsafe(existingWatermark.lastUpdatedAt)) ===
+            incomingUpdatedMs
+            ? Math.max(existingWatermark.lastSyncSeq, incomingSyncSeq ?? 0)
+            : (incomingSyncSeq ?? 0);
+        yield* repository
+          .upsertLocalSyncWatermark({
+            threadId: input.payload.threadId,
+            teamId: team.id,
+            lastUpdatedAt: input.payload.updatedAt,
+            lastSyncSeq: nextSyncSeq,
+            updatedAt: nowIso,
+          })
+          .pipe(Effect.mapError(toInternalError));
+        // Record turn attributions, relink msg:<userMessageId> note anchors to mirrored run IDs, and
+        // re-anchor pending notes once for the highest-ordinal brand-new local run.
+        let highestInsertedRun: {
+          readonly ordinal: number;
+          readonly mirroredRunId: string;
+        } | null = null;
+        for (const run of input.payload.runs) {
+          const mirroredRunId = localSyncMirroredRunId(input.payload.threadId, run.id);
+          const mirroredMessageId = localSyncMirroredMessageId(
+            input.payload.threadId,
+            run.userMessageId,
+          );
+          const inserted = yield* repository
+            .recordTurnAttribution({
+              turnId: mirroredRunId,
+              threadId: input.payload.threadId,
+              authorMemberId: actor.id,
+              createdAt: run.createdAt,
+            })
+            .pipe(Effect.orElseSucceed(() => false));
+          if (inserted) {
+            if (highestInsertedRun === null || run.ordinal >= highestInsertedRun.ordinal) {
+              highestInsertedRun = { ordinal: run.ordinal, mirroredRunId };
+            }
+            yield* publish({
+              version: 1,
+              type: "turnAttributed",
+              payload: {
+                turnId: mirroredRunId,
+                threadId: input.payload.threadId,
+                authorMemberId: actor.id,
+                authorPseudo: actor.pseudo,
+                createdAt: run.createdAt,
+              },
+            });
+          }
+          const relinkedRaw = yield* repository
+            .relinkNoteTurnId({
+              teamId: team.id,
+              threadId: input.payload.threadId,
+              fromTurnId: `msg:${run.userMessageId}`,
+              toTurnId: mirroredRunId,
+            })
+            .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadNote>));
+          const relinkedMirrored = yield* repository
+            .relinkNoteTurnId({
+              teamId: team.id,
+              threadId: input.payload.threadId,
+              fromTurnId: `msg:${mirroredMessageId}`,
+              toTurnId: mirroredRunId,
+            })
+            .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadNote>));
+          for (const note of [...relinkedRaw, ...relinkedMirrored]) {
+            yield* publish({ version: 1, type: "threadNoteUpserted", payload: note });
+          }
+        }
+        if (highestInsertedRun !== null) {
+          const reanchored = yield* repository
+            .reanchorPendingNotesForNewTurn({
+              teamId: team.id,
+              threadId: input.payload.threadId,
+              targetTurnId: highestInsertedRun.mirroredRunId,
+            })
+            .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadNote>));
+          for (const note of reanchored) {
+            yield* publish({ version: 1, type: "threadNoteUpserted", payload: note });
+          }
         }
         yield* publish({
           version: 1,
-          type: "turnAttributed",
-          payload: {
-            turnId: mirroredRunId,
-            threadId: input.payload.threadId,
-            authorMemberId: actor.id,
-            authorPseudo: actor.pseudo,
-            createdAt: run.createdAt,
-          },
+          type: "threadAttributed",
+          payload: attributionOption.value,
         });
-      }
-      const relinkedRaw = yield* repository
-        .relinkNoteTurnId({
-          teamId: team.id,
-          threadId: input.payload.threadId,
-          fromTurnId: `msg:${run.userMessageId}`,
-          toTurnId: mirroredRunId,
-        })
-        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadNote>));
-      const relinkedMirrored = yield* repository
-        .relinkNoteTurnId({
-          teamId: team.id,
-          threadId: input.payload.threadId,
-          fromTurnId: `msg:${mirroredMessageId}`,
-          toTurnId: mirroredRunId,
-        })
-        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadNote>));
-      for (const note of [...relinkedRaw, ...relinkedMirrored]) {
-        yield* publish({ version: 1, type: "threadNoteUpserted", payload: note });
-      }
-    }
-    if (highestInsertedRun !== null) {
-      const reanchored = yield* repository
-        .reanchorPendingNotesForNewTurn({
-          teamId: team.id,
-          threadId: input.payload.threadId,
-          targetTurnId: highestInsertedRun.mirroredRunId,
-        })
-        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadNote>));
-      for (const note of reanchored) {
-        yield* publish({ version: 1, type: "threadNoteUpserted", payload: note });
-      }
-    }
-    yield* publish({
-      version: 1,
-      type: "threadAttributed",
-      payload: attributionOption.value,
-    });
-    return { attribution: attributionOption.value } satisfies TeamSyncLocalThreadResult;
+        return { attribution: attributionOption.value } satisfies TeamSyncLocalThreadResult;
+      }),
+    );
   });
 
   const assertActorCanResolveNotesOnThread = Effect.fn(

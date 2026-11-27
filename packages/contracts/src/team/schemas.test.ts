@@ -629,6 +629,15 @@ describe("Milestone 5 environments, local boundary, and thread notes", () => {
         environments: [restrictedEnv],
       }),
     ).toMatchObject({ canExecute: false, reason: "other_member_local" });
+    // Bob himself viewing his own mirrored thread on the Team Server gets own_local_mirror (P1-7).
+    expect(
+      resolveTeamThreadEnvironmentAccess({
+        member: regular,
+        attribution: bobLocalAttr,
+        environments: [restrictedEnv],
+        viewingOnLocalExecutionEnvironment: false,
+      }),
+    ).toMatchObject({ canExecute: false, reason: "own_local_mirror" });
     // Bob himself can execute only when viewing on his local execution environment.
     expect(
       resolveTeamThreadEnvironmentAccess({

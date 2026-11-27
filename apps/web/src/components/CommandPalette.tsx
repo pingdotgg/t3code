@@ -88,7 +88,8 @@ import {
   WorkflowIcon,
 } from "lucide-react";
 import { useTeamCommandPaletteActions } from "./team/useTeamCommandPaletteActions";
-import { useTeamEnvironmentState } from "../state/team";
+import { resolveOwningTeamEnvironment } from "@t3tools/client-runtime/team";
+import { useTeamStatesByEnvironment } from "../state/team";
 import { canManageTeamProjects } from "@t3tools/contracts";
 import { UsersIcon } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
@@ -588,9 +589,19 @@ function OpenCommandPaletteDialog(props: {
   } | null>(null);
   const [newProjectPublishes, setNewProjectPublishes] = useState(false);
   const [newProjectAssignsToTeam, setNewProjectAssignsToTeam] = useState(true);
-  const newProjectTeamState = useTeamEnvironmentState(newProjectFlow?.environmentId ?? null);
+  const teamStatesByEnvironment = useTeamStatesByEnvironment();
+  const newProjectOwningTeam =
+    newProjectFlow !== null
+      ? resolveOwningTeamEnvironment({
+          environmentId: newProjectFlow.environmentId,
+          teamStates: teamStatesByEnvironment,
+        })
+      : null;
+  const newProjectTeamState = newProjectOwningTeam?.teamState ?? null;
   const canAssignNewProjectToTeam =
     newProjectFlow !== null &&
+    newProjectOwningTeam !== null &&
+    newProjectTeamState !== null &&
     newProjectTeamState.team !== null &&
     newProjectTeamState.currentMember !== null &&
     newProjectTeamState.currentMember.status === "active" &&
@@ -2190,6 +2201,10 @@ function OpenCommandPaletteDialog(props: {
         name: newProjectName,
         publishTo: newProjectPublishes ? newProjectPublishTarget : null,
         assignToTeam: canAssignNewProjectToTeam && newProjectAssignsToTeam,
+        teamEnvironmentId:
+          canAssignNewProjectToTeam && newProjectAssignsToTeam
+            ? (newProjectOwningTeam?.teamEnvironmentId ?? null)
+            : null,
       }),
     );
     newProjectSubmittingRef.current = false;
@@ -2553,7 +2568,7 @@ function OpenCommandPaletteDialog(props: {
           ],
         };
   const newProjectOptionItems: CommandPaletteView["groups"][number]["items"][number][] = [
-    ...(canAssignNewProjectToTeam && newProjectTeamState.team !== null
+    ...(canAssignNewProjectToTeam && newProjectTeamState?.team != null
       ? [
           {
             kind: "action" as const,
