@@ -210,6 +210,15 @@ describe("Chunk", () => {
       const actual = Chunk.fromIterable(expected)
       assertTrue(actual === expected)
     })
+
+    it("should copy an array input", () => {
+      const source = [1, 2]
+      const chunk = Chunk.fromIterable(source)
+      source[0] = 9
+      source.push(3)
+      deepStrictEqual(Chunk.toArray(chunk), [1, 2])
+      strictEqual(chunk.length, 2)
+    })
   })
 
   describe("get", () => {

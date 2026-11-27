@@ -1,7 +1,14 @@
-import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import { desktopTrackMismatchText } from "@t3tools/client-runtime/state/server";
+import type {
+  DesktopBridge,
+  DesktopUpdateActionResult,
+  DesktopUpdateState,
+} from "@t3tools/contracts";
+import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../i18n/messages";
+import { channelSwitchLabel } from "./sidebar/updateEverything.logic";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
@@ -139,6 +146,11 @@ export function getDesktopUpdateButtonTooltip(
       : resolve(msg("Downloading update"));
   }
   if (state.status === "downloaded") {
+    if (state.errorContext === "install" && state.downloadedVersion) {
+      return resolve(
+        msg("Install failed for {version}. Click to retry.", { version: state.downloadedVersion }),
+      );
+    }
     const version = state.downloadedVersion ?? state.availableVersion;
     return version === null
       ? resolve(msg("Update ready downloaded. Click to restart and install."))
@@ -157,7 +169,28 @@ export function getDesktopUpdateButtonTooltip(
         }),
       );
     }
+    if (state.trackMismatch !== undefined) {
+      return resolve(
+        desktopTrackMismatchText({
+          buildChannel: state.trackMismatch.buildChannel,
+          savedChannel: state.channel,
+        }),
+      );
+    }
     return state.message ?? resolve(msg("Update failed"));
+  }
+  // The updater discards every release of the other track, so "up to date" would be false here.
+  const buildChannel = desktopUpdateChannelOf(state.currentVersion);
+  if (state.status === "up-to-date" && buildChannel !== state.channel) {
+    return resolve(
+      msg(
+        "This {build} build ignores {track} releases. Review the update track in Settings to finish the switch.",
+        {
+          build: channelSwitchLabel(buildChannel, resolve),
+          track: channelSwitchLabel(state.channel, resolve),
+        },
+      ),
+    );
   }
   return resolve(msg("Up to date"));
 }
@@ -186,6 +219,34 @@ export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): 
   if (typeof result.state.message !== "string") return null;
   const message = result.state.message.trim();
   return message.length > 0 ? message : null;
+}
+
+/**
+ * macOS can refuse the restart after installUpdate resolves; the desktop then reports it as a
+ * later state with errorContext "install". Success quits the app, so this never resolves then.
+ */
+export async function installDesktopUpdate(
+  bridge: Pick<DesktopBridge, "installUpdate" | "onUpdateState">,
+  expectedVersion?: string,
+): Promise<DesktopUpdateActionResult> {
+  let awaitingFailure = false;
+  let reportFailure: (state: DesktopUpdateState) => void = () => {};
+  const failure = new Promise<DesktopUpdateState>((resolve) => {
+    reportFailure = resolve;
+  });
+  const unsubscribe = bridge.onUpdateState((state) => {
+    if (awaitingFailure && state.errorContext === "install") reportFailure(state);
+  });
+  try {
+    const result = await bridge.installUpdate(expectedVersion);
+    if (!result.accepted || result.completed || getDesktopUpdateActionError(result) !== null) {
+      return result;
+    }
+    awaitingFailure = true;
+    return { ...result, state: await failure };
+  } finally {
+    unsubscribe();
+  }
 }
 
 export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateActionResult): boolean {

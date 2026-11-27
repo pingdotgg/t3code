@@ -27,6 +27,7 @@ import {
   type RichTextMark,
 } from "~/composer-rich-text";
 import { caretTakesMarksBefore, serializeEditorDoc } from "~/composer-rich-text-doc";
+import { isPasteTransaction } from "~/composer-undo-grouping";
 
 // Styled text the selection touches becomes source text with the source mark,
 // parsed back once the selection leaves. History steps only replay on the shape
@@ -496,9 +497,10 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
       if (!transactions.some((tr) => tr.docChanged || tr.selectionSet)) return null;
       const source = markdownSourceKey.getState(state);
       if (source?.detached) return normalizeDetached(state, source.revealed);
+      // A paste is not typing: the caret ends past the pasted text's closing markers.
       const tr = normalizeMarkdownSource(
         state,
-        transactions.some((item) => item.docChanged),
+        transactions.some((item) => item.docChanged && !isPasteTransaction(item)),
       );
       // With nothing to undo, a recorded rewrite would only add a no-op undo.
       if (tr && undoDepth(state) === 0) tr.setMeta("addToHistory", false);

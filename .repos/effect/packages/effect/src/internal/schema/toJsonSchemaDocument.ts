@@ -725,7 +725,9 @@ function compileJsonSchema(
           return pattern
         }
         case "Literal":
-          return RegEx.escape(globalThis.String(part.literal))
+          return getLiteralPattern(part.literal)
+        case "Enum":
+          return getAlternationPattern(part.enums.map(([_, value]) => getLiteralPattern(value)))
         case "String":
           return InternalAST.STRING_PATTERN
         case "Number":
@@ -735,15 +737,22 @@ function compileJsonSchema(
         case "TemplateLiteral":
           return part.parts.map(getPartPattern).join("")
         case "Union":
-          if (part.types.length === 0) return "(?!)"
           // Regex alternatives do not enforce that exactly one branch matches.
-          if (part.options?.mode === "oneOf") exact = false
-          return `(?:${part.types.map(getPartPattern).join("|")})`
+          if (part.types.length > 0 && part.options?.mode === "oneOf") exact = false
+          return getAlternationPattern(part.types.map(getPartPattern))
         default:
           throw errorWithPath(`Invalid TemplateLiteral part ${part._tag}`, [])
       }
     }
   }
+}
+
+function getLiteralPattern(value: InternalAST.LiteralValue): string {
+  return RegEx.escape(globalThis.String(value))
+}
+
+function getAlternationPattern(patterns: ReadonlyArray<string>): string {
+  return patterns.length === 0 ? "(?!)" : `(?:${patterns.join("|")})`
 }
 
 function isJsonSchemaType(input: string): input is JsonSchema.Type {

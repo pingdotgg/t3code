@@ -1,3 +1,6 @@
+"@effect/ai-anthropic/AnthropicTool#CodeExecution_20250825":
+  replacement: "AnthropicTool.CodeExecution_20250825"
+  note: "The v4 tool accepts code-only, Bash command, and text editor view/create/str_replace payloads. Handle the full parameter union instead of assuming every call has code; CodeExecution_20250825_Parameters describes only the code-only branch. Successes also include plain and encrypted code-execution results, and failures include Bash execution errors."
 "@effect/ai-anthropic/AnthropicTool#getProviderDefinedToolName":
   replacement: "Tool.NameMapper"
   note: "The Anthropic-specific name lookup was removed; v4 provider tools carry custom and provider names through the shared Tool.NameMapper."

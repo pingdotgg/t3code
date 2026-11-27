@@ -20,6 +20,7 @@ import type * as Queue from "../Queue.ts"
 import type * as Record from "../Record.ts"
 import type { Scope } from "../Scope.ts"
 import * as Stream from "../Stream.ts"
+import type * as Tracer from "../Tracer.ts"
 import * as Rpc from "./Rpc.ts"
 import type { RequestId } from "./RpcMessage.ts"
 import type * as RpcMiddleware from "./RpcMiddleware.ts"
@@ -140,6 +141,10 @@ export interface RpcGroup<in out R extends Rpc.Any> extends Pipeable {
       options: {
         readonly client: Rpc.ServerClient
         readonly requestId: RequestId
+        /**
+         * The span sent by the client, or `undefined` when no span was propagated.
+         */
+        readonly remoteParentSpan: Tracer.ExternalSpan | undefined
         readonly headers: Headers
       }
     ) => Rpc.ResultFrom<Extract<R, { readonly _tag: Tag }>, never>,

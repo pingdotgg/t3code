@@ -1174,6 +1174,23 @@ describe("Equal.equals", () => {
       expect(error1.stack).not.toBe(error2.stack)
       expect(Equal.equals(error1, error2)).toBe(true)
     })
+
+    const withSiteMetadata = (line: number, enumerable: boolean): Error => {
+      const error = new Error("same message")
+      const metadata = { line, column: line, sourceURL: `file${line}.ts`, originalLine: line, originalColumn: line }
+      for (const [key, value] of Object.entries(metadata)) {
+        Object.defineProperty(error, key, { value, enumerable, writable: true, configurable: true })
+      }
+      return error
+    }
+
+    it("should ignore non-enumerable construction-site metadata (JavaScriptCore)", () => {
+      assert.isTrue(Equal.equals(withSiteMetadata(1, false), withSiteMetadata(2, false)))
+    })
+
+    it("should compare enumerable fields named like construction-site metadata", () => {
+      assert.isFalse(Equal.equals(withSiteMetadata(1, true), withSiteMetadata(2, true)))
+    })
   })
 
   describe("objects with different constructors", () => {

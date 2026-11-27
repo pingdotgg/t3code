@@ -18,6 +18,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
+  useDeferredValue,
   useReducer,
   useRef,
   useState,
@@ -28,6 +29,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type KeybindingCommand,
+  type KeybindingShortcut,
   type KeybindingWhenNode,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
@@ -43,18 +45,36 @@ import {
 
 import { isElectron } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
-import { formatShortcutLabel } from "../../keybindings";
+import { formatShortcutKeyParts, formatShortcutLabel } from "../../keybindings";
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { useClientSettings } from "../../hooks/useSettings";
 import { Badge } from "../ui/badge";
+import { Skeleton } from "../ui/skeleton";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Kbd, KbdGroup } from "../ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  Combobox,
+  ComboboxTrigger,
+  ComboboxPopup,
+  ComboboxSearchInput,
+  ComboboxEmpty,
+  ComboboxList,
+  ComboboxItem,
+} from "../ui/combobox";
+import {
+  SelectButton,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Toggle } from "../ui/toggle";
 import { toastManager } from "../ui/toast";
 import {
@@ -81,36 +101,15 @@ import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { keybindingSearchAnchorId, useSearchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-function KeybindingPill({ value }: { value: string }) {
-  // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
-  const seenParts = new Map<string, number>();
-  const parts = value.split("+").map((part) => {
-    const seen = seenParts.get(part) ?? 0;
-    seenParts.set(part, seen + 1);
-    return { part, key: seen === 0 ? part : `${part}-${seen}` };
-  });
+function KeybindingPill({ shortcut }: { shortcut: KeybindingShortcut }) {
+  const parts = formatShortcutKeyParts(shortcut);
   return (
     <KbdGroup>
-      {parts.map(({ part, key }) => (
-        <Kbd key={key}>
-          {part === "mod"
-            ? navigator.platform.toLowerCase().includes("mac")
-              ? "⌘"
-              : "Ctrl"
-            : part === "shift"
-              ? "⇧"
-              : part === "alt"
-                ? navigator.platform.toLowerCase().includes("mac")
-                  ? "⌥"
-                  : "Alt"
-                : part === "ctrl"
-                  ? "⌃"
-                  : part.length === 1
-                    ? part.toUpperCase()
-                    : part}
-        </Kbd>
+      {parts.map((part, index) => (
+        <Kbd key={index === parts.length - 1 ? "key" : part}>{part}</Kbd>
       ))}
     </KbdGroup>
   );
@@ -131,15 +130,19 @@ function KeybindingsSearchInput({
       <InputGroupAddon>
         <SearchIcon aria-hidden className="size-3.5" />
       </InputGroupAddon>
+      {/* Native search inputs clear on Escape even during IME composition. */}
       <InputGroupInput
         ref={inputRef}
-        type="search"
+        type="text"
+        role="searchbox"
+        enterKeyHint="search"
         value={query}
         onChange={(event) => onChange(event.currentTarget.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
+          if (!isBareEscape(event) || event.nativeEvent.isComposing || event.keyCode === 229)
+            return;
           event.preventDefault();
-          if (query.length > 0) {
+          if (query.length > 0 || event.repeat) {
             event.stopPropagation();
             onChange("");
           } else event.currentTarget.blur();
@@ -227,23 +230,21 @@ function WarningTooltipIcon({
   children: ReactNode;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            tabIndex={focusable ? 0 : undefined}
-            aria-label={label}
-            className={cn(
-              "inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-warning outline-none transition-colors hover:bg-warning/10 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-warning/25",
-              className,
-            )}
-          />
-        }
-      >
-        <TriangleAlertIcon className="size-3.5" />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{children}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <span
+          tabIndex={focusable ? 0 : undefined}
+          aria-label={label}
+          className={cn(
+            "inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-warning outline-none transition-colors hover:bg-warning/10 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-warning/25",
+            className,
+          )}
+        />
+      }
+      label={children}
+    >
+      <TriangleAlertIcon className="size-3.5" />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -734,6 +735,13 @@ function rowKeybindingTarget(row: KeybindingRow): ServerRemoveKeybindingInput {
   };
 }
 
+// Esc with a modifier is not a cancel.
+function isBareEscape(event: KeyboardEvent<HTMLInputElement>) {
+  return (
+    event.key === "Escape" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
+  );
+}
+
 function useKeybindingRowEditor({
   row,
   allRows,
@@ -782,9 +790,9 @@ function useKeybindingRowEditor({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (isBareEscape(event)) {
       const field = event.currentTarget;
       flushSync(() =>
         setDraft({
@@ -898,7 +906,7 @@ function KeybindingKeyControl({
               <T context="keyboard shortcut with no key assigned">Unassigned</T>
             </span>
           ) : (
-            <KeybindingPill value={row.key} />
+            <KeybindingPill shortcut={row.binding.shortcut} />
           )}
         </button>
       ) : (
@@ -1040,13 +1048,10 @@ function KeybindingSourceBadge({ source }: { source: KeybindingRow["source"] }) 
 function KeybindingRowTitle({ row }: { row: KeybindingRow }) {
   const m = useMessages();
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="flex items-center gap-2" />}>
-        {commandLabel(row.command, m)}
-        <KeybindingSourceBadge source={row.source} />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{row.command}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger render={<span className="flex items-center gap-2" />} label={row.command}>
+      {commandLabel(row.command, m)}
+      <KeybindingSourceBadge source={row.source} />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -1173,9 +1178,9 @@ function useNewKeybindingDraft({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (isBareEscape(event)) {
       setDraft({ keyDraft: "", isRecording: false });
       event.currentTarget.blur();
       return;
@@ -1217,30 +1222,76 @@ interface NewKeybindingProps {
 function NewKeybindingCommandSelect({
   draft,
   commandOptions,
+  allRows,
   className,
 }: {
   draft: NewKeybindingDraft;
   commandOptions: ReadonlyArray<KeybindingCommandOption>;
+  allRows: ReadonlyArray<KeybindingRow>;
   className?: string | undefined;
 }) {
   const gt = useGT();
   const m = useMessages();
+  const shortcutsByCommand = new Map<
+    KeybindingCommand,
+    Array<{ id: string; label: string; when: string }>
+  >();
+  for (const row of allRows) {
+    for (const label of row.previewLabels) {
+      const shortcuts = shortcutsByCommand.get(row.command) ?? [];
+      shortcuts.push({ id: `${row.id}:${label}`, label, when: row.when });
+      shortcutsByCommand.set(row.command, shortcuts);
+    }
+  }
   return (
-    <Select
-      value={draft.commandDraft}
-      onValueChange={(value) => draft.setCommandDraft(value as KeybindingCommand)}
+    <Combobox
+      items={commandOptions}
+      defaultOpen
+      itemToStringLabel={(command) => commandLabel(command, m)}
+      filter={(command, query) =>
+        `${command} ${commandLabel(command, m)}`.toLowerCase().includes(query.trim().toLowerCase())
+      }
+      autoHighlight
+      value={draft.commandDraft || null}
+      onValueChange={(value) => value && draft.setCommandDraft(value)}
     >
-      <SelectTrigger size="sm" className={className}>
-        <SelectValue placeholder={gt("Command")} />
-      </SelectTrigger>
-      <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false} className="max-h-72">
-        {commandOptions.map((command) => (
-          <SelectItem key={command} value={command} className="w-full">
-            <span className="truncate">{commandLabel(command, m)}</span>
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+      <ComboboxTrigger
+        aria-label={gt("Command")}
+        render={<SelectButton size="sm" />}
+        className={className}
+      >
+        {draft.commandDraft ? commandLabel(draft.commandDraft, m) : gt("Command")}
+      </ComboboxTrigger>
+      <ComboboxPopup aria-label={gt("Command")} className="w-96">
+        <ComboboxSearchInput
+          autoFocus
+          placeholder={gt("Search", { $context: "search field placeholder" })}
+          aria-label={gt("Search", { $context: "search field placeholder" })}
+        />
+        <ComboboxEmpty>{gt("No results found.")}</ComboboxEmpty>
+        <ComboboxList>
+          {(command: KeybindingCommandOption) => {
+            const shortcuts = shortcutsByCommand.get(command);
+            return (
+              <ComboboxItem key={command} value={command}>
+                <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                  <span>{commandLabel(command, m)}</span>
+                  {shortcuts && (
+                    <span className="flex shrink-0 flex-col items-end gap-1">
+                      {shortcuts.map((shortcut) => (
+                        <Kbd key={shortcut.id} title={shortcut.when || undefined}>
+                          {shortcut.label}
+                        </Kbd>
+                      ))}
+                    </span>
+                  )}
+                </div>
+              </ComboboxItem>
+            );
+          }}
+        </ComboboxList>
+      </ComboboxPopup>
+    </Combobox>
   );
 }
 
@@ -1309,25 +1360,25 @@ function NewKeybindingCancelIcon({
 }) {
   const gt = useGT();
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost-muted"
-            size="icon-sm"
-            disabled={isSaving}
-            aria-label={gt("Cancel new keybinding")}
-            onClick={onCancel}
-          />
-        }
-      >
-        <XIcon className="size-3.5" />
-      </TooltipTrigger>
-      <TooltipPopup side="top">
-        <T>Cancel</T>
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          type="button"
+          variant="ghost-muted"
+          size="icon-sm"
+          disabled={isSaving}
+          aria-label={gt("Cancel new keybinding")}
+          onClick={onCancel}
+        />
+      }
+      label={
+        <>
+          <T>Cancel</T>
+        </>
+      }
+    >
+      <XIcon className="size-3.5" />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -1353,6 +1404,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
           <NewKeybindingCommandSelect
             draft={draft}
             commandOptions={commandOptions}
+            allRows={allRows}
             className="w-56"
           />
           <KeybindingConflictWarning labels={draft.conflictLabels} />
@@ -1391,6 +1443,21 @@ function KeybindingsGroups(props: KeybindingsGroupsProps) {
   ));
 }
 
+function KeybindingsGroupsSkeleton() {
+  return (
+    <>
+      <div aria-hidden className="space-y-2.5">
+        <Skeleton shape="pill" className="h-3 w-24" />
+        <Skeleton shape="card" className="h-96" />
+      </div>
+      <div aria-hidden className="space-y-2.5">
+        <Skeleton shape="pill" className="h-3 w-24" />
+        <Skeleton shape="card" className="h-72" />
+      </div>
+    </>
+  );
+}
+
 function BrowserKeybindingNotice() {
   const gt = useGT();
   const message = gt(
@@ -1426,12 +1493,13 @@ function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
 
 // Cache rows in a separate hook so the compiler does not rebuild them per search keystroke.
 function useKeybindingCatalog() {
+  const sendShortcut = useClientSettings((settings) => settings.sendShortcut);
   const serverKeybindings = useSettingsScope().environment?.serverConfig?.keybindings;
   const merged = mergeWithDefaultKeybindings(serverKeybindings ?? []);
   const m = useMessages();
   return {
     commandOptions: buildKeybindingCommandOptions(merged, m),
-    allRows: buildKeybindingRows(merged, navigator.platform, m),
+    allRows: buildKeybindingRows(merged, navigator.platform, sendShortcut, m),
   };
 }
 
@@ -1475,6 +1543,9 @@ export function KeybindingsSettingsPanel() {
   const { commandOptions, allRows } = useKeybindingCatalog();
   const rows = filterKeybindingRows(allRows, query, m);
   const groups = groupKeybindingRows(rows);
+  // Building every row takes a long frame, so the page opens at once and the list fills in
+  // without blocking input. A search the user types renders the same way.
+  const shownGroups = useDeferredValue(groups, null);
   const anchorIds = keybindingAnchorIds(rows);
 
   const openKeybindingsFile = () => {
@@ -1628,25 +1699,25 @@ export function KeybindingsSettingsPanel() {
             <PlusIcon aria-hidden className="size-4" />
             <T>Add keybinding</T>
           </Button>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  disabled={!keybindingsConfigPath || !canOpenKeybindingsFile}
-                  onClick={openKeybindingsFile}
-                  aria-label={gt("Open keybindings.json")}
-                >
-                  <FileJsonIcon aria-hidden className="size-4" />
-                </Button>
-              }
-            />
-            <TooltipPopup side="top">
-              <T>Open keybindings.json</T>
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                disabled={!keybindingsConfigPath || !canOpenKeybindingsFile}
+                onClick={openKeybindingsFile}
+                aria-label={gt("Open keybindings.json")}
+              >
+                <FileJsonIcon aria-hidden className="size-4" />
+              </Button>
+            }
+            label={
+              <>
+                <T>Open keybindings.json</T>
+              </>
+            }
+          />
         </div>
       </SettingsSection>
 
@@ -1671,9 +1742,11 @@ export function KeybindingsSettingsPanel() {
           </SettingsGroup>
         ) : null}
 
-        {groups.length > 0 ? (
+        {shownGroups === null ? (
+          <KeybindingsGroupsSkeleton />
+        ) : shownGroups.length > 0 ? (
           <KeybindingsGroups
-            groups={groups}
+            groups={shownGroups}
             anchorIds={anchorIds}
             savingCommand={savingCommand}
             {...rowActions}

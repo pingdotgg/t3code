@@ -17,6 +17,7 @@ import { getStackTraceLimit, setStackTraceLimit } from "../internal/stackTraceLi
 import * as Layer from "../Layer.ts"
 import * as Schema from "../Schema.ts"
 import { Scope } from "../Scope.ts"
+import type * as Tracer from "../Tracer.ts"
 import type { Mutable, unhandled } from "../Types.ts"
 import type * as Rpc from "./Rpc.ts"
 import type { Request, RequestId } from "./RpcMessage.ts"
@@ -54,6 +55,10 @@ export interface RpcMiddleware<Provides, E, Requires> {
     options: {
       readonly client: Rpc.ServerClient
       readonly requestId: RequestId
+      /**
+       * The span sent by the client, or `undefined` when no span was propagated.
+       */
+      readonly remoteParentSpan: Tracer.ExternalSpan | undefined
       readonly rpc: Rpc.AnyWithProps
       readonly payload: unknown
       readonly headers: Headers
@@ -116,6 +121,10 @@ export interface Any {
     options: {
       readonly client: Rpc.ServerClient
       readonly requestId: RequestId
+      /**
+       * The span sent by the client, or `undefined` when no span was propagated.
+       */
+      readonly remoteParentSpan: Tracer.ExternalSpan | undefined
       readonly rpc: Rpc.AnyWithProps
       readonly payload: unknown
       readonly headers: Headers

@@ -19,9 +19,11 @@ import * as Data from "../Data.ts"
 import * as Duration from "../Duration.ts"
 import * as Effect from "../Effect.ts"
 import * as Fiber from "../Fiber.ts"
+import { NodeInspectSymbol } from "../Inspectable.ts"
 import * as Latch from "../Latch.ts"
 import * as Layer from "../Layer.ts"
 import * as Scheduler from "../Scheduler.ts"
+import type * as Scope from "../Scope.ts"
 import * as Semaphore from "../Semaphore.ts"
 
 /**
@@ -274,172 +276,151 @@ const millisToNanos = (millis: number): bigint => {
  * @category constructors
  * @since 4.0.0
  */
-export const make = (options?: TestClock.Options) => Effect.map(makeWithScheduler(options), ([testClock]) => testClock)
+export const make = (options?: TestClock.Options): Effect.Effect<TestClock, never, Scope.Scope> =>
+  Effect.map(makeWithScheduler(options), ([testClock]) => testClock)
 
-const makeWithScheduler = Effect.fnUntraced(function*(
-  options?: TestClock.Options
-) {
-  const config = { ...defaultOptions, ...options }
+interface SleepEntry {
+  readonly timestamp: number
+  readonly latch: Latch.Latch
+}
+
+class TestClockImpl implements TestClock {
+  readonly config: Required<TestClock.Options>
+  readonly liveClock: Clock.Clock
+  readonly liveConsole: Console.Console
+  readonly scheduler: TrackingScheduler
   // Sorted by descending timestamp, so `pop` wakes the earliest sleep first
-  const sleeps: Array<{
-    readonly timestamp: number
-    readonly latch: Latch.Latch
-  }> = []
-  const currentClock = yield* Clock.clockWith(Effect.succeed)
-  const liveClock = liveClocks.get(currentClock) ?? currentClock
-  const liveConsole = yield* Console.Console
-  const warningSemaphore = yield* Semaphore.make(1)
-  const parentScheduler = yield* Scheduler.Scheduler
-
-  let currentTimestamp: number = new Date(0).getTime()
-  let currentWallNanos = BigInt(0)
-  let currentMonotonicNanos = BigInt(0)
-  let warningState: WarningState = WarningState.Start()
-
-  function currentTimeMillisUnsafe(): number {
-    return currentTimestamp
-  }
-
-  function currentTimeNanosUnsafe(): bigint {
-    return currentWallNanos
-  }
-
-  function monotonicTimeNanosUnsafe(): bigint {
-    return currentMonotonicNanos
-  }
-
-  const currentTimeMillis = Effect.sync(currentTimeMillisUnsafe)
-  const currentTimeNanos = Effect.sync(currentTimeNanosUnsafe)
-  const monotonicTimeNanos = Effect.sync(monotonicTimeNanosUnsafe)
-
-  function withLive<A, E, R>(effect: Effect.Effect<A, E, R>) {
-    return Effect.provideService(effect, Clock.Clock, liveClock)
-  }
-
-  /**
-   * Forks a fiber that will display a warning message if a test is using time
-   * but is not advancing the `TestClock`.
-   */
-  const warningStart = warningSemaphore.withPermits(1)(
-    Effect.suspend(() => {
-      if (warningState._tag === "Start") {
-        return Effect.logWarning(warningMessage).pipe(
-          Effect.provideService(Console.Console, liveConsole),
-          Effect.delay(config.warningDelay),
-          withLive,
-          Effect.forkChild,
-          Effect.interruptible,
-          Effect.flatMap((fiber) =>
-            Effect.sync(() => {
-              warningState = WarningState.Pending({ fiber })
-            })
-          )
-        )
-      }
-      return Effect.void
-    })
-  )
-  /**
-   * Cancels the warning message that is displayed if a test is using time but
-   * is not advancing the `TestClock`.
-   */
-  const warningDone = warningSemaphore.withPermits(1)(
-    Effect.suspend(() => {
-      switch (warningState._tag) {
-        case "Pending": {
-          return Fiber.interrupt(warningState.fiber).pipe(
-            Effect.andThen(Effect.sync(() => {
-              warningState = WarningState.Done()
-            }))
-          )
-        }
-        case "Start":
-        case "Done": {
-          warningState = WarningState.Done()
-          return Effect.void
-        }
-      }
-    })
-  )
-
-  const sleep = Effect.fnUntraced(function*(duration: Duration.Duration) {
-    const millis = Duration.toMillis(duration)
-    const end = currentTimestamp + millis
-    if (end <= currentTimestamp) return
-    yield* Effect.acquireUseRelease(
-      Effect.sync(() => {
-        const entry = { timestamp: end, latch: Latch.makeUnsafe() }
-        // Insert before entries with an equal timestamp, so they wake in
-        // registration order
-        let low = 0
-        let high = sleeps.length
-        while (low < high) {
-          const mid = (low + high) >>> 1
-          if (sleeps[mid].timestamp > end) low = mid + 1
-          else high = mid
-        }
-        sleeps.splice(low, 0, entry)
-        return entry
-      }),
-      (entry) => Effect.andThen(warningStart, entry.latch.await),
-      (entry) =>
-        Effect.sync(() => {
-          // The entry is already gone if `run` popped it
-          const index = sleeps.indexOf(entry)
-          if (index !== -1) sleeps.splice(index, 1)
-        })
-    )
-  })
-
+  readonly sleeps: Array<SleepEntry> = []
+  readonly warningSemaphore = Semaphore.makeUnsafe(1)
+  readonly runSemaphore = Semaphore.makeUnsafe(1)
+  currentTimestamp = 0
+  currentWallNanos = BigInt(0)
+  currentMonotonicNanos = BigInt(0)
+  warningState: WarningState = WarningState.Start()
   /**
    * Tasks scheduled while waking a sleeper, and tasks scheduled by those tasks,
    * are counted by that wake's tracker so `run` can wait for the woken fiber,
    * and any fibers it resumes or forks, to suspend before checking the next
    * sleep.
    */
-  let currentTracker: WakeTracker | undefined = undefined
+  currentTracker: WakeTracker | undefined = undefined
 
-  function runTracked(tracker: WakeTracker, f: () => void): void {
-    const previous = currentTracker
-    currentTracker = tracker
+  constructor(options: TestClock.Options | undefined, context: Context.Context<never>) {
+    this.config = { ...defaultOptions, ...options }
+    const currentClock = Context.get(context, Clock.Clock)
+    this.liveClock = liveClocks.get(currentClock) ?? currentClock
+    this.liveConsole = Context.get(context, Console.Console)
+    this.scheduler = new TrackingScheduler(this, Context.get(context, Scheduler.Scheduler))
+  }
+
+  // The `TestClock` methods are own arrow functions, so they still work when
+  // detached from the clock or copied with a spread.
+
+  readonly currentTimeMillisUnsafe = (): number => this.currentTimestamp
+  readonly currentTimeNanosUnsafe = (): bigint => this.currentWallNanos
+  readonly monotonicTimeNanosUnsafe = (): bigint => this.currentMonotonicNanos
+  readonly currentTimeMillis = Effect.sync(this.currentTimeMillisUnsafe)
+  readonly currentTimeNanos = Effect.sync(this.currentTimeNanosUnsafe)
+  readonly monotonicTimeNanos = Effect.sync(this.monotonicTimeNanosUnsafe)
+
+  readonly withLive = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.provideService(effect, Clock.Clock, this.liveClock)
+
+  readonly sleep = (duration: Duration.Duration): Effect.Effect<void> =>
+    Effect.suspend(() => {
+      const end = this.currentTimestamp + Duration.toMillis(duration)
+      if (end <= this.currentTimestamp) return Effect.void
+      const sleeps = this.sleeps
+      return Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const entry = { timestamp: end, latch: Latch.makeUnsafe() }
+          // Insert before entries with an equal timestamp, so they wake in
+          // registration order
+          let low = 0
+          let high = sleeps.length
+          while (low < high) {
+            const mid = (low + high) >>> 1
+            if (sleeps[mid].timestamp > end) low = mid + 1
+            else high = mid
+          }
+          sleeps.splice(low, 0, entry)
+          return entry
+        }),
+        (entry) => Effect.andThen(this.warningStart, entry.latch.await),
+        (entry) =>
+          Effect.sync(() => {
+            // The entry is already gone if `run` popped it
+            const index = sleeps.indexOf(entry)
+            if (index !== -1) sleeps.splice(index, 1)
+          })
+      )
+    })
+
+  readonly adjust = (input: Duration.Input): Effect.Effect<void> => {
+    const duration = Duration.fromInputUnsafe(input)
+    const millis = Duration.toMillis(duration)
+    const nanos = Number.isFinite(millis) ? Duration.toNanosUnsafe(duration) : undefined
+    return Effect.andThen(this.warningDone, this.run((timestamp) => timestamp + millis, nanos))
+  }
+
+  readonly setTime = (timestamp: number): Effect.Effect<void> =>
+    Effect.andThen(this.warningDone, this.run(() => timestamp))
+
+  /**
+   * Forks a fiber that will display a warning message if a test is using time
+   * but is not advancing the `TestClock`.
+   */
+  readonly warningStart: Effect.Effect<void> = this.warningSemaphore.withPermits(1)(
+    Effect.suspend(() => {
+      if (this.warningState._tag !== "Start") return Effect.void
+      return Effect.logWarning(warningMessage).pipe(
+        Effect.provideService(Console.Console, this.liveConsole),
+        Effect.delay(this.config.warningDelay),
+        this.withLive,
+        // Child fibers are interruptible by default; preserve the caller's mask.
+        Effect.forkChild,
+        Effect.flatMap((fiber) =>
+          Effect.sync(() => {
+            this.warningState = WarningState.Pending({ fiber })
+          })
+        )
+      )
+    })
+  )
+
+  /**
+   * Cancels the warning message that is displayed if a test is using time but
+   * is not advancing the `TestClock`.
+   */
+  readonly warningDone: Effect.Effect<void> = this.warningSemaphore.withPermits(1)(
+    Effect.suspend(() => {
+      const state = this.warningState
+      if (state._tag === "Pending") {
+        return Fiber.interrupt(state.fiber).pipe(
+          Effect.andThen(Effect.sync(() => {
+            this.warningState = WarningState.Done()
+          }))
+        )
+      }
+      this.warningState = WarningState.Done()
+      return Effect.void
+    })
+  )
+
+  runTracked(tracker: WakeTracker, f: () => void): void {
+    const previous = this.currentTracker
+    this.currentTracker = tracker
     try {
       f()
     } finally {
-      currentTracker = previous
+      this.currentTracker = previous
     }
   }
 
-  const scheduler: Scheduler.Scheduler = {
-    executionMode: parentScheduler.executionMode,
-    shouldYield: (fiber) => parentScheduler.shouldYield(fiber),
-    makeDispatcher() {
-      const dispatcher = parentScheduler.makeDispatcher()
-      return {
-        scheduleTask(task, priority) {
-          const tracker = currentTracker
-          if (tracker === undefined) {
-            return dispatcher.scheduleTask(task, priority)
-          }
-          tracker.pending++
-          dispatcher.scheduleTask(() => {
-            try {
-              runTracked(tracker, task)
-            } finally {
-              if (--tracker.pending === 0) tracker.onIdle?.()
-            }
-          }, priority)
-        },
-        flush() {
-          dispatcher.flush()
-        }
-      }
-    }
-  }
-
-  const wake = (latch: Latch.Latch) =>
-    Effect.suspend(() => {
+  wake(latch: Latch.Latch): Effect.Effect<void> {
+    return Effect.suspend(() => {
       const tracker: WakeTracker = { pending: 0, onIdle: undefined }
-      runTracked(tracker, () => latch.openUnsafe())
+      this.runTracked(tracker, () => latch.openUnsafe())
       if (tracker.pending === 0) return Effect.yieldNow
       return Effect.callback<void>((resume) => {
         if (tracker.pending === 0) return resume(Effect.void)
@@ -449,75 +430,109 @@ const makeWithScheduler = Effect.fnUntraced(function*(
         })
       }).pipe(
         Effect.timeoutOrElse({
-          duration: config.warningDelay,
-          orElse: () => Effect.provideService(Effect.logWarning(busyWarningMessage), Console.Console, liveConsole)
+          duration: this.config.warningDelay,
+          orElse: () => Effect.provideService(Effect.logWarning(busyWarningMessage), Console.Console, this.liveConsole)
         }),
-        withLive,
+        this.withLive,
         Effect.andThen(Effect.yieldNow)
       )
     })
-
-  const runSemaphore = yield* Semaphore.make(1)
-  const run = Effect.fnUntraced(function*(
-    step: (currentTimestamp: number) => number,
-    adjustmentNanos?: bigint
-  ) {
-    yield* Fiber.await(yield* Effect.forkChild(Effect.yieldNow))
-    const initialWallNanos = currentWallNanos
-    const initialMonotonicNanos = currentMonotonicNanos
-    const endTimestamp = step(currentTimestamp)
-    const advanceTo = (timestamp: number) => {
-      const deltaMillis = timestamp - currentTimestamp
-      if (deltaMillis > 0 && Number.isFinite(deltaMillis)) {
-        currentMonotonicNanos += BigInt(Math.round(deltaMillis * 1_000_000))
-      }
-      if (Number.isFinite(timestamp)) {
-        currentWallNanos = millisToNanos(timestamp)
-      }
-      currentTimestamp = timestamp
-    }
-    while (Arr.isArrayNonEmpty(sleeps)) {
-      if (Arr.lastNonEmpty(sleeps).timestamp > endTimestamp) break
-      const entry = sleeps.pop()!
-      advanceTo(entry.timestamp)
-      yield* wake(entry.latch)
-    }
-    advanceTo(endTimestamp)
-    if (adjustmentNanos !== undefined && Number.isFinite(endTimestamp)) {
-      currentWallNanos = initialWallNanos + adjustmentNanos
-      if (adjustmentNanos > BigInt(0)) {
-        currentMonotonicNanos = initialMonotonicNanos + adjustmentNanos
-      }
-    }
-  }, runSemaphore.withPermits(1))
-
-  function adjust(input: Duration.Input) {
-    const duration = Duration.fromInputUnsafe(input)
-    const millis = Duration.toMillis(duration)
-    const nanos = Number.isFinite(millis) ? Duration.toNanosUnsafe(duration) : undefined
-    return warningDone.pipe(Effect.andThen(run((timestamp) => timestamp + millis, nanos)))
   }
 
-  function setTime(timestamp: number) {
-    return warningDone.pipe(Effect.andThen(run(() => timestamp)))
+  advanceTo(timestamp: number): void {
+    const deltaMillis = timestamp - this.currentTimestamp
+    if (deltaMillis > 0 && Number.isFinite(deltaMillis)) {
+      this.currentMonotonicNanos += BigInt(Math.round(deltaMillis * 1_000_000))
+    }
+    if (Number.isFinite(timestamp)) {
+      this.currentWallNanos = millisToNanos(timestamp)
+    }
+    this.currentTimestamp = timestamp
   }
 
-  yield* Effect.addFinalizer(() => warningDone)
-
-  const testClock = {
-    currentTimeMillisUnsafe,
-    currentTimeNanosUnsafe,
-    monotonicTimeNanosUnsafe,
-    currentTimeMillis,
-    currentTimeNanos,
-    monotonicTimeNanos,
-    adjust,
-    setTime,
-    sleep,
-    withLive
+  run(step: (currentTimestamp: number) => number, adjustmentNanos?: bigint): Effect.Effect<void> {
+    return this.runSemaphore.withPermits(1)(runBody.call(this, step, adjustmentNanos))
   }
-  liveClocks.set(testClock, liveClock)
-  return [testClock, scheduler] as const
+
+  // Hides the internal state, which is circular and holds bigints. Own fields,
+  // so a spread copy keeps them too.
+  readonly toJSON = testClockToJSON
+  readonly [NodeInspectSymbol] = testClockToJSON
+}
+
+function testClockToJSON(this: TestClockImpl): unknown {
+  return { _id: "TestClock", currentTimeMillis: this.currentTimeMillisUnsafe() }
+}
+
+const runBody = Effect.fnUntraced(function*(
+  this: TestClockImpl,
+  step: (currentTimestamp: number) => number,
+  adjustmentNanos?: bigint
+) {
+  yield* Fiber.await(yield* Effect.forkChild(Effect.yieldNow))
+  const initialWallNanos = this.currentWallNanos
+  const initialMonotonicNanos = this.currentMonotonicNanos
+  const endTimestamp = step(this.currentTimestamp)
+  const sleeps = this.sleeps
+  while (Arr.isArrayNonEmpty(sleeps)) {
+    if (Arr.lastNonEmpty(sleeps).timestamp > endTimestamp) break
+    const entry = sleeps.pop()!
+    this.advanceTo(entry.timestamp)
+    yield* this.wake(entry.latch)
+  }
+  this.advanceTo(endTimestamp)
+  if (adjustmentNanos !== undefined && Number.isFinite(endTimestamp)) {
+    this.currentWallNanos = initialWallNanos + adjustmentNanos
+    if (adjustmentNanos > BigInt(0)) {
+      this.currentMonotonicNanos = initialMonotonicNanos + adjustmentNanos
+    }
+  }
+})
+
+class TrackingScheduler implements Scheduler.Scheduler {
+  readonly clock: TestClockImpl
+  readonly parent: Scheduler.Scheduler
+  readonly executionMode: Scheduler.Scheduler["executionMode"]
+  constructor(clock: TestClockImpl, parent: Scheduler.Scheduler) {
+    this.clock = clock
+    this.parent = parent
+    this.executionMode = parent.executionMode
+  }
+  shouldYield(fiber: Fiber.Fiber<unknown, unknown>): boolean {
+    return this.parent.shouldYield(fiber)
+  }
+  makeDispatcher(): Scheduler.SchedulerDispatcher {
+    const clock = this.clock
+    const dispatcher = this.parent.makeDispatcher()
+    return {
+      scheduleTask(task, priority) {
+        const tracker = clock.currentTracker
+        if (tracker === undefined) {
+          return dispatcher.scheduleTask(task, priority)
+        }
+        tracker.pending++
+        dispatcher.scheduleTask(() => {
+          try {
+            clock.runTracked(tracker, task)
+          } finally {
+            if (--tracker.pending === 0) tracker.onIdle?.()
+          }
+        }, priority)
+      },
+      flush() {
+        dispatcher.flush()
+      }
+    }
+  }
+}
+
+const makeWithScheduler = Effect.fnUntraced(function*(
+  options?: TestClock.Options
+) {
+  const testClock = new TestClockImpl(options, yield* Effect.context<never>())
+  yield* Effect.addFinalizer(() => testClock.warningDone)
+  liveClocks.set(testClock, testClock.liveClock)
+  return [testClock, testClock.scheduler] as const
 })
 
 /**
