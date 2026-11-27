@@ -89,6 +89,7 @@ import type { TextPreviewResult } from "./largeTextProtocol";
 import type { ReactElement } from "react";
 import type { OfficeWorkerRequest, OfficeWorkerResult } from "./officePreviewProtocol";
 import { previewErrorText } from "./previewFailureMessages";
+import { PreviewPositionKey } from "./previewPosition";
 
 // Real worker imports and WASM initialization can exceed waitFor's default second
 // when the full browser project runs concurrently on CI.
@@ -2333,6 +2334,55 @@ it.each(["rtf", "epub", "ods"] as const)(
     expect(screen.container.querySelector('[role="alert"]')).toBeNull();
   },
 );
+
+it("opens each spreadsheet sheet at its own reading position", async () => {
+  const table = (name: string) =>
+    `<table:table table:name="${name}">${Array.from(
+      { length: 500 },
+      (_, row) =>
+        `<table:table-row><table:table-cell><text:p>${name} ${row}</text:p></table:table-cell></table:table-row>`,
+    ).join("")}</table:table>`;
+  const file = await new JSZip()
+    .file("content.xml", `<office:document>${table("A")}${table("B")}</office:document>`)
+    .generateAsync({ type: "blob" });
+  await using screen = await render(
+    <PreviewPositionKey value="book.ods">
+      <div style={{ display: "flex", height: 400, width: 600 }}>
+        <AttachmentFilePreview
+          name="book.ods"
+          mimeType="application/octet-stream"
+          sizeBytes={file.size}
+          file={file}
+        />
+      </div>
+    </PreviewPositionKey>,
+  );
+  const scroller = () =>
+    screen.container
+      .querySelector<HTMLElement>("[data-preview-row]")
+      ?.closest<HTMLElement>(".overflow-auto") ?? expect.unreachable();
+  const firstVisibleRow = () => {
+    const top = scroller().getBoundingClientRect().top;
+    const row = Array.from(scroller().querySelectorAll<HTMLElement>("[data-preview-row]")).find(
+      (node) => node.getBoundingClientRect().bottom > top + 1,
+    );
+    return Number(row?.dataset.previewRow);
+  };
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("A 0"), {
+    timeout: 10_000,
+  });
+  scroller().scrollTop = 300 * 29;
+  scroller().dispatchEvent(new Event("scroll"));
+  await vi.waitFor(() => expect(firstVisibleRow()).toBeGreaterThan(250));
+  const saved = firstVisibleRow();
+
+  await screen.getByRole("button", { name: "Next sheet" }).click();
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("B 0"));
+  expect(firstVisibleRow(), "an unopened sheet starts at the top").toBe(0);
+
+  await screen.getByRole("button", { name: "Previous sheet" }).click();
+  await vi.waitFor(() => expect(firstVisibleRow()).toBe(saved));
+});
 
 it("renders EPUB publisher styles and follows an anchored link to a fixed-layout section", async () => {
   const archive = new JSZip()
