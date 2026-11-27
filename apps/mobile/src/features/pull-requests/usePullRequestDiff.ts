@@ -34,6 +34,20 @@ export type PullRequestParams = {
 
 export type PullRequestDiffParams = PullRequestParams & { readonly commit?: string };
 
+/** The pull request a route names, without whatever else arrived on that route. */
+export function pullRequestParams(params: PullRequestParams): PullRequestParams {
+  return {
+    environmentId: params.environmentId,
+    projectId: params.projectId,
+    repository: params.repository,
+    number: params.number,
+    ...(params.host === undefined ? {} : { host: params.host }),
+    ...(params.navigationUrl === undefined ? {} : { navigationUrl: params.navigationUrl }),
+    ...(params.navigationId === undefined ? {} : { navigationId: params.navigationId }),
+    ...(params.initialSummary === undefined ? {} : { initialSummary: params.initialSummary }),
+  };
+}
+
 export function pullRequestTarget(params: PullRequestParams) {
   return {
     environmentId: EnvironmentId.make(params.environmentId),

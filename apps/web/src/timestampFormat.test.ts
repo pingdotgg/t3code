@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   formatChatTimestampTooltip,
@@ -17,6 +17,20 @@ function useTimeZone(timeZone: string): Disposable {
     },
   };
 }
+
+it("localizes the day period while honoring the system clock and explicit 24-hour mode", async () => {
+  using _zone = useTimeZone("UTC");
+  vi.stubGlobal("window", { desktopBridge: { getSystemLocale: () => "en-US" } });
+  vi.resetModules();
+  try {
+    const { formatShortTimestamp } = await import("./timestampFormat");
+    const date = "2026-11-19T18:05:00.000Z";
+    expect(formatShortTimestamp(date, "locale", "zh")).toBe("下午6:05");
+    expect(formatShortTimestamp(date, "24-hour", "zh")).toBe("18:05");
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 
 describe("timestamps in an explicit time zone", () => {
   // 23:00 UTC on July 1 is 7 PM on July 1 in New York, whatever the host zone.

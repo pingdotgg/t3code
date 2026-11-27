@@ -2,7 +2,10 @@ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { heldPullRequestListEntriesAtom } from "@t3tools/client-runtime/state/pull-requests";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { applyPullRequestDraftFilterChange } from "@t3tools/client-runtime/pull-request-query";
+import {
+  applyPullRequestFilterChange,
+  pullRequestMenuFilters,
+} from "@t3tools/client-runtime/pull-request-query";
 import { Spinner } from "~/components/ui/spinner";
 import type { PullRequestSpeedActionResult } from "~/components/pullRequest/PullRequestSpeedActions";
 import { usePullRequestCloseBatch } from "~/components/pullRequest/usePullRequestActions";
@@ -35,6 +38,7 @@ import {
   mergePullRequestDiffStats,
   pullRequestDiffStatKey,
   pullRequestEntryKey,
+  pullRequestListAnsweredEmpty,
   rankPullRequestMatches,
   pullRequestStatsRefreshBatches,
   pullRequestStatsRequestBatches,
@@ -414,11 +418,7 @@ export function PullRequestsPage() {
     listQuery.observations,
   );
   if (observedHosts !== hostReads) setHostReads(observedHosts);
-  const baselineEmpty =
-    baselineQuery.data?.entries.length === 0 &&
-    baselineQuery.data.errors.length === 0 &&
-    !baselineQuery.isPending &&
-    baselineQuery.error === null;
+  const baselineEmpty = pullRequestListAnsweredEmpty(baselineQuery);
   const facetTargets = (() => {
     if (!filtersOpen) return NO_LIST_TARGETS;
     return environmentQueries.map(({ environmentId, projectIds }) => ({
@@ -1386,13 +1386,9 @@ export function PullRequestsPage() {
       involvement={search.involvement}
       involvementOptions={resolveFilterOptions(INVOLVEMENT_TABS, resolve)}
       onInvolvement={(involvement) => updateListScope({ involvement })}
-      filters={
-        typedParsed.filters.draft
-          ? { ...menuFilters, draft: typedParsed.filters.draft }
-          : menuFilters
-      }
+      filters={pullRequestMenuFilters(typedParsed.filters, menuFilters)}
       onFilters={(value) => {
-        const { query, filters: next } = applyPullRequestDraftFilterChange(
+        const { query, filters: next } = applyPullRequestFilterChange(
           typedQuery,
           menuFilters,
           value,

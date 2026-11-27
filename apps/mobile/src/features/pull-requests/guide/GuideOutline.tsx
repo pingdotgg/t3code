@@ -27,7 +27,7 @@ export function GuideOutline({
       <View className="mb-5 flex-row items-center justify-between">
         <View className="flex-row items-baseline gap-2">
           <Text className="text-base font-t3-semibold">
-            {gt("{count, plural, one {{count} stops} other {{count} stops}}", {
+            {gt("{count, plural, one {{count} stop} other {{count} stops}}", {
               count: guide.stops.length,
             })}
           </Text>

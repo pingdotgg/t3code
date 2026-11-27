@@ -11,6 +11,7 @@ import { CheckboxMark } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Kbd } from "../ui/kbd";
 import { cn } from "~/lib/utils";
+import { isEditableFocused } from "~/lib/editableFocus";
 import { isInSideChatPane } from "~/lib/sideChatPane";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
@@ -155,14 +156,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
-      if (isInSideChatPane(target)) return;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        return;
-      }
+      if (isInSideChatPane(target) || isEditableFocused(target)) return;
       if (
         target instanceof HTMLElement &&
         target.closest(
-          'select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [aria-modal="true"], [role="menu"], [role="combobox"], [data-slot$="popup"]',
+          '[role="dialog"], [aria-modal="true"], [role="menu"], [role="combobox"], [data-slot$="popup"]',
         )
       ) {
         return;
@@ -215,7 +213,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       >
         <ComposerBanner.Content>
           <span
-            className={cn("min-w-0 truncate text-muted-foreground", isCollapsed && "max-w-1/2")}
+            className={cn(
+              "min-w-0 text-muted-foreground",
+              isCollapsed ? "max-w-1/2 truncate" : "wrap-anywhere",
+            )}
             dir={textDirection(activeQuestion.header)}
           >
             {activeQuestion.header}

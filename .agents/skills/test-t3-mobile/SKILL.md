@@ -79,7 +79,10 @@ through AgentDevice. For a backend on the device host, use
 on Android. For a remote backend, use its reachable origin.
 
 Confirm the intended projects appear, exercise the affected flow, and capture
-evidence. Retain the app and environment while iterating. At teardown, remove
+evidence. Actually inspect the screenshots (`device_screenshot`) as a user using
+the feature—check layout, visual hierarchy, touch ergonomics, and flow—and
+iterate on anything that feels off until you are satisfied before handing back.
+Retain the app and environment while iterating. At teardown, remove
 the disposable connection, close the AgentDevice session, call `device_close`,
 and stop only your backend and Metro processes.
 

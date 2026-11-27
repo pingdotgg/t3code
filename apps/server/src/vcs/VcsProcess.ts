@@ -140,6 +140,22 @@ export const gitConfigEnv = (
 export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
   gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
 
+// A failing `gc --auto` (say, missing objects) reruns after every fetch and strands a full-size
+// `tmp_pack_*` each time, so T3's frequent background Git calls could fill the disk.
+const SERVER_GIT_CONFIG = [
+  ["safe.bareRepository", "explicit"],
+  ["maintenance.auto", "false"],
+  ["gc.auto", "0"],
+] as const;
+
+export const serverGitConfigEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) => {
+  const added: NodeJS.ProcessEnv = {};
+  for (const [key, value] of SERVER_GIT_CONFIG) {
+    Object.assign(added, gitConfigEnv({ ...env, ...added }, key, value, platform));
+  }
+  return added;
+};
+
 const REPOSITORY_SELECTORS = new Set([
   "GIT_DIR",
   "GIT_WORK_TREE",
@@ -248,7 +264,7 @@ export const make = Effect.gen(function* () {
           // LANGUAGE leaves LC_CTYPE, which hooks inherit, alone.
           ...(input.command === "git" ? { LANGUAGE: "C" } : {}),
           ...input.env,
-          ...explicitBareRepositoryEnv({ ...process.env, ...input.env }, hostPlatform),
+          ...serverGitConfigEnv({ ...process.env, ...input.env }, hostPlatform),
         },
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,

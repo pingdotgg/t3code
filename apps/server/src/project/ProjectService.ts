@@ -391,6 +391,9 @@ export const make = Effect.gen(function* () {
     refine?: (
       current: ProjectStore.ProjectRow | undefined,
     ) => Effect.Effect<ProjectCommand | null, ProjectServiceError>,
+    // Runs under the same lock only when this call commits, so retries skip it and writes keep
+    // the commit order.
+    onCommitted?: Effect.Effect<void, ProjectOperationError>,
   ) {
     const { projectId } = initial;
     const dispatchError = (cause: unknown) =>
@@ -424,13 +427,14 @@ export const make = Effect.gen(function* () {
         now,
       });
       if (Result.isSuccess(planned)) {
-        const { receipt } = yield* eventSink.commitProjectCommand({
+        const { receipt, committed } = yield* eventSink.commitProjectCommand({
           commandId: command.commandId,
           projectId,
           commandType: command.type,
           acceptedAt: now,
           event: planned.success,
         });
+        if (committed && onCommitted !== undefined) yield* onCommitted;
         return { receipt };
       }
       const receipt = yield* eventSink.commitRejectedProjectCommand({
@@ -534,6 +538,51 @@ export const make = Effect.gen(function* () {
     return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
   });
 
+  // Once project settings are folded, project defaults resolve from Settings only, where the app's editor saves them.
+  const saveProjectSettings = (
+    projectId: ProjectId,
+    input: Pick<
+      ProjectUpdateInput,
+      "scripts" | "defaultModelSelection" | "defaultThreadEnvMode" | "autoPull"
+    >,
+  ) =>
+    input.scripts === undefined &&
+    input.defaultModelSelection === undefined &&
+    input.defaultThreadEnvMode === undefined &&
+    input.autoPull === undefined
+      ? Effect.void
+      : serverSettings.getSettings.pipe(
+          // A patch replaces the project's whole entry, so its other overrides are carried over.
+          Effect.flatMap(({ projectSettingsOverrides }) => {
+            const entry = {
+              ...projectSettingsOverrides[projectId],
+              ...(input.scripts === undefined ? {} : { defaultProjectScripts: input.scripts }),
+              ...(input.defaultModelSelection == null
+                ? {}
+                : { defaultModelSelection: input.defaultModelSelection }),
+              ...(input.defaultThreadEnvMode == null
+                ? {}
+                : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
+              ...(input.autoPull === undefined ? {} : { defaultAutoPull: input.autoPull }),
+            };
+            // A cleared project default inherits the machine's setting again.
+            if (input.defaultModelSelection === null) delete entry.defaultModelSelection;
+            if (input.defaultThreadEnvMode === null) delete entry.defaultThreadEnvMode;
+            return serverSettings.updateSettings({
+              projectSettingsOverrides: { [projectId]: entry },
+            });
+          }),
+          Effect.asVoid,
+          Effect.mapError(
+            (cause) =>
+              new ProjectOperationError({
+                operation: "dispatch-project-command",
+                projectId,
+                cause,
+              }),
+          ),
+        );
+
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
       yield* rejectWslSharePath(input.projectId, input.workspaceRoot);
@@ -548,15 +597,19 @@ export const make = Effect.gen(function* () {
         workspaceRoot,
         input.trackedFolders ?? [],
       );
-      yield* commit({
-        type: "project.create",
-        commandId: input.commandId,
-        projectId: input.projectId,
-        title: input.title,
-        workspaceRoot,
-        ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
-        trackedFolders,
-      });
+      yield* commit(
+        {
+          type: "project.create",
+          commandId: input.commandId,
+          projectId: input.projectId,
+          title: input.title,
+          workspaceRoot,
+          ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+          trackedFolders,
+        },
+        undefined,
+        saveProjectSettings(input.projectId, { scripts: input.scripts }),
+      );
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
     },
@@ -639,6 +692,7 @@ export const make = Effect.gen(function* () {
           );
           return { ...command, trackedFolders };
         }),
+        saveProjectSettings(input.projectId, input),
       );
       if (workspaceRoot !== previousRoot || input.faviconPath !== undefined) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
