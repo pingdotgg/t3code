@@ -387,6 +387,29 @@ export function defaultWorkflowListTab(groups: WorkflowRunGroups): WorkflowListT
   return groups.workflows.some((section) => section.active.length > 0) ? "running" : "all";
 }
 
+type WorkflowListTruncation = Pick<WorkflowRunsSnapshot, "truncated" | "skippedTruncated">;
+
+/**
+ * Notice shown when the current run list may miss older runs because the snapshot hit its limit.
+ * Null on Needs you (which always includes every paused run and open question), when the current
+ * view is complete, or on older servers that omit the flags.
+ */
+export function workflowListLimitNotice(
+  snapshot: WorkflowListTruncation,
+  tab: WorkflowListTab,
+  showSkipped: boolean,
+  resolve: MFunctionType = mFallback,
+): string | null {
+  if (tab === "needs-you") return null;
+  if (snapshot.truncated === true) {
+    return resolve(msg("Older runs may be missing."));
+  }
+  if (tab === "all" && showSkipped && snapshot.skippedTruncated === true) {
+    return resolve(msg("Older skipped runs may be missing."));
+  }
+  return null;
+}
+
 const CHIP_TONES = 5;
 
 /** A workflow's mark in the list: two letters and one of a few colours, the same every time. */

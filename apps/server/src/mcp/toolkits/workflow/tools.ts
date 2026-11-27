@@ -53,6 +53,8 @@ const WorkflowTool = Tool.make("t3_workflow", {
     run: Schema.optional(WorkflowRun),
     steps: Schema.optional(Schema.Array(WorkflowStep)),
     runs: Schema.optional(Schema.Array(WorkflowRun)),
+    truncated: Schema.optional(Schema.Boolean),
+    skippedTruncated: Schema.optional(Schema.Boolean),
     questions: Schema.optional(Schema.Array(Workflows.WorkflowQuestion)),
     hooks: Schema.optional(Schema.Array(WorkflowHook)),
     entries: Schema.optional(

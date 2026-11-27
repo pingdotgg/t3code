@@ -175,6 +175,10 @@ export const WorkflowRunsSnapshot = Schema.Struct({
   runs: Schema.Array(WorkflowRun),
   questions: Schema.Array(WorkflowQuestion),
   definition: Schema.optional(WorkflowDefinitionState),
+  /** Older runs outside top-level skipped runs were omitted at the list limit. */
+  truncated: Schema.optional(Schema.Boolean),
+  /** Older top-level skipped runs were omitted at their separate list limit. */
+  skippedTruncated: Schema.optional(Schema.Boolean),
 });
 
 /** How much is going on, for a badge that must not cost a list of runs to keep current. */
@@ -199,6 +203,8 @@ export const WorkflowRunsChange = Schema.TaggedStruct("changed", {
   questions: Schema.Array(WorkflowQuestion),
   /** Questions no longer open, by run and question name. */
   closed: Schema.Array(Schema.Struct({ runId: Schema.String, name: Schema.String })),
+  truncated: Schema.optional(Schema.Boolean),
+  skippedTruncated: Schema.optional(Schema.Boolean),
 });
 
 /**
@@ -228,7 +234,15 @@ export function applyWorkflowRunsUpdate(
   ).sort((left, right) =>
     left.askedAt === right.askedAt ? 0 : left.askedAt < right.askedAt ? -1 : 1,
   );
-  return { ...base, runs, questions };
+  const truncated = update.truncated ?? base.truncated;
+  const skippedTruncated = update.skippedTruncated ?? base.skippedTruncated;
+  return {
+    ...base,
+    runs,
+    questions,
+    ...(truncated === undefined ? {} : { truncated }),
+    ...(skippedTruncated === undefined ? {} : { skippedTruncated }),
+  };
 }
 
 /** What names an open question: one run asks one question of a name at a time. */

@@ -22,6 +22,7 @@ import {
   workflowWithdrawal,
   workflowChip,
   workflowFlowFocus,
+  workflowListLimitNotice,
   workflowPausedBeat,
   workflowResultLines,
   workflowRunInvolves,
@@ -237,6 +238,27 @@ describe("the list of runs", () => {
       ),
     ).all;
     expect(ids(invoked.filter((node) => workflowRunInvolves(node, "check")))).toEqual(["parent"]);
+  });
+
+  it("reports truncation only on tabs whose list can miss runs", () => {
+    const both = { truncated: true, skippedTruncated: true };
+    expect(workflowListLimitNotice(both, "needs-you", false)).toBeNull();
+    expect(workflowListLimitNotice(both, "needs-you", true)).toBeNull();
+    expect(workflowListLimitNotice(both, "running", false)).toBe("Older runs may be missing.");
+    expect(workflowListLimitNotice(both, "all", false)).toBe("Older runs may be missing.");
+    expect(workflowListLimitNotice(both, "all", true)).toBe("Older runs may be missing.");
+
+    const skippedOnly = { truncated: false, skippedTruncated: true };
+    expect(workflowListLimitNotice(skippedOnly, "needs-you", true)).toBeNull();
+    expect(workflowListLimitNotice(skippedOnly, "running", true)).toBeNull();
+    expect(workflowListLimitNotice(skippedOnly, "all", false)).toBeNull();
+    expect(workflowListLimitNotice(skippedOnly, "all", true)).toBe(
+      "Older skipped runs may be missing.",
+    );
+
+    // An older server omits both flags.
+    expect(workflowListLimitNotice({}, "all", true)).toBeNull();
+    expect(workflowListLimitNotice({}, "running", false)).toBeNull();
   });
 
   it("counts the open questions by kind, in the order declared, with the rest as other", () => {

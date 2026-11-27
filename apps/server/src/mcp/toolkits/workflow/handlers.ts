@@ -38,15 +38,13 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
           };
         }
         if (input.action === "list") {
-          return {
-            runs: yield* workflows
-              .list({
-                ...(input.status === undefined ? {} : { status: input.status }),
-                ...(input.tag === undefined ? {} : { tag: input.tag }),
-                ...(input.subject === undefined ? {} : { subject: input.subject }),
-              })
-              .pipe(Effect.mapError(refused)),
-          };
+          return yield* workflows
+            .list({
+              ...(input.status === undefined ? {} : { status: input.status }),
+              ...(input.tag === undefined ? {} : { tag: input.tag }),
+              ...(input.subject === undefined ? {} : { subject: input.subject }),
+            })
+            .pipe(Effect.mapError(refused));
         }
         const runId = yield* required(input.runId, "runId");
         return yield* workflows.get(runId).pipe(Effect.mapError(refused));

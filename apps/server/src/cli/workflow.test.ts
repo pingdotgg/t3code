@@ -264,3 +264,36 @@ it.effect("list --tag and questions --kind ask the server for only those", () =>
     assert.include((yield* TestConsole.logLines).join("\n"), "run-1  wanted  feature");
   }),
 );
+
+it.effect("list reports truncation on stderr while keeping --json stdout a bare array", () =>
+  Effect.gen(function* () {
+    const sample = [makeRun("completed"), makeRun("skipped")];
+    const jsonTruncated = yield* runCli(["list", "--json"], () =>
+      Effect.succeed({ structuredContent: { runs: sample, truncated: true } }),
+    );
+    assert.isUndefined(jsonTruncated.error);
+    const parsed = JSON.parse((yield* TestConsole.logLines).at(-1) as string);
+    assert.isTrue(Array.isArray(parsed));
+    assert.equal(parsed.length, 1);
+    assert.deepStrictEqual(jsonTruncated.errors, [
+      "Showing the newest 1 runs; older ones are omitted.",
+    ]);
+
+    const statusTruncated = yield* runCli(["list", "--status", "skipped", "--json"], () =>
+      Effect.succeed({
+        structuredContent: { runs: [makeRun("skipped")], truncated: true },
+      }),
+    );
+    assert.deepStrictEqual(
+      statusTruncated.errors.at(-1),
+      "Showing the newest 1 skipped runs; older ones are omitted.",
+    );
+
+    const complete = yield* runCli(["list", "--status", "waiting", "--json"], () =>
+      Effect.succeed({
+        structuredContent: { runs: [makeRun("waiting")], truncated: false },
+      }),
+    );
+    assert.equal(complete.errors.length, statusTruncated.errors.length);
+  }),
+);
