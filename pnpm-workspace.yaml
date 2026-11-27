@@ -300,6 +300,8 @@ patchedDependencies:
   # reconnect then opens but the tester keeps waiting on the dead attempt and fails after 60s.
   # https://github.com/vitest-dev/vitest/issues/10166
   "@vitest/browser@5.1.1": patches/@vitest__browser@5.1.1.patch
+  # Hermes cannot parse the computed import for optional external codecs. Built-in ZIP codecs still work.
+  "@zip.js/zip.js@2.25.0": patches/@zip.js__zip.js@2.25.0.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.

@@ -1,3 +1,4 @@
+import { FilePasswordPrompt } from "./FilePasswordPrompt";
 /* oxlint-disable react/no-array-index-key -- Read-only cells retain their database row and column positions. */
 import { decodeFilePreviewText, filePreviewKind } from "@t3tools/shared/filePreview";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
@@ -113,6 +114,7 @@ export default function BinaryViewer(props: {
   const [selectedTable, setSelectedTable] = useState("");
   const [page, setPage] = useState(0);
   const [busy, setBusy] = useState(true);
+  const [incorrectPassword, setIncorrectPassword] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -156,7 +158,8 @@ export default function BinaryViewer(props: {
       if (timerRef.current) clearTimeout(timerRef.current);
       const result = event.data;
       setBusy(false);
-      if (result.type === "error") setError(previewFailureText(result));
+      if (result.type === "password") setIncorrectPassword(result.incorrect);
+      else if (result.type === "error") setError(previewFailureText(result));
       else if (result.type === "archive") setArchive(result);
       else if (result.type === "entry") setEntry(result);
       else if (result.type === "rows") setRows(result);
@@ -199,7 +202,8 @@ export default function BinaryViewer(props: {
     { path: string; entryPath: string; directory: boolean; size: number; modified: string | null }
   >();
   for (const item of archive?.entries ?? []) {
-    const name = item.path.replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
+    // `tar cf x.tar .` names members "./src/a.txt"; list them from the archive root.
+    const name = item.path.replace(/^(?:\.?\/)+|\/+$/g, "").replace(/\/{2,}/g, "/");
     if (!name.startsWith(folder)) continue;
     const rest = name.slice(folder.length);
     if (!rest) continue;
@@ -312,7 +316,15 @@ export default function BinaryViewer(props: {
           </FileSurfaceNotice>
         </>
       ) : null}
-      {error ? (
+      {incorrectPassword !== null ? (
+        <FilePasswordPrompt
+          incorrect={incorrectPassword}
+          onSubmit={(password) => {
+            setIncorrectPassword(null);
+            send({ type: "unlock", password });
+          }}
+        />
+      ) : error ? (
         <FileSurfaceFailure
           message={error}
           {...(props.onRetry ? { onRetry: props.onRetry } : {})}

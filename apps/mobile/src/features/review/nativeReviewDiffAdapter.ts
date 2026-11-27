@@ -28,6 +28,9 @@ const TRUNCATED_FILE_NOTICE = msg("This diff is too large to show in full.");
 const NATIVE_HEX_COLOR = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})([\da-f]{2})?$/i;
 const NATIVE_RGBA_COLOR =
   /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/;
+// Git's a/, b/ (maybe quoted) or /dev/null paths, or a `diff -u` timestamp after a tab.
+const LONE_FILE_HEADER =
+  /^(--- "?a\/|\+\+\+ "?b\/|(---|\+\+\+) (\/dev\/null(\t|$)|[^\t]+\t\d{4}-\d\d-\d\d \d\d:\d\d:\d\d))/;
 
 export const NATIVE_REVIEW_DIFF_CONTENT_WIDTH = 2_800;
 
@@ -36,7 +39,12 @@ export function buildNativeReviewSnippetRows(
 ): NativeReviewDiffRow[] {
   if ((comment.fenceLanguage ?? "diff") !== "diff" || !comment.diff.trim()) return [];
   const lines = comment.diff.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
-  if (lines.some((line) => !/^[ +-]/.test(line) || /^(---|\+\+\+) /.test(line))) return [];
+  // A file header is a `--- ` line followed by `+++ `, or one shaped like a header on its own.
+  // Any other `--- ` or `+++ ` line is a changed `-- ` or `++ ` line.
+  const isFileHeader = (line: string, index: number) =>
+    LONE_FILE_HEADER.test(line) ||
+    (line.startsWith("--- ") && lines[index + 1]?.startsWith("+++ "));
+  if (lines.some((line, index) => !/^[ +-]/.test(line) || isFileHeader(line, index))) return [];
   return lines.map((line, index) => ({
     kind: "line",
     id: `${comment.id}:snippet:${index}`,

@@ -15,12 +15,14 @@ const CELL_END = Symbol("cell-end");
 const LINE_START = Symbol("line-start");
 const THEMATIC_BREAK = Symbol("thematic-break");
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 type TextPart =
   | string
   | typeof CELL_START
   | typeof CELL_END
   | typeof LINE_START
   | typeof THEMATIC_BREAK
+  | { columnGap: number }
   | { imageDescription: string }
   | { fallback: string }
   | { notebookOutput: Iterable<string> };
@@ -74,6 +76,8 @@ interface XmlNode {
   markupCompatibility?: boolean;
   hasSelectedChoice?: boolean;
   epubTable?: boolean;
+  mathmlFirstChildSeen?: boolean;
+  epubBlock?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -122,22 +126,43 @@ function separateRubyReadings(ruby: XmlNode) {
   }
 }
 
+function namespaceOf(tagName: string, scope: readonly XmlNode[]) {
+  const colon = tagName.lastIndexOf(":");
+  const binding = colon === -1 ? "xmlns" : `xmlns:${tagName.slice(0, colon)}`;
+  return scope.findLast((node) => Object.hasOwn(node.attrs, binding))?.attrs[binding];
+}
+
+function isXhtmlElement(
+  tagName: string,
+  scope: readonly XmlNode[],
+  rootTagName: string | undefined,
+) {
+  const namespace = namespaceOf(tagName, scope);
+  return (
+    namespace === "http://www.w3.org/1999/xhtml" ||
+    (namespace === undefined && !tagName.includes(":") && rootTagName === "html")
+  );
+}
+
 function xml(source: string, extension: string): XmlNode {
   const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
   const stack = [root];
+  let rootTagName: string | undefined;
   let nodes = 0;
   const parser = new SaxesParser();
   if (extension === ".epub") Object.assign(parser.ENTITIES, characterEntities);
   parser.on("opentag", (tag) => {
     if (++nodes > 200_000 || stack.length > 128) throw new Truncation("XML structure limit");
+    rootTagName ??= tag.name;
     const node: XmlNode = {
       name: tag.name.split(":").at(-1)!,
       attrs: Object.fromEntries(
         Object.entries(tag.attributes).flatMap(([key, value]) => {
           const local = key.split(":").at(-1)!;
-          // XHTML table spans are unqualified; a prefixed colspan is a foreign attribute.
-          return extension === ".epub" && (local === "colspan" || local === "rowspan")
+          // A foreign attribute must not shadow an XHTML table span or a namespace declaration.
+          return extension === ".epub" &&
+            (local === "colspan" || local === "rowspan" || local === "xmlns")
             ? [[key, String(value)]]
             : [
                 [key, String(value)],
@@ -151,19 +176,30 @@ function xml(source: string, extension: string): XmlNode {
     if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
     stack.at(-1)!.children.push(node);
     stack.push(node);
-    if (node.name === "AlternateContent" || node.name === "Choice") {
-      const colon = tag.name.lastIndexOf(":");
-      const binding = colon === -1 ? "xmlns" : `xmlns:${tag.name.slice(0, colon)}`;
-      if (
-        stack.findLast((ancestor) => Object.hasOwn(ancestor.attrs, binding))?.attrs[binding] ===
-        MARKUP_COMPATIBILITY_NS
-      )
-        node.markupCompatibility = true;
-    }
+    if (
+      extension === ".epub" &&
+      node.name === "semantics" &&
+      namespaceOf(tag.name, stack) === MATHML_NS
+    )
+      node.mathmlFirstChildSeen = false;
+    if (
+      extension === ".epub" &&
+      ["nav", "details", "summary"].includes(node.name) &&
+      isXhtmlElement(tag.name, stack, rootTagName)
+    )
+      node.epubBlock = true;
+    if (
+      (node.name === "AlternateContent" || node.name === "Choice") &&
+      namespaceOf(tag.name, stack) === MARKUP_COMPATIBILITY_NS
+    )
+      node.markupCompatibility = true;
   });
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    // MathML Core displays only the first element child of semantics by default.
+    const isMathmlAlternative = parent.mathmlFirstChildSeen === true;
+    if (parent.mathmlFirstChildSeen === false) parent.mathmlFirstChildSeen = true;
     const isCompatibilityChoice =
       node.name === "Choice" &&
       node.markupCompatibility &&
@@ -171,6 +207,10 @@ function xml(source: string, extension: string): XmlNode {
       parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
+      isMathmlAlternative ||
+      (extension === ".epub" &&
+        node.name === "template" &&
+        isXhtmlElement(tag.name, [...stack, node], rootTagName)) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
         Object.hasOwn(tag.attributes, "hidden") &&
@@ -352,10 +392,18 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield "\n";
     } else if (
-      ["blockquote", "figure", "figcaption", "aside", "address", "header", "footer"].includes(
-        child.name,
-      ) &&
-      child.hasText
+      child.hasText &&
+      (child.epubBlock ||
+        [
+          "blockquote",
+          "figure",
+          "figcaption",
+          "aside",
+          "address",
+          "header",
+          "footer",
+          "article",
+        ].includes(child.name))
     ) {
       yield LINE_START;
       yield* paragraphs(child);
@@ -524,7 +572,7 @@ function* table(node: XmlNode): Generator<TextPart, void> {
         for (let i = 0; i < count; i++) {
           column += span;
           if (column > 512) throw new Truncation("Column limit");
-          if (gap) yield "\t".repeat(gap);
+          if (gap) yield { columnGap: gap };
           gap = span;
           // LibreOffice hides the contents a merge covers; the cell still holds its column.
           if (covered(cell)) continue;
@@ -653,13 +701,12 @@ function* notebook(source: string): Generator<TextPart, void> {
           ? outputText(output.data["text/markdown"])
           : plain;
       } else if ("output_type" in output && output.output_type === "error") {
-        const name = [...lines("ename" in output ? output.ename : undefined)].join("");
-        const value = [...lines("evalue" in output ? output.evalue : undefined)].join("");
-        const plain = NodeUtil.stripVTControlCharacters(name + value);
-        if (NOTEBOOK_OUTPUT_TEXT.test(plain)) {
+        const name = outputText("ename" in output ? output.ename : undefined);
+        const value = outputText("evalue" in output ? output.evalue : undefined);
+        if (NOTEBOOK_OUTPUT_TEXT.test(name + value)) {
           yield name;
           if ("evalue" in output) yield ": " + value;
-        } else yield plain;
+        } else yield name + value;
         yield "\n";
         if ("traceback" in output)
           for (const line of lines(output.traceback)) {
@@ -1199,8 +1246,12 @@ export async function extractDocumentText(path: string, extension: string): Prom
       }
       let raw: string;
       let isImageDescription = false;
+      let isColumnGap = false;
       if (typeof part === "string") raw = part;
-      else if ("imageDescription" in part) {
+      else if ("columnGap" in part) {
+        raw = "\t".repeat(part.columnGap);
+        isColumnGap = true;
+      } else if ("imageDescription" in part) {
         raw = part.imageDescription;
         isImageDescription = true;
       } else if ("notebookOutput" in part) {
@@ -1268,6 +1319,8 @@ export async function extractDocumentText(path: string, extension: string): Prom
           value = "";
         }
       } else {
+        // Trim leading text whitespace here so leading table column gaps survive trimEnd().
+        if (!result && !isColumnGap) value = value.trimStart();
         midLine = endsMidLine(value) ?? midLine;
       }
       result += value;
@@ -1286,7 +1339,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
     if (!(error instanceof Truncation)) throw error;
     truncated = true;
   }
-  result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trim();
+  result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trimEnd();
   if (!result && !truncated) throw new Error("No text extracted");
   return truncated ? result.replace(TRAILING_HIGH_SURROGATE, "").trimEnd() + TRUNCATED : result;
 }

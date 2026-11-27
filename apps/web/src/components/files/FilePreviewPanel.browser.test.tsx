@@ -836,6 +836,21 @@ describe("rendered Markdown relative images", () => {
   });
 });
 
+function withAppCss() {
+  const style = document.createElement("style");
+  style.textContent = appCss;
+  document.head.append(style);
+  return { [Symbol.dispose]: () => style.remove() };
+}
+
+function sized(children: ReactNode) {
+  return (
+    <div style={{ width: 500, height: 400, display: "flex", flexDirection: "column" }}>
+      {children}
+    </div>
+  );
+}
+
 describe("rendered Markdown scroll position", () => {
   const sections = Array.from(
     { length: 200 },
@@ -864,17 +879,6 @@ describe("rendered Markdown scroll position", () => {
       expect(position?.heading).toBe(saved?.heading);
       expect(Math.abs((position?.offset ?? 0) - (saved?.offset ?? 0))).toBeLessThanOrEqual(2);
     });
-  const withAppCss = () => {
-    const style = document.createElement("style");
-    style.textContent = appCss;
-    document.head.append(style);
-    return { [Symbol.dispose]: () => style.remove() };
-  };
-  const sized = (children: ReactNode) => (
-    <div style={{ width: 500, height: 400, display: "flex", flexDirection: "column" }}>
-      {children}
-    </div>
-  );
 
   it("restores each file's reading position after the preview remounts", async () => {
     using _settings = setup();
@@ -948,5 +952,94 @@ describe("rendered Markdown scroll position", () => {
     await vi.waitFor(() => expect(readingPosition()?.heading).toBe("Section 0"));
     await screen.rerender(preview("first"));
     await expectReadingPosition(saved);
+  });
+});
+
+describe("rendered Markdown footnotes across chunks", () => {
+  it("renders cross-chunk footnotes with document-wide numbering and one footnotes section", async () => {
+    using _settings = setup();
+    using _style = withAppCss();
+    const paragraphs = Array.from(
+      { length: 60 },
+      (_, i) =>
+        `Paragraph ${i}. ${"Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(2)}`,
+    );
+    const markdown = [
+      "A footnote reference.[^1]",
+      "",
+      ...paragraphs.slice(0, 35).flatMap((p) => [p, ""]),
+      "Second note[^second] and repeat[^1].",
+      "",
+      ...paragraphs.slice(35).flatMap((p) => [p, ""]),
+      "[^1]: The footnote text.",
+      "[^second]: The second footnote.",
+      "",
+      "    - [ ] Footnote task",
+    ].join("\n");
+    const onTaskListChange = vi.fn();
+
+    const split = splitMarkdown(markdown);
+    expect(split.chunks.length).toBeGreaterThan(1);
+    expect(split.footnotes).toBeDefined();
+
+    await using screen = await render(
+      sized(
+        <ChunkedMarkdown
+          {...split}
+          cwd="/workspace"
+          relativePath="footnotes.md"
+          threadRef={threadRef}
+          workspaceMutationId={null}
+          onTaskListChange={onTaskListChange}
+        />,
+      ),
+    );
+
+    const firstRef = await vi.waitFor(() => {
+      const link = screen.container.querySelector<HTMLAnchorElement>(
+        'a[data-footnote-ref][href="#user-content-fn-1"]',
+      );
+      expect(link).not.toBeNull();
+      return link!;
+    });
+    expect(firstRef.textContent).toBe("1");
+    expect(screen.container.textContent).not.toContain("[^1]");
+
+    // Clicking the footnote ref scrolls to the trailing footnotes section even in a virtualized list.
+    firstRef.click();
+    await vi.waitFor(() => {
+      const sections = screen.container.querySelectorAll("section[data-footnotes]");
+      expect(sections.length).toBe(1);
+      expect(sections[0]!.textContent).toContain("The footnote text.");
+      expect(sections[0]!.textContent).toContain("The second footnote.");
+    });
+
+    // A task in a footnote edits its line in the file, not in the section's own text.
+    await act(async () =>
+      screen.container
+        .querySelector<HTMLInputElement>('section[data-footnotes] input[type="checkbox"]')!
+        .click(),
+    );
+    expect(onTaskListChange).toHaveBeenCalledExactlyOnceWith({
+      markerOffset: markdown.indexOf("[ ] Footnote task"),
+      checked: true,
+    });
+
+    // Clicking the backref returns to the first reference (fnref-1) at the top of chunk 0.
+    const backref = screen.container.querySelector<HTMLAnchorElement>(
+      'section[data-footnotes] a[data-footnote-backref][href="#user-content-fnref-1"]',
+    );
+    expect(backref).not.toBeNull();
+    const scroller = screen.container.querySelector<HTMLElement>(".scrollbar-gutter-both")!;
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+    backref!.click();
+    await vi.waitFor(() => {
+      const topRef = screen.container.querySelector<HTMLAnchorElement>(
+        'a[data-footnote-ref][id$="fnref-1"]',
+      );
+      expect(topRef).not.toBeNull();
+      expect(topRef!.textContent).toBe("1");
+      expect(scroller.scrollTop).toBeLessThan(200);
+    });
   });
 });

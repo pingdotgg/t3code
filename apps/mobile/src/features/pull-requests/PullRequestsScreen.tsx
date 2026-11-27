@@ -37,6 +37,7 @@ import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
 import {
+  distinctIgnoringCase,
   filterPullRequestList,
   pullRequestListFacets,
   pullRequestListInput,
@@ -200,18 +201,14 @@ export function PullRequestsScreen(
     setKnownFacets((previous) => ({
       source: facets,
       environmentId,
-      authors: [
-        ...new Set([
-          ...(previous.environmentId === environmentId ? previous.authors : []),
-          ...facets.authors,
-        ]),
-      ].sort(),
-      labels: [
-        ...new Set([
-          ...(previous.environmentId === environmentId ? previous.labels : []),
-          ...facets.labels,
-        ]),
-      ].sort(),
+      authors: distinctIgnoringCase([
+        ...(previous.environmentId === environmentId ? previous.authors : []),
+        ...facets.authors,
+      ]).sort(),
+      labels: distinctIgnoringCase([
+        ...(previous.environmentId === environmentId ? previous.labels : []),
+        ...facets.labels,
+      ]).sort(),
       labelColors: {
         ...facets.labelColors,
         ...(previous.environmentId === environmentId ? previous.labelColors : {}),
