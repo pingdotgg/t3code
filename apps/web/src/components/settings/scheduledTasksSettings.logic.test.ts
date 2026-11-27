@@ -365,9 +365,9 @@ describe("interval time windows", () => {
     expect(draft.intervalWindowEnd).toBe("20:00");
     expect(scheduleFromDraft(draft)).toEqual({ type: "interval", everyMs: 60_000 });
     expect(scheduleFromDraft(draft)).not.toHaveProperty("window");
-    expect(scheduleLabel({ type: "interval", everyMs: 60_000 })).toBe("Every 1 min");
-    expect(scheduleLabel({ type: "interval", everyMs: 3_600_000 })).toBe("Every 60 min");
-    expect(scheduleLabel({ type: "interval", everyMs: 30_000 })).toBe("Every 30 sec");
+    expect(scheduleLabel({ type: "interval", everyMs: 60_000 }, "24-hour")).toBe("Every 1 min");
+    expect(scheduleLabel({ type: "interval", everyMs: 3_600_000 }, "24-hour")).toBe("Every 60 min");
+    expect(scheduleLabel({ type: "interval", everyMs: 30_000 }, "24-hour")).toBe("Every 30 sec");
   });
 
   it("encodes a window's start, end, and weekdays, and restores them", () => {
@@ -386,15 +386,18 @@ describe("interval time windows", () => {
       everyMs: 3_600_000,
       window: { start: "10:00", end: "20:00", weekdays: [1, 3] },
     });
-    expect(scheduleLabel({ type: "interval", everyMs: 3_600_000, window })).toBe(
+    expect(scheduleLabel({ type: "interval", everyMs: 3_600_000, window }, "24-hour")).toBe(
       "Every 60 min, Mon–Fri 10:00–20:00",
     );
     expect(
-      scheduleLabel({
-        type: "interval",
-        everyMs: 3_600_000,
-        window: { start: "10:00", end: "20:00", weekdays: [3, 1] },
-      }),
+      scheduleLabel(
+        {
+          type: "interval",
+          everyMs: 3_600_000,
+          window: { start: "10:00", end: "20:00", weekdays: [3, 1] },
+        },
+        "24-hour",
+      ),
     ).toBe("Every 60 min, Mon, Wed 10:00–20:00");
     expect(scheduleFromDraft({ ...draft, intervalWindowEnd: "10:00" })).toBeNull();
     expect(scheduleFromDraft({ ...draft, intervalWindowEnd: "09:00" })).toBeNull();
@@ -421,18 +424,27 @@ describe("interval time windows", () => {
       type: "interval",
       everyMs: 3_600_000,
     });
-    expect(scheduleLabel(daily)).toBe("Every 60 min, every day 10:00–20:00");
+    expect(scheduleLabel(daily, "24-hour")).toBe("Every 60 min, every day 10:00–20:00");
+    expect(scheduleLabel(daily, "12-hour", "Etc/UTC")).toBe(
+      `Every 60 min, every day ${clock(true, 10, 0)}–${clock(true, 20, 0)} UTC`,
+    );
     expect(
-      scheduleLabel({
-        ...daily,
-        window: { start: "10:00", end: "20:00", weekdays: [] },
-      }),
+      scheduleLabel(
+        {
+          ...daily,
+          window: { start: "10:00", end: "20:00", weekdays: [] },
+        },
+        "24-hour",
+      ),
     ).toBe("Every 60 min, every day 10:00–20:00");
     expect(
-      scheduleLabel({
-        ...daily,
-        window: { start: "10:00", end: "20:00", weekdays: [0, 1, 2, 3, 4, 5, 6] },
-      }),
+      scheduleLabel(
+        {
+          ...daily,
+          window: { start: "10:00", end: "20:00", weekdays: [0, 1, 2, 3, 4, 5, 6] },
+        },
+        "24-hour",
+      ),
     ).toBe("Every 60 min, every day 10:00–20:00");
   });
 });

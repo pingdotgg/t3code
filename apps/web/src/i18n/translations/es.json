@@ -13018,5 +13018,19 @@
       "v": "v"
     },
     " más en Elementos vinculados"
-  ]
+  ],
+  "6c1eddd065401135": "Las franjas horarias no están disponibles aquí",
+  "0c9ff957da8d75b0": "Actualiza este entorno para usar franjas horarias de intervalo.",
+  "e08770fb8b445af3": "Franja horaria",
+  "5435566ccb3acc50": "Ejecutar solo entre estas horas en los días indicados. Desactivado significa todo el día, todos los días. Se usa la zona horaria del entorno, que puede diferir de la del teléfono.",
+  "7a4e5e17bc86fd03": "Inicio",
+  "e72a5d4b2081c99a": "Fin",
+  "d965bd18eabb25e4": "cada día",
+  "322d73d513a28913": "{cadence}, {days} {start}–{end}",
+  "b31eca99ca34c7d6": "{cadence}, {days} {start}–{end} {zone}",
+  "a01ea56d4513a549": "Franja horaria no válida",
+  "bf095325c94ec069": "Introduce una hora de inicio y de fin.",
+  "a1f0c9ea82f7c05e": "El fin debe ser posterior al inicio.",
+  "93b4649762b66d2f": "Elegir días",
+  "0d8459e7d93404fa": "Selecciona al menos un día."
 }

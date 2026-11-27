@@ -5713,5 +5713,15 @@
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "201490988858b511": "zurückgezogen von {by}",
-  "46d614fa7b4bf1e5": "Workflow-Ausführungen"
+  "46d614fa7b4bf1e5": "Workflow-Ausführungen",
+  "6c1eddd065401135": "Zeitfenster sind hier nicht verfügbar",
+  "0c9ff957da8d75b0": "Aktualisiere diese Umgebung, um Intervall-Zeitfenster zu verwenden.",
+  "949d09be92f55081": "Zeitfenster",
+  "bcc9a4b1c42d2680": "Beginn",
+  "8d2bf69694db8871": "Ende",
+  "e08770fb8b445af3": "Zeitfenster",
+  "dcc72e4732f57181": "Die Endzeit muss nach der Startzeit liegen.",
+  "32f36b059ed73dc0": "Alle {minutes} Min.",
+  "d965bd18eabb25e4": "jeden Tag",
+  "a7700dfd6295f39f": "{interval}, {days} {start}–{end}"
 }

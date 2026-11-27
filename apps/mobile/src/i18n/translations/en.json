@@ -5715,5 +5715,15 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "201490988858b511": "withdrawn by {by}",
-  "46d614fa7b4bf1e5": "Workflow runs"
+  "46d614fa7b4bf1e5": "Workflow runs",
+  "6c1eddd065401135": "Time windows are not available here",
+  "0c9ff957da8d75b0": "Update this environment to use interval time windows.",
+  "949d09be92f55081": "Time window",
+  "bcc9a4b1c42d2680": "Start",
+  "8d2bf69694db8871": "End",
+  "e08770fb8b445af3": "Time window",
+  "dcc72e4732f57181": "End time must be after the start time.",
+  "32f36b059ed73dc0": "Every {minutes} min",
+  "d965bd18eabb25e4": "every day",
+  "a7700dfd6295f39f": "{interval}, {days} {start}–{end}"
 }

@@ -190,6 +190,7 @@ function timePickerValue(value: string): Date {
 function weekdaysAfterRepeatAction(
   weekdays: ReadonlyArray<number>,
   id: string,
+  allowEmpty: boolean,
 ): ReadonlyArray<number> {
   if (id === "every_day") return DAYS.map((day) => day.index);
   if (id === "weekdays") return [1, 2, 3, 4, 5];
@@ -198,7 +199,7 @@ function weekdaysAfterRepeatAction(
   const next = weekdays.includes(day.index)
     ? weekdays.filter((index) => index !== day.index)
     : [...weekdays, day.index];
-  return next.length === 0 ? weekdays : next;
+  return !allowEmpty && next.length === 0 ? weekdays : next;
 }
 
 function isWeekdays(weekdays: ReadonlyArray<number>): boolean {
@@ -460,6 +461,7 @@ function PickerRow(props: {
 
 function WeekdayRow(props: {
   readonly weekdays: ReadonlyArray<number>;
+  readonly allowEmpty?: boolean;
   readonly onChange: (update: (weekdays: ReadonlyArray<number>) => ReadonlyArray<number>) => void;
 }) {
   const gt = useGT();
@@ -488,7 +490,11 @@ function WeekdayRow(props: {
           state: props.weekdays.includes(day.index) ? ("on" as const) : undefined,
         })),
       ]}
-      onSelect={(id) => props.onChange((weekdays) => weekdaysAfterRepeatAction(weekdays, id))}
+      onSelect={(id) =>
+        props.onChange((weekdays) =>
+          weekdaysAfterRepeatAction(weekdays, id, props.allowEmpty === true),
+        )
+      }
     />
   );
 }
@@ -1347,6 +1353,7 @@ function TaskForm({
                 />
               ) : null}
               <WeekdayRow
+                allowEmpty
                 weekdays={draft.schedule.weekdays}
                 onChange={(update) =>
                   setDraft((current) => ({

@@ -5713,5 +5713,15 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "201490988858b511": "återkallad av {by}",
-  "46d614fa7b4bf1e5": "Arbetsflödeskörningar"
+  "46d614fa7b4bf1e5": "Arbetsflödeskörningar",
+  "6c1eddd065401135": "Tidsfönster är inte tillgängliga här",
+  "0c9ff957da8d75b0": "Uppdatera miljön för att använda tidsfönster för intervall.",
+  "949d09be92f55081": "Tidsfönster",
+  "bcc9a4b1c42d2680": "Start",
+  "8d2bf69694db8871": "Slut",
+  "e08770fb8b445af3": "Tidsfönster",
+  "dcc72e4732f57181": "Sluttiden måste vara efter starttiden.",
+  "32f36b059ed73dc0": "Var {minutes}:e minut",
+  "d965bd18eabb25e4": "varje dag",
+  "a7700dfd6295f39f": "{interval}, {days} {start}–{end}"
 }

@@ -13023,5 +13023,19 @@
       "v": "v"
     },
     " weitere unter Verknüpfte Elemente"
-  ]
+  ],
+  "6c1eddd065401135": "Zeitfenster sind hier nicht verfügbar",
+  "0c9ff957da8d75b0": "Aktualisiere diese Umgebung, um Intervall-Zeitfenster zu verwenden.",
+  "e08770fb8b445af3": "Zeitfenster",
+  "5435566ccb3acc50": "Nur an den folgenden Tagen zwischen diesen Uhrzeiten ausführen. Aus bedeutet ganztägig, jeden Tag. Es gilt die Zeitzone der Umgebung, die von der Zeitzone deines Telefons abweichen kann.",
+  "7a4e5e17bc86fd03": "Beginn",
+  "e72a5d4b2081c99a": "Ende",
+  "d965bd18eabb25e4": "jeden Tag",
+  "322d73d513a28913": "{cadence}, {days} {start}–{end}",
+  "b31eca99ca34c7d6": "{cadence}, {days} {start}–{end} {zone}",
+  "a01ea56d4513a549": "Ungültiges Zeitfenster",
+  "bf095325c94ec069": "Gib eine Start- und Endzeit ein.",
+  "a1f0c9ea82f7c05e": "Das Ende muss nach dem Beginn liegen.",
+  "93b4649762b66d2f": "Tage auswählen",
+  "0d8459e7d93404fa": "Wähle mindestens einen Tag."
 }

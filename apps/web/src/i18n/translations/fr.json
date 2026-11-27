@@ -13023,5 +13023,19 @@
       "v": "v"
     },
     " de plus dans Éléments associés"
-  ]
+  ],
+  "6c1eddd065401135": "Les plages horaires ne sont pas disponibles ici",
+  "0c9ff957da8d75b0": "Mettez à jour cet environnement pour utiliser des plages horaires pour les intervalles.",
+  "e08770fb8b445af3": "Plage horaire",
+  "5435566ccb3acc50": "Exécuter uniquement entre ces heures les jours ci-dessous. Désactivé signifie toute la journée, tous les jours. Le fuseau horaire de l’environnement est utilisé et peut différer de celui du téléphone.",
+  "7a4e5e17bc86fd03": "Début",
+  "e72a5d4b2081c99a": "Fin",
+  "d965bd18eabb25e4": "tous les jours",
+  "322d73d513a28913": "{cadence}, {days} {start}–{end}",
+  "b31eca99ca34c7d6": "{cadence}, {days} {start}–{end} {zone}",
+  "a01ea56d4513a549": "Plage horaire invalide",
+  "bf095325c94ec069": "Saisissez une heure de début et de fin.",
+  "a1f0c9ea82f7c05e": "La fin doit suivre le début.",
+  "93b4649762b66d2f": "Choisir les jours",
+  "0d8459e7d93404fa": "Sélectionnez au moins un jour."
 }

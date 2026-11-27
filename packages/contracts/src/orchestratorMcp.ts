@@ -68,7 +68,8 @@ const OrchestratorMcpSchedule = Schema.Union([
   ScheduledTaskUpsertSchedule,
   OrchestratorMcpScheduleFromJsonString,
 ]).annotate({
-  description: "interval+window?, fixed_time, once, webhook",
+  description:
+    "Trigger: {type:'interval',everyMs}, {type:'fixed_time',timeOfDay,weekdays?}, {type:'once',runAt}, or {type:'webhook'}.",
 });
 
 const OrchestratorMcpTargetOptionsFromRecord = Schema.Record(

@@ -13023,5 +13023,19 @@
       "v": "v"
     },
     " mais em Itens vinculados"
-  ]
+  ],
+  "6c1eddd065401135": "Janelas de horário não estão disponíveis aqui",
+  "0c9ff957da8d75b0": "Atualize este ambiente para usar janelas de horário em intervalos.",
+  "e08770fb8b445af3": "Janela de horário",
+  "5435566ccb3acc50": "Execute somente entre estes horários nos dias abaixo. Desativado significa o dia todo, todos os dias. Usa o fuso horário do ambiente, que pode ser diferente do telefone.",
+  "7a4e5e17bc86fd03": "Início",
+  "e72a5d4b2081c99a": "Fim",
+  "d965bd18eabb25e4": "todos os dias",
+  "322d73d513a28913": "{cadence}, {days} {start}–{end}",
+  "b31eca99ca34c7d6": "{cadence}, {days} {start}–{end} {zone}",
+  "a01ea56d4513a549": "Janela de horário inválida",
+  "bf095325c94ec069": "Informe um horário de início e de fim.",
+  "a1f0c9ea82f7c05e": "O fim deve ser posterior ao início.",
+  "93b4649762b66d2f": "Escolher dias",
+  "0d8459e7d93404fa": "Selecione pelo menos um dia."
 }

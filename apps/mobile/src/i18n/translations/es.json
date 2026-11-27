@@ -5707,5 +5707,15 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo"
+  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo",
+  "6c1eddd065401135": "Las franjas horarias no están disponibles aquí",
+  "0c9ff957da8d75b0": "Actualiza este entorno para usar franjas horarias de intervalo.",
+  "949d09be92f55081": "Franja horaria",
+  "bcc9a4b1c42d2680": "Inicio",
+  "8d2bf69694db8871": "Fin",
+  "e08770fb8b445af3": "Franja horaria",
+  "dcc72e4732f57181": "La hora de fin debe ser posterior a la de inicio.",
+  "32f36b059ed73dc0": "Cada {minutes} min",
+  "d965bd18eabb25e4": "cada día",
+  "a7700dfd6295f39f": "{interval}, {days} {start}–{end}"
 }

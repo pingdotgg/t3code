@@ -13030,5 +13030,19 @@
       "v": "v"
     },
     " till i Länkade objekt"
-  ]
+  ],
+  "6c1eddd065401135": "Tidsfönster är inte tillgängliga här",
+  "0c9ff957da8d75b0": "Uppdatera miljön för att använda tidsfönster för intervall.",
+  "e08770fb8b445af3": "Tidsfönster",
+  "5435566ccb3acc50": "Kör endast mellan dessa tider på dagarna nedan. Av betyder hela dagen, varje dag. Miljöns tidszon används och kan skilja sig från telefonens.",
+  "7a4e5e17bc86fd03": "Start",
+  "e72a5d4b2081c99a": "Slut",
+  "d965bd18eabb25e4": "varje dag",
+  "322d73d513a28913": "{cadence}, {days} {start}–{end}",
+  "b31eca99ca34c7d6": "{cadence}, {days} {start}–{end} {zone}",
+  "a01ea56d4513a549": "Ogiltigt tidsfönster",
+  "bf095325c94ec069": "Ange en start- och sluttid.",
+  "a1f0c9ea82f7c05e": "Slutet måste vara efter starten.",
+  "93b4649762b66d2f": "Välj dagar",
+  "0d8459e7d93404fa": "Välj minst en dag."
 }

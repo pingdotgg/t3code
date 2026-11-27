@@ -77,14 +77,12 @@ export function scheduleLabel(
               .toSorted((a, b) => a - b)
               .map((day) => weekdayShortLabel(day, locale))
               .join(", ");
-    return resolve(
-      msg("{cadence}, {days} {start}–{end}", {
-        cadence,
-        days,
-        start: window.start,
-        end: window.end,
-      }),
-    );
+    const start = formatTimeOfDay(window.start, timestampFormat);
+    const end = formatTimeOfDay(window.end, timestampFormat);
+    const zone = scheduleTimeZoneLabel(timeZone, runAt);
+    return zone === undefined
+      ? resolve(msg("{cadence}, {days} {start}–{end}", { cadence, days, start, end }))
+      : resolve(msg("{cadence}, {days} {start}–{end} {zone}", { cadence, days, start, end, zone }));
   }
   const weekdays = schedule.weekdays ?? [];
   const time = formatTimeOfDay(schedule.timeOfDay, timestampFormat);
