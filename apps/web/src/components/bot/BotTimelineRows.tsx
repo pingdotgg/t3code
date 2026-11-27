@@ -20,7 +20,11 @@ export function BotReplyHeader() {
   );
 }
 
-export function BotTypingTimelineRow() {
+export function BotTypingTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "bot-typing" }>;
+}) {
   const { bot } = use(TimelineRowCtx);
   // A Bot waiting on your answer is not typing.
   const { awaitingUser } = use(TimelineRowActivityCtx);
@@ -29,9 +33,13 @@ export function BotTypingTimelineRow() {
     <div className="flex items-center gap-2 px-1 text-sm text-muted-foreground">
       <BotAvatar threadId={bot.threadId} state="working" size={20} />
       <span className="min-w-0 truncate">
-        <T>
-          <Var>{bot.name}</Var> is typing…
-        </T>
+        {row.detail === undefined ? (
+          <T>
+            <Var>{bot.name}</Var> is typing…
+          </T>
+        ) : (
+          row.detail
+        )}
       </span>
     </div>
   );

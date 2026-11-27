@@ -2014,12 +2014,40 @@ describe("deriveMessagesTimelineRows", () => {
       entry: { id: "running-command" },
       thought: { id: "new-thought" },
     });
-    // A running Bot shows who is typing, not a work timer or live activity row.
-    const botRows = derive(true);
-    expect(botRows.map((row) => row.kind)).toEqual(["work", "bot-typing"]);
-    expect(
-      botRows.flatMap((row) => (row.kind === "work" ? row.groupedEntries : [])),
-    ).not.toContainEqual(expect.objectContaining({ itemType: "reasoning" }));
+    // A running Bot shows who is typing, not its thoughts, tools or a work timer.
+    expect(derive(true).map((row) => row.kind)).toEqual(["bot-typing"]);
+    const progressRows = deriveMessagesTimelineRows({
+      botPresentation: true,
+      timelineEntries: [
+        {
+          id: "progress-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:01Z",
+          message: {
+            id: MessageId.make("progress"),
+            role: "assistant",
+            text: "Starting workers.\n\nI'll read [the report](t3-thread://x) for `0.2.0`.",
+            runId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:01Z",
+            updatedAt: "2026-01-01T00:00:01Z",
+            streaming: false,
+          },
+        },
+      ],
+      latestRun: {
+        runId: "turn-1" as never,
+        status: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    // Progress is a live trace on the typing row, never a chat message.
+    expect(progressRows).toEqual([
+      expect.objectContaining({ kind: "bot-typing", detail: "I'll read the report for 0.2.0." }),
+    ]);
   });
 
   it("keeps an actually running tool in the shared activity row", () => {
@@ -3097,7 +3125,7 @@ describe("v2 run and attempt history", () => {
       expect.objectContaining({ id: "provider-recovered" }),
     ]);
 
-    // A Bot turn reads as chat: its wake is a caption, its tools gather into one disclosure.
+    // A Bot turn reads as chat: its wake is a caption, then only its final reply.
     const botRows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
@@ -3134,21 +3162,9 @@ describe("v2 run and attempt history", () => {
       turnDiffSummaries: [],
       supportsConversationRollback: false,
     });
-    expect(botRows.map((row) => row.id)).toEqual([
-      "wake-entry",
-      "assistant-thought-entry",
-      "work-toggle:work-entry-1",
-      "work-group:work-entry-1:details",
-      "thread-created-entry",
-      "assistant-final-entry",
-    ]);
+    expect(botRows.map((row) => row.id)).toEqual(["wake-entry", "assistant-final-entry"]);
     expect(botRows[0]).toMatchObject({ kind: "bot-wake", label: "Bump tinyqs finished its turn" });
     expect(botRows[1]).toMatchObject({ botAvatar: true });
-    expect(botRows[5]).not.toHaveProperty("botAvatar");
-    const botWork = botRows.find((row) => row.kind === "work");
-    expect(botWork?.kind === "work" ? botWork.groupedEntries.map((entry) => entry.id) : []).toEqual(
-      ["work-1", "provider-recovered", "work-2"],
-    );
   });
   it("hides tool calls or everything but the final answer", () => {
     const runId = RunId.make("turn-1");

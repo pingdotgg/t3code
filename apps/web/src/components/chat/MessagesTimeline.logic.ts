@@ -561,6 +561,8 @@ type MessagesTimelineRowContent =
       kind: "bot-typing";
       id: string;
       createdAt: null;
+      /** The last line of the Bot's latest progress message in this turn. */
+      detail?: string;
     }
   | {
       /** What woke a Bot, shown as a caption above the reply it triggered. */
@@ -1591,65 +1593,49 @@ function timelineRowEntries(
         entry.kind !== "work" || !workEntryHiddenByToolCallVisibility(entry.entry, visibility),
     );
   }
-  const rowEntries = withoutSubagentDelegationRows(settleSupersededReasoning(shown));
-  return input.botPresentation
-    ? gatherBotTurnTools(rowEntries, input.pendingApprovalRequestIds)
-    : rowEntries;
+  if (input.botPresentation) {
+    const answering = input.isWorking && input.latestRun?.turnEnded !== true;
+    return botConversationEntries(
+      entries,
+      answering ? deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null) : null,
+      input.pendingApprovalRequestIds,
+    );
+  }
+  return withoutSubagentDelegationRows(settleSupersededReasoning(shown));
 }
 
-/** Work that keeps its own row instead of joining a tool group. */
-function workEntryStandsAlone(
-  entry: Extract<TimelineEntry, { kind: "work" }>,
-  pendingApprovalRequestIds: ReadonlySet<RuntimeRequestId> | undefined,
-): boolean {
-  const work = entry.entry;
-  const item = work.projectedItem?.item;
-  return (
-    timelineEntryIsCompaction(entry) ||
-    (work.itemType === "error" && work.toolLifecycleStatus === "failed") ||
-    work.tone === "error" ||
-    work.sourceActivityKind === "runtime.error" ||
-    work.itemType === "system_notice" ||
-    work.itemType === "notification" ||
-    work.itemType === "todo_list" ||
-    work.questionAnswer !== undefined ||
-    (item?.type === "approval_request" && pendingApprovalRequestIds?.has(item.requestId) === true)
-  );
-}
-
-/** Moves each Bot turn's tool calls up to its first one, so the turn shows one disclosure. */
-function gatherBotTurnTools(
+/**
+ * A Bot reads as a chat: each turn's final reply, plus what wakes it, what it asks and what fails.
+ * Its progress and tool calls only show live, in the typing row.
+ */
+function botConversationEntries(
   entries: ReadonlyArray<TimelineEntry>,
+  activeRunId: RunId | null,
   pendingApprovalRequestIds: ReadonlySet<RuntimeRequestId> | undefined,
 ): ReadonlyArray<TimelineEntry> {
-  const groupKey = (entry: TimelineEntry) =>
-    entry.kind === "work" &&
-    entry.entry.runId != null &&
-    !workEntryStandsAlone(entry, pendingApprovalRequestIds)
-      ? `${entry.entry.runId}\u0000${entry.attempt?.id ?? ""}`
-      : null;
-  const groups = new Map<string, TimelineEntry[]>();
-  for (const entry of entries) {
-    const key = groupKey(entry);
-    if (key === null) continue;
-    const group = groups.get(key);
-    if (group) group.push(entry);
-    else groups.set(key, [entry]);
-  }
-  if (groups.size === 0) return entries;
-  const gathered: TimelineEntry[] = [];
-  for (const entry of entries) {
-    const key = groupKey(entry);
-    if (key === null) {
-      gathered.push(entry);
-      continue;
+  const finalReplyIds = deriveTerminalAssistantMessageIds(entries);
+  return entries.filter((entry) => {
+    if (entry.kind === "message") {
+      const { message } = entry;
+      return (
+        message.role !== "assistant" ||
+        (finalReplyIds.has(message.id) && (activeRunId === null || message.runId !== activeRunId))
+      );
     }
-    const group = groups.get(key);
-    if (group === undefined) continue;
-    gathered.push(...group);
-    groups.delete(key);
-  }
-  return gathered;
+    // The Bot's reply names the workers it starts; the panel lists them.
+    if (entry.kind === "event") return entry.projectedItem?.item.type !== "thread_created";
+    if (entry.kind !== "work") return true;
+    const work = entry.entry;
+    const item = work.projectedItem?.item;
+    return (
+      work.itemType === "notification" ||
+      work.questionAnswer !== undefined ||
+      work.tone === "error" ||
+      work.sourceActivityKind === "runtime.error" ||
+      (work.itemType === "error" && work.toolLifecycleStatus === "failed") ||
+      (item?.type === "approval_request" && pendingApprovalRequestIds?.has(item.requestId) === true)
+    );
+  });
 }
 
 function deriveTimelineTurnFolds(
@@ -2489,11 +2475,35 @@ export function deriveMessagesTimelineRows(
     if (
       input.isWorking &&
       input.latestRun?.turnEnded !== true &&
-      !replyIsStreaming &&
-      !hasActiveCompaction &&
       !input.pendingApprovalRequestIds?.size
     ) {
-      nextRows.push({ kind: "bot-typing", id: LIVE_ACTIVITY_ROW_ID, createdAt: null });
+      const progress = input.timelineEntries.findLast(
+        (entry) =>
+          entry.kind === "message" &&
+          entry.message.role === "assistant" &&
+          entry.message.runId === unsettledRunId &&
+          entry.message.text.trim() !== "",
+      );
+      const detail =
+        progress?.kind === "message"
+          ? progress.message.text
+              .trim()
+              .split("\n")
+              .findLast((line) => line.trim() !== "")
+          : undefined;
+      nextRows.push({
+        kind: "bot-typing",
+        id: LIVE_ACTIVITY_ROW_ID,
+        createdAt: null,
+        ...(detail === undefined
+          ? {}
+          : {
+              detail: detail
+                .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+                .replaceAll("`", "")
+                .trim(),
+            }),
+      });
     }
   } else if (
     input.isWorking &&

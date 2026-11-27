@@ -1759,7 +1759,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
       {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
       {row.kind === "bot-wake" ? <BotWakeTimelineRow row={row} /> : null}
-      {row.kind === "bot-typing" ? <BotTypingTimelineRow /> : null}
+      {row.kind === "bot-typing" ? <BotTypingTimelineRow row={row} /> : null}
     </div>
   );
 });
