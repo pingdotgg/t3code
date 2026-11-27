@@ -200,6 +200,20 @@ export interface WorkflowRunListPage {
   readonly skippedTruncated?: boolean | undefined;
 }
 
+interface RunsWhereFilter {
+  readonly workflow?: string | undefined;
+  readonly status?: WorkflowRunStatus | undefined;
+  readonly keyPrefix?: string | undefined;
+  /** Runs with an open question of this kind. */
+  readonly kind?: string | undefined;
+  /** Runs tagged with this. */
+  readonly tag?: string | undefined;
+  /** Runs about this: the subject's kind and key, or text that is its web address or key. */
+  readonly subject?: { readonly kind: string; readonly key: string } | string | undefined;
+  /** Only skipped runs no other run invoked (true), or only the rest (false). */
+  readonly skippedTopLevel?: boolean | undefined;
+}
+
 export class WorkflowStore extends Context.Service<
   WorkflowStore,
   {
@@ -415,31 +429,11 @@ export class WorkflowStore extends Context.Service<
     readonly runByKey: (workflow: string, key: string) => Effect.Effect<RunRow | undefined>;
     readonly runs: (status: WorkflowRunStatus | undefined) => Effect.Effect<WorkflowRunListPage>;
     /** Runs by what they are a run of and what they were started as, newest first. */
-    readonly runsWhere: (filter: {
-      readonly workflow?: string | undefined;
-      readonly status?: WorkflowRunStatus | undefined;
-      readonly keyPrefix?: string | undefined;
-      /** Runs with an open question of this kind. */
-      readonly kind?: string | undefined;
-      /** Runs tagged with this. */
-      readonly tag?: string | undefined;
-      /** Runs about this: the subject's kind and key, or text that is its web address or key. */
-      readonly subject?: { readonly kind: string; readonly key: string } | string | undefined;
-      /** Only skipped runs no other run invoked (true), or only the rest (false). */
-      readonly skippedTopLevel?: boolean | undefined;
-    }) => Effect.Effect<ReadonlyArray<RunSummaryRow>>;
-    readonly runsWherePage: (filter: {
-      readonly workflow?: string | undefined;
-      readonly status?: WorkflowRunStatus | undefined;
-      readonly keyPrefix?: string | undefined;
-      readonly kind?: string | undefined;
-      readonly tag?: string | undefined;
-      readonly subject?: { readonly kind: string; readonly key: string } | string | undefined;
-      readonly skippedTopLevel?: boolean | undefined;
-    }) => Effect.Effect<{
-      readonly rows: ReadonlyArray<RunSummaryRow>;
-      readonly truncated: boolean;
-    }>;
+    readonly runsWhere: (filter: RunsWhereFilter) => Effect.Effect<ReadonlyArray<RunSummaryRow>>;
+    /** `runsWhere`, saying whether older runs were left out at the limit. */
+    readonly runsWherePage: (
+      filter: RunsWhereFilter,
+    ) => Effect.Effect<Omit<WorkflowRunListPage, "skippedTruncated">>;
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
     /** Forgets every trigger but these, so one that comes back starts over. */

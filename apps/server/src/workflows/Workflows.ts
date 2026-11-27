@@ -230,12 +230,8 @@ export const disabled = Workflows.of({
   get: Effect.fn("Workflows.get")(function* (runId) {
     return yield* new WorkflowRunNotFoundError({ runId });
   }),
-  list: Effect.fn("Workflows.list")(function* (filter) {
-    return yield* Effect.succeed({
-      runs: [],
-      truncated: false,
-      ...(filter?.status === undefined ? { skippedTruncated: false } : {}),
-    });
+  list: Effect.fn("Workflows.list")(function* () {
+    return yield* Effect.succeed({ runs: [], truncated: false });
   }),
   about: Effect.fn("Workflows.about")(function* () {
     return yield* Effect.succeed({ runs: [], questions: [] });

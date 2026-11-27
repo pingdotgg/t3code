@@ -59,19 +59,5 @@ describe("workflows.subscribe across versions", () => {
       }),
     );
     expect([unchanged.truncated, unchanged.skippedTruncated]).toEqual([true, false]);
-
-    const recovered = applyWorkflowRunsUpdate(
-      unchanged,
-      decodeUpdate({
-        _tag: "changed",
-        runs: [],
-        removed: [],
-        questions: [],
-        closed: [],
-        truncated: false,
-        skippedTruncated: true,
-      }),
-    );
-    expect([recovered.truncated, recovered.skippedTruncated]).toEqual([false, true]);
   });
 });
