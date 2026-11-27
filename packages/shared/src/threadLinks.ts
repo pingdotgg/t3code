@@ -299,13 +299,18 @@ export function threadLinkRefs(
 // GFM like the chat renderer, so footnotes and other GFM containers hold prose, not code.
 const markdownParser = unified().use(remarkParse).use(remarkGfm);
 const FENCE_LIKE_LINE = /^[ \t>*+\-\d.)]*(?:`{3}|~{3})/m;
+const LIST_ITEM_LINE = /^[ \t>]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|\r?$)/m;
 
 function parsedCodeRanges(markdown: string) {
-  // Parse only when a fence-looking line could be indented code in its container.
+  // Lists can end a fence without a closing marker, even when the fence starts on a
+  // continuation line. Let the Markdown parser find the container boundary.
   const candidates = new RegExp(FENCE_LIKE_LINE, "gm");
   let candidate = candidates.exec(markdown);
-  while (candidate && !/ {4}|\t/.test(candidate[0])) candidate = candidates.exec(markdown);
   if (!candidate) return undefined;
+  if (!LIST_ITEM_LINE.test(markdown)) {
+    while (candidate && !/ {4}|\t/.test(candidate[0])) candidate = candidates.exec(markdown);
+    if (!candidate) return undefined;
+  }
 
   const ranges: Array<{ start: number; end: number }> = [];
   const pending: Nodes[] = [markdownParser.parse(markdown)];
