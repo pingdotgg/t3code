@@ -529,7 +529,7 @@ function ScaledRows(
     node.scrollTop += delta * (nativeTail ? 1 : (scale * 29) / Math.max(29, bounds.height));
     setTop(node.scrollTop);
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Finish scrolling to the end once the final row has loaded and its DOM layout has settled.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Complete End-key scrolling after the final worker row has loaded and its DOM layout has settled.
   useLayoutEffect(() => {
     const node = ref.current;
     const content = contentRef.current;
