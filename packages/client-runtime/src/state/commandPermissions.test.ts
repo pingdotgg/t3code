@@ -189,6 +189,8 @@ describe("command permissions", () => {
     Effect.gen(function* () {
       const registry = yield* setup;
       const check = createCommandPermissions(runtime, method);
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(check.permissionAtom(env))).toBe(false);
       const hold = (held: typeof scopes) =>
         registry.set(
           sessions(env),
