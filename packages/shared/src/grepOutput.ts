@@ -33,13 +33,23 @@ export function parseGrepOutput(
   const matches: Array<{ fileName: string; line: number; text: string }> = [];
   const notes: string[] = [];
   let file: string | undefined;
+  let ripgrepHeading = false;
   const lines = output.split(/\r?\n/);
   for (const [index, line] of lines.entries()) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed === "--" || trimmed === "---" || SUMMARY_LINE.test(trimmed)) continue;
+    if (!trimmed) {
+      // ripgrep separates file groups with a blank line. OpenCode also uses blanks within a group.
+      if (ripgrepHeading) {
+        file = undefined;
+        ripgrepHeading = false;
+      }
+      continue;
+    }
+    if (trimmed === "--" || trimmed === "---" || SUMMARY_LINE.test(trimmed)) continue;
     const heading = FILE_HEADING.exec(trimmed);
     if (heading) {
       file = heading[1];
+      ripgrepHeading = false;
       continue;
     }
     const numbered = file === undefined ? null : NUMBERED_LINE.exec(line);
@@ -51,32 +61,33 @@ export function parseGrepOutput(
     // ripgrep context lines (`N-text`) can't be told apart from a file named like one.
     if (file !== undefined && CONTEXT_LINE.test(line)) return undefined;
     const nextLine = lines[index + 1] ?? "";
-    const followedByRipgrepMatch = RIPGREP_NUMBERED_LINE.test(nextLine);
+    // A bare heading containing `:N:` can also look like an inline match.
+    if (RIPGREP_NUMBERED_LINE.test(nextLine) && /^\S/.test(line) && !NOTE_LINE.test(trimmed)) {
+      file = line.trimEnd();
+      ripgrepHeading = true;
+      continue;
+    }
     // `dir/a:12:b.txt:` is both an inline match and an OpenCode heading; an indented `Line N:` next decides.
     const colonHeading = COLON_HEADING.exec(line.trimEnd());
     const inline =
       colonHeading && OPENCODE_NUMBERED_LINE.test(nextLine) ? null : PATH_LINE_TEXT.exec(line);
     if (inline) {
-      // A ripgrep heading can also look like an inline match when its filename contains `:N:`.
-      // Without a current heading, prefer inline when the next line also fits that form.
-      if (followedByRipgrepMatch && (file !== undefined || !PATH_LINE_TEXT.test(nextLine))) {
-        file = line.trimEnd();
-      } else {
-        matches.push({ fileName: inline[1] ?? "", line: Number(inline[2]), text: inline[3] ?? "" });
-      }
+      matches.push({ fileName: inline[1] ?? "", line: Number(inline[2]), text: inline[3] ?? "" });
       continue;
     }
     if (colonHeading) {
       file = colonHeading[1];
+      ripgrepHeading = false;
       continue;
     }
     if (NOTE_LINE.test(trimmed)) {
       notes.push(trimmed);
       continue;
     }
-    // A bare path with spaces needs a following ripgrep line to distinguish it from prose.
-    if (!/\s/.test(line.trimEnd()) || (/^\S/.test(line) && followedByRipgrepMatch)) {
+    // With no numbered match after it, only a space-free bare path can be a heading.
+    if (!/\s/.test(line.trimEnd())) {
       file = line.trimEnd();
+      ripgrepHeading = false;
       continue;
     }
     return undefined;
