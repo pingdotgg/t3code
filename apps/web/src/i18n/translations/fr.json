@@ -13487,5 +13487,34 @@
   "f83b990c1244d596": "Nom d’affichage de l’équipe",
   "32bbfee4ac2f750f": "Affiché comme préfixe sur les fils de tâches planifiées de l’équipe (par exemple, {displayName}: Daily triage).",
   "6c037e26ecbefe2e": "Nom d’affichage (facultatif)",
-  "7d63b70705da219f": "Utilise le nom de l’équipe par défaut si laissé vide. Affiché comme préfixe sur les fils de tâches planifiées de l’équipe."
+  "7d63b70705da219f": "Utilise le nom de l’équipe par défaut si laissé vide. Affiché comme préfixe sur les fils de tâches planifiées de l’équipe.",
+  "eaaf25718abe08f3": "Sons de notification d'équipe",
+  "6edadea6ed9f764c": "équipe son notification alerte carillon cloche marimba pulsation classique muet aperçu",
+  "aa9c24c9f6e35618": "Son de notification de l'équipe",
+  "8ebb9c471b7746b0": "Carillon",
+  "b480b015b2527f7f": "Cloche",
+  "6177878ddbfe6c6f": "Marimba",
+  "a69e7ab94fe68b23": "Pulsation",
+  "4f33bb8b212f74c0": "Classique (Personnel)",
+  "cf69c5ae3e908891": "Désactivé",
+  "951d35e964e49024": "Carillon (Par défaut)",
+  "0a19f45b7699cbec": "Son de notification pour {team} : {sound}",
+  "ad1aa16672b9e394": "Écouter {sound}",
+  "16bdc6823e68c016": "Écouter le son de notification de {team}",
+  "77b9b206a6fa0f6a": "Son de notification",
+  "f6d5283d42007b0c": "Son d'alerte distinct pour les fils de {team} (projets d'équipe distants et locaux). Les fils personnels continuent d'utiliser le son classique.",
+  "66ebeca535ea72f3": "Les sons de notification des fils sont actuellement désactivés dans les paramètres généraux.",
+  "ecdb99973d136dfc": "Réinitialiser le son de notification de {team} par défaut",
+  "cc86e648609e3b30": "Activez le son de notification des fils ci-dessus pour entendre automatiquement les alertes d'équipe.",
+  "4d403f03880ef1b4": "Son joué pour les fils de {team} (distinct des alertes de fils personnels). S'applique à cet appareil.",
+  "8218e45742ab1da7": "Choisissez un son d'alerte distinct pour chaque équipe connectée (les fils personnels conservent le son classique). S'applique à cet appareil.",
+  "e2b2bda149094334": [
+    "Carillon ",
+    {
+      "t": "span",
+      "i": 1,
+      "c": "(Par défaut)"
+    }
+  ],
+  "fa7abddc6635a0c7": "Écouter"
 }

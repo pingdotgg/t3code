@@ -202,6 +202,18 @@ export function requiresTeamNoteApprovalConfirmation(authorRole: TeamRole): bool
 export const TeamMemberStatus = Schema.Literals(["active", "suspended", "removed"]);
 export type TeamMemberStatus = typeof TeamMemberStatus.Type;
 
+export const TEAM_NOTIFICATION_SOUND_PRESETS = [
+  "chime",
+  "bell",
+  "marimba",
+  "pulse",
+  "classic",
+  "off",
+] as const;
+export const TeamNotificationSoundPreset = Schema.Literals(TEAM_NOTIFICATION_SOUND_PRESETS);
+export type TeamNotificationSoundPreset = typeof TeamNotificationSoundPreset.Type;
+export const DEFAULT_TEAM_NOTIFICATION_SOUND: TeamNotificationSoundPreset = "chime";
+
 export const TEAM_CLIENT_CAPABILITY_HEADER = "x-t3-teams-client";
 export const TEAM_CLIENT_CAPABILITY_QUERY_PARAM = "t3TeamsClient";
 export const TEAM_CLIENT_CAPABILITY_VALUE = "1";

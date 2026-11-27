@@ -1,6 +1,11 @@
 import { msg } from "gt-react";
 import { m } from "../i18n/messages";
 import {
+  resolveTeamNotificationSoundPreset,
+  resolveThreadTeamId,
+  type TeamEnvironmentState,
+} from "@t3tools/client-runtime/team";
+import {
   type EnvironmentThreadShell,
   type PendingSubagentRequest,
   presentThreadShell,
@@ -8,7 +13,12 @@ import {
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
-import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ThreadShell,
+  TeamId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { monitorHoldsWakeCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
@@ -182,7 +192,45 @@ export function startThreadNotifications(
       teamState,
       threadId: thread.id,
     });
-    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
+    const resolveNotificationTeamId = (): TeamId | null => {
+      if (teamState?.team != null) {
+        return teamState.attributionByThreadId.get(thread.id)?.teamId ?? teamState.team.id;
+      }
+      const teamStates = new Map<EnvironmentId, TeamEnvironmentState>();
+      for (const envId of registry.get(environmentSummaries.environmentIdsAtom)) {
+        const envTeamState = readTeamEnvironmentStateFromRegistry(registry, envId);
+        if (envTeamState?.team != null) teamStates.set(envId, envTeamState);
+      }
+      if (teamStates.size === 0) return null;
+      const shellState = registry.get(environmentShell.stateValueAtom(environmentId));
+      const projects =
+        shellState !== null && Option.isSome(shellState.snapshot)
+          ? (shellState.snapshot.value.projects ?? [])
+          : [];
+      const projectShell = projects.find((candidate) => candidate.id === state.raw.projectId);
+      return resolveThreadTeamId({
+        environmentId,
+        threadId: thread.id,
+        project: projectShell
+          ? {
+              id: projectShell.id,
+              environmentId,
+              repositoryIdentity: projectShell.repositoryIdentity,
+            }
+          : { id: state.raw.projectId, environmentId },
+        teamStates,
+      });
+    };
+    const settings = getClientSettings();
+    const { notificationMode: mode, inAppNotificationsEnabled } = settings;
+    const teamId = resolveNotificationTeamId();
+    const teamSoundPreset =
+      teamId === null
+        ? null
+        : resolveTeamNotificationSoundPreset({
+            teamId,
+            teamNotificationSounds: settings.teamNotificationSounds,
+          });
     const active = activeThread();
     const title =
       kind === "completion"
@@ -196,10 +244,21 @@ export function startThreadNotifications(
               : status === "request"
                 ? m(msg("Guest request"))
                 : m(msg("Input needed"));
-    if (hasNotificationSound(mode)) {
-      void playNotificationSound(kind, () =>
-        hasNotificationSound(getClientSettings().notificationMode),
-      );
+    if (hasNotificationSound(mode) && teamSoundPreset !== "off") {
+      const shouldPlay = () => {
+        const latest = getClientSettings();
+        if (!hasNotificationSound(latest.notificationMode)) return false;
+        if (teamId === null) return true;
+        return (
+          resolveTeamNotificationSoundPreset({
+            teamId,
+            teamNotificationSounds: latest.teamNotificationSounds,
+          }) !== "off"
+        );
+      };
+      void (teamSoundPreset === null
+        ? playNotificationSound(kind, shouldPlay)
+        : playNotificationSound(kind, shouldPlay, teamSoundPreset));
     }
     if (
       inAppNotificationsEnabled &&

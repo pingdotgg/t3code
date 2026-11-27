@@ -555,3 +555,41 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
+
+describe("team notification sound settings", () => {
+  it("defaults teamNotificationSounds to an empty record and validates presets", () => {
+    expect(decodeClientSettings({}).teamNotificationSounds).toEqual({});
+    expect(
+      decodeClientSettings({
+        teamNotificationSounds: {
+          "team-a": "chime",
+          "team-b": "bell",
+          "team-c": "marimba",
+          "team-d": "pulse",
+          "team-e": "classic",
+          "team-f": "off",
+        },
+      }).teamNotificationSounds,
+    ).toEqual({
+      "team-a": "chime",
+      "team-b": "bell",
+      "team-c": "marimba",
+      "team-d": "pulse",
+      "team-e": "classic",
+      "team-f": "off",
+    });
+    expect(
+      decodeClientSettingsPatch({
+        teamNotificationSounds: { "team-a": "marimba" },
+      }),
+    ).toEqual({
+      teamNotificationSounds: { "team-a": "marimba" },
+    });
+    expect(() =>
+      decodeClientSettings({ teamNotificationSounds: { "team-a": "invalid-sound" } }),
+    ).toThrow();
+    expect(() =>
+      decodeClientSettingsPatch({ teamNotificationSounds: { "   ": "bell" } }),
+    ).toThrow();
+  });
+});

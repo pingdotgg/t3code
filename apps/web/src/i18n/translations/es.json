@@ -13482,5 +13482,34 @@
   "f83b990c1244d596": "Nombre para mostrar del equipo",
   "32bbfee4ac2f750f": "Se muestra como prefijo en los hilos de tareas programadas del equipo (por ejemplo, {displayName}: Daily triage).",
   "6c037e26ecbefe2e": "Nombre para mostrar (opcional)",
-  "7d63b70705da219f": "Usa el nombre del equipo si se deja vacío. Se muestra como prefijo en los hilos de tareas programadas del equipo."
+  "7d63b70705da219f": "Usa el nombre del equipo si se deja vacío. Se muestra como prefijo en los hilos de tareas programadas del equipo.",
+  "eaaf25718abe08f3": "Sonidos de notificación de equipos",
+  "6edadea6ed9f764c": "equipo sonido notificacion alerta carillon campana marimba pulso clasico silenciar vista previa",
+  "aa9c24c9f6e35618": "Sonido de notificación del equipo",
+  "8ebb9c471b7746b0": "Carillón",
+  "b480b015b2527f7f": "Campana",
+  "6177878ddbfe6c6f": "Marimba",
+  "a69e7ab94fe68b23": "Pulso",
+  "4f33bb8b212f74c0": "Clásico (Personal)",
+  "cf69c5ae3e908891": "Desactivado",
+  "951d35e964e49024": "Carillón (Predeterminado)",
+  "0a19f45b7699cbec": "Sonido de notificación para {team}: {sound}",
+  "ad1aa16672b9e394": "Previsualizar {sound}",
+  "16bdc6823e68c016": "Previsualizar el sonido de notificación de {team}",
+  "77b9b206a6fa0f6a": "Sonido de notificación",
+  "f6d5283d42007b0c": "Sonido de alerta distinto para los hilos de {team} (tanto en proyectos remotos como locales del equipo). Los hilos personales siguen usando el sonido clásico.",
+  "66ebeca535ea72f3": "Los sonidos de notificación de hilos están desactivados actualmente en la configuración General.",
+  "ecdb99973d136dfc": "Restablecer el sonido de notificación de {team} al valor predeterminado",
+  "cc86e648609e3b30": "Activa arriba el sonido de notificación de hilos para escuchar automáticamente las alertas del equipo.",
+  "4d403f03880ef1b4": "Sonido reproducido para los hilos de {team} (distinto de las alertas de hilos personales). Se aplica a este dispositivo.",
+  "8218e45742ab1da7": "Elige un sonido de alerta distinto para cada equipo conectado (los hilos personales conservan el sonido clásico). Se aplica a este dispositivo.",
+  "e2b2bda149094334": [
+    "Carillón ",
+    {
+      "t": "span",
+      "i": 1,
+      "c": "(Predeterminado)"
+    }
+  ],
+  "fa7abddc6635a0c7": "Probar"
 }

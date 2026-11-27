@@ -5,11 +5,13 @@ import {
 } from "@t3tools/client-runtime/team";
 import {
   EnvironmentId,
+  ProjectId,
   TeamId,
   TeamMemberId,
   TeamViewId,
   ThreadId,
   type TeamMember,
+  type TeamNotificationSoundPreset,
   type TeamPseudo,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -23,6 +25,7 @@ import { RELEASED_COMPLETION_GRACE_MS } from "./ThreadNotificationCoordinator.lo
 const state = vi.hoisted(() => ({
   mode: "notifications",
   inApp: false,
+  teamNotificationSounds: {} as Record<string, TeamNotificationSoundPreset>,
   toast: vi.fn(),
   closeToast: vi.fn(),
   shells: null as unknown as { set: (id: string, value: unknown) => void },
@@ -106,6 +109,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => ({
   getClientSettings: (() => ({
     notificationMode: state.mode,
     inAppNotificationsEnabled: state.inApp,
+    teamNotificationSounds: state.teamNotificationSounds,
   })) as never,
 }));
 vi.mock(import("../threadNotifications"), async (original) => ({
@@ -238,6 +242,7 @@ function setup() {
   stack.defer(() => testRegistry.dispose());
   state.mode = "notifications";
   state.inApp = false;
+  state.teamNotificationSounds = {};
   state.settingsListeners.clear();
   registry.set(environmentIdsAtom, ["one", "two"]);
   state.shells.set("one", shell());
@@ -841,4 +846,147 @@ it("defers notifications and sound across team stream races without leaking coll
   });
   expect(TestNotification.sent).toHaveLength(1);
   expect(state.sound).toHaveBeenCalledTimes(1);
+});
+
+it("plays per-team sound presets for remote Team Server threads and local team-project threads, while respecting off", async () => {
+  await using app = setup();
+  state.mode = "notifications-and-sound";
+  const teamId = TeamId.make("team-sound");
+  const viewId = TeamViewId.make("view-sound");
+  const aliceId = TeamMemberId.make("member-alice-sound");
+  const localProjectId = ProjectId.make("proj-local-team");
+  const remoteProjectId = ProjectId.make("proj-remote-team");
+  const repoKey = "github.com/acme/sound-repo";
+  const alice: TeamMember = {
+    id: aliceId,
+    teamId,
+    pseudo: "alice" as TeamPseudo,
+    role: "owner",
+    status: "active",
+    createdAt: "2026-09-13T07:00:00.000Z",
+    updatedAt: "2026-09-13T07:00:00.000Z",
+  };
+  const remoteThreadId = ThreadId.make("thread");
+  const attribution = {
+    threadId: remoteThreadId,
+    teamId,
+    creatorMemberId: aliceId,
+    creatorPseudo: alice.pseudo,
+    viewId,
+    locked: false,
+    lockedByMemberId: null,
+    createdAt: "2026-09-13T07:00:00.000Z",
+  };
+  const assignment = {
+    projectId: remoteProjectId,
+    teamId,
+    defaultViewId: viewId,
+    repoIdentityKey: repoKey,
+    assignedByMemberId: aliceId,
+    createdAt: "2026-09-13T07:00:00.000Z",
+    updatedAt: "2026-09-13T07:00:00.000Z",
+  };
+  const teamState: TeamEnvironmentState = {
+    ...EMPTY_TEAM_ENVIRONMENT_STATE,
+    team: {
+      id: teamId,
+      name: "Sound Team",
+      displayName: "Sound Team",
+      defaultViewId: viewId,
+      createdAt: "2026-09-13T07:00:00.000Z",
+      updatedAt: "2026-09-13T07:00:00.000Z",
+    },
+    currentMember: alice,
+    members: [alice],
+    threadAttributions: [attribution],
+    memberById: new Map([[aliceId, alice]]),
+    attributionByThreadId: new Map([[remoteThreadId, attribution]]),
+    teamProjects: [assignment],
+    projectAssignmentByProjectId: new Map([[remoteProjectId, assignment]]),
+    projectAssignmentByRepoKey: new Map([[repoKey, assignment]]),
+  };
+
+  // Environment "one" is the remote Team Server; "two" is Alice's local environment.
+  state.teamStates.set("one", teamState);
+  state.teamStates.set("two", EMPTY_TEAM_ENVIRONMENT_STATE);
+  state.shells.set("two", {
+    status: "live",
+    snapshot: Option.some({
+      projects: [
+        {
+          id: localProjectId,
+          repositoryIdentity: {
+            canonicalKey: "local/sound-repo",
+            origin: { canonicalKey: repoKey },
+          },
+        },
+      ],
+      threads: [
+        {
+          ...toV2ThreadShell(thread),
+          projectId: localProjectId,
+        },
+      ],
+    }),
+  });
+  app.start();
+
+  // 1. Remote Team Server thread defaults to "chime".
+  state.shells.set(
+    "one",
+    shell({
+      latestTurn: { turnId: "turn-1", state: "completed", completedAt: "2026-09-13T07:01:00.000Z" },
+    }),
+  );
+  expect(state.sound).toHaveBeenLastCalledWith("completion", expect.any(Function), "chime");
+
+  // 2. Local thread on the team-assigned project resolves teamId via repo identity and plays custom "marimba".
+  state.teamNotificationSounds = { [teamId]: "marimba" };
+  state.shells.set("two", {
+    status: "live",
+    snapshot: Option.some({
+      projects: [
+        {
+          id: localProjectId,
+          repositoryIdentity: {
+            canonicalKey: "local/sound-repo",
+            origin: { canonicalKey: repoKey },
+          },
+        },
+      ],
+      threads: [
+        {
+          ...toV2ThreadShell({
+            ...thread,
+            latestTurn: {
+              turnId: "turn-local-1",
+              state: "completed",
+              completedAt: "2026-09-13T07:02:00.000Z",
+            },
+          }),
+          projectId: localProjectId,
+        },
+      ],
+    }),
+  });
+  expect(state.sound).toHaveBeenLastCalledWith("completion", expect.any(Function), "marimba");
+
+  // 3. Setting team sound to "off" suppresses sound while still showing the desktop notification.
+  state.teamNotificationSounds = { [teamId]: "off" };
+  const callsBeforeOff = state.sound.mock.calls.length;
+  const notificationsBeforeOff = TestNotification.sent.length;
+  state.shells.set(
+    "one",
+    shell({
+      latestTurn: { turnId: "turn-2", state: "running", completedAt: null },
+    }),
+  );
+  state.shells.set(
+    "one",
+    shell({
+      latestTurn: { turnId: "turn-2", state: "completed", completedAt: "2026-09-13T07:03:00.000Z" },
+    }),
+  );
+  expect(state.sound).toHaveBeenCalledTimes(callsBeforeOff);
+  expect(TestNotification.sent).toHaveLength(notificationsBeforeOff + 1);
 });

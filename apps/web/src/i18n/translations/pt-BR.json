@@ -13487,5 +13487,34 @@
   "f83b990c1244d596": "Nome de exibição da equipe",
   "32bbfee4ac2f750f": "Exibido como prefixo nos tópicos de tarefas agendadas da equipe (por exemplo, {displayName}: Daily triage).",
   "6c037e26ecbefe2e": "Nome de exibição (opcional)",
-  "7d63b70705da219f": "Usa o nome da equipe se ficar em branco. Exibido como prefixo nos tópicos de tarefas agendadas da equipe."
+  "7d63b70705da219f": "Usa o nome da equipe se ficar em branco. Exibido como prefixo nos tópicos de tarefas agendadas da equipe.",
+  "eaaf25718abe08f3": "Sons de notificação de equipes",
+  "6edadea6ed9f764c": "equipe som notificação alerta carrilhão sino marimba pulso clássico silenciar prévia",
+  "aa9c24c9f6e35618": "Som de notificação da equipe",
+  "8ebb9c471b7746b0": "Carrilhão",
+  "b480b015b2527f7f": "Sino",
+  "6177878ddbfe6c6f": "Marimba",
+  "a69e7ab94fe68b23": "Pulso",
+  "4f33bb8b212f74c0": "Clássico (Pessoal)",
+  "cf69c5ae3e908891": "Desativado",
+  "951d35e964e49024": "Carrilhão (Padrão)",
+  "0a19f45b7699cbec": "Som de notificação para {team}: {sound}",
+  "ad1aa16672b9e394": "Ouvir prévia de {sound}",
+  "16bdc6823e68c016": "Ouvir prévia do som de notificação de {team}",
+  "77b9b206a6fa0f6a": "Som de notificação",
+  "f6d5283d42007b0c": "Som de alerta distinto para tópicos de {team} (projetos de equipe remotos e locais). Tópicos pessoais continuam usando o som clássico.",
+  "66ebeca535ea72f3": "Os sons de notificação de tópicos estão desativados nas configurações Gerais.",
+  "ecdb99973d136dfc": "Redefinir som de notificação de {team} para o padrão",
+  "cc86e648609e3b30": "Ative o som de notificação de tópicos acima para ouvir alertas de equipe automaticamente.",
+  "4d403f03880ef1b4": "Som reproduzido para tópicos de {team} (distinto dos alertas de tópicos pessoais). Aplica-se a este dispositivo.",
+  "8218e45742ab1da7": "Escolha um som de alerta distinto para cada equipe conectada (tópicos pessoais mantêm o som clássico). Aplica-se a este dispositivo.",
+  "e2b2bda149094334": [
+    "Carrilhão ",
+    {
+      "t": "span",
+      "i": 1,
+      "c": "(Padrão)"
+    }
+  ],
+  "fa7abddc6635a0c7": "Prévia"
 }

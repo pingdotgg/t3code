@@ -13496,5 +13496,34 @@
   "f83b990c1244d596": "Team display name",
   "32bbfee4ac2f750f": "Shown as the prefix on team-owned scheduled-task threads (for example, {displayName}: Daily triage).",
   "6c037e26ecbefe2e": "Display name (optional)",
-  "7d63b70705da219f": "Defaults to the team name if left blank. Shown as the prefix on team-owned scheduled-task threads."
+  "7d63b70705da219f": "Defaults to the team name if left blank. Shown as the prefix on team-owned scheduled-task threads.",
+  "eaaf25718abe08f3": "Team notification sounds",
+  "6edadea6ed9f764c": "team sound notification sound alert chime bell marimba pulse classic mute preview",
+  "aa9c24c9f6e35618": "Team notification sound",
+  "8ebb9c471b7746b0": "Chime",
+  "b480b015b2527f7f": "Bell",
+  "6177878ddbfe6c6f": "Marimba",
+  "a69e7ab94fe68b23": "Pulse",
+  "4f33bb8b212f74c0": "Classic (Personal)",
+  "cf69c5ae3e908891": "Off",
+  "951d35e964e49024": "Chime (Default)",
+  "0a19f45b7699cbec": "Notification sound for {team}: {sound}",
+  "ad1aa16672b9e394": "Preview {sound}",
+  "16bdc6823e68c016": "Preview {team} notification sound",
+  "77b9b206a6fa0f6a": "Notification sound",
+  "f6d5283d42007b0c": "Distinct alert sound for threads in {team} (both remote and local team projects). Personal threads continue using the classic sound.",
+  "66ebeca535ea72f3": "Thread notification sounds are currently off in General settings.",
+  "ecdb99973d136dfc": "Reset {team} notification sound to default",
+  "cc86e648609e3b30": "Turn on thread notification sound above to hear team alerts automatically.",
+  "4d403f03880ef1b4": "Sound played for {team} threads (distinct from personal thread alerts). Applies to this device.",
+  "8218e45742ab1da7": "Choose a distinct alert sound for each connected team (personal threads keep the classic sound). Applies to this device.",
+  "e2b2bda149094334": [
+    "Chime ",
+    {
+      "t": "span",
+      "i": 1,
+      "c": "(Default)"
+    }
+  ],
+  "fa7abddc6635a0c7": "Preview"
 }
