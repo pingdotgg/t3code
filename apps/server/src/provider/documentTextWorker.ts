@@ -352,7 +352,9 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield "\n";
     } else if (
-      ["blockquote", "figcaption", "aside", "address", "header", "footer"].includes(child.name) &&
+      ["blockquote", "figure", "figcaption", "aside", "address", "header", "footer"].includes(
+        child.name,
+      ) &&
       child.hasText
     ) {
       yield LINE_START;
