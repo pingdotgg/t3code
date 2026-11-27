@@ -1,10 +1,5 @@
 import { expect, it } from "vite-plus/test";
-import {
-  alignedWords,
-  MP3_ENCODER_DELAY_SAMPLES,
-  mp3Duration,
-  quietestMoment,
-} from "./synthesisTimings.ts";
+import { alignedWords, mp3Duration } from "./synthesisTimings.ts";
 
 it("counts MP3 playing time across split chunks and after an ID3 tag", () => {
   // MPEG-1 Layer III at 64 kbps and 44.1 kHz: 208 bytes and 1152 samples per frame.
@@ -40,17 +35,4 @@ it("builds words from character alignment that spans chunks", () => {
   expect([...mismatch.push(alignment(0, 6)), ...mismatch.end()]).toEqual([
     { start: 0, end: 2, startSeconds: 0, endSeconds: 0.2 },
   ]);
-});
-
-it("finds the quiet between two words, measured on the MP3's clock", () => {
-  const rate = 24_000;
-  // Speech, a 40 ms gap from 0.30 s, then speech again; the PCM starts after the encoder delay.
-  const pcm = Int16Array.from({ length: rate / 2 }, (_, index) =>
-    index >= rate * 0.3 && index < rate * 0.34 ? 0 : index % 2 ? 8_000 : -8_000,
-  );
-  const delay = MP3_ENCODER_DELAY_SAMPLES / rate;
-  const quiet = quietestMoment([{ pcm, rate, startSeconds: 0 }], 0.1 + delay, 0.45 + delay);
-  expect(quiet! - delay).toBeGreaterThanOrEqual(0.3);
-  expect(quiet! - delay).toBeLessThanOrEqual(0.34);
-  expect(quietestMoment([{ pcm, rate, startSeconds: 0 }], 2, 3)).toBeUndefined();
 });

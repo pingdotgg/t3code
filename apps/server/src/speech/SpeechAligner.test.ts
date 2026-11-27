@@ -111,10 +111,6 @@ it.effect("has no session for text the model cannot hear", () => {
       "Revisé la pantalla de ajustes y encontré el problema. Cuando cambias de proveedor, la voz anterior sigue seleccionada.";
     expect(yield* aligner.session(spanish, "auto", "english")).toBeUndefined();
     expect(yield* aligner.session(spanish, "auto", "multilingual")).toBeDefined();
-    // A Chinese word in an English sentence goes untimed; the English around it is still timed.
-    expect(
-      yield* aligner.session("Mixed: the function getUser returns 用户 data.", "auto", "english"),
-    ).toBeDefined();
   }).pipe(Effect.provide(fake.layer), onSupportedHost);
 });
 

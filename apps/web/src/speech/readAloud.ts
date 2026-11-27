@@ -160,7 +160,6 @@ export const readAloudController = createReadAloudController(
         }
         return timed.subscribe(listener);
       },
-      estimated: () => timed?.estimated() === true,
       seek: (at) => {
         const seconds = timed?.secondsAt(at);
         // A live stream ignores seeks beyond what the browser can seek, so those read again instead.

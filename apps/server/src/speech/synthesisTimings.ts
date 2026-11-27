@@ -23,48 +23,9 @@ function frameAt(bytes: Uint8Array, at: number) {
   };
 }
 
-// Players keep lame's encoder delay at the start of each MP3 stream the PCM becomes.
-export const MP3_ENCODER_DELAY_SAMPLES = 1105;
-
-/** Mono PCM a synthesis sent, starting `startSeconds` into its MP3, before the encoder delay. */
-export type TimedPcm = {
-  readonly pcm: Int16Array;
-  readonly rate: number;
-  readonly startSeconds: number;
-};
-
-/**
- * The middle of the latest of the quietest 20 ms stretches of `parts` between `from` and `to`
- * seconds of MP3 time, where a cut is least likely to catch a word; undefined when the PCM does
- * not cover that span. Of stretches about as quiet, the latest sits closest to the next word.
- */
-export function quietestMoment(parts: ReadonlyArray<TimedPcm>, from: number, to: number) {
-  const stretches: Array<{ readonly seconds: number; readonly level: number }> = [];
-  for (const { pcm, rate, startSeconds } of parts) {
-    const offset = startSeconds + MP3_ENCODER_DELAY_SAMPLES / rate;
-    const window = Math.max(1, Math.round(rate * 0.02));
-    const hop = Math.max(1, Math.round(rate * 0.005));
-    const last = Math.min(pcm.length, Math.floor((to - offset) * rate)) - window;
-    for (let start = Math.max(0, Math.ceil((from - offset) * rate)); start <= last; start += hop) {
-      let energy = 0;
-      for (let index = start; index < start + window; index++) energy += pcm[index]! ** 2;
-      stretches.push({
-        seconds: offset + (start + window / 2) / rate,
-        level: Math.sqrt(energy / window),
-      });
-    }
-  }
-  if (!stretches.length) return undefined;
-  const quietest = Math.min(...stretches.map((stretch) => stretch.level));
-  // Twice as loud, or under about -50 dBFS, still reads as quiet.
-  const quiet = Math.max(quietest * 2, 100);
-  return stretches.findLast((stretch) => stretch.level <= quiet)!.seconds;
-}
-
 /**
  * The frame of an MP3 stream that plays at `seconds`: its byte offset and when it starts, or
- * undefined until `bytes` reach it. Audio cut there decodes from a frame boundary. `end` is
- * where the next frame starts.
+ * undefined until `bytes` reach it. Audio cut there decodes from a frame boundary.
  */
 export function mp3FrameAt(bytes: Uint8Array, seconds: number) {
   // An ID3v2 tag holds metadata, not audio; its size is four 7-bit bytes.
@@ -80,12 +41,7 @@ export function mp3FrameAt(bytes: Uint8Array, seconds: number) {
       continue;
     }
     if (at + frame.length > bytes.length) return undefined;
-    if (elapsed + frame.seconds > seconds)
-      return {
-        offset: at,
-        seconds: elapsed,
-        end: { offset: at + frame.length, seconds: elapsed + frame.seconds },
-      };
+    if (elapsed + frame.seconds > seconds) return { offset: at, seconds: elapsed };
     elapsed += frame.seconds;
     at += frame.length;
   }

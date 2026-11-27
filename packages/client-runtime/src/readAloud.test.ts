@@ -344,7 +344,6 @@ it("seeks to a picked word in the audio when its time is known, else reads from 
   const seeks: number[] = [];
   const speeds: number[] = [];
   let seekable = true;
-  let estimated = false;
   const prepared: Array<ReturnType<typeof deferred<void>>> = [];
   const controller = createReadAloudController(async (text, _settings, _signal, from) => {
     texts.push(text);
@@ -360,7 +359,6 @@ it("seeks to a picked word in the audio when its time is known, else reads from 
         seeks.push(at);
         return seekable;
       },
-      estimated: () => estimated,
       setSpeed: (speed) => speeds.push(speed),
     };
   });
@@ -388,15 +386,6 @@ it("seeks to a picked word in the audio when its time is known, else reads from 
   await vi.waitFor(() => expect(texts).toHaveLength(3));
   expect(seeks).toEqual([]);
   expect(froms[2]).toBeUndefined();
-
-  // Speech the environment could not time would play its lead-in whole, so it starts at the word.
-  estimated = true;
-  seekable = false;
-  void controller.seek("1", markdown.indexOf("one"));
-  await vi.waitFor(() => expect(texts).toHaveLength(4));
-  expect(texts[3]).toBe("one.");
-  expect(froms[3]).toBeUndefined();
-  estimated = false;
 
   // Speed changes go to the player, and later readings keep them.
   await controller.setSpeed(1.25);
