@@ -21,6 +21,31 @@ it("excludes review attachments rendered as context chips", () => {
   ]);
 });
 
+it("indexes single tildes in user paths as typed", () => {
+  const text = "Install as ~/a/x, then read (~/a/guide.md).";
+  expect(searchableMessageSegments({ role: "user", text, streaming: false })?.join("")).toBe(text);
+  expect(
+    searchableMessageSegments({ role: "user", text: "Drop ~~old~~", streaming: false })?.join(""),
+  ).toBe("Drop old");
+});
+
+it("indexes the spaces typed at the start of a user's lines, as the bubble shows them", () => {
+  const text = "Plan\n   Step one\n\tDetail";
+  // Each line ending reads as one space, as the text after a rendered line break does.
+  expect(searchableMessageSegments({ role: "user", text, streaming: false })).toEqual([
+    "Plan",
+    "    Step one",
+    " \tDetail",
+  ]);
+  const indexed = (text: string) =>
+    searchableMessageSegments({ role: "user", text, streaming: false });
+  // A task's checkbox does not move where its continuation lines start.
+  expect(indexed("- [ ] task\n    detail")).toEqual([" task", "   detail"]);
+  // A space or tab written as a character reference is dropped there, as without the indentation.
+  expect(indexed("a\n &#32;b")).toEqual(["a", "  b"]);
+  expect(indexed("a  \n\t&Tab;b")).toEqual(["a", " \tb"]);
+});
+
 it("excludes structured context chips without joining text across them", () => {
   expect(
     searchableMessageSegments({
@@ -79,6 +104,47 @@ it("searches displayed prose and file-chip labels without hidden paths", () => {
     "label main.ts · L3:C2",
   ]);
   expect(assistantSegments("[label](src/main.ts#L3C2)")).toEqual(["label"]);
+  expect(
+    assistantSegments(
+      "[![a](https://example.com/a.png)](src/index.ts) [![b](https://example.com/b.png)](lib/index.ts)",
+      "/workspace/repo",
+    ),
+  ).toEqual(["index.ts · repo/src index.ts · repo/lib"]);
+  for (const text of [
+    "[a](/repo/app/(a)/page.tsx) and [b](/repo/app/(b)/page.tsx)",
+    String.raw`[a](/repo/app/\(a\)/page.tsx) and [b](/repo/app/\(b\)/page.tsx)`,
+  ]) {
+    expect(assistantSegments(text, "/repo")).toEqual([
+      "a page.tsx · app/(a) and b page.tsx · app/(b)",
+    ]);
+  }
+  expect(
+    assistantSegments(
+      String.raw`[a](C:\repo\.a\page.tsx) and [b](C:\repo\.b\page.tsx)`,
+      String.raw`C:\repo`,
+    ),
+  ).toEqual(["a page.tsx · repo/.a and b page.tsx · repo/.b"]);
+  expect(
+    assistantSegments(
+      String.raw`[a](C:\repo\.a\x&amp;y\page.tsx) and [b](C:\repo\.b\x&amp;y\page.tsx)`,
+      String.raw`C:\repo`,
+    ),
+  ).toEqual(["a page.tsx · .a/x&y and b page.tsx · .b/x&y"]);
+  expect(
+    assistantSegments("[a](/repo/a&amp;b/page.tsx) and [b](/repo/c&amp;d/page.tsx)", "/repo"),
+  ).toEqual(["a page.tsx · repo/a&b and b page.tsx · repo/c&d"]);
+  expect(
+    assistantSegments("[a](</repo/a&b)/page.tsx>) and [b](</repo/c&d)/page.tsx>)", "/repo"),
+  ).toEqual(["a page.tsx · repo/a&b) and b page.tsx · repo/c&d)"]);
+  expect(
+    assistantSegments("[a](/repo/a&b>c/page.tsx) and [b](/repo/c&d>e/page.tsx)", "/repo"),
+  ).toEqual(["a page.tsx · repo/a&b>c and b page.tsx · repo/c&d>e"]);
+  expect(
+    assistantSegments(
+      String.raw`[a](</repo/a\<b &amp;c/page.tsx>) and [b](</repo/d\<e &amp;f/page.tsx>)`,
+      "/repo",
+    ),
+  ).toEqual(["a page.tsx · repo/a<b &c and b page.tsx · repo/d<e &f"]);
 });
 
 it("keeps fence paths literal and indexes file-chip labels in user messages", () => {
@@ -87,6 +153,50 @@ it("keeps fence paths literal and indexes file-chip labels in user messages", ()
     searchableMessageSegments({ role: "user", text: "`/tmp/file.ts:42`", streaming: false }),
   ).toEqual(["file.ts · L42"]);
 });
+
+it.each([
+  {
+    source: "user",
+    cwd: "/workspace/repo",
+    text: "See [src/notes.ts](src/notes.ts#L42-L64) and [src/notes.ts](src/notes.ts#L42-L70)",
+    expected: ["See notes.ts · L42–64 and notes.ts · L42–70"],
+  },
+  {
+    source: "assistant",
+    cwd: "/workspace/repo",
+    text: "[Read notes](src/notes.ts:42-64) and `test/notes.ts:42-64`",
+    expected: ["Read notes notes.ts · repo/src · L42–64 and notes.ts · repo/test · L42–64"],
+  },
+  {
+    source: "assistant",
+    cwd: undefined,
+    text: [
+      "[notes.ts](file:///tmp/notes.ts#L42-64) [relative](src/notes.ts#L42-L64)",
+      "[web](https://example.com/notes.ts#L42-L64) [reverse](/tmp/notes.ts#L64-L42)",
+      "`port:42-64`",
+      "\n```text\n/tmp/notes.ts:42-64\n```",
+    ].join(" "),
+    expected: [
+      "notes.ts · L42–64 relative web reverse notes.ts · L64 port:42-64",
+      "/tmp/notes.ts:42-64\n",
+    ],
+  },
+  {
+    source: "plan",
+    cwd: String.raw`\\server\share\repo`,
+    text: "[notes.ts](file://server/share/repo/notes.ts#L42-L64) [other](file://other/share/notes.ts#L42-L64)",
+    expected: ["Proposed plan", "notes.ts · L42–64 other"],
+  },
+] as const)(
+  "indexes the displayed file range in $source text",
+  ({ source, cwd, text, expected }) => {
+    const segments =
+      source === "plan"
+        ? searchablePlanSegments(text, cwd)
+        : searchableMessageSegments({ role: source, text, streaming: false }, cwd);
+    expect(segments).toEqual(expected);
+  },
+);
 
 it("indexes nested disclosure summaries and bodies in rendered order", () => {
   expect(
@@ -127,4 +237,43 @@ it("indexes insight bodies without hidden fences and keeps user and plan text li
   );
   expect(searchablePlanSegments(text).join("\n")).toContain("★ Insight");
   expect(assistantSegments(`\`\`\`text\n${text}\n\`\`\``)?.join("\n")).toContain("★ Insight");
+});
+
+it("does not index the hidden marker of an alert written with CR-only line endings", () => {
+  expect(assistantSegments("> [!NOTE]\r> hi")).toEqual(["hi"]);
+});
+
+it("keeps insight line breaks for backticked openers on their own line, not in prose", () => {
+  expect(assistantSegments("`★ Insight ─────`\nfirst line\nsecond line\n`─────`")).toEqual([
+    "first line",
+    " second line",
+  ]);
+  expect(assistantSegments("`★ Insight ─────` opens a callout.\nfirst line\nsecond line")).toEqual([
+    "★ Insight ───── opens a callout. first line second line",
+  ]);
+  expect(
+    assistantSegments("`★ Insight ─────`\u2028opens a callout.\nfirst line\nsecond line"),
+  ).toEqual(["★ Insight ─────\u2028opens a callout. first line second line"]);
+});
+
+it("indexes image destinations rendered as file chips", () => {
+  expect(
+    assistantSegments(
+      "![note](src/notes.ts#L42-L64) ![screenshot](src/screenshot.png#L42-L64)",
+      "/workspace/repo",
+    ),
+  ).toEqual(["notes.ts · L42–64 "]);
+});
+
+it.each(["\n", "\r\n", "\r"])(
+  "does not search across a standalone image with %j line endings",
+  (ending) => {
+    const text = ["Caption", "![pic](https://x.test/pic.png)", "After"].join(ending);
+    expect(assistantSegments(text)).toEqual(["Caption", " After"]);
+  },
+);
+
+it("projects carriage-return soft line breaks to a space outside code blocks", () => {
+  expect(assistantSegments("First\rsecond")).toEqual(["First second"]);
+  expect(assistantSegments("```text\nFirst\rsecond\n```")).toEqual(["First\rsecond\n"]);
 });

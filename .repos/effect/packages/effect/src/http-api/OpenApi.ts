@@ -1226,6 +1226,7 @@ export type OpenAPISpecPathItem =
     [K in OpenAPISpecMethodName]?: OpenAPISpecOperation
   }
   & {
+    $ref?: string
     parameters?: Array<OpenAPISpecParameter>
     "x-oai-additionalOperations"?: Partial<Record<HttpMethod.HttpMethod, OpenAPISpecOperation>>
   }
@@ -1341,6 +1342,7 @@ export interface OpenAPISpecRequestBody {
  * @since 4.0.0
  */
 export interface OpenAPIComponents {
+  pathItems?: Record<string, OpenAPISpecPathItem>
   schemas: JsonSchema.Definitions
   securitySchemes: Record<string, OpenAPISecurityScheme>
 }

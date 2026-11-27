@@ -1,6 +1,9 @@
 import type { RunId, ScreenReaderAnnouncements } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { searchToolLabelParts } from "@t3tools/shared/toolActivity";
+import { msg } from "gt-react";
 
+import { m } from "../../i18n/messages";
 import type { TimelineEntry, WorkLogEntry } from "../../session-logic";
 import {
   liveWorkEntryLabel,
@@ -34,12 +37,38 @@ const ACTIVITY_MAX_LENGTH = 120;
 // Parsing is synchronous, and nobody listens to a longer message through a live region.
 const MESSAGE_MAX_LENGTH = 2_000;
 
+/** The first `maxLength` code points of `text`, or null when it has no more than that. */
+function cutText(text: string, maxLength: number): string | null {
+  if (text.length <= maxLength) return null;
+  const characters = Array.from(text);
+  return characters.length > maxLength ? characters.slice(0, maxLength).join("") : null;
+}
+
+// The app builds these labels as a whole "Searched ..." sentence: a web search from its search
+// parts, a file search without a provider title from its parts or as "Searched files".
+function appLabelledSearch(work: WorkLogEntry): boolean {
+  const data = work.toolData;
+  const record =
+    data !== null && typeof data === "object" && !Array.isArray(data)
+      ? (data as Record<string, unknown>)
+      : undefined;
+  if (work.itemType === "file_search") {
+    return typeof record?.title !== "string" || record.title.trim() === "";
+  }
+  const { query, glob, target } = searchToolLabelParts(record);
+  return Boolean(query || glob || target);
+}
+
 // On screen these labels are a path or a query beside an icon.
 function withVerb(work: WorkLogEntry, label: string) {
-  if (work.itemType === "file_change") return `Editing ${label}`;
+  if (work.itemType === "file_change") return m(msg("Editing {label}", { label }));
   if (work.itemType !== "file_search" && work.itemType !== "web_search") return label;
+  if (appLabelledSearch(work)) return label;
+  // Labels that did not come from the search parts are provider text, which stays English.
   if (/^search(?:ed|ing)?\s/i.test(label)) return label;
-  return `${work.itemType === "web_search" ? "Searching the web for" : "Searching for"} ${label}`;
+  return work.itemType === "web_search"
+    ? m(msg("Searching the web for {label}", { label }))
+    : m(msg("Searching for {label}", { label }));
 }
 
 type MessageEntry = Extract<TimelineEntry, { kind: "message" }>;
@@ -60,13 +89,14 @@ function completedBeforeSuperseded(entry: MessageEntry) {
 
 function stepLabel(work: WorkLogEntry, workspaceRoot: string | undefined): string | null {
   // Reasoning text is never read out.
-  if (work.itemType === "reasoning") return "Thinking";
+  if (work.itemType === "reasoning") return m(msg("Thinking"));
   const status = work.toolLifecycleStatus;
   if (status === "failed" || status === "declined" || status === "stopped") return null;
   const label = liveWorkEntryLabel(work, workspaceRoot, true).replace(/\s+/g, " ").trim();
   if (label === "") return null;
   const spoken = withVerb(work, label);
-  return spoken.length > ACTIVITY_MAX_LENGTH ? `${spoken.slice(0, ACTIVITY_MAX_LENGTH)}…` : spoken;
+  const cut = cutText(spoken, ACTIVITY_MAX_LENGTH);
+  return cut === null ? spoken : `${cut}…`;
 }
 
 /**
@@ -98,7 +128,7 @@ export function turnDetail(
     if (entry.kind === "work") {
       const work = entry.entry;
       if (work.sourceActivityKind === "context-compaction") {
-        activity ??= null;
+        activity ??= work.toolLifecycleStatus === "inProgress" ? work.label : null;
         continue;
       }
       // Notices, todo lists and checkpoints sit beside the turn's steps without being one.
@@ -189,11 +219,12 @@ export function nextTurnDetailAnnouncement(
           previous.messages.get(message.id) !== true &&
           (message.fresh || previous.messages.has(message.id)),
       )
-      .map((message) =>
-        message.text.length > MESSAGE_MAX_LENGTH
-          ? `${markdownPlainText(message.text.slice(0, MESSAGE_MAX_LENGTH))} More in the thread.`
-          : markdownPlainText(message.text),
-      )
+      .map((message) => {
+        const cut = cutText(message.text, MESSAGE_MAX_LENGTH);
+        return cut === null
+          ? markdownPlainText(message.text)
+          : m(msg("{text} More in the thread.", { text: markdownPlainText(cut) }));
+      })
       .filter((text) => text !== "")
       .map((text) => `${MESSAGE_AUTHOR}: ${text}`),
     activity:

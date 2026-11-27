@@ -20,14 +20,14 @@ const MAX_RELEASE_NOTE_GROUPS = 6;
 const MAX_RELEASE_NOTE_ITEMS_PER_GROUP = 8;
 const MAX_RELEASE_NOTE_ITEM_LENGTH = 220;
 
-const HTML_ENTITY_REPLACEMENTS: Readonly<Record<string, string>> = {
-  amp: "&",
-  apos: "'",
-  gt: ">",
-  lt: "<",
-  nbsp: " ",
-  quot: '"',
-};
+const HTML_ENTITY_REPLACEMENTS: ReadonlyMap<string, string> = new Map([
+  ["amp", "&"],
+  ["apos", "'"],
+  ["gt", ">"],
+  ["lt", "<"],
+  ["nbsp", " "],
+  ["quot", '"'],
+]);
 
 function decodeCodePoint(codePoint: number, entity: string): string {
   if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
@@ -37,7 +37,7 @@ function decodeCodePoint(codePoint: number, entity: string): string {
 }
 
 function decodeHtmlEntity(entity: string): string {
-  const named = HTML_ENTITY_REPLACEMENTS[entity];
+  const named = HTML_ENTITY_REPLACEMENTS.get(entity);
   if (named) return named;
   if (entity.startsWith("#x")) {
     return decodeCodePoint(Number.parseInt(entity.slice(2), 16), entity);
@@ -70,7 +70,10 @@ function stripMarkup(input: string, keepBold = false): string {
 
 function truncateReleaseNoteItem(item: string): string {
   if (item.length <= MAX_RELEASE_NOTE_ITEM_LENGTH) return item;
-  return `${item.slice(0, MAX_RELEASE_NOTE_ITEM_LENGTH - 3).trimEnd()}...`;
+  return `${item
+    .slice(0, MAX_RELEASE_NOTE_ITEM_LENGTH - 3)
+    .replace(/\p{Surrogate}$/u, "")
+    .trimEnd()}...`;
 }
 
 function normalizeReleaseNoteLine(line: string): string {

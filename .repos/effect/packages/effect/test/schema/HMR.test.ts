@@ -1,4 +1,7 @@
+import { assert } from "@effect/vitest"
 import { Exit, Option } from "effect"
+import type * as Schema from "effect/Schema"
+import type * as SchemaJITCompiler from "effect/schema/SchemaJITCompiler"
 import { describe, expect, it, vi } from "vitest"
 
 const SCHEMA_MODULE_PATH = "../../src/Schema.ts"
@@ -52,6 +55,46 @@ describe("HMR", () => {
     expect(Option.isSome(o)).toBe(true)
     const schemaError = o.value
     expect(mod2.isSchemaError(schemaError)).toBe(true)
+  })
+
+  it("parses fields from another module copy", async () => {
+    const mod1 = await vi.importActual<typeof Schema>(SCHEMA_MODULE_PATH)
+    vi.resetModules()
+    const mod2 = await vi.importActual<typeof Schema>(SCHEMA_MODULE_PATH)
+
+    const encode = mod2.encodeSync(mod2.Struct({ a: mod1.optionalKey(mod1.String) }))
+    expect(encode({ a: "" })).toStrictEqual({ a: "" })
+    expect(encode({})).toStrictEqual({})
+  })
+
+  it.each(["interpreted", "compiled"])("preserves foreign parser outputs with %s consumers", async (mode) => {
+    const mod1 = await vi.importActual<typeof Schema>(SCHEMA_MODULE_PATH)
+    vi.resetModules()
+    const mod2 = await vi.importActual<typeof Schema>(SCHEMA_MODULE_PATH)
+    const compiler = mode === "compiled"
+      ? await vi.importActual<typeof SchemaJITCompiler>("../../src/schema/SchemaJITCompiler.ts")
+      : undefined
+    const taggedData = { [Symbol.for("effect/schema/parser/missing")]: true }
+    const cases: ReadonlyArray<{ readonly schema: Schema.Codec<unknown>; readonly input: unknown }> = [
+      { schema: mod1.String, input: "" },
+      { schema: mod1.Boolean, input: false },
+      { schema: mod1.Number, input: -0 },
+      { schema: mod1.Literal(0), input: -0 },
+      { schema: mod1.Unknown, input: undefined },
+      { schema: mod1.Unknown, input: null },
+      { schema: mod1.Unknown, input: taggedData },
+      { schema: mod2.Struct({ a: mod1.optionalKey(mod1.String) }), input: {} },
+      { schema: mod2.Struct({ a: mod1.optionalKey(mod1.String) }), input: { a: "" } },
+      { schema: mod2.Struct({ a: mod1.optionalKey(mod1.Unknown) }), input: { a: undefined } },
+      { schema: mod2.Struct({ a: mod1.Unknown }), input: { a: taggedData } },
+      { schema: mod2.Array(mod1.Number), input: [-0, 0, 1] }
+    ]
+    for (const { input, schema } of cases) {
+      compiler?.enable(schema.ast)
+      compiler?.enable(mod2.flip(schema).ast)
+      assert.deepStrictEqual(mod2.decodeUnknownSync(schema)(input), input)
+      assert.deepStrictEqual(mod2.encodeUnknownSync(schema)(input), input)
+    }
   })
 
   it("Schema.Class", async () => {

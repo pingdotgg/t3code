@@ -2,7 +2,9 @@ import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
   ChatAttachmentId,
+  ComposerContextId,
   MessageId,
+  ProviderInstanceId,
   RunId,
   ThreadId,
   type ScopedThreadRef,
@@ -18,6 +20,7 @@ import { toastManager } from "../ui/toast";
 import { act, render } from "../../../test/render";
 import { useComposerDraftStore, useComposerThreadDraft } from "../../composerDraftStore";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
+import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "../../lib/terminalContext";
 import {
   environmentContextRecord,
   environmentContextReference,
@@ -27,16 +30,21 @@ import { deriveComposerSendState } from "../ChatView.logic";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { useQueuedRunEdit } from "./useQueuedRunEdit";
+import { readAttachmentUpload, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
 
 interface RunStatus {
   readonly id: RunId;
   readonly status: string;
+  readonly modelSelection?: { readonly instanceId: ProviderInstanceId; readonly model: string };
+  readonly activeAttemptId?: string;
 }
 
 const mocks = await vi.hoisted(async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     editQueuedRun: vi.fn<(value: unknown) => Promise<{ readonly _tag: "Success" | "Failure" }>>(),
+    promoteQueuedRun: vi.fn<(value: unknown) => Promise<{ readonly _tag: "Success" }>>(),
+    promoteCommand: {},
     // The projection's runs per thread, written by each test to stand in for the server.
     threadRuns: Atom.family((_key: string) =>
       Atom.make<ReadonlyArray<RunStatus> | null>(null).pipe(Atom.keepAlive),
@@ -45,7 +53,8 @@ const mocks = await vi.hoisted(async () => {
 });
 
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: () => mocks.editQueuedRun,
+  useAtomCommand: (command: unknown) =>
+    command === mocks.promoteCommand ? mocks.promoteQueuedRun : mocks.editQueuedRun,
 }));
 
 vi.mock("../../hooks/useSettings", () => ({
@@ -61,13 +70,35 @@ vi.mock("../../state/threads", async () => {
     threadEnvironment: {
       snapshotAtom: () => Atom.make(null),
       editQueuedRun: {},
+      promoteQueuedRun: mocks.promoteCommand,
     },
     environmentThreadDetails: {
       statusAtom: () => Atom.make("ready"),
       quietThreadAtom: (ref: ScopedThreadRef) =>
         Atom.make((get) => {
           const runs = get(mocks.threadRuns(key(ref)));
-          return runs === null ? null : { projection: { runs } };
+          if (runs === null) return null;
+          // A Claude-like session whose running turn takes steering.
+          return {
+            projection: {
+              thread: { id: ref.threadId, activeProviderThreadId: null },
+              runs,
+              messages: [],
+              providerThreads: [],
+              providerSessions: [
+                {
+                  id: "session",
+                  status: "running",
+                  capabilities: { turns: { supportsActiveSteering: true } },
+                },
+              ],
+              providerTurns: runs.flatMap((run) =>
+                run.activeAttemptId
+                  ? [{ runAttemptId: run.activeAttemptId, status: "running" }]
+                  : [],
+              ),
+            },
+          };
         }),
     },
     environmentThreadShells: {
@@ -84,7 +115,13 @@ const RUN = RunId.make("run-1");
 type HookResult = ReturnType<typeof useQueuedRunEdit>;
 
 function projection(runs: ReadonlyArray<RunStatus>, messages: ReadonlyArray<unknown>) {
-  return { runs, messages } as unknown as ThreadStructure;
+  return {
+    runs,
+    messages,
+    thread: {
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "current-model" },
+    },
+  } as unknown as ThreadStructure;
 }
 
 function setRuns(ref: ScopedThreadRef, status: string) {
@@ -102,7 +139,10 @@ function Harness(props: {
     routeThreadRef: props.threadRef,
     threadDraftTarget: props.threadRef,
     activeThreadId: props.threadRef.threadId,
-    serverProjection: projection([{ id: RUN, status: props.runStatus }], props.messages),
+    serverProjection: projection(
+      [{ id: RUN, status: props.runStatus, modelSelection: savedContent("").modelSelection }],
+      props.messages,
+    ),
     promptRef: { current: "" },
     composerRef: { current: null },
   });
@@ -149,6 +189,8 @@ function view(
 
 function setup() {
   mocks.editQueuedRun.mockReset();
+  mocks.promoteQueuedRun.mockReset();
+  useAttachmentUploadStore.setState({ uploadsByImageId: {} });
   useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
   setRuns(THREAD_A, "queued");
   setRuns(THREAD_B, "queued");
@@ -175,6 +217,7 @@ async function beginChangedEdit(hook: { current: HookResult | null }) {
 }
 
 const savedContent = (prompt: string) => ({
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
   prompt,
   images: [],
   files: [],
@@ -244,6 +287,42 @@ describe("useQueuedRunEdit", () => {
     },
   );
 
+  it.each([
+    // Cmd+Enter or Cmd-click with Queue as the default: save, then steer.
+    { dispatchMode: "steer", submissionIntent: "alternate", steers: true },
+    // Enter or the Update button with Steer as the default: save in place only.
+    { dispatchMode: "steer", submissionIntent: "foreground", steers: false },
+    // Cmd+Enter with Steer as the default queues, so the message stays queued.
+    { dispatchMode: "queue", submissionIntent: "alternate", steers: false },
+  ] as const)(
+    "a saved edit sent as $submissionIntent/$dispatchMode steers: $steers",
+    async (submission) => {
+      const { hook } = setup();
+      mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+      mocks.promoteQueuedRun.mockResolvedValue({ _tag: "Success" });
+      const activeRun = RunId.make("run-active");
+      appAtomRegistry.set(mocks.threadRuns(runsKey(THREAD_A)), [
+        { id: activeRun, status: "running", activeAttemptId: "attempt-1" },
+        { id: RUN, status: "queued" },
+      ]);
+      await using _screen = await render(view(THREAD_A, "queued", hook));
+      await beginChangedEdit(hook);
+      await act(() => requireHook(hook).saveEdit(savedContent("changed"), () => {}, submission));
+      expect(mocks.editQueuedRun).toHaveBeenCalledOnce();
+      if (!submission.steers) {
+        expect(mocks.promoteQueuedRun).not.toHaveBeenCalled();
+        return;
+      }
+      expect(mocks.promoteQueuedRun).toHaveBeenCalledExactlyOnceWith({
+        environmentId: ENV,
+        input: { threadId: THREAD_A.threadId, queuedRunId: RUN, targetRunId: activeRun },
+      });
+      expect(mocks.editQueuedRun.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.promoteQueuedRun.mock.invocationCallOrder[0]!,
+      );
+    },
+  );
+
   it("saves an effort-only prompt without claiming removed attachments remain", async () => {
     const { hook } = setup();
     mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
@@ -297,22 +376,83 @@ describe("useQueuedRunEdit", () => {
     expect(draft?.environmentContexts).toEqual([machine]);
   });
 
-  it("saves only the thread mentions still in the edited message", async () => {
+  it("saves only the thread mentions and attachments still in the edited message", async () => {
     const { hook } = setup();
     mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
     const kept = threadContextRecord(THREAD_B, "Kept");
     const removed = threadContextRecord(THREAD_A, "Removed");
+    const removedImageId = ChatAttachmentId.make("server-image-removed");
+    const keptFileId = ChatAttachmentId.make("server-file-kept");
+    const removedImageContextId = ComposerContextId.make("image_local-removed");
+    const keptFileContextId = ComposerContextId.make("file_local-kept");
+    const removedImage = {
+      type: "image" as const,
+      id: removedImageId,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+    };
+    const keptFile = {
+      type: "file" as const,
+      id: keptFileId,
+      name: "legacy.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 40,
+    };
+    const removedImageRecord = {
+      version: 1 as const,
+      kind: "image" as const,
+      contextId: removedImageContextId,
+      label: "image.png",
+      attachmentId: removedImageId,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+    };
+    const keptFileRecord = {
+      version: 1 as const,
+      kind: "file" as const,
+      contextId: keptFileContextId,
+      label: "legacy.pdf",
+      attachmentId: keptFileId,
+      name: "legacy.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 40,
+    };
     const messageId = MessageId.make("message-1");
-    const text = [kept, removed]
-      .map((record) => formatInlineContextReference(threadContextReference(record)))
-      .join(" and ");
-    const messages = [{ id: messageId, text, context: { version: 1, records: [kept, removed] } }];
+    const text = [
+      formatInlineContextReference(threadContextReference(kept)),
+      formatInlineContextReference(threadContextReference(removed)),
+      formatInlineContextReference({
+        kind: "image",
+        contextId: removedImageContextId,
+        label: "image.png",
+      }),
+    ].join(" and ");
+    const messages = [
+      {
+        id: messageId,
+        text,
+        context: { version: 1, records: [kept, removed, removedImageRecord, keptFileRecord] },
+      },
+    ];
     await using _screen = await render(view(THREAD_A, "queued", hook, messages));
-    await act(() => requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [] }));
+    await act(() =>
+      requireHook(hook).beginEdit({
+        runId: RUN,
+        messageId,
+        text,
+        attachments: [removedImage, keptFile],
+      }),
+    );
     const target = requireHook(hook).draftTarget;
-    await act(() => useComposerDraftStore.getState().setThreadContexts(target, [kept]));
+    await act(() => {
+      useComposerDraftStore.getState().setThreadContexts(target, [kept]);
+      requireHook(hook).removeEditingAttachment(removedImageId);
+    });
 
     const draft = useComposerDraftStore.getState().getComposerDraft(target);
+    expect(draft?.prompt).not.toContain(removedImageContextId);
     await requireHook(hook).saveEdit(
       { ...savedContent(draft?.prompt ?? ""), threadContexts: draft?.threadContexts ?? [] },
       () => {},
@@ -321,10 +461,40 @@ describe("useQueuedRunEdit", () => {
     expect(mocks.editQueuedRun).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({
-          edit: expect.objectContaining({ context: { version: 1, records: [kept] } }),
+          text: draft?.prompt,
+          edit: expect.objectContaining({
+            attachments: [keptFile],
+            context: { version: 1, records: [keptFileRecord, kept] },
+          }),
         }),
       }),
     );
+  });
+
+  it("adds terminal context to the queued message being edited", async () => {
+    const { hook } = setup();
+    await using _screen = await render(view(THREAD_A, "queued", hook));
+    await beginChangedEdit(hook);
+    const target = requireHook(hook).draftTarget;
+    const inserted = useComposerDraftStore.getState().insertTerminalContext(
+      target,
+      `changed${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}`,
+      {
+        id: "terminal-context-1",
+        threadId: THREAD_A.threadId,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        terminalId: "default",
+        terminalLabel: "Terminal 1",
+        lineStart: 3,
+        lineEnd: 3,
+        text: "hello",
+      },
+      0,
+    );
+    expect(inserted).toBe(true);
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(target)?.terminalContexts,
+    ).toHaveLength(1);
   });
 
   it("keeps an open edit when the user leaves the thread and comes back", async () => {
@@ -379,6 +549,78 @@ describe("useQueuedRunEdit", () => {
     expect(promptOf(THREAD_A)).toBe("");
   });
 
+  it.each([
+    { transition: "cancel", result: "Success" },
+    { transition: "recover", result: "Failure" },
+    { transition: "replace", result: "Success" },
+  ] as const)(
+    "settles saved attachments after $transition and $result",
+    async ({ transition, result }) => {
+      const { hook } = setup();
+      let finishSave!: (result: { readonly _tag: "Success" | "Failure" }) => void;
+      let started!: () => void;
+      const saving = new Promise<{ readonly _tag: "Success" | "Failure" }>((resolve) => {
+        finishSave = resolve;
+      });
+      const requested = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      mocks.editQueuedRun.mockImplementation(() => {
+        started();
+        return saving;
+      });
+      await using _screen = await render(view(THREAD_A, "queued", hook));
+      await beginChangedEdit(hook);
+      const image = {
+        type: "image" as const,
+        id: "saved-image",
+        name: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 5,
+        file: new File(["image"], "image.png", { type: "image/png" }),
+        previewUrl: "blob:saved-image",
+      };
+      using revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+      await act(() =>
+        useComposerDraftStore.getState().addImage(requireHook(hook).draftTarget, image),
+      );
+      useAttachmentUploadStore.setState({
+        uploadsByImageId: {
+          [image.id]: { status: "ready", environmentId: ENV, attachmentId: "saved-upload" },
+        },
+      });
+      const target = requireHook(hook).draftTarget;
+      const saved = requireHook(hook).saveEdit(
+        { ...savedContent("changed"), images: [image] },
+        () => {},
+      );
+      await act(() => requested);
+      expect(requireHook(hook).isSaving).toBe(true);
+      if (transition === "cancel") await act(() => requireHook(hook).cancelEdit());
+      if (transition === "recover") await act(() => setRuns(THREAD_A, "running"));
+      if (transition === "replace") {
+        await beginChangedEdit(hook);
+        await act(() =>
+          useComposerDraftStore.getState().addImage(requireHook(hook).draftTarget, image),
+        );
+      }
+      expect(readAttachmentUpload(image.id)).toBeDefined();
+      expect(revoke).not.toHaveBeenCalled();
+      finishSave({ _tag: result });
+      await act(() => saved);
+      if (transition === "cancel") {
+        expect(readAttachmentUpload(image.id)).toBeUndefined();
+        expect(revoke).toHaveBeenCalledWith(image.previewUrl);
+        expect(useComposerDraftStore.getState().getComposerDraft(target)).toBeNull();
+      } else {
+        expect(readAttachmentUpload(image.id)).toBeDefined();
+        expect(revoke).not.toHaveBeenCalled();
+        const owner = transition === "recover" ? THREAD_A : target;
+        expect(useComposerDraftStore.getState().getComposerDraft(owner)?.images).toEqual([image]);
+      }
+    },
+  );
+
   it("leaves a newer edit alone when a save from before navigation finishes", async () => {
     const { hook } = setup();
     let finishSave: (result: { readonly _tag: "Success" }) => void = () => {};
@@ -412,3 +654,41 @@ describe("useQueuedRunEdit", () => {
     ).toBe("newer");
   });
 });
+
+it.each([false, true])(
+  "pins a following queued message only after a model pick: %s",
+  async (pick) => {
+    const { hook } = setup();
+    mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+    await using _screen = await render(
+      view(THREAD_A, "queued", hook, [
+        { id: MessageId.make("message-1"), followsThreadSelection: true },
+      ]),
+    );
+    await beginChangedEdit(hook);
+    const selection = { instanceId: ProviderInstanceId.make("codex"), model: "chosen-model" };
+    const target = requireHook(hook).draftTarget;
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.activeProvider).toBeNull();
+    if (pick)
+      await act(() =>
+        useComposerDraftStore.getState().setModelSelection(target, selection, { explicit: true }),
+      );
+    await requireHook(hook).saveEdit(
+      { ...savedContent("changed"), modelSelection: selection },
+      () => {},
+    );
+    expect(mocks.editQueuedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining(
+          pick ? { modelSelection: selection } : { threadId: THREAD_A.threadId },
+        ),
+      }),
+    );
+    if (!pick)
+      expect(mocks.editQueuedRun.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          input: expect.not.objectContaining({ modelSelection: expect.anything() }),
+        }),
+      );
+  },
+);

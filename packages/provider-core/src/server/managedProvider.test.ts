@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -100,10 +101,12 @@ const refreshedSnapshotSecond: ServerProvider = {
 function layerProviderHost(input: {
   readonly runBackgroundWork: boolean;
   readonly settings?: Pick<ProviderHost.ProviderHost["Service"], "settings">["settings"];
+  readonly awaitServerReady?: Effect.Effect<void>;
 }) {
   return Layer.succeed(
     ProviderHost.ProviderHost,
     ProviderHost.ProviderHost.of({
+      compatibility: () => Effect.undefined,
       paths: {
         cwd: process.cwd(),
         baseDir: "/t3",
@@ -118,6 +121,7 @@ function layerProviderHost(input: {
         subscribe: Effect.succeed(Stream.empty),
       },
       shouldRunBackgroundWork: () => Effect.succeed(input.runBackgroundWork),
+      ...(input.awaitServerReady ? { awaitServerReady: input.awaitServerReady } : {}),
       resolveAttachmentPath: () => null,
       credentials: () => Effect.die("unused"),
     }),
@@ -292,6 +296,49 @@ describe("makeManagedServerProvider", () => {
           assert.strictEqual(yield* Ref.get(checkCalls), 1);
         }),
       ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("holds the first provider check until server startup finishes", () =>
+    Effect.gen(function* () {
+      const serverReady = yield* Deferred.make<void>();
+      const checkStarted = yield* Deferred.make<void>();
+      const checkCalls = yield* Ref.make(0);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const provider = yield* makeManagedServerProvider<TestSettings>({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
+              Effect.andThen(Deferred.succeed(checkStarted, undefined)),
+              Effect.as(refreshedSnapshot),
+            ),
+            refreshInterval: "1 hour",
+          });
+
+          yield* TestClock.adjust("10 seconds");
+          assert.strictEqual(yield* Ref.get(checkCalls), 0);
+          assert.deepStrictEqual(yield* provider.getSnapshot, initialSnapshot);
+          assert.isTrue(yield* provider.isAwaitingFirstCheck!);
+
+          yield* Deferred.succeed(serverReady, undefined);
+          yield* Deferred.await(checkStarted);
+          assert.strictEqual(yield* Ref.get(checkCalls), 1);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerProviderHost({
+              runBackgroundWork: false,
+              awaitServerReady: Deferred.await(serverReady),
+            }),
+            TestClock.layer(),
+          ),
+        ),
+      );
+    }),
   );
 
   it.effect("skips periodic provider refreshes without foreground provider-status demand", () =>
@@ -615,6 +662,55 @@ describe("makeManagedServerProvider", () => {
 
         assert.deepStrictEqual(updates, [refreshedSnapshot, enrichedSnapshot]);
         assert.deepStrictEqual(latest, enrichedSnapshot);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("keeps a known update through a recheck of the same installed version", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const advisory = (currentVersion: string, latestVersion: string | null) => ({
+          status: latestVersion === null ? ("unknown" as const) : ("behind_latest" as const),
+          currentVersion,
+          latestVersion,
+          updateCommand: maintenanceCapabilities.update.command,
+          canUpdate: true,
+          checkedAt: null,
+          message: null,
+        });
+        const installedVersion = yield* Ref.make("1.0.0");
+        const enrichments =
+          yield* Queue.unbounded<(snapshot: ServerProvider) => Effect.Effect<void>>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          // Like a real probe, this reports the installed version but not the latest one.
+          checkProvider: Ref.get(installedVersion).pipe(
+            Effect.map((version) => ({
+              ...refreshedSnapshot,
+              version,
+              versionAdvisory: advisory(version, null),
+            })),
+          ),
+          enrichSnapshot: ({ publishSnapshot }) => Queue.offer(enrichments, publishSnapshot),
+          refreshInterval: "1 hour",
+        });
+        const publishFirstEnrichment = yield* Queue.take(enrichments);
+        yield* publishFirstEnrichment({
+          ...refreshedSnapshot,
+          version: "1.0.0",
+          versionAdvisory: advisory("1.0.0", "2.0.0"),
+        });
+
+        const rechecked = yield* provider.refresh;
+        assert.deepStrictEqual(rechecked.versionAdvisory, advisory("1.0.0", "2.0.0"));
+
+        yield* Ref.set(installedVersion, "2.0.0");
+        const updated = yield* provider.refresh;
+        assert.deepStrictEqual(updated.versionAdvisory, advisory("2.0.0", null));
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

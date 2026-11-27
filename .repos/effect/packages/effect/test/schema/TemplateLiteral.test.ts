@@ -2,6 +2,20 @@ import { assert, describe, it } from "@effect/vitest"
 import { Context, Effect, Schema, SchemaAST, SchemaGetter, SchemaTransformation } from "effect"
 
 describe("TemplateLiteral", () => {
+  it("constructs empty enum parts but matches no strings", () => {
+    const schema = Schema.TemplateLiteral([Schema.Enum({})])
+    for (const input of ["", "task", "1"]) {
+      assert.isFalse(Schema.is(schema)(input))
+    }
+  })
+
+  it("matches empty-string enum members before a separator", () => {
+    const schema = Schema.TemplateLiteral([Schema.Enum({ Empty: "", Task: "task" }), "_", Schema.String])
+    assert.isTrue(Schema.is(schema)("_build"))
+    assert.isTrue(Schema.is(schema)("task_build"))
+    assert.isFalse(Schema.is(schema)("other_build"))
+  })
+
   it("does not expand shared subtemplates during construction", () => {
     let visits = 0
     let part: SchemaAST.AST = new Proxy(new SchemaAST.String(), {
@@ -76,6 +90,39 @@ describe("TemplateLiteral", () => {
 })
 
 describe("TemplateLiteralParser", () => {
+  it.effect.each(
+    [
+      { Numeric: 1, Text: "1" },
+      { Text: "1", Numeric: 1 }
+    ] as const
+  )("uses enum string conversion for colliding members %#", (members) =>
+    Effect.gen(function*() {
+      const member = Schema.Enum(members)
+      const schema = Schema.TemplateLiteralParser([member])
+      const expected = yield* Schema.decodeEffect(Schema.toCodecStringTree(member))("1")
+
+      assert.isTrue(Schema.is(Schema.TemplateLiteral([member]))("1"))
+      assert.deepStrictEqual(yield* Schema.decodeEffect(schema)("1"), [expected])
+      assert.strictEqual(yield* Schema.encodeEffect(schema)([1]), "1")
+      assert.strictEqual(yield* Schema.encodeEffect(schema)(["1"]), "1")
+    }))
+
+  it.effect("constructs empty enum parts but fails to decode strings", () =>
+    Effect.gen(function*() {
+      const schema = Schema.TemplateLiteralParser([Schema.Enum({})])
+      for (const input of ["", "task", "1"]) {
+        assert.strictEqual((yield* Effect.result(Schema.decodeUnknownEffect(schema)(input)))._tag, "Failure")
+      }
+    }))
+
+  it.effect("decodes and encodes empty-string enum members before a separator", () =>
+    Effect.gen(function*() {
+      const schema = Schema.TemplateLiteralParser([Schema.Enum({ Empty: "", Task: "task" }), "_", Schema.String])
+      assert.deepStrictEqual(yield* Schema.decodeEffect(schema)("_build"), ["", "_", "build"])
+      assert.deepStrictEqual(yield* Schema.decodeEffect(schema)("task_build"), ["task", "_", "build"])
+      assert.strictEqual(yield* Schema.encodeEffect(schema)(["", "_", "build"]), "_build")
+    }))
+
   it.effect("transforms a template into a tuple and encodes transformed parts", () =>
     Effect.gen(function*() {
       const schema = Schema.TemplateLiteralParser(["bit:", Schema.BooleanFromBit])

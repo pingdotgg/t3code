@@ -49,7 +49,7 @@
     "@effect/openapi-generator": "workspace:^",
     "@effect/platform-node": "workspace:^",
     "effect": "workspace:^",
-    "glob": "^14.0.3",
+    "glob": "^14.0.6",
     "yaml": "^2.9.1"
   },
   "devDependencies": {

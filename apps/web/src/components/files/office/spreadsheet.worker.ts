@@ -11,7 +11,8 @@ import {
 import type { CellRange } from "@betteroffice/xlsx/headless";
 import { anchorRange, attempt, lastCell, parseRange, parseSpans } from "./sheet-cells";
 import type { WorkbookView } from "../officePreviewProtocol";
-import { chartFonts, drawFrame, paintFrame, withoutGridlines } from "./sheet-frame";
+import { chartFonts, drawFrame, paintFrame } from "./sheet-frame";
+import { maximumColumnWidth, maximumRowHeight, minimumTrackSize } from "./sheet-sizing";
 import { sheetFonts } from "./sheet-fonts";
 import { frozenSize } from "./sheet-paint";
 import type { SheetLayout, SheetMethods, SheetTab } from "./sheet-protocol";
@@ -28,9 +29,7 @@ type Opened = {
   readonly ends: Map<string, { readonly x: number; readonly y: number } | undefined>;
   /** The one canvas every frame paints on and hands over as a bitmap. */
   readonly surface: OffscreenCanvas;
-  /** The sheets whose view hides gridlines, which the engine draws on every sheet. */
-  readonly hiddenGridlines: ReadonlySet<number>;
-  readonly themeFonts: WorkbookView["themeFonts"];
+  readonly view: WorkbookView;
 };
 
 /** The workbook this worker opened, once it has. */
@@ -54,8 +53,7 @@ serveWorker<SheetMethods>({
       info,
       ends: new Map(),
       surface: new OffscreenCanvas(1, 1),
-      hiddenGridlines: new Set(input.view.hiddenGridlines),
-      themeFonts: input.view.themeFonts,
+      view: input.view,
     };
 
     const tabs = visibleTabs(workbook, info);
@@ -78,6 +76,37 @@ serveWorker<SheetMethods>({
 
     throw new Error(`Sheet ${input.sheet} could not open`);
   },
+  resize: (input) => {
+    const opened = active(input.sheet);
+    if (
+      !Number.isInteger(input.index) ||
+      input.index < 0 ||
+      input.index > (input.axis === "row" ? lastCell.row : lastCell.col) ||
+      !Number.isFinite(input.delta)
+    )
+      throw new Error("Invalid track resize");
+    const rect = opened.workbook.cellRect(
+      input.sheet,
+      input.axis === "row" ? input.index : 0,
+      input.axis === "column" ? input.index : 0,
+    );
+    const column = input.axis === "column";
+    const digitWidth = opened.view.digitWidth;
+    const current = column ? rect.w : rect.h;
+    const maximum = column ? maximumColumnWidth * digitWidth : maximumRowHeight;
+    const target = current + input.delta;
+    const size = Math.max(
+      minimumTrackSize,
+      Math.min(maximum, column ? Math.round(target) : target),
+    );
+    const operation = column
+      ? { type: "setColWidth", sheet: input.sheet, col: input.index, width: size / digitWidth }
+      : { type: "setRowHeight", sheet: input.sheet, row: input.index, height: size * 0.75 };
+    opened.info = opened.workbook.applyOps([operation]).sheetInfo;
+    opened.ends.clear();
+    const { chartWidth, chartHeight } = layout(opened.workbook, input.sheet);
+    return { info: opened.info, chartWidth, chartHeight };
+  },
   frame: async (input) => {
     const opened = active(input.sheet);
     const frozen = { rows: opened.info.frozenRows, cols: opened.info.frozenCols };
@@ -86,10 +115,7 @@ serveWorker<SheetMethods>({
 
     if (!frame) return undefined;
 
-    const drawn = chartFonts(
-      opened.hiddenGridlines.has(input.sheet) ? withoutGridlines(frame) : frame,
-      opened.themeFonts,
-    );
+    const drawn = chartFonts(frame, opened.view.themeFonts);
 
     await loadFonts(drawn.tiles.map((tile) => tile.list));
 

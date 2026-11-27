@@ -1,19 +1,100 @@
 import {
-  CLOUD_SPEECH_PROVIDER_NAMES,
-  type CloudSpeechProvider,
   SPEECH_MAX_OPTIONS_BYTES,
   type SpeechCustomWords,
+  type SpeechBenchmarkTier,
   SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import recommendationPolicy from "./speechRecommendationPolicy.json" with { type: "json" };
 
 const decodeOptions = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechTranscriptionOptions));
 const encodeOptions = Schema.encodeSync(Schema.fromJsonString(SpeechTranscriptionOptions));
 
-export function cloudSpeechDisclosure(provider: CloudSpeechProvider, environment: string) {
-  return provider === "openrouter"
-    ? `After you stop, ${environment} sends the recording to OpenRouter. OpenRouter chooses who runs your model. T3 requests zero data retention; your OpenRouter account may allow safety retention.`
-    : `After you stop, ${environment} sends your recording and vocabulary hints, including project names, to ${CLOUD_SPEECH_PROVIDER_NAMES[provider]}.`;
+export type SpeechRecommendationRole = "recommended" | "faster" | "accurate";
+type RecommendationModel = {
+  readonly id: string;
+  readonly languages: readonly string[];
+  readonly benchmark?: {
+    readonly accuracy: Readonly<Record<string, { readonly errorPercent: number }>>;
+    readonly secondsPer30s: {
+      readonly cpu?: number | null;
+      readonly accelerated: number | null;
+    };
+  };
+};
+
+/** Reference accuracy/speed picks; no preference or incomplete measurements get no badge. */
+export function recommendSpeechModels(
+  models: readonly RecommendationModel[],
+  languages: readonly string[],
+  tier: SpeechBenchmarkTier | undefined,
+) {
+  const wanted = [...new Set(languages)];
+  const roles = new Map<string, SpeechRecommendationRole>();
+  if (wanted.length === 0 || tier === undefined) return roles;
+  const policy = recommendationPolicy;
+  const scored = models.flatMap((model) => {
+    if (!wanted.every((language) => model.languages.includes(language))) return [];
+    const errors = wanted.map((language) => model.benchmark?.accuracy[language]?.errorPercent);
+    const wait = model.benchmark?.secondsPer30s[tier];
+    if (
+      wait == null ||
+      !Number.isFinite(wait) ||
+      wait < 0 ||
+      errors.some((error) => error === undefined || !Number.isFinite(error) || error < 0)
+    )
+      return [];
+    const measured = errors as number[];
+    const error = Math.exp(
+      measured.reduce((sum, value) => sum + Math.log(value), 0) / measured.length,
+    );
+    return [
+      {
+        id: model.id,
+        error,
+        worst: Math.max(...measured),
+        wait,
+        cost: error + policy.waitWeight * Math.max(0, wait - policy.freeWaitSeconds),
+      },
+    ];
+  });
+  if (scored.length === 0) return roles;
+  const useful = scored.filter((model) => model.worst < policy.maxLanguageErrorPercent);
+  const pool = useful.length ? useful : scored;
+  const lowest = (items: typeof scored, score: (item: (typeof scored)[number]) => number) =>
+    items.reduce<(typeof scored)[number] | undefined>(
+      (best, item) => (best === undefined || score(item) < score(best) ? item : best),
+      undefined,
+    );
+  const withinBudget = pool.filter((model) => model.wait <= policy.overallMaxWaitSeconds);
+  const best = (
+    useful.length
+      ? lowest(withinBudget.length ? withinBudget : pool, (model) => model.cost)
+      : lowest(pool, (model) => model.worst + model.error / 1000)
+  )!;
+  const quicker = pool.filter((model) => model.wait < best.wait);
+  const fast = useful.length
+    ? (lowest(
+        quicker.filter((model) => model.wait <= policy.fastMaxWaitSeconds),
+        (model) => model.error,
+      ) ?? lowest(quicker, (model) => model.wait + model.error / 1000))
+    : undefined;
+  const accurate = useful.length
+    ? lowest(
+        pool.filter(
+          (model) => model.error < best.error && model.wait <= policy.accurateMaxWaitSeconds,
+        ),
+        (model) => model.error,
+      )
+    : undefined;
+  for (const [model, role] of [
+    [best, "recommended"],
+    [fast, "faster"],
+    [accurate, "accurate"],
+  ] as const) {
+    if (model && !roles.has(model.id)) roles.set(model.id, role);
+  }
+  return roles;
 }
 
 // Only offer explicit hints understood by all cloud APIs; other languages can still be detected.
@@ -36,17 +117,19 @@ export function effectiveSpeechLanguage(
   return model.languages.find((language) => language === "en") ?? model.languages[0] ?? "auto";
 }
 
+/** The final byte count can arrive before the download finishes writing to disk. */
+export function speechModelDownloadPercent(downloaded: number, size: number) {
+  return Math.min(99, Math.floor((downloaded * 100) / size));
+}
+
 /**
- * The model first-run setup offers: the selected one, else a recommended one, else any that the
+ * The model first-run setup offers: the selected one, else the benchmark pick, else any that the
  * server would really transcribe the person's language with. Without a language hint,
  * offer only the selected model, without a recommendation.
  */
 export function chooseSetupSpeechModel<
-  Model extends {
-    readonly id: string;
-    readonly languages: readonly string[];
+  Model extends RecommendationModel & {
     readonly supportsLanguageDetection: boolean;
-    readonly recommended: boolean;
   },
 >(
   models: readonly Model[],
@@ -54,22 +137,26 @@ export function chooseSetupSpeechModel<
     readonly selectedModelId: string;
     readonly intent: string;
     readonly preferred: readonly string[];
+    readonly benchmarkTier: SpeechBenchmarkTier | undefined;
   },
 ) {
   if (input.intent === "auto" && input.preferred.length === 0) {
     const model = models.find(({ id }) => id === input.selectedModelId);
-    return model && { model, language: null };
+    return model && { model, language: null, recommended: false };
   }
   for (const language of input.intent === "auto" ? input.preferred : [input.intent]) {
     const capable = models.filter((model) => {
       const effective = effectiveSpeechLanguage(model, input.intent);
       return effective === language || (effective === "auto" && model.languages.includes(language));
     });
+    const recommendedId = recommendSpeechModels(capable, [language], input.benchmarkTier)
+      .keys()
+      .next().value;
     const model =
       capable.find(({ id }) => id === input.selectedModelId) ??
-      capable.find(({ recommended }) => recommended) ??
+      capable.find(({ id }) => id === recommendedId) ??
       capable[0];
-    if (model) return { model, language };
+    if (model) return { model, language, recommended: model.id === recommendedId };
   }
   return undefined;
 }
@@ -78,27 +165,15 @@ const vocabularyKey = (value: string) => value.trim().normalize("NFC").toLocaleL
 
 /**
  * Project spellings win over personal ones. Hint terms, such as the project name or the
- * correction cue, come first so the 100-entry wire limit cannot drop them.
+ * correction cue, only steer recognition, so they travel apart from the dictionary.
  */
 export function resolveSpeechVocabulary(input: {
   readonly personal: SpeechCustomWords;
   readonly project: SpeechCustomWords;
   readonly hints?: ReadonlyArray<string>;
-}): SpeechCustomWords {
-  const known = new Set(
-    [...input.project, ...input.personal].flatMap(({ term, aliases }) =>
-      [term, ...aliases].map(vocabularyKey),
-    ),
-  );
-  // A hint that is already a dictionary entry keeps that entry and its aliases in place.
-  const hints = (input.hints ?? []).flatMap((hint) => {
-    const term = hint.replace(/\s+/g, " ").trim();
-    return term.length > 0 && term.length <= 50 && !known.has(vocabularyKey(term))
-      ? [{ term, aliases: [] }]
-      : [];
-  });
+}): { readonly speechCustomWords: SpeechCustomWords; readonly speechHints: string[] } {
   const seen = new Set<string>();
-  return [...hints, ...input.project, ...input.personal]
+  const speechCustomWords = [...input.project, ...input.personal]
     .flatMap(({ term, aliases }) => {
       if (seen.has(vocabularyKey(term))) return [];
       seen.add(vocabularyKey(term));
@@ -110,6 +185,17 @@ export function resolveSpeechVocabulary(input: {
       return [{ term, aliases: uniqueAliases }];
     })
     .slice(0, 100);
+  const known = new Set(
+    speechCustomWords.flatMap(({ term, aliases }) => [term, ...aliases].map(vocabularyKey)),
+  );
+  // A hint that is already a dictionary entry keeps that entry and its aliases in place.
+  const speechHints = (input.hints ?? []).flatMap((hint) => {
+    const term = hint.replace(/\s+/g, " ").trim();
+    if (term.length === 0 || term.length > 50 || known.has(vocabularyKey(term))) return [];
+    known.add(vocabularyKey(term));
+    return [term];
+  });
+  return { speechCustomWords, speechHints };
 }
 
 /** Binary requests contain a four-byte JSON length, UTF-8 options, then unencoded PCM. */

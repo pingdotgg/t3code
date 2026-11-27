@@ -232,12 +232,23 @@ describe("environment grouping", () => {
       workspaceRoot: "/tmp/destination",
       repositoryIdentity: destinationRepositoryIdentity,
     });
+    const destinationRemoteIdentity = {
+      ...destinationRepositoryIdentity,
+      rootPath: "/remote/destination",
+    };
+    const destinationRemoteSubfolder = makeProject({
+      id: ProjectId.make("destination-remote-subfolder"),
+      environmentId: remoteEnvironmentId,
+      title: "destination-app",
+      workspaceRoot: "/remote/destination/app",
+      repositoryIdentity: destinationRemoteIdentity,
+    });
     const destinationRemote = makeProject({
       id: ProjectId.make("destination-remote"),
       environmentId: remoteEnvironmentId,
       title: "destination",
       workspaceRoot: "/remote/destination",
-      repositoryIdentity: destinationRepositoryIdentity,
+      repositoryIdentity: destinationRemoteIdentity,
     });
     const fallbackPrimary = makeProject({
       id: ProjectId.make("fallback-primary"),
@@ -249,6 +260,7 @@ describe("environment grouping", () => {
         currentPrimary,
         currentRemote,
         destinationPrimary,
+        destinationRemoteSubfolder,
         destinationRemote,
         fallbackPrimary,
       ],
@@ -276,6 +288,34 @@ describe("environment grouping", () => {
     expect(fallback?.targetProject).toMatchObject({
       environmentId: primaryEnvironmentId,
       id: fallbackPrimary.id,
+    });
+  });
+
+  it("targets an open copy when the preferred project is archived", () => {
+    const archived = makeProject({
+      repositoryIdentity,
+      archivedAt: "2026-01-02T00:00:00.000Z",
+    });
+    const open = makeProject({
+      id: ProjectId.make("open-copy"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [archived, open],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    const [entry] = buildSidebarProjectPickerEntries({
+      groups: pickableProjectGroups(groups),
+      preferredProjectRef: { environmentId: archived.environmentId, projectId: archived.id },
+    });
+
+    expect(entry?.targetProject).toMatchObject({ environmentId: open.environmentId, id: open.id });
+    expect(entry?.group.memberProjectRefs).toContainEqual({
+      environmentId: archived.environmentId,
+      projectId: archived.id,
     });
   });
 

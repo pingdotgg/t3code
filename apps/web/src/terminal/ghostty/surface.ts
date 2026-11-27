@@ -1,9 +1,11 @@
+import { resolveEventKeys } from "@t3tools/shared/keybindingMatching";
 import { isMacPlatform } from "../../lib/utils";
 import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
   GHOSTTY_CELL_WIDE,
   GhosttyTerminalCore,
+  ghosttyColorsEqual,
   type GhosttyCell,
   type GhosttyScrollbar,
   type GhosttySnapshot,
@@ -19,6 +21,9 @@ import {
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMonospaceFamily } from "../../appearanceFonts";
 import { observeResize } from "../../lib/observeResize";
+import { msg } from "gt-react";
+import { m } from "../../i18n/messages";
+import { subscribeI18n } from "../../i18n/runtime";
 
 const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -228,6 +233,8 @@ function terminalColumnOffset(row: GhosttySnapshot["rowData"][number], column: n
 export interface TerminalLinkWithRange {
   readonly text: string;
   readonly range: GhosttyCellRange;
+  /** The link to use when `text` is no file; absent unless the pointer is on it. */
+  readonly fallback?: TerminalLinkWithRange;
 }
 
 function isSameTerminalLink(
@@ -236,6 +243,7 @@ function isSameTerminalLink(
 ): boolean {
   return (
     right?.text === left.text &&
+    right.fallback?.text === left.fallback?.text &&
     right.range.start.x === left.range.start.x &&
     right.range.start.y === left.range.start.y &&
     right.range.end.x === left.range.end.x &&
@@ -278,34 +286,46 @@ export function terminalLinkAtPositionWithRange(
   const continuesBelowViewport = lastRow !== undefined && lastRow.wrapsToNext;
   const hitColumn = row.cells[column]?.wide === GHOSTTY_CELL_WIDE.spacerTail ? column - 1 : column;
   const offset = segment.startIndex + terminalColumnOffset(row, hitColumn);
+  const rangeOf = (start: number, end: number): GhosttyCellRange | null => {
+    const startSegment = wrappedLine.segments.find(
+      (value) => start >= value.startIndex && start < value.endIndex,
+    );
+    const endSegment = wrappedLine.segments.find(
+      (value) => end - 1 >= value.startIndex && end - 1 < value.endIndex,
+    );
+    const startRow = startSegment ? rows[startSegment.bufferLineNumber - 1] : undefined;
+    const endRow = endSegment ? rows[endSegment.bufferLineNumber - 1] : undefined;
+    if (!startSegment || !endSegment || !startRow || !endRow) return null;
+    const endColumn = terminalColumnAtOffset(endRow, end - 1 - endSegment.startIndex);
+    return {
+      start: {
+        x: terminalColumnAtOffset(startRow, start - startSegment.startIndex),
+        y: startSegment.bufferLineNumber - 1,
+      },
+      end: {
+        x:
+          endRow.cells[endColumn + 1]?.wide === GHOSTTY_CELL_WIDE.spacerTail
+            ? endColumn + 1
+            : endColumn,
+        y: endSegment.bufferLineNumber - 1,
+      },
+    };
+  };
   for (const match of extractTerminalLinks(wrappedLine.text)) {
     if (offset >= match.start && offset < match.end) {
       if (match.end === wrappedLine.text.length && continuesBelowViewport) return null;
-      const startSegment = wrappedLine.segments.find(
-        (value) => match.start >= value.startIndex && match.start < value.endIndex,
-      );
-      const endSegment = wrappedLine.segments.find(
-        (value) => match.end - 1 >= value.startIndex && match.end - 1 < value.endIndex,
-      );
-      const startRow = startSegment ? rows[startSegment.bufferLineNumber - 1] : undefined;
-      const endRow = endSegment ? rows[endSegment.bufferLineNumber - 1] : undefined;
-      if (!startSegment || !endSegment || !startRow || !endRow) return null;
-      const endColumn = terminalColumnAtOffset(endRow, match.end - 1 - endSegment.startIndex);
+      const range = rangeOf(match.start, match.end);
+      if (!range) return null;
+      const fallbackRange =
+        match.fallback && offset < match.fallback.end
+          ? rangeOf(match.start, match.fallback.end)
+          : null;
       return {
         text: match.text,
-        range: {
-          start: {
-            x: terminalColumnAtOffset(startRow, match.start - startSegment.startIndex),
-            y: startSegment.bufferLineNumber - 1,
-          },
-          end: {
-            x:
-              endRow.cells[endColumn + 1]?.wide === GHOSTTY_CELL_WIDE.spacerTail
-                ? endColumn + 1
-                : endColumn,
-            y: endSegment.bufferLineNumber - 1,
-          },
-        },
+        range,
+        ...(match.fallback && fallbackRange
+          ? { fallback: { text: match.fallback.text, range: fallbackRange } }
+          : {}),
       };
     }
   }
@@ -313,14 +333,14 @@ export function terminalLinkAtPositionWithRange(
 }
 
 export function isTerminalCopyShortcut(
-  event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
 ) {
-  const key = event.key.toLowerCase();
-  if (key === "insert" && !isMacPlatform(platform)) {
+  const keys = resolveEventKeys(event);
+  if (keys.has("insert") && !isMacPlatform(platform)) {
     return event.ctrlKey && !event.shiftKey && !event.metaKey;
   }
-  if (key !== "c") return false;
+  if (!keys.has("c")) return false;
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
 }
 
@@ -355,14 +375,14 @@ export function applyTerminalCopyEvent(
 }
 
 function isTerminalPasteShortcut(
-  event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
 ) {
-  const key = event.key.toLowerCase();
-  if (key === "insert" && !isMacPlatform(platform)) {
+  const keys = resolveEventKeys(event);
+  if (keys.has("insert") && !isMacPlatform(platform)) {
     return event.shiftKey && !event.ctrlKey && !event.metaKey;
   }
-  if (key !== "v") return false;
+  if (!keys.has("v")) return false;
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
 }
 
@@ -397,16 +417,26 @@ function shouldReportTerminalMouse(
   return tracking && !event.shiftKey && !event.ctrlKey && !event.metaKey;
 }
 
+// macOS Chromium reports Control-click as a primary press and opens the context menu on it.
+function isTerminalPrimaryPress(event: Pick<MouseEvent, "button" | "ctrlKey">): boolean {
+  return event.button === 0 && !(event.ctrlKey && isMacPlatform(navigator.platform));
+}
+
 type TerminalMouseAction = "press" | "release" | "motion";
+type TerminalMouseReport = ReturnType<GhosttyTerminalCore["encodeMouse"]>;
 
 export function resolveTerminalMouseData(
   action: TerminalMouseAction,
-  data: string,
-  previousMotionData: string,
-): { readonly send: boolean; readonly nextMotionData: string } {
-  const nextMotionData = action === "motion" ? data : "";
+  report: TerminalMouseReport,
+  previousMotionData: TerminalMouseReport | null,
+): { readonly send: boolean; readonly nextMotionData: TerminalMouseReport | null } {
+  const nextMotionData = action === "motion" ? report : null;
   return {
-    send: data.length > 0 && (action !== "motion" || data !== previousMotionData),
+    send:
+      report.data.length > 0 &&
+      (action !== "motion" ||
+        report.data !== previousMotionData?.data ||
+        report.binary !== previousMotionData?.binary),
     nextMotionData,
   };
 }
@@ -414,11 +444,11 @@ export function resolveTerminalMouseData(
 function resolveTerminalMouseTrackingState(
   previousTracking: boolean,
   tracking: boolean,
-  motionData: string,
-): { readonly tracking: boolean; readonly motionData: string } {
+  motionData: TerminalMouseReport | null,
+): { readonly tracking: boolean; readonly motionData: TerminalMouseReport | null } {
   return {
     tracking,
-    motionData: previousTracking === tracking ? motionData : "",
+    motionData: previousTracking === tracking ? motionData : null,
   };
 }
 
@@ -521,14 +551,21 @@ export interface GhosttyTerminalSurfaceOptions {
   /** Read after font and WASM loading. */
   readonly visible?: boolean;
   readonly onData: (data: string) => void;
+  /** Input bytes that are not UTF-8, one UTF-16 code unit per byte. */
+  readonly onBinary: (data: string) => void;
+  /** The terminal's own answers to queries from the PTY (DA, DSR, DECRQM), never typed input. */
+  readonly onReply: (data: string) => void;
   readonly onResize: (cols: number, rows: number) => void;
   readonly onSelectionChange: () => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
   readonly canActivateLink?: (text: string) => boolean;
   readonly validateLink?: (text: string) => Promise<boolean>;
-  /** Reports hovered candidates once their rendered text is stable for 250 ms; null cancels. */
-  readonly onLinkHover?: (text: string | null) => void;
+  /**
+   * Reports hovered candidates once their rendered text is stable for 250 ms; null cancels.
+   * `fallbackText` is the candidate's shorter reading, used when `text` is no file.
+   */
+  readonly onLinkHover?: (text: string | null, fallbackText?: string) => void;
   /** The host must prevent the default menu; native Paste cannot reach a canvas terminal. */
   readonly onContextMenu?: (event: MouseEvent) => void;
 }
@@ -635,7 +672,7 @@ export class GhosttyTerminalSurface {
     remainder: number;
     moved: boolean;
   } | null = null;
-  private lastMouseMotionData = "";
+  private lastMouseMotionData: TerminalMouseReport | null = null;
   private mouseAnyEventTracking = false;
   private dprMedia: MediaQueryList | null = null;
   // Watch reduced motion changes to restart blink cycles that have no remaining timer.
@@ -654,6 +691,7 @@ export class GhosttyTerminalSurface {
     metrics: GhosttyCellMetrics,
     fontFamily: string,
     options: GhosttyTerminalSurfaceOptions,
+    private readonly stopObservingI18n: () => void,
   ) {
     this.mount = mount;
     this.canvas = canvas;
@@ -671,6 +709,8 @@ export class GhosttyTerminalSurface {
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
     this.installEvents();
+    // The input is mounted before the core loads, so focus can land before the listeners.
+    this.focused = document.activeElement === input;
     this.watchDevicePixelRatio();
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
     document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
@@ -688,7 +728,6 @@ export class GhosttyTerminalSurface {
 
     const input = document.createElement("textarea");
     input.className = "t3-ghostty-input";
-    input.setAttribute("aria-label", "Terminal input");
     input.autocapitalize = "off";
     input.autocomplete = "off";
     input.spellcheck = false;
@@ -699,7 +738,6 @@ export class GhosttyTerminalSurface {
     scrollbar.className =
       "group absolute top-1 right-px bottom-1 z-1 w-[var(--app-scrollbar-width)] cursor-default touch-none";
     scrollbar.setAttribute("role", "scrollbar");
-    scrollbar.setAttribute("aria-label", "Terminal scrollback");
     scrollbar.setAttribute("aria-orientation", "vertical");
     scrollbar.tabIndex = 0;
     scrollbar.hidden = true;
@@ -707,42 +745,59 @@ export class GhosttyTerminalSurface {
     scrollbarThumb.className =
       "absolute inset-x-px top-0 rounded-[3px] bg-[var(--app-scrollbar-thumb)] transition-[background-color] duration-[120ms] ease-[ease-out] group-hover:bg-[var(--app-scrollbar-thumb-hover)] group-focus-visible:bg-[var(--app-scrollbar-thumb-hover)]";
     scrollbar.append(scrollbarThumb);
+    const updateAccessibleNames = () => {
+      input.setAttribute("aria-label", m(msg("Terminal input")));
+      scrollbar.setAttribute("aria-label", m(msg("Terminal scrollback")));
+    };
+    updateAccessibleNames();
     mount.replaceChildren(canvas, input, scrollbar);
 
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("Canvas 2D is unavailable");
     context.fillStyle = `rgb(${options.theme.background.r}, ${options.theme.background.g}, ${options.theme.background.b})`;
     context.fillRect(0, 0, canvas.width, canvas.height);
-    const fontSize = terminalFontSize(options.font?.size);
+    const stopObservingI18n = subscribeI18n(updateAccessibleNames);
     try {
-      // Load bundled fonts before measuring; fallback metrics would size the wrong grid.
-      await ensureTerminalSymbolsFont();
-    } catch {}
-    const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
-    const metrics = measureGhosttyCell(context, fontSize, fontFamily);
-    const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
-    const core = await GhosttyTerminalCore.create(
-      grid.cols,
-      grid.rows,
-      metrics.width,
-      metrics.height,
-      options.theme,
-      options.onData,
-    );
-    const surface = new GhosttyTerminalSurface(
-      mount,
-      canvas,
-      input,
-      scrollbar,
-      scrollbarThumb,
-      context,
-      core,
-      metrics,
-      fontFamily,
-      options,
-    );
-    surface.fit();
-    return surface;
+      const fontSize = terminalFontSize(options.font?.size);
+      try {
+        // Load bundled fonts before measuring; fallback metrics would size the wrong grid.
+        await ensureTerminalSymbolsFont();
+      } catch {}
+      const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
+      const metrics = measureGhosttyCell(context, fontSize, fontFamily);
+      const grid = terminalGridSize(
+        mount.clientWidth,
+        mount.clientHeight,
+        metrics,
+        CONTENT_PADDING,
+      );
+      const core = await GhosttyTerminalCore.create(
+        grid.cols,
+        grid.rows,
+        metrics.width,
+        metrics.height,
+        options.theme,
+        options.onReply,
+      );
+      const surface = new GhosttyTerminalSurface(
+        mount,
+        canvas,
+        input,
+        scrollbar,
+        scrollbarThumb,
+        context,
+        core,
+        metrics,
+        fontFamily,
+        options,
+        stopObservingI18n,
+      );
+      surface.fit();
+      return surface;
+    } catch (error) {
+      stopObservingI18n();
+      throw error;
+    }
   }
 
   setVisible(visible: boolean): void {
@@ -779,7 +834,7 @@ export class GhosttyTerminalSurface {
   resetAndWrite(data: string): void {
     if (this.disposed) return;
     this.cancelSynchronizedRenderTimer();
-    this.lastMouseMotionData = "";
+    this.lastMouseMotionData = null;
     this.core.resetAndWrite(data);
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
@@ -1029,26 +1084,6 @@ export class GhosttyTerminalSurface {
     return before ? { start, end } : { start: end, end: start };
   }
 
-  getSelectionEndClientRect(): { readonly right: number; readonly bottom: number } | null {
-    const position = this.getSelectionPosition();
-    if (!position) return null;
-    const viewportEnd = this.core.screenPointToViewport(position.end.x, position.end.y);
-    if (
-      !viewportEnd ||
-      viewportEnd.x < 0 ||
-      viewportEnd.x >= this.cols ||
-      viewportEnd.y < 0 ||
-      viewportEnd.y >= this.rows
-    ) {
-      return null;
-    }
-    const bounds = this.canvas.getBoundingClientRect();
-    return {
-      right: bounds.left + CONTENT_PADDING + (viewportEnd.x + 1) * this.metrics.width,
-      bottom: bounds.top + this.originY + (viewportEnd.y + 1) * this.metrics.height,
-    };
-  }
-
   clearSelection({ source = "user" }: { source?: "user" | "output" } = {}): void {
     if (source === "user") this.linkActivationRequestId += 1;
     this.clearPrimedCopy();
@@ -1075,11 +1110,16 @@ export class GhosttyTerminalSurface {
     return this.core.isViewportActive();
   }
 
+  isAlternateScreen(): boolean {
+    return this.core.isAlternateScreen();
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     this.clearHoveredLink();
     this.stopObservingResize();
+    this.stopObservingI18n();
     document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
     this.dprMedia = null;
@@ -1119,7 +1159,7 @@ export class GhosttyTerminalSurface {
     const mac = isMacPlatform(navigator.platform);
     const primaryModifier = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
     const selectAllShortcut =
-      event.key.toLowerCase() === "a" &&
+      resolveEventKeys(event).has("a") &&
       primaryModifier &&
       !event.altKey &&
       (mac ? !event.shiftKey : event.shiftKey);
@@ -1190,6 +1230,15 @@ export class GhosttyTerminalSurface {
       }
       return;
     }
+    const copyChord =
+      primaryModifier &&
+      !event.altKey &&
+      (mac ? !event.shiftKey : event.shiftKey || event.key.toLowerCase() === "insert");
+    if (copyChord && isTerminalCopyShortcut(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (isTerminalPasteShortcut(event)) {
       const gesture = { code: event.code, readText: "" };
       this.pasteShortcutGesture = gesture;
@@ -1254,18 +1303,26 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onFocus = () => {
-    this.focused = true;
+    this.setFocused(true);
     this.cursorOn = true;
     this.requestRender();
   };
 
   private readonly onBlur = () => {
-    this.focused = false;
+    this.setFocused(false);
     this.pasteShortcutGesture = null;
     this.refreshHoveredLink();
     this.cursorOn = true;
     this.requestRender();
   };
+
+  // DOM focus events can repeat without a change; report only real transitions.
+  private setFocused(focused: boolean): void {
+    if (this.focused === focused) return;
+    this.focused = focused;
+    const data = this.core.encodeFocus(focused);
+    if (data.length > 0) this.options.onData(data);
+  }
 
   private readonly onDevicePixelRatioChange = () => {
     this.watchDevicePixelRatio();
@@ -1398,7 +1455,7 @@ export class GhosttyTerminalSurface {
       }
       return;
     }
-    if (event.button !== 0) return;
+    if (!isTerminalPrimaryPress(event)) return;
     const clickCount = this.recordSelectionClick(event);
     const link = this.linkAt(event.clientX, event.clientY, true);
     if (link && !event.shiftKey && clickCount === 1) {
@@ -1516,7 +1573,7 @@ export class GhosttyTerminalSurface {
       this.sendMouse("motion", this.buttonFromButtons(event.buttons), event);
       return;
     }
-    this.lastMouseMotionData = "";
+    this.lastMouseMotionData = null;
     if (!this.selectionAnchorScreen || !this.canvas.hasPointerCapture(event.pointerId)) {
       this.updateHoverCursor(event);
       return;
@@ -1594,7 +1651,7 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onPointerLeave = () => {
-    this.lastMouseMotionData = "";
+    this.lastMouseMotionData = null;
     this.clearHoveredLink();
   };
 
@@ -1609,7 +1666,7 @@ export class GhosttyTerminalSurface {
     const pointer = this.hoverPointer;
     const link = pointer ? this.findLinkAt(pointer.x, pointer.y) : null;
     this.updateLinkHover(link);
-    this.setHoveredLink(link && this.options.canActivateLink?.(link.text) !== false ? link : null);
+    this.setHoveredLink(link && this.activatableLink(link));
   }
 
   private updateLinkHover(link: TerminalLinkWithRange | null): void {
@@ -1629,13 +1686,17 @@ export class GhosttyTerminalSurface {
         changedAt = Math.max(changedAt, this.linkRowStability[y]?.changedAt ?? now);
       }
       const delay = Math.max(0, TERMINAL_LINK_HOVER_DELAY_MS - (now - changedAt));
+      const report = () =>
+        link.fallback
+          ? this.options.onLinkHover?.(link.text, link.fallback.text)
+          : this.options.onLinkHover?.(link.text);
       if (delay === 0) {
-        this.options.onLinkHover(link.text);
+        report();
         return;
       }
       this.linkHoverTimer = window.setTimeout(() => {
         this.linkHoverTimer = null;
-        this.options.onLinkHover?.(link.text);
+        report();
       }, delay);
     }
   }
@@ -1741,7 +1802,7 @@ export class GhosttyTerminalSurface {
       event.preventDefault();
       return;
     }
-    if (event.button !== 0) return;
+    if (!isTerminalPrimaryPress(event)) return;
     if (!this.selectionMoved && this.selectionMode === "cell") {
       this.clearSelection();
     }
@@ -2052,7 +2113,12 @@ export class GhosttyTerminalSurface {
       this.canvasConfigured = true;
       this.canvasDevicePixelRatio = canvasConfiguration.ratio;
     }
+    const previousBackground = this.snapshot?.background;
     this.snapshot = this.core.snapshot();
+    // Only a full render repaints the padding around the rows in the new default background.
+    if (previousBackground && !ghosttyColorsEqual(previousBackground, this.snapshot.background)) {
+      this.forceFullRender = true;
+    }
     if (!this.blinkEnabled()) this.cursorOn = true;
     // Move the origin only on full repaint; dirty-row updates cannot mix origins.
     const scrollState = this.readScrollbarState();
@@ -2158,6 +2224,12 @@ export class GhosttyTerminalSurface {
     };
   }
 
+  private activatableLink(link: TerminalLinkWithRange): TerminalLinkWithRange | null {
+    const canActivate = this.options.canActivateLink;
+    if (!canActivate || canActivate(link.text)) return link;
+    return link.fallback && canActivate(link.fallback.text) ? link.fallback : null;
+  }
+
   private validateLink(text: string): Promise<boolean> | undefined {
     if (this.options.canActivateLink?.(text) !== false) return;
     const validation = this.options.validateLink?.(text);
@@ -2176,20 +2248,25 @@ export class GhosttyTerminalSurface {
       return;
     }
     const requestId = this.linkActivationRequestId;
-    void validation.then(
-      (valid) => {
-        if (
-          this.disposed ||
-          !this.visible ||
-          requestId !== this.linkActivationRequestId ||
-          !isSameTerminalLink(link, this.findLinkAt(event.clientX, event.clientY))
-        )
-          return;
-        if (valid) this.options.onLinkActivate(link.text, event);
-        else this.clearSelection();
-      },
-      () => {},
-    );
+    const settle = (candidate: TerminalLinkWithRange, pending: Promise<boolean>) =>
+      void pending.then(
+        (valid) => {
+          if (
+            this.disposed ||
+            !this.visible ||
+            requestId !== this.linkActivationRequestId ||
+            !isSameTerminalLink(link, this.findLinkAt(event.clientX, event.clientY))
+          )
+            return;
+          if (valid) return this.options.onLinkActivate(candidate.text, event);
+          const fallback = candidate.fallback;
+          const fallbackValidation = fallback && this.options.validateLink?.(fallback.text);
+          if (fallback && fallbackValidation) settle(fallback, fallbackValidation);
+          else this.clearSelection();
+        },
+        () => {},
+      );
+    settle(link, validation);
   }
 
   private linkAt(
@@ -2198,11 +2275,8 @@ export class GhosttyTerminalSurface {
     allowValidation = false,
   ): TerminalLinkWithRange | null {
     const link = this.findLinkAt(clientX, clientY);
-    return link &&
-      ((allowValidation && this.options.validateLink) ||
-        this.options.canActivateLink?.(link.text) !== false)
-      ? link
-      : null;
+    if (!link) return null;
+    return allowValidation && this.options.validateLink ? link : this.activatableLink(link);
   }
 
   private findLinkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
@@ -2254,7 +2328,7 @@ export class GhosttyTerminalSurface {
 
   private sendMouse(action: TerminalMouseAction, button: number | null, event: MouseEvent): void {
     const bounds = this.canvas.getBoundingClientRect();
-    const data = this.core.encodeMouse({
+    const report = this.core.encodeMouse({
       action,
       button,
       mods:
@@ -2274,9 +2348,11 @@ export class GhosttyTerminalSurface {
       paddingBottom: Math.max(0, bounds.height - this.originY - this.rows * this.metrics.height),
       anyButtonPressed: event.buttons !== 0,
     });
-    const resolution = resolveTerminalMouseData(action, data, this.lastMouseMotionData);
+    const resolution = resolveTerminalMouseData(action, report, this.lastMouseMotionData);
     this.lastMouseMotionData = resolution.nextMotionData;
-    if (resolution.send) this.options.onData(data);
+    if (!resolution.send) return;
+    if (report.binary) this.options.onBinary(report.data);
+    else this.options.onData(report.data);
   }
 
   private synchronizeMouseTrackingState(): boolean {

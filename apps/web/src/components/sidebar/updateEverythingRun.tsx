@@ -1,11 +1,22 @@
 import { useAtomValue } from "@effect/atom-react";
-import { serverUpdateStateAtom } from "@t3tools/client-runtime/state/server";
+import { AVAILABLE_CONNECTION_STATE } from "@t3tools/client-runtime/connection";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import {
+  ServerUpdateTerminalError,
+  nudgeReconnectDuringUpdateRestart,
+  serverUpdateStateAtom,
+} from "@t3tools/client-runtime/state/server";
 import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { AsyncResult, Atom } from "effect/reactivity";
+import * as Stream from "effect/Stream";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { msg } from "gt-react";
 
 import { APP_VERSION } from "~/branding";
+import { environmentCatalog } from "~/connection/catalog";
+import { m } from "~/i18n/messages";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { desktopUpdateStateAtom } from "~/state/desktopUpdate";
 import { serverEnvironment } from "~/state/server";
@@ -16,6 +27,7 @@ import {
   closeFinishedUpdateRun,
   getUpdateEverythingToastView,
   isServerUpdateHandedOff,
+  type RestoredRetry,
   type UpdateEverythingResult,
   type UpdateEverythingRun,
   type UpdateRunMachine,
@@ -75,37 +87,53 @@ export function retryFailedUpdateRunServers(
     target: ServerUpdateTarget,
     options: { readonly quiet: boolean },
   ) => Promise<ServerUpdateOutcome>,
+  restored: ReadonlyMap<EnvironmentId, RestoredRetry> = new Map(),
 ): void {
   const failed = (appAtomRegistry.get(updateEverythingRunAtom)?.machines ?? []).flatMap(
-    (machine) =>
-      machine.result === "failed" && machine.server !== null
-        ? [{ target: machine.server, providerFailure: machine.providerFailure }]
-        : [],
+    (machine) => {
+      const target = machine.server ?? restored.get(machine.environmentId);
+      const targetVersion = target === "current" ? machine.handedOffVersion : target?.targetVersion;
+      return machine.result === "failed" && target !== undefined && targetVersion
+        ? [
+            {
+              environmentId: machine.environmentId,
+              target,
+              targetVersion,
+              providerFailure: machine.providerFailure,
+            },
+          ]
+        : [];
+    },
   );
-  const pending: typeof failed = [];
-  for (const entry of failed) {
+  const pending: Array<{ target: ServerUpdateTarget; providerFailure: string | null }> = [];
+  for (const { environmentId, target, targetVersion, providerFailure } of failed) {
     // The host rejects a same-version update; a server that came back on the target is done.
     if (
       runsVersion(
-        appAtomRegistry.get(serverEnvironment.configValueAtom(entry.target.environmentId)),
-        entry.target.targetVersion,
+        appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId)),
+        targetVersion,
       )
     ) {
-      settleUpdateRunMachine(entry.target.environmentId, entry.providerFailure, {
-        serverUpdated: true,
-      });
-    } else {
-      pending.push(entry);
+      settleUpdateRunMachine(environmentId, providerFailure, { serverUpdated: true });
+    } else if (target !== "current") {
+      pending.push({ target, providerFailure });
     }
   }
-  const targets = pending.map(({ target }) => target);
-  const retried = new Set(targets.map((target) => target.environmentId));
+  const retried = new Map(pending.map(({ target }) => [target.environmentId, target]));
   const startedAt = Date.now();
-  updateRunMachines((machine) =>
-    retried.has(machine.environmentId)
-      ? { ...machine, result: null, failure: null, startedAt }
-      : machine,
-  );
+  updateRunMachines((machine) => {
+    const target = retried.get(machine.environmentId);
+    return target === undefined
+      ? machine
+      : {
+          ...machine,
+          server: target,
+          handedOffVersion: null,
+          result: null,
+          failure: null,
+          startedAt,
+        };
+  });
   for (const { target, providerFailure } of pending) {
     void update(target, { quiet: true }).then((outcome) =>
       settleUpdateRunMachine(
@@ -114,7 +142,7 @@ export function retryFailedUpdateRunServers(
           ? providerFailure
           : outcome.status === "failed"
             ? outcome.message
-            : "Could not start the update",
+            : m(msg("Could not start the update")),
         { serverUpdated: outcome.status === "updated" },
       ),
     );
@@ -186,6 +214,7 @@ const HandedOffServer = Schema.Struct({
   label: Schema.String,
   targetVersion: Schema.String,
   startedAt: Schema.Number,
+  updateId: Schema.optionalKey(Schema.String),
 });
 type HandedOffServer = typeof HandedOffServer.Type;
 
@@ -196,6 +225,8 @@ const SavedResult = Schema.Struct({
   updatedProviders: Schema.Number,
   failures: Schema.Array(Schema.String),
   handedOff: Schema.optional(Schema.Array(HandedOffServer)),
+  // Restored track switches retry through their planner, not the capsule.
+  trackSwitch: Schema.optionalKey(Schema.Boolean),
 });
 const decodeSavedResult = Schema.decodeUnknownOption(Schema.fromJsonString(SavedResult));
 
@@ -209,12 +240,14 @@ export function saveUpdateEverythingResult(result: UpdateEverythingResult): void
       machine.handedOffVersion ??
       (state.status === "running" ? state.targetVersion : machine.server?.targetVersion);
     if (targetVersion === undefined) return [];
+    const updateId = state.status === "running" ? state.updateId : undefined;
     return [
       {
         environmentId: machine.environmentId,
         label: machine.label,
         targetVersion,
         startedAt: machine.startedAt,
+        ...(updateId === undefined ? {} : { updateId }),
       },
     ];
   });
@@ -228,6 +261,7 @@ export function saveUpdateEverythingResult(result: UpdateEverythingResult): void
         updatedProviders: result.updatedProviders,
         failures: result.failures,
         handedOff,
+        ...(run?.trackSwitch ? { trackSwitch: true } : {}),
       } satisfies typeof SavedResult.Type),
     );
   } catch {}
@@ -269,9 +303,13 @@ export function showUpdateEverythingResult(result: UpdateEverythingResult): void
   );
 }
 
-function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
+function followHandedOffServers(
+  servers: ReadonlyArray<HandedOffServer>,
+  trackSwitch: boolean,
+): void {
   if (servers.length === 0) return;
   setUpdateEverythingRun(() => ({
+    ...(trackSwitch ? { trackSwitch: true } : {}),
     localVersion: null,
     phase: "servers",
     restartAt: null,
@@ -300,6 +338,7 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
         appAtomRegistry.get(serverEnvironment.configValueAtom(server.environmentId))?.environment
           .serverVersion ?? server.targetVersion,
       targetVersion: server.targetVersion,
+      ...(server.updateId === undefined ? {} : { updateId: server.updateId }),
     });
     // Nothing observes the atom until the UI mounts, and the registry drops unobserved atoms.
     const releaseState = appAtomRegistry.mount(stateAtom);
@@ -308,12 +347,16 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      queueMicrotask(() => unsubscribe());
+      stopReconnectNudge();
+      queueMicrotask(() => {
+        unsubscribe();
+        unsubscribeOutcome();
+      });
       appAtomRegistry.set(stateAtom, { status: "idle" });
       releaseState();
       settleUpdateRunMachine(server.environmentId, failure);
       if (failure === null) updatedServers += 1;
-      else failures.push(`${server.label}: ${failure}`);
+      else failures.push(m(msg("{machine}: {failure}", { machine: server.label, failure })));
       remaining -= 1;
       if (remaining === 0) {
         showUpdateEverythingResult({
@@ -326,8 +369,24 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
       }
     };
     const timer = setTimeout(
-      () => settle(`Not back after ${HANDOFF_TIMEOUT_MS / 60_000} minutes`),
+      () =>
+        settle(
+          m(msg("Not back after {minutes} minutes", { minutes: HANDOFF_TIMEOUT_MS / 60_000 })),
+        ),
       server.startedAt + HANDOFF_TIMEOUT_MS - Date.now(),
+    );
+    const stopReconnectNudge = Effect.runCallback(
+      nudgeReconnectDuringUpdateRestart({
+        stateChanges: AtomRegistry.toStream(
+          appAtomRegistry,
+          environmentCatalog.stateAtom(server.environmentId),
+        ).pipe(
+          Stream.map((state) => AsyncResult.getOrElse(state, () => AVAILABLE_CONNECTION_STATE)),
+        ),
+        retryNow: environmentCatalog.retryNow
+          .run(appAtomRegistry, server.environmentId)
+          .pipe(Effect.ignoreCause),
+      }),
     );
     const unsubscribe = appAtomRegistry.subscribe(
       serverEnvironment.configValueAtom(server.environmentId),
@@ -336,6 +395,30 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
       },
       { immediate: true },
     );
+    // A rollback restarts the old version, which the version check above never accepts.
+    const unsubscribeOutcome =
+      server.updateId === undefined
+        ? () => {}
+        : appAtomRegistry.subscribe(
+            serverEnvironment.updateOutcome({ environmentId: server.environmentId, input: {} }),
+            (result) => {
+              const outcome = AsyncResult.getOrElse(result, () => null);
+              if (
+                outcome === null ||
+                outcome.id !== server.updateId ||
+                outcome.status === "committed"
+              ) {
+                return;
+              }
+              const error = new ServerUpdateTerminalError({
+                targetVersion: server.targetVersion,
+                status: outcome.status,
+                ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
+              });
+              settle(thrownErrorMessage(error, m) ?? error.message);
+            },
+            { immediate: true },
+          );
   }
 }
 
@@ -345,7 +428,7 @@ export function startDesktopUpdateLaunchNotice(): () => void {
   if (saved) {
     const handedOff = saved.handedOff ?? [];
     showUpdateEverythingResult({ ...saved, restarting: handedOff.map((server) => server.label) });
-    followHandedOffServers(handedOff);
+    followHandedOffServers(handedOff, saved.trackSwitch === true);
   }
 
   let notifiedNotAppliedVersion: string | null = null;
@@ -359,8 +442,13 @@ export function startDesktopUpdateLaunchNotice(): () => void {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Update did not apply",
-          description: `T3 Code is still on ${APP_VERSION}. Install ${notAppliedVersion} again from the update button.`,
+          title: m(msg("Update did not apply")),
+          description: m(
+            msg("T3 Code is still on {current}. Install {version} again from the update button.", {
+              current: APP_VERSION,
+              version: notAppliedVersion,
+            }),
+          ),
         }),
       );
     },

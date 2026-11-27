@@ -18,6 +18,7 @@ import { Command, Flag } from "effect/cli";
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
 import { rebuildMessageSearch } from "../src/orchestration-v2/messageSearchIndex.ts";
 import { runMigrations } from "../src/persistence/Migrations.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
@@ -57,6 +58,18 @@ export class MigrateDevDbSourceIsDestinationError extends Schema.TaggedError<Mig
 ) {
   override get message(): string {
     return `Source database '${this.sourcePath}' resolves to a path this command rewrites. Pick a different --source or --base-dir.`;
+  }
+}
+
+export class MigrateDevDbLegacySourceError extends Schema.TaggedError<MigrateDevDbLegacySourceError>()(
+  "MigrateDevDbLegacySourceError",
+  {
+    sourcePath: Schema.String,
+    legacyThreads: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Source database '${this.sourcePath}' holds ${this.legacyThreads} legacy threads the server has not imported into V2 yet, which this command cannot carry over. Start a server once on a T3 home holding a copy of it so it imports them, then pass the userdata/statev2.sqlite that server leaves behind as --source.`;
   }
 }
 
@@ -183,12 +196,19 @@ const ensureNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (databasePath:
   }
 });
 
-const RECOVERY_KINDS: ReadonlyArray<ProjectionStore.ProjectionRecoveryKind> = [
-  "queued-runs",
-  "runtime",
-  "subagent-results",
-  "delegated-completions",
-];
+// Every kind startup recovery resumes, so a copied family never starts work by itself. The record
+// fails typecheck when a kind is added and not listed here.
+const RECOVERY_KIND_SET = {
+  "queued-runs": true,
+  runtime: true,
+  "restart-continuations": true,
+  "subagent-results": true,
+  "delegated-completions": true,
+  "unread-steers": true,
+} satisfies Record<ProjectionStore.ProjectionRecoveryKind, true>;
+const RECOVERY_KINDS = Object.keys(
+  RECOVERY_KIND_SET,
+) as ReadonlyArray<ProjectionStore.ProjectionRecoveryKind>;
 
 const CLEARED_TABLES: ReadonlyArray<string> = [
   "scheduled_tasks",
@@ -210,47 +230,71 @@ const rootIsVisible = (sql: SqlClient.SqlClient) => sql`
   AND json_extract(root.payload_json, '$.deletedAt') IS NULL
   AND json_extract(root.payload_json, '$.archivedAt') IS NULL`;
 
-// A single read transaction keeps the copy consistent with concurrent server writes.
+// One read transaction keeps the copy, and its legacy-thread guard, consistent with concurrent
+// server writes. The server imports V1 threads at boot, and the copy keeps only threads with V2
+// rows, so unimported ones would vanish silently (see LegacyV1ThreadImporter.pendingThreadCount).
 const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath: string) {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`ATTACH DATABASE ${`${NodeURL.pathToFileURL(sourcePath).href}?mode=ro`} AS src`;
-  const schema = yield* sql<{ type: string; name: string; sql: string }>`
-    SELECT type, name, sql FROM src.sqlite_master
-    WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'`;
-  const threadColumns = yield* sql<{ name: string; notnull: number }>`
-    SELECT m.name, c."notnull" FROM src.sqlite_master m, pragma_table_info(m.name, 'src') c
-    WHERE m.type = 'table' AND c.name = 'thread_id'`;
-  const threadIdNullable = new Map(threadColumns.map((row) => [row.name, row.notnull === 0]));
-  // FTS5 makes its own shadow tables and contentless rows cannot be copied:
-  // create the virtual table, skip its shadow tables and rows, and rebuild the
-  // index once the messages and triggers are in.
-  const virtualTables = schema
-    .filter((entry) => entry.type === "table" && /^CREATE VIRTUAL TABLE/i.test(entry.sql))
-    .map((entry) => entry.name);
-  const isShadowTable = (name: string) =>
-    virtualTables.some((virtual) =>
-      FTS5_SHADOW_SUFFIXES.some((suffix) => name === `${virtual}${suffix}`),
-    );
-  const tables = schema.filter((entry) => entry.type === "table" && !isShadowTable(entry.name));
-  const filtered = tables.some((table) => table.name === "orchestration_v2_projection_threads");
-  // A row that points into a cleared table cannot be copied, so whatever references one is
-  // cleared with it, however far down the chain a newer migration added it.
-  const references = yield* sql<{ name: string; parent: string }>`
-    SELECT m.name, f."table" AS parent FROM src.sqlite_master m, pragma_foreign_key_list(m.name, 'src') f
-    WHERE m.type = 'table'`;
-  const cleared = new Set(CLEARED_TABLES);
-  for (let grew = true; grew;) {
-    grew = false;
-    for (const { name, parent } of references) {
-      if (cleared.has(parent) && !cleared.has(name)) {
-        cleared.add(name);
-        grew = true;
-      }
-    }
-  }
 
   yield* sql.withTransaction(
     Effect.gen(function* () {
+      const schema = yield* sql<{ type: string; name: string; sql: string }>`
+        SELECT type, name, sql FROM src.sqlite_master
+        WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'`;
+      const threadColumns = yield* sql<{ name: string; notnull: number }>`
+        SELECT m.name, c."notnull" FROM src.sqlite_master m, pragma_table_info(m.name, 'src') c
+        WHERE m.type = 'table' AND c.name = 'thread_id'`;
+      const threadIdNullable = new Map(threadColumns.map((row) => [row.name, row.notnull === 0]));
+      // FTS5 makes its own shadow tables and contentless rows cannot be copied:
+      // create the virtual table, skip its shadow tables and rows, and rebuild the
+      // index once the messages and triggers are in.
+      const virtualTables = schema
+        .filter((entry) => entry.type === "table" && /^CREATE VIRTUAL TABLE/i.test(entry.sql))
+        .map((entry) => entry.name);
+      const isShadowTable = (name: string) =>
+        virtualTables.some((virtual) =>
+          FTS5_SHADOW_SUFFIXES.some((suffix) => name === `${virtual}${suffix}`),
+        );
+      const tables = schema.filter((entry) => entry.type === "table" && !isShadowTable(entry.name));
+      const filtered = tables.some((table) => table.name === "orchestration_v2_projection_threads");
+      // A row that points into a cleared table cannot be copied, so whatever references one is
+      // cleared with it, however far down the chain a newer migration added it.
+      const references = yield* sql<{ name: string; parent: string }>`
+        SELECT m.name, f."table" AS parent FROM src.sqlite_master m, pragma_foreign_key_list(m.name, 'src') f
+        WHERE m.type = 'table'`;
+      const cleared = new Set(CLEARED_TABLES);
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const { name, parent } of references) {
+          if (cleared.has(parent) && !cleared.has(name)) {
+            cleared.add(name);
+            grew = true;
+          }
+        }
+      }
+
+      if (tables.some((table) => table.name === "projection_threads")) {
+        // The V2 tables, application_event_version, and the partial index arrive in
+        // the same migration. Without the hint SQLite scans each thread's stream.
+        const [pending] = filtered
+          ? yield* sql<{ count: number }>`
+              SELECT COUNT(*) AS count FROM src.projection_threads AS thread
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM src.orchestration_events AS event INDEXED BY orchestration_events_v2_created_threads_idx
+                WHERE event.application_event_version = 2
+                  AND event.aggregate_kind = 'thread'
+                  AND event.stream_id = thread.thread_id
+                  AND event.event_type = 'thread.created'
+              )`
+          : yield* sql<{ count: number }>`SELECT COUNT(*) AS count FROM src.projection_threads`;
+        const legacyThreads = Number(pending?.count ?? 0);
+        if (legacyThreads > 0) {
+          return yield* new MigrateDevDbLegacySourceError({ sourcePath, legacyThreads });
+        }
+      }
+
       for (const table of tables) yield* sql.unsafe(table.sql).unprepared;
       if (filtered) {
         yield* sql`CREATE TEMP TABLE copied_threads (thread_id TEXT PRIMARY KEY)`;
@@ -286,19 +330,17 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
   yield* sql`DETACH DATABASE src`;
 });
 
-const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigrateDevDbInput) {
+/**
+ * Threads a server started on this database would resume by itself: every startup recovery kind,
+ * plus latest-run failures and recovery choices, which usage-limit recovery can resume.
+ */
+export const resumableThreadIds = Effect.fn("resumableDevDbThreadIds")(function* () {
   const sql = yield* SqlClient.SqlClient;
-
-  // Usage-limit recovery also depends on settings; exclude latest-run failures and recovery choices.
   const projections = yield* ProjectionStore.ProjectionStoreV2;
-  const recoveryThreadIds = yield* Effect.forEach(RECOVERY_KINDS, (kind) =>
+  const recovery = yield* Effect.forEach(RECOVERY_KINDS, (kind) =>
     projections.getRecoveryThreadIds(kind),
   );
-  yield* sql`CREATE TEMP TABLE live_threads (thread_id TEXT PRIMARY KEY)`;
-  for (const threadId of new Set(recoveryThreadIds.flat())) {
-    yield* sql`INSERT INTO live_threads (thread_id) VALUES (${threadId})`;
-  }
-  yield* sql`INSERT OR IGNORE INTO live_threads (thread_id)
+  const failedOrRecovering = yield* sql<{ thread_id: string }>`
     SELECT r.thread_id FROM orchestration_v2_projection_runs r
     WHERE r.status = 'failed' AND r.ordinal = (
       SELECT MAX(latest.ordinal) FROM orchestration_v2_projection_runs latest
@@ -306,6 +348,121 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
     UNION
     SELECT thread_id FROM orchestration_v2_projection_threads
     WHERE json_extract(payload_json, '$.limitRecovery') IS NOT NULL`;
+  return [
+    ...new Set<string>([...recovery.flat(), ...failedOrRecovering.map((row) => row.thread_id)]),
+  ];
+});
+
+export class MigrateDevDbResumableWorkError extends Schema.TaggedError<MigrateDevDbResumableWorkError>()(
+  "MigrateDevDbResumableWorkError",
+  { databasePath: Schema.String, threads: Schema.Number },
+) {
+  override get message() {
+    return `${this.databasePath} still holds ${this.threads} threads a server would resume.`;
+  }
+}
+
+/**
+ * Drops, in place, every thread family a server started on `databasePath` would resume, and fails
+ * if any remain. A database seeded by an older checkout can miss a recovery kind added since.
+ */
+export const dropResumableFamilies = Effect.fn("dropResumableDevDbFamilies")(function* (
+  databasePath: string,
+  options: RunMigrateDevDbOptions = {},
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
+  // A symlink, `..` or another letter case can name the live database; compare where they lead.
+  const resolve = (file: string) =>
+    fs.realPath(file).pipe(
+      Effect.catch(() =>
+        fs
+          .realPath(path.dirname(file))
+          .pipe(Effect.map((dir) => path.join(dir, path.basename(file)))),
+      ),
+      Effect.orElseSucceed(() => path.resolve(file)),
+    );
+  const comparable = (resolved: string) =>
+    platform === "linux" ? resolved : resolved.toLowerCase();
+  // A hard link has its own path, so the file itself is compared too.
+  const identity = (file: string) =>
+    fs.stat(file).pipe(
+      Effect.map((info) => Option.map(info.ino, (ino) => `${info.dev}:${ino}`)),
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
+  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
+  const liveDatabase = path.join(sharedHome, "userdata", "statev2.sqlite");
+  const [target, live] = yield* Effect.all([resolve(databasePath), resolve(liveDatabase)]);
+  const targetIdentity = yield* identity(target);
+  const liveIdentities = yield* Effect.forEach(
+    [liveDatabase, `${liveDatabase}-wal`, `${liveDatabase}-shm`],
+    identity,
+  );
+  if (
+    comparable(target) === comparable(live) ||
+    (Option.isSome(targetIdentity) &&
+      liveIdentities.some(
+        (candidate) => Option.isSome(candidate) && candidate.value === targetIdentity.value,
+      ))
+  ) {
+    return yield* new MigrateDevDbSharedHomeError();
+  }
+  // Beside the real file, where a running server keeps its runtime state.
+  yield* ensureNotInUse(target);
+  return yield* Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const resumable = yield* resumableThreadIds();
+    if (resumable.length > 0) {
+      yield* sql`CREATE TEMP TABLE resumable_families (thread_id TEXT PRIMARY KEY)`;
+      yield* sql`INSERT OR IGNORE INTO resumable_families
+        SELECT family.thread_id FROM orchestration_v2_projection_threads family
+        WHERE COALESCE(json_extract(family.payload_json, '$.lineage.rootThreadId'), family.thread_id) IN (
+          SELECT COALESCE(json_extract(payload_json, '$.lineage.rootThreadId'), thread_id)
+          FROM orchestration_v2_projection_threads WHERE thread_id IN ${sql.in(resumable)})`;
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          for (const { name } of yield* sql<{ name: string }>`
+            SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c
+            WHERE m.type = 'table' AND c.name = 'thread_id'
+              AND m.name <> ${PROVIDER_SESSIONS_TABLE}`) {
+            yield* sql`DELETE FROM ${sql(name)}
+              WHERE thread_id IN (SELECT thread_id FROM resumable_families)`;
+          }
+          // A session a kept thread still binds stays, as pruning keeps it.
+          yield* sql`DELETE FROM ${sql(PROVIDER_SESSIONS_TABLE)}
+            WHERE thread_id IN (SELECT thread_id FROM resumable_families)
+              AND provider_session_id NOT IN (
+                SELECT provider_session_id FROM orchestration_v2_projection_provider_session_bindings
+                WHERE thread_id NOT IN (SELECT thread_id FROM resumable_families)
+              )`;
+          yield* sql`DELETE FROM orchestration_v2_projection_context_transfers
+            WHERE source_thread_id IN (SELECT thread_id FROM resumable_families)
+               OR target_thread_id IN (SELECT thread_id FROM resumable_families)`;
+          yield* sql`DELETE FROM orchestration_events WHERE aggregate_kind = 'thread'
+            AND stream_id IN (SELECT thread_id FROM resumable_families)`;
+        }),
+      );
+    }
+    const left = yield* resumableThreadIds();
+    if (left.length > 0) {
+      return yield* new MigrateDevDbResumableWorkError({ databasePath, threads: left.length });
+    }
+    return resumable.length;
+  }).pipe(
+    Effect.provide(
+      ProjectionStore.layer.pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename: target }))),
+    ),
+  );
+});
+
+const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigrateDevDbInput) {
+  const sql = yield* SqlClient.SqlClient;
+
+  yield* sql`CREATE TEMP TABLE live_threads (thread_id TEXT PRIMARY KEY)`;
+  for (const threadId of yield* resumableThreadIds()) {
+    yield* sql`INSERT INTO live_threads (thread_id) VALUES (${threadId})`;
+  }
 
   // Clone or drop whole thread families to preserve fork and subagent lineage reads.
   yield* sql`CREATE TEMP TABLE thread_families AS
@@ -382,12 +539,20 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
            OR (aggregate_kind = 'project'
             AND stream_id NOT IN (SELECT project_id FROM kept_projects))`;
       yield* sql`UPDATE orchestration_v2_projection_threads
-        SET payload_json = json_set(payload_json, '$.pullRequests', (
+        SET payload_json = json_set(payload_json, '$.pullRequests', json((
           SELECT json_group_array(json_remove(link.value, '$.watch') ORDER BY link.key)
-          FROM json_each(payload_json, '$.pullRequests') AS link))
+          FROM json_each(payload_json, '$.pullRequests') AS link)))
         WHERE EXISTS (
           SELECT 1 FROM json_each(payload_json, '$.pullRequests') AS link
           WHERE json_extract(link.value, '$.watch') IS NOT NULL)`;
+      // Copied threads keep their real worktree paths, where a settle script would run.
+      yield* sql`UPDATE projection_projects
+        SET scripts_json = (
+          SELECT json_group_array(json_remove(script.value, '$.runOnSettle') ORDER BY script.key)
+          FROM json_each(scripts_json) AS script)
+        WHERE EXISTS (
+          SELECT 1 FROM json_each(scripts_json) AS script
+          WHERE json_extract(script.value, '$.runOnSettle') IS NOT NULL)`;
       for (const table of CLEARED_TABLES) {
         yield* sql`DELETE FROM ${sql(table)}`;
       }
@@ -488,7 +653,6 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   }
 
   yield* fs.makeDirectory(stateDir, { recursive: true });
-  yield* ensureNotInUse(databasePath);
 
   const wrapPhase =
     (phase: MigrateDevDbPhaseError["phase"], phaseDatabasePath: string) =>
@@ -504,8 +668,15 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     yield* Console.log(`Copying visible threads from ${sourcePath} (read-only)...`);
     yield* copySourceSlice(sourcePath).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
-      wrapPhase("snapshot", sourcePath),
+      Effect.catchTags({
+        SqlError: (cause) =>
+          Effect.fail(
+            new MigrateDevDbPhaseError({ phase: "snapshot", databasePath: sourcePath, cause }),
+          ),
+      }),
     );
+    // Checkpoints the destination, so it runs after the copy's legacy guard.
+    yield* ensureNotInUse(databasePath);
 
     // Migrate first so prune queries can use columns missing from older sources.
     yield* Console.log("Running migrations on the snapshot...");
@@ -591,9 +762,20 @@ export const migrateDevDbCommand = Command.make(
       Flag.optional,
       Flag.withDescription("Source database. Defaults to ~/.t3/userdata/statev2.sqlite."),
     ),
+    dropResumable: Flag.String("drop-resumable").pipe(
+      Flag.optional,
+      Flag.withDescription(
+        "Only drop, in place, the thread families a server started on this database would resume, and fail if any remain. Copies only; never the live database.",
+      ),
+    ),
   },
-  ({ projects, threadsPerProject, baseDir, source }) =>
+  ({ projects, threadsPerProject, baseDir, source, dropResumable }) =>
     Effect.gen(function* () {
+      if (Option.isSome(dropResumable)) {
+        const dropped = yield* dropResumableFamilies(dropResumable.value);
+        yield* Console.log(`Dropped ${dropped} resumable threads.`);
+        return;
+      }
       const result = yield* runMigrateDevDb({
         projects,
         threadsPerProject,

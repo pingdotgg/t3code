@@ -91,11 +91,15 @@ export const renderCliShim = (input: {
     // Extract-and-run would make the runtime start the app instead of mounting it.
     "unset APPIMAGE_EXTRACT_AND_RUN",
     // Its own session keeps a group signal (Ctrl-C, SSH hangup) from unmounting it under the
-    // running server; the traps unmount it after. Without setsid the extract fallback runs.
+    // running server, and ignoring TERM survives a stop sent to every process (systemd's default).
+    // Without setsid the extract fallback runs.
     "work=$(mktemp -d) || exit 1",
+    "trap '' TERM",
     'setsid "$app" --appimage-mount >"$work/mount" 2>/dev/null &',
     "mounter=$!",
-    `trap 'kill "$mounter" 2>/dev/null; rm -rf "$work"' EXIT`,
+    // It unmounts itself on TERM, which it now ignores, so the trap unmounts it. Lazily, like the
+    // runtime: the server's own children may still be exiting.
+    `trap '[ -z "$mount" ] || fusermount3 -uz "$mount" 2>/dev/null || fusermount -uz "$mount" 2>/dev/null; kill -HUP "$mounter" 2>/dev/null; rm -rf "$work"' EXIT`,
     "trap 'exit 130' INT TERM HUP",
     "mount=",
     'while kill -0 "$mounter" 2>/dev/null; do',
@@ -109,7 +113,26 @@ export const renderCliShim = (input: {
     '  (cd "$work" && "$app" --appimage-extract >/dev/null) || { echo "Could not open $app." >&2; exit 1; }',
     '  mount="$work/squashfs-root"',
     "fi",
-    run("$mount"),
+    // The runtime sets this when it launches the app; the CLI skips its path-keyed compile cache on it.
+    'export APPIMAGE="$app"',
+    // The shell must outlive the CLI to unmount, so it forwards TERM and HUP; the terminal sends
+    // Ctrl-C to the CLI directly. A background child would read /dev/null, so pass stdin on fd 9.
+    // With stdin closed, `exec 9<&0` would end the shell; `command` makes it a normal error.
+    "{ command exec 9<&0; } 2>/dev/null || exec 9</dev/null",
+    `${run("$mount")} <&9 9<&- &`,
+    "cli=$!",
+    "exec 9<&-",
+    `trap 'kill -TERM "$cli" 2>/dev/null' TERM`,
+    `trap 'kill -HUP "$cli" 2>/dev/null' HUP`,
+    "trap '' INT",
+    "status=0",
+    'wait "$cli" || status=$?',
+    // A trapped signal interrupts wait; wait again for the CLI's own exit status.
+    'while kill -0 "$cli" 2>/dev/null; do',
+    "  status=0",
+    '  wait "$cli" || status=$?',
+    "done",
+    'exit "$status"',
     "",
   ].join("\n");
 };

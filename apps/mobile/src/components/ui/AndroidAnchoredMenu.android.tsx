@@ -1,7 +1,13 @@
 import type { MenuAction, MenuComponentProps } from "@react-native-menu/menu";
-import type { ReactNode } from "react";
+import { cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { use, useRef, useState } from "react";
-import type { StyleProp, ViewInstance, ViewStyle } from "react-native";
+import type {
+  AccessibilityProps,
+  PressableProps,
+  StyleProp,
+  ViewInstance,
+  ViewStyle,
+} from "react-native";
 import { Pressable, ScrollView, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 
@@ -38,10 +44,113 @@ export type AndroidAnchoredMenuProps = {
   readonly actions: readonly MenuAction[];
   readonly title?: string;
   readonly onPressAction?: MenuComponentProps["onPressAction"];
+  readonly accessibilityLabel?: AccessibilityProps["accessibilityLabel"];
+  readonly accessibilityHint?: AccessibilityProps["accessibilityHint"];
+  readonly accessibilityState?: AccessibilityProps["accessibilityState"];
+  readonly hitSlop?: PressableProps["hitSlop"];
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
   readonly children: ReactNode | ((open: () => void) => ReactNode);
 };
+
+type TriggerAccessibilityProps = {
+  readonly accessible?: boolean;
+  readonly accessibilityRole?: AccessibilityProps["accessibilityRole"];
+  readonly accessibilityLabel?: AccessibilityProps["accessibilityLabel"];
+  readonly accessibilityHint?: AccessibilityProps["accessibilityHint"];
+  readonly accessibilityState?: AccessibilityProps["accessibilityState"];
+  readonly importantForAccessibility?: AccessibilityProps["importantForAccessibility"];
+  readonly hitSlop?: PressableProps["hitSlop"];
+  readonly disabled?: boolean;
+  readonly children?: ReactNode;
+};
+
+function stripTriggerAccessibility(node: ReactNode, depth = 0): ReactNode {
+  if (depth >= 3) return node;
+  if (Array.isArray(node)) {
+    let changed = false;
+    const next = node.map((child) => {
+      const stripped = stripTriggerAccessibility(child, depth);
+      if (stripped !== child) changed = true;
+      return stripped;
+    });
+    return changed ? next : node;
+  }
+  if (!isValidElement(node)) return node;
+  const element = node as ReactElement<TriggerAccessibilityProps>;
+  const { accessibilityRole, accessibilityLabel, accessibilityHint, accessibilityState } =
+    element.props;
+  if (
+    accessibilityRole !== undefined ||
+    accessibilityLabel !== undefined ||
+    accessibilityHint !== undefined ||
+    accessibilityState !== undefined
+  ) {
+    return cloneElement(element, {
+      accessible: false,
+      accessibilityRole: undefined,
+      accessibilityLabel: undefined,
+      accessibilityHint: undefined,
+      accessibilityState: undefined,
+      importantForAccessibility: "no-hide-descendants",
+    });
+  }
+  if (element.props.children !== undefined) {
+    const nextChild = stripTriggerAccessibility(element.props.children, depth + 1);
+    if (nextChild !== element.props.children) {
+      return cloneElement(element, undefined, nextChild);
+    }
+  }
+  return node;
+}
+
+function extractTriggerAccessibility(
+  node: ReactNode,
+  depth = 0,
+  acc: {
+    accessibilityLabel?: AccessibilityProps["accessibilityLabel"];
+    accessibilityHint?: AccessibilityProps["accessibilityHint"];
+    accessibilityState?: AccessibilityProps["accessibilityState"];
+    hitSlop?: PressableProps["hitSlop"];
+  } = {},
+): TriggerAccessibilityProps {
+  if (depth >= 3) return acc;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      extractTriggerAccessibility(child, depth, acc);
+    }
+    return acc;
+  }
+  if (!isValidElement(node)) return acc;
+  const element = node as ReactElement<TriggerAccessibilityProps>;
+  const { accessibilityLabel, accessibilityHint, accessibilityState, hitSlop, disabled } =
+    element.props;
+  if (acc.accessibilityLabel === undefined && accessibilityLabel !== undefined) {
+    acc.accessibilityLabel = accessibilityLabel;
+  }
+  if (acc.accessibilityHint === undefined && accessibilityHint !== undefined) {
+    acc.accessibilityHint = accessibilityHint;
+  }
+  if (acc.accessibilityState === undefined) {
+    const nextState = accessibilityState ?? (disabled !== undefined ? { disabled } : undefined);
+    if (nextState !== undefined) acc.accessibilityState = nextState;
+  }
+  if (acc.hitSlop === undefined && hitSlop !== undefined) {
+    acc.hitSlop = hitSlop;
+  }
+  if (
+    acc.accessibilityLabel !== undefined &&
+    acc.accessibilityHint !== undefined &&
+    acc.accessibilityState !== undefined &&
+    acc.hitSlop !== undefined
+  ) {
+    return acc;
+  }
+  if (element.props.children !== undefined) {
+    extractTriggerAccessibility(element.props.children, depth + 1, acc);
+  }
+  return acc;
+}
 
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const { scale, menuWidth: desiredMenuWidth, menuItemHeight } = useAndroidControlSizing();
@@ -61,6 +170,10 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
     setPath([]);
     setOverlay(null);
   };
+  // The in-window menu is pinned to the trigger's spot above the keyboard, which is stale once it hides.
+  if (anchor?.keyboardWasVisible === true && !keyboardVisible) {
+    close();
+  }
 
   const open = () => {
     anchorNode?.measureInWindow((x, y, width, height) => {
@@ -137,6 +250,14 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
     }
   };
 
+  const triggerAccessibility =
+    typeof props.children === "function" ? {} : extractTriggerAccessibility(props.children);
+  const triggerLabel =
+    props.accessibilityLabel ?? triggerAccessibility.accessibilityLabel ?? props.title;
+  const triggerHint = props.accessibilityHint ?? triggerAccessibility.accessibilityHint;
+  const triggerState = props.accessibilityState ?? triggerAccessibility.accessibilityState;
+  const triggerHitSlop = props.hitSlop ?? triggerAccessibility.hitSlop;
+
   return (
     <>
       {typeof props.children === "function" ? (
@@ -152,12 +273,23 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
         <Pressable
           ref={setAnchorNode}
           accessibilityRole="button"
+          accessibilityLabel={triggerLabel}
+          accessibilityHint={triggerHint}
+          accessibilityState={triggerState}
+          hitSlop={triggerHitSlop}
           className={props.className}
           collapsable={false}
           style={props.style}
           onPress={open}
         >
-          <View pointerEvents="none">{props.children}</View>
+          <View
+            pointerEvents="none"
+            accessible={false}
+            importantForAccessibility="no-hide-descendants"
+            accessibilityElementsHidden
+          >
+            {stripTriggerAccessibility(props.children)}
+          </View>
         </Pressable>
       )}
       {anchor === null ? null : (

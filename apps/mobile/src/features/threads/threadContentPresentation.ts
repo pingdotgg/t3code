@@ -1,4 +1,8 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export type ThreadContentPresentation =
   | { readonly kind: "ready" }
@@ -9,26 +13,32 @@ export type ThreadContentPresentation =
       readonly detail: string;
     };
 
+// Shared so the thread screen's props keep their identity across renders.
+export const THREAD_CONTENT_READY: ThreadContentPresentation = { kind: "ready" };
+const THREAD_CONTENT_LOADING: ThreadContentPresentation = { kind: "loading" };
+
 export function projectThreadContentPresentation(input: {
   readonly hasDetail: boolean;
   readonly detailError: string | null;
   readonly detailDeleted: boolean;
   readonly connectionState: EnvironmentConnectionPhase;
+  readonly resolve?: MessageResolver;
 }): ThreadContentPresentation {
+  const resolve = input.resolve ?? m;
   if (input.hasDetail) {
-    return { kind: "ready" };
+    return THREAD_CONTENT_READY;
   }
   if (input.detailDeleted) {
     return {
       kind: "unavailable",
-      title: "Thread unavailable",
-      detail: "This thread was deleted or is no longer available.",
+      title: resolve(msg("Thread unavailable")),
+      detail: resolve(msg("This thread was deleted or is no longer available.")),
     };
   }
   if (input.detailError !== null) {
     return {
       kind: "unavailable",
-      title: "Could not load conversation",
+      title: resolve(msg("Could not load conversation")),
       detail: input.detailError,
     };
   }
@@ -37,11 +47,24 @@ export function projectThreadContentPresentation(input: {
     input.connectionState === "connecting" ||
     input.connectionState === "reconnecting"
   ) {
-    return { kind: "loading" };
+    return THREAD_CONTENT_LOADING;
   }
   return {
     kind: "unavailable",
-    title: "Messages not cached",
-    detail: "Reconnect this environment to load the conversation.",
+    title: resolve(msg("Messages not cached")),
+    detail: resolve(msg("Reconnect this environment to load the conversation.")),
   };
+}
+
+export function threadSyncStatusLabel(
+  status: EnvironmentThreadStatus,
+  presentation: ThreadContentPresentation["kind"],
+  hasError: boolean,
+  resolve: MessageResolver = m,
+): string | null {
+  if (status !== "empty" && status !== "cached" && status !== "synchronizing") return null;
+  if (presentation === "ready") {
+    return hasError ? resolve(msg("Could not sync messages")) : resolve(msg("Syncing messages…"));
+  }
+  return presentation === "loading" ? resolve(msg("Loading messages…")) : null;
 }

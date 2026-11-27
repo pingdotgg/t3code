@@ -1,4 +1,5 @@
 import { NodeId, RunId } from "@t3tools/contracts";
+import { DateTime } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -14,7 +15,6 @@ type VisibilityInput = Parameters<typeof createOrchestrationV2TurnItemVisibility
 
 const ordinaryStatuses = [
   "preparing",
-  "queued",
   "starting",
   "running",
   "waiting",
@@ -92,61 +92,73 @@ describe.each([
     ).toBe(true);
   });
 
-  it.each([
+  it.each<{
+    status: VisibilityInput["runs"][number]["status"];
+    startedAt?: string;
+    hidden: string[];
+  }>([
     ...ordinaryStatuses.map((status) => ({ status, hidden: [] })),
+    { status: "queued", hidden: ["queued"] },
     { status: "cancelled", hidden: ["queued"] },
+    { status: "cancelled", startedAt: "2026-11-23T06:11:54.535Z", hidden: [] },
     {
       status: "rolled_back",
       hidden: ["queued", "start", "steer", "promoted", "legacy", "assistant", "request", "result"],
     },
-  ] satisfies ReadonlyArray<{
-    status: VisibilityInput["runs"][number]["status"];
-    hidden: string[];
-  }>)("keeps the correct transcript rows for $status runs", ({ status, hidden }) => {
-    const rows = [
-      { id: "queued", type: "user_message", inputIntent: "queued_turn", runId, nodeId },
-      { id: "start", type: "user_message", inputIntent: "turn_start", runId, nodeId },
-      { id: "steer", type: "user_message", inputIntent: "steer", runId, nodeId },
-      {
-        id: "promoted",
-        type: "user_message",
-        inputIntent: "promoted_queued_to_steer",
-        runId,
-        nodeId,
-      },
-      { id: "legacy", type: "user_message", runId, nodeId },
-      { id: "assistant", type: "assistant_message", inputIntent: "queued_turn", runId, nodeId },
-      { id: "request", type: "run_interrupt_request", runId, nodeId },
-      { id: "result", type: "run_interrupt_result", runId, nodeId },
-      { id: "null", type: "user_message", inputIntent: "queued_turn", runId: null, nodeId },
-      {
-        id: "missing",
-        type: "user_message",
-        inputIntent: "queued_turn",
-        runId: otherRunId,
-        nodeId,
-      },
-    ] satisfies ReadonlyArray<VisibilityInput["items"][number] & { id: string }>;
-    const input = {
-      runs: [{ id: runId, status }],
-      attempts: [],
-      items: rows,
-    } satisfies VisibilityInput;
-    expect(rows.filter((item) => isVisible({ ...input, item })).map((item) => item.id)).toEqual(
-      [
-        "queued",
-        "start",
-        "steer",
-        "promoted",
-        "legacy",
-        "assistant",
-        "request",
-        "result",
-        "null",
-        "missing",
-      ].filter((id) => !hidden.some((hiddenId) => hiddenId === id)),
-    );
-  });
+  ])(
+    "keeps the correct transcript rows for $status runs (started $startedAt)",
+    ({ status, startedAt, hidden }) => {
+      const rows = [
+        { id: "queued", type: "user_message", inputIntent: "queued_turn", runId, nodeId },
+        { id: "start", type: "user_message", inputIntent: "turn_start", runId, nodeId },
+        { id: "steer", type: "user_message", inputIntent: "steer", runId, nodeId },
+        {
+          id: "promoted",
+          type: "user_message",
+          inputIntent: "promoted_queued_to_steer",
+          runId,
+          nodeId,
+        },
+        { id: "legacy", type: "user_message", runId, nodeId },
+        { id: "assistant", type: "assistant_message", inputIntent: "queued_turn", runId, nodeId },
+        { id: "request", type: "run_interrupt_request", runId, nodeId },
+        { id: "result", type: "run_interrupt_result", runId, nodeId },
+        { id: "null", type: "user_message", inputIntent: "queued_turn", runId: null, nodeId },
+        {
+          id: "missing",
+          type: "user_message",
+          inputIntent: "queued_turn",
+          runId: otherRunId,
+          nodeId,
+        },
+      ] satisfies ReadonlyArray<VisibilityInput["items"][number] & { id: string }>;
+      const input = {
+        runs: [
+          {
+            id: runId,
+            status,
+            ...(startedAt === undefined ? {} : { startedAt: DateTime.makeUnsafe(startedAt) }),
+          },
+        ],
+        attempts: [],
+        items: rows,
+      } satisfies VisibilityInput;
+      expect(rows.filter((item) => isVisible({ ...input, item })).map((item) => item.id)).toEqual(
+        [
+          "queued",
+          "start",
+          "steer",
+          "promoted",
+          "legacy",
+          "assistant",
+          "request",
+          "result",
+          "null",
+          "missing",
+        ].filter((id) => !hidden.some((hiddenId) => hiddenId === id)),
+      );
+    },
+  );
 
   it.each([
     { name: "empty history", runs: [], attempts: [] },
@@ -217,11 +229,15 @@ describe.each([
 
 describe("indexed timeline visibility", () => {
   it.each([
-    ...ordinaryStatuses.flatMap(
+    ...[...ordinaryStatuses, "queued" as const].flatMap(
       (status) =>
         [
-          { statuses: ["rolled_back", status], visible: true, ordinaryVisible: true },
-          { statuses: ["cancelled", status], visible: true, ordinaryVisible: true },
+          {
+            statuses: ["rolled_back", status],
+            visible: status !== "queued",
+            ordinaryVisible: true,
+          },
+          { statuses: ["cancelled", status], visible: status !== "queued", ordinaryVisible: true },
           { statuses: [status, "rolled_back"], visible: false, ordinaryVisible: false },
           { statuses: [status, "cancelled"], visible: false, ordinaryVisible: true },
         ] as const,

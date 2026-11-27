@@ -53,7 +53,7 @@ abstract class AgentNotificationsFixture {
 
   protected fun update(alertId: String, active: Boolean) = mapOf(
     "device_id" to "device",
-    "user_id" to "user",
+    "user_hash" to "60a4ea94a99303630c40fff23f4de5c06a8f978289a3889f31edfac3b89f85d7",
     "updated_at" to System.currentTimeMillis().toString(),
     "active" to active.toString(),
     "activity_title" to "1 active agent",
@@ -664,7 +664,7 @@ class AgentNotificationChannelsTest {
     AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
     val running = mapOf(
       "device_id" to "device",
-      "user_id" to "user",
+      "user_hash" to "60a4ea94a99303630c40fff23f4de5c06a8f978289a3889f31edfac3b89f85d7",
       "updated_at" to System.currentTimeMillis().toString(),
       "active" to "true",
       "activity_title" to "Agent activity"

@@ -629,7 +629,7 @@ export interface Constructor {
 }
 
 /**
- * Creates a cached SQL statement constructor from a connection acquirer,
+ * Creates a SQL statement constructor from a connection acquirer,
  * compiler, tracing attributes, and optional row transformation function.
  *
  * @stability unstable
@@ -643,23 +643,19 @@ export const make = (
   transformRows: (<A extends object>(row: ReadonlyArray<A>) => ReadonlyArray<A>) | undefined,
   borrower?: Borrower | undefined
 ): Constructor => {
-  const cache = transformRows === undefined ? constructorCache.noTransforms : constructorCache.transforms
-  if (cache.has(acquirer)) {
-    return cache.get(acquirer)!
-  }
-  const self = Object.assign(
+  const self: Constructor = Object.assign(
     function sql(strings: unknown, ...args: Array<any>): any {
       if (typeof strings === "string") {
         return identifier(strings)
       } else if (Array.isArray(strings) && "raw" in strings) {
-        return statement(
+        return makeUnsafe(
+          templateSegments(strings as TemplateStringsArray, args),
           acquirer,
           compiler,
-          strings as TemplateStringsArray,
-          args,
           spanAttributes,
           transformRows,
-          borrower
+          borrower,
+          self
         )
       }
 
@@ -676,7 +672,8 @@ export const make = (
           compiler,
           spanAttributes,
           transformRows,
-          borrower
+          borrower,
+          self
         )
       },
       literal(sql: string) {
@@ -707,14 +704,7 @@ export const make = (
     }
   )
 
-  cache.set(acquirer, self)
-
   return self
-}
-
-const constructorCache = {
-  transforms: new WeakMap<Acquirer, Constructor>(),
-  noTransforms: new WeakMap<Acquirer, Constructor>()
 }
 
 /**
@@ -734,7 +724,10 @@ export const statement = <A = Row>(
   spanAttributes: ReadonlyArray<readonly [string, unknown]>,
   transformRows: (<A extends object>(row: ReadonlyArray<A>) => ReadonlyArray<A>) | undefined,
   borrower?: Borrower | undefined
-): Statement<A> => {
+): Statement<A> =>
+  makeUnsafe(templateSegments(strings, args), acquirer, compiler, spanAttributes, transformRows, borrower, undefined)
+
+const templateSegments = (strings: TemplateStringsArray, args: Array<any>): Array<Segment> => {
   const segments: Array<Segment> = strings[0].length > 0 ? [literal(strings[0])] : []
 
   for (let i = 0; i < args.length; i++) {
@@ -753,7 +746,7 @@ export const statement = <A = Row>(
     }
   }
 
-  return makeUnsafe(segments, acquirer, compiler, spanAttributes, transformRows, borrower)
+  return segments
 }
 
 /**
@@ -1413,6 +1406,7 @@ interface StatementImpl<A> extends Statement<A> {
   readonly spanAttributes: ReadonlyArray<readonly [string, unknown]>
   readonly transformRows: (<A extends object>(row: ReadonlyArray<A>) => ReadonlyArray<A>) | undefined
   readonly borrower: Borrower | undefined
+  readonly sql: Constructor | undefined
 
   withConnection<XA, E>(
     operation: string,
@@ -1441,7 +1435,8 @@ const makeUnsafe = <A = Row>(
   compiler: Compiler,
   spanAttributes: ReadonlyArray<readonly [string, unknown]>,
   transformRows: (<A extends object>(row: ReadonlyArray<A>) => ReadonlyArray<A>) | undefined,
-  borrower: Borrower | undefined
+  borrower: Borrower | undefined,
+  sql: Constructor | undefined
 ): StatementImpl<A> => {
   const self = Object.create(StatementProto)
   self.segments = segments
@@ -1450,13 +1445,14 @@ const makeUnsafe = <A = Row>(
   self.spanAttributes = spanAttributes
   self.transformRows = transformRows
   self.borrower = borrower
+  self.sql = sql
   return self
 }
 
 // TODO: figure out why these diagnostics are emitted
 const StatementProto: Omit<
   StatementImpl<any>,
-  "segments" | "acquirer" | "compiler" | "spanAttributes" | "transformRows" | "borrower"
+  "segments" | "acquirer" | "compiler" | "spanAttributes" | "transformRows" | "borrower" | "sql"
 > = {
   [FragmentTypeId]: FragmentTypeId,
   withConnection<XA, E>(
@@ -1631,7 +1627,7 @@ const withStatement = <A, X, E, R>(
     return Effect.flatMap(
       transform(
         self,
-        make(self.acquirer, self.compiler, self.spanAttributes, self.transformRows, self.borrower),
+        self.sql ?? make(self.acquirer, self.compiler, self.spanAttributes, self.transformRows, self.borrower),
         fiber,
         span
       ) as Effect.Effect<StatementImpl<A>>,

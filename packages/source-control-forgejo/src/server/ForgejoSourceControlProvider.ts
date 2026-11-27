@@ -1,46 +1,93 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
+import * as Semaphore from "effect/Semaphore";
 import { SourceControlProviderError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
+  combinedAuthOutput,
+  firstSafeAuthLine,
   isMissingExecutable,
   providerAuth,
   probeSourceControlProvider,
+  type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
+import {
+  parseGitRemoteHost,
+  unknownRemoteProvider,
+} from "@t3tools/source-control-core/shared/definition";
 import { ForgejoPullRequestSchema, toForgejoChangeRequest } from "./forgejoPullRequests.ts";
+import * as ForgejoChangeRequestTemplate from "./forgejoChangeRequestTemplate.ts";
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
+
+/**
+ * What Settings says about gt. With `defaultHost`, it names the account a repository published
+ * without a server goes to; without it, any signed-in account.
+ */
+function gtAuth(input: SourceControlAuthProbeInput, defaultHost?: string) {
+  const accounts = ForgejoCli.parseGtAccounts(input.stdout);
+  if (!accounts)
+    return providerAuth({
+      status: "unknown",
+      detail: firstSafeAuthLine(combinedAuthOutput(input)) ?? "Could not read gt's accounts.",
+    });
+  const chosen =
+    defaultHost === undefined
+      ? undefined
+      : ForgejoCli.defaultGtLogin(ForgejoCli.parseForgejoLogins(input.stdout), defaultHost);
+  if (defaultHost !== undefined && !chosen && accounts.length > 0)
+    return providerAuth({ status: "unknown", detail: ForgejoCli.NO_DEFAULT_GT_SERVER });
+  const account = chosen
+    ? accounts.find((entry) => entry.host === chosen.url && entry.user === chosen.user)
+    : (accounts.find((entry) => entry.active && entry.verified) ??
+      accounts.find((entry) => entry.active) ??
+      accounts[0]);
+  return account
+    ? providerAuth({
+        status: account.verified
+          ? "authenticated"
+          : // gt prints this for a server that did not answer, never for a rejected token.
+            account.error?.startsWith("cannot reach")
+            ? "unknown"
+            : "unauthenticated",
+        account: account.user,
+        host: ForgejoCli.parseForgejoRemote(account.host)?.host,
+        detail: account.error ?? undefined,
+      })
+    : providerAuth({
+        status: "unauthenticated",
+        detail: "Run `gt auth login` to authenticate a Forgejo or Gitea server.",
+      });
+}
 
 export const discovery = {
   type: "cli",
   kind: SourceControlProviderKind.make("forgejo"),
   label: "Forgejo / Gitea",
-  executable: "tea",
-  versionArgs: ["--version"],
-  authArgs: ["login", "status", "--output", "json"],
-  remoteRefinementArgs: () => ["login", "list", "--output", "json"],
-  parseAuth: (input) => {
-    const logins = ForgejoCli.parseForgejoLogins(input.stdout);
-    const login = logins.find((entry) => entry.default === "true") ?? logins[0];
-    return login
-      ? providerAuth({
-          status: login.valid === "true" ? "authenticated" : "unauthenticated",
-          account: login.user,
-          host: ForgejoCli.parseForgejoRemote(login.url)?.host,
-        })
-      : providerAuth({
-          status: "unauthenticated",
-          detail: "Run `tea login add` to authenticate a Forgejo or Gitea server.",
-        });
-  },
+  executable: "gt",
+  // Graphite's CLI is also `gt`; it answers `--version` but rejects the `version` command.
+  versionArgs: ["version"],
+  rejectedVersionMeansMissing: true,
+  authArgs: [
+    "auth",
+    "status",
+    "--verify",
+    "--json",
+    `${ForgejoCli.GT_ACCOUNT_FIELDS},verified,error`,
+  ],
+  remoteRefinementArgs: () => ["auth", "status", "--json", ForgejoCli.GT_ACCOUNT_FIELDS],
+  parseAuth: (input) => gtAuth(input),
   refineUnknownRemote: (input) => {
     const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
     const login =
@@ -59,7 +106,7 @@ export const discovery = {
       : null;
   },
   installHint:
-    "Install `fj` 0.6 or later from https://codeberg.org/forgejo-contrib/forgejo-cli and run `fj --host <server-url> auth add-token`, or install `tea` 0.16 or later from https://gitea.com/gitea/tea and run `tea login add` for each Forgejo or Gitea server.",
+    "Install `fj` 0.6 or later from https://codeberg.org/forgejo-contrib/forgejo-cli and run `fj --host <server-url> auth add-token`, or install `gt` 2.0 or later from https://gitea.com/gitea/cli and run `gt auth login --host <server-url>` for each Forgejo or Gitea server.",
 } satisfies SourceControlCliDiscoverySpec;
 
 export const makeDiscovery = Effect.gen(function* () {
@@ -102,6 +149,7 @@ export const makeDiscovery = Effect.gen(function* () {
           ...discovery,
           executable: "fj",
           versionArgs: ["version"],
+          rejectedVersionMeansMissing: false,
           authArgs: login ? ["--host", login.url, "whoami"] : ["auth", "list"],
           parseAuth: (result) =>
             Result.isFailure(credentials)
@@ -125,7 +173,7 @@ export const makeDiscovery = Effect.gen(function* () {
                   : providerAuth({
                       status: "unauthenticated",
                       detail:
-                        "Authenticate this server with `fj --host <server-url> auth add-token`.",
+                        "Authenticate this server with `fj --host <server-url> auth add-token`. For a server under a URL subpath, such as `https://example.com/forgejo`, use `gt auth login` instead.",
                     }),
         },
       });
@@ -149,11 +197,43 @@ export const makeDiscovery = Effect.gen(function* () {
         }
         return fj;
       }
-      const tea = yield* probeSourceControlProvider({ cwd, process, spec: discovery });
+      let accounts: SourceControlAuthProbeInput | undefined;
+      const gt = yield* probeSourceControlProvider({
+        cwd,
+        process,
+        spec: {
+          ...discovery,
+          parseAuth: (input) => {
+            accounts = input;
+            return gtAuth(input);
+          },
+        },
+      });
       // Discovery keeps the install hint only for an absent executable; a slow or broken fj
-      // explains itself better than tea's install advice.
+      // explains itself better than gt's install advice.
       const fjAbsent = fj.status === "missing" && fj.installHint === discovery.installHint;
-      return tea.status === "available" || fjAbsent ? tea : fj;
+      if (gt.status !== "available") return fjAbsent ? gt : fj;
+      const servers = new Set(
+        ForgejoCli.parseForgejoLogins(accounts?.stdout ?? "").map((login) => login.url),
+      );
+      if (!accounts || servers.size < 2) return gt;
+      // With several servers signed in, Settings names the one a repository published without
+      // a server goes to. gt is asked only now, after its version probe answered.
+      const defaultHost = yield* process
+        .run({
+          operation: "source-control.discovery.default-host",
+          command: "gt",
+          args: ["config", "get", "default_host"],
+          cwd,
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+          maxOutputBytes: 8_000,
+        })
+        .pipe(
+          Effect.map((result) => (Number(result.exitCode) === 0 ? result.stdout.trim() : "")),
+          Effect.orElseSucceed(() => ""),
+        );
+      return { ...gt, auth: gtAuth(accounts, defaultHost) };
     }),
     refineUnknownRemote: Effect.fn("ForgejoSourceControlProvider.refineUnknownRemote")(
       function* (input: {
@@ -163,14 +243,16 @@ export const makeDiscovery = Effect.gen(function* () {
         const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
         if (!remote) return null;
         let failure: ForgejoCli.ForgejoCliError | undefined;
-        for (const command of ["fj", "tea"] as const) {
+        for (const command of ["fj", "gt"] as const) {
           const logins = yield* listLogins({
             cwd: input.cwd,
             command,
             remoteUrl: input.context.remoteUrl,
           }).pipe(
             Effect.catchIf(
-              (error) => isMissingExecutable(error.cause),
+              // An absent CLI holds no login, and neither does another program named gt. Any
+              // other failure leaves the remote unknown.
+              (error) => isMissingExecutable(error.cause) || error.reason === "wrong-cli",
               () => Effect.succeed([]),
             ),
             Effect.result,
@@ -213,8 +295,10 @@ const refineRepositoryIdentity: NonNullable<
   resolveContext,
 }) {
   const remote = ForgejoCli.parseForgejoRemote(identity.locator.remoteUrl);
+  const remoteHost = parseGitRemoteHost(identity.locator.remoteUrl);
   if (
     !remote ||
+    !remoteHost ||
     !identity.rootPath ||
     (identity.provider !== undefined &&
       identity.provider !== "unknown" &&
@@ -224,7 +308,7 @@ const refineRepositoryIdentity: NonNullable<
   const context = yield* resolveContext({
     cwd: identity.rootPath,
     context: {
-      provider: { kind: SourceControlProviderKind.make("unknown"), name: "Unknown", baseUrl: "" },
+      provider: unknownRemoteProvider(remoteHost),
       remoteName: identity.locator.remoteName,
       remoteUrl: identity.locator.remoteUrl,
     },
@@ -251,13 +335,11 @@ const resolveRemoteWebHost: NonNullable<
   context,
   resolveContext,
 }) {
-  if (!ForgejoCli.parseForgejoRemote(context.remoteUrl)?.ssh) return null;
+  const remoteHost = parseGitRemoteHost(context.remoteUrl);
+  if (!ForgejoCli.parseForgejoRemote(context.remoteUrl)?.ssh || !remoteHost) return null;
   const resolved = yield* resolveContext({
     cwd,
-    context: {
-      ...context,
-      provider: { kind: SourceControlProviderKind.make("unknown"), name: "Unknown", baseUrl: "" },
-    },
+    context: { ...context, provider: unknownRemoteProvider(remoteHost) },
   });
   return resolved?.provider.kind === "forgejo"
     ? new URL(resolved.provider.baseUrl).host.toLowerCase()
@@ -278,10 +360,24 @@ const cloneUrls = (raw: typeof RepositorySchema.Type) => ({
 const repositoryPath = (repository: string) =>
   `repos/${repository.split("/").map(encodeURIComponent).join("/")}`;
 
+type ForgejoPull = typeof ForgejoPullRequestSchema.Type;
+const updatedMillis = (pull: ForgejoPull) =>
+  pull.updated_at?.pipe(Option.map(DateTime.toEpochMillis), Option.getOrUndefined);
+// Renaming a fork or deleting a pull request moves nothing in the list, so it is re-read in full.
+const UNFILTERED_PULLS_MAX_AGE_MS = 60 * 60_000;
+/** Every pull request of a repository whose server ignores `head=` (Gitea, Forgejo before 16). */
+interface UnfilteredPulls {
+  readonly lock: Semaphore.Semaphore;
+  pulls: Map<number, ForgejoPull> | undefined;
+  /** The newest `updated_at` on the list's first page when it was last read. */
+  newest: number | undefined;
+  scannedAt: number;
+}
+
 export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli.ForgejoCli;
   const fs = yield* FileSystem.FileSystem;
-  const { process } = yield* SourceControlHost.SourceControlHost;
+  const { git, process } = yield* SourceControlHost.SourceControlHost;
   const request = <S extends Schema.Codec<unknown, unknown, never, never>>(
     input: ForgejoCli.ForgejoApiInput,
     schema: S,
@@ -292,7 +388,7 @@ export const make = Effect.gen(function* () {
           Effect.mapError(
             (cause) =>
               new ForgejoCli.ForgejoCliError({
-                command: "tea",
+                command: "gt",
                 cwd: input.cwd,
                 detail: "Forgejo API returned an invalid response.",
                 reason: "invalid-response",
@@ -323,7 +419,7 @@ export const make = Effect.gen(function* () {
     const number = /(?:^#?|\/pulls\/)(\d+)(?:\/[^?#]*)?(?:[?#].*)?$/.exec(input.reference)?.[1];
     if (!number)
       return yield* new ForgejoCli.ForgejoCliError({
-        command: "tea",
+        command: "gt",
         cwd: input.cwd,
         detail: "Specify a pull request number or Forgejo pull request URL.",
       });
@@ -332,6 +428,48 @@ export const make = Effect.gen(function* () {
       ForgejoPullRequestSchema,
     );
   });
+  const unfilteredPulls = new Map<string, UnfilteredPulls>();
+  // Call holding `state.lock`. The list is sorted newest update first, so after one full read
+  // everything that changed since sits ahead of the first pull request older than `newest`.
+  const readUnfilteredPulls = Effect.fn("ForgejoSourceControlProvider.readUnfilteredPulls")(
+    function* (
+      input: ForgejoCli.ForgejoRepositoryInput,
+      repository: string,
+      state: UnfilteredPulls,
+      firstPage: ReadonlyArray<ForgejoPull> | undefined,
+    ) {
+      const now = yield* Clock.currentTimeMillis;
+      const since =
+        state.pulls && now - state.scannedAt < UNFILTERED_PULLS_MAX_AGE_MS
+          ? state.newest
+          : undefined;
+      const pulls =
+        since !== undefined && state.pulls ? state.pulls : new Map<number, ForgejoPull>();
+      let newest = since;
+      for (let page = 1; ; page++) {
+        const items =
+          page === 1 && firstPage && !state.pulls
+            ? firstPage
+            : yield* request(
+                {
+                  ...input,
+                  path: `${repositoryPath(repository)}/pulls?state=all&sort=recentupdate&limit=50&page=${page}`,
+                },
+                Schema.Array(ForgejoPullRequestSchema),
+              );
+        const updated = items.flatMap((item) => updatedMillis(item) ?? []);
+        for (const item of items) pulls.set(item.number, item);
+        // Later pages can hold newer updates than a first page read before them, and a mark past
+        // the first page's would skip the updates that pushed them down.
+        if (page === 1 && updated.length > 0) newest = Math.max(...updated);
+        if (items.length === 0 || (since !== undefined && updated.some((at) => at < since))) break;
+      }
+      if (since === undefined) state.scannedAt = now;
+      state.pulls = pulls;
+      state.newest = newest;
+      return pulls;
+    },
+  );
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("forgejo"),
     repositoryNameFromRemoteUrl,
@@ -342,16 +480,9 @@ export const make = Effect.gen(function* () {
         const repo = yield* cli.resolveRepository(input);
         const source = SourceControlProvider.sourceControlRefFromInput(input);
         const branch = SourceControlProvider.sourceBranch(input);
-        const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         const limit = input.limit ?? 20;
-        for (let page = 1; results.length < limit; page++) {
-          const items = yield* request(
-            {
-              ...input,
-              path: `${repositoryPath(repo.repository)}/pulls?state=${input.state === "merged" ? "closed" : input.state}&head=${encodeURIComponent(branch)}&sort=recentupdate&limit=50&page=${page}`,
-            },
-            Schema.Array(ForgejoPullRequestSchema),
-          );
+        const matching = (items: Iterable<ForgejoPull>) => {
+          const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
           for (const item of items) {
             const normalized = toForgejoChangeRequest(item);
             if (
@@ -362,11 +493,79 @@ export const make = Effect.gen(function* () {
               continue;
             if (input.state === "all" || normalized.state === input.state) results.push(normalized);
           }
-          if (items.length === 0) break;
+          return results;
+        };
+        const key = `${repo.baseUrl}\n${repo.repository}`;
+        let unfiltered = unfilteredPulls.get(key);
+        let firstPage: ReadonlyArray<ForgejoPull> | undefined;
+        if (!unfiltered) {
+          const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
+          for (let page = 1; results.length < limit; page++) {
+            const items = yield* request(
+              {
+                ...input,
+                path: `${repositoryPath(repo.repository)}/pulls?state=${input.state === "merged" ? "closed" : input.state}&head=${encodeURIComponent(branch)}&sort=recentupdate&limit=50&page=${page}`,
+              },
+              Schema.Array(ForgejoPullRequestSchema),
+            );
+            // A deleted head branch keeps its name only in `label`.
+            if (items.some((item) => item.head.ref !== branch && item.head.label !== branch)) {
+              unfiltered = unfilteredPulls.get(key) ?? {
+                lock: Semaphore.makeUnsafe(1),
+                pulls: undefined,
+                newest: undefined,
+                scannedAt: 0,
+              };
+              unfilteredPulls.set(key, unfiltered);
+              if (page === 1 && input.state === "all") firstPage = items;
+              break;
+            }
+            results.push(...matching(items));
+            if (items.length === 0) break;
+          }
+          if (!unfiltered) return results.slice(0, limit);
         }
-        return results.slice(0, limit);
+        const pulls = yield* unfiltered.lock.withPermits(1)(
+          readUnfilteredPulls(input, repo.repository, unfiltered, firstPage),
+        );
+        const candidates = matching(pulls.values()).toSorted(
+          (left, right) =>
+            Option.getOrElse(Option.map(right.updatedAt, DateTime.toEpochMillis), () => 0) -
+              Option.getOrElse(Option.map(left.updatedAt, DateTime.toEpochMillis), () => 0) ||
+            right.number - left.number,
+        );
+        // A deleted pull request leaves the list without moving anything in it, so a remembered
+        // match is read again before it is returned.
+        const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
+        for (const candidate of candidates) {
+          if (results.length >= limit) break;
+          const current = yield* request(
+            {
+              ...input,
+              path: `${repositoryPath(repo.repository)}/pulls/${candidate.number}`,
+            },
+            ForgejoPullRequestSchema,
+          ).pipe(
+            Effect.catchIf(
+              (error) => isForgejoCliError(error) && error.httpStatus === 404,
+              () => Effect.undefined,
+            ),
+          );
+          if (current?.number !== candidate.number) {
+            pulls.delete(candidate.number);
+            continue;
+          }
+          // Not written back: a refresh may have stored a newer copy while this was read.
+          results.push(...matching([current]));
+        }
+        return results;
       },
       (effect, input) => effect.pipe(mapError("listChangeRequests", input.cwd)),
+    ),
+    readChangeRequestTemplate: Effect.fn("ForgejoSourceControlProvider.readChangeRequestTemplate")(
+      function ({ cwd, treeish }) {
+        return ForgejoChangeRequestTemplate.detect(cwd, treeish, git.execute);
+      },
     ),
     getChangeRequest: Effect.fn("ForgejoSourceControlProvider.getChangeRequest")(function (input) {
       return getPull(input).pipe(
@@ -398,7 +597,18 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const repo = yield* cli.resolveRepository(input);
         return cloneUrls(
-          yield* request({ ...input, path: repositoryPath(repo.repository) }, RepositorySchema),
+          yield* request(
+            { ...input, path: repositoryPath(repo.repository) },
+            RepositorySchema,
+          ).pipe(
+            Effect.mapError((error) => {
+              if (error.reason !== "not-found") return error;
+              return new ForgejoCli.ForgejoCliError({
+                ...error,
+                userFacingDetail: SourceControlProvider.repositoryNotFoundDetail(repo.repository),
+              });
+            }),
+          ),
         );
       },
       (effect, input) => effect.pipe(mapError("getRepositoryCloneUrls", input.cwd)),
@@ -482,26 +692,24 @@ export const make = Effect.gen(function* () {
           yield* cli.execute({
             cwd: input.cwd,
             args: [
-              "pulls",
+              "pr",
               "checkout",
-              "--login",
-              repo.login,
+              String(pull.number),
+              ...ForgejoCli.gtAccountArgs(repo),
               "--repo",
               repo.repository,
-              "--branch",
-              String(pull.number),
             ],
           });
         if (input.force) {
           // Non-commit server input could become git options.
           if (!/^[0-9a-f]{7,64}$/i.test(pull.head.sha))
             return yield* new ForgejoCli.ForgejoCliError({
-              command: repo.command ?? "tea",
+              command: repo.command ?? "gt",
               cwd: input.cwd,
               detail: "Forgejo reported a pull request head that is not a commit.",
               reason: "invalid-response",
             });
-          // tea leaves PR branches stale; `--keep` updates them without discarding dirty files.
+          // gt leaves PR branches stale; `--keep` updates them without discarding dirty files.
           yield* process.run({
             operation: "ForgejoSourceControlProvider.checkoutChangeRequest",
             command: "git",

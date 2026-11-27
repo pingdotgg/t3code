@@ -1,7 +1,10 @@
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
+import { msg } from "gt-react";
 import { useState } from "react";
+
+import { m } from "~/i18n/messages";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -51,10 +54,10 @@ export function useReviewGuideWriter({
       useGuideRunStore.getState().settle(guideRunKey(environmentId, reference));
       toastManager.add({
         type: "error",
-        title: "Could not start a review guide",
+        title: m(msg("Could not start a review guide")),
         description: readableFailure(
           squashAtomCommandFailure(result),
-          "Check the review guide model in Settings → Source control.",
+          m(msg("Check the review guide model in Settings → Source control & issues.")),
         ),
       });
     }

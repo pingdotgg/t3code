@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeEvents from "node:events";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -12,15 +13,32 @@ import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 const makeWindow = () => {
   const sent: Array<string> = [];
   const revealed: Array<unknown> = [];
-  const webContents = Object.assign(new NodeEvents.EventEmitter(), {
-    isDestroyed: () => false,
-    send: (channel: string, url: string) => {
-      if (channel === WEB_LINK_OPEN_CHANNEL) sent.push(url);
-    },
-  });
-  const window = { webContents } as unknown as Electron.BrowserWindow;
-  const reload = () =>
-    webContents.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+  const open = () => {
+    const webContents = Object.assign(new NodeEvents.EventEmitter(), {
+      isDestroyed: () => false,
+      send: (channel: string, url: string) => {
+        if (channel === WEB_LINK_OPEN_CHANNEL) sent.push(url);
+      },
+    });
+    return { webContents } as unknown as Electron.BrowserWindow;
+  };
+  let window = Option.some(open());
+  const reload = () => {
+    if (Option.isSome(window)) {
+      window.value.webContents.emit("did-start-navigation", {
+        isMainFrame: true,
+        isSameDocument: false,
+      });
+    }
+  };
+  const close = () => {
+    const closed = window;
+    window = Option.none();
+    if (Option.isSome(closed)) closed.value.webContents.emit("destroyed");
+  };
+  const reopen = () => {
+    window = Option.some(open());
+  };
   const layer = DesktopWebLinks.layer.pipe(
     Layer.provide(
       Layer.succeed(DesktopWindow.DesktopWindow, {
@@ -31,13 +49,14 @@ const makeWindow = () => {
       Layer.succeed(
         ElectronWindow.ElectronWindow,
         ElectronWindow.ElectronWindow.of({
-          currentMainOrFirst: Effect.succeedSome(window),
+          main: Effect.sync(() => window),
+          currentMainOrFirst: Effect.sync(() => window),
           reveal: (target: Electron.BrowserWindow) => Effect.sync(() => void revealed.push(target)),
         } as unknown as ElectronWindow.ElectronWindow["Service"]),
       ),
     ),
   );
-  return { sent, revealed, layer, reload };
+  return { sent, revealed, layer, reload, close, reopen };
 };
 
 describe("DesktopWebLinks", () => {
@@ -59,6 +78,7 @@ describe("DesktopWebLinks", () => {
       yield* webLinks.setRendererReady(false);
       yield* webLinks.receive("https://example.com/fourth");
       assert.strictEqual(sent.length, 3);
+      assert.strictEqual(revealed.length, 2);
     }).pipe(Effect.provide(layer));
   });
 
@@ -73,6 +93,33 @@ describe("DesktopWebLinks", () => {
 
       yield* webLinks.setRendererReady(true);
       assert.deepStrictEqual(sent, ["https://example.com/during-reload"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("asks for a window when a link arrives after the main window closed", () => {
+    const { sent, revealed, layer, close, reopen } = makeWindow();
+    return Effect.gen(function* () {
+      const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+      close();
+      yield* webLinks.receive("https://example.com/at-launch");
+      assert.strictEqual(revealed.length, 0);
+
+      reopen();
+      yield* webLinks.setRendererReady(true);
+      assert.deepStrictEqual(sent, ["https://example.com/at-launch"]);
+      assert.strictEqual(revealed.length, 1);
+
+      close();
+      yield* webLinks.receive("https://example.com/after-close");
+      assert.deepStrictEqual(sent, ["https://example.com/at-launch"]);
+      assert.strictEqual(revealed.length, 2);
+
+      reopen();
+      yield* webLinks.setRendererReady(true);
+      assert.deepStrictEqual(sent, [
+        "https://example.com/at-launch",
+        "https://example.com/after-close",
+      ]);
     }).pipe(Effect.provide(layer));
   });
 });

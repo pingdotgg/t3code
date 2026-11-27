@@ -1,17 +1,22 @@
 import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 
 import type { SidebarProjectSnapshot } from "~/sidebarProjectGrouping";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 export function ProjectEnvironmentBadge(props: {
   readonly group: Pick<SidebarProjectSnapshot, "memberProjects">;
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly machineByEnvironmentId: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>;
 }) {
+  const gt = useGT();
   const remoteMembers = props.group.memberProjects
     .filter((member) => member.environmentId !== props.primaryEnvironmentId)
-    .map((member) => ({ ...member, environmentLabel: member.environmentLabel ?? "Remote" }))
+    .map((member) => ({
+      ...member,
+      environmentLabel: member.environmentLabel ?? gt("Remote", { $context: "machine location" }),
+    }))
     .sort((a, b) => a.environmentLabel.localeCompare(b.environmentLabel));
   const first = remoteMembers[0];
   if (!first) return null;
@@ -20,25 +25,23 @@ export function ProjectEnvironmentBadge(props: {
     .filter((label, index, all) => all.indexOf(label) === index)
     .join(", ");
   const alsoHere = remoteMembers.length < props.group.memberProjects.length;
-  const description = `${alsoHere ? "Also on" : "On"} ${labels}`;
+  const description = alsoHere ? gt("Also on {labels}", { labels }) : gt("On {labels}", { labels });
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            role="img"
-            aria-label={description}
-            className="inline-flex shrink-0 items-center text-muted-foreground"
-          />
-        }
-      >
-        <EnvironmentMachineIcon
-          aria-hidden
-          kind={props.machineByEnvironmentId.get(first.environmentId) ?? "server"}
-          className="size-3.5"
+    <SharedTooltipTrigger
+      render={
+        <span
+          role="img"
+          aria-label={description}
+          className="inline-flex shrink-0 items-center text-muted-foreground"
         />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{description}</TooltipPopup>
-    </Tooltip>
+      }
+      label={description}
+    >
+      <EnvironmentMachineIcon
+        aria-hidden
+        kind={props.machineByEnvironmentId.get(first.environmentId) ?? "server"}
+        className="size-3.5"
+      />
+    </SharedTooltipTrigger>
   );
 }
