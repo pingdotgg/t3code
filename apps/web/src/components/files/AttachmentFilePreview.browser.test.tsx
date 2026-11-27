@@ -2,7 +2,7 @@ import DocumentPages, { sanitizeDocumentHtml } from "./DocumentPages";
 import { act, fakeTimers, render, stubGlobal, type Screen } from "../../../test/render";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 // Prepare the real worker before tests; Vite's worker transform adds a large inline source map.
@@ -1471,22 +1471,52 @@ describe("attachment HTML preview recovery", () => {
   });
 });
 
-describe("document output sanitization", () => {
-  it("renders uppercase Roman markers on ordered list items", async () => {
-    await using screen = await render(
-      <DocumentPages
-        html={'<ol type="I"><li>Prepare the site</li></ol>'}
-        name="procedure.odt"
-        output
-      />,
-    );
-    const frame = screen.container.querySelector("iframe")!;
-    await vi.waitFor(() => {
-      const item = frame.contentDocument?.querySelector("li");
-      expect(item && frame.contentWindow?.getComputedStyle(item).listStyleType).toBe("upper-roman");
-    });
+it("renders uppercase Roman markers in the ODT preview", async () => {
+  const bytes = await new JSZip()
+    .file(
+      "content.xml",
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0">
+        <office:automatic-styles><text:list-style style:name="Roman">
+          <text:list-level-style-number text:level="1" style:num-format="I"/>
+        </text:list-style></office:automatic-styles>
+        <office:body><office:text><text:list text:style-name="Roman">
+          <text:list-item><text:p>Prepare the site</text:p></text:list-item>
+        </text:list></office:text></office:body>
+      </office:document-content>`,
+    )
+    .generateAsync({ type: "arraybuffer" });
+  const file = new File([bytes], "procedure.odt", {
+    type: "application/vnd.oasis.opendocument.text",
   });
+  await using screen = await render(
+    <AttachmentFilePreview
+      name={file.name}
+      mimeType={file.type}
+      sizeBytes={file.size}
+      file={file}
+    />,
+  );
+  await expect.element(screen.getByTitle(/^procedure\.odt/)).toBeVisible();
+  const session = cdp();
+  await vi.waitFor(async () => {
+    const { frameTree } = await session.send("Page.getFrameTree");
+    const runner = frameTree.childFrames?.find(({ frame }) => frame.url === location.href);
+    const preview = runner?.childFrames?.find(({ frame }) => frame.url === "about:srcdoc");
+    expect(preview).toBeDefined();
+    // The preview has an opaque origin, so its CSS must be read in its own frame.
+    const { executionContextId } = await session.send("Page.createIsolatedWorld", {
+      frameId: preview!.frame.id,
+    });
+    const { result } = await session.send("Runtime.evaluate", {
+      contextId: executionContextId,
+      expression: 'getComputedStyle(document.querySelector("li")).listStyleType',
+      returnByValue: true,
+    });
+    expect(result.value).toBe("upper-roman");
+  });
+});
 
+describe("document output sanitization", () => {
   it("fits saved HTML outputs to their content and resizes when the content changes", async () => {
     await using screen = await render(
       <DocumentPages html="<table><tr><td>42</td></tr></table>" name="Output" output />,
