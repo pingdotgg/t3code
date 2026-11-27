@@ -7656,6 +7656,107 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect("lists an awaited command's end after a later turn starts from an older snapshot", () =>
+    Effect.gen(function* () {
+      const released = yield* Deferred.make<void>();
+      const entries = backgroundExecTranscript.entries;
+      const late = entries.at(-1);
+      const turnStart = entries.filter(
+        (entry) => entry.type !== "runtime_exit" && entry.label === "turn/start",
+      );
+      const turnStarted = entries.find(
+        (entry) => entry.type !== "runtime_exit" && entry.label === "turn/started",
+      );
+      if (late === undefined || turnStart.length !== 2 || turnStarted === undefined) {
+        return yield* Effect.die("The background exec transcript changed shape.");
+      }
+      const NEXT_TURN = "native-codex-bg-turn-2";
+      const nextTurn = JSON.parse(
+        JSON.stringify([...turnStart, turnStarted])
+          .replaceAll('"id":3', '"id":5')
+          .replaceAll(`"${BG_NATIVE_TURN}"`, `"${NEXT_TURN}"`),
+      ) as Array<CodexReplay.CodexAppServerReplayEntry>;
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "codex-bg-roster-after-next-turn",
+          entries: [
+            ...entries.slice(0, -1),
+            {
+              type: "expect_outbound",
+              label: "list-background-terminals",
+              frame: {
+                id: 4,
+                method: "thread/backgroundTerminals/list",
+                params: { threadId: BG_NATIVE_THREAD },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "list-background-terminals",
+              frame: { id: 4, result: { data: [{ processId: "4242" }], nextCursor: null } },
+            },
+            ...nextTurn,
+            {
+              type: "emit_inbound",
+              label: "turn/completed/next",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: BG_NATIVE_THREAD,
+                  turn: makeCodexReplayTurn({ id: NEXT_TURN, status: "completed" }),
+                },
+              },
+            },
+            { ...late, afterMs: 0 } as CodexReplay.CodexAppServerReplayEntry,
+          ],
+        }),
+        undefined,
+        undefined,
+        undefined,
+        (entry) =>
+          entry.label === "item/completed/command-late" ? Deferred.await(released) : Effect.void,
+      );
+      const startTurn = (attempt: string) =>
+        Effect.flatMap(DateTime.now, (now) =>
+          harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(attempt),
+              text: BG_PROMPT,
+            }),
+          ),
+        );
+      const rosters = () => awaitedRosters(harness.events, harness.providerThread.id);
+      yield* startTurn("attempt-roster-first");
+      yield* harness.firstTerminal;
+      yield* harness.runtime.awaitBackgroundTasks!({
+        providerThread: harness.providerThread,
+        taskIds: ["4242"],
+        awaited: true,
+      });
+      yield* harness.until(() => rosters().length === 1);
+      // The next turn's input predates the roster published above.
+      yield* startTurn("attempt-roster-next");
+      yield* harness.until(() => harness.terminalEvents().length === 2);
+
+      yield* Deferred.succeed(released, undefined);
+      yield* harness.until(() => rosters().length === 2);
+      assert.deepEqual(rosters(), [[BG_COMMAND_ITEM], []]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // A command that waited on approval starts without a process id; Codex sends it on completion.
   it.effect("resolves the session id of an approved command Codex started without one", () =>
     Effect.gen(function* () {

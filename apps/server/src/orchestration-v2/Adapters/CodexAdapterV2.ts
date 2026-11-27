@@ -2540,6 +2540,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const turnTerminalizationPermit = yield* Semaphore.make(1);
         const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
         const rootProviderThreads = new Map<string, OrchestrationV2ProviderThread>();
+        // Turn and resume inputs carry snapshots older than the roster published since.
+        const publishedAwaitedRosters = new Map<
+          string,
+          ReadonlyArray<OrchestrationV2PendingBackgroundTask>
+        >();
+        const setRootProviderThread = (
+          nativeThreadId: string,
+          providerThread: OrchestrationV2ProviderThread,
+        ) => {
+          const roster = publishedAwaitedRosters.get(nativeThreadId);
+          rootProviderThreads.set(
+            nativeThreadId,
+            roster === undefined
+              ? providerThread
+              : { ...providerThread, pendingBackgroundTasks: roster },
+          );
+        };
         const goalHolds = new Map<string, CodexGoalHold>();
         const continuedRuns = new Map<ProviderTurnId, Array<ActiveCodexTurnContext>>();
         const capacityContinuations = new Map<
@@ -2705,7 +2722,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const goal = goalsByNativeThread.get(nativeThreadId) ?? null;
           if (providerGoalsEqual(providerThread.goal ?? null, goal)) return;
           const updated = { ...providerThread, goal, updatedAt: yield* DateTime.now };
-          rootProviderThreads.set(nativeThreadId, updated);
+          setRootProviderThread(nativeThreadId, updated);
           yield* emitProviderEvent({
             type: "provider_thread.updated",
             driver: CODEX_PROVIDER,
@@ -2718,7 +2735,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         ) {
           const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
           if (nativeThreadId == null) return;
-          rootProviderThreads.set(nativeThreadId, providerThread);
+          setRootProviderThread(nativeThreadId, providerThread);
           yield* emitGoalUpdate(nativeThreadId);
         });
 
@@ -2981,7 +2998,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
           for (const [nativeThreadId, providerThread] of rootProviderThreads) {
             const tasks = rosters.get(nativeThreadId) ?? [];
-            const previous = providerThread.pendingBackgroundTasks ?? [];
+            const previous =
+              publishedAwaitedRosters.get(nativeThreadId) ??
+              providerThread.pendingBackgroundTasks ??
+              [];
             if (
               previous.length === tasks.length &&
               previous.every((task, index) => task.taskId === tasks[index]?.taskId)
@@ -2992,6 +3012,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               pendingBackgroundTasks: tasks,
               updatedAt: yield* DateTime.now,
             };
+            publishedAwaitedRosters.set(nativeThreadId, tasks);
             rootProviderThreads.set(nativeThreadId, updated);
             yield* emitProviderEvent({
               type: "provider_thread.updated",
@@ -7123,7 +7144,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const rootProviderThread =
             nativeThreadId == null ? undefined : rootProviderThreads.get(nativeThreadId);
           if (nativeThreadId != null && rootProviderThread !== undefined) {
-            rootProviderThreads.set(nativeThreadId, { ...rootProviderThread, status: "idle" });
+            setRootProviderThread(nativeThreadId, { ...rootProviderThread, status: "idle" });
           }
           // Notification handlers block response routing, so the read and terminal get a fiber.
           if (awaitsReset) {
@@ -8323,7 +8344,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             yield* rejectIfRetired;
             if (command.type === "set") yield* validateCodexGoalObjective(command.objective);
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
-            rootProviderThreads.set(threadId, turnInput.providerThread);
+            setRootProviderThread(threadId, turnInput.providerThread);
             const readGoal = client
               .request("thread/goal/get", { threadId })
               .pipe(
@@ -8755,7 +8776,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               });
               // Codex resumes an active goal's turns right after the response; own them before it.
               const previousRoot = rootProviderThreads.get(nativeThreadId);
-              rootProviderThreads.set(nativeThreadId, threadInput.providerThread);
+              setRootProviderThread(nativeThreadId, threadInput.providerThread);
               goalUpdatesHeld.add(nativeThreadId);
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(appThreadId == null ? resume : reportingResume(appThreadId, resume)),
@@ -8765,7 +8786,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.onError(() =>
                   Effect.suspend(() => {
                     if (previousRoot !== undefined) {
-                      rootProviderThreads.set(nativeThreadId, previousRoot);
+                      setRootProviderThread(nativeThreadId, previousRoot);
                     }
                     return releaseGoalUpdates(nativeThreadId);
                   }),
@@ -8784,7 +8805,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeConversationHeadRef: threadInput.providerThread.nativeConversationHeadRef,
                 updatedAt: codexTimestamp(response.thread.updatedAt),
               } satisfies OrchestrationV2ProviderThread;
-              rootProviderThreads.set(nativeThreadId, resumed);
+              setRootProviderThread(nativeThreadId, resumed);
               yield* releaseGoalUpdates(nativeThreadId);
               return rootProviderThreads.get(nativeThreadId) ?? resumed;
             },
