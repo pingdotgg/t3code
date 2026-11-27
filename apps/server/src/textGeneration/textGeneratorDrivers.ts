@@ -60,8 +60,14 @@ const describeStatus = (label: string, status: number, message: string | undefin
   return `${label} ${reason}${detail ? `: ${detail}` : "."}`;
 };
 
-const endpoint = (connection: TextGeneratorConnection, path: string) =>
-  `${connection.baseUrl.replace(/\/+$/, "")}${path}`;
+const endpoint = (connection: TextGeneratorConnection, path: string) => {
+  const url = new URL(connection.baseUrl);
+  // The settings schema accepts a trailing empty "?" or "#"; drop them so the path lands in the pathname.
+  url.search = "";
+  url.hash = "";
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}${path}`;
+  return url.toString();
+};
 
 /** Sends a request and decodes a 2xx JSON body; anything else becomes a readable error. */
 const sendJson = Effect.fn("TextGenerator.sendJson")(function* <S extends Schema.Top>(

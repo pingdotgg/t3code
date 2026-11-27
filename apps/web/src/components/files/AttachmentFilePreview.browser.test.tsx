@@ -572,6 +572,35 @@ describe("bounded binary previews", () => {
     }
   });
 
+  it("opens extensionless UTF-8 text archive entries while rejecting binary ones", async () => {
+    const bytes = await new JSZip()
+      .file("CHANGELOG", "Release 1.2.3 notes")
+      .file("firmware", new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0x00, 0x01]))
+      .generateAsync({ type: "arraybuffer" });
+    const src = URL.createObjectURL(new Blob([bytes]));
+    try {
+      await using screen = await render(<BinaryViewer src={src} name="pkg.zip" kind="archive" />);
+      await vi.waitFor(
+        () => expect(screen.container.querySelectorAll("tbody button")).toHaveLength(2),
+        10_000,
+      );
+      await screen.getByRole("button", { name: "CHANGELOG" }).click();
+      await vi.waitFor(
+        () => expect(screen.container.textContent).toContain("Release 1.2.3 notes"),
+        10_000,
+      );
+      await screen.getByRole("button", { name: "Back to archive" }).click();
+      await screen.getByRole("button", { name: "firmware" }).click();
+      await vi.waitFor(() =>
+        expect(screen.container.querySelector('[role="alert"]')?.textContent).toContain(
+          "Only UTF-8 text and images can be opened inside an archive.",
+        ),
+      );
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  });
+
   it("keeps WhiteIsZero TIFF brightness and alpha with SubIFDs and type-13 ExifIFD pointers and rejects invalid metadata before decoding", async () => {
     let bytes = new ArrayBuffer(0);
     let exifEntry = 0;
@@ -2132,12 +2161,15 @@ it.each([
   expect(new DOMParser().parseFromString(html, "text/html").body.textContent).toBe(expected);
 });
 
-it.each(["odt", "odp"] as const)("preserves rendered %s spaces and tabs", async (kind) => {
+it.each(["odt", "odp", "rtf"] as const)("preserves rendered %s spaces and tabs", async (kind) => {
   const archive = new JSZip().file(
     "content.xml",
     `<office:document>${kind === "odt" ? "<office:text>" : "<draw:page>"}<text:p>A<text:s text:c="3"/>B<text:tab/>C</text:p>${kind === "odt" ? "</office:text>" : "</draw:page>"}</office:document>`,
   );
-  const bytes = await archive.generateAsync({ type: "arraybuffer" });
+  const bytes =
+    kind === "rtf"
+      ? new TextEncoder().encode(String.raw`{\rtf1\ansi A\tab B  C}`).buffer
+      : await archive.generateAsync({ type: "arraybuffer" });
   const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
     type: "module",
   });
@@ -2152,18 +2184,23 @@ it.each(["odt", "odp"] as const)("preserves rendered %s spaces and tabs", async 
     });
     if (result.type !== "document") throw new Error("Expected document");
     await using screen = await render(
-      <DocumentPages html={result.pages[0]!.html} name="spacing" output />,
+      <DocumentPages html={result.pages[0]!.html + "<p>A\tB  C</p>"} name="spacing" output />,
     );
     await vi.waitFor(() => {
       const doc = screen.container.querySelector("iframe")?.contentDocument;
-      const spans = doc?.querySelectorAll<HTMLElement>("span[data-odf-whitespace]");
-      expect(doc?.querySelector("p")?.textContent).toBe("A   B\tC");
-      expect(spans).toHaveLength(2);
+      const spans = doc?.querySelectorAll<HTMLElement>(
+        kind === "rtf" ? "p[data-rtf-whitespace]" : "span[data-odf-whitespace]",
+      );
+      expect(doc?.querySelector("p")?.innerText).toBe(kind === "rtf" ? "A\tB  C" : "A   B\tC");
+      expect(spans).toHaveLength(kind === "rtf" ? 1 : 2);
       for (const span of spans!) {
         expect(doc!.defaultView!.getComputedStyle(span).whiteSpace).toBe("pre-wrap");
         expect(span.getBoundingClientRect().width).toBeGreaterThan(0);
       }
       expect(spans![0]!.getBoundingClientRect().width).toBeGreaterThan(10);
+      const plain = doc!.querySelector<HTMLElement>("p:last-child")!;
+      expect(plain.innerText).toBe("A B C");
+      expect(doc!.defaultView!.getComputedStyle(plain).whiteSpace).toBe("normal");
     });
   } finally {
     worker.terminate();
