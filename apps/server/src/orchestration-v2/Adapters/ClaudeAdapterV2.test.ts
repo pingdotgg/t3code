@@ -16718,7 +16718,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       if (Exit.isFailure(started)) {
         assert.strictEqual(
           makeProviderFailure({ cause: started.cause, class: "transport_error" }).message,
-          "Claude Code could not start this turn: No message found with message.uuid of: 00000000-0000-4000-8000-000000004400",
+          "Claude Code could not find the checkpoint this thread resumes from. Start a fresh session with /clear, then send the message again.",
         );
       }
       if (harness.runtime.hasPendingBackgroundWork === undefined) {

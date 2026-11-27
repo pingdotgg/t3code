@@ -414,6 +414,8 @@ const CLAUDE_ROOT_REFUSAL =
   "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
 // Claude Code's answer to a --resume whose session store is gone, as a result error and on stderr.
 const CLAUDE_CONVERSATION_NOT_FOUND = "No conversation found with session ID:";
+// Claude Code's result error for a resumeSessionAt message it cannot find in the session.
+const CLAUDE_RESUME_POINT_NOT_FOUND = "No message found with message.uuid of:";
 
 // fd 4 gates the launch until the server has recorded the process it is about to become.
 // The shell enters the cwd itself: as a native cwd, a mount that hangs chdir freezes the server.
@@ -897,12 +899,12 @@ export class ClaudeConversationNotFoundError extends Schema.TaggedError<ClaudeCo
   }
 }
 
-export class ClaudeStartRejectedError extends Schema.TaggedError<ClaudeStartRejectedError>()(
-  "ClaudeStartRejectedError",
-  { error: Schema.String },
+export class ClaudeResumePointNotFoundError extends Schema.TaggedError<ClaudeResumePointNotFoundError>()(
+  "ClaudeResumePointNotFoundError",
+  { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `Claude Code could not start this turn: ${this.error}`;
+    return "Claude Code could not find the checkpoint this thread resumes from. Start a fresh session with /clear, then send the message again.";
   }
 }
 
@@ -14758,15 +14760,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
               if (!attached) {
                 yield* Ref.update(activeTurn, (current) => (current === context ? null : current));
-                const rejection =
-                  querySession.rejectedStart === undefined
-                    ? undefined
-                    : resultUserFacingError(querySession.rejectedStart);
+                const rejectedStart = querySession.rejectedStart;
+                const resumePointMissing =
+                  rejectedStart !== undefined &&
+                  rejectedStart.subtype !== "success" &&
+                  rejectedStart.errors.some((error) =>
+                    error.startsWith(CLAUDE_RESUME_POINT_NOT_FOUND),
+                  );
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver: CLAUDE_PROVIDER,
                   detail: CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL,
-                  ...(rejection !== undefined
-                    ? { cause: new ClaudeStartRejectedError({ error: rejection }) }
+                  ...(resumePointMissing
+                    ? { cause: new ClaudeResumePointNotFoundError({ cause: rejectedStart }) }
                     : querySession.exitCause === undefined
                       ? {}
                       : { cause: querySession.exitCause }),
