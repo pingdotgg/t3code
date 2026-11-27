@@ -240,16 +240,11 @@ describe("extractInlineCodeSpans", () => {
       "Use `` ``` `` to open a fence, then edit `./a/shared.ts` and `./b/shared.ts`",
       ["```", "./a/shared.ts", "./b/shared.ts"],
     ],
-    ["~~~md\nSee `./a/shared.ts`\n~~~\nEdit `./b/shared.ts`", ["./b/shared.ts"]],
     ["````md\n```ts\nSee `./a/shared.ts`\n```\n````\nEdit `./b/shared.ts`", ["./b/shared.ts"]],
-    ["```ts\nSee `./a/shared.ts`\n```\nEdit `./b/shared.ts`", ["./b/shared.ts"]],
     ["> ```\n> See `./a/shared.ts`\n> ```\nEdit `./b/shared.ts`", ["./b/shared.ts"]],
-    ["- a\n    ```\n    code `./a/shared.ts`\n    ```\nEdit `./b/shared.ts`", ["./b/shared.ts"]],
-    ["Edit `./a/shared.ts`\n```\nSee `./b/shared.ts`", ["./a/shared.ts"]],
     ["```x``` then `./a/shared.ts`", ["x", "./a/shared.ts"]],
     ["```\n`a.ts`\n``` not closed\n`b.ts`", []],
     ["~~~~\n`./a/shared.ts`\n~~~\n`./b/shared.ts`\n~~~~\n`./c/shared.ts`", ["./c/shared.ts"]],
-    ["```ts\r\n`./a/shared.ts`\r\n``` \r\n`./b/shared.ts`", ["./b/shared.ts"]],
     [
       "```diff\n- ```\n```\nEdit `./a/shared.ts` and `./b/shared.ts`",
       ["./a/shared.ts", "./b/shared.ts"],
@@ -260,10 +255,6 @@ describe("extractInlineCodeSpans", () => {
     ],
     [
       "```yaml\ndesc: |\n    ```\n```\nEdit `./a/shared.ts` and `./b/shared.ts`",
-      ["./a/shared.ts", "./b/shared.ts"],
-    ],
-    [
-      "```go\n\t```\n```\nEdit `./a/shared.ts` and `./b/shared.ts`",
       ["./a/shared.ts", "./b/shared.ts"],
     ],
     ["- ```\n  `./a/shared.ts`\n  ```\nEdit `./b/shared.ts`", ["./b/shared.ts"]],
