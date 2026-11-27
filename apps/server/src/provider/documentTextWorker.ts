@@ -18,6 +18,10 @@ const PRESENTATIONML_NAMESPACES = new Set([
   "http://schemas.openxmlformats.org/presentationml/2006/main",
   "http://purl.oclc.org/ooxml/presentationml/main",
 ]);
+const WORDPROCESSINGML_NAMESPACES = new Set([
+  "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+  "http://purl.oclc.org/ooxml/wordprocessingml/main",
+]);
 const PPTX_DRAWING_PROPERTIES = new Map([
   ["sp", "nvSpPr"],
   ["grpSp", "nvGrpSpPr"],
@@ -159,6 +163,36 @@ function isXhtmlElement(
   );
 }
 
+function hasImportantDisplayNone(style: string): boolean {
+  // Stylesheet rules can override non-important inline display.
+  if (!style || style.includes("\\") || !/display/i.test(style) || !/important/i.test(style))
+    return false;
+  let badString = false;
+  const declarations = style.replaceAll(
+    /\/\*[\s\S]*?(?:\*\/|$)|"[^"]*(?:"|$)|'[^']*(?:'|$)/g,
+    (token) => {
+      if (token.startsWith("/")) return " ";
+      // CSS ends a string at a newline, so later declarations can still apply.
+      if (/[\n\r\f]/.test(token)) badString = true;
+      return '""';
+    },
+  );
+  // Semicolons in blocks can be part of a declaration's value.
+  if (badString || /[()[\]{}]/.test(declarations)) return false;
+  let hidden = false;
+  for (const [declaration] of declarations.matchAll(/[^;]+/g)) {
+    const match =
+      /^[\t\n\f\r ]*(display|all)[\t\n\f\r ]*:([^!]+)![\t\n\f\r ]*important[\t\n\f\r ]*$/i.exec(
+        declaration,
+      );
+    if (!match) continue;
+    const [, property, value] = match;
+    if (!value?.trim()) continue;
+    hidden = property?.toLowerCase() === "display" && /^[\t\n\f\r ]*none[\t\n\f\r ]*$/i.test(value);
+  }
+  return hidden;
+}
+
 function xml(source: string, extension: string): XmlNode {
   const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
@@ -251,8 +285,9 @@ function xml(source: string, extension: string): XmlNode {
         isXhtmlElement(tag.name, [...stack, node], rootTagName)) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
-        Object.hasOwn(tag.attributes, "hidden") &&
-        !/^until-found$/i.test(String(tag.attributes.hidden))) ||
+        ((Object.hasOwn(tag.attributes, "hidden") &&
+          !/^until-found$/i.test(String(tag.attributes.hidden))) ||
+          hasImportantDisplayNone(tag.attributes.style ?? ""))) ||
       (extension === ".docx" && node.name === "del") ||
       (extension === ".docx" &&
         node.name === "r" &&
@@ -274,6 +309,16 @@ function xml(source: string, extension: string): XmlNode {
     ) {
       parent.children.pop();
       return;
+    }
+    if (
+      extension === ".docx" &&
+      node.name === "ruby" &&
+      WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "")
+    ) {
+      const base = children(node).find((child) => child.name === "rubyBase");
+      const reading = children(node).find((child) => child.name === "rt");
+      // Word stores the guide first even though the base is the text on the line.
+      if (base?.hasText && reading?.hasText) node.children = [base, "(", reading, ")"];
     }
     if (extension === ".epub" && node.name === "ruby" && stack[1]?.name === "html")
       separateRubyReadings(node);
@@ -894,7 +939,28 @@ function rtfUnicodeDestination(
   if (end !== undefined) return { body, end };
 }
 
+const RTF_NESTED_CELL_END = Symbol("rtf-nested-cell-end");
+
 function* rtf(source: string): Generator<string, void> {
+  // \nestcell ends a nested cell without a delimiter; space it only from adjacent text.
+  let last = "";
+  let afterNestedCell = false;
+  for (const part of rtfParts(source)) {
+    if (part === RTF_NESTED_CELL_END) {
+      afterNestedCell = true;
+      continue;
+    }
+    const text = part.replaceAll("\0", "");
+    if (text) {
+      if (afterNestedCell && /\S/u.test(last) && /\S/u.test(text[0]!)) yield " ";
+      afterNestedCell = false;
+      last = text.at(-1)!;
+    }
+    yield part;
+  }
+}
+
+function* rtfParts(source: string): Generator<string | typeof RTF_NESTED_CELL_END, void> {
   if (!source.startsWith("{\\rtf")) throw new Error("Invalid RTF document");
   let state = {
     skip: false,
@@ -1057,6 +1123,7 @@ function* rtf(source: string): Generator<string, void> {
         // Table structure survives tracked deletions; only the deleted cell text is dropped.
         else if (!state.skip && control === "row") yield "\n";
         else if (!state.skip && control === "cell") yield "\t";
+        else if (!state.skip && control === "nestcell") yield RTF_NESTED_CELL_END;
         else if (!hidden() && symbols.has(control)) yield symbols.get(control)!;
       } else {
         i++;
