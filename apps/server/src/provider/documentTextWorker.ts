@@ -363,6 +363,12 @@ function* xstringText(node: XmlNode): Generator<string, void> {
         literal ? `_${literal}` : String.fromCharCode(Number.parseInt(hex!, 16)),
     );
 }
+
+function hasXstringText(node: XmlNode): boolean {
+  for (const value of xstringText(node)) if (value.trim()) return true;
+  return false;
+}
+
 function* paragraphs(node: XmlNode): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
   if (node.imageDescription !== undefined) {
@@ -1045,7 +1051,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       const formats = cellFormats ? children(cellFormats) : [];
       const sharedPath = workbookPartPath("sharedStrings");
       const strings = has(sharedPath) ? [...all(read(sharedPath), "si")] : [];
-      const populatedStrings = strings.map(hasCellText);
+      const populatedStrings = strings.map(hasXstringText);
       for (const sheet of all(workbook, "sheet")) {
         yield `\n## Sheet: ${sheet.attrs.name}\n`;
         const target = rels.get(sheet.attrs["r:id"] ?? sheet.attrs.id)?.Target;
@@ -1060,7 +1066,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             const raw = value?.children.find((child) => typeof child === "string")?.trim();
             return !!raw && !!populatedStrings[Number(raw)];
           }
-          if (cell.attrs.t === "inlineStr") return hasCellText(cell);
+          if (cell.attrs.t === "inlineStr") return hasXstringText(cell);
           if (value && hasCellText(value)) return true;
           for (const formula of all(cell, "f")) if (hasCellText(formula)) return true;
           return false;

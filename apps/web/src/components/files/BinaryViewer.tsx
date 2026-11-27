@@ -213,8 +213,10 @@ export default function BinaryViewer(props: {
     // Files stay keyed by their raw name so `/a.txt` and `a.txt` remain two openable rows.
     const key = directory ? `d:${path}` : `f:${item.path}`;
     const previous = children.get(key);
-    if (previous && directory) previous.size += item.size;
-    else
+    if (previous && directory) {
+      previous.size += item.size;
+      if (slash < 0 && item.directory) previous.modified = item.modified;
+    } else
       children.set(key, {
         path,
         entryPath: item.path,

@@ -758,9 +758,11 @@
   "8360d689ebc7f829": "Pushen & {shortLabel} aus dem Standard-Branch erstellen?",
   "daa408bb99d21d18": "{kind, select, pr {Diese Aktion pusht lokale Commits und erstellt einen PR auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.} mr {Diese Aktion pusht lokale Commits und erstellt einen MR auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.} generic {Diese Aktion pusht lokale Commits und erstellt eine Änderungsanfrage auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.} other {Diese Aktion pusht lokale Commits und erstellt {changeRequest} auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.}}",
   "8471c4c5a50ffde3": "Issues dieses Hosts können noch nicht angezeigt werden.",
-  "2f4a47129f89fe22": "Nicht verbunden. Füge einen persönlichen API-Schlüssel hinzu, um die Issues aufzulisten.",
+  "4a727b074bbbc5b2": "Nicht verbunden. Füge deinen persönlichen API-Schlüssel hinzu, um die Issues aufzulisten.",
+  "b40c70c4488dcebe": "Nicht verbunden. Füge dein API-Token hinzu, um die Issues aufzulisten.",
   "024baab60525a419": "Die gespeicherten Anmeldedaten wurden abgelehnt.",
-  "2613c232516f3c72": "Verbunden als {account} · noch keine Projekte verknüpft. Wähle für ein Projekt ein Team, um seine Issues aufzulisten.",
+  "1e89798e3a9050c6": "Verbunden als {account} · noch keine Projekte verknüpft. Verknüpfe eines mit einem Linear-Team, um seine Issues aufzulisten.",
+  "c3ab6f9e8b29fbf1": "Verbunden als {account} · noch keine Projekte verknüpft. Verknüpfe eines mit einem Jira-Projekt, um seine Issues aufzulisten.",
   "77d07bfe2f8ee19d": "{count, plural, one {Verbunden als {account} · {count} Projekt verknüpft} other {Verbunden als {account} · {count} Projekte verknüpft}}",
   "3eb9a01099aaf799": "{count} s",
   "3618302947c280f0": "{count} Min.",
@@ -10497,6 +10499,9 @@
     }
   ],
   "a8c2b705bbb43a80": "Keine Treffer gefunden.",
+  "384d0c30da9f9f2b": "Zurück zu {model} · {effort}",
+  "e898114f94a79aee": "Zurück zu {model}",
+  "fcef94b45227b775": "Die letzte Runde lief damit, daher gilt ihr Prompt-Cache weiterhin.",
   "425f7ce2f24cb248": "Einstellungsbereiche",
   "ee3e8bd8b7918aec": "Suchen",
   "858561b97fdd72f2": "Einstellungen durchsuchen",
@@ -13037,7 +13042,5 @@
   "0eceb5780908eb6c": "Vorlesen",
   "3ee98da81538c6de": "Die Vertonung konnte nicht abgespielt werden.",
   "95435f0b59cb2193": "Audiovorschau",
-  "384d0c30da9f9f2b": "Zurück zu {model} · {effort}",
-  "e898114f94a79aee": "Zurück zu {model}",
-  "fcef94b45227b775": "Die letzte Runde lief damit, daher gilt ihr Prompt-Cache weiterhin."
+  "4a12506938295127": "Gib zuerst {field} ein."
 }
