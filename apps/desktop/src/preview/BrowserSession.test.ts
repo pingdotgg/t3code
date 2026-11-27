@@ -422,6 +422,38 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("does not ask again for an app link the user cancelled on the same page", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const requestHandler =
+        sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
+      assert.isFunction(requestHandler);
+      const page = Object.assign(new NodeEvents.EventEmitter(), {
+        hostWebContents: null,
+        isDestroyed: () => false,
+      });
+
+      const request = () =>
+        Effect.callback<boolean>((resume) => {
+          requestHandler(
+            page,
+            "openExternal",
+            (granted: boolean) => resume(Effect.succeed(granted)),
+            { externalURL: "bytedance://dispatch_message/" },
+          );
+        });
+
+      showMessageBox.mockReset();
+      showMessageBox.mockReturnValue(1);
+      assert.isFalse(yield* request());
+      assert.isFalse(yield* request());
+      assert.isFalse(yield* request());
+      assert.strictEqual(showMessageBox.mock.calls.length, 1);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect.each([
     {
       permission: "clipboard-read",
