@@ -312,48 +312,48 @@ function applySgr(attributes: Attributes, params: ReadonlyArray<number>): void {
 
 const STRING_SEQUENCE_INTRODUCERS = new Set(["]", "P", "X", "_", "^"]);
 
-/** Length of a complete escape sequence starting at `index` (an ESC), or -1 if unfinished. */
-function escapeLength(input: string, index: number): number {
-  const next = input[index + 1];
+/** Exclusive end of an escape sequence whose introducer is at `start`, or -1 if unfinished. */
+function escapeEnd(input: string, start: number): number {
+  const next = input[start];
   if (next === undefined) return -1;
   // A second ESC restarts the sequence.
-  if (next === ESC) return 1;
+  if (next === ESC) return start;
   if (next === "[") {
-    for (let cursor = index + 2; cursor < input.length; cursor += 1) {
+    for (let cursor = start + 1; cursor < input.length; cursor += 1) {
       const code = input.charCodeAt(cursor);
       // Like xterm.js, a new ESC cancels an unfinished CSI so the next sequence parses intact.
-      if (code === 0x1b) return cursor - index;
+      if (code === 0x1b) return cursor;
       // CAN and SUB cancel the CSI and are consumed.
-      if (code === 0x18 || code === 0x1a) return cursor - index + 1;
-      if (code >= 0x40 && code <= 0x7e) return cursor - index + 1;
+      if (code === 0x18 || code === 0x1a) return cursor + 1;
+      if (code >= 0x40 && code <= 0x7e) return cursor + 1;
       // Like xterm.js, a non-ASCII code point aborts the CSI and is consumed, both halves of a surrogate pair.
       if (code >= 0x80) {
         if (code >= 0xd800 && code <= 0xdbff) {
           if (cursor + 1 >= input.length) return -1;
           const low = input.charCodeAt(cursor + 1);
-          if (low >= 0xdc00 && low <= 0xdfff) return cursor - index + 2;
+          if (low >= 0xdc00 && low <= 0xdfff) return cursor + 2;
         }
-        return cursor - index + 1;
+        return cursor + 1;
       }
     }
     return -1;
   }
   if (STRING_SEQUENCE_INTRODUCERS.has(next)) {
     // BEL/ST ends string sequences; also stop at newlines so stray binary introducers cannot hide later output.
-    for (let cursor = index + 2; cursor < input.length; cursor += 1) {
-      if (input[cursor] === "\u0007") return cursor - index + 1;
-      if (input[cursor] === "\u0018" || input[cursor] === "\u001a") return cursor - index + 1;
-      if (input[cursor] === "\n") return cursor - index;
+    for (let cursor = start + 1; cursor < input.length; cursor += 1) {
+      if (input[cursor] === "\u0007") return cursor + 1;
+      if (input[cursor] === "\u0018" || input[cursor] === "\u001a") return cursor + 1;
+      if (input[cursor] === "\n") return cursor;
       // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
       if (input[cursor] === ESC) {
         if (cursor + 1 >= input.length) return -1;
-        return input[cursor + 1] === "\\" ? cursor - index + 2 : cursor - index;
+        return input[cursor + 1] === "\\" ? cursor + 2 : cursor;
       }
     }
     return -1;
   }
   // ECMA-35: any intermediate bytes (0x20-0x2F, e.g. charset designations, DECALN) precede one final byte.
-  let cursor = index + 1;
+  let cursor = start;
   while (
     cursor < input.length &&
     input.charCodeAt(cursor) >= 0x20 &&
@@ -364,13 +364,13 @@ function escapeLength(input: string, index: number): number {
   if (cursor >= input.length) return -1;
   // After intermediates, a control or ESC is not a final byte; end before it so it is still processed.
   const final = input.charCodeAt(cursor);
-  if (cursor > index + 1 && (final < 0x30 || final > 0x7e)) return cursor - index;
+  if (cursor > start && (final < 0x30 || final > 0x7e)) return cursor;
   if (final >= 0xd800 && final <= 0xdbff) {
     if (cursor + 1 >= input.length) return -1;
     const low = input.charCodeAt(cursor + 1);
-    if (low >= 0xdc00 && low <= 0xdfff) return cursor - index + 2;
+    if (low >= 0xdc00 && low <= 0xdfff) return cursor + 2;
   }
-  return cursor - index + 1;
+  return cursor + 1;
 }
 
 const penTransitions = new Map<string, string>();
@@ -597,10 +597,12 @@ class Terminal {
     }
   }
 
-  private control(code: number): void {
+  private applyLineControl(code: number): boolean {
     if (code === 0x0a) this.newline();
     else if (code === 0x0d) this.col = 0;
     else if (code === 0x08) this.col = Math.max(0, this.col - 1);
+    else return false;
+    return true;
   }
 
   /** Applies `input`; returns the unfinished escape left at its end. */
@@ -617,16 +619,18 @@ class Terminal {
       flush(index);
       printable = index + 1;
       if (code === 0x1b) {
-        const length = escapeLength(input, index);
-        let sequence = input.slice(index, length === -1 ? input.length : index + length);
+        let start = index + 1;
+        while (this.applyLineControl(input.charCodeAt(start))) start += 1;
+        const end = escapeEnd(input, start);
+        let sequence = ESC + input.slice(start, end === -1 ? input.length : end);
         if (sequence[1] === "[") {
           // Apply line controls now and leave them out of the CSI, including any pending fragment.
           sequence = sequence.replace(/[\b\n\r]/gu, (control) => {
-            this.control(control.charCodeAt(0));
+            this.applyLineControl(control.charCodeAt(0));
             return "";
           });
         }
-        if (length === -1) {
+        if (end === -1) {
           if (sequence.length <= MAX_PENDING_ESCAPE) return sequence;
           // Retain the introducer and possible ST prefix so long string payloads stay hidden until termination.
           if (STRING_SEQUENCE_INTRODUCERS.has(sequence[1]!)) {
@@ -635,10 +639,10 @@ class Terminal {
           return "";
         }
         this.escape(sequence);
-        index += length - 1;
-        printable = index + 1;
+        index = end - 1;
+        printable = end;
       } else {
-        this.control(code);
+        this.applyLineControl(code);
       }
     }
     const last = input.charCodeAt(input.length - 1);
