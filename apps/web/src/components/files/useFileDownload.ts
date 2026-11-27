@@ -23,16 +23,19 @@ export function useFileDownload(environmentId: EnvironmentId | null) {
   return (cwd: string, filePath: string | Promise<string>) =>
     void (async () => {
       const path = await filePath;
-      const httpBaseUrl = readPreparedConnection(environmentId)?.httpBaseUrl;
-      if (!httpBaseUrl) throw new Error(gt("Reconnect to the environment and try again."));
+      const connection = readPreparedConnection(environmentId);
+      if (!connection?.httpBaseUrl)
+        throw new Error(gt("Reconnect to the environment and try again."));
       const result = await createUrl({
         environmentId,
         input: { resource: { _tag: "draft-workspace-file", cwd, path, disposition: "attachment" } },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+      const url = resolveAssetUrl(connection.httpBaseUrl, result.value.relativeUrl);
       if (!url) throw new Error(gt("The file could not be loaded. Try again."));
-      await downloadMedia(url, path.split(/[\\/]/).at(-1) || path);
+      const hostOs = connection.descriptor?.platform.os;
+      const separator = hostOs === "linux" || hostOs === "darwin" ? "/" : /[\\/]/;
+      await downloadMedia(url, path.split(separator).at(-1) || path);
     })().catch((cause: unknown) =>
       toastManager.add({
         type: "error",
