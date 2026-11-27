@@ -119,7 +119,8 @@ describe("watchAntigravityPromptOutcome", () => {
             "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER, step_payload BLOB)",
           );
           const insert = database.prepare("INSERT INTO steps VALUES (?, ?, ?, ?)");
-          for (const [type, status] of steps) insert.run(nextIndex++, type, status, Buffer.from("x"));
+          for (const [type, status] of steps)
+            insert.run(nextIndex++, type, status, Buffer.from("x"));
         } finally {
           database.close();
         }
@@ -206,7 +207,11 @@ describe("watchAntigravityPromptOutcome", () => {
         Effect.gen(function* () {
           const check = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
           appendSteps(steps);
-          return yield* check(result, options);
+          const outcome = yield* check(result, options);
+          if (outcome !== undefined && "replyFinished" in outcome) {
+            return assert.fail("expected a failure or no outcome");
+          }
+          return outcome;
         });
       const input = Buffer.from("Run the fixture.");
       const reply = Buffer.from("FIXTURE_OK");
@@ -442,7 +447,11 @@ describe("watchAntigravityPromptOutcome", () => {
       const linked = yield* watchAntigravityPromptOutcome(profileDirectory, own);
       append(peer, ERROR_MESSAGE, QUOTA_ERROR);
       assert.isUndefined(yield* linked({ stopReason: "end_turn" }));
-      assert.equal((yield* linked({ stopReason: "refusal" }))?.failure.class, "usage_limit");
+      const refused = yield* linked({ stopReason: "refusal" });
+      assert.equal(
+        refused !== undefined && "failure" in refused ? refused.failure.class : undefined,
+        "usage_limit",
+      );
 
       // An unreadable log gives no evidence, but the agent's typed refusal still fails the turn.
       yield* fs.remove(path.join(conversations, `${own}.db`));

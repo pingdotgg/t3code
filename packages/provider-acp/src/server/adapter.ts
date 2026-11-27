@@ -440,6 +440,11 @@ interface AcpPromptOutcomeFailure {
   readonly resumeWith?: string;
 }
 
+/** The agent's own log shows the reply finished, though `session/prompt` never answered. */
+interface AcpPromptOutcomeReplyFinished {
+  readonly replyFinished: true;
+}
+
 export interface AcpAdapterV2Flavor {
   readonly buildAttachmentPrompt?: (input: {
     readonly text: string;
@@ -453,7 +458,8 @@ export interface AcpAdapterV2Flavor {
   /**
    * Runs before `session/prompt`. The check reports a failure hidden by a clean stop, or
    * by silence when the inactivity watchdog retires the prompt (`retired`). A failure
-   * restarts the runtime; a `broken` thread's next turn starts a fresh session.
+   * restarts the runtime; a `broken` thread's next turn starts a fresh session. A retired
+   * prompt whose reply finished completes its turn instead of failing it.
    */
   readonly watchPromptOutcome?: (
     sessionId: string,
@@ -461,7 +467,7 @@ export interface AcpAdapterV2Flavor {
     (
       result: EffectAcpSchema.PromptResponse,
       options?: { readonly retired?: boolean },
-    ) => Effect.Effect<AcpPromptOutcomeFailure | undefined>
+    ) => Effect.Effect<AcpPromptOutcomeFailure | AcpPromptOutcomeReplyFinished | undefined>
   >;
   readonly requiresSignIn?: (cause: unknown) => boolean;
   /**
@@ -9927,6 +9933,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         }).pipe(Effect.as(undefined)),
                       ),
                     );
+              if (recorded !== undefined && "replyFinished" in recorded) {
+                yield* finalizeTurn(context, "completed");
+                return "retired" as const;
+              }
               const minutes = Math.max(1, Math.round(timeoutMillis / 60_000));
               yield* finalizeTurn(
                 context,
@@ -10305,13 +10315,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }
                   if (context.finalized || followsAgentWorkState || superseded()) return;
                   // ACP v2 reports a failed prompt through its idle stop reason, not an RPC error.
-                  const hiddenFailure =
+                  const outcome =
                     settle.checkPromptOutcome === undefined ||
                     context.interrupted ||
                     result.stopReason === "error" ||
                     result.stopReason === "cancelled"
                       ? undefined
                       : yield* settle.checkPromptOutcome(result);
+                  const hiddenFailure =
+                    outcome === undefined || "replyFinished" in outcome ? undefined : outcome;
                   const resumeWith = hiddenFailure?.resumeWith;
                   if (
                     hiddenFailure !== undefined &&

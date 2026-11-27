@@ -17,6 +17,8 @@ import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityPro
 const ERROR_STEP_TYPE = 17;
 // CORTEX_STEP_TYPE_PLANNER_RESPONSE: the model answered within this turn.
 const PLANNER_RESPONSE_STEP_TYPE = 15;
+// CORTEX_STEP_STATUS_DONE: the step is complete, not still being written.
+const DONE_STEP_STATUS = 3;
 // The harness error text leads the payload; a Go stack trace follows it.
 const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
@@ -77,6 +79,7 @@ interface LastStep {
   readonly type: number;
   readonly payload: Uint8Array | null;
   readonly reachedModel: boolean;
+  readonly replyFinished: boolean;
 }
 
 class AntigravitySessionLogError extends Schema.TaggedError<AntigravitySessionLogError>()(
@@ -116,9 +119,14 @@ const lastStepIndex = (database: NodeSqlite.DatabaseSync) => {
 const lastStepAfter =
   (index: number) =>
   (database: NodeSqlite.DatabaseSync): LastStep | undefined => {
+    // Older session logs have no status column.
+    const hasStatus =
+      database.prepare("SELECT 1 FROM pragma_table_info('steps') WHERE name = 'status'").get() !==
+      undefined;
     const row = database
       .prepare(
-        `SELECT step_type AS type, substr(step_payload, 1, ?) AS payload
+        `SELECT step_type AS type, ${hasStatus ? "status" : "NULL"} AS status,
+         substr(step_payload, 1, ?) AS payload
          FROM steps WHERE idx > ? ORDER BY idx DESC LIMIT 1`,
       )
       .get(MAX_ERROR_PAYLOAD_BYTES, index);
@@ -131,6 +139,7 @@ const lastStepAfter =
       type: row.type,
       payload: row.payload instanceof Uint8Array ? row.payload : null,
       reachedModel,
+      replyFinished: row.type === PLANNER_RESPONSE_STEP_TYPE && row.status === DONE_STEP_STATUS,
     };
   };
 
@@ -347,6 +356,9 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
           Effect.orElseSucceed(() => undefined),
         )
       : undefined;
+    if (options?.retired === true && step?.replyFinished === true) {
+      return { replyFinished: true } as const;
+    }
     // A retired prompt's check runs long after the error, so a relative delay has no anchor.
     const now = options?.retired === true ? undefined : yield* DateTime.now;
     return turnFailure(result.stopReason, step, now);

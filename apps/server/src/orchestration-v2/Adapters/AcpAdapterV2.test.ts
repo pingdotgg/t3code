@@ -6286,7 +6286,9 @@ describe("AcpAdapterV2", () => {
           runtimeOrdinal === 1 ? { T3_ACP_HANG_PROMPT_FOREVER: "1" } : {},
         watchPromptOutcome: () =>
           Effect.succeed((_result, options) =>
-            Effect.succeed(options?.retired === true ? { replyFinished: true as const } : undefined),
+            Effect.succeed(
+              options?.retired === true ? { replyFinished: true as const } : undefined,
+            ),
           ),
       });
       yield* harness.startTurn(1);
