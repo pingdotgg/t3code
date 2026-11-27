@@ -1793,7 +1793,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return nextThread
       ? () => navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id))
       : shell
-        ? () => void handleNewThread(scopeProjectRef(shell.environmentId, shell.projectId))
+        ? () =>
+            void handleNewThread(
+              scopeProjectRef(shell.environmentId, shell.projectId),
+              environmentScopeId === null ? undefined : { environmentSelection: "manual" },
+            )
         : () => void router.navigate({ to: "/" });
   };
 
@@ -3652,13 +3656,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       ? gt("The selected machine is unavailable")
                       : gt("No threads match these filters")}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setEnvironmentScopeId(null)}
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                  >
+                  <Button variant="outline" size="xs" onClick={() => setEnvironmentScopeId(null)}>
                     <T>Show all machines</T>
-                  </button>
+                  </Button>
                 </>
               ) : projects.length === 0 ? (
                 <>

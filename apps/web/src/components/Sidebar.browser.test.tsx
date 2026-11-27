@@ -24,6 +24,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -264,6 +265,80 @@ describe("sidebar project folder new thread", () => {
 });
 
 describe("sidebar machine scope", () => {
+  it.each([
+    { scope: "selected machine", environmentSelection: "manual" },
+    { scope: "all machines", environmentSelection: undefined },
+  ] as const)(
+    "opens the fallback draft in $scope after settling the last thread",
+    async ({ scope, environmentSelection }) => {
+      using stack = new DisposableStack();
+      const ui = useUiStateStore.getState();
+      const drafts = useComposerDraftStore.getState();
+      stack.defer(() => {
+        useUiStateStore.setState(ui, true);
+        useComposerDraftStore.setState(drafts, true);
+      });
+      const remote = { ...project("settle-fallback"), environmentId: EnvironmentId.make("dev1") };
+      const thread = { ...threadShell(remote.id, 0), environmentId: remote.environmentId };
+      ui.resetSidebarScope();
+      if (scope === "selected machine") ui.setSidebarEnvironmentScopeId(remote.environmentId);
+      using _identities = vi
+        .spyOn(environments, "useEnvironmentIdentities")
+        .mockReturnValue([
+          { environmentId: remote.environmentId, label: "Development", displayUrl: null },
+        ]);
+      using _projects = vi.spyOn(entities, "readProjects").mockReturnValue([remote]);
+      using _serverConfigs = vi
+        .spyOn(entities, "useServerConfigs")
+        .mockReturnValue(
+          new Map([
+            [
+              remote.environmentId,
+              { environment: { capabilities: {} } } as EnvironmentServerConfig,
+            ],
+          ]),
+        );
+      using _loaded = vi.spyOn(entities, "readEnvironmentServerConfigLoaded").mockReturnValue(true);
+      using readShell = vi.spyOn(entities, "readThreadShell").mockReturnValue(thread);
+      vi.mocked(useProjects).mockReturnValue([remote]);
+      vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
+      vi.mocked(useHandleNewThread).mockRestore();
+      vi.mocked(useThreadRouteTarget).mockRestore();
+      vi.mocked(useOrchestrationCommand).mockReturnValue(
+        vi.fn(async () => {
+          readShell.mockReturnValue({ ...thread, settledOverride: "settled" });
+          return AsyncResult.success(undefined);
+        }),
+      );
+      const root = createRootRoute({
+        component: () => (
+          <SidebarProvider>
+            <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+          </SidebarProvider>
+        ),
+      });
+      const router = createRouter({
+        routeTree: root.addChildren([
+          createRoute({ getParentRoute: () => root, path: "draft/$draftId" }),
+          createRoute({ getParentRoute: () => root, path: "$environmentId/$threadId" }),
+        ]),
+        history: createMemoryHistory({ initialEntries: [`/${thread.environmentId}/${thread.id}`] }),
+      });
+      await router.load();
+      // The sidebar reads real route params both before and after the settle mutation.
+      await using screen = await render(<RouterProvider router={router} />, { router: false });
+      const settle = screen.getByRole("button", { name: "Settle thread", exact: true });
+      settle.element().focus();
+      await userEvent.keyboard("{Enter}");
+
+      await vi.waitFor(() => expect(router.state.location.pathname).toMatch(/^\/draft\//));
+      const draftId = DraftId.make(router.state.location.pathname.slice("/draft/".length));
+      const draft = useComposerDraftStore.getState().getDraftSession(draftId);
+      expect(draft).toMatchObject({ environmentId: remote.environmentId, projectId: remote.id });
+      expect(draft?.environmentSelection).toBe(environmentSelection);
+    },
+  );
+
   it("reveals an in-place promoted thread when it is reopened after visiting Issues", async () => {
     using stack = new DisposableStack();
     const ui = useUiStateStore.getState();
