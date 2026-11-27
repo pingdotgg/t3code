@@ -70,9 +70,24 @@ describe("hasCloudPublicConfig", () => {
     });
 
     it("keeps production keys available in the Electron auth shell", () => {
-      vi.stubGlobal("window", { location: new URL("file:///app/index.html"), desktopBridge: {} });
+      vi.stubGlobal("window", {
+        location: new URL("file:///app/index.html"),
+        desktopBridge: { getConnectEnabled: () => true },
+      });
 
       expect(hasCloudPublicConfig()).toBe(true);
+    });
+
+    it("keeps Clerk out of Electron when managed policy turns T3 Connect off", async () => {
+      vi.stubGlobal("window", {
+        location: new URL("file:///app/index.html"),
+        desktopBridge: { getConnectEnabled: () => false },
+      });
+      // The desktop answer is cached per session, so evaluate the module fresh for this case.
+      vi.resetModules();
+      const { hasCloudPublicConfig: hasFreshCloudPublicConfig } = await import("./publicConfig.ts");
+
+      expect(hasFreshCloudPublicConfig()).toBe(false);
     });
   });
 });

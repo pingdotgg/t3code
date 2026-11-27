@@ -94,7 +94,17 @@ export function resolveRelayTracingConfig() {
     : null;
 }
 
+let desktopConnectEnabled: boolean | null = null;
+
+// Managed Policy can turn T3 Connect off on desktop; the answer is fixed for the session.
+function connectEnabledOnDesktop(): boolean {
+  if (typeof window === "undefined" || window.desktopBridge === undefined) return true;
+  desktopConnectEnabled ??= window.desktopBridge.getConnectEnabled();
+  return desktopConnectEnabled;
+}
+
 export function hasCloudPublicConfig(): boolean {
+  if (!connectEnabledOnDesktop()) return false;
   const config = resolveCloudPublicConfig();
   if (!config.clerkPublishableKey || !config.clerkJwtTemplate || !config.relayUrl) {
     return false;

@@ -38,6 +38,7 @@ import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
+  installConnectEnabled,
   installRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
@@ -262,6 +263,76 @@ describe("toLocalBackendPath", () => {
         ),
       ),
     ),
+  );
+});
+
+describe("installConnectEnabled", () => {
+  const connectEnabled = (policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0]) =>
+    Effect.gen(function* () {
+      const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
+      const ipcMain: DesktopIpc.DesktopIpcMain = {
+        removeHandler: () => undefined,
+        handle: () => undefined,
+        removeAllListeners: (channel) => void listeners.delete(channel),
+        on: (channel, listener) => void listeners.set(channel, listener),
+      };
+      yield* installConnectEnabled().pipe(
+        Effect.provide(
+          Layer.mergeAll(DesktopIpc.layerTest(ipcMain), DesktopManagedPolicy.layerTest(policy)),
+        ),
+      );
+      const event = { returnValue: undefined as unknown };
+      listeners.get(IpcChannels.GET_CONNECT_ENABLED_CHANNEL)?.(event as never);
+      return event.returnValue;
+    }).pipe(Effect.scoped);
+
+  it.effect("is on without a policy, or with one that leaves Connect allowed", () =>
+    Effect.gen(function* () {
+      assert.strictEqual(yield* connectEnabled(), true);
+      assert.strictEqual(
+        yield* connectEnabled({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { clients: ["desktop", "remote"] },
+        }),
+        true,
+      );
+    }),
+  );
+
+  it.effect("is off when the policy sets limits.connect to false", () =>
+    Effect.gen(function* () {
+      assert.strictEqual(
+        yield* connectEnabled({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { connect: false },
+        }),
+        false,
+      );
+    }),
+  );
+
+  it.effect("is off when the policy's clients leave out remote, as the server does", () =>
+    Effect.gen(function* () {
+      assert.strictEqual(
+        yield* connectEnabled({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { clients: ["desktop"] },
+        }),
+        false,
+      );
+    }),
+  );
+
+  it.effect("is off when the policy cannot be read", () =>
+    Effect.gen(function* () {
+      assert.strictEqual(
+        yield* connectEnabled(new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
+        false,
+      );
+    }),
   );
 });
 
