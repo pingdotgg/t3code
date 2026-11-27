@@ -226,14 +226,25 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
       );
   }
 
-  // A file held open can stop the delete partway. Putting `.git` back, when
-  // that works, leaves a worktree that a retry can remove.
+  // A file held open can stop the delete partway, so `.git` goes last and a retry still
+  // finds the worktree. Node's recursive `rm` reports the first error while sibling
+  // deletes still run, so `.git` must not be among them.
   const gitFileContents = yield* fileSystem
     .readFileString(gitFile)
     .pipe(Effect.mapError(() => notAWorktree));
+  const failedToDelete = (cause: unknown) => refuse(`failed to delete '${worktreePath}'`, cause);
+  for (const name of yield* fileSystem
+    .readDirectory(worktreePath)
+    .pipe(Effect.mapError(failedToDelete))) {
+    if (name === ".git") continue;
+    yield* fileSystem
+      .remove(path.join(worktreePath, name), { recursive: true })
+      .pipe(Effect.mapError(failedToDelete));
+  }
+  yield* fileSystem.remove(gitFile).pipe(Effect.mapError(failedToDelete));
   yield* fileSystem.remove(worktreePath, { recursive: true }).pipe(
     Effect.tapError(() => fileSystem.writeFileString(gitFile, gitFileContents).pipe(Effect.ignore)),
-    Effect.mapError((cause) => refuse(`failed to delete '${worktreePath}'`, cause)),
+    Effect.mapError(failedToDelete),
   );
   // The folder is gone, so Git only drops the worktree's metadata.
   return yield* input.run([
