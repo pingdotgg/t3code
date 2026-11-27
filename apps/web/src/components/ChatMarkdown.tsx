@@ -1459,10 +1459,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
             ) {
               // Open desktop Alt-clicks before Chromium downloads them so link routers can read the held key.
               // Editor links also go over IPC: the desktop popup handler only passes web links.
-              // Localhost links too: the environment's loopback may need a forward first.
+              // Localhost links too, on every client: the environment's loopback may be another machine's.
               if (
-                isElectron &&
-                (event.altKey || isLocalEditorFileHref(href) || loopbackWebPort(href) !== null)
+                (isElectron && (event.altKey || isLocalEditorFileHref(href))) ||
+                loopbackWebPort(href) !== null
               ) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -1485,10 +1485,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
           onAuxClick={(event) => {
             // A middle-click raises no click event, and the desktop popup handler only passes web links.
             if (
-              !isElectron ||
               event.button !== 1 ||
               !href ||
-              (!isLocalEditorFileHref(href) && loopbackWebPort(href) === null)
+              !((isElectron && isLocalEditorFileHref(href)) || loopbackWebPort(href) !== null)
             )
               return;
             event.preventDefault();
