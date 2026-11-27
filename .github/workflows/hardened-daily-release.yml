@@ -1,15 +1,20 @@
-name: Hardened Daily Release
+name: Hardened Release
 
-# Releases main once a day. Hardened Sync keeps main current with upstream. When the release
-# fails, Claude Code repairs the cause one time and the release runs again.
+# Releases main after each Hardened Sync, at most once in six hours. When the release fails,
+# Claude Code repairs the cause one time and the release runs again.
 
 on:
+  # GitHub starts scheduled runs of this repository hours late or not at all, so the end of a
+  # sync starts the release. The schedule is a fallback.
+  workflow_run:
+    workflows: [Hardened Sync]
+    types: [completed]
   schedule:
     - cron: "23 9 * * *"
   workflow_dispatch:
     inputs:
       force:
-        description: "Release even when main has not changed since the last release"
+        description: "Release even when main has not changed or the last release is recent"
         required: false
         default: false
         type: boolean
@@ -57,9 +62,13 @@ jobs:
             echo "release=false" >>"$GITHUB_OUTPUT"
             exit 0
           fi
-          last="$(gh release list -R "$GITHUB_REPOSITORY" --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // ""')"
+          read -r published last < <(gh release list -R "$GITHUB_REPOSITORY" --exclude-pre-releases --limit 1 \
+            --json tagName,publishedAt --jq '.[0] // {} | "\(.publishedAt // "" | if . == "" then 0 else fromdateiso8601 end) \(.tagName // "")"')
           if [[ "$FORCE" != "true" && -n "$last" ]] && git diff --quiet "$last" HEAD -- . ':!.github'; then
             echo "No source changes since $last."
+            echo "release=false" >>"$GITHUB_OUTPUT"
+          elif [[ "$FORCE" != "true" ]] && (( $(date +%s) - published < 6 * 3600 )); then
+            echo "$last was released less than six hours ago."
             echo "release=false" >>"$GITHUB_OUTPUT"
           else
             echo "release=true" >>"$GITHUB_OUTPUT"

@@ -1,8 +1,8 @@
 name: Hardened Agent Change
 
 # One attempt at a change that Claude Code makes and CI gates: an upstream merge, the repair of
-# a merge that failed CI, or the repair of a failed release. Hardened Sync and Hardened Daily
-# Release call it.
+# a merge that failed CI, or the repair of a failed release. Hardened Sync and Hardened Release
+# call it.
 on:
   workflow_call:
     inputs:

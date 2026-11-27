@@ -1,10 +1,12 @@
 name: Hardened Sync
 
-# Merges upstream into main every four hours. Claude Code resolves conflicts and repairs a merge
-# that fails CI, up to two times. A merge that still fails stays in a pull request for a person.
+# Merges upstream into main. Claude Code resolves conflicts and repairs a merge that fails CI, up
+# to two times. A merge that still fails stays in a pull request for a person.
 on:
+  # GitHub drops most scheduled runs of this repository and starts others hours late, so the
+  # schedule asks every hour. A run with nothing new from upstream stops before the agent starts.
   schedule:
-    - cron: "17 */4 * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 concurrency:
