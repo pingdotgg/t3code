@@ -11,6 +11,7 @@ import type {
   DesktopPreviewAnnotationVoiceConfig,
   DesktopPreviewAnnotationVoiceState,
   DesktopPreviewColorScheme,
+  DesktopPreviewDialog,
   DesktopPreviewFavicon,
   DesktopPreviewFindResultEvent,
   DesktopPreviewOpenLinkEvent,
@@ -91,6 +92,7 @@ import {
   START_PICK_CHANNEL,
   THUMB_PRESS_CHANNEL,
 } from "./GuestProtocol.ts";
+import { holdPageDialogs, type PageDialogHold } from "./PageDialogs.ts";
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS, type RecordingInputOptions } from "./RecordingInput.ts";
@@ -120,6 +122,7 @@ export interface PreviewTabState {
   audible: boolean;
   controller: "human" | "agent" | "none";
   capturing: boolean;
+  dialog?: DesktopPreviewDialog;
   favicon?: DesktopPreviewFavicon;
   serverTab?: { readonly threadId: string; readonly tabId: string };
   updatedAt: string;
@@ -616,6 +619,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const tabLifecycleGenerations = new Map<string, number>();
   // A guest can fail its first load before registerWebview installs its tab listeners.
   const guestLoadFailures = new Map<number, PreviewAutomationLoadError>();
+  const dialogHolds = new Map<number, PageDialogHold>();
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -962,6 +966,39 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (Option.isSome(next)) yield* emitIfCurrent(tabId, next.value);
   });
 
+  const syncTabDialog = Effect.fn("PreviewManager.syncTabDialog")(function* (
+    wc: Electron.WebContents,
+  ) {
+    const updatedAt = yield* currentIso;
+    const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+      const entry = [...tabs].find(([, tab]) => tab.webContentsId === wc.id);
+      if (!entry) return [Option.none<readonly [string, PreviewTabState]>(), tabs] as const;
+      const [tabId, current] = entry;
+      const dialog = dialogHolds.get(wc.id)?.current();
+      const { dialog: _dialog, ...withoutDialog } = current;
+      const state: PreviewTabState = {
+        ...withoutDialog,
+        ...(dialog ? { dialog } : {}),
+        updatedAt,
+      };
+      return [
+        Option.some([tabId, state] as const),
+        replaceMap(tabs, (copy) => {
+          copy.set(tabId, state);
+        }),
+      ] as const;
+    });
+    if (Option.isSome(next)) yield* emitIfCurrent(next.value[0], next.value[1]);
+  });
+
+  const ensureDialogHold = (wc: Electron.WebContents) => {
+    if (dialogHolds.has(wc.id)) return;
+    dialogHolds.set(
+      wc.id,
+      holdPageDialogs(wc, () => runFork(syncTabDialog(wc))),
+    );
+  };
+
   const requireWebContents = Effect.fn("PreviewManager.requireWebContents")(function* (
     tabId: string,
   ) {
@@ -1104,6 +1141,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             }
           });
           const onMessage: BrowserControlSession["onMessage"] = (_event, method) => {
+            if (method === "Page.javascriptDialogClosed") dialogHolds.get(wc.id)?.closed();
             runFork(handleDebuggerMessage(method));
           };
           const control: BrowserControlSession = {
@@ -1656,6 +1694,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.ipc.off(RECORDING_INPUT_CHANNEL, recordingInput);
         wc.ipc.off(PAGE_UNHANDLED_SHORTCUT_CHANNEL, pageUnhandledShortcut);
         detachPasskeys();
+        dialogHolds.get(wc.id)?.answer(false);
       }).pipe(Effect.ignore),
     );
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
@@ -1851,8 +1890,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
     }
     const updatedAt = yield* currentIso;
+    const { dialog: _dialog, ...closedWithoutDialog } = closedTab;
     const closed: PreviewTabState = {
-      ...closedTab,
+      ...closedWithoutDialog,
       webContentsId: null,
       navStatus: { kind: "Idle" },
       canGoBack: false,
@@ -1977,9 +2017,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }
         const pendingUrl = current.navStatus.kind === "Loading" ? current.navStatus.url : null;
         const failure = guestLoadFailures.get(webContentsId);
-        const { favicon: _favicon, ...currentWithoutFavicon } = current;
+        const { favicon: _favicon, dialog: _dialog, ...currentWithoutFavicon } = current;
+        const pendingDialog = dialogHolds.get(webContentsId)?.current();
         const next: PreviewTabState = {
           ...currentWithoutFavicon,
+          ...(pendingDialog ? { dialog: pendingDialog } : {}),
           webContentsId,
           navStatus:
             failure && (pendingUrl === null || pendingUrl === failure.url)
@@ -2078,7 +2120,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             if (current?.webContentsId !== webContentsId) {
               return [Option.none<PreviewTabState>(), tabs] as const;
             }
-            const { favicon: _favicon, ...currentWithoutFavicon } = current;
+            const { favicon: _favicon, dialog: _dialog, ...currentWithoutFavicon } = current;
             const next: PreviewTabState = { ...currentWithoutFavicon, webContentsId: null };
             return [
               Option.some(next),
@@ -2099,6 +2141,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     yield* rendererHistory.register(wc, { surface: "preview" });
     const webContentsId = wc.id;
+    ensureDialogHold(wc);
     wc.on("did-start-navigation", (event) => {
       if (event.isMainFrame && !event.isSameDocument) guestLoadFailures.delete(webContentsId);
     });
@@ -2112,6 +2155,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     wc.once("destroyed", () => {
       guestLoadFailures.delete(webContentsId);
+      dialogHolds.get(webContentsId)?.closed();
+      dialogHolds.delete(webContentsId);
       runFork(
         Effect.gen(function* () {
           yield* hideDestroyedGuest(webContentsId);
@@ -2178,6 +2223,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         audible: current?.audible ?? false,
         controller: current?.controller ?? "none",
         capturing: current?.capturing ?? false,
+        ...(current?.dialog ? { dialog: current.dialog } : {}),
         ...(current?.favicon ? { favicon: current.favicon } : {}),
         ...(current?.serverTab ? { serverTab: current.serverTab } : {}),
         updatedAt,
@@ -2706,6 +2752,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           ),
         );
       }),
+    );
+  });
+
+  const answerDialog = Effect.fn("PreviewManager.answerDialog")(function* (
+    tabId: string,
+    dialogId: number,
+    accept: boolean,
+  ) {
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!tab) {
+      return yield* new PreviewTabNotFoundError({ tabId });
+    }
+    const webContentsId = tab.webContentsId;
+    if (webContentsId === null) return;
+    yield* attempt({ operation: "answerDialog", tabId, webContentsId }, () =>
+      dialogHolds.get(webContentsId)?.answer(accept, dialogId),
     );
   });
 
@@ -3776,6 +3838,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setAnnotationTheme,
     setAnnotationSendEnabled,
     setAudioMuted,
+    answerDialog,
     setShown,
     setCaptureDrawn,
     setColorScheme,
@@ -3993,6 +4056,11 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       audioMuted: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
+    readonly answerDialog: (
+      tabId: string,
+      dialogId: number,
+      accept: boolean,
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly setShown: (tabId: string, shown: boolean) => Effect.Effect<void>;
     readonly setCaptureDrawn: (tabId: string, drawn: boolean) => Effect.Effect<void>;
     readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
@@ -4156,6 +4224,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     setColorScheme: operations.setColorScheme,
     setZoomFactor: operations.setZoomFactor,
     setAudioMuted: operations.setAudioMuted,
+    answerDialog: operations.answerDialog,
     setShown: operations.setShown,
     setCaptureDrawn: operations.setCaptureDrawn,
     openDevTools: operations.openDevTools,
