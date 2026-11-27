@@ -336,7 +336,7 @@ const EnvironmentLinksTool = Tool.make("t3_environment_links", {
 
 const EnvironmentLinkTool = Tool.make("t3_environment_link", {
   description:
-    "Ask the user to link another machine, in a card. For a machine the user names that is not linked. Pass `hint` from their words, `environmentId` when one names it (already linked: returns `linked`), `url` only when the user gave an address. Returns `pending`; the outcome arrives as a message in this thread. Do not wait, poll, or call it again to check. Never ask for a pairing code in chat.",
+    "Ask the user, in a card, to link a machine they name that is unlinked or linked below the access needed. Pass `hint` from their words, `environmentId` when one names it (returns `linked` if it has `requestedAccess`), `url` only if the user gave one. Returns `pending`; the outcome arrives as a message here. Do not wait, poll, or call it again. Never ask for a pairing code in chat.",
   parameters: OrchestratorMcpEnvironmentLinkInput,
   success: OrchestratorMcpEnvironmentLinkResult,
   failure: OrchestratorMcpFailure,

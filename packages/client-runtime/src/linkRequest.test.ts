@@ -1,4 +1,10 @@
-import { EnvironmentId, type ServerConfig, ThreadId, TurnItemId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type PeerLinkSummary,
+  type ServerConfig,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
@@ -15,6 +21,8 @@ import {
   linkRequestDisplay,
   linkRequestFailureMessage,
   linkRequestInitialMachine,
+  linkRequestKeepsLink,
+  linkRequestSuggestedAddress,
   linkRequestTarget,
   linkRequestTargetName,
   rankMachinesByHint,
@@ -79,7 +87,12 @@ describe("linkRequestAnswerInput", () => {
         access: "auto",
         pairingCode: "abc",
       }),
-    ).toMatchObject({ answer: { urls: ["https://box.ts.net"] } });
+    ).toEqual({
+      threadId: item.threadId,
+      turnItemId: item.id,
+      // A typed address links alone: it names no machine, whatever the card names.
+      answer: { type: "link", urls: ["https://box.ts.net"], access: "auto", pairingCode: "abc" },
+    });
   });
 
   it("refuses a blank code, a blank address, or a machine with no address", () => {
@@ -188,6 +201,17 @@ const discovered = (
   error: Option.none(),
 });
 
+const link = (
+  id: string,
+  options: Partial<Pick<PeerLinkSummary, "label" | "urls" | "status" | "access">> = {},
+) => ({
+  environmentId: EnvironmentId.make(id),
+  label: options.label ?? id,
+  urls: options.urls ?? [],
+  status: options.status ?? "reachable",
+  access: options.access ?? "auto",
+});
+
 describe("linkableMachines", () => {
   it("lists the other machines with reported addresses before saved ones, once each", () => {
     const here = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
@@ -201,7 +225,7 @@ describe("linkableMachines", () => {
       linkableMachines({
         environments: [here, vps, mini],
         threadEnvironmentId: here.environmentId,
-        links: [{ environmentId: mini.environmentId, status: "unreachable" }],
+        links: [link(mini.environmentId, { status: "unreachable", access: "read-only" })],
         connect: new Map(),
       }),
     ).toEqual([
@@ -211,8 +235,9 @@ describe("linkableMachines", () => {
         machine: "laptop",
         connected: true,
         connectOnly: false,
-        linked: false,
+        linkedAccess: null,
         urls: ["https://vps.ts.net", "https://vps.example.com"],
+        linkUrls: [],
       },
       {
         environmentId: mini.environmentId,
@@ -220,8 +245,9 @@ describe("linkableMachines", () => {
         machine: "server",
         connected: false,
         connectOnly: false,
-        linked: true,
+        linkedAccess: "read-only",
         urls: [],
+        linkUrls: [],
       },
     ]);
   });
@@ -274,16 +300,71 @@ describe("linkableMachines", () => {
       environments: [here, vps, mini],
       threadEnvironmentId: here.environmentId,
       links: [
-        { environmentId: vps.environmentId, status: "expired" },
-        { environmentId: mini.environmentId, status: "unreachable" },
-        { environmentId: EnvironmentId.make("environment-old"), status: "expired" },
+        link(vps.environmentId, { status: "expired" }),
+        link(mini.environmentId, { status: "unreachable" }),
+        link("environment-old", { status: "expired" }),
       ],
       connect: new Map([["environment-old", discovered("environment-old", "Old box")]]),
     });
-    expect(listed.map((machine) => [machine.label, machine.linked])).toEqual([
-      ["VPS", false],
-      ["Mini", true],
-      ["Old box", false],
+    expect(listed.map((machine) => [machine.label, machine.linkedAccess])).toEqual([
+      ["VPS", null],
+      ["Mini", "auto"],
+      ["Old box", null],
+    ]);
+  });
+
+  it("keeps where only the environment's link reached a machine apart from its own addresses", () => {
+    const here = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
+    const vps = presentation("environment-vps", "VPS", { reported: ["https://vps.ts.net"] });
+    const listed = linkableMachines({
+      environments: [here, vps],
+      threadEnvironmentId: here.environmentId,
+      links: [
+        // Anything can answer as the VPS where only the link reached it: kept apart, once each,
+        // and never this client's loopback.
+        link(vps.environmentId, {
+          urls: ["https://vps.ts.net", "https://vps.example.com", "http://127.0.0.1:3773"],
+        }),
+        link("environment-box", {
+          label: "Box",
+          urls: ["https://box.ts.net"],
+          access: "read-only",
+        }),
+        // An expired link still names the machine and where it answered, for linking it again.
+        link("environment-old", {
+          label: "Old box",
+          urls: ["https://old.ts.net"],
+          status: "expired",
+        }),
+        link("environment-local", { label: "Local", urls: ["http://localhost:3774"] }),
+      ],
+      connect: new Map([["environment-box", discovered("environment-box", "Box")]]),
+    });
+    expect(listed).toEqual([
+      expect.objectContaining({
+        label: "VPS",
+        linkedAccess: "auto",
+        urls: ["https://vps.ts.net"],
+        linkUrls: ["https://vps.example.com"],
+      }),
+      expect.objectContaining({
+        label: "Box",
+        connectOnly: true,
+        linkedAccess: "read-only",
+        urls: ["https://environment-box.t3.example"],
+        linkUrls: ["https://box.ts.net"],
+      }),
+      {
+        environmentId: EnvironmentId.make("environment-old"),
+        label: "Old box",
+        machine: "server",
+        connected: false,
+        connectOnly: false,
+        linkedAccess: null,
+        urls: [],
+        linkUrls: ["https://old.ts.net"],
+      },
+      expect.objectContaining({ label: "Local", linkedAccess: "auto", urls: [], linkUrls: [] }),
     ]);
   });
 
@@ -293,7 +374,7 @@ describe("linkableMachines", () => {
     const listed = linkableMachines({
       environments: [here, vps],
       threadEnvironmentId: here.environmentId,
-      links: [{ environmentId: EnvironmentId.make("environment-old"), status: "reachable" }],
+      links: [link("environment-old")],
       connect: new Map([
         // This environment and saved machines are listed once, as saved.
         [here.environmentId, discovered(here.environmentId, "Here")],
@@ -313,10 +394,11 @@ describe("linkableMachines", () => {
       machine: "mac-mini",
       connected: false,
       connectOnly: true,
-      linked: false,
+      linkedAccess: null,
       urls: ["https://environment-mini.t3.example"],
+      linkUrls: [],
     });
-    expect(listed[2]).toMatchObject({ machine: "server", linked: true });
+    expect(listed[2]).toMatchObject({ machine: "server", linkedAccess: "auto" });
 
     // A Connect record that publishes only a loopback address gives the machine none.
     const local = discovered("environment-local", "Local");
@@ -392,8 +474,9 @@ describe("rankMachinesByHint", () => {
           machine: "server",
           connected: true,
           connectOnly: false,
-          linked: false,
+          linkedAccess: null,
           urls: [],
+          linkUrls: [],
         }) as const,
     );
     expect(linkRequestInitialMachine({ hint: "vps" }, listed)).toBe("environment-vps");
@@ -421,8 +504,9 @@ describe("linkRequestTarget", () => {
     machine: "server",
     connected: true,
     connectOnly: false,
-    linked: false,
+    linkedAccess: null,
     urls: ["http://10.0.0.2:3773", "https://box.t3connect.example/"],
+    linkUrls: ["https://box.peer.example"],
   } as const;
 
   it("takes a machine from an address the agent gave only where this app already reaches it", () => {
@@ -434,6 +518,10 @@ describe("linkRequestTarget", () => {
     };
     expect(linkRequestTarget(unfamiliar, [box], null)).toEqual({ kind: "address" });
     expect(linkRequestTarget(unfamiliar, [box], box.environmentId)).toEqual({ kind: "address" });
+    // Nor is an address only the environment's link reached it at.
+    expect(linkRequestTarget({ url: "https://box.peer.example" }, [box], null)).toEqual({
+      kind: "address",
+    });
     expect(linkRequestTargetName(unfamiliar)).toBe("https://other.example");
     // A username in the address must not pass for the host the code goes to.
     expect(linkRequestTargetName({ url: "https://box.t3connect.example@other.example/x" })).toBe(
@@ -447,7 +535,8 @@ describe("linkRequestTarget", () => {
       environmentId: box.environmentId,
       label: "Box",
       urls: box.urls,
-      linked: false,
+      linkUrls: box.linkUrls,
+      linkedAccess: null,
     });
     expect(linkRequestTarget({ url: "http://box.t3connect.example" }, [box], null)).toEqual({
       kind: "address",
@@ -472,6 +561,35 @@ describe("linkRequestTarget", () => {
     expect(linkRequestTarget({}, [box], box.environmentId)).toMatchObject({ kind: "machine" });
     expect(linkRequestTarget({}, [box], ANOTHER_ADDRESS)).toEqual({ kind: "address" });
     expect(linkRequestTarget({}, [box], null)).toEqual({ kind: "none" });
+    // Where only the environment's link reached it is no address of its own: the user
+    // starts from it, and sees it, before a code goes there.
+    const linkedOnly = { ...box, urls: [] };
+    const target = linkRequestTarget({ environmentId: box.environmentId }, [linkedOnly], null);
+    expect(target).toMatchObject({ kind: "machine", urls: [] });
+    expect(linkRequestSuggestedAddress({}, target)).toBe("https://box.peer.example");
+    expect(linkRequestSuggestedAddress({ url: "https://other.example" }, { kind: "address" })).toBe(
+      "https://other.example",
+    );
+    expect(linkRequestSuggestedAddress({}, { kind: "none" })).toBe("");
+  });
+
+  it("keeps a link the machine has unless the agent asked for more access than it allows", () => {
+    const linked = { ...box, linkedAccess: "read-only" } as const;
+    const target = linkRequestTarget({ environmentId: box.environmentId }, [linked], null);
+    // No access named: the agent takes the link as it is, as the server does without a card.
+    expect(linkRequestKeepsLink({}, target)).toBe(true);
+    expect(linkRequestKeepsLink({ requestedAccess: "read-only" }, target)).toBe(true);
+    // A weaker link is linked again, with the access the user picks.
+    expect(linkRequestKeepsLink({ requestedAccess: "approval-required" }, target)).toBe(false);
+    expect(linkRequestKeepsLink({ requestedAccess: "full-access" }, target)).toBe(false);
+    // No link to keep.
+    expect(
+      linkRequestKeepsLink(
+        {},
+        linkRequestTarget({ environmentId: box.environmentId }, [box], null),
+      ),
+    ).toBe(false);
+    expect(linkRequestKeepsLink({}, { kind: "address" })).toBe(false);
   });
 });
 

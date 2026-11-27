@@ -5,8 +5,10 @@
  * (provider CLIs abandon a long tool call): the answer reaches the agent as a notification.
  */
 import {
+  type AuthMcpClientAccess,
   CommandId,
   type EnvironmentId,
+  mcpClientAccessCovers,
   MessageId,
   type NodeId,
   type OrchestrationV2Notification,
@@ -15,7 +17,6 @@ import {
   type OrchestratorMcpEnvironmentLinkResult,
   OrchestratorMcpFailure,
   type PeerLink,
-  PeerLinkError,
   PeerLinkRequestError,
   type PeerLinkRequestAnswerInput,
   type RunId,
@@ -209,7 +210,8 @@ const make = Effect.gen(function* () {
             "Pass either environmentId or url, not both. Pass neither to let the user pick the machine.",
         });
       }
-      // A machine already linked needs no card: the agent can use it now.
+      // A machine already linked needs no card: the agent can use it now. Only one
+      // asked for more access than the link has gets a card, and linking again raises it.
       if (input.environmentId !== undefined) {
         const linked = yield* usableLink(input.environmentId).pipe(
           Effect.mapError(
@@ -217,7 +219,11 @@ const make = Effect.gen(function* () {
               new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
           ),
         );
-        if (Option.isSome(linked)) {
+        if (
+          Option.isSome(linked) &&
+          (input.requestedAccess === undefined ||
+            mcpClientAccessCovers(linked.value.access, input.requestedAccess))
+        ) {
           if (input.clientRequestId !== undefined) {
             yield* closeAsLinked(
               threadId,
@@ -300,27 +306,25 @@ const make = Effect.gen(function* () {
   /** Links the machine the user picked, or finds the link they chose to keep. */
   const answerOutcome = (
     answer: PeerLinkRequestAnswerInput["answer"],
-  ): Effect.Effect<LinkRequestOutcome> => {
+    requestedAccess: AuthMcpClientAccess | undefined,
+  ): Effect.Effect<LinkRequestOutcome, PeerLinkRequestError> => {
     switch (answer.type) {
       case "decline":
         return Effect.succeed({ linkStatus: "declined" });
       case "use-existing":
+        // A client's list of links can lag one removed or replaced meanwhile, by an
+        // agent say. The card stays open so the user can link the machine again.
         return usableLink(answer.environmentId).pipe(
+          Effect.mapError((cause) => new PeerLinkRequestError({ reason: "load_failed", cause })),
           Effect.flatMap(
             Option.match({
-              onNone: () =>
-                Effect.fail(
-                  new PeerLinkError({
-                    reason: "unknown_link",
-                    message:
-                      "That environment is no longer linked here, or its link expired. Link it again.",
-                  }),
-                ),
-              onSome: (linked) => Effect.succeed(linkedOutcome(linked)),
+              onNone: () => Effect.fail(new PeerLinkRequestError({ reason: "link_gone" })),
+              onSome: (linked) =>
+                requestedAccess === undefined ||
+                mcpClientAccessCovers(linked.access, requestedAccess)
+                  ? Effect.succeed(linkedOutcome(linked))
+                  : Effect.fail(new PeerLinkRequestError({ reason: "link_too_weak" })),
             }),
-          ),
-          Effect.catch((error) =>
-            Effect.succeed<LinkRequestOutcome>({ linkStatus: "failed", failure: error.message }),
           ),
         );
       case "link": {
@@ -380,7 +384,7 @@ const make = Effect.gen(function* () {
               linkStatus: "failed",
               failure: "This request is from before an update. Ask for the link again.",
             }
-          : yield* answerOutcome(input.answer);
+          : yield* answerOutcome(input.answer, card.requestedAccess);
       // If Stop closed the card while linking, the card keeps that; the link
       // itself stands and Settings lists it.
       yield* lifecycleLocks.withLock(

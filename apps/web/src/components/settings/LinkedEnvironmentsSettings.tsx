@@ -271,13 +271,15 @@ export function LinkEnvironmentDialog({
         machine: "server" as const,
         connected: false,
         connectOnly: false,
-        linked: false,
+        linkedAccess: null,
         urls: route.urls,
+        linkUrls: [],
       })),
   ];
   // Null until the user picks; with no other machines known, only an address is left.
   const [choice, setChoice] = useState<string | null>(prefill?.choice ?? null);
-  const [address, setAddress] = useState(prefill?.address ?? "");
+  // Null until the user types; until then the field holds the suggested address.
+  const [typedAddress, setAddress] = useState<string | null>(null);
   const [pairingCode, setPairingCode] = useState("");
   const [access, setAccess] = useState<AuthMcpClientAccess>("approval-required");
   const [busy, setBusy] = useState(false);
@@ -303,6 +305,10 @@ export function LinkEnvironmentDialog({
   const [throughFailed, setThroughFailed] = useState<ReadonlySet<EnvironmentId>>(new Set());
   const [alsoLinkBack, setAlsoLinkBack] = useState(false);
   const selected = choice ?? (machines.length === 0 ? ANOTHER_ADDRESS : null);
+  const machine = machines.find((candidate) => candidate.environmentId === selected) ?? null;
+  // Where the environment's link reached the machine: shown for the user to check, since
+  // anything can answer there as it.
+  const address = typedAddress ?? machine?.linkUrls[0] ?? prefill?.address ?? "";
   // Only for the machine the dialog opened for: another choice or address is another machine.
   const prefilledThrough =
     prefill?.through !== undefined &&
@@ -310,7 +316,6 @@ export function LinkEnvironmentDialog({
     address === (prefill.address ?? "")
       ? prefill.through
       : null;
-  const machine = machines.find((candidate) => candidate.environmentId === selected) ?? null;
   const targetId = machine?.environmentId ?? null;
   const connected = usePreparedConnection(targetId);
   const mayMint = useEnvironmentScope(targetId, AuthAccessWriteScope);
@@ -356,7 +361,7 @@ export function LinkEnvironmentDialog({
     setOpen(next);
     if (!next) {
       setChoice(prefill?.choice ?? null);
-      setAddress(prefill?.address ?? "");
+      setAddress(null);
       setPairingCode("");
       setAccess("approval-required");
       setMintFailed(new Set());
@@ -528,7 +533,7 @@ export function LinkEnvironmentDialog({
                 }}
               />
             ) : null}
-            {machine?.linked ? (
+            {machine?.linkedAccess ? (
               <p className="text-xs text-muted-foreground">
                 <T>Already linked. Linking again renews it with the access you pick.</T>
               </p>

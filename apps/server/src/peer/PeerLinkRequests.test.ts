@@ -1037,19 +1037,25 @@ it.live(
     ),
 );
 
-it.live("naming a machine that is already linked returns the link at once, with no card", () =>
+it.live("naming a machine linked with enough access returns the link at once, with no card", () =>
   withBoth((a, b) =>
     Effect.gen(function* () {
       yield* seedThread(a);
       const pairing = yield* b.auth.issuePairingCredential();
       yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
-      const asked = yield* a.call({ environmentId: box.environmentId });
-      expect(asked.structuredContent).toEqual({
-        status: "linked",
-        environmentId: box.environmentId,
-        label: "Box",
-        access: "auto",
-      });
+      for (const asks of [
+        {},
+        { requestedAccess: "approval-required" },
+        { requestedAccess: "auto" },
+      ]) {
+        const asked = yield* a.call({ environmentId: box.environmentId, ...asks });
+        expect(asked.structuredContent).toEqual({
+          status: "linked",
+          environmentId: box.environmentId,
+          label: "Box",
+          access: "auto",
+        });
+      }
       expect(yield* cardOf(a)).toBeUndefined();
 
       // Not both: the address could name another machine than the id.
@@ -1088,6 +1094,64 @@ it.live("a retry naming a machine linked meanwhile closes the card it left as li
   ),
 );
 
+it.live("a machine linked with less access than asked goes through the card, which raises it", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      yield* linkTo(a.links, b, "read-only");
+      const card = yield* ask(a, {
+        environmentId: box.environmentId,
+        requestedAccess: "full-access",
+      });
+      expect(card).toMatchObject({ linkStatus: "pending", requestedAccess: "full-access" });
+      // Naming no access, or no more than the link has, takes the link as it is.
+      for (const asks of [{}, { requestedAccess: "read-only" }]) {
+        expect(
+          (yield* a.call({ environmentId: box.environmentId, ...asks })).structuredContent,
+        ).toMatchObject({ status: "linked", access: "read-only" });
+      }
+      expect((yield* linkCards(a)).filter((item) => item.linkStatus === "pending")).toEqual([card]);
+
+      // Keeping a link with less access than asked is no answer, from a client whose list
+      // still shows it covering the request say; the card stays open to link again.
+      const kept = yield* a.requests
+        .answer({
+          threadId,
+          turnItemId: card.id,
+          answer: { type: "use-existing", environmentId: box.environmentId },
+        })
+        .pipe(Effect.flip);
+      expect(kept.reason).toBe("link_too_weak");
+      expect((yield* linkCards(a)).find((item) => item.id === card.id)).toMatchObject({
+        linkStatus: "pending",
+      });
+      expect((yield* outcomeMessages(a)).messages).toHaveLength(0);
+
+      // Linking again over the old link replaces it; nothing is unlinked first.
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.requests.answer({
+        threadId,
+        turnItemId: card.id,
+        answer: {
+          type: "link",
+          environmentId: box.environmentId,
+          label: "Box",
+          urls: [b.url],
+          access: "full-access",
+          pairingCode: pairing.credential,
+        },
+      });
+      expect((yield* linkCards(a)).find((item) => item.id === card.id)).toMatchObject({
+        linkStatus: "linked",
+        linkedAccess: "full-access",
+      });
+      expect(Option.getOrUndefined(yield* a.links.get(box.environmentId))).toMatchObject({
+        access: "full-access",
+      });
+    }),
+  ),
+);
+
 it.live("a link that expired goes through the card, so the user can link it again", () =>
   withBoth((a, b) =>
     Effect.gen(function* () {
@@ -1097,16 +1161,18 @@ it.live("a link that expired goes through the card, so the user can link it agai
       expect(asked.structuredContent).toMatchObject({ status: "pending" });
       const card = yield* pendingCard(a);
 
-      // Keeping the expired link is no answer: the card fails and says why.
-      yield* a.requests
+      // Keeping the expired link is no answer, as when a client's list still shows one
+      // removed meanwhile; the card stays open for the user to link again.
+      const kept = yield* a.requests
         .answer({
           threadId,
           turnItemId: card.id,
           answer: { type: "use-existing", environmentId: box.environmentId },
         })
-        .pipe(afterLinksExpire);
-      expect(yield* cardOf(a)).toMatchObject({ linkStatus: "failed" });
-      expect((yield* outcomeMessages(a)).messages[0]!.text).toContain("expired");
+        .pipe(afterLinksExpire, Effect.flip);
+      expect(kept.reason).toBe("link_gone");
+      expect(yield* cardOf(a)).toMatchObject({ linkStatus: "pending" });
+      expect((yield* outcomeMessages(a)).messages).toHaveLength(0);
     }),
   ),
 );

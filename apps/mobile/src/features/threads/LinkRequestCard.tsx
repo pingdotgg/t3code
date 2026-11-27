@@ -9,6 +9,8 @@ import {
   linkRequestFailureMessage,
   linkRequestInitialMachine,
   type LinkRequestItem,
+  linkRequestKeepsLink,
+  linkRequestSuggestedAddress,
   linkRequestTarget,
   rankMachinesByHint,
 } from "@t3tools/client-runtime/link-request";
@@ -207,7 +209,8 @@ function LinkRequestSheet(props: {
   const listed = useLinkableMachines(props.environmentId, true);
   const machines = useMemo(() => rankMachinesByHint(listed, item.hint), [listed, item.hint]);
   const [choice, setChoice] = useState<string | null>(null);
-  const [address, setAddress] = useState(item.url ?? "");
+  // Null until the user types; until then the field holds the suggested address.
+  const [typedAddress, setAddress] = useState<string | null>(null);
   const [access, setAccess] = useState<AuthMcpClientAccess>(() => linkRequestDefaultAccess(item));
   const [pairingCode, setPairingCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -223,6 +226,7 @@ function LinkRequestSheet(props: {
   });
   const selected = choice ?? linkRequestInitialMachine(item, machines);
   const target = linkRequestTarget(item, machines, selected, m);
+  const address = typedAddress ?? linkRequestSuggestedAddress(item, target);
   const targetName =
     target.kind === "machine"
       ? target.label
@@ -243,7 +247,7 @@ function LinkRequestSheet(props: {
     Option.isSome(connected) &&
     mayMint &&
     !mintFailed.has(targetId);
-  const useExisting = target.kind === "machine" && target.linked;
+  const useExisting = linkRequestKeepsLink(item, target);
   const ready =
     target.kind !== "none" &&
     (useExisting ||
@@ -251,7 +255,7 @@ function LinkRequestSheet(props: {
 
   const prepareAnswer = async () => {
     if (target.kind === "none") return null;
-    if (target.kind === "machine" && target.linked) {
+    if (useExisting && target.kind === "machine") {
       return linkRequestAnswerInput(item, {
         type: "use-existing",
         environmentId: target.environmentId,
@@ -375,7 +379,7 @@ function LinkRequestSheet(props: {
             />
           </SettingsSection>
         ) : null}
-        {needsAddress && item.url === undefined ? (
+        {needsAddress && item.url === undefined && !useExisting ? (
           <View className="gap-2">
             <TextInput
               accessibilityLabel={gt("Address")}
@@ -407,6 +411,11 @@ function LinkRequestSheet(props: {
           </Text>
         ) : target.kind === "none" ? null : (
           <>
+            {target.kind === "machine" && target.linkedAccess !== null ? (
+              <Text className="font-sans text-sm leading-5 text-foreground-muted">
+                <T>Already linked. Linking again renews it with the access you pick.</T>
+              </Text>
+            ) : null}
             {canMint ? null : (
               <View className="gap-2">
                 <TextInput
@@ -501,13 +510,14 @@ function MachineRow(props: {
 }) {
   const gt = useGT();
   const { machine } = props;
-  const status = machine.linked
-    ? gt("Linked")
-    : machine.connected
-      ? null
-      : machine.connectOnly
-        ? "T3 Connect"
-        : gt("Not connected");
+  const status =
+    machine.linkedAccess !== null
+      ? gt("Linked")
+      : machine.connected
+        ? null
+        : machine.connectOnly
+          ? "T3 Connect"
+          : gt("Not connected");
   return (
     <Pressable
       accessibilityRole="radio"

@@ -276,6 +276,13 @@ export const AuthMcpClientAccess = Schema.Literals([
 ]);
 export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
 
+/** Whether `granted` allows everything `wanted` does; the levels are listed weakest first. */
+export const mcpClientAccessCovers = (
+  granted: AuthMcpClientAccess,
+  wanted: AuthMcpClientAccess,
+): boolean =>
+  AuthMcpClientAccess.literals.indexOf(granted) >= AuthMcpClientAccess.literals.indexOf(wanted);
+
 /** The scopes an agent session gets for an access level, and a pairing code must carry. */
 export const mcpClientScopes = (access: AuthMcpClientAccess): ReadonlyArray<AuthGrantScope> =>
   access === "read-only"

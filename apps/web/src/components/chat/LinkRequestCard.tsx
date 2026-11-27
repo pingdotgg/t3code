@@ -9,6 +9,8 @@ import {
   linkRequestFailureMessage,
   linkRequestInitialMachine,
   type LinkRequestItem,
+  linkRequestKeepsLink,
+  linkRequestSuggestedAddress,
   linkRequestTarget,
   linkRequestTargetName,
   rankMachinesByHint,
@@ -189,7 +191,8 @@ function LinkRequestDialog(props: {
   const machines = rankMachinesByHint(listed, item.hint);
   // Null until the user picks; until then the hint's best match is picked.
   const [choice, setChoice] = useState<string | null>(null);
-  const [address, setAddress] = useState(item.url ?? "");
+  // Null until the user types; until then the field holds the suggested address.
+  const [typedAddress, setAddress] = useState<string | null>(null);
   const [access, setAccess] = useState<AuthMcpClientAccess>(() => linkRequestDefaultAccess(item));
   const [pairingCode, setPairingCode] = useState("");
   const [step, setStep] = useState<LinkStep>("machine");
@@ -207,6 +210,7 @@ function LinkRequestDialog(props: {
   });
   const selected = choice ?? linkRequestInitialMachine(item, machines);
   const target = linkRequestTarget(item, machines, selected, messages);
+  const address = typedAddress ?? linkRequestSuggestedAddress(item, target);
   const targetName =
     target.kind === "machine" ? target.label : linkRequestTargetName(item, messages);
   // Without a catalog entry or an address, the name is the generic "a machine".
@@ -230,9 +234,9 @@ function LinkRequestDialog(props: {
     Option.isSome(connected) &&
     mayMint &&
     !mintFailed.has(targetId);
+  const useExisting = linkRequestKeepsLink(item, target);
   // An address the agent gave is already filled in; only one the user must type is asked for.
-  const asksAddress = needsAddress && item.url === undefined;
-  const useExisting = target.kind === "machine" && target.linked;
+  const asksAddress = needsAddress && item.url === undefined && !useExisting;
   // A named machine with an address it answers at has nothing to choose before access.
   const steps: ReadonlyArray<LinkStep> =
     pickMachine || asksAddress ? ["machine", "access"] : ["access"];
@@ -243,7 +247,7 @@ function LinkRequestDialog(props: {
 
   const reset = () => {
     setChoice(null);
-    setAddress(item.url ?? "");
+    setAddress(null);
     setAccess(linkRequestDefaultAccess(item));
     setPairingCode("");
     setStep("machine");
@@ -259,7 +263,7 @@ function LinkRequestDialog(props: {
   // Settles to the answer to send, an error to show, or nothing to do.
   const prepareAnswer = async () => {
     if (target.kind === "none") return null;
-    if (target.kind === "machine" && target.linked) {
+    if (useExisting && target.kind === "machine") {
       return linkRequestAnswerInput(item, {
         type: "use-existing",
         environmentId: target.environmentId,
@@ -407,6 +411,11 @@ function LinkRequestDialog(props: {
                 ) : null}
                 {useExisting ? null : (
                   <>
+                    {target.kind === "machine" && target.linkedAccess !== null ? (
+                      <p className="text-xs text-muted-foreground">
+                        <T>Already linked. Linking again renews it with the access you pick.</T>
+                      </p>
+                    ) : null}
                     {needsAddress ? <LinkAddressWarning address={address} /> : null}
                     {canMint ? null : (
                       <label className="block space-y-1.5">
