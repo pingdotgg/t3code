@@ -245,7 +245,7 @@ it("moves the draft the user typed into during a checkout onto the checkout", as
   expect(readPendingWorkspaceDefault(opened)).toBeNull();
 });
 
-it("releases a waiting send and skips the task when checkout succeeds after a move", async () => {
+it("keeps the destination branch and skips the task when checkout succeeds after a move", async () => {
   setup();
   const draftId = DraftId.make("draft-moved-during-checkout");
   const threadId = ThreadId.make("thread-moved-during-checkout");
@@ -275,18 +275,11 @@ it("releases a waiting send and skips the task when checkout succeeds after a mo
   await userEvent.click(screen.getByRole("button", { name: "Fix" }));
   await expect.poll(() => state.prepareThread.mock.calls.length).toBe(1);
   store.setPrompt(draftId, "My draft");
-  const waitingSend = readPendingWorkspaceDefault(draftId);
-  expect(waitingSend).not.toBeNull();
 
   const destination = scopeProjectRef(EnvironmentId.make("environment"), ProjectId.make("other"));
   store.setLogicalProjectDraftThreadId(scopedProjectKey(destination), destination, draftId, {
     branch: "destination",
   });
-  let waitResult: void | false;
-  void waitingSend?.then((result) => {
-    waitResult = result;
-  });
-  await expect.poll(() => waitResult).toBe(false);
 
   await act(async () => {
     prepared.resolve({

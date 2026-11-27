@@ -7271,7 +7271,7 @@
   ],
   "7d160729d1afcd58": "Länka pull request",
   "2b82c15cd4dc73c6": "Kunde inte uppdatera visade filer",
-  "638700987b3f33ac": "Checkout finished without attaching to the draft",
+  "638700987b3f33ac": "Utcheckningen är klar. Utkastet kopplades inte till den.",
   "f85cd11cb736771c": "Utcheckad, men inte bekräftad på den senaste commiten",
   "406f2d0ee4df0b37": "Den här utcheckningen kunde inte bekräftas på den senaste commiten i {term, select, mr {merge requesten} cr {ändringsbegäran} other {pull requesten}}, så koden kan skilja sig. Lokala commits eller ocommittat arbete håller kvar en utcheckning där den är.",
   "739e53cc339ac41c": "Merga",

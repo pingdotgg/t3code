@@ -7264,7 +7264,7 @@
   ],
   "7d160729d1afcd58": "Pull Request verknüpfen",
   "2b82c15cd4dc73c6": "Angesehene Dateien konnten nicht aktualisiert werden",
-  "638700987b3f33ac": "Checkout finished without attaching to the draft",
+  "638700987b3f33ac": "Auschecken abgeschlossen. Der Entwurf wurde nicht mit dem Checkout verknüpft.",
   "f85cd11cb736771c": "Ausgecheckt, aber nicht auf dem neuesten Commit bestätigt",
   "406f2d0ee4df0b37": "{term, select, mr {Dieser Checkout konnte nicht als auf dem neuesten Commit des Merge Requests bestätigt werden, daher kann sein Code abweichen. Lokale Commits oder nicht committete Arbeit halten einen Checkout an seiner Stelle.} cr {Dieser Checkout konnte nicht als auf dem neuesten Commit der Änderungsanfrage bestätigt werden, daher kann sein Code abweichen. Lokale Commits oder nicht committete Arbeit halten einen Checkout an seiner Stelle.} other {Dieser Checkout konnte nicht als auf dem neuesten Commit des Pull Requests bestätigt werden, daher kann sein Code abweichen. Lokale Commits oder nicht committete Arbeit halten einen Checkout an seiner Stelle.}}",
   "739e53cc339ac41c": "Mergen",
