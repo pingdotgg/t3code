@@ -173,11 +173,9 @@ for (const fullDraft of [true, false]) {
             }),
           )
           .toBe(true);
-      const closePreview = () =>
-        screen.getByRole("button", "Close image preview", { exact: true }).tap();
       await screen.getByRole("button", "Preview screenshot.png", { exact: true }).tap();
       await expectScreenshotLoaded();
-      await closePreview();
+      await screen.getByRole("button", "Close image preview", { exact: true }).tap();
 
       if (fullDraft) {
         await browser.evaluate(() => {
