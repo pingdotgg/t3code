@@ -3081,10 +3081,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         // These commands keep the session alive but must not gate other commands' wakes.
         const expiredHoldCommandIds = new Set<string>();
         // A command whose every linked terminal has exited is done, whatever its tool status says.
+        // A terminal-only command's synthetic tool tracks exactly its own terminal.
         const commandTerminalsExited = (sessionId: string, toolCallId: string) => {
-          const terminalIds =
-            embeddedTerminalsByToolCallId.get(sessionScopedId(sessionId, toolCallId))
-              ?.terminalIds ?? [];
+          const terminalIds = toolCallId.startsWith("acp-agent-terminal:")
+            ? [toolCallId.slice("acp-agent-terminal:".length)]
+            : (embeddedTerminalsByToolCallId.get(sessionScopedId(sessionId, toolCallId))
+                ?.terminalIds ?? []);
           return (
             terminalIds.length > 0 &&
             terminalIds.every(

@@ -2049,6 +2049,38 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  it.effect("does not pin a terminal-only command whose terminal exited after a late link", () =>
+    Effect.gen(function* () {
+      const { session, startTurn, throughPromptSettled, throughTerminal } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: [
+            { sessionUpdate: "terminal_update", terminalId: "term_build", command: "make build" },
+            {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "call_build",
+              kind: "execute",
+              title: "make build",
+              status: "completed",
+              content: [{ type: "terminal", terminalId: "term_build" }],
+            },
+            {
+              sessionUpdate: "terminal_update",
+              terminalId: "term_build",
+              exitStatus: { exitCode: 0 },
+            },
+          ],
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* throughTerminal;
+      assert.isFalse(
+        yield* session.keepsIdleSessionAlive!,
+        "the synthetic command's terminal exited before the hold expired",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   it.effect("keeps a silent scheduled wake in its run past the command hold bound", () =>
     Effect.gen(function* () {
       const { usage, offers, send, startTurn, until, throughPromptSettled } =
