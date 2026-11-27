@@ -16,7 +16,10 @@ const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|\r?$)/;
 const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})\r?$/;
 // A column-0 paragraph, quote or table after a blank line closes any open list, quote or table.
 const BLOCK_START = /^[\p{L}\p{N}`[!|>]/u;
-const ORDERED_ITEM = /^\d{1,9}[.)](?:[ \t]|\r?$)/;
+const LIST_ITEM = /^( {0,3}(?:[-*+]|\d{1,9}[.)]))([ \t]+|(?=\r?$))/;
+// Further markers on an item's first line open nested items that start on the same line.
+const NESTED_LIST_MARKERS = /^(?:(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|(?=\r?$)))+/;
+const BLOCK_QUOTE = /^ {0,3}>/;
 const DISPLAY_MATH_OPEN = /^ {0,3}\$\$/;
 // CommonMark HTML blocks of types 1-5 and display math run past blank lines until their closer.
 const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
@@ -42,6 +45,13 @@ const HTML_FLOW_MAX_CHARS = 8 * 1024;
 // Parsing is far slower than the line scan, so a whole document shares one budget.
 const HTML_PARSE_BUDGET_CHARS = 16 * 1024;
 
+function indentationColumn(whitespace: string, column = 0): number {
+  for (const character of whitespace) {
+    column += character === "\t" ? 4 - (column % 4) : 1;
+  }
+  return column;
+}
+
 // A <details> or <table> wraps the Markdown between its tags, across the blank lines that end
 // each HTML block, so a cut waits until the ones an HTML block opened are closed.
 const WRAPPER_TAG = /<(\/?)(?:details|table)(?=[\s/>]|$)/gi;
@@ -66,6 +76,18 @@ function openedWrappers(line: string): number {
     opened += closing ? -1 : 1;
   }
   return opened;
+}
+
+/** Whether `text` opens a block that ends a paragraph and is not one itself. */
+function opensNonParagraph(text: string): boolean {
+  return (
+    ATX_HEADING.test(text) ||
+    THEMATIC_BREAK.test(text) ||
+    BLOCK_QUOTE.test(text) ||
+    FENCE_OPEN.test(text) ||
+    HTML_BLOCK_TAG.test(text) ||
+    SPANNING_BLOCKS.some(([open]) => open.test(text))
+  );
 }
 
 /** Null means the block ends on this line. Undefined means no block opens. */
@@ -95,12 +117,22 @@ function blockCloser(line: string): ((line: string) => boolean) | null | undefin
 export interface MarkdownChunk {
   readonly text: string;
   readonly lines: number;
+  readonly separator?: "\n" | "\r";
 }
 
 const FRONTMATTER_OPEN = /^\uFEFF?---[ \t]*\r?$/;
 const FRONTMATTER_CLOSE = /^(?:---|\.\.\.)[ \t]*\r?$/;
 // Cap the lookahead for a frontmatter closer; a leading rule with none is a thematic break.
 const FRONTMATTER_MAX_LINES = 1000;
+
+// A bare CR ends a line too; CRLF lines keep their `\r`, which the patterns here allow.
+function nextLineBreak(text: string, from: number): number {
+  for (let i = from; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 10 || (code === 13 && text.charCodeAt(i + 1) !== 10)) return i;
+  }
+  return text.length;
+}
 
 const hasFrontmatterClose = (lines: readonly string[]) =>
   lines.slice(1, FRONTMATTER_MAX_LINES + 1).some((line) => FRONTMATTER_CLOSE.test(line));
@@ -233,9 +265,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   const chunks: MarkdownChunk[] = [];
   const definitions: string[] = [];
   const omittedDefinitions = new Set<string>();
-  let lines: string[] = [];
   let first = true;
-  let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
   let ambiguousHtml = false;
   let afterBlankLine = false;
@@ -243,16 +273,33 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let pendingDefinitions: ReturnType<typeof readLinkDefinitions> | undefined;
   let afterHeading = false;
   let openedFence = false;
+  // The outermost list item's content column; a line indented less is outside every item.
+  let listContentIndent = Infinity;
+  let listMarker = "";
+  let emptyListItem = false;
+  let paragraphOpen = false;
   let definitionChars = 0;
   let openWrappers = 0;
+  const sourceLines: string[] = [];
+  const lineStarts: number[] = [];
+  for (let start = 0; start <= text.length;) {
+    const end = nextLineBreak(text, start);
+    sourceLines.push(text.slice(start, end));
+    lineStarts.push(start);
+    start = end + 1;
+  }
+  let chunkStart = 0;
   let heldCut = 0;
-  const flush = () => {
-    chunks.push({ text: lines.join("\n"), lines: lines.length });
-    lines = [];
-    chars = 0;
+  // Slices the source so each piece keeps its own line endings and the break after it.
+  const flush = (end: number) => {
+    const from = lineStarts[chunkStart]!;
+    const to = end < sourceLines.length ? lineStarts[end]! - 1 : text.length;
+    const separator = text[to];
+    const chunk = { text: text.slice(from, to), lines: end - chunkStart };
+    chunks.push(separator === "\n" || separator === "\r" ? { ...chunk, separator } : chunk);
+    chunkStart = end;
     heldCut = 0;
   };
-  const sourceLines = text.split("\n");
   let flowStart = 0;
   let parsedThrough = 0;
   let htmlStarts: Set<number> | undefined;
@@ -263,6 +310,13 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     htmlStarts = undefined;
   };
   for (const [lineIndex, line] of sourceLines.entries()) {
+    const chars = lineStarts[lineIndex]! - lineStarts[chunkStart]!;
+    const blank = BLANK_LINE.test(line);
+    const whitespace = /^[ \t]*/.exec(line)![0];
+    const indent = indentationColumn(whitespace);
+    if (emptyListItem && (blank || indent < listContentIndent)) listContentIndent = Infinity;
+    emptyListItem = false;
+    const dedented = indent < listContentIndent;
     if (closes !== null) {
       if (closes(line)) {
         closes = null;
@@ -279,9 +333,9 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         !ambiguousHtml &&
         chars >= targetChars &&
         ((line.startsWith("#") && ATX_HEADING.test(line)) ||
-          (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
-      if (cutPoint && openWrappers === 0) flush();
-      else if (cutPoint) heldCut = lines.length;
+          (afterBlankLine && BLOCK_START.test(line) && !LIST_ITEM.test(line)));
+      if (cutPoint && openWrappers === 0) flush(lineIndex);
+      else if (cutPoint) heldCut = lineIndex;
       const closer = blockCloser(line);
       closes = closer ?? null;
       if (closer === null || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line)) {
@@ -323,10 +377,45 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         if (lineIndex === flowStart || htmlStarts?.has(lineIndex)) closes = closesAtBlankLine;
         else if (lineIndex >= parsedThrough) ambiguousHtml = true;
       }
-      // Two or more spaces may put a fence in a list item, which this does not track.
-      openedFence = /^ ?[`~]/.test(line) && FENCE_OPEN.test(line);
+      const afterFence = afterHeading && openedFence && dedented;
+      const fence = FENCE_OPEN.test(line);
+      // Fence tracking ignores lists, so it finds the real end of a fence indented two or more
+      // spaces only when that fence is outside every list item.
+      openedFence = fence && (dedented || /^ ?[`~]/.test(line));
+      const thematicBreak = THEMATIC_BREAK.test(line);
+      const contentColumn = dedented ? 0 : listContentIndent;
+      const canStartBlock = indent - contentColumn <= 3;
+      const content = canStartBlock ? line.slice(whitespace.length) : "";
+      const item = thematicBreak ? null : LIST_ITEM.exec(content);
+      const marker = item?.[1];
+      let itemContent = item ? content.slice(item[0].length) : "";
+      const itemIsEmpty = BLANK_LINE.test(itemContent);
+      const markerKind = marker?.at(-1);
+      const continuesList = dedented && listContentIndent !== Infinity && markerKind === listMarker;
+      const opensItem: boolean =
+        item !== null &&
+        (!paragraphOpen ||
+          continuesList ||
+          (!itemIsEmpty && (!/^\d/.test(marker!) || /^1[.)]$/.test(marker!))));
+      let startsIndentedCode = false;
+      if (item && opensItem) {
+        const markerEnd = indent + item[1]!.length;
+        const paddedColumn = indentationColumn(item[2]!, markerEnd);
+        emptyListItem = dedented && itemIsEmpty;
+        // Empty items and items starting with indented code use one column of padding.
+        startsIndentedCode = paddedColumn - markerEnd > 4;
+        if (dedented) {
+          listContentIndent = itemIsEmpty || startsIndentedCode ? markerEnd + 1 : paddedColumn;
+          listMarker = markerKind!;
+        }
+        itemContent = itemContent.replace(NESTED_LIST_MARKERS, "");
+      } else if (dedented && !blank && (afterBlankLine || afterFence || opensNonParagraph(line))) {
+        // Dedented prose can still be a lazy continuation until a block boundary.
+        listContentIndent = Infinity;
+      }
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
+      let startsDefinition = false;
       if (
         !ambiguousHtml &&
         (first || afterBlankLine || lineIndex === definitionEnd + 1 || afterHeading)
@@ -341,6 +430,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           definition = pendingDefinitions.get(lineIndex);
         }
         if (definition) {
+          startsDefinition = true;
           definitionEnd = definition.end;
           if (!omittedDefinitions.has(definition.identifier)) {
             if (
@@ -355,21 +445,28 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           }
         }
       }
+      paragraphOpen =
+        !blank &&
+        !startsDefinition &&
+        closes === null &&
+        (canStartBlock || paragraphOpen) &&
+        (item && opensItem
+          ? !BLANK_LINE.test(itemContent) && !startsIndentedCode && !opensNonParagraph(itemContent)
+          : !opensNonParagraph(line));
     }
     if (closes === closesAtBlankLine)
       openWrappers = Math.max(0, openWrappers + openedWrappers(line));
     first = false;
-    lines.push(line);
-    chars += line.length + 1;
     // A piece too large to render goes back to the last cut a wrapper held.
-    if (heldCut > 0 && chars - 1 > LARGE_MARKDOWN_CHUNK_MAX_CHARS) {
-      const rest = lines.splice(heldCut);
-      flush();
-      lines = rest;
-      chars = rest.reduce((sum, kept) => sum + kept.length + 1, 0);
+    if (
+      heldCut > chunkStart &&
+      lineStarts[lineIndex]! + line.length - lineStarts[chunkStart]! >
+        LARGE_MARKDOWN_CHUNK_MAX_CHARS
+    ) {
+      flush(heldCut);
       openWrappers = 0;
     }
-    afterBlankLine = BLANK_LINE.test(line);
+    afterBlankLine = blank;
     if (afterBlankLine) {
       ambiguousHtml = false;
       resetFlow(lineIndex + 1);
@@ -377,8 +474,16 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     afterHeading =
       closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
-  flush();
+  flush(sourceLines.length);
   return { chunks, definitions: definitions.join("\n") };
+}
+
+export function joinMarkdownChunks(chunks: readonly MarkdownChunk[]): string {
+  return chunks
+    .map((chunk, index) =>
+      index + 1 < chunks.length ? `${chunk.text}${chunk.separator ?? "\n"}` : chunk.text,
+    )
+    .join("");
 }
 
 /** Prepends shared definitions in document order; source offsets shift by the prefix length. */

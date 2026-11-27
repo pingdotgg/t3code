@@ -7,6 +7,7 @@ import remarkRehype from "remark-rehype";
 import { unified } from "unified";
 
 import {
+  joinMarkdownChunks,
   LARGE_MARKDOWN_CHUNK_MAX_CHARS,
   splitMarkdown,
   withMarkdownDefinitions,
@@ -93,6 +94,48 @@ describe("splitMarkdown", () => {
       "<div>",
       "# heading",
     ]);
+  });
+
+  it("splits CR-only Markdown into bounded chunks like LF and preserves line endings", () => {
+    const cr = `first\r\r# ${"x\r\r# ".repeat(30_000)}end`;
+    const lf = cr.replaceAll("\r", "\n");
+    const crResult = splitMarkdown(cr);
+    const lfResult = splitMarkdown(lf);
+
+    expect(crResult.chunks.length).toBe(lfResult.chunks.length);
+    expect(crResult.chunks.length).toBeGreaterThan(1);
+    expect(
+      crResult.chunks.every((chunk) => chunk.text.length <= LARGE_MARKDOWN_CHUNK_MAX_CHARS),
+    ).toBe(true);
+    expect(crResult.chunks.reduce((sum, chunk) => sum + chunk.lines, 0)).toBe(
+      lfResult.chunks.reduce((sum, chunk) => sum + chunk.lines, 0),
+    );
+    expect(joinMarkdownChunks(crResult.chunks)).toBe(cr);
+    const rendered = unified().use(remarkParse).use(remarkRehype);
+    expect(toHtml(rendered.runSync(rendered.parse(crResult.chunks[1]!.text)))).toContain(
+      "<h1>x</h1>",
+    );
+
+    const mixed = `---\rtitle: cr\r---\r\r[ref]: /cr-link\r\r\`\`\`md\r# inside fence\r\`\`\`\r\r<details>\r\r${"x".repeat(32 * 1024)}\r\r</details>\r\r# After [ref]\r\n\r\n- [ ] task`;
+    const mixedResult = splitMarkdown(mixed);
+    expect(mixedResult.definitions).toBe("[ref]: /cr-link");
+    expect(mixedResult.chunks.map((chunk) => chunk.text.split(/\r\n?|\n/)[0])).toEqual([
+      "---",
+      "# After [ref]",
+    ]);
+    expect(joinMarkdownChunks(mixedResult.chunks)).toBe(mixed);
+    const secondChunk = withMarkdownDefinitions(
+      mixedResult.chunks[1]!.text,
+      mixedResult.definitions,
+    );
+    const list = unified()
+      .use(remarkParse)
+      .use(remarkGfm)
+      .parse(secondChunk)
+      .children.find((node) => node.type === "list");
+    const marker = taskListMarkerOffset(secondChunk, list!.position!.start.offset!);
+    const secondStart = mixedResult.chunks[0]!.text.length + 1;
+    expect(secondStart + marker! - (mixedResult.definitions.length + 2)).toBe(mixed.indexOf("[ ]"));
   });
 
   it("keeps HTML blocks and display math open across blank lines", () => {
@@ -287,87 +330,128 @@ describe("splitMarkdown", () => {
     expect(result.chunks.map((chunk) => chunk.text)).toEqual([intro, appendix]);
   });
 
-  it.each(["", " "])("collects link definitions outside code with fence indent %j", (indent) => {
-    const text = [
-      "[![badge][b]][site]",
-      "",
-      "```md",
-      "[fake]: /not-a-definition",
-      "```",
-      "",
-      "Paragraph",
-      "[inline]: /continues-the-paragraph",
-      "",
-      "[site]: https://example.com",
-      "[b]: https://example.com/badge.svg 'Badge'",
-      "[^note]: a footnote",
-      "",
-      '[x]: /url "title" is paragraph text',
-      "",
-      "# Heading",
-      "[h]: /after-heading",
-      "",
-      "---",
-      "[t]: /after-break",
-      "",
-      "===",
-      "[p]: /paragraph-text",
-      "",
-      `${indent}\`\`\`sh`,
-      "npm install",
-      `${indent}\`\`\``,
-      "[fence]: /after-fence",
-      "~~~",
-      "~~~",
-      "Text after a fence",
-      "[q]: /continues-the-paragraph",
-      "",
-      "$$",
-      "x",
-      "$$ trailing",
-      "[math]: /inside-math",
-      "",
-      "<!-->",
-      "```",
-      "-->",
-      "```",
-      "[comment]: /after-a-closed-comment",
-      "```",
-      "[code]: /inside-a-fence-after-a-comment",
-      "```",
-      "",
-      "- ```md",
-      "  ~~~",
-      "  ~~~",
-      "  [list]: /inside-a-list-fence",
-      "  ```",
-    ].join("\n");
-    expect(splitMarkdown(text).definitions).toBe(
-      "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break\n[fence]: /after-fence\n[comment]: /after-a-closed-comment",
-    );
-    const frontmatter = ["---", "title: x", "...", "[fm]: /after-frontmatter", "", "# A"];
-    expect(splitMarkdown(frontmatter.join("\n")).definitions).toBe("[fm]: /after-frontmatter");
-    const unclosed = ["---", ...Array<string>(1000).fill("text"), "[u]: /paragraph-text"];
-    expect(splitMarkdown(unclosed.join("\n")).definitions).toBe("");
-    expect(splitMarkdown("---\n[rule]: /after-leading-rule\n\n# A").definitions).toBe(
-      "[rule]: /after-leading-rule",
-    );
-    const unbalanced = [
-      "[x]: /docs/example)",
-      "[after]: /continues-paragraph",
-      "",
-      "[open]: /docs/example(",
-      "",
-      "[bs]: /docs/example\\\\)",
-      "",
-      "[balanced]: /docs/example(a(b))",
-      "[escaped]: /docs/example\\)",
-      "[angle]: </docs/example)>",
-    ];
-    expect(splitMarkdown(unbalanced.join("\n")).definitions).toBe(
-      "[balanced]: /docs/example(a(b))\n[escaped]: /docs/example\\)\n[angle]: </docs/example)>",
-    );
+  it.each([
+    ["an ordered item whose content starts farther right", "10. Item\n\n", ""],
+    ["an item padded to the next tab stop", "-\tItem\n\n", ""],
+    ["a blockquote that ends the list", "- Item\n> quote\n", ""],
+    ["an HTML comment that ends the list", "- Item\n<!-- note -->\n", ""],
+    ["an HTML block that ends the list", "- Item\n<div>top level</div>\n\n", ""],
+    ["a math block that ends the list", "- Item\n$$\nx\n$$\n", ""],
+    ["an indented thematic break", "  - - -\n", ""],
+    ["an empty list item", "-\n\n", "  "],
+    ["an empty list item with trailing spaces", "-  \n\n", "  "],
+    ["an empty list item followed by dedented prose", "-\nfoo\n", "  "],
+  ])("collects definitions after a fence following %s", (_, beforeFence, definitionIndent) => {
+    const definition = "[ref]: /target";
+    const text = beforeFence + "  ```sh\n  example\n  ```\n" + definitionIndent + definition;
+    expect(splitMarkdown(text).definitions).toBe(definition);
   });
+
+  it.each([
+    ["nested markers on one line", "- - ```\n    code\n    ```"],
+    ["a line of many nested markers", "- ".repeat(70_000) + "x"],
+    ["a heading in a list item", "- # Heading\n  2. Item\n     ```\n     code\n        ```"],
+    ["a lazy ordered marker", "- outer\n  - inner\n2. lazy\n    ```\n       ```"],
+  ])("collects a list item definition after %s", (_, list) => {
+    const definition = "[ref]: /target";
+    expect(splitMarkdown(`${list}\n\n  ${definition}`).definitions).toBe(definition);
+  });
+
+  it.each([
+    ["after a list fence", ["- Item", "  ```", "  code", "```", "[ref]: /fake", "```"]],
+    ["after a paragraph", ["Paragraph", "2. continuation", "   ```", "[ref]: /fake", "   ```"]],
+    [
+      "in a parent item after a nested item",
+      ["- outer", "  - inner", "    ```", "  ```", "  [ref]: /fake", "  ```"],
+    ],
+  ])("keeps definitions inside a top-level fence %s literal", (_, lines) => {
+    expect(splitMarkdown(lines.join("\n")).definitions).toBe("");
+  });
+
+  it.each(["", " ", "  ", "   "])(
+    "collects link definitions outside code with fence indent %j",
+    (indent) => {
+      const text = [
+        "[![badge][b]][site]",
+        "",
+        "```md",
+        "[fake]: /not-a-definition",
+        "```",
+        "",
+        "Paragraph",
+        "[inline]: /continues-the-paragraph",
+        "",
+        "[site]: https://example.com",
+        "[b]: https://example.com/badge.svg 'Badge'",
+        "[^note]: a footnote",
+        "",
+        '[x]: /url "title" is paragraph text',
+        "",
+        "# Heading",
+        "[h]: /after-heading",
+        "",
+        "---",
+        "[t]: /after-break",
+        "",
+        "===",
+        "[p]: /paragraph-text",
+        "",
+        `${indent}\`\`\`sh`,
+        "npm install",
+        `${indent}\`\`\``,
+        "[fence]: /after-fence",
+        "~~~",
+        "~~~",
+        "Text after a fence",
+        "[q]: /continues-the-paragraph",
+        "",
+        "$$",
+        "x",
+        "$$ trailing",
+        "[math]: /inside-math",
+        "",
+        "<!-->",
+        "```",
+        "-->",
+        "```",
+        "[comment]: /after-a-closed-comment",
+        "```",
+        "[code]: /inside-a-fence-after-a-comment",
+        "```",
+        "",
+        "- ```md",
+        "  ~~~",
+        "  ~~~",
+        "  [list]: /inside-a-list-fence",
+        "  ```",
+      ].join("\n");
+      expect(splitMarkdown(text).definitions).toBe(
+        "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break\n[fence]: /after-fence\n[comment]: /after-a-closed-comment",
+      );
+      const frontmatter = ["---", "title: x", "...", "[fm]: /after-frontmatter", "", "# A"];
+      expect(splitMarkdown(frontmatter.join("\n")).definitions).toBe("[fm]: /after-frontmatter");
+      const unclosed = ["---", ...Array<string>(1000).fill("text"), "[u]: /paragraph-text"];
+      expect(splitMarkdown(unclosed.join("\n")).definitions).toBe("");
+      expect(splitMarkdown("---\n[rule]: /after-leading-rule\n\n# A").definitions).toBe(
+        "[rule]: /after-leading-rule",
+      );
+      const unbalanced = [
+        "[x]: /docs/example)",
+        "[after]: /continues-paragraph",
+        "",
+        "[open]: /docs/example(",
+        "",
+        "[bs]: /docs/example\\\\)",
+        "",
+        "[balanced]: /docs/example(a(b))",
+        "[escaped]: /docs/example\\)",
+        "[angle]: </docs/example)>",
+      ];
+      expect(splitMarkdown(unbalanced.join("\n")).definitions).toBe(
+        "[balanced]: /docs/example(a(b))\n[escaped]: /docs/example\\)\n[angle]: </docs/example)>",
+      );
+    },
+  );
 });
 
 describe("withMarkdownDefinitions", () => {
