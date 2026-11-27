@@ -16,7 +16,7 @@ const FILE_HEADING = /^File: (.+)$/;
 const NUMBERED_LINE = /^\s*(?:(?:Line |L)(\d+): ?|(\d+):)(.*)$/s;
 const CONTEXT_LINE = /^\s*\d+-/;
 const PATH_LINE_TEXT = /^(\S.*?):(\d+):(.*)$/s;
-const COLON_HEADING = /^(\S.*):$/;
+const COLON_HEADING = /^(\S.*):$/s;
 const OPENCODE_NUMBERED_LINE = /^\s+Line \d+:/;
 const RIPGREP_NUMBERED_LINE = /^\d+:/;
 

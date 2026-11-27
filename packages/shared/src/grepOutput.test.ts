@@ -29,6 +29,18 @@ describe("parseGrepOutput", () => {
     expect(
       parseGrepOutput("Found 1 matches\n/tmp/a:12:b.txt:\n  Line 2: needle second\n", "/tmp"),
     ).toEqual([{ fileName: "/tmp/a:12:b.txt", line: 2, preview: "needle second" }]);
+    for (const separator of ["\u2028", "\u2029"]) {
+      const fileName = `/tmp/a${separator}b:12:c.txt`;
+      expect(
+        parseGrepOutput(
+          `Found 2 matches\n/tmp/first.txt:\n  Line 1: first\n${fileName}:\n  Line 2: second\n`,
+          "/tmp",
+        ),
+      ).toEqual([
+        { fileName: "/tmp/first.txt", line: 1, preview: "first" },
+        { fileName, line: 2, preview: "second" },
+      ]);
+    }
     expect(
       parseGrepOutput("Found 1 matches\n/tmp/line.txt:\n  Line 1: needle\u2028suffix\n", "/tmp"),
     ).toEqual([{ fileName: "/tmp/line.txt", line: 1, preview: "needle\u2028suffix" }]);
