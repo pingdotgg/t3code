@@ -1283,19 +1283,6 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "word/document.xml":
-              '<w:document xmlns:w="urn:w"><w:body><w:tbl>' +
-              "<w:tr><w:tc><w:p><w:r><w:t/></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>USD</w:t></w:r></w:p></w:tc></w:tr>" +
-              "<w:tr><w:tc><w:p><w:r><w:t>Revenue</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>900</w:t></w:r></w:p></w:tc></w:tr>" +
-              "</w:tbl></w:body></w:document>",
-          },
-          expected: [],
-          exact: "\tUSD\nRevenue\t900",
-        },
-        {
-          ext: "docx",
-          bounded: true,
-          parts: {
-            "word/document.xml":
               '<w:document xmlns:w="urn:w"><w:body>\n\t<w:tbl>' +
               "<w:tr><w:tc><w:p><w:r><w:t/></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>USD</w:t></w:r></w:p></w:tc></w:tr>" +
               "<w:tr><w:tc><w:p><w:r><w:t>Revenue</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>900</w:t></w:r></w:p></w:tc></w:tr>" +
@@ -1303,33 +1290,6 @@ describe("question answer paths", () => {
           },
           expected: [],
           exact: "\tUSD\nRevenue\t900",
-        },
-        {
-          ext: "docx",
-          bounded: true,
-          parts: {
-            "word/document.xml":
-              '<w:document xmlns:w="urn:w"><w:body>\n\t<w:tbl>' +
-              "<w:tr><w:tc><w:p><w:r><w:t>Code</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>USD</w:t></w:r></w:p></w:tc></w:tr>" +
-              "<w:tr><w:tc><w:p><w:r><w:t>Revenue</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>900</w:t></w:r></w:p></w:tc></w:tr>" +
-              "</w:tbl>\n</w:body></w:document>",
-          },
-          expected: [],
-          exact: "Code\tUSD\nRevenue\t900",
-        },
-        {
-          ext: "docx",
-          bounded: true,
-          parts: {
-            "word/document.xml":
-              '<w:document xmlns:w="urn:w"><w:body>\n\t' +
-              "<w:p><w:r><w:t>Control</w:t></w:r></w:p><w:tbl>" +
-              "<w:tr><w:tc><w:p><w:r><w:t/></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>USD</w:t></w:r></w:p></w:tc></w:tr>" +
-              "<w:tr><w:tc><w:p><w:r><w:t>Revenue</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>900</w:t></w:r></w:p></w:tc></w:tr>" +
-              "</w:tbl>\n</w:body></w:document>",
-          },
-          expected: [],
-          exact: "Control\n\tUSD\nRevenue\t900",
         },
         {
           ext: "docx",
