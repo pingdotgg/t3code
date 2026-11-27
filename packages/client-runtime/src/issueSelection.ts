@@ -6,6 +6,54 @@ type Labelled = Pick<IssueDetail, "labels">;
 type Assigned = Pick<IssueDetail, "assignees">;
 
 /**
+ * The loaded people a query matches by name or by the tracker's own search, which also reads
+ * emails, then the people only that search found.
+ */
+function mergeIssueAssigneeCandidates(
+  loaded: ReadonlyArray<IssueAssigneeCandidate>,
+  searched: ReadonlyArray<IssueAssigneeCandidate>,
+  query: string,
+): ReadonlyArray<IssueAssigneeCandidate> {
+  const needle = query.trim().toLowerCase();
+  const known = new Set(loaded.map((candidate) => candidate.id));
+  const matched = new Set(searched.map((candidate) => candidate.id));
+  return [
+    ...loaded.filter(
+      (candidate) =>
+        matched.has(candidate.id) ||
+        `${candidate.login} ${candidate.name ?? ""}`.toLowerCase().includes(needle),
+    ),
+    ...searched.filter((candidate) => !known.has(candidate.id)),
+  ];
+}
+
+/** An assignee picker's list while the tracker searches past what it loaded; a stale answer never shows. */
+export function issueAssigneeSearchView(input: {
+  readonly loaded: ReadonlyArray<IssueAssigneeCandidate>;
+  readonly searchable: boolean;
+  readonly query: string;
+  readonly debouncedQuery: string;
+  readonly search: {
+    readonly data: { readonly assignees: ReadonlyArray<IssueAssigneeCandidate> } | null;
+    readonly isPending: boolean;
+    readonly error: string | null;
+  };
+}) {
+  const searching = input.searchable && input.query.trim().length > 0;
+  const current = searching && input.query.trim() === input.debouncedQuery;
+  const candidates = mergeIssueAssigneeCandidates(
+    input.loaded,
+    current ? (input.search.data?.assignees ?? []) : [],
+    input.query,
+  );
+  return {
+    candidates,
+    pending: searching && (!current || input.search.isPending) && candidates.length === 0,
+    error: current && candidates.length === 0 ? input.search.error : null,
+  };
+}
+
+/**
  * An issue write replaces the whole set, so a picker's picks become one write when it closes.
  * Both return null when the picks leave the issue as the tracker already has it.
  */

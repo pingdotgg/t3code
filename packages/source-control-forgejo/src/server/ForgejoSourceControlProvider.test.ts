@@ -111,6 +111,63 @@ it.effect("reads clone URLs on the given host rather than the checkout's", () =>
   );
 });
 
+it.effect("publishes to the signed-in user's account whatever case its owner is typed in", () => {
+  const requests: string[] = [];
+  const client = HttpClient.make((request) => {
+    requests.push(`${request.method} ${request.url}`);
+    const body = request.url.endsWith("/api/v1/user")
+      ? { login: "Alice" }
+      : {
+          full_name: "Alice/project",
+          clone_url: "https://forgejo.test/Alice/project.git",
+          ssh_url: "git@forgejo.test:Alice/project.git",
+        };
+    return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(encodeJson(body))));
+  });
+  return Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const provider = yield* ForgejoSourceControlProvider.make.pipe(
+      Effect.provideService(ForgejoCli.ForgejoCli, cli),
+    );
+    yield* provider.createRepository({
+      cwd: "/repo",
+      repository: "alice/project",
+      visibility: "private",
+    });
+    assert.deepStrictEqual(requests, [
+      "GET https://forgejo.test/api/v1/user",
+      "POST https://forgejo.test/api/v1/user/repos",
+    ]);
+  }).pipe(
+    Effect.provideService(HttpClient.HttpClient, client),
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: {
+                "forgejo.test": { type: "Application", token: "test-token" },
+              },
+            }),
+          ),
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) => {
+            assert.strictEqual(input.command, "fj");
+            assert.deepStrictEqual(input.args, ["--host", "https://forgejo.test", "whoami"]);
+            return Effect.succeed(processOutput(""));
+          },
+        },
+      }),
+    ),
+  );
+});
+
 const requiredChecksPullRequest = {
   number: 7,
   title: "Required checks",

@@ -32,6 +32,7 @@ const PPTX_DRAWING_PROPERTIES = new Map([
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 const ODF_DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+const ODF_TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
 type TextPart =
   | string
   | typeof CELL_START
@@ -96,7 +97,7 @@ interface XmlNode {
   epubTable?: boolean;
   mathmlFirstChildSeen?: boolean;
   epubBlock?: boolean;
-  odfTextBox?: boolean;
+  odfInlineParagraphs?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -163,6 +164,36 @@ function isXhtmlElement(
   );
 }
 
+function hasImportantDisplayNone(style: string): boolean {
+  // Stylesheet rules can override non-important inline display.
+  if (!style || style.includes("\\") || !/display/i.test(style) || !/important/i.test(style))
+    return false;
+  let badString = false;
+  const declarations = style.replaceAll(
+    /\/\*[\s\S]*?(?:\*\/|$)|"[^"]*(?:"|$)|'[^']*(?:'|$)/g,
+    (token) => {
+      if (token.startsWith("/")) return " ";
+      // CSS ends a string at a newline, so later declarations can still apply.
+      if (/[\n\r\f]/.test(token)) badString = true;
+      return '""';
+    },
+  );
+  // Semicolons in blocks can be part of a declaration's value.
+  if (badString || /[()[\]{}]/.test(declarations)) return false;
+  let hidden = false;
+  for (const [declaration] of declarations.matchAll(/[^;]+/g)) {
+    const match =
+      /^[\t\n\f\r ]*(display|all)[\t\n\f\r ]*:([^!]+)![\t\n\f\r ]*important[\t\n\f\r ]*$/i.exec(
+        declaration,
+      );
+    if (!match) continue;
+    const [, property, value] = match;
+    if (!value?.trim()) continue;
+    hidden = property?.toLowerCase() === "display" && /^[\t\n\f\r ]*none[\t\n\f\r ]*$/i.test(value);
+  }
+  return hidden;
+}
+
 function xml(source: string, extension: string): XmlNode {
   const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
@@ -196,7 +227,7 @@ function xml(source: string, extension: string): XmlNode {
     stack.at(-1)!.children.push(node);
     stack.push(node);
     if (odf && node.name === "text-box" && namespaceOf(tag.name, stack) === ODF_DRAW_NS)
-      node.odfTextBox = true;
+      node.odfInlineParagraphs = true;
     if (
       extension === ".epub" &&
       node.name === "semantics" &&
@@ -255,8 +286,9 @@ function xml(source: string, extension: string): XmlNode {
         isXhtmlElement(tag.name, [...stack, node], rootTagName)) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
-        Object.hasOwn(tag.attributes, "hidden") &&
-        !/^until-found$/i.test(String(tag.attributes.hidden))) ||
+        ((Object.hasOwn(tag.attributes, "hidden") &&
+          !/^until-found$/i.test(String(tag.attributes.hidden))) ||
+          hasImportantDisplayNone(tag.attributes.style ?? ""))) ||
       (extension === ".docx" && node.name === "del") ||
       (extension === ".docx" &&
         node.name === "r" &&
@@ -288,6 +320,19 @@ function xml(source: string, extension: string): XmlNode {
       const reading = children(node).find((child) => child.name === "rt");
       // Word stores the guide first even though the base is the text on the line.
       if (base?.hasText && reading?.hasText) node.children = [base, "(", reading, ")"];
+    }
+    if (
+      extension === ".odt" &&
+      node.name === "note" &&
+      namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS
+    ) {
+      const parts = children(node);
+      const citation = parts.find((child) => child.name === "note-citation");
+      const body = parts.find((child) => child.name === "note-body");
+      if (citation?.hasText && body?.hasText) {
+        body.odfInlineParagraphs = true;
+        node.children = ["[", citation, ": ", body, "]"];
+      }
     }
     if (extension === ".epub" && node.name === "ruby" && stack[1]?.name === "html")
       separateRubyReadings(node);
@@ -386,8 +431,8 @@ function* text(node: XmlNode): Generator<TextPart, void> {
   }
   // Word text boxes hold their own paragraphs inside the anchoring paragraph.
   if (node.name === "txbxContent") yield* paragraphs(node);
-  else if (node.odfTextBox) {
-    // An ODF box can sit inline, so only add breaks between its own paragraphs.
+  else if (node.odfInlineParagraphs) {
+    // ODF boxes and notes can sit inline, so only add breaks between their own paragraphs.
     let seenParagraph = false;
     for (const child of node.children) {
       if (typeof child === "string") {

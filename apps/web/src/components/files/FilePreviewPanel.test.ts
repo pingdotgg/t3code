@@ -177,6 +177,11 @@ describe("document preview contents", () => {
       String.raw`{\rtf1 A{\deleted\uc1\u945\deleted0 old}B}`,
       "AB",
     ],
+    [
+      "nested table cells",
+      String.raw`{\rtf1\ansi\trowd\cellx3000\pard\intbl\itap2 Inner A\nestcell\pard\intbl\itap2 Inner B\nestcell{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}\pard\intbl\itap1\cell\row}`,
+      "Inner A\tInner B\t\t",
+    ],
   ])("keeps the text of %s", (_name, source, expected) => {
     const result = openRtf(bytes(source));
     if (result.type !== "document") throw new Error("Expected document");
@@ -489,6 +494,16 @@ Third}`;
     for (const name of ["", "Питон"]) {
       const blank = { nbformat: 4, metadata: { language_info: { name } }, cells: [] };
       expect(openNotebook(bytes(JSON.stringify(blank)))).toMatchObject({ language: "text" });
+    }
+    const kernelspec = { name: "python3", display_name: "Python 3", language: "python" };
+    for (const [metadata, language] of [
+      [{ kernelspec }, "python"],
+      [{ language_info: { name: "" }, kernelspec }, "python"],
+      [{ language_info: { name: "python" }, kernelspec: { language: "r" } }, "python"],
+    ] as const) {
+      expect(
+        openNotebook(bytes(JSON.stringify({ nbformat: 4, metadata, cells: [] }))),
+      ).toMatchObject({ language });
     }
     // IPython traceback frames can omit trailing newlines or place ANSI resets after them.
     const failed = openNotebook(

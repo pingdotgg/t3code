@@ -334,14 +334,22 @@ export const makeZonedUnsafe = (input: DateTime.DateTime.Input, options?: {
 }
 
 /** @internal */
-export const makeZoned: (
+export const makeZoned = (
   input: DateTime.DateTime.Input,
   options?: {
     readonly timeZone?: number | string | DateTime.TimeZone | undefined
     readonly adjustForTimeZone?: boolean | undefined
     readonly disambiguation?: DateTime.Disambiguation | undefined
   }
-) => Option.Option<DateTime.Zoned> = Option.liftThrowable(makeZonedUnsafe)
+): Option.Option<DateTime.Zoned> => {
+  // Do not pass `makeZonedUnsafe` to a top-level call such as `Option.liftThrowable`,
+  // or AOT compilers that prune per function treat `Intl` as reachable whenever this module loads.
+  try {
+    return Option.some(makeZonedUnsafe(input, options))
+  } catch {
+    return Option.none()
+  }
+}
 
 /** @internal */
 export const make: <A extends DateTime.DateTime.Input>(input: A) => Option.Option<DateTime.DateTime.PreserveZone<A>> =
@@ -475,9 +483,14 @@ export const zoneMakeOffset = (offset: number): DateTime.TimeZone.Offset => {
 }
 
 /** @internal */
-export const zoneMakeNamed: (zoneId: string) => Option.Option<DateTime.TimeZone.Named> = Option.liftThrowable(
-  zoneMakeNamedUnsafe
-)
+export const zoneMakeNamed = (zoneId: string): Option.Option<DateTime.TimeZone.Named> => {
+  // Plain function for the same reason as `makeZoned`.
+  try {
+    return Option.some(zoneMakeNamedUnsafe(zoneId))
+  } catch {
+    return Option.none()
+  }
+}
 
 /** @internal */
 export const zoneMakeNamedEffect = (zoneId: string): Effect.Effect<DateTime.TimeZone.Named, IllegalArgumentError> =>
@@ -778,7 +791,7 @@ export const setParts: {
 } = dual(
   2,
   (self: DateTime.DateTime, parts: Partial<DateTime.DateTime.PartsWithWeekday>): DateTime.DateTime =>
-    mutate(self, (date) => setPartsDate(date, parts))
+    mutateWithOffset(self, (date) => setPartsDate(date, parts))
 )
 
 /** @internal */
@@ -937,6 +950,25 @@ export const mutate: {
   return makeZonedFromAdjusted(newAdjustedDate.getTime(), self.zone, options?.disambiguation ?? "compatible")
 })
 
+// Keep the input offset when valid for the updated wall-clock time so repeated hours stay in the same occurrence.
+const mutateWithOffset = (
+  self: DateTime.DateTime,
+  f: (date: Date) => void,
+  disambiguation: DateTime.Disambiguation = "compatible"
+): DateTime.DateTime => {
+  if (self._tag === "Utc" || self.zone._tag === "Offset") {
+    return mutate(self, f, { disambiguation })
+  }
+  const date = toDate(self)
+  const offset = date.getTime() - Math.trunc(self.epochMilliseconds)
+  f(date)
+  const adjustedMillis = date.getTime()
+  const result = makeZonedProto(adjustedMillis - offset, self.zone)
+  return zonedOffset(result) === offset
+    ? result
+    : makeZonedFromAdjusted(adjustedMillis, self.zone, disambiguation)
+}
+
 /** @internal */
 export const mutateUtc: {
   (f: (date: Date) => void): <A extends DateTime.DateTime>(self: A) => A
@@ -1089,24 +1121,11 @@ const mutateRounding = (
   self: DateTime.DateTime,
   part: DateTime.DateTime.UnitSingular,
   f: (date: Date) => void,
-  disambiguation: DateTime.Disambiguation = "compatible"
-): DateTime.DateTime => {
-  if (
-    self._tag === "Utc" || self.zone._tag === "Offset" ||
-    part === "day" || part === "week" || part === "month" || part === "year"
-  ) {
-    return mutate(self, f, { disambiguation })
-  }
-  // keep the input's offset so rounding stays in the same occurrence of a repeated hour
-  const date = toDate(self)
-  const offset = date.getTime() - Math.trunc(self.epochMilliseconds)
-  f(date)
-  const adjustedMillis = date.getTime()
-  const result = makeZonedProto(adjustedMillis - offset, self.zone)
-  return zonedOffset(result) === offset
-    ? result
-    : makeZonedFromAdjusted(adjustedMillis, self.zone, disambiguation)
-}
+  disambiguation?: DateTime.Disambiguation
+): DateTime.DateTime =>
+  part === "day" || part === "week" || part === "month" || part === "year"
+    ? mutate(self, f, { disambiguation })
+    : mutateWithOffset(self, f, disambiguation)
 
 const startOfDate = (date: Date, part: DateTime.DateTime.UnitSingular, options?: {
   readonly weekStartsOn?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | undefined
