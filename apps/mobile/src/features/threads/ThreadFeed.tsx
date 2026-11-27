@@ -322,6 +322,7 @@ import {
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
 import { waitForThreadShell } from "./threadForkNavigation";
+import { useCaptureThreadNavigation } from "./thread-preview-route";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
@@ -475,7 +476,7 @@ function AssistantForkButton(props: {
   });
   const gt = useGT();
   const forkFromRun = useAtomCommand(threadEnvironment.forkFromRun, "fork from response");
-  const navigation = useNavigation();
+  const captureThreadNavigation = useCaptureThreadNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const [busy, setBusy] = useState(false);
   const canFork = canForkProjectedAssistantItem({
@@ -492,7 +493,7 @@ function AssistantForkButton(props: {
       accessibilityLabel={gt("Fork from this response")}
       disabled={busy}
       onPress={() => {
-        const sourceNavigationState = navigation.getState();
+        const isSourceCurrent = captureThreadNavigation();
         const targetThreadId = ThreadId.make(uuidv4());
         setBusy(true);
         void Haptics.selectionAsync();
@@ -527,9 +528,7 @@ function AssistantForkButton(props: {
               );
               return;
             }
-            if (!navigation.isFocused() || navigation.getState() !== sourceNavigationState) {
-              return;
-            }
+            if (!isSourceCurrent()) return;
             selectDetail({
               name: "Thread",
               params: { environmentId: props.environmentId, threadId: targetThreadId },

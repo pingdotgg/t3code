@@ -5,6 +5,7 @@ import {
   StackRouter,
   useNavigation,
   useNavigationBuilder,
+  type NavigationContainerRef,
   type NavigatorTypeBagBase,
   type ParamListBase,
   type RouteProp,
@@ -20,7 +21,7 @@ import type {
   NativeStackNavigatorProps,
   NativeStackTypeBag,
 } from "@react-navigation/native-stack";
-import type { ReactNode } from "react";
+import { createContext, use, useRef, type ReactNode } from "react";
 
 import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
 
@@ -72,6 +73,19 @@ function createThreadPreviewNavigator<
 type ThreadPreviewParams = { readonly environmentId: string; readonly threadId: string };
 
 const Preview = createThreadPreviewNavigator<{ Thread: ThreadPreviewParams }>();
+const PreviewHostNavigationContext = createContext<(() => () => boolean) | null>(null);
+
+/** Captures the route and any preview host before work that may navigate on completion. */
+export function useCaptureThreadNavigation() {
+  const navigation = useNavigation();
+  const captureHostNavigation = use(PreviewHostNavigationContext);
+  return () => {
+    const state = navigation.getState();
+    const isHostCurrent = captureHostNavigation?.();
+    return () =>
+      (isHostCurrent?.() ?? true) && navigation.isFocused() && navigation.getState() === state;
+  };
+}
 
 /**
  * A `Thread` route of its own for a thread shown inside another screen. Thread state resolves the
@@ -84,17 +98,31 @@ export function ThreadPreviewRoute(
   },
 ) {
   const host = useNavigation();
+  const captureHostNavigation = useCaptureThreadNavigation();
+  const previewRef = useRef<NavigationContainerRef<{ Thread: ThreadPreviewParams }> | null>(null);
+  const capturePreviewHost = () => {
+    const preview = previewRef.current;
+    const isHostCurrent = captureHostNavigation();
+    return () => preview !== null && previewRef.current === preview && isHostCurrent();
+  };
   const theme = useMobileNavigationTheme();
   const { environmentId, threadId } = props;
   return (
-    <NavigationIndependentTree>
-      <NavigationContainer theme={theme} onUnhandledAction={host.dispatch}>
-        <Preview.Navigator key={`${environmentId}:${threadId}`}>
-          <Preview.Screen name="Thread" initialParams={{ environmentId, threadId }}>
-            {(screen) => props.children(screen.route)}
-          </Preview.Screen>
-        </Preview.Navigator>
-      </NavigationContainer>
-    </NavigationIndependentTree>
+    <PreviewHostNavigationContext value={capturePreviewHost}>
+      <NavigationIndependentTree>
+        <NavigationContainer
+          key={`${environmentId}:${threadId}`}
+          ref={previewRef}
+          theme={theme}
+          onUnhandledAction={host.dispatch}
+        >
+          <Preview.Navigator>
+            <Preview.Screen name="Thread" initialParams={{ environmentId, threadId }}>
+              {(screen) => props.children(screen.route)}
+            </Preview.Screen>
+          </Preview.Navigator>
+        </NavigationContainer>
+      </NavigationIndependentTree>
+    </PreviewHostNavigationContext>
   );
 }
