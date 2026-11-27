@@ -1233,8 +1233,8 @@ it.effect(
         expect(yield* call({ elicitation: { url: {} } })).toMatchObject({
           structuredContent: { answer: "unavailable" },
         });
-        // Antigravity reaches its tools through tool_call, which cannot hand on the question:
-        // the tool learns the client cannot be asked, not that the person declined.
+        // tool_call cannot hand on the question: the tool learns the client cannot be asked,
+        // not that the person declined.
         expect(yield* call(canAsk, {}, "tool_call")).toMatchObject({
           structuredContent: { answer: "unavailable" },
         });

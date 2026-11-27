@@ -1456,6 +1456,7 @@ describe("source control tools", () => {
     it.effect("leaves the branch and hooks it names with the thread's session until answered", () =>
       Effect.gen(function* () {
         const sessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* sessions.showsApprovalRequests(ProviderInstanceId.make("codex"));
         const git: Pick<GitManager.GitManager["Service"], "createPullRequest"> = {
           createPullRequest: (input) =>
             input.pushHooks !== undefined &&
@@ -1492,6 +1493,7 @@ describe("source control tools", () => {
           },
         });
 
+        yield* sessions.answerApprovalRequests(THREAD_ID, message, true);
         const answering = asClient(true, {
           action: "accept",
           state: Ref.getUnsafe(asking.request)!.requestState!,
@@ -1506,6 +1508,7 @@ describe("source control tools", () => {
     it.effect("an answer ends its own request and leaves another call's waiting", () =>
       Effect.gen(function* () {
         const sessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* sessions.showsApprovalRequests(ProviderInstanceId.make("codex"));
         // Two branches of one repository: the same hooks, so the same digest and count.
         let branch = "tools";
         const git: Pick<GitManager.GitManager["Service"], "createPullRequest"> = {
@@ -1542,6 +1545,7 @@ describe("source control tools", () => {
         yield* ask;
         branch = "docs";
         const second = yield* ask;
+        yield* sessions.answerApprovalRequests(THREAD_ID, question("docs"), true);
         const answering = asClient(true, { action: "accept", state: second.requestState! });
         yield* harness.call("pull_request_create", args).pipe(
           Effect.provideService(McpClientInput.McpClientInput, {
@@ -1811,6 +1815,30 @@ describe("source control tools", () => {
         });
         expect(git.attempts).toEqual([{ approvedDigest: null }, "off"]);
       }),
+    );
+
+    it.effect("in a thread whose adapter shows no request, pushes with hooks off unasked", () =>
+      Effect.gen(function* () {
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        const git = hooked(() => "digest-1");
+        const harness = yield* makeHarness({ thread: lowerThread(), git });
+        // An agent that declares elicitation and answers it itself.
+        const session = approvingSession();
+        const result = yield* harness.call("pull_request_create", args).pipe(
+          Effect.provideService(McpClientInput.McpClientInput, {
+            request: Ref.makeUnsafe<McpSchema.InputRequired | undefined>(undefined),
+            sessions,
+          }),
+          session.provide,
+        );
+        expect(result).toMatchObject({
+          number: 43,
+          created: true,
+          note: "The repository's push hooks were not run, because this client cannot ask a person to approve them.",
+        });
+        expect(session.asked).toEqual([]);
+        expect(git.attempts).toEqual([{ approvedDigest: null }, "off"]);
+      }).pipe(Effect.provide(McpProviderSessions.layer)),
     );
 
     describe("in a thread whose adapter shows the request to the person", () => {
