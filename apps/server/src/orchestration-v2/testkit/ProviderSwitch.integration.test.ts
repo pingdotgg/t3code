@@ -69,6 +69,7 @@ import {
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -104,6 +105,8 @@ function makeTestAdapter(input: {
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly injectedHistory?: Ref.Ref<ReadonlyArray<unknown>>;
   readonly failStartOnce?: Ref.Ref<boolean>;
+  /** Like an ACP agent restarted under a loaded thread whose native session is gone. */
+  readonly loseNativeSessionOnce?: Ref.Ref<boolean>;
   readonly refuseStarts?: Ref.Ref<number>;
   readonly refusalCause?: unknown;
   readonly failInjectionOnce?: Ref.Ref<boolean>;
@@ -296,6 +299,23 @@ function makeTestAdapter(input: {
                 (yield* Ref.getAndSet(input.failStartOnce, false))
               )
                 return yield* unimplemented(input.driver, "turn start failed after injection");
+              if (
+                input.loseNativeSessionOnce !== undefined &&
+                (yield* Ref.getAndSet(input.loseNativeSessionOnce, false))
+              )
+                return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver: input.driver,
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  cause: EffectAcpErrors.AcpRequestError.fromProtocolError(
+                    {
+                      code: -32603,
+                      message: `Session not found: ${turnInput.providerThread.nativeThreadRef?.nativeId}`,
+                    },
+                    { method: "session/load" },
+                  ),
+                });
               if (
                 input.refuseStarts !== undefined &&
                 (yield* Ref.getAndUpdate(input.refuseStarts, (left) => Math.max(0, left - 1))) > 0
@@ -2231,6 +2251,52 @@ describe("orchestration v2 provider switching", () => {
           }),
       );
     }),
+  );
+
+  // regression: #44152 agy lost the trajectory while T3 still held the thread as loaded.
+  it.live(
+    "recovers in a fresh native session when the turn start finds the native session gone",
+    () =>
+      Effect.gen(function* () {
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const loseNativeSessionOnce = yield* Ref.make(false);
+        yield* unverifiedReplacementHarness(
+          "lost-native-session-on-start",
+          [
+            makeTestAdapter({
+              instanceId: GROK_MODEL_SELECTION.instanceId,
+              driver: GROK_DRIVER,
+              capabilities: AcpProviderCapabilitiesV2,
+              modelSelection: GROK_MODEL_SELECTION,
+              responseByRunOrdinal: {},
+              capturedTurns,
+              loseNativeSessionOnce,
+              nativeThreadGeneration: yield* Ref.make(0),
+            }),
+          ],
+          ({ orchestrator, dispatchRequest, awaitSettled }) =>
+            Effect.gen(function* () {
+              yield* dispatchRequest(1, GROK_MODEL_SELECTION);
+              yield* awaitSettled(1);
+              yield* Ref.set(loseNativeSessionOnce, true);
+              yield* dispatchRequest(2, GROK_MODEL_SELECTION);
+              yield* awaitSettled(2);
+
+              const projection = yield* orchestrator.getThreadProjection(threadId);
+              const run2 = projection.runs.at(-1)!;
+              const failure = projection.turnItems.findLast((item) => item.type === "error");
+              assert.equal(
+                run2.status,
+                "completed",
+                `turn 2 failed: ${failure?.type === "error" ? failure.failure.message : "no error item"}`,
+              );
+              const turns = yield* Ref.get(capturedTurns);
+              assert.equal(turns.length, 2);
+              assert.notEqual(turns[1]!.nativeThreadId, turns[0]!.nativeThreadId);
+              assert.isNotEmpty(replacementRecordsFor(projection, run2.id));
+            }),
+        );
+      }),
   );
 
   it.live("keeps failing honestly on the next turn after rejecting a reused session", () =>
