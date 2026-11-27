@@ -3,7 +3,11 @@ import { decodeMsg, useGT, useMessages } from "gt-react";
 import { SettingsIcon } from "lucide-react";
 
 import { ITEM_ICON_CLASS, type CommandPaletteActionItem } from "./CommandPalette.logic";
-import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
+import {
+  settingsForThisPlatform,
+  SETTINGS_NAV_LABELS,
+  SETTINGS_SECTION_LABELS,
+} from "./settings/settingsSearch";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
 
 const NO_SETTINGS_ITEMS: ReadonlyArray<CommandPaletteActionItem> = [];
@@ -29,6 +33,7 @@ export function useCommandPaletteSettingsItems(
     searchTerms: [
       item.title,
       SETTINGS_SECTION_LABELS[item.to],
+      SETTINGS_NAV_LABELS[item.to],
       ...(item.searchTerms ?? []),
     ].flatMap((term) => [messages(term), decodeMsg(term)]),
     title: messages(item.title),
