@@ -39,7 +39,9 @@ const CURSOR_USAGE_WINDOW_COPY: Readonly<
   },
   spendLimit: {
     label: msg("Spend"),
-    description: msg("Spending this billing cycle against your Cursor spend limit."),
+    description: msg("Spending this billing cycle against your {provider} spend limit.", {
+      provider: "Cursor",
+    }),
   },
 };
 

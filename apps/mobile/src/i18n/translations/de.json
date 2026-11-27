@@ -5715,5 +5715,5 @@
   "201490988858b511": "zurückgezogen von {by}",
   "46d614fa7b4bf1e5": "Workflow-Ausführungen",
   "c7566c908e14be09": "Ausgaben",
-  "e3ae4e11641b4626": "Ausgaben in diesem Abrechnungszeitraum im Verhältnis zu deinem Cursor-Ausgabenlimit."
+  "ae693772acb75c75": "Ausgaben in diesem Abrechnungszeitraum im Verhältnis zu deinem {provider}-Ausgabenlimit."
 }

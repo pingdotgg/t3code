@@ -5709,5 +5709,5 @@
   "201490988858b511": "retirée par {by}",
   "46d614fa7b4bf1e5": "Exécutions de workflow",
   "c7566c908e14be09": "Dépenses",
-  "e3ae4e11641b4626": "Dépenses de ce cycle de facturation par rapport à votre limite de dépenses Cursor."
+  "ae693772acb75c75": "Dépenses de ce cycle de facturation par rapport à votre limite de dépenses {provider}."
 }
