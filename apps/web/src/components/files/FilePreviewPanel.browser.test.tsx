@@ -222,6 +222,7 @@ function filePreview(
   relativePath: string,
   workspaceMutationId: string | null = null,
   reveal: { line: number; requestId: number } | null = null,
+  thread = threadRef,
 ) {
   return (
     <FilePreviewPanel
@@ -229,8 +230,8 @@ function filePreview(
       cwd="/workspace"
       projectName="Project"
       relativePath={relativePath}
-      threadRef={threadRef}
-      composerDraftTarget={threadRef}
+      threadRef={thread}
+      composerDraftTarget={thread}
       keybindings={[]}
       availableEditors={[]}
       openInShortcutEnabled={false}
@@ -390,6 +391,44 @@ describe("source file scroll", () => {
     await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
   });
 
+  it("returns a file to where it was scrolled in each thread after the panel remounts", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+    const contents = Array.from({ length: 2000 }, (_, i) => `const line${i} = ${i};`).join("\n");
+    state.file = { relativePath: "a.ts", contents, byteLength: contents.length, truncated: false };
+    const otherThread = { environmentId, threadId: ThreadId.make("other-thread") };
+    const panel = (thread: typeof threadRef) => (
+      <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
+        {filePreview("a.ts", null, null, thread)}
+      </div>
+    );
+    const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
+    const scrollTo = async (top: number) => {
+      await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+      scroller()!.scrollTop = top;
+      await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(top));
+    };
+
+    for (const [thread, top] of [
+      [threadRef, 4200],
+      [otherThread, 1000],
+    ] as const) {
+      await using _screen = await render(panel(thread));
+      await scrollTo(top);
+    }
+    for (const [thread, top] of [
+      [threadRef, 4200],
+      [otherThread, 1000],
+    ] as const) {
+      await using _screen = await render(panel(thread));
+      await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(top));
+    }
+  });
+
   it("centers a linked line in a scrolled read-only file, and again when the viewer is rebuilt", async () => {
     using _settings = setup();
     const style = document.createElement("style");
@@ -469,6 +508,7 @@ describe("source file scroll", () => {
   ])(
     "$label",
     async ({
+      label,
       startLine,
       initialScrollLine,
       direction,
@@ -494,7 +534,8 @@ describe("source file scroll", () => {
 
       await using screen = await render(
         <div style={{ width: 560, height: 400, display: "flex", flexDirection: "column" }}>
-          {filePreview("notes.md")}
+          {/* Each case gets its own thread so it does not resume the previous case's scroll. */}
+          {filePreview("notes.md", null, null, { environmentId, threadId: ThreadId.make(label) })}
         </div>,
       );
 

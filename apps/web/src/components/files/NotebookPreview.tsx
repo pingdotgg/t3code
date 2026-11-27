@@ -1,7 +1,7 @@
 /* oxlint-disable react/no-array-index-key -- Notebook cells and outputs retain their saved source order. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { T, useGT, useMessages } from "gt-react";
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import { Button } from "~/components/ui/button";
@@ -9,6 +9,14 @@ import ReadOnlySourcePreview from "./ReadOnlySourcePreview";
 import DocumentPages from "./DocumentPages";
 import { FileSurfaceNotice } from "./fileSurfaceChrome";
 import type { OfficeWorkerResult } from "./officePreviewProtocol";
+import { createPositionMemory, PreviewPositionKey } from "./previewPosition";
+
+const savedPositions = createPositionMemory<{
+  readonly visible: number;
+  readonly cell: number;
+  readonly offset: number;
+}>();
+const cellsOf = (root: HTMLElement) => root.querySelectorAll(":scope > div > section");
 
 // Saved notebooks must not load URLs or turn authored links into app actions.
 const NOTEBOOK_MARKDOWN: MarkdownExtensions = { inert: true };
@@ -31,8 +39,18 @@ export default function NotebookPreview(props: {
 }) {
   const gt = useGT();
   const messages = useMessages();
-  const [visible, setVisible] = useState(20);
+  const positionKey = useContext(PreviewPositionKey);
+  const [saved] = useState(() => savedPositions.get(positionKey));
+  const [visible, setVisible] = useState(saved?.visible ?? 20);
   const scroll = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Return a reopened notebook to its saved cell once the cells have laid out.
+  useLayoutEffect(() => {
+    const root = scroll.current;
+    const cell = saved && root ? cellsOf(root)[saved.cell] : undefined;
+    if (!root || !saved || !cell) return;
+    root.scrollTop +=
+      cell.getBoundingClientRect().top - root.getBoundingClientRect().top + saved.offset;
+  }, [saved]);
   const [outputView, setOutputView] = useState(() => ({
     mounted: new Set<string>(),
     heights: new Map<string, number>(),
@@ -102,7 +120,22 @@ export default function NotebookPreview(props: {
       <FileSurfaceNotice>
         <T>Saved outputs only. Code is never executed.</T>
       </FileSurfaceNotice>
-      <div ref={scroll} className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
+      <div
+        ref={scroll}
+        className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto"
+        onScroll={(event) => {
+          const root = event.currentTarget;
+          const top = root.getBoundingClientRect().top;
+          const cells = Array.from(cellsOf(root));
+          const cell = cells.findIndex((node) => node.getBoundingClientRect().bottom > top);
+          if (cell === -1) return;
+          savedPositions.set(positionKey, {
+            visible,
+            cell,
+            offset: top - cells[cell]!.getBoundingClientRect().top,
+          });
+        }}
+      >
         <div className="mx-auto max-w-4xl space-y-5 px-5 py-6">
           {props.notebook.cells.slice(0, visible).map((cell, index) => (
             <section
