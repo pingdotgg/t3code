@@ -13044,6 +13044,7 @@
   "4a12506938295127": "Saisissez d’abord {field}.",
   "5807c08e225c6b3d": "Télécharger",
   "0d50b5bfe7151ece": "Impossible de télécharger le fichier",
-  "fda0d29cc723370d": "Restore failed draft",
-  "aec0f1166ba54cb1": "Finish or stash your current draft before restoring."
+  "fda0d29cc723370d": "Restaurer le brouillon non envoyé",
+  "aec0f1166ba54cb1": "Termine ton brouillon actuel ou mets-le en réserve avant de restaurer le précédent.",
+  "bf0f37f53a4e2d62": "Aperçu"
 }

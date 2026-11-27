@@ -300,7 +300,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
 
 // Keep preview state outside ChatView to isolate dialog renders.
 type ExpandedImagePreviewState = {
-  readonly threadKey: string;
+  readonly threadKey: string | null;
   readonly preview: ExpandedImagePreview;
 } | null;
 
@@ -321,7 +321,10 @@ function setExpandedImagePreview(next: ExpandedImagePreviewState): void {
   if (previous !== null && previous !== ownedSrc(next)) URL.revokeObjectURL(previous);
 }
 
-export function openExpandedImagePreview(threadKey: string, preview: ExpandedImagePreview): void {
+export function openExpandedImagePreview(
+  threadKey: string | null,
+  preview: ExpandedImagePreview,
+): void {
   setExpandedImagePreview({ threadKey, preview });
 }
 
@@ -329,13 +332,15 @@ function closeExpandedImagePreview(): void {
   setExpandedImagePreview(null);
 }
 
-// Leaving the thread's route (or the chat view) drops its preview.
+// Leaving the thread drops its preview. Previews opened from app-wide actions have no thread.
 registerThreadOverlay((threadKey) => {
   const current = appAtomRegistry.get(expandedImagePreviewAtom);
-  if (current !== null && current.threadKey !== threadKey) closeExpandedImagePreview();
+  if (current !== null && current.threadKey !== null && current.threadKey !== threadKey) {
+    closeExpandedImagePreview();
+  }
 });
 
-export function ExpandedImageDialogHost({ threadKey }: { readonly threadKey: string }) {
+export function ExpandedImageDialogHost({ threadKey }: { readonly threadKey: string | null }) {
   const state = useAtomValue(expandedImagePreviewAtom);
   const preview = state?.threadKey === threadKey ? state.preview : null;
   if (preview === null) return null;

@@ -12980,6 +12980,7 @@
   "4a12506938295127": "先に {field} を入力してください。",
   "5807c08e225c6b3d": "ダウンロード",
   "0d50b5bfe7151ece": "ファイルをダウンロードできませんでした",
-  "fda0d29cc723370d": "Restore failed draft",
-  "aec0f1166ba54cb1": "Finish or stash your current draft before restoring."
+  "fda0d29cc723370d": "送信できなかった下書きを復元",
+  "aec0f1166ba54cb1": "復元する前に、現在の下書きを仕上げるか退避してください。",
+  "bf0f37f53a4e2d62": "プレビュー"
 }

@@ -75,6 +75,7 @@ import {
   clearBackgroundDraftSubmissionByRef,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
+  resolveLiveComposerDraftTarget,
   restoreFailedDraftThread,
   checkoutPullRequestUrlToLink,
   composerDraftHasUserContent,
@@ -1698,9 +1699,9 @@ export function useComposerSend(input: ComposerSendInput) {
       });
       // A restored draft clones its images, so the sent copies are no longer used.
       optimisticBlobPreviews.release(optimisticMessage);
-      const restoreFailedSend = () => {
-        const retryComposerImages = restoreComposerDraft(composerDraftTarget, sendSnapshot);
-        if (currentRouteThreadKeyRef.current === routeThreadKey) {
+      const restoreFailedSend = (target: ComposerThreadTarget, threadKey: string) => {
+        const retryComposerImages = restoreComposerDraft(target, sendSnapshot);
+        if (currentRouteThreadKeyRef.current === threadKey) {
           promptRef.current = sendSnapshot.draftText;
           composerImagesRef.current = retryComposerImages;
           composerFilesRef.current = composerFilesSnapshot;
@@ -1715,11 +1716,10 @@ export function useComposerSend(input: ComposerSendInput) {
           });
         }
       };
-      if (
-        composerDraftHasUserContent(
-          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-        )
-      ) {
+      const hasNewDraftContent = (target: ComposerThreadTarget) =>
+        countPreparingComposerImages(composerTargetKey(target)) > 0 ||
+        composerDraftHasUserContent(useComposerDraftStore.getState().getComposerDraft(target));
+      if (hasNewDraftContent(composerDraftTarget)) {
         // A draft typed meanwhile keeps the composer, so the failed text stays reachable here.
         const failedText = sendSnapshot.draftText;
         const hasText = failedText.trim().length > 0;
@@ -1751,12 +1751,19 @@ export function useComposerSend(input: ComposerSendInput) {
           ? {
               children: m(msg("Restore failed draft")),
               onClick: () => {
+                const liveTarget = resolveLiveComposerDraftTarget(composerDraftTarget);
+                if (liveTarget === null) return;
+                // A local draft prepares images under its draft id and sends under its thread key.
+                const localDraft =
+                  typeof liveTarget === "string"
+                    ? useComposerDraftStore.getState().getDraftSession(liveTarget)
+                    : null;
+                const liveThreadKey = localDraft
+                  ? scopedThreadKey(scopeThreadRef(localDraft.environmentId, localDraft.threadId))
+                  : composerTargetKey(liveTarget);
                 if (
-                  sendInFlightRef.current ||
-                  countPreparingComposerImages(composerTargetKey(composerDraftTarget)) > 0 ||
-                  composerDraftHasUserContent(
-                    useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-                  )
+                  draftSendState(liveThreadKey).sendInFlight.current ||
+                  hasNewDraftContent(liveTarget)
                 ) {
                   toastManager.add({
                     type: "info",
@@ -1764,7 +1771,7 @@ export function useComposerSend(input: ComposerSendInput) {
                   });
                   return;
                 }
-                restoreFailedSend();
+                restoreFailedSend(liveTarget, liveThreadKey);
                 restored = true;
                 toastManager.close(failedSendToastId);
               },
@@ -1794,9 +1801,7 @@ export function useComposerSend(input: ComposerSendInput) {
                           "aria-label": m(msg("Preview {name}", { name: firstImage.name })),
                           children: m(msg("Preview")),
                           onClick: () => {
-                            const threadKey = currentRouteThreadKeyRef.current;
-                            if (threadKey === null) return;
-                            openExpandedImagePreview(threadKey, {
+                            openExpandedImagePreview(null, {
                               images: [
                                 {
                                   src: URL.createObjectURL(firstImage.file),
@@ -1821,7 +1826,7 @@ export function useComposerSend(input: ComposerSendInput) {
           },
         });
       } else {
-        restoreFailedSend();
+        restoreFailedSend(composerDraftTarget, routeThreadKey);
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);

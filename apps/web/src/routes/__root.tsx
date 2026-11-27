@@ -42,6 +42,7 @@ import { Button } from "../components/ui/button";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
 import { SharedTooltipProvider } from "../components/ui/shared-tooltip";
 import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
+import { ExpandedImageDialogHost } from "../components/chat/ExpandedImageDialog";
 import { isElectron } from "../env";
 import { useClientSettings } from "../hooks/useSettings";
 import {
@@ -148,6 +149,7 @@ function RootRouteView() {
             thread, panel or message pay for tooltips nobody hovers. */}
         <SharedTooltipProvider>
           <RootRouteBranch />
+          <ExpandedImageDialogHost threadKey={null} />
         </SharedTooltipProvider>
       </AnchoredToastProvider>
     </ToastProvider>
