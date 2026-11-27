@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Junction fixtures work without symlink privileges on Windows.
+import * as NodeFSP from "node:fs/promises";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -152,7 +155,7 @@ it.effect("list includes delegated threads across pages and still leaves out sub
 );
 
 it.effect(
-  "start resolves home-relative project paths while preserving ids and relative paths",
+  "start resolves project ids and registered aliases through absolute, relative, and home-relative paths",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -163,14 +166,17 @@ it.effect(
       const home = path.join(root, "home");
       const cwd = path.join(root, "current");
       const workspaceRoot = path.join(home, "My Project");
+      const aliasRoot = path.join(home, "My Project Alias");
       const nestedRoot = path.join(workspaceRoot, "nested");
       const baseDir = path.join(root, "state");
       yield* fs.makeDirectory(nestedRoot, { recursive: true });
       yield* fs.makeDirectory(cwd);
+      yield* Effect.promise(() => NodeFSP.symlink(workspaceRoot, aliasRoot, "junction"));
       const projects = [
         { id: ProjectId.make("current-project"), title: "Current", workspaceRoot: cwd },
         { id: ProjectId.make("home-project"), title: "Home", workspaceRoot: home },
         { id: ProjectId.make("intended-project"), title: "Intended", workspaceRoot },
+        { id: ProjectId.make("alias-project"), title: "Alias", workspaceRoot: aliasRoot },
         { id: ProjectId.make("nested-project"), title: "Nested", workspaceRoot: nestedRoot },
         { id: ProjectId.make("~/literal-id"), title: "Exact id", workspaceRoot: cwd },
       ];
@@ -203,6 +209,8 @@ it.effect(
         ["~/literal-id", "~/literal-id"],
         [workspaceRoot, "intended-project"],
         [path.relative(cwd, workspaceRoot), "intended-project"],
+        [aliasRoot, "alias-project"],
+        [path.join(aliasRoot, "nested"), "nested-project"],
         [".", "current-project"],
         ["~/My Project", "intended-project"],
         ["~", "home-project"],

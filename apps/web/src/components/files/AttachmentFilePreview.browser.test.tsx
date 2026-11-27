@@ -82,7 +82,7 @@ import JSZip from "jszip";
 import { boundedZip } from "@t3tools/client-runtime/zip/bounded-zip";
 import BinaryViewer from "./BinaryViewer";
 import { decodeImagePreview } from "./decodeImagePreview";
-import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
+import { formatArchiveModifiedDate, type BinaryWorkerResult } from "./binaryPreviewProtocol";
 import type { TextPreviewResult } from "./largeTextProtocol";
 import type { ReactElement } from "react";
 import type { OfficeWorkerRequest, OfficeWorkerResult } from "./officePreviewProtocol";
@@ -238,8 +238,8 @@ describe("bounded binary previews", () => {
     }
   });
 
-  it("names archive folders whose paths have leading or repeated slashes", async () => {
-    const bytes = new Uint8Array(2048);
+  it("names archive folders whose paths have leading slashes, repeated slashes or ./", async () => {
+    const bytes = new Uint8Array(3072);
     const write = (offset: number, value: string) =>
       bytes.set(new TextEncoder().encode(value), offset);
     const member = (offset: number, name: string, content: string) => {
@@ -259,6 +259,8 @@ describe("bounded binary previews", () => {
     };
     member(0, "/a//hello.txt", "nested hello");
     member(1024, "a/hello.txt", "plain hello");
+    // `tar cf x.tar .` names every member from "./".
+    member(2048, "./a/dot.txt", "dot hello");
     const src = URL.createObjectURL(new Blob([bytes]));
     try {
       await using screen = await render(<BinaryViewer src={src} name="paths.tar" kind="archive" />);
@@ -271,14 +273,17 @@ describe("bounded binary previews", () => {
       const preview = () => screen.container.querySelector("pre")?.textContent;
       await vi.waitFor(() => expect(rows()).toEqual(["a"]), 10_000);
       await act(() => buttons()[0]!.click());
-      await vi.waitFor(() => expect(rows()).toEqual(["hello.txt", "hello.txt"]));
-      await act(() => buttons()[0]!.click());
+      await vi.waitFor(() => expect(rows()).toEqual(["dot.txt", "hello.txt", "hello.txt"]));
+      await act(() => buttons()[1]!.click());
       await vi.waitFor(() => expect(preview()).toContain("nested hello"), 10_000);
       await act(() => back().click());
-      await act(() => buttons()[1]!.click());
+      await act(() => buttons()[2]!.click());
       await vi.waitFor(() => expect(preview()).toContain("plain hello"), 10_000);
       await act(() => back().click());
-      await vi.waitFor(() => expect(rows()).toEqual(["hello.txt", "hello.txt"]));
+      await act(() => buttons()[0]!.click());
+      await vi.waitFor(() => expect(preview()).toContain("dot hello"), 10_000);
+      await act(() => back().click());
+      await vi.waitFor(() => expect(rows()).toEqual(["dot.txt", "hello.txt", "hello.txt"]));
       const parent = () =>
         screen.container.querySelector<HTMLButtonElement>('[aria-label="Parent folder"]')!;
       await act(() => parent().click());
@@ -310,6 +315,32 @@ describe("bounded binary previews", () => {
           ["empty.txt", "0 bytes"],
           ["readme.txt", "1 KB"],
         ]);
+      }, 10_000);
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  });
+
+  it("dates an archive folder by its own ZIP record when its children come first", async () => {
+    const zip = new JSZip();
+    const fileDate = new Date("2022-01-02T00:00:00Z");
+    zip.file("docs/readme.txt", "a".repeat(1024), { createFolders: false, date: fileDate });
+    zip.file("docs/sub/nested.txt", "b".repeat(1024), { createFolders: false, date: fileDate });
+    zip.file("docs/", null, { dir: true, date: new Date("2024-10-19T00:00:00Z") });
+    zip.file("docs/sub/", null, { dir: true, date: new Date("2023-07-08T00:00:00Z") });
+    zip.file("docs/later.txt", "c".repeat(1024), {
+      createFolders: false,
+      date: new Date("2025-05-06T00:00:00Z"),
+    });
+    const src = URL.createObjectURL(new Blob([await zip.generateAsync({ type: "arraybuffer" })]));
+    try {
+      await using screen = await render(<BinaryViewer src={src} name="dates.zip" kind="archive" />);
+      await vi.waitFor(() => {
+        expect(
+          [...screen.container.querySelectorAll("tbody td")].map((cell) =>
+            cell.textContent?.trim(),
+          ),
+        ).toEqual(["docs", "3 KB", formatArchiveModifiedDate("2024-10-19T00:00:00.000")]);
       }, 10_000);
     } finally {
       URL.revokeObjectURL(src);
@@ -2442,6 +2473,77 @@ it("renders EPUB publisher styles and follows an anchored link to a fixed-layout
   );
   await screen.getByRole("button", { name: "Previous chapter" }).click();
   await vi.waitFor(() => expect(frame()?.contentDocument?.querySelector("#opening")).toBeTruthy());
+});
+
+it("highlights EPUB narration cues during playback and pauses on chapter change", async () => {
+  const sampleRate = 8_000;
+  const pcm = new Uint8Array(44 + sampleRate * 2 * 8);
+  const header = new DataView(pcm.buffer);
+  const encoder = new TextEncoder();
+  pcm.set(encoder.encode("RIFF"), 0);
+  pcm.set(encoder.encode("WAVEfmt "), 8);
+  pcm.set(encoder.encode("data"), 36);
+  header.setUint32(4, pcm.length - 8, true);
+  header.setUint32(16, 16, true);
+  header.setUint16(20, 1, true);
+  header.setUint16(22, 1, true);
+  header.setUint32(24, sampleRate, true);
+  header.setUint32(28, sampleRate * 2, true);
+  header.setUint16(32, 2, true);
+  header.setUint16(34, 16, true);
+  header.setUint32(40, pcm.length - 44, true);
+  const { default: JSZip } = await import("jszip");
+  const file = await new JSZip()
+    .file(
+      "META-INF/container.xml",
+      '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+    )
+    .file(
+      "book.opf",
+      `<package><manifest>
+      <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml" media-overlay="read"/>
+      <item id="end" href="end.xhtml" media-type="application/xhtml+xml"/>
+      <item id="read" href="read.smil" media-type="application/smil+xml"/>
+    </manifest><spine><itemref idref="chapter"/><itemref idref="end"/></spine></package>`,
+    )
+    .file(
+      "chapter.xhtml",
+      '<html><body><p id="first">First phrase</p><p id="second">Second phrase</p></body></html>',
+    )
+    .file("end.xhtml", "<html><body><p>End</p></body></html>")
+    .file(
+      "read.smil",
+      `<smil xmlns="http://www.w3.org/ns/SMIL"><body>
+      <par><text src="chapter.xhtml#first"/><audio src="audio.wav" clipEnd="4s"/></par>
+      <par><text src="chapter.xhtml#second"/><audio src="audio.wav" clipBegin="4s" clipEnd="8s"/></par>
+    </body></smil>`,
+    )
+    .file("audio.wav", pcm)
+    .generateAsync({ type: "blob" });
+  await using screen = await render(
+    <div className="flex h-[480px] w-[360px]">
+      <AttachmentFilePreview
+        name="read-along.epub"
+        mimeType="application/epub+zip"
+        sizeBytes={file.size}
+        file={file}
+      />
+    </div>,
+  );
+  const read = screen.getByRole("button", { name: "Read aloud" });
+  await expect.element(read).toBeVisible();
+  const player = screen.container.querySelector("audio")!;
+  player.muted = true;
+  const activePhrase = () =>
+    screen.container
+      .querySelector("iframe")
+      ?.contentDocument?.querySelector(".t3-epub-narration-active")?.id;
+  await read.click();
+  await vi.waitFor(() => expect(activePhrase()).toBe("first"));
+  player.currentTime = 4.1;
+  await vi.waitFor(() => expect(activePhrase()).toBe("second"));
+  await screen.getByRole("button", { name: "Next chapter" }).click();
+  await vi.waitFor(() => expect(player.paused).toBe(true));
 });
 
 it.each(["epub", "odt", "ipynb", "html", "encoded-html"] as const)(

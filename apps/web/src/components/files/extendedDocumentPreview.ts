@@ -9,6 +9,7 @@ import {
 
 import { type OfficeWorkerResult, type NotebookCell } from "./officePreviewProtocol";
 import { PreviewError } from "./previewFailure";
+import { officeXmlDecoder } from "./officeArchive";
 import {
   archivePath,
   escape,
@@ -158,9 +159,9 @@ export async function openDocument(
   kind: "odt" | "ods" | "odp",
 ): Promise<OfficeWorkerResult> {
   markupBytes = 0;
-  const source = await archive.file("content.xml")?.async("string");
-  if (!source) throw new PreviewError({ code: "odf-no-content" });
-  const root = parseXml(source);
+  const content = await archive.file("content.xml")?.async("uint8array");
+  if (!content?.length) throw new PreviewError({ code: "odf-no-content" });
+  const root = parseXml(officeXmlDecoder(content).decode(content));
   if (kind === "ods") {
     const tables = find(root, "table:table");
     if (!tables.length || tables.length > 100) throw new PreviewError({ code: "ods-sheet-count" });
