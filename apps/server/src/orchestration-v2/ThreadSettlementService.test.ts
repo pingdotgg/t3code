@@ -2601,7 +2601,7 @@ describe("ThreadSettlementServiceV2 terminals", () => {
       yield* Effect.gen(function* () {
         const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
         yield* startHarness(service, fixture.activation, fixture.snapshotReads);
-        // The source still works in that worktree, so only the fork with its own one runs it.
+        // The worktree belongs to the source, so only the fork with its own worktree runs it.
         yield* fixture.publishEvent(settledEvent(fork));
         yield* fixture.publishEvent(settledEvent(sideChat));
         yield* fixture.publishEvent(settledEvent(own));
