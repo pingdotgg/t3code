@@ -662,7 +662,7 @@ function locationsFromToolCallInput(input: {
 
 // Agents resend cumulative output; bound it to avoid flooding event ingestion.
 const TOOL_CALL_CONTENT_MAX_CHARS = 8_000;
-export const TOOL_CALL_CONTENT_TRUNCATION_MARKER = "[Earlier output truncated]\n\n";
+const TOOL_CALL_CONTENT_TRUNCATION_MARKER = "[Earlier output truncated]\n\n";
 
 /** The tail to keep, or undefined when the text fits or an adapter already bounded it. */
 function retainedToolCallOutputTail(text: string): string | undefined {

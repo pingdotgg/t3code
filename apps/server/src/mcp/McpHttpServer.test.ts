@@ -6,7 +6,6 @@ import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  DeviceHostId,
   DeviceId,
   DeviceOperationError,
   EnvironmentId,
@@ -14,12 +13,10 @@ import {
   OrchestratorMcpFailure,
   PreviewTabId,
   ProjectId,
-  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   ProviderInstanceId,
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
-  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -62,7 +59,6 @@ import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as McpClientInput from "./McpClientInput.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -569,148 +565,6 @@ it.effect("saves the uncapped screenshot while the agent sees the capped one", (
       });
     }),
   ).pipe(Effect.provide(layerTest)),
-);
-
-it.effect(
-  "captures recoverable preview_snapshot outputs only for provider instances that opt into visual recovery",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const sessions = yield* McpProviderSessions.McpProviderSessions;
-        const png =
-          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
-        yield* serveSnapshots("mcp-capture-client", {
-          ...snapshotResult,
-          screenshot: { mimeType: "image/png", data: png, width: 1, height: 1 },
-        });
-
-        // Non-ACP provider instances do not opt in, so visual tool results are not cached.
-        const withImageArgs = { tabId: alternateTabId, includeImage: true };
-        yield* callSnapshot(withImageArgs);
-        expect(
-          yield* sessions.takeToolResult(threadId, "preview_snapshot", withImageArgs),
-        ).toBeUndefined();
-
-        // Once an ACP provider instance opts in, all preview_snapshot modes are captured.
-        yield* sessions.recoversVisualToolResults(invocation.thread.providerInstanceId);
-        yield* callSnapshot(withImageArgs);
-        const recoveredImage = yield* sessions.takeToolResult(
-          threadId,
-          "preview_snapshot",
-          withImageArgs,
-        );
-        expect(recoveredImage).toMatchObject({
-          content: [{ type: "image", mimeType: "image/png", data: png }],
-          structuredContent: {
-            url: snapshotResult.url,
-            title: snapshotResult.title,
-            screenshot: { mimeType: "image/png", width: 1, height: 1 },
-          },
-        });
-
-        const saveArgs = { tabId: alternateTabId, save: true };
-        const savedResult = yield* callSnapshot(saveArgs);
-        const savedPath = (savedResult.structuredContent as { readonly screenshotPath: string })
-          .screenshotPath;
-        expect(yield* sessions.takeToolResult(threadId, "preview_snapshot", saveArgs)).toEqual({
-          url: snapshotResult.url,
-          screenshotPath: savedPath,
-        });
-
-        const textOnlyArgs = { tabId: alternateTabId, includeImage: false };
-        yield* callSnapshot(textOnlyArgs);
-        expect(
-          yield* sessions.takeToolResult(threadId, "preview_snapshot", textOnlyArgs),
-        ).toMatchObject({
-          url: snapshotResult.url,
-          title: snapshotResult.title,
-        });
-      }),
-    ).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(McpProviderSessions.layer)))),
-);
-
-it.effect(
-  "marks oversized skipped device_screenshot captures ambiguous so input-only lookup cannot steal a smaller sibling",
-  () => {
-    const smallPngBase64 =
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
-    const smallPng = new Uint8Array(Buffer.from(smallPngBase64, "base64"));
-    const oversizedPng = new Uint8Array(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + smallPng.byteLength);
-    oversizedPng.set(smallPng, 0);
-    const device = {
-      hostId: DeviceHostId.make("local"),
-      id: DeviceId.make("phone"),
-      platform: "ios" as const,
-      name: TrimmedNonEmptyString.make("iPhone"),
-      version: "18.0",
-      booted: true,
-      physical: false,
-    };
-    let calls = 0;
-    return Effect.gen(function* () {
-      const server = yield* McpServer.McpServer;
-      const sessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* sessions.recoversVisualToolResults(invocation.thread.providerInstanceId);
-      const runShot = () =>
-        server.callTool({ name: "device_screenshot", arguments: {} }).pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, {
-            ...invocation,
-            capabilities: new Set(["device"] as const),
-          }),
-          Effect.provideService(McpSchema.McpServerClient, client),
-        );
-
-      yield* runShot();
-      yield* runShot();
-
-      // Oversized call 2 skipped caching and marked `{}` ambiguous; input-only lookup must refuse call 1's image.
-      expect(yield* sessions.takeToolResult(threadId, "device_screenshot", {})).toBeUndefined();
-      // Exact reported lookup for call 1 still drains call 1's cached image cleanly.
-      const smallExpected = {
-        content: [{ type: "image", mimeType: "image/png", data: smallPngBase64 }],
-        structuredContent: {
-          device,
-          screenshot: { mimeType: "image/png", width: 1, height: 1 },
-        },
-      };
-      expect(
-        yield* sessions.takeToolResult(threadId, "device_screenshot", {}, smallExpected),
-      ).toEqual(smallExpected);
-    }).pipe(
-      Effect.provide(
-        McpHttpServer.layerDeviceToolkit.pipe(
-          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-          Layer.provideMerge(McpProviderSessions.layer),
-          Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
-          Layer.provide(
-            Layer.mock(DeviceService.DeviceService)({
-              locateSession: () => Effect.succeedNone,
-              sessionsForThread: () =>
-                Effect.succeed([
-                  {
-                    threadId,
-                    hostId: device.hostId,
-                    deviceId: device.id,
-                    platform: device.platform,
-                    openedAt: "2026-10-23T00:00:00Z",
-                  },
-                ]),
-              screenshot: () => {
-                calls += 1;
-                return Effect.succeed({
-                  device,
-                  png: calls === 1 ? smallPng : oversizedPng,
-                });
-              },
-            }),
-          ),
-          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
-          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-oversized-" })),
-          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-        ),
-      ),
-    );
-  },
 );
 
 it.effect("names the screenshot destination when saving it fails", () =>

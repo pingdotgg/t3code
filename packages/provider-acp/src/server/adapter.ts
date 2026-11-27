@@ -44,11 +44,8 @@ import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import {
   compactDynamicToolOutput,
   compactT3McpToolOutput,
-  hasUsableToolOutputImages,
   htmlRenderFromToolItem,
   mcpToolResultOutput,
-  previewSnapshotScreenshotPath,
-  toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
@@ -99,7 +96,6 @@ import {
   parsePermissionRequest,
   parseSessionUpdateEvent,
   sessionUpdateIsReplay,
-  TOOL_CALL_CONTENT_TRUNCATION_MARKER,
   toolCallVisibleOutputChanged,
   unreadToolCallUpdate,
   withTrackedChangedPaths,
@@ -1353,55 +1349,6 @@ function appendToolContentText(content: unknown, text: string): unknown[] {
   return next;
 }
 
-const MAX_CLAIMED_TOOL_RESULT_IMAGE_BYTES = 16 * 1024 * 1024;
-
-function claimedToolResultImageSize(value: unknown): number {
-  let bytes = 0;
-  for (const image of toolOutputImages(value)) {
-    if (image.data !== undefined) bytes += image.data.length;
-  }
-  return bytes;
-}
-
-function rememberClaimedToolResult(
-  context: Pick<
-    ActiveAcpTurn,
-    | "claimedToolResults"
-    | "claimedToolResultImageBytes"
-    | "claimedToolResultImageBytesTotal"
-    | "evictedClaimedToolResultKeys"
-  >,
-  key: string,
-  value: unknown,
-): void {
-  const previousBytes = context.claimedToolResultImageBytes.get(key) ?? 0;
-  if (previousBytes > 0) {
-    context.claimedToolResultImageBytesTotal -= previousBytes;
-    context.claimedToolResultImageBytes.delete(key);
-  }
-  const nextBytes = claimedToolResultImageSize(value);
-  if (nextBytes > MAX_CLAIMED_TOOL_RESULT_IMAGE_BYTES) {
-    // Never exceed the aggregate cap for a single oversized multi-image claim; record the key
-    // so late summary replays cannot erase the displayed item or steal a sibling's capture.
-    context.claimedToolResults.delete(key);
-    context.evictedClaimedToolResultKeys.add(key);
-    return;
-  }
-  context.evictedClaimedToolResultKeys.delete(key);
-  context.claimedToolResults.set(key, value);
-  if (nextBytes === 0) return;
-  context.claimedToolResultImageBytes.set(key, nextBytes);
-  context.claimedToolResultImageBytesTotal += nextBytes;
-  for (const [evictKey, evictBytes] of context.claimedToolResultImageBytes) {
-    if (context.claimedToolResultImageBytesTotal <= MAX_CLAIMED_TOOL_RESULT_IMAGE_BYTES) break;
-    if (evictKey === key) continue;
-    context.claimedToolResultImageBytes.delete(evictKey);
-    context.claimedToolResults.delete(evictKey);
-    context.evictedClaimedToolResultKeys.add(evictKey);
-    context.claimedToolResultImageBytesTotal -= evictBytes;
-  }
-}
-
 function acpMcpToolCallOutput(rawOutput: unknown): unknown {
   const record = unknownRecord(rawOutput);
   if (record === undefined) return rawOutput;
@@ -1877,11 +1824,6 @@ interface ActiveAcpTurn {
   readonly tools: Map<string, AcpToolCallState & { readonly backgroundCommandTaskId?: string }>;
   /** Confirmed T3 MCP tool outputs keyed by `${toolCallId}\0${tool}\0${inputHash}`. */
   readonly claimedToolResults: Map<string, unknown>;
-  /** Image base64 byte sizes retained in `claimedToolResults` (oldest-first eviction cap). */
-  readonly claimedToolResultImageBytes: Map<string, number>;
-  claimedToolResultImageBytesTotal: number;
-  /** Keys whose completed image claims were evicted (or rejected >16 MiB) so replays cannot overwrite or steal siblings. */
-  readonly evictedClaimedToolResultKeys: Set<string>;
   /** `${toolCallId}\0${tool}\0${inputHash}` keys that already drained a recorded MCP result. */
   readonly drainedToolResultKeys: Set<string>;
   /** `${toolCallId}\0${tool}\0${inputHash}` keys that reached terminal failure and must never do input-only recovery. */
@@ -2479,7 +2421,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-  yield* mcpSessions.recoversVisualToolResults(options.instanceId);
   const { flavor, selfInvocation: self } = options;
   const callLauncher = yield* writeAcpMcpCallLauncher(host.paths.stateDir);
   const readMcpContext = (threadId: ThreadId | null) =>
@@ -5471,34 +5412,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const previous = context.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
           const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
-          if (
-            context.evictedClaimedToolResultKeys.size > 0 &&
-            projectedStatus === undefined &&
-            (toolStatus(normalized.status) === "pending" ||
-              toolStatus(normalized.status) === "running")
-          ) {
-            const earlyMcp = extractMcpToolCallIdentity(normalized, {
-              embeddedTerminalCommands: embeddedTerminalCommands(
-                context.nativeThreadId,
-                normalized.toolCallId,
-              ),
-            });
-            if (earlyMcp !== undefined) {
-              const earlyResolved = resolveT3McpToolId(`${earlyMcp.server}.${earlyMcp.tool}`);
-              if (earlyResolved !== null && earlyResolved !== HTML_RENDER_TOOL_NAME) {
-                const earlyRawInput = unknownRecord(normalized.data.rawInput);
-                const earlyInput =
-                  earlyMcp.input ?? unknownRecord(earlyRawInput?.arguments) ?? earlyRawInput ?? {};
-                const earlyKey = `${normalized.toolCallId}\0${earlyResolved}\0${McpProviderSessions.hashToolInput(earlyInput)}`;
-                if (context.evictedClaimedToolResultKeys.has(earlyKey)) {
-                  // A late in-progress replay after an evicted completion must not downgrade
-                  // `context.tools` or emit a running node before a prompt failure could settle it.
-                  yield* rearmDeferredFinalize(context);
-                  return;
-                }
-              }
-            }
-          }
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(normalized);
           const backgroundCommandTaskId =
             flavor.isBackgroundCommandTool?.(normalized) === true
@@ -5836,7 +5749,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           : { isError: true, content: [{ type: "text", text: String(output) }] };
               }
               context.blockedInputRecoveryKeys.add(callInputKey);
-              rememberClaimedToolResult(context, callInputKey, output);
+              context.claimedToolResults.set(callInputKey, output);
             }
             if (
               resolvedT3Tool !== null &&
@@ -5852,9 +5765,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   );
                 }
               } else if (callInputKey !== undefined) {
-                const reportedError = compactT3McpToolOutput(resolvedT3Tool, output, {
-                  includeVisual: true,
-                });
+                const reportedError = compactT3McpToolOutput(resolvedT3Tool, output);
                 context.blockedInputRecoveryKeys.add(callInputKey);
                 // Only drain when the failed call reported an explicit output to match;
                 // a bare failure without output must not consume a sibling's cached record.
@@ -5899,24 +5810,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               callInputKey !== undefined &&
               !isError
             ) {
-              // An ACP runtime or protocol normalizer may strip image bytes or save metadata while
-              // leaving partial text/markers; recover the server-captured output in those cases.
-              const incompletePreviewSnapshot =
-                resolvedT3Tool === "preview_snapshot" &&
-                ((input.includeImage === true && !hasUsableToolOutputImages(output)) ||
-                  (input.save === true &&
-                    previewSnapshotScreenshotPath({ toolName, output }) === undefined));
-              const compactReported = compactT3McpToolOutput(resolvedT3Tool, output, {
-                includeVisual: true,
-              });
-              const reportedOutput = incompletePreviewSnapshot ? undefined : compactReported;
+              const reportedOutput = compactT3McpToolOutput(resolvedT3Tool, output);
               // ACP runtimes may omit or summarize MCP results, including across repeated or
               // interleaved in_progress updates. Claims are keyed by (callId, tool, inputHash).
               const claimedOutput = context.claimedToolResults.get(callInputKey);
               if (reportedOutput !== undefined) {
-                context.attemptedInputRecoveryKeys.add(callInputKey);
+                context.claimedToolResults.set(callInputKey, reportedOutput);
                 if (!context.drainedToolResultKeys.has(callInputKey)) {
-                  rememberClaimedToolResult(context, callInputKey, reportedOutput);
                   const drained = yield* mcpSessions.takeToolResult(
                     context.input.threadId,
                     resolvedT3Tool,
@@ -5925,72 +5825,29 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   );
                   if (drained !== undefined) {
                     context.drainedToolResultKeys.add(callInputKey);
-                    if (
-                      resolvedT3Tool === "preview_snapshot" &&
-                      McpProviderSessions.hashToolInput(drained) !==
-                        McpProviderSessions.hashToolInput(reportedOutput)
-                    ) {
-                      rememberClaimedToolResult(context, callInputKey, drained);
-                      output = drained;
-                    }
                   }
-                } else if (
-                  resolvedT3Tool === "preview_snapshot" &&
-                  claimedOutput !== undefined &&
-                  McpProviderSessions.hashToolInput(claimedOutput) !==
-                    McpProviderSessions.hashToolInput(reportedOutput)
-                ) {
-                  output = claimedOutput;
-                } else {
-                  rememberClaimedToolResult(context, callInputKey, reportedOutput);
                 }
-              } else if (
-                claimedOutput === undefined &&
-                context.evictedClaimedToolResultKeys.has(callInputKey)
-              ) {
-                // This call already emitted its full output and released its cached image bytes
-                // under the per-turn claim cap; suppress summary-only replays (even after an
-                // interleaved in_progress update) so ProjectionStore keeps the displayed output
-                // and this call cannot consume a sibling's capture.
-                yield* rearmDeferredFinalize(context);
-                return;
               } else {
                 let recoveredOutput = claimedOutput;
-                const hintMeta =
-                  incompletePreviewSnapshot && compactReported !== undefined
-                    ? (unknownRecord(compactReported.structuredContent) ?? compactReported)
-                    : undefined;
-                const partialHint =
-                  hintMeta !== undefined &&
-                  ((typeof hintMeta.url === "string" &&
-                    !hintMeta.url.includes(TOOL_CALL_CONTENT_TRUNCATION_MARKER)) ||
-                    (typeof hintMeta.screenshotPath === "string" &&
-                      !hintMeta.screenshotPath.includes(TOOL_CALL_CONTENT_TRUNCATION_MARKER)))
-                    ? compactReported
-                    : undefined;
                 if (
                   recoveredOutput === undefined &&
                   projectedStatus === undefined &&
                   !context.blockedInputRecoveryKeys.has(callInputKey) &&
-                  !context.drainedToolResultKeys.has(callInputKey) &&
-                  (partialHint !== undefined ||
-                    !context.attemptedInputRecoveryKeys.has(callInputKey))
+                  !context.attemptedInputRecoveryKeys.has(callInputKey)
                 ) {
-                  if (partialHint === undefined) {
-                    context.attemptedInputRecoveryKeys.add(callInputKey);
-                  }
+                  context.attemptedInputRecoveryKeys.add(callInputKey);
                   recoveredOutput = yield* mcpSessions.takeToolResult(
                     context.input.threadId,
                     resolvedT3Tool,
                     input,
-                    partialHint,
+                    undefined,
                   );
                   if (recoveredOutput !== undefined) {
                     context.drainedToolResultKeys.add(callInputKey);
                   }
                 }
                 if (recoveredOutput !== undefined) {
-                  rememberClaimedToolResult(context, callInputKey, recoveredOutput);
+                  context.claimedToolResults.set(callInputKey, recoveredOutput);
                   output = recoveredOutput;
                 }
               }
@@ -10746,9 +10603,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
               claimedToolResults: new Map(),
-              claimedToolResultImageBytes: new Map(),
-              claimedToolResultImageBytesTotal: 0,
-              evictedClaimedToolResultKeys: new Set(),
               drainedToolResultKeys: new Set(),
               blockedInputRecoveryKeys: new Set(),
               attemptedInputRecoveryKeys: new Set(),
