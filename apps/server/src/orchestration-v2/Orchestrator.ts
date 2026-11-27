@@ -4729,7 +4729,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         command.expected !== undefined &&
         (settleWhenDone?.runId !== command.expected.runId ||
-          settleWhenDone.requestedAt !== command.expected.requestedAt)
+          settleWhenDone.requestedAt !== command.expected.requestedAt ||
+          settleWhenDone.requestId !== command.expected.requestId)
       )
         return;
       if (command.enabled && settleWhenDone !== null) return;
@@ -4784,7 +4785,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               "The thread has queued input. Send it or remove it before requesting Settle when done.",
           });
         }
-        settleWhenDone = { runId, requestedAt: DateTime.formatIso(yield* DateTime.now) };
+        settleWhenDone = {
+          runId,
+          requestedAt: DateTime.formatIso(yield* DateTime.now),
+          requestId: command.commandId,
+        };
       } else {
         settleWhenDone = null;
       }
@@ -4844,6 +4849,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           thread.settleWhenDone?.runId !== expected.runId ||
           thread.settleWhenDone.requestedAt !== expected.requestedAt ||
+          thread.settleWhenDone.requestId !== expected.requestId ||
           requestedRun === undefined
         ) {
           return yield* new OrchestratorDispatchError({
@@ -4856,12 +4862,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           newWork ||
           (shell?.latestUserAuthoredMessageAt != null &&
             DateTime.toEpochMillis(shell.latestUserAuthoredMessageAt) >
-              Date.parse(expected.requestedAt)) ||
-          threadPullRequestsOf(thread).some(
-            (link) =>
-              link.watch !== undefined &&
-              Date.parse(link.watch.startedAt) >= Date.parse(expected.requestedAt),
-          );
+              Date.parse(expected.requestedAt));
         const continuedRunIds = new Set(work.map((run) => run.restartContinuationOfRunId));
         const unsuccessful = work.filter(
           (run) =>
@@ -16354,6 +16355,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           );
         if (
           thread.settledOverride !== null ||
+          thread.settleWhenDone != null ||
           DateTime.toEpochMillis(thread.updatedAt) > DateTime.toEpochMillis(command.snapshotAt)
         ) {
           return yield* new OrchestratorDispatchError({

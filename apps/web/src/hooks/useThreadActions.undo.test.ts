@@ -120,6 +120,7 @@ beforeEach(() => {
   for (const command of Object.values(commands)) {
     command.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   }
+  commands.settle.mockResolvedValue({ _tag: "Success", value: { sequence: 1, deferred: false } });
   router.navigate.mockClear();
   router.state.location.href = "/";
   router.state.matches[0]!.params = {};
@@ -136,6 +137,16 @@ afterEach(() => {
 });
 
 describe("concurrent thread action Undo", () => {
+  it("does not offer Settled undo when a racing command defers settlement", async () => {
+    commands.settle.mockResolvedValue({
+      _tag: "Success",
+      value: { sequence: 1, deferred: true },
+    });
+    const result = await useThreadActions().settleThread(target);
+    expect(result).toMatchObject({ _tag: "Success", value: { deferred: true } });
+    expect(useThreadUndoNotice.getState().notice).toBeNull();
+  });
+
   it.each([
     ["settleThread", "settle", "unsettle", "Settled"],
     ["snoozeThread", "snooze", "unsnooze", "Snoozed"],

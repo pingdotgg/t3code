@@ -2,6 +2,7 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
+  CommandId,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   GitManagerError,
@@ -2675,17 +2676,21 @@ it.effect("settle when done isolates a failing thread from automatic settlement"
       latestUserMessageAt: at(-10 * DAY_MS),
       latestRunCompletedAt: at(-10 * DAY_MS),
     });
+    const failedCandidates = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
     const h = yield* makeHarness({
       snapshot: makeSnapshot([armed, automatic]),
       settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 1 },
       hasActiveSubprocess: ({ threadId }) =>
         threadId === armed.id
-          ? Effect.die(new Error("terminal read failed"))
+          ? Ref.update(failedCandidates, (ids) => [...ids, armed.id]).pipe(
+              Effect.andThen(Effect.die(new Error("terminal read failed"))),
+            )
           : Effect.succeed(false),
     });
     yield* Effect.gen(function* () {
       const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
       yield* startHarness(service, h.activation, h.snapshotReads);
+      assert.deepEqual(yield* Ref.get(failedCandidates), [armed.id]);
       assert.deepEqual(
         (yield* Ref.get(h.commands)).map((command) => command.threadId),
         [automatic.id],
@@ -2748,10 +2753,10 @@ it.effect.each([
   },
   { name: "guest message", status: "completed" as const, guest: true, action: null },
   {
-    name: "new pull request watch",
+    name: "existing pull request watch in the same millisecond",
     status: "completed" as const,
     watch: true,
-    action: "thread.settle-when-done.set",
+    action: "thread.settle",
   },
 ])("settle when done recovers $name without automatic settlement", (scenario) =>
   Effect.gen(function* () {
@@ -2833,7 +2838,7 @@ it.effect.each([
           makeSnapshot([
             {
               ...thread,
-              settleWhenDone: { ...intent, requestedAt: "2026-08-28T12:00:01.000Z" },
+              settleWhenDone: { ...intent, requestId: CommandId.make("rearmed:same-tick") },
             },
           ]),
         );

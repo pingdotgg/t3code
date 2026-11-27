@@ -84,7 +84,9 @@ vi.mock("../state/use-atom-command", () => ({
         return AsyncResult.failure(Cause.fail(new Error("Server denied the request")));
       }
       state.afterRequest?.(action);
-      return AsyncResult.success(undefined);
+      return AsyncResult.success(
+        action === "settle" ? { sequence: 1, deferred: false } : undefined,
+      );
     },
 }));
 vi.mock("../state/use-atom-query-runner", () => ({

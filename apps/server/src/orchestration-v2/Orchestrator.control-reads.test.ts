@@ -3308,6 +3308,9 @@ it.effect.each([
   { status: "completed", followup: "checkpoint" },
   { status: "completed", followup: "native-answer" },
   { status: "completed", followup: "new-watch" },
+  { status: "completed", followup: "existing-watch" },
+  { status: "completed", followup: "request-generation" },
+  { status: "completed", followup: "automatic-race" },
   { status: "failed", followup: "unclassified" },
   { status: "completed", followup: "compaction" },
   { status: "completed", followup: "held-wake" },
@@ -3446,7 +3449,11 @@ it.effect.each([
         });
       yield* enable("first");
       const first = (yield* projections.getThread(threadId)).settleWhenDone;
-      assert.deepEqual(first, { runId, requestedAt: DateTime.formatIso(now) });
+      assert.deepEqual(first, {
+        runId,
+        requestedAt: DateTime.formatIso(now),
+        requestId: CommandId.make(`enable:${status}:first`),
+      });
       yield* TestClock.adjust("1 second");
       yield* enable("idempotent");
       assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, first);
@@ -3473,6 +3480,18 @@ it.effect.each([
       });
       assert.isNull((yield* projections.getThread(threadId)).settleWhenDone ?? null);
       yield* TestClock.adjust("1 second");
+      if (followup === "existing-watch") {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make("settle-existing-watch"),
+          threadId,
+          host: "github.com",
+          repository: "example/project",
+          number: 1,
+          watching: true,
+          link: { url: "https://github.com/example/project/pull/1", source: "manual" },
+        });
+      }
       yield* enable("second");
       const intent = (yield* projections.getThread(threadId)).settleWhenDone!;
       if (followup === "native-answer") {
@@ -3618,6 +3637,84 @@ it.effect.each([
             resolvedAt: null,
           },
         });
+      }
+      if (followup === "request-generation") {
+        yield* orchestrator.dispatch({
+          type: "thread.settle-when-done.set",
+          commandId: CommandId.make("cancel:same-tick-generation"),
+          threadId,
+          enabled: false,
+          expected: intent,
+        });
+        yield* enable("replacement:same-tick");
+        const replacement = (yield* projections.getThread(threadId)).settleWhenDone!;
+        assert.equal(replacement.requestedAt, intent.requestedAt);
+        assert.notEqual(replacement.requestId, intent.requestId);
+        for (const expected of [intent, { runId, requestedAt: intent.requestedAt }]) {
+          const identity = "requestId" in expected ? "previous" : "legacy";
+          yield* orchestrator.dispatch({
+            type: "thread.settle-when-done.set",
+            commandId: CommandId.make(`stale-cancel:same-tick-generation:${identity}`),
+            threadId,
+            enabled: false,
+            expected,
+          });
+          assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, replacement);
+          const stale = yield* orchestrator
+            .dispatch({
+              type: "thread.settle",
+              commandId: CommandId.make(`stale-settle:same-tick-generation:${identity}`),
+              threadId,
+              expectedSettleWhenDone: expected,
+            })
+            .pipe(Effect.flip);
+          assert.instanceOf(stale, Orchestrator.OrchestratorDispatchError);
+          assert.equal(
+            stale.cause,
+            "The response or its settlement request changed before completion.",
+          );
+          assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, replacement);
+        }
+        yield* orchestrator.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("settle:replacement-generation"),
+          threadId,
+          expectedSettleWhenDone: replacement,
+        });
+        assert.equal((yield* projections.getThread(threadId)).settledOverride, "settled");
+        return;
+      }
+      if (followup === "automatic-race") {
+        const current = yield* projections.getThread(threadId);
+        const stale = yield* orchestrator
+          .dispatch({
+            type: "thread.auto-settle",
+            commandId: CommandId.make("automatic-settle:same-tick-arming"),
+            threadId,
+            snapshotAt: current.updatedAt,
+            settledAt: end,
+          })
+          .pipe(Effect.flip);
+        assert.instanceOf(stale, Orchestrator.OrchestratorDispatchError);
+        assert.equal(stale.cause, `Thread ${threadId} changed before automatic settlement.`);
+        assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, intent);
+        assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
+        return;
+      }
+      if (followup === "existing-watch") {
+        const held = yield* orchestrator
+          .dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make("settle-existing-watch:same-tick"),
+            threadId,
+            expectedSettleWhenDone: intent,
+            hasActiveTerminal: true,
+          })
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(held));
+        assert.deepEqual((yield* projections.getThread(threadId)).settleWhenDone, intent);
+        assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
+        return;
       }
       if (followup === "checkpoint") {
         const outbox = yield* EffectOutbox.EffectOutboxV2;
@@ -3872,11 +3969,14 @@ it.effect.each([
             type: "thread.settle",
             commandId: CommandId.make("stale-finish:same-tick"),
             threadId,
-            expectedLatestRunId: runId,
             expectedSettleWhenDone: pending,
           })
-          .pipe(Effect.exit);
-        assert.isTrue(Exit.isFailure(stale));
+          .pipe(Effect.flip);
+        assert.instanceOf(stale, Orchestrator.OrchestratorDispatchError);
+        assert.equal(
+          stale.cause,
+          "The response or its settlement request changed before completion.",
+        );
         assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
       }
     }).pipe(Effect.provide(layerTest)),

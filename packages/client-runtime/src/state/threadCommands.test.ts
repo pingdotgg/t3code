@@ -530,7 +530,13 @@ describe("remote thread lifecycle commands", () => {
               activeRunId: active ? runId : null,
               latestRunId: runId,
               status: active ? ("running" as const) : ("completed" as const),
-              settleWhenDone: pending ? { runId, requestedAt: DateTime.formatIso(NOW) } : null,
+              settleWhenDone: pending
+                ? {
+                    runId,
+                    requestedAt: DateTime.formatIso(NOW),
+                    requestId: CommandId.make("observed"),
+                  }
+                : null,
             },
           ],
         };
@@ -560,14 +566,66 @@ describe("remote thread lifecycle commands", () => {
           }),
           { startImmediately: true },
         );
+        if (!pending) {
+          yield* Fiber.join(cancel);
+          expect(yield* Queue.size(h.requests)).toBe(0);
+          return;
+        }
         const cancellation = yield* Queue.take(h.requests);
         expect(cancellation.command).toMatchObject({
           type: "thread.settle-when-done.set",
           enabled: false,
+          expected: initial.threads[0]!.settleWhenDone,
         });
         yield* Deferred.succeed(cancellation.reply, { sequence: 3 });
         yield* Fiber.join(cancel);
         expect(h.registry.get(h.visibleAtom)).toBe(initial);
+      }),
+  );
+
+  it.effect(
+    "cancels only the completion settlement observed before waiting for another command",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ settleWhenDoneSupported: true });
+        const intent = {
+          runId: RunId.make("working"),
+          requestedAt: DateTime.formatIso(NOW),
+          requestId: CommandId.make("observed"),
+        };
+        const initial = {
+          ...SNAPSHOT,
+          threads: [{ ...SNAPSHOT.threads[0]!, settleWhenDone: intent }],
+        };
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), initial);
+        const target = { environmentId: ENVIRONMENT_ID, input: { threadId: THREAD_ID } };
+        const pin = yield* Effect.forkChild(h.commands.pin.run(h.registry, target), {
+          startImmediately: true,
+        });
+        const pinRequest = yield* Queue.take(h.requests);
+        const cancel = yield* Effect.forkChild(
+          h.commands.cancelSettleWhenDone.run(h.registry, target),
+          { startImmediately: true },
+        );
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
+          ...initial,
+          threads: [
+            {
+              ...initial.threads[0]!,
+              settleWhenDone: { ...intent, requestId: CommandId.make("replacement") },
+            },
+          ],
+        });
+        yield* Deferred.succeed(pinRequest.reply, { sequence: 2 });
+        yield* Fiber.join(pin);
+        const cancellation = yield* Queue.take(h.requests);
+        expect(cancellation.command).toMatchObject({
+          type: "thread.settle-when-done.set",
+          enabled: false,
+          expected: intent,
+        });
+        yield* Deferred.succeed(cancellation.reply, { sequence: 3 });
+        yield* Fiber.join(cancel);
       }),
   );
 
@@ -933,29 +991,38 @@ describe("settle and snooze while the environment is offline", () => {
     }),
   );
 
-  it.effect("drops a queued settle when the thread changed on the server meanwhile", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness({ connected: false });
-      yield* Effect.exit(h.commands.settle.run(h.registry, target));
-      yield* h.reconnect("synchronizing");
-      const changed = {
-        ...SNAPSHOT,
-        snapshotSequence: 5,
-        threads: [
-          {
-            ...SNAPSHOT.threads[0]!,
-            latestRunId: RunId.make("run-2"),
-            itemCount: 3,
-          },
-        ],
-      };
-      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), changed);
-      h.registry.set(h.statusAtom(ENVIRONMENT_ID), "live");
-      yield* nothingPending(h);
-      expect(yield* queued(h)).toEqual([]);
-      expect(h.registry.get(h.visibleAtom)).toBe(changed);
-      yield* expectNothingSent(h);
-    }),
+  it.effect.each(["new-run", "armed-settlement"] as const)(
+    "drops a queued settle after %s on the server",
+    (change) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ connected: false });
+        yield* Effect.exit(h.commands.settle.run(h.registry, target));
+        yield* h.reconnect("synchronizing");
+        const changed = {
+          ...SNAPSHOT,
+          snapshotSequence: 5,
+          threads: [
+            {
+              ...SNAPSHOT.threads[0]!,
+              ...(change === "new-run"
+                ? { latestRunId: RunId.make("run-2"), itemCount: 3 }
+                : {
+                    settleWhenDone: {
+                      runId: RunId.make("run-1"),
+                      requestedAt: DateTime.formatIso(NOW),
+                    },
+                  }),
+            },
+          ],
+        };
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), changed);
+        if (change === "armed-settlement") expect(h.registry.get(h.visibleAtom)).toEqual(changed);
+        h.registry.set(h.statusAtom(ENVIRONMENT_ID), "live");
+        yield* nothingPending(h);
+        expect(yield* queued(h)).toEqual([]);
+        expect(h.registry.get(h.visibleAtom)).toBe(changed);
+        yield* expectNothingSent(h);
+      }),
   );
 
   it.effect("un-settling a queued settle cancels it without contacting the server", () =>

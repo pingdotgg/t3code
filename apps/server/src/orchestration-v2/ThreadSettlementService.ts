@@ -380,13 +380,8 @@ export const make = Effect.gen(function* () {
           const intent = thread.settleWhenDone!;
           const requestedAt = DateTime.toEpochMillis(DateTime.makeUnsafe(intent.requestedAt));
           const superseded =
-            (thread.latestResumingMessageAt != null &&
-              DateTime.toEpochMillis(thread.latestResumingMessageAt) > requestedAt) ||
-            thread.pullRequests?.some(
-              (link) =>
-                link.watch !== undefined &&
-                DateTime.toEpochMillis(DateTime.makeUnsafe(link.watch.startedAt)) >= requestedAt,
-            );
+            thread.latestResumingMessageAt != null &&
+            DateTime.toEpochMillis(thread.latestResumingMessageAt) > requestedAt;
           const uuid = yield* random.uuidV4();
           if (superseded) {
             yield* orchestrator.dispatch({
@@ -416,7 +411,7 @@ export const make = Effect.gen(function* () {
           yield* orchestrator.dispatch({
             type: "thread.settle",
             commandId: CommandId.make(
-              `server:settle-when-done:${thread.id}:${intent.requestedAt}:${sequence}:${hasActiveTerminal ? "terminal" : "ready"}`,
+              `server:settle-when-done:${thread.id}:${intent.requestId ?? intent.requestedAt}:${sequence}:${hasActiveTerminal ? "terminal" : "ready"}`,
             ),
             threadId: thread.id,
             expectedSettleWhenDone: intent,

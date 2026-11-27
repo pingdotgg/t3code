@@ -887,7 +887,7 @@ export function useThreadActions() {
       environmentId: target.environmentId,
       input: { threadId: target.threadId },
     });
-    if (result._tag !== "Success") {
+    if (result._tag !== "Success" || result.value.deferred) {
       action.finish();
       return result;
     }

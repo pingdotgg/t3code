@@ -14,6 +14,7 @@ import {
   type ModelSelection,
   type NodeId,
   type OrchestrationV2Command,
+  type OrchestrationV2ThreadShell,
   type OrchestrationV2CreationSource,
   type PlanId,
   type ProjectId,
@@ -114,6 +115,7 @@ export type UnarchiveThreadInput = ThreadCommandInput;
 export interface SettleThreadInput extends ThreadCommandInput {
   readonly whenDone?: boolean;
   readonly runId?: RunId;
+  readonly expected?: NonNullable<OrchestrationV2ThreadShell["settleWhenDone"]>;
 }
 
 export interface UnsettleThreadInput extends ThreadCommandInput {
@@ -627,6 +629,7 @@ export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(functi
       threadId: input.threadId,
       enabled: input.whenDone,
       ...(input.runId === undefined ? {} : { runId: input.runId }),
+      ...(input.expected === undefined ? {} : { expected: input.expected }),
     });
   }
   return yield* simpleThreadCommand("thread.settle", input);

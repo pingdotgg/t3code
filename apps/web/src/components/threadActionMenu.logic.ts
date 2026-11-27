@@ -152,6 +152,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
 export function isThreadTriageAction(action: string): boolean {
   return (
     action === "settle" ||
+    action === "cancel-settle-when-done" ||
     action === "unsettle" ||
     action === "snooze" ||
     action === "unsnooze" ||

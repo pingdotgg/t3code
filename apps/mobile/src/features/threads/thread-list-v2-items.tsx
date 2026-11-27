@@ -912,6 +912,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       providerNameLabel,
       hasQueuedMessages: props.hasQueuedMessages === true,
       regeneratingTitle: isRegeneratingTitle,
+      settleWhenDone: thread.settleWhenDone != null,
     },
     m,
   );

@@ -84,7 +84,8 @@ function applySettle(
   accepted: boolean,
 ): OrchestrationV2ThreadShell {
   return !accepted &&
-    (thread.pendingRuntimeRequest !== null ||
+    (thread.settleWhenDone != null ||
+      thread.pendingRuntimeRequest !== null ||
       ["preparing", "queued", "starting", "running", "waiting"].includes(thread.status))
     ? thread
     : {
@@ -636,7 +637,19 @@ export function createThreadEnvironmentAtoms<R, E>(
     cancelSettleWhenDone: {
       label: commands.settle.label,
       run: (registry, target) =>
-        commands.settle.run(registry, { ...target, input: { ...target.input, whenDone: false } }),
+        Effect.suspend(() => {
+          const snapshot = registry.get(snapshotAtom(target.environmentId));
+          const expected = snapshot?.threads.find(
+            (thread) => thread.id === target.input.threadId,
+          )?.settleWhenDone;
+          if (expected == null) {
+            return Effect.succeed({ sequence: snapshot?.snapshotSequence ?? 0 });
+          }
+          return commands.settle.run(registry, {
+            ...target,
+            input: { ...target.input, whenDone: false, expected },
+          });
+        }),
     } satisfies typeof settleManually,
     unsettle: triage.cancelQueued(
       optimistic.wrap(commands.unsettle, (thread, input, now) => ({

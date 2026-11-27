@@ -27,6 +27,16 @@ const baseState: ThreadActionMenuState = {
 };
 
 describe("buildThreadActionMenuItems", () => {
+  it.each([false, true])("keeps cancellation under the triage permission (%s)", (canTriage) => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      canTriage,
+      settleWhenDone: true,
+    });
+    expect(items.find((item) => item.id === "cancel-settle-when-done")?.disabled).toBe(!canTriage);
+  });
+
   it.each([false, true])(
     "disables both lifecycle directions without permission (reversed: %s)",
     (reversed) => {

@@ -501,6 +501,7 @@ const OrchestrationV2LastTitleRegeneration = Schema.Struct({
 export const OrchestrationV2SettleWhenDone = Schema.Struct({
   runId: RunId,
   requestedAt: IsoDateTime,
+  requestId: Schema.optional(CommandId),
 });
 
 export const OrchestrationV2AppThread = Schema.Struct({
