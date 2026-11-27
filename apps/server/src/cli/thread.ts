@@ -405,20 +405,42 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
 
   const containing = containingRoots(target, requestedPath)[0]?.project;
   if (containing !== undefined) return containing;
-  const targetInfo = yield* fileSystem.stat(target).pipe(Effect.option);
-  const gitDirectory =
-    Option.isSome(targetInfo) && targetInfo.value.type === "File" ? path.dirname(target) : target;
+  const projectNotFound = () => new ThreadProjectNotFoundError({ identifier });
+  let gitDirectory = target;
+  let checkoutTarget = target;
+  // Git needs an existing cwd even if the requested path doesn't exist yet.
+  while (true) {
+    const info = yield* fileSystem.stat(gitDirectory).pipe(
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
+      Effect.mapError(projectNotFound),
+    );
+    if (info?.type === "Directory") {
+      if (gitDirectory !== target) {
+        const parent = yield* realPath(gitDirectory);
+        checkoutTarget = path.join(parent, path.relative(gitDirectory, target));
+        gitDirectory = parent;
+      }
+      break;
+    }
+    const parent = path.dirname(gitDirectory);
+    if (info?.type === "File" && gitDirectory === target) {
+      gitDirectory = parent;
+      break;
+    }
+    if (info !== undefined || parent === gitDirectory) return yield* projectNotFound();
+    gitDirectory = parent;
+  }
   const listed = yield* listGitCheckouts(gitDirectory).pipe(
     Effect.flatMap((paths) => Effect.forEach(paths, realPath)),
     Effect.provide(ProcessRunner.layer),
   );
   const ownCheckout = listed
-    .filter((checkout) => contains(checkout, target))
+    .filter((checkout) => contains(checkout, checkoutTarget))
     .toSorted((left, right) => right.length - left.length)[0];
   if (ownCheckout === undefined) {
-    return yield* new ThreadProjectNotFoundError({ identifier });
+    return yield* projectNotFound();
   }
-  const relative = path.relative(ownCheckout, target);
+  const relative = path.relative(ownCheckout, checkoutTarget);
   const matches = new Map<ProjectId, (typeof projects)[number]>();
   for (const checkout of listed) {
     if (checkout === ownCheckout) continue;
@@ -431,7 +453,7 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   }
   const [match, ...others] = matches.values();
   if (match === undefined) {
-    return yield* new ThreadProjectNotFoundError({ identifier });
+    return yield* projectNotFound();
   }
   if (others.length > 0) {
     const names = [match, ...others].map((project) => `${project.title} (${project.id})`);
