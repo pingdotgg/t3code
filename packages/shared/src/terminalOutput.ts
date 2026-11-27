@@ -312,48 +312,48 @@ function applySgr(attributes: Attributes, params: ReadonlyArray<number>): void {
 
 const STRING_SEQUENCE_INTRODUCERS = new Set(["]", "P", "X", "_", "^"]);
 
-/** Exclusive end of an escape sequence whose introducer is at `start`, or -1 if unfinished. */
-function escapeEnd(input: string, start: number): number {
-  const next = input[start];
+/** Length of a complete escape sequence whose introducer follows `index`, or -1 if unfinished. */
+function escapeLength(input: string, index: number): number {
+  const next = input[index + 1];
   if (next === undefined) return -1;
   // A second ESC restarts the sequence.
-  if (next === ESC) return start;
+  if (next === ESC) return 1;
   if (next === "[") {
-    for (let cursor = start + 1; cursor < input.length; cursor += 1) {
+    for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       const code = input.charCodeAt(cursor);
       // Like xterm.js, a new ESC cancels an unfinished CSI so the next sequence parses intact.
-      if (code === 0x1b) return cursor;
+      if (code === 0x1b) return cursor - index;
       // CAN and SUB cancel the CSI and are consumed.
-      if (code === 0x18 || code === 0x1a) return cursor + 1;
-      if (code >= 0x40 && code <= 0x7e) return cursor + 1;
+      if (code === 0x18 || code === 0x1a) return cursor - index + 1;
+      if (code >= 0x40 && code <= 0x7e) return cursor - index + 1;
       // Like xterm.js, a non-ASCII code point aborts the CSI and is consumed, both halves of a surrogate pair.
       if (code >= 0x80) {
         if (code >= 0xd800 && code <= 0xdbff) {
           if (cursor + 1 >= input.length) return -1;
           const low = input.charCodeAt(cursor + 1);
-          if (low >= 0xdc00 && low <= 0xdfff) return cursor + 2;
+          if (low >= 0xdc00 && low <= 0xdfff) return cursor - index + 2;
         }
-        return cursor + 1;
+        return cursor - index + 1;
       }
     }
     return -1;
   }
   if (STRING_SEQUENCE_INTRODUCERS.has(next)) {
     // BEL/ST ends string sequences; also stop at newlines so stray binary introducers cannot hide later output.
-    for (let cursor = start + 1; cursor < input.length; cursor += 1) {
-      if (input[cursor] === "\u0007") return cursor + 1;
-      if (input[cursor] === "\u0018" || input[cursor] === "\u001a") return cursor + 1;
-      if (input[cursor] === "\n") return cursor;
+    for (let cursor = index + 2; cursor < input.length; cursor += 1) {
+      if (input[cursor] === "\u0007") return cursor - index + 1;
+      if (input[cursor] === "\u0018" || input[cursor] === "\u001a") return cursor - index + 1;
+      if (input[cursor] === "\n") return cursor - index;
       // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
       if (input[cursor] === ESC) {
         if (cursor + 1 >= input.length) return -1;
-        return input[cursor + 1] === "\\" ? cursor + 2 : cursor;
+        return input[cursor + 1] === "\\" ? cursor - index + 2 : cursor - index;
       }
     }
     return -1;
   }
   // ECMA-35: any intermediate bytes (0x20-0x2F, e.g. charset designations, DECALN) precede one final byte.
-  let cursor = start;
+  let cursor = index + 1;
   while (
     cursor < input.length &&
     input.charCodeAt(cursor) >= 0x20 &&
@@ -364,13 +364,13 @@ function escapeEnd(input: string, start: number): number {
   if (cursor >= input.length) return -1;
   // After intermediates, a control or ESC is not a final byte; end before it so it is still processed.
   const final = input.charCodeAt(cursor);
-  if (cursor > start && (final < 0x30 || final > 0x7e)) return cursor;
+  if (cursor > index + 1 && (final < 0x30 || final > 0x7e)) return cursor - index;
   if (final >= 0xd800 && final <= 0xdbff) {
     if (cursor + 1 >= input.length) return -1;
     const low = input.charCodeAt(cursor + 1);
-    if (low >= 0xdc00 && low <= 0xdfff) return cursor + 2;
+    if (low >= 0xdc00 && low <= 0xdfff) return cursor - index + 2;
   }
-  return cursor + 1;
+  return cursor - index + 1;
 }
 
 const penTransitions = new Map<string, string>();
@@ -621,7 +621,8 @@ class Terminal {
       if (code === 0x1b) {
         let start = index + 1;
         while (this.control(input.charCodeAt(start))) start += 1;
-        const end = escapeEnd(input, start);
+        const length = escapeLength(input, start - 1);
+        const end = length === -1 ? -1 : start - 1 + length;
         let sequence = ESC + input.slice(start, end === -1 ? input.length : end);
         if (sequence[1] === "[") {
           // Apply line controls now and leave them out of the CSI, including any pending fragment.
