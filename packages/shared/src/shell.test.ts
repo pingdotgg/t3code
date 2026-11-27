@@ -1533,25 +1533,85 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
-    it.effect("keeps git when PATH has another git or the host is not macOS", () =>
-      Effect.gen(function* () {
-        const homebrew = setup({ gitOnPath: "/opt/homebrew/bin/git", xcrunGit: XCODE_GIT });
-        expect(yield* homebrew.resolve).toBe("git");
-        expect(homebrew.host.xcrunCalls).toBe(0);
+    it.effect.runIf(HostProcess.Platform.defaultValue() !== "win32")(
+      "distinguishes symlink/.. custom git from /usr/bin/git using realpath",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-macos-git-shim-" });
+          const customDir = path.join(root, "custom");
+          const customSub = path.join(customDir, "sub");
+          const link = path.join(root, "link");
+          yield* fs.makeDirectory(customSub, { recursive: true });
+          yield* fs.symlink(customSub, link);
 
-        const linux = setup({ platform: "linux", gitOnPath: "/usr/bin/git", xcrunGit: XCODE_GIT });
-        expect(yield* linux.resolve).toBe("git");
-      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+          const customGit = path.join(customDir, "git");
+          yield* fs.writeFileString(customGit, "#!/bin/sh\nexit 0\n");
+          yield* fs.chmod(customGit, 0o755);
+
+          let xcrunCalls = 0;
+          const resolved = yield* resolveSpawnCommand("git", ["status"], {
+            env: { PATH: `${link}/..` },
+          }).pipe(
+            Effect.map((r) => r.command),
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(XcodeGitLocation, () => {
+              xcrunCalls += 1;
+              return XCODE_GIT;
+            }),
+          );
+          expect(resolved).toBe(`${link}/../git`);
+          expect(xcrunCalls).toBe(0);
+
+          const hasDirectUsrBinGit = yield* fs.realPath("/usr/bin/git").pipe(
+            Effect.map((resolvedPath) => resolvedPath === "/usr/bin/git"),
+            Effect.orElseSucceed(() => false),
+          );
+          if (hasDirectUsrBinGit) {
+            const shimLink = path.join(root, "usr-bin-link");
+            yield* fs.symlink("/usr/bin", shimLink);
+            const shimResolved = yield* resolveSpawnCommand("git", ["status"], {
+              env: { PATH: `${shimLink}/.` },
+            }).pipe(
+              Effect.map((r) => r.command),
+              Effect.provideService(HostProcess.Platform, "darwin"),
+              Effect.provideService(XcodeGitLocation, () => {
+                xcrunCalls += 1;
+                return customGit;
+              }),
+            );
+            expect(shimResolved).toBe(customGit);
+            expect(xcrunCalls).toBe(1);
+          }
+        }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
-    it.effect("keeps git when xcrun fails or names a missing file", () =>
+    it.effect(
+      "uses PATH git without xcrun when PATH has another git, and keeps bare git on Linux",
+      () =>
+        Effect.gen(function* () {
+          const homebrew = setup({ gitOnPath: "/opt/homebrew/bin/git", xcrunGit: XCODE_GIT });
+          expect(yield* homebrew.resolve).toBe("/opt/homebrew/bin/git");
+          expect(homebrew.host.xcrunCalls).toBe(0);
+
+          const linux = setup({
+            platform: "linux",
+            gitOnPath: "/usr/bin/git",
+            xcrunGit: XCODE_GIT,
+          });
+          expect(yield* linux.resolve).toBe("git");
+        }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
+
+    it.effect("falls back to /usr/bin/git when xcrun fails or names a missing file", () =>
       Effect.gen(function* () {
         const failed = setup({ gitOnPath: "/usr/bin/git", xcrunGit: undefined });
-        expect(yield* failed.resolve).toBe("git");
+        expect(yield* failed.resolve).toBe("/usr/bin/git");
 
         const missing = setup({ gitOnPath: "/usr/bin/git", xcrunGit: XCODE_GIT });
         missing.files.delete(XCODE_GIT);
-        expect(yield* missing.resolve).toBe("git");
+        expect(yield* missing.resolve).toBe("/usr/bin/git");
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
@@ -1566,6 +1626,246 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         host.xcrunGit = betaGit;
         expect(yield* resolve).toBe(betaGit);
         expect(host.xcrunCalls).toBe(2);
+      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
+
+    it.effect("does not reuse an unset-PATH Xcode git cache entry for an explicit empty PATH", () =>
+      Effect.gen(function* () {
+        const files = new Set(["/usr/bin/git", XCODE_GIT]);
+        let xcrunCalls = 0;
+        const resolveExecutable = (
+          command: string,
+          _platform: NodeJS.Platform,
+          lookupEnv: NodeJS.ProcessEnv,
+        ) => {
+          if (command !== "git") return files.has(command) ? command : undefined;
+          return lookupEnv.PATH === "" ? undefined : "/usr/bin/git";
+        };
+        const locateXcodeGit = () => {
+          xcrunCalls += 1;
+          return XCODE_GIT;
+        };
+        const resolveWithEnv = (env: NodeJS.ProcessEnv) =>
+          resolveSpawnCommand("git", ["status"], { env }).pipe(
+            Effect.map((resolved) => resolved.command),
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(SpawnExecutableResolution, resolveExecutable),
+            Effect.provideService(XcodeGitLocation, locateXcodeGit),
+          );
+
+        expect(yield* resolveWithEnv({})).toBe(XCODE_GIT);
+        expect(yield* resolveWithEnv({})).toBe(XCODE_GIT);
+        expect(xcrunCalls).toBe(1);
+
+        expect(yield* resolveWithEnv({ PATH: "" })).toBe("git");
+        expect(xcrunCalls).toBe(1);
+      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
+  });
+
+  describe("macOS bare commands", () => {
+    it.effect.runIf(HostProcess.Platform.defaultValue() !== "win32")(
+      "rescans PATH on each macOS spawn so earlier PATH additions win immediately",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-macos-path-" });
+          const first = path.join(root, "first");
+          const second = path.join(root, "second");
+          yield* fs.makeDirectory(first);
+          yield* fs.makeDirectory(second);
+
+          const laterTool = path.join(second, "mytool");
+          yield* fs.writeFileString(laterTool, "#!/bin/sh\nexit 0\n");
+          yield* fs.chmod(laterTool, 0o755);
+
+          const resolve = resolveSpawnCommand("mytool", ["--flag"], {
+            env: { PATH: `${first}:${second}` },
+          }).pipe(Effect.provideService(HostProcess.Platform, "darwin"));
+
+          const resolved = yield* resolve;
+          expect(resolved).toEqual({
+            command: laterTool,
+            args: ["--flag"],
+            shell: false,
+          });
+
+          const earlierTool = path.join(first, "mytool");
+          yield* fs.writeFileString(earlierTool, "#!/bin/sh\nexit 0\n");
+          yield* fs.chmod(earlierTool, 0o755);
+
+          expect(yield* resolve).toEqual({
+            command: earlierTool,
+            args: ["--flag"],
+            shell: false,
+          });
+        }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
+
+    it.effect.runIf(HostProcess.Platform.defaultValue() !== "win32")(
+      "skips directories and non-executable files in earlier PATH entries, but defers on ELOOP or a missing interpreter",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-macos-errno-path-" });
+          const dirEntry = path.join(root, "has-dir");
+          const nonExecEntry = path.join(root, "has-non-exec");
+          const loopEntry = path.join(root, "has-loop");
+          const validEntry = path.join(root, "valid");
+          yield* fs.makeDirectory(path.join(dirEntry, "mytool"), { recursive: true });
+          yield* fs.makeDirectory(nonExecEntry);
+          yield* fs.makeDirectory(loopEntry);
+          yield* fs.makeDirectory(validEntry);
+
+          const nonExecTool = path.join(nonExecEntry, "mytool");
+          yield* fs.writeFileString(nonExecTool, "#!/bin/sh\nexit 0\n");
+          yield* fs.chmod(nonExecTool, 0o644);
+
+          const validTool = path.join(validEntry, "mytool");
+          yield* fs.writeFileString(validTool, "#!/bin/sh\nexit 0\n");
+          yield* fs.chmod(validTool, 0o755);
+
+          // Directory and non-executable file (EACCES) are skipped so validTool wins.
+          const skipped = yield* resolveSpawnCommand("mytool", [], {
+            env: { PATH: `${dirEntry}:${nonExecEntry}:${validEntry}` },
+          }).pipe(
+            Effect.map((r) => r.command),
+            Effect.provideService(HostProcess.Platform, "darwin"),
+          );
+          expect(skipped).toBe(validTool);
+
+          // A script whose interpreter is missing fails posix_spawn with ENOENT, after which native
+          // PATH lookup continues to validTool, so resolution defers instead of pinning it.
+          const staleEntry = path.join(root, "stale");
+          yield* fs.makeDirectory(staleEntry);
+          const staleTool = path.join(staleEntry, "mytool");
+          yield* fs.writeFileString(staleTool, "#!/missing/interpreter\nexit 0\n");
+          yield* fs.chmod(staleTool, 0o755);
+          const deferredOnStale = yield* resolveSpawnCommand("mytool", [], {
+            env: { PATH: `${staleEntry}:${validEntry}` },
+          }).pipe(
+            Effect.map((r) => r.command),
+            Effect.provideService(HostProcess.Platform, "darwin"),
+          );
+          expect(deferredOnStale).toBe("mytool");
+
+          // macOS treats CR as part of the interpreter path (not whitespace/EOL), so `#!/bin/sh\r\n`
+          // fails posix_spawn with ENOENT and native PATH lookup continues to validTool.
+          const crlfEntry = path.join(root, "crlf");
+          yield* fs.makeDirectory(crlfEntry);
+          const crlfTool = path.join(crlfEntry, "mytool");
+          yield* fs.writeFileString(crlfTool, "#!/bin/sh\r\nexit 0\n");
+          yield* fs.chmod(crlfTool, 0o755);
+          const deferredOnCrlf = yield* resolveSpawnCommand("mytool", [], {
+            env: { PATH: `${crlfEntry}:${validEntry}` },
+          }).pipe(
+            Effect.map((r) => r.command),
+            Effect.provideService(HostProcess.Platform, "darwin"),
+          );
+          expect(deferredOnCrlf).toBe("mytool");
+
+          // An execute-only file (0111) cannot have its header inspected, so defer to native
+          // lookup rather than pinning a script whose interpreter may be missing.
+          if (process.getuid?.() !== 0) {
+            const execOnlyEntry = path.join(root, "exec-only");
+            yield* fs.makeDirectory(execOnlyEntry);
+            const execOnlyTool = path.join(execOnlyEntry, "mytool");
+            yield* fs.writeFileString(execOnlyTool, "#!/bin/sh\nexit 0\n");
+            yield* fs.chmod(execOnlyTool, 0o111);
+            const deferredOnExecOnly = yield* resolveSpawnCommand("mytool", [], {
+              env: { PATH: `${execOnlyEntry}:${validEntry}` },
+            }).pipe(
+              Effect.map((r) => r.command),
+              Effect.provideService(HostProcess.Platform, "darwin"),
+            );
+            expect(deferredOnExecOnly).toBe("mytool");
+          }
+
+          // Symlink loop (ELOOP) stops the scan and defers to native spawn instead of skipping to validTool.
+          const loopA = path.join(loopEntry, "loop-a");
+          const loopB = path.join(loopEntry, "loop-b");
+          yield* fs.symlink(loopB, loopA);
+          yield* fs.symlink(loopA, loopB);
+          yield* fs.symlink(loopA, path.join(loopEntry, "mytool"));
+
+          const deferredOnLoop = yield* resolveSpawnCommand("mytool", [], {
+            env: { PATH: `${loopEntry}:${validEntry}` },
+          }).pipe(
+            Effect.map((r) => r.command),
+            Effect.provideService(HostProcess.Platform, "darwin"),
+          );
+          expect(deferredOnLoop).toBe("mytool");
+        }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
+
+    it.effect.runIf(HostProcess.Platform.defaultValue() !== "win32")(
+      "uses uppercase PATH, defaults to /usr/bin:/bin when unset, and defers on empty or relative entries",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-macos-env-path-" });
+          const bin = path.join(root, "bin");
+          yield* fs.makeDirectory(bin);
+          const tool = path.join(bin, "mytool");
+          yield* fs.writeFileString(tool, "#!/bin/sh\nexit 0\n");
+          yield* fs.chmod(tool, 0o755);
+
+          const resolveWithEnv = (command: string, env: NodeJS.ProcessEnv) =>
+            resolveSpawnCommand(command, [], { env }).pipe(
+              Effect.map((resolved) => resolved.command),
+              Effect.provideService(HostProcess.Platform, "darwin"),
+            );
+
+          // Empty or relative entries are searched from the child's cwd, so they defer to native lookup.
+          expect(yield* resolveWithEnv("mytool", { PATH: "" })).toBe("mytool");
+          expect(yield* resolveWithEnv("mytool", { PATH: `:${bin}` })).toBe("mytool");
+          expect(yield* resolveWithEnv("mytool", { PATH: `rel/bin:${bin}` })).toBe("mytool");
+
+          // Empty or relative entries after a match do not change it.
+          expect(yield* resolveWithEnv("mytool", { PATH: `${bin}/:.` })).toBe(`${bin}/mytool`);
+
+          // Lowercase Path is ignored on macOS; unset PATH falls back to /usr/bin:/bin.
+          expect(yield* resolveWithEnv("mytool", { Path: bin })).toBe("mytool");
+          const expectedDefaultSh = ["/usr/bin/sh", "/bin/sh"].find((candidate) => {
+            try {
+              NodeFS.accessSync(candidate, NodeFS.constants.X_OK);
+              return NodeFS.statSync(candidate).isFile();
+            } catch {
+              return false;
+            }
+          });
+          if (expectedDefaultSh !== undefined) {
+            expect(yield* resolveWithEnv("sh", {})).toBe(expectedDefaultSh);
+          }
+        }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
+
+    it.effect("skips resolution for explicit paths on macOS and for bare commands on Linux", () =>
+      Effect.gen(function* () {
+        let resolverCalls = 0;
+        const resolver = () => {
+          resolverCalls += 1;
+          return "/bin/ps";
+        };
+
+        expect(
+          yield* resolveSpawnCommand("/bin/ps", ["-A"], { env: { PATH: "/bin" } }).pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(SpawnExecutableResolution, resolver),
+          ),
+        ).toEqual({ command: "/bin/ps", args: ["-A"], shell: false });
+
+        expect(
+          yield* resolveSpawnCommand("ps", ["-A"], { env: { PATH: "/bin" } }).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(SpawnExecutableResolution, resolver),
+          ),
+        ).toEqual({ command: "ps", args: ["-A"], shell: false });
+
+        expect(resolverCalls).toBe(0);
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
   });
