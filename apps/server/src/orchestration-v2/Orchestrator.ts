@@ -14983,6 +14983,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         retainedRuns,
         sessions: projection.providerSessions,
         providerTurns: projection.providerTurns,
+        attempts: projection.attempts,
       });
       if (classified.needsTargetProviderRollback) {
         const capabilities = yield* providerAdapters.get(providerThread.providerInstanceId).pipe(

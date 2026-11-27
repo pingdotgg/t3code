@@ -1780,7 +1780,10 @@ export function deriveAvailableRevertTurnCounts(
   for (const run of projection.runs) {
     if (!isRollbackableSettledRunStatus(run.status)) continue;
     if (run.ordinal > maxRollbackableOrdinal) maxRollbackableOrdinal = run.ordinal;
-    if (!didRunReachProvider(run, projection.providerTurns) || run.providerThreadId === null) {
+    if (
+      !didRunReachProvider(run, projection.providerTurns, projection.attempts) ||
+      run.providerThreadId === null
+    ) {
       continue;
     }
     const runOwner = providerThreadsById.get(run.providerThreadId);

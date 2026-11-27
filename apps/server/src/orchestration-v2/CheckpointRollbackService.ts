@@ -471,7 +471,7 @@ export const layer: Layer.Layer<
       const targetConversationThreadIds = new Set(context.targetConversationThreadIds);
       const targetRunsToRollback = runsToRollback.filter(
         (run) =>
-          didRunReachProvider(run, context.providerTurns) &&
+          didRunReachProvider(run, context.providerTurns, context.rollbackAttempts) &&
           run.providerThreadId !== null &&
           targetConversationThreadIds.has(run.providerThreadId),
       );
@@ -638,6 +638,7 @@ export const layer: Layer.Layer<
       const spanningSnapshots: Array<{
         readonly providerThread: OrchestrationV2ProviderThread;
         readonly lastRunOrdinal: number;
+        readonly rolledBack: boolean;
       }> = [];
       const effectiveAbandonedProviderThreads: Array<OrchestrationV2ProviderThread> = [
         ...abandonedProviderThreads,
@@ -649,10 +650,13 @@ export const layer: Layer.Layer<
         }
         const rolledBack = succeededSpanningById.get(spanning.providerThread.id);
         spanningSnapshots.push(
-          rolledBack ?? {
-            providerThread: spanning.providerThread,
-            lastRunOrdinal: spanning.targetRun.ordinal,
-          },
+          rolledBack !== undefined
+            ? { ...rolledBack, rolledBack: true }
+            : {
+                providerThread: spanning.providerThread,
+                lastRunOrdinal: spanning.targetRun.ordinal,
+                rolledBack: false,
+              },
         );
       }
       if (restoreFiles) {
@@ -710,16 +714,41 @@ export const layer: Layer.Layer<
               }),
             );
           }
+          // Reread spanning/abandoned rows under the lock so concurrent provider updates
+          // (e.g. pendingBackgroundTasks) are not overwritten by snapshots read before rollback.
+          const hasNonTargetUpdates =
+            spanningSnapshots.length > 0 || effectiveAbandonedProviderThreads.length > 0;
+          const freshRecords = hasNonTargetUpdates
+            ? yield* projections.getThreadRecords(
+                input.threadId,
+                failedSpanningConversationIds.size > 0
+                  ? ["providerThreads", "providerSessions"]
+                  : ["providerThreads"],
+              )
+            : undefined;
+          const freshProviderThreadsById = new Map(
+            (freshRecords?.providerThreads ?? []).map((row) => [row.id, row]),
+          );
           for (const spanning of spanningSnapshots) {
+            const current = freshProviderThreadsById.get(spanning.providerThread.id);
+            const payloadBase = spanning.rolledBack
+              ? {
+                  ...(current ?? spanning.providerThread),
+                  ...spanning.providerThread,
+                  ...(current?.pendingBackgroundTasks === undefined
+                    ? {}
+                    : { pendingBackgroundTasks: current.pendingBackgroundTasks }),
+                }
+              : (current ?? spanning.providerThread);
             events.push(
               yield* makeEvent({
                 type: "provider-thread.updated",
                 threadId: input.threadId,
-                driver: spanning.providerThread.driver,
-                providerInstanceId: spanning.providerThread.providerInstanceId,
+                driver: payloadBase.driver,
+                providerInstanceId: payloadBase.providerInstanceId,
                 occurredAt: now,
                 payload: {
-                  ...spanning.providerThread,
+                  ...payloadBase,
                   lastRunOrdinal: spanning.lastRunOrdinal,
                   updatedAt: now,
                 },
@@ -727,15 +756,16 @@ export const layer: Layer.Layer<
             );
           }
           for (const abandoned of effectiveAbandonedProviderThreads) {
+            const current = freshProviderThreadsById.get(abandoned.id) ?? abandoned;
             events.push(
               yield* makeEvent({
                 type: "provider-thread.updated",
                 threadId: input.threadId,
-                driver: abandoned.driver,
-                providerInstanceId: abandoned.providerInstanceId,
+                driver: current.driver,
+                providerInstanceId: current.providerInstanceId,
                 occurredAt: now,
                 payload: {
-                  ...abandoned,
+                  ...current,
                   status: "closed",
                   lastRunOrdinal: null,
                   updatedAt: now,
@@ -757,11 +787,53 @@ export const layer: Layer.Layer<
               },
             }),
           );
+          const effectiveAbandonedSessions = (() => {
+            if (failedSpanningConversationIds.size === 0 || freshRecords === undefined) {
+              return context.abandonedSessions;
+            }
+            const closedIds = new Set(effectiveAbandonedProviderThreads.map((row) => row.id));
+            const retainedSessionIds = new Set<string>();
+            if (providerThread.providerSessionId !== null) {
+              retainedSessionIds.add(providerThread.providerSessionId);
+            }
+            for (const row of freshRecords.providerThreads) {
+              if (
+                row.appThreadId === input.threadId &&
+                row.ownerNodeId === null &&
+                !isRetiredProviderThread(row) &&
+                !closedIds.has(row.id) &&
+                row.providerSessionId !== null
+              ) {
+                retainedSessionIds.add(row.providerSessionId);
+              }
+            }
+            const byId = new Map(context.abandonedSessions.map((session) => [session.id, session]));
+            const freshSessionsById = new Map(
+              freshRecords.providerSessions.map((session) => [session.id, session]),
+            );
+            for (const abandoned of effectiveAbandonedProviderThreads) {
+              const current = freshProviderThreadsById.get(abandoned.id) ?? abandoned;
+              const sessionId = current.providerSessionId;
+              if (sessionId === null || retainedSessionIds.has(sessionId) || byId.has(sessionId)) {
+                continue;
+              }
+              const session = freshSessionsById.get(sessionId);
+              if (
+                session !== undefined &&
+                session.status !== "stopped" &&
+                session.status !== "error" &&
+                !session.capabilities.sessions.supportsMultipleProviderThreadsPerSession
+              ) {
+                byId.set(session.id, session);
+              }
+            }
+            return Array.from(byId.values());
+          })();
           const detachEffects: Array<PendingOrchestrationEffectV2> = [];
           const detachCommandId =
             input.requestId ??
             CommandId.make(`command:rollback-detach:${input.threadId}:${input.checkpointId}`);
-          for (const abandonedSession of context.abandonedSessions) {
+          for (const abandonedSession of effectiveAbandonedSessions) {
             events.push(
               yield* makeEvent({
                 type: "provider-session.detached",

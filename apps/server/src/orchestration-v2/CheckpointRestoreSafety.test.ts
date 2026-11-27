@@ -87,6 +87,7 @@ it.effect.each([
       providerTurns: [],
       rootNodes: [],
       targetAttempt: undefined,
+      rollbackAttempts: [],
       targetConversationThreadIds: [providerThreadId],
       rolledBackAttemptIds: [],
       staleCheckpoints: [],

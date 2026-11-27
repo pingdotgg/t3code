@@ -351,7 +351,10 @@ export function classifyRollbackProviderThreads(input: {
   readonly retainedRuns: ReadonlyArray<OrchestrationV2Run>;
   readonly sessions: ReadonlyArray<OrchestrationV2ThreadProjection["providerSessions"][number]>;
   readonly providerTurns?: ReadonlyArray<
-    Pick<OrchestrationV2ProviderTurn, "runAttemptId" | "promptDropped">
+    Pick<OrchestrationV2ProviderTurn, "id" | "runAttemptId" | "promptDropped">
+  >;
+  readonly attempts?: ReadonlyArray<
+    Pick<OrchestrationV2ThreadProjection["attempts"][number], "id" | "providerTurnId">
   >;
   readonly attemptByOrdinal?: ReadonlyMap<number, RollbackTargetAttempt>;
   readonly canRollbackProvider?: (providerThread: OrchestrationV2ProviderThread) => boolean;
@@ -390,7 +393,12 @@ export function classifyRollbackProviderThreads(input: {
   const deliveredDiscardedConvKeys = new Set<string>();
   let targetHasDeliveredDiscardedRun = false;
   for (const run of input.runsToRollback) {
-    if (!didRunReachProvider(run, input.providerTurns) || run.providerThreadId === null) continue;
+    if (
+      !didRunReachProvider(run, input.providerTurns, input.attempts) ||
+      run.providerThreadId === null
+    ) {
+      continue;
+    }
     if (targetConversationThreadIds.has(run.providerThreadId)) {
       targetHasDeliveredDiscardedRun = true;
     }
@@ -407,7 +415,12 @@ export function classifyRollbackProviderThreads(input: {
     { readonly threadId: ProviderThreadId; readonly ordinal: number }
   >();
   for (const run of input.retainedRuns) {
-    if (!didRunReachProvider(run, input.providerTurns) || run.providerThreadId === null) continue;
+    if (
+      !didRunReachProvider(run, input.providerTurns, input.attempts) ||
+      run.providerThreadId === null
+    ) {
+      continue;
+    }
     const prevThread = retainedRunByThreadId.get(run.providerThreadId);
     if (prevThread === undefined || run.ordinal > prevThread.ordinal) {
       retainedRunByThreadId.set(run.providerThreadId, run);
@@ -546,6 +559,7 @@ export interface ProjectionCheckpointRollbackContext {
   readonly scope: OrchestrationV2CheckpointScope | undefined;
   readonly targetRun: OrchestrationV2Run | undefined;
   readonly targetAttempt: RollbackTargetAttempt | undefined;
+  readonly rollbackAttempts: ReadonlyArray<RollbackTargetAttempt>;
   readonly targetConversationThreadIds: ReadonlyArray<ProviderThreadId>;
   readonly providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
   readonly rolledBackAttemptIds: ReadonlyArray<RunAttemptId>;
@@ -6795,6 +6809,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               providerSession: undefined,
               targetRun: undefined,
               targetAttempt: undefined,
+              rollbackAttempts: [],
               targetConversationThreadIds: providerThread === undefined ? [] : [providerThread.id],
               providerTurns: [],
               rolledBackAttemptIds: [],
@@ -6831,7 +6846,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             FROM orchestration_v2_projection_run_attempts AS attempt
             JOIN orchestration_v2_projection_runs AS run
               ON attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId')
-            WHERE run.thread_id = ${threadId} AND run.ordinal = ${targetOrdinal}
+            WHERE run.thread_id = ${threadId} AND run.ordinal >= ${targetOrdinal}
               AND run.status != 'rolled_back' AND attempt.thread_id = ${threadId}`,
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
             WHERE thread_id = ${threadId} AND ordinal = ${targetOrdinal}
@@ -6958,12 +6973,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               OR ${sql.in("turn.provider_turn_id", relevantTurnIds)}
               OR ${sql.in("turn.run_attempt_id", relevantAttemptIds)})
             ORDER BY
+              CASE WHEN turn.started_at IS NULL THEN 1 ELSE 0 END ASC,
+              turn.started_at ASC,
               COALESCE(run.ordinal, 2147483647) ASC,
               COALESCE(attempt.attempt_ordinal, 2147483647) ASC,
               turn.ordinal ASC,
               turn.provider_turn_id ASC`,
             ]);
             const providerTurns = yield* decodeRows(decodeProviderTurnPayload, threadId)(turnRows);
+            const rollbackAttempts = Array.from(attemptByOrdinal.values());
             const classified = classifyRollbackProviderThreads({
               targetProviderThread: providerThread,
               activeProviderThreadId: thread.activeProviderThreadId,
@@ -6973,6 +6991,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               retainedRuns,
               sessions: allSessions,
               providerTurns,
+              attempts: rollbackAttempts,
               attemptByOrdinal,
             });
             const abandonedSessions = allSessions.filter(
@@ -6997,6 +7016,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ...context,
               targetRun,
               targetAttempt,
+              rollbackAttempts,
               targetConversationThreadIds: Array.from(classified.targetConversationThreadIds),
               runsToRollback,
               providerSession: allSessions.find(

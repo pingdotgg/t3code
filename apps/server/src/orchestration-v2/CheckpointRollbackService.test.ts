@@ -226,6 +226,7 @@ it.effect.each([
       scope: { id: scopeId, cwd: worktreePath },
       runsToRollback: [],
       targetAttempt: undefined,
+      rollbackAttempts: [],
       targetConversationThreadIds: [providerThreadId],
       rolledBackAttemptIds: [],
       staleCheckpoints: [],
@@ -455,6 +456,7 @@ it.effect.each([
         scope: { id: scopeId, cwd: worktreePath },
         runsToRollback: [],
         targetAttempt: undefined,
+        rollbackAttempts: [],
         targetConversationThreadIds: [providerThreadId],
         rolledBackAttemptIds: [],
         staleCheckpoints: [],
@@ -1138,13 +1140,47 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
             retainedRuns: [makeRun(1, grokAlias1Id, "completed", now, RunAttemptId.make("att:1"))],
             sessions: [],
             providerTurns: [
-              { runAttemptId: RunAttemptId.make("att:1") },
-              { runAttemptId: RunAttemptId.make("att:2") },
-              { runAttemptId: RunAttemptId.make("att:4"), promptDropped: true },
+              { id: ProviderTurnId.make("turn:1"), runAttemptId: RunAttemptId.make("att:1") },
+              { id: ProviderTurnId.make("turn:2"), runAttemptId: RunAttemptId.make("att:2") },
+              {
+                id: ProviderTurnId.make("turn:4"),
+                runAttemptId: RunAttemptId.make("att:4"),
+                promptDropped: true,
+              },
             ],
             canRollbackProvider: () => false,
           });
           assert.isFalse(undeliveredResult.needsTargetProviderRollback);
+
+          // A steered failed/interrupted run whose attempt links via providerTurnId to a delivered
+          // turn started by another attempt must count as delivered and require native rollback.
+          const steeredResult = ProjectionStore.classifyRollbackProviderThreads({
+            targetProviderThread: grokAlias1,
+            activeProviderThreadId: targetThreadId,
+            targetOrdinal: 1,
+            rootProviderThreads: [grokAlias1, targetThread],
+            runsToRollback: [
+              makeRun(2, grokAlias1Id, "interrupted", now, RunAttemptId.make("att:steer-2")),
+            ],
+            retainedRuns: [makeRun(1, grokAlias1Id, "completed", now, RunAttemptId.make("att:1"))],
+            sessions: [],
+            providerTurns: [
+              { id: ProviderTurnId.make("turn:1"), runAttemptId: RunAttemptId.make("att:1") },
+              {
+                id: ProviderTurnId.make("turn:shared-steer"),
+                runAttemptId: RunAttemptId.make("att:host-turn"),
+              },
+            ],
+            attempts: [
+              { id: RunAttemptId.make("att:1"), providerTurnId: ProviderTurnId.make("turn:1") },
+              {
+                id: RunAttemptId.make("att:steer-2"),
+                providerTurnId: ProviderTurnId.make("turn:shared-steer"),
+              },
+            ],
+            canRollbackProvider: () => false,
+          });
+          assert.isTrue(steeredResult.needsTargetProviderRollback);
         }),
     );
 
@@ -1186,8 +1222,17 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           });
           const targetThread = makeThread(targetThreadId, 4);
           const spanningThread = makeThread(spanningThreadId, 3);
+          const untouchedSpanningId = ProviderThreadId.make("pt:spanning-c");
+          const untouchedSpanningThread = makeThread(untouchedSpanningId, 2);
+          const freshBackgroundTask = {
+            taskId: "bg-task-1",
+            kind: "background_task" as const,
+            label: "background build",
+            startedAt: now,
+          };
           const callOrder: Array<ProviderThreadId> = [];
           const written: Array<OrchestrationV2DomainEvent> = [];
+          const writtenEffects: Array<string> = [];
           const makeRun = (
             ordinal: number,
             providerThreadId: ProviderThreadId,
@@ -1227,6 +1272,12 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
                       written.push(...events);
                       return [];
                     }),
+                  writeWithEffects: ({ events, effects }) =>
+                    Effect.sync(() => {
+                      written.push(...events);
+                      writtenEffects.push(...effects.map((effect) => effect.request.type));
+                      return [];
+                    }),
                 }),
                 Layer.mock(ProjectionStore.ProjectionStoreV2)({
                   getThread: () =>
@@ -1248,6 +1299,28 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
                       archivedAt: null,
                       createdAt: now,
                       updatedAt: now,
+                    } as never),
+                  getThreadRecords: () =>
+                    Effect.succeed({
+                      providerThreads: [
+                        targetThread,
+                        spanningThread,
+                        {
+                          ...untouchedSpanningThread,
+                          pendingBackgroundTasks: [freshBackgroundTask],
+                        },
+                      ],
+                      providerSessions: [
+                        {
+                          id: spanningThread.providerSessionId,
+                          driver: spanningThread.driver,
+                          providerInstanceId: spanningThread.providerInstanceId,
+                          status: "ready",
+                          capabilities: {
+                            sessions: { supportsMultipleProviderThreadsPerSession: false },
+                          },
+                        },
+                      ],
                     } as never),
                   getProviderControlContext: () => Effect.succeed({ attempt: undefined } as never),
                   getCheckpointRollbackContext: () =>
@@ -1288,6 +1361,7 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
                         id: targetAttemptId,
                         providerTurnId: targetTurnId,
                       },
+                      rollbackAttempts: [],
                       targetConversationThreadIds: [targetThreadId],
                       providerTurns: [
                         {
@@ -1349,6 +1423,20 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
                           conversationThreadIds: [spanningThreadId],
                           needsRollback: true,
                         },
+                        {
+                          providerThread: untouchedSpanningThread,
+                          providerSession: undefined,
+                          targetRun: makeRun(
+                            1,
+                            untouchedSpanningId,
+                            CheckpointId.make("cp:c1"),
+                            RunAttemptId.make("att:c1"),
+                          ),
+                          targetAttempt: undefined,
+                          targetCheckpointId: CheckpointId.make("cp:c1"),
+                          conversationThreadIds: [untouchedSpanningId],
+                          needsRollback: false,
+                        },
                       ],
                       abandonedProviderThreads: [],
                       abandonedSessions: [],
@@ -1401,6 +1489,19 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           if (spanningUpdate?.type === "provider-thread.updated") {
             assert.equal(spanningUpdate.payload.status, "closed");
             assert.isNull(spanningUpdate.payload.lastRunOrdinal);
+          }
+          // Exclusive session of the failed spanning thread is detached.
+          const detachedEvent = written.find((event) => event.type === "provider-session.detached");
+          assert.isDefined(detachedEvent);
+          assert.deepEqual(writtenEffects, ["provider-session.detach"]);
+          // Non-rolled-back spanning row preserves fresh pendingBackgroundTasks read under lock.
+          const untouchedUpdate = written.find(
+            (event) =>
+              event.type === "provider-thread.updated" && event.payload.id === untouchedSpanningId,
+          );
+          assert.isDefined(untouchedUpdate);
+          if (untouchedUpdate?.type === "provider-thread.updated") {
+            assert.deepEqual(untouchedUpdate.payload.pendingBackgroundTasks, [freshBackgroundTask]);
           }
         }),
     );

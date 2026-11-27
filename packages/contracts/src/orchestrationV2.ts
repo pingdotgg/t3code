@@ -1458,8 +1458,9 @@ export function providerThreadNativeConversationKey(
 export function didRunReachProvider(
   run: Pick<OrchestrationV2Run, "status" | "startedAt" | "activeAttemptId">,
   providerTurns?: ReadonlyArray<
-    Pick<OrchestrationV2ProviderTurn, "runAttemptId" | "promptDropped">
+    Pick<OrchestrationV2ProviderTurn, "id" | "runAttemptId" | "promptDropped">
   >,
+  attempts?: ReadonlyArray<Pick<OrchestrationV2RunAttempt, "id" | "providerTurnId">>,
 ): boolean {
   if (run.status === "completed") return true;
   if (run.status !== "failed" && run.status !== "interrupted" && run.status !== "cancelled") {
@@ -1468,8 +1469,14 @@ export function didRunReachProvider(
   if (run.startedAt === null) return false;
   if (providerTurns === undefined) return true;
   if (run.activeAttemptId === null) return false;
+  const linkedProviderTurnId = attempts?.find(
+    (attempt) => attempt.id === run.activeAttemptId,
+  )?.providerTurnId;
   return providerTurns.some(
-    (turn) => turn.runAttemptId === run.activeAttemptId && isDeliveredProviderTurn(turn),
+    (turn) =>
+      (turn.runAttemptId === run.activeAttemptId ||
+        (linkedProviderTurnId != null && turn.id === linkedProviderTurnId)) &&
+      isDeliveredProviderTurn(turn),
   );
 }
 
