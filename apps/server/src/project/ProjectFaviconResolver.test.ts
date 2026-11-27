@@ -270,7 +270,7 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         yield* writeTextFile(
           quotedValueCwd,
           "index.html",
-          `<link rel="icon" title="preview href=app.css here" href="brand.svg">`,
+          `<link rel="icon" title='preview href=app.css < primary' media="(width > 600px)" href="brand.svg">`,
         );
         yield* writeTextFile(quotedValueCwd, "app.css", "body {}");
         yield* writeTextFile(quotedValueCwd, "brand.svg", "<svg>brand</svg>");

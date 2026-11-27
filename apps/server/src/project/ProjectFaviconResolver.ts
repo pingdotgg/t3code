@@ -77,7 +77,7 @@ const ICON_SOURCE_FILES = [
   "src/index.html",
 ] as const;
 
-const HTML_LINK_RE = /<link\b[^<>]*>/gi;
+const HTML_LINK_RE = /<link\b(?:[^<>"']|"[^"]*"|'[^']*')*>/gi;
 // `rel` is an unordered, whitespace-separated token list; any `icon` token marks an icon link.
 const ICON_REL_VALUE = String.raw`(?:"(?:[^"]*[\t\n\f\r ])?icon(?=[\t\n\f\r "])|'(?:[^']*[\t\n\f\r ])?icon(?=[\t\n\f\r ']))`;
 // HTML attribute syntax: a name, then an optional double-quoted, single-quoted, or unquoted value.
