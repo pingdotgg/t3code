@@ -1665,9 +1665,9 @@ it.each(["archive", "sqlite"] as const)(
 );
 
 it("loads a font attachment through the lazy preview", async () => {
-  const { default: fontUrl } =
-    await import("../../../node_modules/@betteroffice/fonts/assets/Carlito-Regular.ttf?url");
-  const file = await (await fetch(fontUrl)).blob();
+  const { loadBundledFontBytes, resolveBundledFamilyFace } = await import("@betteroffice/fonts");
+  const bytes = await loadBundledFontBytes(resolveBundledFamilyFace("Carlito", false, false)!);
+  const file = new Blob([bytes], { type: "font/ttf" });
   await using screen = await render(
     <AttachmentFilePreview
       name="Carlito.ttf"
