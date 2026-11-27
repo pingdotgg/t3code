@@ -20,36 +20,45 @@ const TIMEOUT_OPTION =
 const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
 const SHELL_PRECOMMAND_MODIFIERS = new Set(["nocorrect", "noglob", "time"]);
 const POWERSHELL_SETUP_PROGRAMS = new Set(["pop-location", "push-location", "set-location"]);
-const POWERSHELL_FLAGS = new Set([
-  "-mta",
-  "-nol",
-  "-nologo",
-  "-noni",
-  "-noninteractive",
-  "-nop",
-  "-noprofile",
-  "-sta",
-]);
+// powershell.exe and pwsh accept any prefix of a parameter name that is at least
+// as long as its shortest unambiguous form, plus a few extra aliases.
+const POWERSHELL_PARAMETERS: ReadonlyArray<readonly [string, string, ...string[]]> = [
+  ["command", "c"],
+  ["configurationname", "config"],
+  ["encodedcommand", "e", "ec"],
+  ["executionpolicy", "ex", "ep"],
+  ["file", "f"],
+  ["inputformat", "inp", "if"],
+  ["mta", "mta"],
+  ["nologo", "nol"],
+  ["noninteractive", "noni"],
+  ["noprofile", "nop"],
+  ["outputformat", "o", "of"],
+  ["sta", "sta"],
+  ["version", "v"],
+  ["windowstyle", "w"],
+  ["workingdirectory", "wo", "wd"],
+];
+const POWERSHELL_FLAGS = new Set(["mta", "nologo", "noninteractive", "noprofile", "sta"]);
 const POWERSHELL_OPTIONS_WITH_VALUE = new Set([
-  "-config",
-  "-configurationname",
-  "-ep",
-  "-ex",
-  "-executionpolicy",
-  "-if",
-  "-inp",
-  "-inputformat",
-  "-o",
-  "-of",
-  "-outputformat",
-  "-v",
-  "-version",
-  "-w",
-  "-wd",
-  "-windowstyle",
-  "-wo",
-  "-workingdirectory",
+  "configurationname",
+  "executionpolicy",
+  "inputformat",
+  "outputformat",
+  "version",
+  "windowstyle",
+  "workingdirectory",
 ]);
+
+function powerShellParameter(token: string): string | null {
+  if (!token.startsWith("-")) return null;
+  const key = token.slice(1).toLowerCase();
+  for (const [name, shortest, ...aliases] of POWERSHELL_PARAMETERS) {
+    if (aliases.includes(key)) return name;
+    if (key.length >= shortest.length && name.startsWith(key)) return name;
+  }
+  return null;
+}
 const START_PROCESS_FLAGS = new Set([
   "-confirm",
   "-debug",
@@ -950,25 +959,26 @@ function windowsShellPayloadProgramName(
   }
 
   for (let index = start; index < tokens.length; index += 1) {
-    const option = tokens[index]!.toLowerCase();
-    if (option === "-command" || option === "-c") {
+    const option = tokens[index]!;
+    const parameter = powerShellParameter(option);
+    if (parameter === "command") {
       const payload = tokens[index + 1];
       return {
         matched: true,
         program: parsePayload(payload),
       };
     }
-    if (option === "-file" || option === "-f") {
+    if (parameter === "file") {
       return { matched: true, program: staticProgramName(tokens[index + 1] ?? "") };
     }
-    if (option === "-encodedcommand" || option === "-enc" || option === "-e") {
+    if (parameter === "encodedcommand") {
       return { matched: true, program: null };
     }
-    if (POWERSHELL_OPTIONS_WITH_VALUE.has(option)) {
+    if (parameter && POWERSHELL_OPTIONS_WITH_VALUE.has(parameter)) {
       index += 1;
       continue;
     }
-    if (POWERSHELL_FLAGS.has(option)) continue;
+    if (parameter && POWERSHELL_FLAGS.has(parameter)) continue;
     if (!option.startsWith("-")) {
       return { matched: true, program: staticProgramName(tokens[index]!) };
     }
@@ -1511,12 +1521,13 @@ function windowsShellScriptIndex(shell: string, tokens: ReadonlyArray<string>): 
       if (!option.startsWith("/")) return null;
       continue;
     }
-    if (option === "-command" || option === "-c") return index + 1;
-    if (POWERSHELL_OPTIONS_WITH_VALUE.has(option)) {
+    const parameter = powerShellParameter(option);
+    if (parameter === "command") return index + 1;
+    if (parameter && POWERSHELL_OPTIONS_WITH_VALUE.has(parameter)) {
       index += 1;
       continue;
     }
-    if (!POWERSHELL_FLAGS.has(option)) return null;
+    if (!parameter || !POWERSHELL_FLAGS.has(parameter)) return null;
   }
   return null;
 }

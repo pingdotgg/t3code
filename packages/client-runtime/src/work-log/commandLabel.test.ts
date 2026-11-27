@@ -16,7 +16,7 @@ describe("commandProgramName", () => {
     ["/bin/zsh -lc 'git status\nsed -n '\"'1,20p' apps/web/src/components/DiffPanel.tsx\"", "git"],
     ["bash -c $'ls\\nnpm test'", "ls"],
     ["bash -c $'\\x6e\\160m test'", "npm"],
-    ['powershell -NoP -ep Bypass -c "git status"', "git"],
+    ['powershell -NoP -exec bypass -c "git status"', "git"],
   ])("unwraps shell scripts without executing them: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -211,7 +211,10 @@ describe("commandDisplayText with Windows shell wrappers", () => {
     ['cmd.exe /c "npm test"', "npm test"],
     ['Bash.exe -lc "git status"', "git status"],
     ['"C:\\Program Files\\Git\\bin\\Bash.exe" -lc "rg foo"', "rg foo"],
-    ['powershell.exe -NoL -NonI -NoP -ex Bypass -w Hidden -c "git status"', "git status"],
+    [
+      'powershell.exe -NoProf -NonI -ep Bypass -ExecutionPol Bypass -wd C:\\repo -Comm "git status"',
+      "git status",
+    ],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
   });
