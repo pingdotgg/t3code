@@ -1,3 +1,4 @@
+import { useMessageTimeFormatter } from "../threads/useMessageTimeFormatter";
 import {
   requestedQueueAtom,
   selectedQueueAtom,
@@ -17,7 +18,8 @@ import type {
   ProjectMergeQueuesResult,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { useGT } from "gt-react-native";
+import { msg, useGT, useMessages } from "gt-react-native";
+import { checkStatus } from "./pullRequestStatus";
 import { useCallback, useState } from "react";
 import { AppState, Pressable, View } from "react-native";
 import { AppBar } from "../../components/ui/AppBar";
@@ -31,6 +33,14 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 
+const queueStateLabels = {
+  queued: msg("waiting"),
+  "awaiting-checks": msg("awaiting checks"),
+  mergeable: msg("ready to merge"),
+  unmergeable: msg("cannot merge"),
+  locked: msg("locked"),
+} as const;
+
 function QueueEntry({
   entry,
   project,
@@ -43,6 +53,8 @@ function QueueEntry({
   refresh: () => void;
 }) {
   const gt = useGT();
+  const formatTime = useMessageTimeFormatter();
+  const resolve = useMessages();
   const navigation = useNavigation();
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -81,20 +93,20 @@ function QueueEntry({
       >
         <Text className="text-xs text-foreground-muted">
           {gt("Position {position}", { position: entry.position })} ·{" "}
-          {entry.state.replaceAll("-", " ")}
+          {resolve(queueStateLabels[entry.state])}
         </Text>
         <Text className="font-t3-bold">
           #{entry.number} {entry.title}
         </Text>
         {entry.enqueuedAt && (
           <Text className="text-xs text-foreground-muted">
-            {gt("Enqueued {time}", { time: new Date(entry.enqueuedAt).toLocaleString() })}
+            {gt("Enqueued {time}", { time: formatTime(entry.enqueuedAt) })}
           </Text>
         )}
         <Text className="text-xs text-foreground-muted">
           {entry.estimatedMergeAt
             ? gt("Estimated merge {time}", {
-                time: new Date(entry.estimatedMergeAt).toLocaleTimeString(),
+                time: formatTime(entry.estimatedMergeAt),
               })
             : gt("Merge estimate unavailable")}
         </Text>
@@ -108,7 +120,7 @@ function QueueEntry({
                 key={JSON.stringify([check.name, check.url])}
                 onPress={check.url ? () => void tryOpenExternalUrl(check.url!) : undefined}
               >
-                {check.name} · {check.status}
+                {check.name} · {checkStatus(check, resolve).label}
                 {check.required ? " · " + gt("Required") : ""}
               </Text>
             ))

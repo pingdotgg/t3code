@@ -13,6 +13,7 @@ import {
 import { T, useGT, useMessages } from "gt-react";
 import { GitBranchIcon, RefreshCwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { formatFullTimestamp, formatShortTimestamp } from "../timestampFormat";
 import { useClientSettings } from "../hooks/useSettings";
 import { useEnvironments } from "../state/environments";
 import { pullRequestEnvironment } from "../state/pullRequests";
@@ -35,6 +36,7 @@ function QueueRow({
 }) {
   const gt = useGT();
   const resolve = useMessages();
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const [expanded, setExpanded] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,11 +108,13 @@ function QueueRow({
       </div>
       <div className="mt-1 text-xs text-muted-foreground">
         {entry.enqueuedAt &&
-          gt("Enqueued {time}", { time: new Date(entry.enqueuedAt).toLocaleString() })}{" "}
+          gt("Enqueued {time}", {
+            time: formatFullTimestamp(entry.enqueuedAt, timestampFormat),
+          })}{" "}
         ·{" "}
         {entry.estimatedMergeAt
           ? gt("Estimated merge {time}", {
-              time: new Date(entry.estimatedMergeAt).toLocaleTimeString(),
+              time: formatShortTimestamp(entry.estimatedMergeAt, timestampFormat),
             })
           : gt("Merge estimate unavailable")}
       </div>

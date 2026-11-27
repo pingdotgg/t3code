@@ -305,6 +305,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        {props.page === "source-control" ? <MobileMergeQueuesSetting /> : null}
         {!hasConnectedSelection || reference === null ? (
           <Text className="px-2 text-base text-foreground-muted">
             {projectSelected
@@ -423,7 +424,6 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   />
                 )}
                 {projectSelected ? null : <IssueTrackerSection environments={selectedTargets} />}
-                <MobileMergeQueuesSetting />
                 <SettingsSection title={gt("Pull requests")}>
                   <SettingsSwitchRow
                     icon={PullRequestGlyph.merged}
