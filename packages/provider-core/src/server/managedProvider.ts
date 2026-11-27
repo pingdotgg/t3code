@@ -417,7 +417,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       if (Equal.equals(state.snapshot, snapshot) && usageAuthLabel === state.usageAuthLabel) {
         return [null, state] as const;
       }
-      return [snapshot, { ...state, snapshot, usageAuthLabel }] as const;
+      // Enrichment still running for the previous account must not republish its auth.
+      const enrichmentGeneration = state.enrichmentGeneration + (probedSwitched ? 1 : 0);
+      return [snapshot, { ...state, snapshot, usageAuthLabel, enrichmentGeneration }] as const;
     });
     if (next !== null) {
       yield* PubSub.publish(changesPubSub, next);

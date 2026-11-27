@@ -1142,6 +1142,7 @@ describe("makeManagedServerProvider", () => {
             { usageLimits: updatedLimits, auth: { email: "a@example.com", label: "Pro" } },
             { usageLimits: switchedFailure, auth: { email: "b@example.com" } },
           ]);
+          const staleEnrichment = yield* Deferred.make<() => Effect.Effect<void>>();
           const provider = yield* makeManagedServerProvider<TestSettings>({
             resolveMaintenance: () => Effect.die("usage refresh must not resolve maintenance"),
             getSettings: Effect.succeed({ enabled: true }),
@@ -1162,6 +1163,8 @@ describe("makeManagedServerProvider", () => {
             checkUsageLimits: Ref.update(usageChecks, (count) => count + 1).pipe(
               Effect.andThen(Ref.modify(probeResults, ([head, ...rest]) => [head, rest] as const)),
             ),
+            enrichSnapshot: ({ snapshot, publishSnapshot }) =>
+              Deferred.succeed(staleEnrichment, () => publishSnapshot(snapshot)),
             refreshOnInterval: false,
           });
           yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
@@ -1175,6 +1178,8 @@ describe("makeManagedServerProvider", () => {
           const switched = yield* provider.getSnapshot;
           assert.strictEqual(switched.auth.email, "b@example.com");
           assert.deepStrictEqual(switched.usageLimits, switchedFailure);
+          yield* (yield* Deferred.await(staleEnrichment))();
+          assert.strictEqual((yield* provider.getSnapshot).auth.email, "b@example.com");
         }),
       ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

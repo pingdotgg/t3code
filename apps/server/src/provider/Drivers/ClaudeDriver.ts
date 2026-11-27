@@ -351,6 +351,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           current?.auth.workspaceId !== undefined &&
           workspaceId !== current.auth.workspaceId);
       if (switchedAccount) {
+        yield* Ref.set(lastGoodCapabilities, undefined);
         yield* Cache.invalidateAll(capabilitiesProbeCache);
       }
       if (!capabilities.usage) {
