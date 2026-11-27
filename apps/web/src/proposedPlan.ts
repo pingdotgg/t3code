@@ -18,6 +18,7 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
   const previewLines: string[] = [];
   let visibleLineCount = 0;
   let hasMoreContent = false;
+  let openFence: string | null = null;
 
   for (const line of lines) {
     const isVisibleLine = line.trim().length > 0;
@@ -29,6 +30,16 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
     if (isVisibleLine) {
       visibleLineCount += 1;
     }
+    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (fence !== undefined) {
+      if (openFence === null) openFence = fence;
+      else if (
+        fence[0] === openFence[0] &&
+        fence.length >= openFence.length &&
+        line.trim() === fence
+      )
+        openFence = null;
+    }
   }
 
   while (previewLines.length > 0 && previewLines.at(-1)?.trim().length === 0) {
@@ -37,6 +48,10 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
 
   if (previewLines.length === 0) {
     return proposedPlanTitle(planMarkdown) ?? resolve(msg("Plan preview unavailable."));
+  }
+
+  if (openFence !== null) {
+    previewLines.push(openFence);
   }
 
   if (hasMoreContent) {
