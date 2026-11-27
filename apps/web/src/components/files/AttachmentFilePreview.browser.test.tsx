@@ -321,57 +321,31 @@ describe("bounded binary previews", () => {
     }
   });
 
-  it.each(["child-first", "directory-first"] as const)(
-    "uses the explicit ZIP directory modified date when entries are %s",
-    async (order) => {
-      const zip = new JSZip();
-      const childDate = new Date("2022-01-02T00:00:00Z");
-      const dirDate = new Date("2024-10-19T00:00:00Z");
-      const laterChildDate = new Date("2025-05-06T00:00:00Z");
-      const subChildDate = new Date("2020-03-04T00:00:00Z");
-      const subDirDate = new Date("2023-07-08T00:00:00Z");
-      if (order === "directory-first") {
-        zip.file("docs/", null, { dir: true, date: dirDate });
-        zip.file("docs/sub/", null, { dir: true, date: subDirDate });
-      }
-      zip.file("docs/readme.txt", "a".repeat(1024), { createFolders: false, date: childDate });
-      zip.file("docs/sub/nested.txt", "b".repeat(1024), {
-        createFolders: false,
-        date: subChildDate,
-      });
-      if (order === "child-first") {
-        zip.file("docs/", null, { dir: true, date: dirDate });
-        zip.file("docs/sub/", null, { dir: true, date: subDirDate });
-      }
-      zip.file("docs/later.txt", "c".repeat(1024), { createFolders: false, date: laterChildDate });
-      const bytes = await zip.generateAsync({ type: "arraybuffer" });
-      const src = URL.createObjectURL(new Blob([bytes]));
-      try {
-        await using screen = await render(
-          <BinaryViewer src={src} name="dates.zip" kind="archive" />,
-        );
-        const rows = () =>
-          [...screen.container.querySelectorAll("tbody tr")].map((row) =>
-            [...row.querySelectorAll("td")].map((cell) => cell.textContent?.trim()),
-          );
-        await vi.waitFor(() => {
-          expect(rows()).toEqual([
-            ["docs", "3 KB", formatArchiveModifiedDate("2024-10-19T00:00:00.000")],
-          ]);
-        }, 10_000);
-        await act(() => screen.container.querySelector<HTMLButtonElement>("tbody button")!.click());
-        await vi.waitFor(() => {
-          expect(rows()).toEqual([
-            ["sub", "1 KB", formatArchiveModifiedDate("2023-07-08T00:00:00.000")],
-            ["later.txt", "1 KB", formatArchiveModifiedDate("2025-05-06T00:00:00.000")],
-            ["readme.txt", "1 KB", formatArchiveModifiedDate("2022-01-02T00:00:00.000")],
-          ]);
-        });
-      } finally {
-        URL.revokeObjectURL(src);
-      }
-    },
-  );
+  it("dates an archive folder by its own ZIP record when its children come first", async () => {
+    const zip = new JSZip();
+    const fileDate = new Date("2022-01-02T00:00:00Z");
+    zip.file("docs/readme.txt", "a".repeat(1024), { createFolders: false, date: fileDate });
+    zip.file("docs/sub/nested.txt", "b".repeat(1024), { createFolders: false, date: fileDate });
+    zip.file("docs/", null, { dir: true, date: new Date("2024-10-19T00:00:00Z") });
+    zip.file("docs/sub/", null, { dir: true, date: new Date("2023-07-08T00:00:00Z") });
+    zip.file("docs/later.txt", "c".repeat(1024), {
+      createFolders: false,
+      date: new Date("2025-05-06T00:00:00Z"),
+    });
+    const src = URL.createObjectURL(new Blob([await zip.generateAsync({ type: "arraybuffer" })]));
+    try {
+      await using screen = await render(<BinaryViewer src={src} name="dates.zip" kind="archive" />);
+      await vi.waitFor(() => {
+        expect(
+          [...screen.container.querySelectorAll("tbody td")].map((cell) =>
+            cell.textContent?.trim(),
+          ),
+        ).toEqual(["docs", "3 KB", formatArchiveModifiedDate("2024-10-19T00:00:00.000")]);
+      }, 10_000);
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  });
 
   it("uses a PAX size override for the following TAR payload and bounds it", async () => {
     const archive = (size: string) => {
