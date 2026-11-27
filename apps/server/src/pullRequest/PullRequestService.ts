@@ -2984,37 +2984,42 @@ export const make = Effect.gen(function* () {
         const first = entries[0]!;
         const readStats = first.project.api.listChangeRequestStats;
         if (readStats === undefined) return Effect.succeed<ReadonlyArray<PullRequestDiffStat>>([]);
-        const projectsByRepository = new Map(
-          entries.map((entry) => [
-            `${entry.project.repository.toLowerCase()} ${entry.number}`,
-            entry.project,
-          ]),
-        );
+        // Several projects can ask for the same pull request; each gets its own row.
+        const requesters = new Map<
+          string,
+          { readonly repository: string; readonly number: number; projects: SupportedProject[] }
+        >();
+        for (const entry of entries) {
+          const key = `${entry.project.repository.toLowerCase()} ${entry.number}`;
+          const held = requesters.get(key);
+          if (held === undefined) {
+            requesters.set(key, {
+              repository: entry.project.repository,
+              number: entry.number,
+              projects: [entry.project],
+            });
+          } else held.projects.push(entry.project);
+        }
         return readStats({
           cwd: first.project.project.workspaceRoot,
           host: first.project.host,
-          changeRequests: entries.map((entry) => ({
-            repository: entry.project.repository,
-            number: entry.number,
+          changeRequests: [...requesters.values()].map(({ repository, number }) => ({
+            repository,
+            number,
           })),
         }).pipe(
           Effect.map((read) =>
-            read.flatMap((stat): ReadonlyArray<PullRequestDiffStat> => {
-              const project = projectsByRepository.get(
-                `${stat.repository.toLowerCase()} ${stat.number}`,
-              );
-              return project === undefined
-                ? []
-                : [
-                    {
-                      projectId: project.project.id,
-                      repository: project.repository,
-                      number: stat.number,
-                      additions: stat.additions,
-                      deletions: stat.deletions,
-                    },
-                  ];
-            }),
+            read.flatMap((stat): ReadonlyArray<PullRequestDiffStat> =>
+              (
+                requesters.get(`${stat.repository.toLowerCase()} ${stat.number}`)?.projects ?? []
+              ).map((project) => ({
+                projectId: project.project.id,
+                repository: project.repository,
+                number: stat.number,
+                additions: stat.additions,
+                deletions: stat.deletions,
+              })),
+            ),
           ),
           Effect.orElseSucceed((): ReadonlyArray<PullRequestDiffStat> => []),
         );

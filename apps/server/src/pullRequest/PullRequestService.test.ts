@@ -439,13 +439,18 @@ it.effect(
           { projectId: "p1" as ProjectId, repository: "acme/api", number: 7 },
           // The same repository as its own project, listed after the workspace that tracks it.
           { projectId: "p2" as ProjectId, repository: "acme/api", number: 8 },
+          // One pull request asked for by both projects reaches both.
+          { projectId: "p2" as ProjectId, repository: "acme/api", number: 7 },
         ],
       });
       assert.deepStrictEqual(
         stats
-          .map(({ repository, number, additions }) => `${repository}#${number} +${additions}`)
+          .map(
+            ({ projectId, repository, number, additions }) =>
+              `${projectId} ${repository}#${number} +${additions}`,
+          )
           .toSorted(),
-        ["acme/api#7 +20", "acme/api#8 +20", "acme/web#7 +10"],
+        ["p1 acme/api#7 +20", "p1 acme/web#7 +10", "p2 acme/api#7 +20", "p2 acme/api#8 +20"],
       );
       yield* service.detail({ projectId: "p1" as ProjectId, repository: "acme/api", number: 2 });
       assert.deepStrictEqual(detailCwds, ["/ws/api"]);
