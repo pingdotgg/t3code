@@ -107,7 +107,8 @@ it("does not offer to remove the only route a found-automatically route depends 
     allowInsecure: true,
   })!;
   await using screen = await render(routesList(learned));
-  await expect.element(screen.getByText(/found automatically/)).toBeVisible();
+  // The learned route says it was found automatically in its address tooltip.
+  await expect.element(screen.getByText(/desk\.tail1234\.ts\.net/)).toBeVisible();
 
   expect(screen.getByRole("button", { name: "Remove LAN route" }).elements()).toHaveLength(0);
 });

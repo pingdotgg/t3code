@@ -317,11 +317,11 @@ describe("resource monitor retry", () => {
 });
 
 it.each([
-  [1, 0, "1 start · 0 exits"],
-  [2, 1, "2 starts · 1 exit"],
+  [1, 0, "1 start", "0 exits"],
+  [2, 1, "2 starts", "1 exit"],
 ])(
   "pluralizes process starts and exits independently (%i, %i)",
-  async (processStarts, processExits, detail) => {
+  async (processStarts, processExits, starts, exits) => {
     using fixture = setup();
     const { groups } = fixture.snapshot;
     const liveTelemetry = Atom.make<
@@ -339,9 +339,9 @@ it.each([
         <ResourceTelemetryDiagnostics environmentId={environmentId} />
       </RegistryContext.Provider>,
     );
-    const processDetail = screen.getByText(/^\d+ starts? · \d+ exits?$/);
-    await expect.element(processDetail).toBeVisible();
-    expect(processDetail.element().textContent).toBe(detail);
+    // Starts and exits are two lines here.
+    await expect.element(screen.getByText(starts, { exact: true })).toBeVisible();
+    await expect.element(screen.getByText(exits, { exact: true })).toBeVisible();
   },
 );
 

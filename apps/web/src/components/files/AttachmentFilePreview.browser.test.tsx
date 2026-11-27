@@ -1225,7 +1225,12 @@ describe("large text preview recovery", () => {
         screen.container.textContent?.includes("Showing the first 1,024 columns") ?? false;
       expect(hasBanner()).toBe(truncated);
       const status = () => screen.container.querySelector('[role="status"]')?.textContent ?? "";
-      await vi.waitFor(() => expect(status()).toContain("1 row · 1,024 columns"), 10_000);
+      await vi.waitFor(() => expect(status()).toContain("1 row"), 10_000);
+      // The column count is in the row count's tooltip.
+      await userEvent.hover(
+        screen.container.querySelector<HTMLElement>('[role="status"] [tabindex="0"]')!,
+      );
+      await expect.element(page.getByText("1,024 columns", { exact: true })).toBeVisible();
       expect(hasBanner()).toBe(truncated);
     },
   );
