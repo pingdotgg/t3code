@@ -229,8 +229,7 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((uuid) => {
         const tempPath = `${secretPath}.${uuid}.tmp`;
         return Effect.gen(function* () {
-          yield* fileSystem.writeFile(tempPath, value);
-          yield* fileSystem.chmod(tempPath, 0o600);
+          yield* fileSystem.writeFile(tempPath, value, { flag: "wx", mode: 0o600 });
           yield* fileSystem.rename(tempPath, secretPath);
           yield* fileSystem.chmod(secretPath, 0o600);
         }).pipe(
