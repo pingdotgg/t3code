@@ -35,7 +35,7 @@ import {
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
 import { probeCursorSkills } from "./skills.ts";
-import { makeCursorAuth } from "./auth.ts";
+import { isInvalidCursorTeamId, makeCursorAuth } from "./auth.ts";
 import * as CursorCredentialStore from "./credentialStore.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
@@ -45,6 +45,8 @@ const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 const isSdkRunnerError = Schema.is(CursorAgentSdk.CursorAgentSdkRunnerError);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
+const teamIdOf = (environment: ReadonlyArray<{ name: string; value: unknown }> | undefined) =>
+  environment?.find((variable) => variable.name === "CURSOR_TEAM_ID")?.value ?? "";
 const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
   provider: DRIVER_KIND,
   packageName: null,
@@ -137,6 +139,7 @@ export const CursorDriver: ProviderDriver<
       displayName: displayName ?? "Cursor",
       enabled,
       ...(processEnv.CURSOR_API_KEY ? { apiKey: processEnv.CURSOR_API_KEY } : {}),
+      ...(processEnv.CURSOR_TEAM_ID ? { teamId: processEnv.CURSOR_TEAM_ID } : {}),
       store: credentials.store,
       credentialBinding: credentials.binding,
       onChanged: (signedIn): Effect.Effect<void, ProviderSetupError> =>
@@ -154,6 +157,28 @@ export const CursorDriver: ProviderDriver<
           ),
         ),
     });
+    const builtTeamId = teamIdOf(environment);
+    // The registry can defer this instance's rebuild behind a secret read, leaving it live after a
+    // new team id is saved; refuse paid requests rather than bill the previous team meanwhile.
+    // A saved secret reference is not comparable until read, so it never blocks, nor does an
+    // instance absent from settings.
+    const requireAccess = host.settings.get.pipe(
+      Effect.map((settings) => {
+        const saved = settings.providerInstances[instanceId];
+        return saved && teamIdOf(saved.environment);
+      }),
+      Effect.orElseSucceed(() => builtTeamId),
+      Effect.filterOrFail(
+        (saved) => typeof saved !== "string" || saved === builtTeamId,
+        () =>
+          new ProviderSetupError({
+            instanceId,
+            operation: "credentials",
+            detail: "Cursor is applying the new CURSOR_TEAM_ID. Try again in a moment.",
+          }),
+      ),
+      Effect.andThen(auth.requireAccess),
+    );
     const stampSnapshot: typeof stampIdentity = (draft) =>
       stampIdentity({
         ...draft,
@@ -175,11 +200,18 @@ export const CursorDriver: ProviderDriver<
       Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
         ...sdkRunner,
         open: (input) =>
-          auth.requireApiKey.pipe(
-            Effect.flatMap((apiKey) =>
+          requireAccess.pipe(
+            Effect.flatMap(({ apiKey, team }) =>
               Effect.acquireRelease(
                 sdkRunner
-                  .open({ ...input, options: { ...input.options, apiKey } })
+                  .open({
+                    ...input,
+                    options: {
+                      ...input.options,
+                      apiKey,
+                      ...(team ? { teamId: team.id } : {}),
+                    },
+                  })
                   .pipe(
                     Effect.flatMap((session) =>
                       Effect.cached(session.close).pipe(
@@ -211,36 +243,38 @@ export const CursorDriver: ProviderDriver<
     const textGeneration = yield* makeCursorTextGeneration(
       effectiveConfig,
       processEnv,
-      auth.requireApiKey,
+      requireAccess,
       auth.withAccess,
       () => catalogModels,
       () => catalogSdkModels,
       sdkRunner,
     );
 
-    const checkProvider = auth.readApiKey.pipe(
+    const checkProvider = auth.readAccess.pipe(
       Effect.orElseSucceed(() => undefined),
-      Effect.flatMap((apiKey) =>
+      Effect.flatMap((access) =>
         checkCursorProviderStatus(
           effectiveConfig,
           {
             ...processEnv,
-            CURSOR_API_KEY: apiKey,
+            CURSOR_API_KEY: access?.apiKey,
           },
-          auth.usesApiKey ? "api-key" : "browser",
+          { type: auth.usesApiKey ? "api-key" : "browser", team: access?.team },
         ).pipe(
           Effect.filterOrElse(
             (snapshot) =>
               !(
                 effectiveConfig.enabled &&
                 snapshot.installed &&
-                snapshot.auth.status === "authenticated"
+                snapshot.auth.status === "authenticated" &&
+                !isInvalidCursorTeamId(processEnv.CURSOR_TEAM_ID)
               ),
             (snapshot) =>
-              readCursorUsageLimits(effectiveConfig, {
-                ...processEnv,
-                CURSOR_API_KEY: apiKey,
-              }).pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits }))),
+              readCursorUsageLimits(
+                effectiveConfig,
+                { ...processEnv, CURSOR_API_KEY: access?.apiKey },
+                access?.team?.id,
+              ).pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits }))),
           ),
         ),
       ),

@@ -82,6 +82,7 @@ describe("CursorSdkCatalog", () => {
         ];
         const client = HttpClient.make((request) => {
           expect(request.headers.authorization).toBe("Bearer test-key");
+          expect(request.headers["x-cursor-team-id"]).toBe("42");
           expect(request.method).toBe("GET");
           requests.push(request.url);
           const matches = request.url === `https://api.cursor.com/v1/${route}`;
@@ -104,7 +105,7 @@ describe("CursorSdkCatalog", () => {
           ),
         );
         expect(sdkLoad).not.toHaveBeenCalled();
-        const result = yield* catalog.read("test-key").pipe(Effect.exit);
+        const result = yield* catalog.read("test-key", 42).pipe(Effect.exit);
         expect(requests).toContain(`https://api.cursor.com/v1/${route}`);
         if (expected === "ready" || expected === "no-user") {
           expect(Exit.isSuccess(result)).toBe(true);
@@ -159,7 +160,7 @@ describe("CursorSdkCatalog", () => {
     }),
   );
 
-  it.effect("does not cache failed or empty model discovery", () =>
+  it.effect("does not cache failed or empty model discovery, nor across teams", () =>
     Effect.gen(function* () {
       let modelCalls = 0;
       const catalog = yield* CursorSdkCatalog.makeCursorSdkCatalog({
@@ -178,6 +179,8 @@ describe("CursorSdkCatalog", () => {
       expect((yield* catalog.read("test-key")).models).toEqual([model]);
       expect((yield* catalog.read("test-key")).models).toEqual([model]);
       expect(modelCalls).toBe(3);
+      yield* catalog.read("test-key", 42);
+      expect(modelCalls).toBe(4);
     }),
   );
 });

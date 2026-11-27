@@ -178,6 +178,7 @@ export interface CursorAgentSdkSession {
 export interface CursorAgentSdkTextGenerateInput {
   readonly prompt: string;
   readonly apiKey: string;
+  readonly teamId?: number;
   readonly model: NonNullable<AgentOptions["model"]>;
   readonly cwd: string;
   readonly stateRoot: string;

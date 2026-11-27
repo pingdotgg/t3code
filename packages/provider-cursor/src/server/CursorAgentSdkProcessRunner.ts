@@ -1146,6 +1146,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
               type: "textGenerate",
               prompt: input.prompt,
               apiKey: input.apiKey,
+              ...(input.teamId === undefined ? {} : { teamId: input.teamId }),
               model: input.model,
               cwd: input.cwd,
               stateRoot: input.stateRoot,

@@ -13,7 +13,7 @@ import type { CursorSettings } from "../settings.ts";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import { cursorSdkModelSelection } from "./sdkModel.ts";
-import type { CursorAuth } from "./auth.ts";
+import type { CursorAccess, CursorAuth } from "./auth.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -68,6 +68,7 @@ const runCursorTextGenerationWithStore = <E>(input: {
   readonly store: NonNullable<NonNullable<AgentOptions["local"]>["store"]>;
   readonly prompt: string;
   readonly apiKey: string;
+  readonly teamId?: number;
   readonly model: NonNullable<AgentOptions["model"]>;
   readonly cwd: string;
   readonly mapError: (step: "create" | "dispose" | "send" | "cancel" | "wait", cause: unknown) => E;
@@ -75,6 +76,7 @@ const runCursorTextGenerationWithStore = <E>(input: {
 }): Effect.Effect<RunResult, E> => {
   const agentOptions = {
     apiKey: input.apiKey,
+    ...(input.teamId === undefined ? {} : { teamId: input.teamId }),
     mode: "plan",
     model: input.model,
     local: {
@@ -181,6 +183,7 @@ export const runCursorTextGenerationInProcess = Effect.fn("CursorTextGeneration.
       store: Object.assign(store, { persistRunEvents: false }),
       prompt: input.prompt,
       apiKey: input.apiKey,
+      ...(input.teamId === undefined ? {} : { teamId: input.teamId }),
       model: input.model,
       cwd: input.cwd,
       mapError: (step, cause) =>
@@ -193,7 +196,7 @@ export const runCursorTextGenerationInProcess = Effect.fn("CursorTextGeneration.
 export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
-  resolveApiKey?: Effect.Effect<string, ProviderSetupError>,
+  resolveAccess?: Effect.Effect<CursorAccess, ProviderSetupError>,
   withAccess?: CursorAuth["withAccess"],
   getModels?: () => ReadonlyArray<ServerProviderModel>,
   getSdkModels?: () => ReadonlyArray<SDKModel>,
@@ -203,7 +206,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   const sdk = yield* CursorSdk.CursorSdk;
   const resolvedEnvironment = environment ?? process.env;
 
-  const resolveCursorApiKey = Effect.fn("CursorTextGeneration.resolveCursorApiKey")(function* (
+  const resolveCursorAccess = Effect.fn("CursorTextGeneration.resolveCursorAccess")(function* (
     operation: TextGenerationOperations.Operation,
   ) {
     if (!cursorSettings.enabled) {
@@ -213,9 +216,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       });
     }
 
-    const apiKey = resolveApiKey
-      ? yield* resolveApiKey
-      : resolvedEnvironment.CURSOR_API_KEY?.trim();
+    if (resolveAccess) return yield* resolveAccess;
+    const apiKey = resolvedEnvironment.CURSOR_API_KEY?.trim();
     if (!apiKey) {
       return yield* new TextGenerationError({
         operation,
@@ -223,7 +225,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       });
     }
 
-    return apiKey;
+    return { apiKey, team: undefined };
   });
 
   const runCursorJson: TextGenerationOperations.Runner = Effect.fn(
@@ -232,7 +234,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     function* (input) {
       const { operation, prompt, modelSelection } = input;
 
-      const apiKey = yield* resolveCursorApiKey(operation);
+      const { apiKey, team } = yield* resolveCursorAccess(operation);
       const sdkFailure = (detail: string) => (cause: unknown) =>
         new TextGenerationError({ operation, detail, cause });
       // sandbox.json expands writable paths independently of settingSources; the public API cannot override it.
@@ -257,6 +259,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           ? runInWorker({
               prompt,
               apiKey,
+              ...(team ? { teamId: team.id } : {}),
               model: resolvedModel,
               cwd,
               stateRoot,
@@ -292,6 +295,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
                 store: Object.assign(store, { persistRunEvents: false }),
                 prompt,
                 apiKey,
+                ...(team ? { teamId: team.id } : {}),
                 model: resolvedModel,
                 cwd,
                 mapError: (step, cause) => sdkFailure(textGenerationErrorDetail[step])(cause),

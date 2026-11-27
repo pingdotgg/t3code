@@ -10,6 +10,8 @@ Run Cursor's local agent in T3 Code using your paid Cursor account or `CURSOR_AP
 
 Each Cursor instance keeps its own login separate from your Cursor editor or CLI. A configured `CURSOR_API_KEY` overrides browser sign-in. **Change account** or **Sign out** stops running threads for that instance while keeping history (to revoke a key early, delete it in your Cursor dashboard).
 
+If your Cursor account belongs to several teams, runs use the account's default team. To use another team, enter its id in **Team ID**. It applies to browser sign-in and to `CURSOR_API_KEY`.
+
 ## Capabilities and limits
 
 - Supports streaming text, reasoning, tool activity, plans, image attachments, mid-turn text steering (steers with attachments or mode changes restart the run), and **Edit from here** / checkpoint rewind (rewinding to the first message starts a fresh session).
