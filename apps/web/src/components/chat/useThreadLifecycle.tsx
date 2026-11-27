@@ -530,7 +530,12 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     });
   };
   const onOpenRelatedThreadStable = useStableCallback(onOpenRelatedThread);
-  const childThreadInputs = useChildThreadInputs(activeThreadRef);
+  const allChildThreadInputs = useChildThreadInputs(activeThreadRef);
+  // A Bot's chat shows its workers' requests as cards of their own.
+  const childThreadInputs =
+    activeThreadShell?.botConfig == null
+      ? allChildThreadInputs
+      : allChildThreadInputs.filter((child) => child.groupedUnderThreadId !== activeThreadShell.id);
   const childInputNow = childInputNowItem(
     {
       childThreadInputs,

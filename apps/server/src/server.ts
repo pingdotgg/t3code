@@ -783,7 +783,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ).pipe(Layer.provide(OrchestrationMilestones.layer), Layer.provide(ProjectionStoreV2.layer)),
   Layer.effectDiscard(
     BotWakeReactor.BotWakeReactor.pipe(Effect.flatMap((reactor) => reactor.start())),
-  ).pipe(Layer.provide(BotWakeReactor.layer)),
+  ).pipe(Layer.provide(BotWakeReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ProviderInstallation.layer,

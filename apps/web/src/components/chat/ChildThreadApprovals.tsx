@@ -1,6 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
-import type { ChildThreadApproval } from "@t3tools/client-runtime/state/thread-requests";
+import type {
+  ChildThreadApproval,
+  ThreadPendingApproval,
+} from "@t3tools/client-runtime/state/thread-requests";
 import {
   fullAccessOverrideExplanation,
   PUSH_HOOKS_APPROVAL_QUESTION,
@@ -19,13 +22,7 @@ import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions
 import { PushHooksApprovalDetails } from "./PushHooksApprovalDetails";
 
 function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
-  const canRespond = useEnvironmentScope(entry.thread.environmentId, AuthOrchestrationOperateScope);
-  const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
   const gt = useGT();
-  const messages = useMessages();
-  const [responding, setResponding] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const { approval } = entry;
   return (
     <section
       aria-label={gt("Approval from {title}", { title: entry.title })}
@@ -36,6 +33,27 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           Approval needed from <Var>{entry.title}</Var>
         </T>
       </p>
+      <OtherThreadApproval thread={entry.thread} approval={entry.approval} />
+    </section>
+  );
+}
+
+/** Another thread's pending approval, answered on that thread. */
+export function OtherThreadApproval({
+  thread,
+  approval,
+}: {
+  thread: ScopedThreadRef;
+  approval: ThreadPendingApproval;
+}) {
+  const canRespond = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
+  const gt = useGT();
+  const messages = useMessages();
+  const [responding, setResponding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
       {approval.pushHooks ? (
         <>
           <p className="mb-1">{messages(PUSH_HOOKS_APPROVAL_QUESTION)}</p>
@@ -69,8 +87,8 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
             setResponding(true);
             setError(null);
             const result = await respond({
-              environmentId: entry.thread.environmentId,
-              input: { threadId: entry.thread.threadId, requestId, decision },
+              environmentId: thread.environmentId,
+              input: { threadId: thread.threadId, requestId, decision },
             });
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
               const failure = squashAtomCommandFailure(result);
@@ -90,12 +108,20 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           {error}
         </p>
       ) : null}
-    </section>
+    </>
   );
 }
 
-export function ChildThreadApprovals({ threadRef }: { threadRef: ScopedThreadRef | null }) {
-  const approvals = useAtomValue(childThreadApprovalsAtom(threadRef));
+export function ChildThreadApprovals({
+  threadRef,
+  hideWorkers = false,
+}: {
+  threadRef: ScopedThreadRef | null;
+  /** A Bot's chat shows its workers' requests itself. */
+  hideWorkers?: boolean;
+}) {
+  const allApprovals = useAtomValue(childThreadApprovalsAtom(threadRef));
+  const approvals = hideWorkers ? allApprovals.filter((entry) => !entry.worker) : allApprovals;
   if (approvals.length === 0) return null;
   return (
     <div className="mb-2 flex max-h-80 flex-col gap-2 overflow-auto">

@@ -13086,5 +13086,35 @@
   "d0a76aa4c42ce65f": "Sök i anteckningar",
   "1ad011d70f9e01e9": "Spara en inställning",
   "e4531a60a3ee5a37": "Börja bevaka en tråd eller körning",
-  "c5bc41c84b413ae2": "Sluta bevaka en tråd eller körning"
+  "c5bc41c84b413ae2": "Sluta bevaka en tråd eller körning",
+  "2c5c701e26c3fefa": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " skriver…"
+  ],
+  "01f1b7ea80a6d537": "Ditt svar",
+  "fff2428ddd02a265": "Skriv ett eget svar",
+  "8341d2112104dbd5": "Förfrågan från {title}",
+  "5536b6ffc0e02e95": "Skicka svar",
+  "859afb06f481b44d": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    "behöver ditt godkännande"
+  ],
+  "5d87c4ee693f975e": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    "har en fråga"
+  ]
 }

@@ -557,6 +557,19 @@ type MessagesTimelineRowContent =
       compacting?: true;
     }
   | {
+      /** A Bot thread's stand-in for the working and thinking rows while the Bot runs. */
+      kind: "bot-typing";
+      id: string;
+      createdAt: null;
+    }
+  | {
+      /** What woke a Bot, shown as a caption above the reply it triggered. */
+      kind: "bot-wake";
+      id: string;
+      createdAt: string;
+      label: string;
+    }
+  | {
       kind: "thinking";
       id: string;
       createdAt: string | null;
@@ -637,6 +650,8 @@ type MessagesTimelineRowContent =
       groupedWithPrevious?: boolean;
       /** Set when the message above is a steer too, so the label shows once. */
       continuesSteer?: boolean;
+      /** The Bot's first reply since your last message or its last wake carries its avatar. */
+      botAvatar?: true;
     }
   | {
       kind: "assistant-meta";
@@ -1536,11 +1551,11 @@ function timelineRowEntries(
     | "latestRun"
     | "runningRunId"
     | "pendingApprovalRequestIds"
-    | "hideReasoning"
+    | "botPresentation"
   >,
 ) {
   const visibility = input.toolCallVisibility ?? "showAll";
-  const entries = input.hideReasoning
+  const entries = input.botPresentation
     ? input.timelineEntries.filter(
         (entry) => entry.kind !== "work" || entry.entry.itemType !== "reasoning",
       )
@@ -1576,7 +1591,65 @@ function timelineRowEntries(
         entry.kind !== "work" || !workEntryHiddenByToolCallVisibility(entry.entry, visibility),
     );
   }
-  return withoutSubagentDelegationRows(settleSupersededReasoning(shown));
+  const rowEntries = withoutSubagentDelegationRows(settleSupersededReasoning(shown));
+  return input.botPresentation
+    ? gatherBotTurnTools(rowEntries, input.pendingApprovalRequestIds)
+    : rowEntries;
+}
+
+/** Work that keeps its own row instead of joining a tool group. */
+function workEntryStandsAlone(
+  entry: Extract<TimelineEntry, { kind: "work" }>,
+  pendingApprovalRequestIds: ReadonlySet<RuntimeRequestId> | undefined,
+): boolean {
+  const work = entry.entry;
+  const item = work.projectedItem?.item;
+  return (
+    timelineEntryIsCompaction(entry) ||
+    (work.itemType === "error" && work.toolLifecycleStatus === "failed") ||
+    work.tone === "error" ||
+    work.sourceActivityKind === "runtime.error" ||
+    work.itemType === "system_notice" ||
+    work.itemType === "notification" ||
+    work.itemType === "todo_list" ||
+    work.questionAnswer !== undefined ||
+    (item?.type === "approval_request" && pendingApprovalRequestIds?.has(item.requestId) === true)
+  );
+}
+
+/** Moves each Bot turn's tool calls up to its first one, so the turn shows one disclosure. */
+function gatherBotTurnTools(
+  entries: ReadonlyArray<TimelineEntry>,
+  pendingApprovalRequestIds: ReadonlySet<RuntimeRequestId> | undefined,
+): ReadonlyArray<TimelineEntry> {
+  const groupKey = (entry: TimelineEntry) =>
+    entry.kind === "work" &&
+    entry.entry.runId != null &&
+    !workEntryStandsAlone(entry, pendingApprovalRequestIds)
+      ? `${entry.entry.runId}\u0000${entry.attempt?.id ?? ""}`
+      : null;
+  const groups = new Map<string, TimelineEntry[]>();
+  for (const entry of entries) {
+    const key = groupKey(entry);
+    if (key === null) continue;
+    const group = groups.get(key);
+    if (group) group.push(entry);
+    else groups.set(key, [entry]);
+  }
+  if (groups.size === 0) return entries;
+  const gathered: TimelineEntry[] = [];
+  for (const entry of entries) {
+    const key = groupKey(entry);
+    if (key === null) {
+      gathered.push(entry);
+      continue;
+    }
+    const group = groups.get(key);
+    if (group === undefined) continue;
+    gathered.push(...group);
+    groups.delete(key);
+  }
+  return gathered;
 }
 
 function deriveTimelineTurnFolds(
@@ -1589,10 +1662,12 @@ function deriveTimelineTurnFolds(
     | "runningRunId"
     | "toolCallVisibility"
     | "revealedMessageId"
-    | "hideReasoning"
+    | "botPresentation"
   >,
 ) {
-  if (input.toolCallVisibility === "zen") return new Map<string, TurnFold>();
+  if (input.toolCallVisibility === "zen" || input.botPresentation) {
+    return new Map<string, TurnFold>();
+  }
   const timelineEntries = timelineRowEntries(input);
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
@@ -1635,8 +1710,11 @@ export function deriveMessagesTimelineRows(
     worktreeSetup?: WorktreeSetupSnapshot | null;
     toolCallVisibility?: ToolCallVisibility;
     revealedMessageId?: MessageId | null;
-    /** Bot threads leave reasoning out of their transcript. */
-    hideReasoning?: boolean;
+    /**
+     * Bot threads read as a chat: no reasoning, turn folds or work timers, one tool disclosure
+     * per turn, wakes as captions, and a typing row while the Bot runs.
+     */
+    botPresentation?: boolean;
   },
   resolve: MessageResolver = m,
 ): MessagesTimelineRow[] {
@@ -1689,8 +1767,9 @@ export function deriveMessagesTimelineRows(
     isWorking: input.isWorking,
   });
   const runlessWorkActive = input.isWorking && input.runlessWorkActive === true;
+  const botPresentation = input.botPresentation === true;
   const foldsByAnchorEntryId =
-    input.toolCallVisibility === "zen"
+    input.toolCallVisibility === "zen" || botPresentation
       ? new Map<string, TurnFold>()
       : deriveTurnFolds({
           timelineEntries: timelineEntries,
@@ -1743,7 +1822,7 @@ export function deriveMessagesTimelineRows(
     : timelineEntries.length;
 
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
-  if (input.isWorking && (unsettledRunId !== null || runlessWorkActive)) {
+  if (!botPresentation && input.isWorking && (unsettledRunId !== null || runlessWorkActive)) {
     let tailAttemptId: string | null | undefined;
     for (let index = timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
       const entry = timelineEntries[index]!;
@@ -1898,7 +1977,7 @@ export function deriveMessagesTimelineRows(
     timelineEntries.findLastIndex((entry) => timelineEntryRunId(entry) === endedRunId) >=
       activeTurnHeaderIndex;
   const appendWorkingRow = () => {
-    if (compactionOnlyRunFinished || zenAnswerLanded) return;
+    if (botPresentation || compactionOnlyRunFinished || zenAnswerLanded) return;
     if (runningCompactionRunId !== null && activeCompactionRunId === null) return;
     nextRows.push({
       kind: "working",
@@ -2059,6 +2138,20 @@ export function deriveMessagesTimelineRows(
       continue;
     }
 
+    if (
+      botPresentation &&
+      timelineEntry.kind === "work" &&
+      timelineEntry.entry.itemType === "notification"
+    ) {
+      nextRows.push({
+        kind: "bot-wake",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        label: timelineEntry.entry.label,
+      });
+      continue;
+    }
+
     if (timelineEntry.kind === "work") {
       if (
         isPendingApproval(timelineEntry.entry) ||
@@ -2115,7 +2208,10 @@ export function deriveMessagesTimelineRows(
         workEntryIsVisibleInGroup(entry, workEntryIsInActiveRun(entry)),
       );
       if (visibleGroupedEntries.length > 0) {
-        const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
+        // A Bot turn keeps one disclosure; the typing row says it is still at work.
+        const activeInProgressToolEntries = botPresentation
+          ? []
+          : visibleGroupedEntries.filter(workEntryIsInActiveRun);
         if (activeInProgressToolEntries.length > 0) {
           const groupId = workGroupId(timelineEntry.id);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
@@ -2389,7 +2485,17 @@ export function deriveMessagesTimelineRows(
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
   }
-  if (
+  if (botPresentation) {
+    if (
+      input.isWorking &&
+      input.latestRun?.turnEnded !== true &&
+      !replyIsStreaming &&
+      !hasActiveCompaction &&
+      !input.pendingApprovalRequestIds?.size
+    ) {
+      nextRows.push({ kind: "bot-typing", id: LIVE_ACTIVITY_ROW_ID, createdAt: null });
+    }
+  } else if (
     input.isWorking &&
     input.latestRun?.turnEnded !== true &&
     !replyIsStreaming &&
@@ -2429,11 +2535,25 @@ export function deriveMessagesTimelineRows(
   }
 
   const result = attachTrailingToolGroupsToAssistant(
-    attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
+    attachCreatedThreadSummaries(
+      nextRows,
+      timelineEntries,
+      collapsedFoldMemberIds,
+      botPresentation,
+    ),
   );
+  let botAvatarShown = false;
   return result.map((row, index) => {
     if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
       return { ...row, continuesWorkLog: true };
+    }
+    if (botPresentation) {
+      if (row.kind === "bot-wake" || (row.kind === "message" && row.message.role === "user")) {
+        botAvatarShown = false;
+      } else if (row.kind === "message" && row.message.role === "assistant" && !botAvatarShown) {
+        botAvatarShown = true;
+        return { ...row, botAvatar: true };
+      }
     }
     if (!timelineRowIsOwnUserMessage(row)) return row;
     const previous = result[index - 1];
@@ -2474,6 +2594,8 @@ function attachCreatedThreadSummaries(
   rows: MessagesTimelineRow[],
   timelineEntries: ReadonlyArray<TimelineEntry>,
   collapsedFoldMemberIds: ReadonlySet<string>,
+  /** A Bot turn names the threads it created once, after its reply. */
+  summaryOnly: boolean,
 ): MessagesTimelineRow[] {
   const terminalIndexes = new Map<RunId, number>();
   const createdByRun = new Map<RunId, Array<Extract<MessagesTimelineRow, { kind: "event" }>>>();
@@ -2502,7 +2624,7 @@ function attachCreatedThreadSummaries(
       const terminalIndex = runId === null ? undefined : terminalIndexes.get(runId);
       if (
         terminalIndex !== undefined &&
-        (collapsedFoldMemberIds.has(row.id) || index > terminalIndex)
+        (summaryOnly || collapsedFoldMemberIds.has(row.id) || index > terminalIndex)
       )
         return [];
     }
@@ -2543,7 +2665,7 @@ export function timelineTurnFoldRunIdsByEntryId(
     | "runningRunId"
     | "toolCallVisibility"
     | "revealedMessageId"
-    | "hideReasoning"
+    | "botPresentation"
   >,
 ): ReadonlyMap<string, RunId> {
   const byEntryId = new Map<string, RunId>();
@@ -2622,7 +2744,7 @@ function replaceStreamingMessageRows(
     }
     if (entry.kind === "work" && previousEntry.kind === "work") {
       if (!isStreamingThoughtUpdate(previousEntry.entry, entry.entry)) return null;
-      if (!input.hideReasoning) thoughts.set(entry.id, entry.entry);
+      if (!input.botPresentation) thoughts.set(entry.id, entry.entry);
       continue;
     }
     if (entry.kind === "proposed-plan" && previousEntry.kind === "proposed-plan") {
@@ -2795,6 +2917,14 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "worktree-setup":
       return a.snapshot === (b as typeof a).snapshot;
 
+    case "bot-typing":
+      return true;
+
+    case "bot-wake": {
+      const bw = b as typeof a;
+      return a.createdAt === bw.createdAt && a.label === bw.label;
+    }
+
     case "assistant-meta": {
       const bm = b as typeof a;
       return (
@@ -2923,7 +3053,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.revertTurnCount === bm.revertTurnCount &&
         a.groupedWithNext === bm.groupedWithNext &&
         a.groupedWithPrevious === bm.groupedWithPrevious &&
-        a.continuesSteer === bm.continuesSteer
+        a.continuesSteer === bm.continuesSteer &&
+        a.botAvatar === bm.botAvatar
       );
     }
   }

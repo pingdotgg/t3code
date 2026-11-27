@@ -13074,5 +13074,35 @@
   "d0a76aa4c42ce65f": "Buscar en las notas",
   "1ad011d70f9e01e9": "Guardar una preferencia",
   "e4531a60a3ee5a37": "Empezar a seguir un hilo o una ejecución",
-  "c5bc41c84b413ae2": "Dejar de seguir un hilo o una ejecución"
+  "c5bc41c84b413ae2": "Dejar de seguir un hilo o una ejecución",
+  "2c5c701e26c3fefa": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " está escribiendo…"
+  ],
+  "01f1b7ea80a6d537": "Tu respuesta",
+  "fff2428ddd02a265": "Escribe tu propia respuesta",
+  "8341d2112104dbd5": "Solicitud de {title}",
+  "5536b6ffc0e02e95": "Enviar respuesta",
+  "859afb06f481b44d": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    "necesita tu aprobación"
+  ],
+  "5d87c4ee693f975e": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    "tiene una pregunta"
+  ]
 }

@@ -351,10 +351,11 @@ Limits: the shell is simulated, so a CLI's output is the simulator's reading of 
 
 `cases/bots.ndjson` runs a Bot thread (`setup.bot: true`). T3 lists the Bot tools and `t3_workflow` to it, and the eval appends `withBotInstructions` from `apps/server/src/bots/botInstructions.ts` to the prompt, as each Bot turn does.
 
-| Case                     | Kind  | What it checks                                                                                  |
-| ------------------------ | ----- | ----------------------------------------------------------------------------------------------- |
-| bot-bughunt-delegates    | bad   | A Bot asked for a bughunt launches a worker thread and runs no shell, read or edit tool itself. |
-| bot-status-reads-workers | guard | A Bot asked how its workers are doing answers without new launches, shell, reads or edits.      |
+| Case                       | Kind  | What it checks                                                                                  |
+| -------------------------- | ----- | ----------------------------------------------------------------------------------------------- |
+| bot-bughunt-delegates      | bad   | A Bot asked for a bughunt launches a worker thread and runs no shell, read or edit tool itself. |
+| bot-status-reads-workers   | guard | A Bot asked how its workers are doing answers without new launches, shell, reads or edits.      |
+| bot-decision-asks-in-reply | bad   | A Bot told to ask before starting asks in its final reply, with no ask-user tool and no launch. |
 
 GPT-6 Luna, 3 samples, Terra shell, 2026-11-20: no Bot instructions (what Home on Claude got from its AGENTS.md) 0/3 and 0/3, both grepping the repo; Home's old AGENTS.md text appended to the turn 3/3 and 2/3; the current text 3/3 and 3/3.
 

@@ -100,6 +100,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     decision: Schema.optional(ProviderApprovalDecision),
     feedback: Schema.optional(Schema.String),
     answers: Schema.optional(ProviderUserInputAnswers),
+    /** The answer releases a question that now waits for a message, so it stays pending. */
+    releasedToMessage: Schema.optional(Schema.Literal(true)),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-thread.rollback"),

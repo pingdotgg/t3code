@@ -229,6 +229,7 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import { BOT_RELEASED_QUESTION_ANSWER } from "../bots/botInstructions.ts";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -700,6 +701,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "queued-run.edit":
     case "runtime-request.respond":
     case "runtime-request.delivery.fail":
+    case "runtime-request.release-to-message":
     case "thread.user-input.dismiss":
     case "checkpoint.rollback":
     case "checkpoint.rollback.fail":
@@ -12151,6 +12153,84 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  /**
+   * Turns a Bot's blocking question into a message question: the provider is answered at once so
+   * the turn ends, and the question stays pending until the user's next message or a dismiss.
+   * Anything else, including a question that is not ready yet, is left as it is.
+   */
+  const dispatchRuntimeRequestReleaseToMessage = Effect.fn(
+    "Orchestrator.dispatchRuntimeRequestReleaseToMessage",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "runtime-request.release-to-message" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(mapDispatchError(command));
+    // Subagent children copy their parent's fields, botConfig included, but are not Bots.
+    if (
+      thread.botConfig == null ||
+      thread.lineage.parentThreadId !== null ||
+      thread.deletedAt !== null
+    ) {
+      return;
+    }
+    const { request, item, node } = yield* projectionStore
+      .getRuntimeResponseContext(command.threadId, command.requestId)
+      .pipe(mapDispatchError(command));
+    if (
+      request?.kind !== "user_input" ||
+      request.status !== "pending" ||
+      request.responseCapability.type !== "live" ||
+      item?.type !== "user_input_request"
+    ) {
+      return;
+    }
+    const { providerSessionId } = request.responseCapability;
+    const now = yield* DateTime.now;
+    const emitEvent = emit(events, command);
+    const runId = node?.runId ?? item.runId;
+    yield* emitEvent({
+      type: "runtime-request.updated",
+      threadId: command.threadId,
+      ...(runId == null ? {} : { runId }),
+      nodeId: request.nodeId,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: { ...request, responseCapability: { type: "message" } },
+    });
+    yield* emitEvent({
+      type: "turn-item.updated",
+      threadId: command.threadId,
+      ...(item.runId === null ? {} : { runId: item.runId }),
+      ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: { ...item, responseMode: "message", updatedAt: now },
+    });
+    yield* Ref.update(effects, (existing) => [
+      ...existing,
+      {
+        id: `effect:${command.commandId}:runtime-request.respond:${command.requestId}`,
+        commandId: command.commandId,
+        threadId: command.threadId,
+        request: {
+          type: "runtime-request.respond",
+          providerSessionId,
+          requestId: command.requestId,
+          answers: Object.fromEntries(
+            item.questions.map((question) => [question.id, BOT_RELEASED_QUESTION_ANSWER]),
+          ),
+          releasedToMessage: true,
+        },
+      } satisfies PendingOrchestrationEffectV2,
+    ]);
+  });
+
   const dispatchThreadUserInputDismiss = Effect.fn("Orchestrator.dispatchThreadUserInputDismiss")(
     function* (
       command: Extract<OrchestrationV2Command, { readonly type: "thread.user-input.dismiss" }>,
@@ -16536,6 +16616,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "runtime-request.delivery.fail":
         yield* dispatchRuntimeRequestDeliveryFail(command, events);
         break;
+      case "runtime-request.release-to-message":
+        yield* dispatchRuntimeRequestReleaseToMessage(command, events, effects);
+        break;
       case "thread.background-work.settle":
         yield* dispatchBackgroundWorkSettle(command, events, effects);
         break;
@@ -16713,6 +16796,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // A read can answer a watch again before a push's reopen lands; nothing is left to clear.
           command.type === "thread.pull-request-watch.checks-reopen" ||
           command.type === "thread.interrupt.unresponsive" ||
+          // Only a Bot's still-blocking question is released.
+          command.type === "runtime-request.release-to-message" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.

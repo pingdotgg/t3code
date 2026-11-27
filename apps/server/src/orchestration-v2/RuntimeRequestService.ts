@@ -56,6 +56,7 @@ export interface RuntimeRequestServiceV2Shape {
     readonly decision?: ProviderApprovalDecision;
     readonly feedback?: string;
     readonly answers?: ProviderUserInputAnswers;
+    readonly releasedToMessage?: true;
   }) => Effect.Effect<void, RuntimeRequestResponseExecutionError>;
 }
 
@@ -86,8 +87,13 @@ export const layer: Layer.Layer<
               requestId: input.requestId,
             });
           }
-          // Dispatch persists resolution before this effect runs; pending requests are not executable.
-          if (request.status !== "resolved") {
+          // Dispatch persists resolution before this effect runs; pending requests are not executable,
+          // except a released question, which stays pending for the user's message.
+          const released =
+            input.releasedToMessage === true &&
+            request.status === "pending" &&
+            request.responseCapability.type === "message";
+          if (request.status !== "resolved" && !released) {
             return yield* new RuntimeRequestResponseExecutionError({
               reason: "request-not-ready",
               threadId: input.threadId,
@@ -96,8 +102,9 @@ export const layer: Layer.Layer<
             });
           }
           if (
-            request.responseCapability.type !== "live" ||
-            request.responseCapability.providerSessionId !== input.providerSessionId
+            !released &&
+            (request.responseCapability.type !== "live" ||
+              request.responseCapability.providerSessionId !== input.providerSessionId)
           ) {
             return yield* new RuntimeRequestResponseExecutionError({
               reason: "request-not-resumable",

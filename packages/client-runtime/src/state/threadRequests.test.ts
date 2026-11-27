@@ -19,6 +19,7 @@ import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection
 import { v2Now, v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import {
   createQuestionHistoryProjector,
+  createBotWorkerRequestsAtom,
   createChildThreadApprovalsAtom,
   type PendingThreadRequests,
   derivePendingThreadRequests,
@@ -698,6 +699,72 @@ it("loads only child approvals and retains their destination across environments
   );
   expect(registry.get(approvalsAtom(parent))).toEqual([]);
   expect(readDetails).not.toHaveBeenCalled();
+  unmount();
+  registry.dispose();
+});
+
+it("lists a Bot's open worker requests oldest first, loading only workers that wait", () => {
+  const environmentId = EnvironmentId.make("local");
+  const bot = { environmentId, threadId: ThreadId.make("bot") };
+  const shell = (id: string, fields: Record<string, unknown>) => ({
+    ...presentThreadShell(environmentId, v2ThreadShell),
+    id: ThreadId.make(id),
+    title: id,
+    groupedUnderThreadId: bot.threadId,
+    ...fields,
+  });
+  const shells = Atom.make([
+    shell("asks", { hasPendingUserInput: true }),
+    shell("approves", { hasPendingApprovals: true }),
+    shell("idle", {}),
+    shell("elsewhere", { hasPendingApprovals: true, groupedUnderThreadId: ThreadId.make("other") }),
+  ]);
+  const approval = (createdAt: string) => ({
+    requestId: RuntimeRequestId.make(`approval-${createdAt}`),
+    requestKind: "command" as const,
+    createdAt,
+    responseCapability: "live" as const,
+  });
+  const userInput = {
+    requestId: RuntimeRequestId.make("question"),
+    createdAt: "2026-10-19T00:00:02Z",
+    questions: [],
+    responseCapability: "live" as const,
+    dismissible: false,
+  };
+  const details = Atom.family((key: string) =>
+    Atom.make<PendingThreadRequests | null>(
+      key.endsWith("asks")
+        ? { approvals: [], userInputs: [userInput] }
+        : {
+            approvals: [approval("2026-10-19T00:00:03Z"), approval("2026-10-19T00:00:01Z")],
+            userInputs: [],
+          },
+    ),
+  );
+  const readDetails = vi.fn((ref: ScopedThreadRef) => details(threadKey(ref)));
+  const requestsAtom = createBotWorkerRequestsAtom({
+    threadShellsAtom: shells,
+    pendingRequestsAtom: readDetails,
+  });
+  const registry = AtomRegistry.make();
+  const unmount = registry.mount(requestsAtom(bot));
+  expect(
+    registry
+      .get(requestsAtom(bot))
+      .map((request) => [
+        request.title,
+        request.kind === "approval" ? request.approval.createdAt : request.userInput.createdAt,
+      ]),
+  ).toEqual([
+    ["approves", "2026-10-19T00:00:01Z"],
+    ["asks", "2026-10-19T00:00:02Z"],
+    ["approves", "2026-10-19T00:00:03Z"],
+  ]);
+  expect(readDetails.mock.calls.map(([ref]) => ref.threadId).toSorted()).toEqual([
+    "approves",
+    "asks",
+  ]);
   unmount();
   registry.dispose();
 });

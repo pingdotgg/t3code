@@ -107,6 +107,12 @@ export interface TimelineRowSharedState {
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   workGroupViewState: WorkGroupViewState;
+  bot: TimelineBot | null;
+}
+
+export interface TimelineBot {
+  readonly threadId: ThreadId;
+  readonly name: string;
 }
 
 export interface TimelineRowActivityState {

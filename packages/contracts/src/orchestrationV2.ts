@@ -4016,6 +4016,16 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     requestId: RuntimeRequestId,
   }),
+  /**
+   * A Bot never blocks on the user: its provider's blocking question becomes a message
+   * question answered by the user's next message, and the provider is told to end its turn.
+   */
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.release-to-message"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+  }),
   /** The provider did not confirm a Stop of this turn in time. */
   Schema.Struct({
     type: Schema.Literal("thread.interrupt.unresponsive"),

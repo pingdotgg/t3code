@@ -15,9 +15,14 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 
-it.effect.each(["expired", "resolved"] as const)(
-  "responds only to resolved requests and preserves feedback (%s)",
-  (status) => {
+it.effect.each([
+  { name: "expired", status: "expired", released: false, delivered: false },
+  { name: "resolved", status: "resolved", released: false, delivered: true },
+  { name: "unreleased message question", status: "pending", released: false, delivered: false },
+  { name: "released Bot question", status: "pending", released: true, delivered: true },
+] as const)(
+  "responds only to resolved or released requests and preserves feedback ($name)",
+  ({ status, released, delivered }) => {
     const threadId = ThreadId.make("thread-runtime-request-expired");
     const providerSessionId = ProviderSessionId.make("provider-session-runtime-request-expired");
     const requestId = RuntimeRequestId.make("request-expired");
@@ -38,10 +43,8 @@ it.effect.each(["expired", "resolved"] as const)(
           nativeRequestRef: null,
           kind: "command",
           status,
-          responseCapability: {
-            type: "live",
-            providerSessionId,
-          },
+          responseCapability:
+            status === "pending" ? { type: "message" } : { type: "live", providerSessionId },
           createdAt: DateTime.makeUnsafe("2026-07-29T00:00:00.000Z"),
           resolvedAt: DateTime.makeUnsafe("2026-07-29T00:00:01.000Z"),
         },
@@ -71,8 +74,9 @@ it.effect.each(["expired", "resolved"] as const)(
         requestId,
         decision: "decline",
         feedback: "Use an explicit path.",
+        ...(released ? { releasedToMessage: true as const } : {}),
       });
-      if (status === "resolved") {
+      if (delivered) {
         yield* response;
         assert.deepEqual(respondToRuntimeRequest.mock.calls, [
           [

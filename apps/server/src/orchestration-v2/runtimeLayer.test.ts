@@ -97,6 +97,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "../project/ScratchThreadPromotion.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { BOT_RELEASED_QUESTION_ANSWER } from "../bots/botInstructions.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as DeviceHost from "../device/DeviceHost.ts";
@@ -3082,6 +3083,86 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         settledProjection.turnItems.find((item) => item.id === settled.itemId)?.status,
         "cancelled",
       );
+    }),
+  );
+
+  it.effect("answers a Bot's blocking question at once and leaves it as a message question", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const providerSessionId = ProviderSessionId.make("runtime-bot-question-session");
+
+      const ask = Effect.fn("runtimeLayerTest.askBlockingQuestion")(function* (
+        name: string,
+        bot: boolean,
+      ) {
+        const threadId = ThreadId.make(`runtime-bot-question-${name}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          createdBy: "user",
+          creationSource: "web",
+          threadId,
+          projectId: ProjectId.make(`${threadId}:project`),
+          title: "Blocking question",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+          ...(bot ? { botConfig: { enabled: true, muteChildren: false } } : {}),
+        });
+        const { requestId } = yield* seedPendingQuestion(threadId, null, {
+          type: "live",
+          providerSessionId,
+        });
+        const commandId = CommandId.make(`${threadId}:release`);
+        yield* orchestrator.dispatch({
+          type: "runtime-request.release-to-message",
+          commandId,
+          threadId,
+          requestId,
+        });
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        return {
+          request: projection.runtimeRequests.find((request) => request.id === requestId),
+          item: projection.turnItems.find((item) => item.type === "user_input_request"),
+          effects: yield* outbox.listByCommandId(commandId),
+        };
+      });
+
+      const bot = yield* ask("bot", true);
+      assert.equal(bot.request?.status, "pending");
+      assert.deepEqual(bot.request?.responseCapability, { type: "message" });
+      assert.equal(bot.item?.type === "user_input_request" && bot.item.responseMode, "message");
+      assert.deepEqual(
+        bot.effects.map((effect) => effect.request),
+        [
+          {
+            type: "runtime-request.respond",
+            providerSessionId,
+            requestId: bot.request!.id,
+            answers: {
+              color: BOT_RELEASED_QUESTION_ANSWER,
+              sizes: BOT_RELEASED_QUESTION_ANSWER,
+              note: BOT_RELEASED_QUESTION_ANSWER,
+            },
+            releasedToMessage: true,
+          },
+        ],
+      );
+
+      const worker = yield* ask("worker", false);
+      assert.equal(worker.request?.status, "pending");
+      assert.deepEqual(worker.request?.responseCapability, {
+        type: "live",
+        providerSessionId,
+      });
+      assert.equal(
+        worker.item?.type === "user_input_request" && worker.item.responseMode,
+        undefined,
+      );
+      assert.deepEqual(worker.effects, []);
     }),
   );
 

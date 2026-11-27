@@ -622,6 +622,8 @@ export interface ChildThreadApproval {
   readonly thread: ScopedThreadRef;
   readonly title: string;
   readonly approval: ThreadPendingApproval;
+  /** The child is also one of the parent's workers, whose requests a Bot's chat shows itself. */
+  readonly worker: boolean;
 }
 
 export function createChildThreadApprovalsAtom(input: {
@@ -637,10 +639,12 @@ export function createChildThreadApprovalsAtom(input: {
         if (!child.hasPendingApprovals) return [];
         const thread = { environmentId: child.environmentId, threadId: child.id };
         // Only children asking for approval need a detail subscription.
+        const worker = child.groupedUnderThreadId === parseThreadKey(key).threadId;
         return (get(input.pendingRequestsAtom(thread))?.approvals ?? []).map((approval) => ({
           thread,
           title: child.title,
           approval,
+          worker,
         }));
       });
       if (
@@ -660,5 +664,86 @@ export function createChildThreadApprovalsAtom(input: {
     });
   });
   const empty = Atom.make<ReadonlyArray<ChildThreadApproval>>([]);
+  return (ref: ScopedThreadRef | null) => (ref === null ? empty : family(threadKey(ref)));
+}
+
+/** A request one of a Bot's workers is waiting on, answered on the worker's own thread. */
+export type BotWorkerRequest =
+  | {
+      readonly kind: "approval";
+      readonly thread: ScopedThreadRef;
+      readonly title: string;
+      readonly approval: ThreadPendingApproval;
+    }
+  | {
+      readonly kind: "user-input";
+      readonly thread: ScopedThreadRef;
+      readonly title: string;
+      readonly userInput: ThreadPendingUserInput;
+    };
+
+const botWorkerRequestValue = (request: BotWorkerRequest) =>
+  request.kind === "approval" ? request.approval : request.userInput;
+
+/** Every open request of a Bot's workers, oldest first. */
+export function createBotWorkerRequestsAtom(input: {
+  readonly threadShellsAtom: Atom.Atom<ReadonlyArray<EnvironmentThreadShell>>;
+  readonly pendingRequestsAtom: (ref: ScopedThreadRef) => Atom.Atom<PendingThreadRequests | null>;
+}) {
+  const family = Atom.family((key: string) => {
+    const bot = parseThreadKey(key);
+    let previous: ReadonlyArray<BotWorkerRequest> = [];
+    return Atom.make((get) => {
+      const next = get(input.threadShellsAtom)
+        .flatMap((worker): BotWorkerRequest[] => {
+          if (
+            worker.environmentId !== bot.environmentId ||
+            worker.groupedUnderThreadId !== bot.threadId ||
+            worker.archivedAt !== null ||
+            !(worker.hasPendingApprovals || worker.hasPendingUserInput)
+          ) {
+            return [];
+          }
+          const thread = { environmentId: worker.environmentId, threadId: worker.id };
+          // Only workers whose shell says they wait on the user need a detail subscription.
+          const requests = get(input.pendingRequestsAtom(thread));
+          if (requests === null) return [];
+          return [
+            ...requests.approvals.map((approval) => ({
+              kind: "approval" as const,
+              thread,
+              title: worker.title,
+              approval,
+            })),
+            ...requests.userInputs.map((userInput) => ({
+              kind: "user-input" as const,
+              thread,
+              title: worker.title,
+              userInput,
+            })),
+          ];
+        })
+        .sort((left, right) =>
+          botWorkerRequestValue(left).createdAt.localeCompare(
+            botWorkerRequestValue(right).createdAt,
+          ),
+        );
+      if (
+        next.length === previous.length &&
+        next.every((request, index) => {
+          const old = previous[index]!;
+          return (
+            botWorkerRequestValue(old) === botWorkerRequestValue(request) &&
+            old.title === request.title &&
+            threadKey(old.thread) === threadKey(request.thread)
+          );
+        })
+      )
+        return previous;
+      previous = next;
+      return next;
+    });
+  });
+  const empty = Atom.make<ReadonlyArray<BotWorkerRequest>>([]);
   return (ref: ScopedThreadRef | null) => (ref === null ? empty : family(threadKey(ref)));
 }

@@ -1975,9 +1975,9 @@ describe("deriveMessagesTimelineRows", () => {
       createdAt: at,
       entry: { id, createdAt: at, runId: "turn-1" as never, label: id, ...fields },
     });
-    const derive = (hideReasoning: boolean) =>
+    const derive = (botPresentation: boolean) =>
       deriveMessagesTimelineRows({
-        hideReasoning,
+        botPresentation,
         timelineEntries: [
           work("old-thought", "2026-01-01T00:00:01Z", {
             itemType: "reasoning",
@@ -2014,8 +2014,9 @@ describe("deriveMessagesTimelineRows", () => {
       entry: { id: "running-command" },
       thought: { id: "new-thought" },
     });
+    // A running Bot shows who is typing, not a work timer or live activity row.
     const botRows = derive(true);
-    expect(botRows.find((row) => row.kind === "work-live")).not.toHaveProperty("thought");
+    expect(botRows.map((row) => row.kind)).toEqual(["work", "bot-typing"]);
     expect(
       botRows.flatMap((row) => (row.kind === "work" ? row.groupedEntries : [])),
     ).not.toContainEqual(expect.objectContaining({ itemType: "reasoning" }));
@@ -3095,6 +3096,59 @@ describe("v2 run and attempt history", () => {
       expect.objectContaining({ id: "work-1" }),
       expect.objectContaining({ id: "provider-recovered" }),
     ]);
+
+    // A Bot turn reads as chat: its wake is a caption, its tools gather into one disclosure.
+    const botRows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "wake-entry",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:00Z",
+          entry: {
+            id: "wake",
+            createdAt: "2026-01-01T00:00:00Z",
+            runId: "turn-1" as never,
+            label: "Bump tinyqs finished its turn",
+            tone: "info" as const,
+            itemType: "notification" as const,
+          },
+        },
+        ...timelineEntries.slice(1, 5),
+        {
+          id: "work-entry-2",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:15Z",
+          entry: {
+            id: "work-2",
+            createdAt: "2026-01-01T00:00:15Z",
+            runId: "turn-1" as never,
+            label: "Read thread",
+            tone: "tool" as const,
+          },
+        },
+        timelineEntries[5]!,
+      ],
+      expandedWorkGroupIds: new Set(["work-group:work-entry-1"]),
+      botPresentation: true,
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(botRows.map((row) => row.id)).toEqual([
+      "wake-entry",
+      "assistant-thought-entry",
+      "work-toggle:work-entry-1",
+      "work-group:work-entry-1:details",
+      "thread-created-entry",
+      "assistant-final-entry",
+    ]);
+    expect(botRows[0]).toMatchObject({ kind: "bot-wake", label: "Bump tinyqs finished its turn" });
+    expect(botRows[1]).toMatchObject({ botAvatar: true });
+    expect(botRows[5]).not.toHaveProperty("botAvatar");
+    const botWork = botRows.find((row) => row.kind === "work");
+    expect(botWork?.kind === "work" ? botWork.groupedEntries.map((entry) => entry.id) : []).toEqual(
+      ["work-1", "provider-recovered", "work-2"],
+    );
   });
   it("hides tool calls or everything but the final answer", () => {
     const runId = RunId.make("turn-1");

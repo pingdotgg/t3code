@@ -37,6 +37,7 @@ function setup() {
         createdAt: "2026-11-01T00:00:00.000Z",
         responseCapability: "live",
       },
+      worker: false,
     },
   ]);
   return thread;
