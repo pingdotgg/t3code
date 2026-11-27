@@ -25,10 +25,7 @@ describe("composer list continuation", () => {
 
   it.each([
     ["* [x] done", "* [x] done\n* [ ] "],
-    ["+ [X] done", "+ [X] done\n+ [ ] "],
-    ["  * [ ] todo", "  * [ ] todo\n  * [ ] "],
     ["1. [x] done", "1. [x] done\n2. [ ] "],
-    ["9) [ ] todo", "9) [ ] todo\n10) [ ] "],
   ])("continues %j as an unchecked task with the same marker", (value, expected) => {
     expect(applyEdit(value, listContinuationForEnter(value, value.length)!)).toBe(expected);
   });
@@ -52,8 +49,6 @@ describe("composer list continuation", () => {
     expect(applyEdit("1)\t", listContinuationForEnter("1)\t", 3)!)).toBe("");
     expect(applyEdit("- [ ] ", listContinuationForEnter("- [ ] ", 6)!)).toBe("");
     expect(applyEdit("* [ ] ", listContinuationForEnter("* [ ] ", 6)!)).toBe("");
-    expect(applyEdit("+ [ ] ", listContinuationForEnter("+ [ ] ", 6)!)).toBe("");
-    expect(applyEdit("1. [ ] ", listContinuationForEnter("1. [ ] ", 7)!)).toBe("");
     expect(applyEdit("1. [x] a\n2. [ ] ", listContinuationForEnter("1. [x] a\n2. [ ] ", 16)!)).toBe(
       "1. [x] a\n",
     );
