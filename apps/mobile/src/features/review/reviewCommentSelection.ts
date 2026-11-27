@@ -307,6 +307,17 @@ function extractReviewCommentBody(rawBody: string): {
   };
 }
 
+/** A stored "12 to 18" range label in the UI language, as the web chip shows it. */
+function reviewCommentRangeText(rangeLabel: string, resolve: MessageResolver): string {
+  const range = /^([+-]?L?\d+) to ([+-]?L?\d+)$/u.exec(rangeLabel);
+  return range === null
+    ? rangeLabel
+    : resolve(msg("{start} to {end}", { $context: "a range of lines in a file or diff" }), {
+        start: range[1]!,
+        end: range[2]!,
+      });
+}
+
 function parseReviewInlineComment(
   rawAttributes: string,
   rawBody: string,
@@ -332,8 +343,9 @@ function parseReviewInlineComment(
     filePath,
     startIndex: Math.min(startIndex, endIndex),
     endIndex: Math.max(startIndex, endIndex),
-    rangeLabel:
-      attributes.rangeLabel?.trim() || resolve(msg("line", { $context: "review comment range" })),
+    rangeLabel: attributes.rangeLabel?.trim()
+      ? reviewCommentRangeText(attributes.rangeLabel.trim(), resolve)
+      : resolve(msg("line", { $context: "review comment range" })),
     text: body.text,
     diff: body.contents,
     fenceLanguage: body.language,
@@ -417,7 +429,7 @@ export function parseReviewInlineComments(
       filePath: record.filePath,
       startIndex: record.startIndex,
       endIndex: record.endIndex,
-      rangeLabel: record.rangeLabel,
+      rangeLabel: reviewCommentRangeText(record.rangeLabel, resolve),
       text: record.text,
       diff: record.diff,
       ...(record.fenceLanguage !== undefined ? { fenceLanguage: record.fenceLanguage } : {}),
