@@ -43,10 +43,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { m } from "~/i18n/messages";
 
 import { toastManager } from "../ui/toast";
-import {
-  offHeadPullRequestCheckoutToast,
-  unattachedPullRequestCheckoutToast,
-} from "./pullRequestCheckoutToast";
+import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
 import {
   checkoutFailureDescription,
   appendHandoff,
@@ -347,6 +344,7 @@ export function writeHandoffToComposer(
 type PreparedCheckout = Awaited<
   ReturnType<ReturnType<typeof usePreparePullRequestThreadAction>["run"]>
 >;
+type DraftCheckoutResult = PreparedCheckout | { readonly _tag: "Cancelled" };
 
 /**
  * Moves the draft opened for a checkout onto it once it is ready, keeping whatever the user
@@ -357,9 +355,10 @@ export function prepareDraftCheckout(
   projectRef: ScopedProjectRef,
   checkout: Promise<PreparedCheckout>,
   isCancelled: () => boolean = () => false,
-) {
-  return trackPendingDraftCheckout(draftId, projectRef, checkout, (prepared) => {
-    if (isCancelled() || prepared._tag === "Failure") return false;
+): Promise<DraftCheckoutResult> {
+  const result = checkout.then((prepared): DraftCheckoutResult => {
+    if (!isCurrent() || isCancelled()) return { _tag: "Cancelled" };
+    if (prepared._tag === "Failure") return prepared;
     const { branch, worktreePath, pullRequest } = prepared.value;
     // A waiting send resumes right after this and must render the checkout first.
     flushSync(() =>
@@ -372,8 +371,14 @@ export function prepareDraftCheckout(
         checkoutPullRequest: { url: pullRequest.url, branch },
       }),
     );
-    return true;
+    return prepared;
   });
+  const isCurrent = trackPendingDraftCheckout(
+    draftId,
+    projectRef,
+    result.then((prepared) => prepared._tag === "Success"),
+  );
+  return result;
 }
 
 export type PullRequestHandoffDetail = Pick<
@@ -493,7 +498,7 @@ export function usePullRequestHandoffs({
       });
       return;
     }
-    const { prepared, applied } = await prepareDraftCheckout(
+    const prepared = await prepareDraftCheckout(
       opened.draftId,
       projectRef,
       prepareThread.run({
@@ -503,12 +508,12 @@ export function usePullRequestHandoffs({
       }),
       () => cancelled,
     );
-    if (cancelled) {
-      setHandoff(null);
+    setHandoff(null);
+    if (cancelled || prepared._tag === "Cancelled") {
+      if (!cancelled) toastManager.close(toastId);
       return;
     }
     if (prepared._tag === "Failure") {
-      setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
         title: m(
@@ -521,11 +526,6 @@ export function usePullRequestHandoffs({
           isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
         ),
       });
-      return;
-    }
-    setHandoff(null);
-    if (!applied) {
-      toastManager.update(toastId, unattachedPullRequestCheckoutToast());
       return;
     }
     if (task === null) {

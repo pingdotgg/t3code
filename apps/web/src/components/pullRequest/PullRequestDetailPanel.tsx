@@ -64,10 +64,7 @@ import {
   usePullRequestDefaultMergeMethodResolver,
   writeHandoffToComposer,
 } from "./usePullRequestActions";
-import {
-  offHeadPullRequestCheckoutToast,
-  unattachedPullRequestCheckoutToast,
-} from "./pullRequestCheckoutToast";
+import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
 import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -1152,7 +1149,7 @@ export function PullRequestDetailPanel({
       });
       return;
     }
-    const { prepared, applied } = await prepareDraftCheckout(
+    const prepared = await prepareDraftCheckout(
       opened.draftId,
       projectRef,
       prepareThread.run({
@@ -1161,8 +1158,12 @@ export function PullRequestDetailPanel({
         threadId: opened.threadId,
       }),
     );
+    setHandoff(null);
+    if (prepared._tag === "Cancelled") {
+      toastManager.close(toastId);
+      return;
+    }
     if (prepared._tag === "Failure") {
-      setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
         title: m(
@@ -1175,11 +1176,6 @@ export function PullRequestDetailPanel({
           isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
         ),
       });
-      return;
-    }
-    setHandoff(null);
-    if (!applied) {
-      toastManager.update(toastId, unattachedPullRequestCheckoutToast());
       return;
     }
     if (task === null) {

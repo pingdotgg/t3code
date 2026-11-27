@@ -5,13 +5,6 @@ import { m } from "~/i18n/messages";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
-export function unattachedPullRequestCheckoutToast() {
-  return {
-    type: "info",
-    title: m(msg("Checkout finished without attaching to the draft")),
-  } as const;
-}
-
 export function offHeadPullRequestCheckoutToast(terminology: ChangeRequestTerminology) {
   return {
     type: "warning",

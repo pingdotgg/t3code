@@ -7266,7 +7266,6 @@
   ],
   "7d160729d1afcd58": "Vincular pull request",
   "2b82c15cd4dc73c6": "No se pudieron actualizar los archivos vistos",
-  "638700987b3f33ac": "Checkout completado. El borrador no se vinculó al checkout.",
   "f85cd11cb736771c": "Checkout hecho, pero no confirmado en el último commit",
   "406f2d0ee4df0b37": "No se pudo confirmar que este checkout esté en el último commit de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}, así que su código puede ser distinto. Los commits locales o el trabajo sin commit mantienen el checkout donde está.",
   "739e53cc339ac41c": "Fusionar",

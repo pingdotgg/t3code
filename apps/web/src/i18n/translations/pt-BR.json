@@ -7266,7 +7266,6 @@
   ],
   "7d160729d1afcd58": "Vincular pull request",
   "2b82c15cd4dc73c6": "Não foi possível atualizar os arquivos vistos",
-  "638700987b3f33ac": "Checkout concluído. O rascunho não foi vinculado ao checkout.",
   "f85cd11cb736771c": "Checkout feito, mas não confirmado no commit mais recente",
   "406f2d0ee4df0b37": "Não foi possível confirmar este checkout no commit mais recente {term, select, mr {do merge request} cr {da solicitação de alteração} other {do pull request}}, então o código pode ser diferente. Commits locais ou trabalho sem commit mantêm um checkout onde ele está.",
   "739e53cc339ac41c": "Merge",

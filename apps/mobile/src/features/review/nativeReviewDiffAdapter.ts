@@ -97,9 +97,13 @@ function opaqueNativeHexColor(color: string, background: string): string {
 export function createNativeReviewDiffStyle(
   codeSurface: ResolvedMobileCodeSurface,
   wordWrap: boolean,
+  fonts: { readonly code: string; readonly ui: string; readonly uiBold: string },
 ) {
   return {
     wordWrap,
+    codeFontFamily: fonts.code,
+    uiFontFamily: fonts.ui,
+    uiBoldFontFamily: fonts.uiBold,
     rowHeight: codeSurface.rowHeight,
     contentWidth: NATIVE_REVIEW_DIFF_CONTENT_WIDTH,
     changeBarWidth: 4,

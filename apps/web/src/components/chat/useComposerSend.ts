@@ -1839,11 +1839,8 @@ export function useComposerSend(input: ComposerSendInput) {
       draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
     if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
     const { result, draftReady, sameRoute } = await waitBeforeSend(workspaceDefault);
-    if (result === false) {
-      reportDraftChangedBeforeSend();
-      return;
-    }
-    if (!draftReady || !sameRoute) return;
+    if (result === "moved") reportDraftChangedBeforeSend();
+    if (result === false || result === "moved" || !draftReady || !sameRoute) return;
     return sendWithEnvironmentRefreshLatest(...args);
   };
   // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
