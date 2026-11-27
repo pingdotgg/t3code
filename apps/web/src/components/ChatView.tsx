@@ -1,5 +1,6 @@
 import { m } from "../i18n/messages";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { toServerClock } from "@t3tools/client-runtime/clock";
 import { useGT, useMessages } from "gt-react";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import {
@@ -910,10 +911,11 @@ export default function ChatView(props: ChatViewProps) {
     if (usage.promptCacheExpiresAt) return Date.parse(usage.promptCacheExpiresAt);
     return usage.promptCacheTtlMs ? Date.parse(usage.updatedAt) + usage.promptCacheTtlMs : null;
   })();
+  // The host stamped the expiry, and the timer runs on this clock.
   const promptCacheExpired = useDeadlinePassed(
-    promptCacheExpiresAt !== null && Number.isFinite(promptCacheExpiresAt)
-      ? promptCacheExpiresAt
-      : null,
+    promptCacheExpiresAt === null || !serverThread
+      ? null
+      : promptCacheExpiresAt - toServerClock(serverThread.environmentId, 0),
   );
   const activeActivityRun = isServerThread ? serverActivityRun : (activeThread?.latestRun ?? null);
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);

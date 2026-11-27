@@ -112,17 +112,13 @@ export function resolveComposerSendForPick(
   input: ComposerProviderModelInput,
   pick: ModelSelection,
 ): ModelSelection | null {
-  // The reset saves a same-instance pick on the thread, so its stored options no longer apply.
-  const threadModelSelection =
-    input.threadModelSelection?.instanceId === pick.instanceId ? pick : input.threadModelSelection;
-  const resolved = resolveComposerProviderModel(
-    { ...input, threadModelSelection },
-    {
-      modelSelectionByProvider: { [pick.instanceId]: pick },
-      activeProvider: pick.instanceId,
-      modelSelectionExplicit: true,
-    },
-  );
+  // The thread keeps its stored selection until the pick is saved, and a send in that window
+  // gives a pick without options the stored ones.
+  const resolved = resolveComposerProviderModel(input, {
+    modelSelectionByProvider: { [pick.instanceId]: pick },
+    activeProvider: pick.instanceId,
+    modelSelectionExplicit: true,
+  });
   if (!resolved.selectedProviderEntry) return null;
   return createModelSelection(
     resolved.selectedInstanceId,
