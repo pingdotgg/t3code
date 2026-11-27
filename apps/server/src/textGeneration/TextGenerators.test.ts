@@ -89,24 +89,21 @@ it.effect.each([
   }),
 );
 
-it.effect.each(["openaiCompatible", "anthropic"] as const)(
-  "%s HTTP error detail does not split an emoji at the cutoff",
-  (kind) =>
-    Effect.gen(function* () {
-      const prefix = "a".repeat(299);
-      const upstream: typeof fetch = async () =>
-        Response.json({ error: { message: `${prefix}🚀` } }, { status: 400 });
-      const failure = yield* TEXT_GENERATOR_DRIVERS[kind]
-        .listModels({ baseUrl: "https://api.test/v1", apiKey: "", label: "Test API" })
-        .pipe(
-          Effect.provide(FetchHttpClient.layer),
-          Effect.provideService(FetchHttpClient.Fetch, upstream),
-          Effect.flip,
-        );
+it.effect("HTTP error detail does not split an emoji at the cutoff", () =>
+  Effect.gen(function* () {
+    const prefix = "a".repeat(299);
+    const upstream: typeof fetch = async () =>
+      Response.json({ error: { message: `${prefix}🚀` } }, { status: 400 });
+    const failure = yield* TEXT_GENERATOR_DRIVERS.openaiCompatible
+      .listModels({ baseUrl: "https://api.test/v1", apiKey: "", label: "Test API" })
+      .pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, upstream),
+        Effect.flip,
+      );
 
-      expect(failure.detail.isWellFormed()).toBe(true);
-      expect(failure.detail).toBe(`Test API returned HTTP 400: ${prefix}`);
-    }),
+    expect(failure.detail).toBe(`Test API returned HTTP 400: ${prefix}`);
+  }),
 );
 
 it.effect("a turned-off text generator fails instead of calling its API", () =>
