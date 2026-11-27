@@ -30,22 +30,21 @@ function acceptsWorkspaceDefault(
   );
 }
 
-const pendingCheckouts = new Map<DraftId, Promise<void>>();
+const pendingCheckouts = new Map<DraftId, Promise<boolean>>();
 
-/** A send waits while a checkout is prepared for its draft, so it starts in that checkout. */
-export function trackPendingDraftCheckout(draftId: DraftId, checkout: Promise<unknown>) {
-  const settled: Promise<void> = checkout
-    .then(
-      () => {},
-      () => {},
-    )
+/** A waiting send can resume only after the current checkout has been applied. */
+export function trackPendingDraftCheckout(draftId: DraftId, checkoutReady: Promise<boolean>) {
+  const isCurrent = () => pendingCheckouts.get(draftId) === settled;
+  const settled: Promise<boolean> = checkoutReady
+    .catch(() => false)
     .finally(() => {
-      if (pendingCheckouts.get(draftId) === settled) pendingCheckouts.delete(draftId);
+      if (isCurrent()) pendingCheckouts.delete(draftId);
     });
   pendingCheckouts.set(draftId, settled);
+  return isCurrent;
 }
 
-export function readPendingWorkspaceDefault(draftId: DraftId): Promise<void> | null {
+export function readPendingWorkspaceDefault(draftId: DraftId): Promise<boolean | void> | null {
   const checkout = pendingCheckouts.get(draftId);
   if (checkout) return checkout;
   const pending = pendingDefaults.get(draftId);
