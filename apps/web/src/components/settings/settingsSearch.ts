@@ -1732,11 +1732,17 @@ export function searchSettings(
       const title = normalizeSearchText(decodeMsg(item.title));
       // The title as displayed, so search also works in the active language.
       const displayedTitle = normalizeSearchText(translate(item.title));
+      const navLabel = SETTINGS_NAV_LABELS[item.to];
+      const translatedNavLabel = translate(navLabel);
       const fields = [
         title,
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
+        normalizeSearchText(decodeMsg(navLabel)),
         displayedTitle,
         normalizeSearchText(translate(SETTINGS_SECTION_LABELS[item.to])),
+        normalizeSearchText(
+          translatedNavLabel === navLabel ? decodeMsg(navLabel) : translatedNavLabel,
+        ),
         ...(item.searchTerms ?? []).map(normalizeSearchText),
         ...(item.searchTerms ?? []).map((term) => normalizeSearchText(translate(term))),
       ];
