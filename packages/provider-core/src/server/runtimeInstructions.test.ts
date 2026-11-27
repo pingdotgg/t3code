@@ -24,6 +24,7 @@ describe("buildRuntimeInstructions", () => {
     assert.include(instructions, "Link each PR you create, take over, or push to");
     assert.include(instructions, "every stack layer");
     assert.include(instructions, "link_issue");
+    assert.include(instructions, "each issue you take on, review, or file");
     assert.include(instructions, "Skip PRs you only read or review");
     assert.include(instructions, "If linking fails, say so.");
     assert.notInclude(instructions, "git log -1");
