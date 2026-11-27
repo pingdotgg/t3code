@@ -221,6 +221,7 @@ export interface BwrapSandboxPlan {
   readonly roSystemBinds?: ReadonlyArray<string> | undefined;
   readonly roTrySystemBinds?: ReadonlyArray<string> | undefined;
   readonly providerProfileDirs: ReadonlyArray<string>;
+  readonly providerProfileRwPinSubpaths?: ReadonlyArray<string> | undefined;
   readonly providerProfileRoSubpaths?: ReadonlyArray<string> | undefined;
   readonly toolCacheDirs: ReadonlyArray<string>;
   readonly extraRwBinds: ReadonlyArray<string>;
@@ -1467,6 +1468,14 @@ function buildBwrapPrefixArgs(
   for (const profileDir of plan.providerProfileDirs) {
     pushRw(profileDir);
   }
+  // Pin child RW subdirectories (such as `antigravity-acp`) as mountpoints so sandboxed processes
+  // get `EBUSY` if they attempt to rename or swap the directory with a symlink.
+  for (const rwPinSubpath of plan.providerProfileRwPinSubpaths ?? []) {
+    const normalized = normalizePosixPath(rwPinSubpath);
+    if (mountedRw.has(normalized)) continue;
+    mountedRw.add(normalized);
+    args.push("--bind", normalized, normalized);
+  }
   // Emit profile RO overlays unconditionally (bypassing `pushRo`'s system-prefix skip) so
   // profiles hosted under `/opt/...` still lock `config` and `.t3-team-profile.json` read-only.
   for (const roSubpath of plan.providerProfileRoSubpaths ?? []) {
@@ -1532,9 +1541,8 @@ const decodePersonalAntigravityPluginPrefs = Schema.decodeUnknownOption(
 );
 
 /**
- * Locks `.t3-team-profile.json` RO for any team profile, unconditionally locks `<profileDir>/config`
- * RO for trusted `GEMINI_HOME` profiles, and binds only enabled direct `~/.gemini/config/plugins/*`
- * targets RO when the marker confirms `driver: "antigravity"`.
+ * Locks `.t3-team-profile.json` RO for any team profile, pins `antigravity-acp` RW and locks
+ * `config` RO for trusted `GEMINI_HOME` profiles, and binds enabled `~/.gemini/config/plugins/*` RO.
  */
 async function collectTeamProfileRoLocksAndPlugins(input: {
   readonly profileDir: string;
@@ -1544,9 +1552,11 @@ async function collectTeamProfileRoLocksAndPlugins(input: {
   readonly homeRoots: ReadonlyArray<string>;
 }): Promise<{
   readonly profileRoSubpaths: ReadonlyArray<string>;
+  readonly profileRwPinSubpaths: ReadonlyArray<string>;
   readonly pluginRoTargets: ReadonlyArray<string>;
 }> {
   const profileRoSubpaths: Array<string> = [];
+  const profileRwPinSubpaths: Array<string> = [];
 
   const markerPath = NodePath.posix.join(input.profileDir, TEAM_PROFILE_MARKER_FILENAME);
   const markerRaw = await readRegularFileNoFollow(markerPath, 16_384).catch(() => undefined);
@@ -1555,7 +1565,18 @@ async function collectTeamProfileRoLocksAndPlugins(input: {
   }
 
   if (!input.isGeminiHomeProfile) {
-    return { profileRoSubpaths, pluginRoTargets: [] };
+    return { profileRoSubpaths, profileRwPinSubpaths, pluginRoTargets: [] };
+  }
+
+  // Pin `<profileDir>/antigravity-acp` as a mountpoint so sandboxed turns get EBUSY on rename/swap.
+  const profileAcpDir = NodePath.posix.join(input.profileDir, "antigravity-acp");
+  const profileAcpStat = await NodeFSP.lstat(profileAcpDir).catch(() => undefined);
+  if (
+    profileAcpStat !== undefined &&
+    !profileAcpStat.isSymbolicLink() &&
+    profileAcpStat.isDirectory()
+  ) {
+    profileRwPinSubpaths.push(profileAcpDir);
   }
 
   // Always lock `<profileDir>/config` RO for trusted `GEMINI_HOME` profiles regardless of marker
@@ -1567,21 +1588,21 @@ async function collectTeamProfileRoLocksAndPlugins(input: {
     profileConfigStat.isSymbolicLink() ||
     !profileConfigStat.isDirectory()
   ) {
-    return { profileRoSubpaths, pluginRoTargets: [] };
+    return { profileRoSubpaths, profileRwPinSubpaths, pluginRoTargets: [] };
   }
   profileRoSubpaths.push(profileConfigDir);
 
   if (markerRaw === undefined) {
-    return { profileRoSubpaths, pluginRoTargets: [] };
+    return { profileRoSubpaths, profileRwPinSubpaths, pluginRoTargets: [] };
   }
   const markerOpt = decodeTeamProfileMarkerDriver(markerRaw);
   if (markerOpt._tag !== "Some" || markerOpt.value.driver !== "antigravity") {
-    return { profileRoSubpaths, pluginRoTargets: [] };
+    return { profileRoSubpaths, profileRwPinSubpaths, pluginRoTargets: [] };
   }
 
   const layout = getTeamHarnessProfile("antigravity").personalSkillLayout;
   if (layout.kind !== "antigravity-config-and-plugins") {
-    return { profileRoSubpaths, pluginRoTargets: [] };
+    return { profileRoSubpaths, profileRwPinSubpaths, pluginRoTargets: [] };
   }
 
   const profilePluginsDir = NodePath.posix.join(profileConfigDir, "plugins");
@@ -1591,7 +1612,7 @@ async function collectTeamProfileRoLocksAndPlugins(input: {
     profilePluginsStat.isSymbolicLink() ||
     !profilePluginsStat.isDirectory()
   ) {
-    return { profileRoSubpaths, pluginRoTargets: [] };
+    return { profileRoSubpaths, profileRwPinSubpaths, pluginRoTargets: [] };
   }
 
   const allowedPersonalPluginsDirs = new Set<string>();
@@ -1696,6 +1717,7 @@ async function collectTeamProfileRoLocksAndPlugins(input: {
 
   return {
     profileRoSubpaths,
+    profileRwPinSubpaths,
     pluginRoTargets: [...pluginRoTargets],
   };
 }
@@ -1783,6 +1805,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
       : undefined;
 
   const providerProfileDirs: Array<string> = [];
+  const providerProfileRwPinSubpaths: Array<string> = [];
   const providerProfileRoSubpaths: Array<string> = [];
   const discoveredPluginRoBinds: Array<string> = [];
   for (const raw of [...extracted.providerProfileDirs, ...(input.providerProfileDirs ?? [])]) {
@@ -1804,6 +1827,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
         homeRoots,
       }),
     );
+    providerProfileRwPinSubpaths.push(...pluginBinds.profileRwPinSubpaths);
     providerProfileRoSubpaths.push(...pluginBinds.profileRoSubpaths);
     discoveredPluginRoBinds.push(...pluginBinds.pluginRoTargets);
   }
@@ -2028,6 +2052,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
     ...(gitRepo === undefined ? {} : { gitRepo }),
     ...(emptyRoFile === undefined ? {} : { emptyRoFile }),
     providerProfileDirs,
+    ...(providerProfileRwPinSubpaths.length === 0 ? {} : { providerProfileRwPinSubpaths }),
     ...(providerProfileRoSubpaths.length === 0 ? {} : { providerProfileRoSubpaths }),
     toolCacheDirs,
     extraRwBinds,

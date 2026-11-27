@@ -1939,11 +1939,16 @@ it.effect(
         const roBinds = wrapped.args.filter((_, idx, arr) => arr[idx - 1] === "--ro-bind");
 
         const markerPath = NodePath.join(paths.profileDir, ".t3-team-profile.json");
+        const profileAcpDir = NodePath.join(paths.profileDir, "antigravity-acp");
         expect(rwBinds).toContain(paths.profileDir);
+        expect(rwBinds).toContain(profileAcpDir);
         expect(roBinds).toContain(markerPath);
         expect(roBinds).toContain(profileConfigDir);
         expect(roBinds).toContain(enabledPluginDir);
-        // `<teamProfile>/.t3-team-profile.json` and `<teamProfile>/config` RO overlays MUST come after `<teamProfile>` RW bind.
+        // `antigravity-acp` RW pin and `.t3-team-profile.json`/`config` RO overlays MUST come after `<teamProfile>` RW bind.
+        expect(wrapped.args.indexOf(profileAcpDir)).toBeGreaterThan(
+          wrapped.args.indexOf(paths.profileDir),
+        );
         expect(wrapped.args.indexOf(markerPath)).toBeGreaterThan(
           wrapped.args.indexOf(paths.profileDir),
         );
@@ -1972,12 +1977,13 @@ it.effect(
         expect(tamperedRoBinds).not.toContain(enabledPluginDir);
         NodeFS.writeFileSync(markerPath, originalMarkerText, "utf8");
 
-        // `buildBwrapArgs` must NOT skip `providerProfileRoSubpaths` even when stateDir lives under `/opt`.
+        // `buildBwrapArgs` must NOT skip `providerProfileRoSubpaths` or `providerProfileRwPinSubpaths` under `/opt`.
         const optArgs = buildBwrapArgs({
           bwrapBinaryPath: "/usr/bin/bwrap",
           cwd: "/workspace/repo",
           chdir: "/workspace/repo",
           providerProfileDirs: ["/opt/t3runner/providers/antigravity/abc"],
+          providerProfileRwPinSubpaths: ["/opt/t3runner/providers/antigravity/abc/antigravity-acp"],
           providerProfileRoSubpaths: [
             "/opt/t3runner/providers/antigravity/abc/.t3-team-profile.json",
             "/opt/t3runner/providers/antigravity/abc/config",
@@ -1990,7 +1996,9 @@ it.effect(
           command: "/bin/sh",
           args: ["-c", "true"],
         });
+        const optRwBinds = optArgs.filter((_, idx, arr) => arr[idx - 1] === "--bind");
         const optRoBinds = optArgs.filter((_, idx, arr) => arr[idx - 1] === "--ro-bind");
+        expect(optRwBinds).toContain("/opt/t3runner/providers/antigravity/abc/antigravity-acp");
         expect(optRoBinds).toContain("/opt/t3runner/providers/antigravity/abc/config");
         expect(optRoBinds).toContain(
           "/opt/t3runner/providers/antigravity/abc/.t3-team-profile.json",
@@ -2073,9 +2081,11 @@ it.effect(
           },
           ownStateDir,
         });
+        const emptyRwBinds = emptyWrapped.args.filter((_, idx, arr) => arr[idx - 1] === "--bind");
         const emptyRoBinds = emptyWrapped.args.filter(
           (_, idx, arr) => arr[idx - 1] === "--ro-bind",
         );
+        expect(emptyRwBinds).toContain(NodePath.join(emptyPaths.profileDir, "antigravity-acp"));
         expect(emptyRoBinds).toContain(NodePath.join(emptyPaths.profileDir, "config"));
       } finally {
         NodeFS.rmSync(root, { recursive: true, force: true });

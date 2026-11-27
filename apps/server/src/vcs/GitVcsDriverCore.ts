@@ -1138,12 +1138,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     readonly pushEvents: ReadonlyArray<string>;
   }
 
+  const CONFIGURED_HOOKS_REGEXP = "^hook\\..+\\.(command|event|enabled)$";
+
   /**
    * Every hook Git's configuration defines, from all of its files and whatever they include.
    * Asked with hooks on and not through `execute`, as the hooks directory is below.
    */
   const readConfiguredHooks = Effect.fnUntraced(function* (cwd: string) {
-    const args = ["config", "--null", "--get-regexp", "^hook\\..+\\.(command|event|enabled)$"];
+    const args = ["config", "--null", "--get-regexp", CONFIGURED_HOOKS_REGEXP];
     // `git config` alone reads only the file `GIT_CONFIG` names, and a push reads all of them.
     const env = { GIT_CONFIG: undefined };
     const command = { operation: "GitVcsDriver.configuredHooks", cwd, args, env };
@@ -1492,7 +1494,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             commandInput.args.length === 4 &&
             commandInput.args[0] === "config" &&
             commandInput.args[1] === "--null" &&
-            commandInput.args[2] === "--get-regexp";
+            commandInput.args[2] === "--get-regexp" &&
+            commandInput.args[3] === CONFIGURED_HOOKS_REGEXP;
           const isReadOnlyHookInspection = isPushHooksLocationProbe || isConfiguredHooksReadProbe;
           const isApprovedPush =
             hooksPolicy._tag === "approved-push" && input.pushes === true && limits !== undefined;

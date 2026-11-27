@@ -30,7 +30,9 @@ import {
   materializeEphemeralLeaseToken,
   materializeTeamProfileAssets,
   purgeEphemeralLeaseTokens,
+  purgePinnedRelativeTokenFile,
   purgeTeamProfileDirectory,
+  writePinnedRelativeTokenFile,
 } from "./TeamProfileMaterializer.ts";
 
 const platformLayer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
@@ -702,6 +704,73 @@ describe("TeamProfileMaterializer", () => {
                 .catch(() => false),
             ),
           ).toBe(false);
+
+          // Concurrent parent-swap race regression: swapping `antigravity-acp` to a symlink AFTER
+          // parent pinning MUST NOT redirect either lease-token write or purge to `externalHostDir`.
+          const hostPlatform = yield* HostProcess.Platform;
+          if (hostPlatform === "linux") {
+            const personalSentinel = NodePath.join(
+              externalHostDir,
+              TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME,
+            );
+            const movedAcpDir = NodePath.join(paths.profileDir, "antigravity-acp.moved-write");
+            yield* Effect.promise(async () => {
+              await NodeFSP.writeFile(personalSentinel, "PERSONAL-SECRET", "utf8");
+              await NodeFSP.rm(movedAcpDir, { recursive: true, force: true });
+            });
+            yield* Effect.promise(() =>
+              writePinnedRelativeTokenFile({
+                rootDir: paths.profileDir,
+                relativeSegments: ["antigravity-acp", TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME],
+                contents: '{"token":"team-race-safe"}\n',
+                platform: hostPlatform,
+                beforeLeafOp: async () => {
+                  await NodeFSP.rename(acpDir, movedAcpDir);
+                  await NodeFSP.symlink(externalHostDir, acpDir, "dir");
+                },
+              }),
+            );
+            expect(yield* Effect.promise(() => NodeFSP.readFile(personalSentinel, "utf8"))).toBe(
+              "PERSONAL-SECRET",
+            );
+            expect(
+              yield* Effect.promise(() =>
+                NodeFSP.readFile(
+                  NodePath.join(movedAcpDir, TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME),
+                  "utf8",
+                ),
+              ),
+            ).toBe('{"token":"team-race-safe"}\n');
+
+            // Restore real `antigravity-acp` containing the team token, then race-swap during purge.
+            const movedPurgeDir = NodePath.join(paths.profileDir, "antigravity-acp.moved-purge");
+            yield* Effect.promise(async () => {
+              await NodeFSP.unlink(acpDir);
+              await NodeFSP.rename(movedAcpDir, acpDir);
+              await NodeFSP.rm(movedPurgeDir, { recursive: true, force: true });
+            });
+            yield* Effect.promise(() =>
+              purgePinnedRelativeTokenFile({
+                rootDir: paths.profileDir,
+                relativeSegments: ["antigravity-acp", TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME],
+                platform: hostPlatform,
+                beforeLeafOp: async () => {
+                  await NodeFSP.rename(acpDir, movedPurgeDir);
+                  await NodeFSP.symlink(externalHostDir, acpDir, "dir");
+                },
+              }),
+            );
+            expect(yield* Effect.promise(() => NodeFSP.readFile(personalSentinel, "utf8"))).toBe(
+              "PERSONAL-SECRET",
+            );
+            expect(
+              yield* Effect.promise(() =>
+                NodeFSP.access(NodePath.join(movedPurgeDir, TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME))
+                  .then(() => true)
+                  .catch(() => false),
+              ),
+            ).toBe(false);
+          }
         } finally {
           yield* Effect.promise(() => NodeFSP.rm(tmp, { recursive: true, force: true }));
         }

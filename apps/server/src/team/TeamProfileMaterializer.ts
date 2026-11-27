@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Uses lstat/symlink/chmod for isolated team profile skill precedence and 0600 ephemeral tokens.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -166,25 +167,208 @@ export function renderTeamPrepromptsMarkdown(preprompts: ReadonlyArray<TeamPrepr
   return preprompts.map((item) => `## ${item.name}\n\n${item.content.trim()}`).join("\n\n");
 }
 
-async function writeSecureTokenFile(
-  filePath: string,
-  contents: string,
-  platform: NodeJS.Platform,
-): Promise<void> {
-  await NodeFSP.mkdir(NodePath.dirname(filePath), { recursive: true, mode: 0o700 });
-  const tempPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
+interface PinnedParentDirectory {
+  readonly dirBase: string;
+  readonly close: () => Promise<void>;
+}
+
+function isSafeRelativeSegment(segment: string): boolean {
+  return (
+    segment.length > 0 &&
+    segment !== "." &&
+    segment !== ".." &&
+    !segment.includes("/") &&
+    !segment.includes("\\") &&
+    !segment.includes("\0")
+  );
+}
+
+function getErrnoCode(error: unknown): string | undefined {
+  return typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string"
+    ? error.code
+    : undefined;
+}
+
+/**
+ * Pins the parent directory of a relative path via `O_DIRECTORY | O_NOFOLLOW` FDs on Linux
+ * (`/proc/self/fd/<fd>`) so subsequent leaf ops cannot be redirected by concurrent parent swaps.
+ */
+async function openPinnedRelativeParentDirectory(input: {
+  readonly rootDir: string;
+  readonly parentSegments: ReadonlyArray<string>;
+  readonly create: boolean;
+  readonly platform: NodeJS.Platform;
+}): Promise<PinnedParentDirectory | undefined> {
+  for (const segment of input.parentSegments) {
+    if (!isSafeRelativeSegment(segment)) {
+      throw new Error(`Refusing unsafe relative segment inside team profile: ${segment}`);
+    }
+  }
+  if (input.create) {
+    await NodeFSP.mkdir(input.rootDir, { recursive: true, mode: 0o700 });
+  }
+  const realRootDir = await NodeFSP.realpath(input.rootDir).catch(() => undefined);
+  if (realRootDir === undefined) {
+    if (input.create) {
+      throw new Error(`Missing team profile directory: ${input.rootDir}`);
+    }
+    return undefined;
+  }
+
+  if (input.platform === "linux") {
+    const dirOpenFlags =
+      NodeFS.constants.O_RDONLY | NodeFS.constants.O_DIRECTORY | NodeFS.constants.O_NOFOLLOW;
+    let curFh = await NodeFSP.open(realRootDir, dirOpenFlags);
+    try {
+      for (const segment of input.parentSegments) {
+        const segPath = `/proc/self/fd/${curFh.fd}/${segment}`;
+        let nextFh: NodeFSP.FileHandle;
+        try {
+          nextFh = await NodeFSP.open(segPath, dirOpenFlags);
+        } catch (error) {
+          const code = getErrnoCode(error);
+          if (!input.create) {
+            await curFh.close().catch(() => undefined);
+            return undefined;
+          }
+          if (code === "ENOENT") {
+            await NodeFSP.mkdir(segPath, { mode: 0o700 }).catch((mkdirErr) => {
+              if (getErrnoCode(mkdirErr) !== "EEXIST") throw mkdirErr;
+            });
+            nextFh = await NodeFSP.open(segPath, dirOpenFlags);
+          } else if (code === "ELOOP" || code === "ENOTDIR") {
+            await NodeFSP.unlink(segPath);
+            await NodeFSP.mkdir(segPath, { mode: 0o700 }).catch((mkdirErr) => {
+              if (getErrnoCode(mkdirErr) !== "EEXIST") throw mkdirErr;
+            });
+            nextFh = await NodeFSP.open(segPath, dirOpenFlags);
+          } else {
+            throw error;
+          }
+        }
+        await curFh.close();
+        curFh = nextFh;
+      }
+      const pinnedFh = curFh;
+      return {
+        dirBase: `/proc/self/fd/${pinnedFh.fd}`,
+        close: () => pinnedFh.close().catch(() => undefined),
+      };
+    } catch (error) {
+      await curFh.close().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  let cursor = realRootDir;
+  for (const segment of input.parentSegments) {
+    const nextPath = NodePath.join(cursor, segment);
+    if (input.create) {
+      cursor = await ensureContainedRealDirectory(cursor, nextPath);
+    } else {
+      assertPathContainedWithin(realRootDir, nextPath);
+      const stat = await NodeFSP.lstat(nextPath).catch(() => undefined);
+      if (stat === undefined || stat.isSymbolicLink() || !stat.isDirectory()) {
+        return undefined;
+      }
+      cursor = nextPath;
+    }
+  }
+  return { dirBase: cursor, close: async () => {} };
+}
+
+export async function writePinnedRelativeTokenFile(input: {
+  readonly rootDir: string;
+  readonly relativeSegments: ReadonlyArray<string>;
+  readonly contents: string;
+  readonly platform: NodeJS.Platform;
+  readonly beforeLeafOp?: () => Promise<void>;
+}): Promise<void> {
+  const leafName = input.relativeSegments.at(-1);
+  if (leafName === undefined || !isSafeRelativeSegment(leafName)) {
+    throw new Error(`Refusing unsafe token filename inside team profile: ${String(leafName)}`);
+  }
+  const pinned = await openPinnedRelativeParentDirectory({
+    rootDir: input.rootDir,
+    parentSegments: input.relativeSegments.slice(0, -1),
+    create: true,
+    platform: input.platform,
+  });
+  if (pinned === undefined) {
+    throw new Error(`Unable to pin token parent directory inside: ${input.rootDir}`);
+  }
   try {
-    await NodeFSP.writeFile(tempPath, contents, { encoding: "utf8", mode: 0o600 });
-    if (platform !== "win32") {
-      await NodeFSP.chmod(tempPath, 0o600);
+    if (input.beforeLeafOp !== undefined) {
+      await input.beforeLeafOp();
     }
-    await NodeFSP.rename(tempPath, filePath);
-    if (platform !== "win32") {
-      await NodeFSP.chmod(filePath, 0o600);
+    const joinLeaf = (name: string) =>
+      input.platform === "linux"
+        ? `${pinned.dirBase}/${name}`
+        : NodePath.join(pinned.dirBase, name);
+    const leafPath = joinLeaf(leafName);
+    const tempPath = joinLeaf(`${leafName}.tmp-${NodeCrypto.randomUUID()}`);
+    const existing = await NodeFSP.lstat(leafPath).catch(() => undefined);
+    if (existing !== undefined && !existing.isSymbolicLink() && existing.isDirectory()) {
+      await NodeFSP.rm(leafPath, { recursive: true, force: true });
     }
-  } catch (error) {
-    await NodeFSP.rm(tempPath, { force: true }).catch(() => undefined);
-    throw error;
+    const openFlags =
+      NodeFS.constants.O_WRONLY |
+      NodeFS.constants.O_CREAT |
+      NodeFS.constants.O_EXCL |
+      (input.platform !== "win32" ? NodeFS.constants.O_NOFOLLOW : 0);
+    let tmpFh: NodeFSP.FileHandle | undefined;
+    try {
+      tmpFh = await NodeFSP.open(tempPath, openFlags, 0o600);
+      await tmpFh.writeFile(input.contents, "utf8");
+      if (input.platform !== "win32") {
+        await tmpFh.chmod(0o600);
+      }
+      await tmpFh.close();
+      tmpFh = undefined;
+      await NodeFSP.rename(tempPath, leafPath);
+    } catch (error) {
+      if (tmpFh !== undefined) {
+        await tmpFh.close().catch(() => undefined);
+      }
+      await NodeFSP.unlink(tempPath).catch(() => undefined);
+      throw error;
+    }
+  } finally {
+    await pinned.close();
+  }
+}
+
+export async function purgePinnedRelativeTokenFile(input: {
+  readonly rootDir: string;
+  readonly relativeSegments: ReadonlyArray<string>;
+  readonly platform: NodeJS.Platform;
+  readonly beforeLeafOp?: () => Promise<void>;
+}): Promise<void> {
+  const leafName = input.relativeSegments.at(-1);
+  if (leafName === undefined || !isSafeRelativeSegment(leafName)) {
+    return;
+  }
+  const pinned = await openPinnedRelativeParentDirectory({
+    rootDir: input.rootDir,
+    parentSegments: input.relativeSegments.slice(0, -1),
+    create: false,
+    platform: input.platform,
+  });
+  if (pinned === undefined) return;
+  try {
+    if (input.beforeLeafOp !== undefined) {
+      await input.beforeLeafOp();
+    }
+    const leafPath =
+      input.platform === "linux"
+        ? `${pinned.dirBase}/${leafName}`
+        : NodePath.join(pinned.dirBase, leafName);
+    await NodeFSP.unlink(leafPath).catch(() => undefined);
+  } finally {
+    await pinned.close();
   }
 }
 
@@ -288,17 +472,15 @@ async function syncAntigravityPersonalConfigAndPlugins(input: {
   const skillsConfigPath = NodePath.join(configDir, "skills.json");
   assertPathContainedWithin(configDir, skillsConfigPath);
   const existingSkillsConfig = await NodeFSP.lstat(skillsConfigPath).catch(() => undefined);
-  if (existingSkillsConfig?.isSymbolicLink()) {
-    await NodeFSP.unlink(skillsConfigPath);
-  } else if (existingSkillsConfig !== undefined && !existingSkillsConfig.isFile()) {
-    await NodeFSP.rm(skillsConfigPath, { recursive: true, force: true });
-  }
   const nextSkillsConfig = `${encodeJsonUnknown({ entries })}\n`;
-  const currentSkillsConfig = await NodeFSP.readFile(skillsConfigPath, "utf8").catch(
-    () => undefined,
-  );
+  const currentSkillsConfig =
+    existingSkillsConfig !== undefined &&
+    !existingSkillsConfig.isSymbolicLink() &&
+    existingSkillsConfig.isFile()
+      ? await NodeFSP.readFile(skillsConfigPath, "utf8").catch(() => undefined)
+      : undefined;
   if (currentSkillsConfig !== nextSkillsConfig) {
-    await NodeFSP.writeFile(skillsConfigPath, nextSkillsConfig, "utf8");
+    await writeContainedAtomicFile(configDir, skillsConfigPath, nextSkillsConfig);
   }
 
   // Mirror enabled personal plugins from `~/.gemini/config/plugins/*` into `<teamProfile>/config/plugins/*`
@@ -489,14 +671,22 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
             ) {
               return false;
             }
-            const skillsStat = await NodeFSP.stat(paths.skillsDir);
-            if (!skillsStat.isDirectory()) return false;
+            const skillsStat = await NodeFSP.lstat(paths.skillsDir);
+            if (skillsStat.isSymbolicLink() || !skillsStat.isDirectory()) return false;
             if (paths.instructionFile !== null) {
               const expectsInstruction = threadPreprompts.length > 0;
-              const hasInstruction = await NodeFSP.stat(paths.instructionFile)
-                .then((s) => s.isFile())
+              const hasInstruction = await NodeFSP.lstat(paths.instructionFile)
+                .then((s) => !s.isSymbolicLink() && s.isFile())
                 .catch(() => false);
               if (expectsInstruction !== hasInstruction) return false;
+            }
+            for (const segments of spec.ephemeralTokenRelativePaths) {
+              let cursor = paths.profileDir;
+              for (const segment of segments.slice(0, -1)) {
+                cursor = NodePath.join(cursor, segment);
+                const parentStat = await NodeFSP.lstat(cursor);
+                if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) return false;
+              }
             }
             return true;
           },
@@ -607,6 +797,18 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
                 layout: spec.personalSkillLayout,
                 platform,
               });
+            }
+            // Pre-create ephemeral token parent directories (e.g. `antigravity-acp`) so bwrap can
+            // pin them as mountpoints before the first turn starts.
+            const realProfileDir = await NodeFSP.realpath(paths.profileDir);
+            for (const segments of spec.ephemeralTokenRelativePaths) {
+              let parentCursor = realProfileDir;
+              for (const segment of segments.slice(0, -1)) {
+                parentCursor = await ensureContainedRealDirectory(
+                  parentCursor,
+                  NodePath.join(parentCursor, segment),
+                );
+              }
             }
           },
           catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
@@ -720,18 +922,6 @@ export const materializeEphemeralLeaseToken = Effect.fn(
     driver: input.driver,
   });
 
-  const resolveContainedTokenPath = async (): Promise<string> => {
-    await NodeFSP.mkdir(paths.profileDir, { recursive: true, mode: 0o700 });
-    const realProfileDir = await NodeFSP.realpath(paths.profileDir);
-    let parentDir = realProfileDir;
-    for (const segment of primarySegments.slice(0, -1)) {
-      parentDir = await ensureContainedRealDirectory(parentDir, NodePath.join(parentDir, segment));
-    }
-    const tokenPath = NodePath.join(parentDir, primarySegments.at(-1)!);
-    assertPathContainedWithin(parentDir, tokenPath);
-    return tokenPath;
-  };
-
   if (spec.ephemeralTokenFormat === "antigravity-oauth-json") {
     // Explicitly omit `refresh_token` so refresh credentials never touch a teammate's disk.
     const payload = {
@@ -745,10 +935,13 @@ export const materializeEphemeralLeaseToken = Effect.fn(
       ...(input.lease.email ? { id_token_email: input.lease.email } : {}),
     };
     yield* Effect.tryPromise({
-      try: async () => {
-        const tokenPath = await resolveContainedTokenPath();
-        await writeSecureTokenFile(tokenPath, `${encodeJsonUnknown(payload)}\n`, platform);
-      },
+      try: () =>
+        writePinnedRelativeTokenFile({
+          rootDir: paths.profileDir,
+          relativeSegments: primarySegments,
+          contents: `${encodeJsonUnknown(payload)}\n`,
+          platform,
+        }),
       catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
     }).pipe(
       Effect.catch((cause) =>
@@ -772,10 +965,13 @@ export const materializeEphemeralLeaseToken = Effect.fn(
       },
     };
     yield* Effect.tryPromise({
-      try: async () => {
-        const tokenPath = await resolveContainedTokenPath();
-        await writeSecureTokenFile(tokenPath, `${encodeJsonUnknown(payload)}\n`, platform);
-      },
+      try: () =>
+        writePinnedRelativeTokenFile({
+          rootDir: paths.profileDir,
+          relativeSegments: primarySegments,
+          contents: `${encodeJsonUnknown(payload)}\n`,
+          platform,
+        }),
       catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
     }).pipe(
       Effect.catch((cause) =>
@@ -798,26 +994,16 @@ export const purgeEphemeralLeaseTokens = Effect.fn(
   readonly driver: ProviderDriverKind;
 }): Effect.fn.Return<void, never, Digest.Digest | Path.Path> {
   const spec = getTeamHarnessProfile(input.driver);
+  const platform = yield* HostProcess.Platform;
   const paths = yield* resolveTeamProfilePaths(input);
   yield* Effect.tryPromise({
     try: async () => {
-      const realProfileDir = await NodeFSP.realpath(paths.profileDir).catch(() => undefined);
-      if (realProfileDir === undefined) return;
       for (const segments of spec.ephemeralTokenRelativePaths) {
-        let cursor = realProfileDir;
-        let escaped = false;
-        for (const segment of segments.slice(0, -1)) {
-          cursor = NodePath.join(cursor, segment);
-          const stat = await NodeFSP.lstat(cursor).catch(() => undefined);
-          if (stat === undefined || stat.isSymbolicLink() || !stat.isDirectory()) {
-            escaped = true;
-            break;
-          }
-        }
-        if (escaped) continue;
-        const leafPath = NodePath.join(cursor, segments.at(-1)!);
-        assertPathContainedWithin(realProfileDir, leafPath);
-        await NodeFSP.rm(leafPath, { force: true }).catch(() => undefined);
+        await purgePinnedRelativeTokenFile({
+          rootDir: paths.profileDir,
+          relativeSegments: segments,
+          platform,
+        }).catch(() => undefined);
       }
     },
     catch: () => undefined,
