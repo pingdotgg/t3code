@@ -348,7 +348,6 @@ export function PullRequestStackMenu({
       {display !== "trigger" &&
       (leadsWithAutoMerge || canMerge) &&
       !autoMergeArmed &&
-      conflictsWith === null &&
       selectedLayer?.state === "open" ? (
         <SharedTooltipTrigger
           render={
