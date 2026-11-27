@@ -211,7 +211,9 @@ const findLocalImages = (html: string) =>
     // Preserve raw text and quoted attributes; blank only comments without shifting offsets.
     html
       .replace(HTML_COMMENT_CONTEXT, (source) =>
-        source.startsWith("<!--") ? source.replace(/[^\r\n]/g, " ") : source,
+        source.startsWith("<!--")
+          ? source.replace(/[^\r\n]+/g, (run) => " ".repeat(run.length))
+          : source,
       )
       .matchAll(LOCAL_IMAGE_PATTERN),
   ).flatMap((match) => {

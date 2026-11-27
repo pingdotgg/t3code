@@ -304,7 +304,11 @@ export function SavedBackendListRow({
             onClick={() => setRoutesOpen((open) => !open)}
             className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
           >
-            {routeCount === 1 ? gt("Routes") : `${routeCount} routes`}
+            {routeCount === 1
+              ? gt("Routes")
+              : gt("{count, plural, one {{count} route} other {{count} routes}}", {
+                  count: routeCount,
+                })}
             <ChevronRightIcon
               aria-hidden
               className={cn(
