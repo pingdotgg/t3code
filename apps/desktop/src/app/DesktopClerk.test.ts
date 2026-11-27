@@ -7,7 +7,7 @@ import * as NodePathLayer from "@effect/platform-node/NodePath";
 import { codexAuthHandoffUrl, readCodexAuthDelivery } from "@t3tools/shared/codexAuthHandoff";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { managedPolicyPath } from "@t3tools/shared/managedPolicyFile";
+import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -67,6 +67,7 @@ const layerDesktopClerk = (
   },
   listeners = new Map<string, (...args: unknown[]) => void>(),
   stateDir = clerkStateDir,
+  managedPolicyLayer: Layer.Layer<DesktopManagedPolicy.DesktopManagedPolicy> = DesktopManagedPolicy.layerTest(),
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
     stateDir,
@@ -108,6 +109,7 @@ const layerDesktopClerk = (
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
         Layer.succeed(ElectronShell.ElectronShell, shell),
         fileSystemLayer,
+        managedPolicyLayer,
       ),
     ),
   );
@@ -324,35 +326,37 @@ describe("DesktopClerk", () => {
   it.each([
     {
       name: "limits.connect: false",
-      contents: JSON.stringify({
-        schemaVersion: 1,
+      policy: {
+        schemaVersion: 1 as const,
         organization: "Example Corp",
         limits: { connect: false },
-      }),
+      },
     },
     {
-      name: "invalid policy JSON (fail closed)",
-      contents: "{invalid json",
+      name: "unreadable policy (fail closed)",
+      policy: new ManagedPolicyFileError({ path: "/test/policy.json", reason: "bad JSON" }),
     },
   ])(
-    "skips creating the Clerk bridge synchronously when the managed policy file has $name",
-    ({ contents }) => {
+    "skips creating the Clerk bridge synchronously when DesktopManagedPolicy has $name",
+    ({ policy }) => {
       const events: string[] = [];
-      const policyFile = managedPolicyPath("linux");
-      const fileSystemLayer = FileSystem.layerNoop({
-        exists: (path) => Effect.succeed(path === policyFile),
-        readFileString: (path) =>
-          path === policyFile
-            ? Effect.succeed(contents)
-            : Effect.succeed(process.versions.electron ?? ""),
-        makeDirectory: () => Effect.void,
-        remove: () => Effect.void,
-        writeFileString: () => Effect.void,
-      });
 
       // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- The assertion IS that the layer builds synchronously; it.effect would mask a regression to async.
       Effect.runSync(
-        Effect.scoped(Layer.build(layerDesktopClerk(false, events, "linux", fileSystemLayer))),
+        Effect.scoped(
+          Layer.build(
+            layerDesktopClerk(
+              false,
+              events,
+              "darwin",
+              DesktopPreReadyFileSystem.layer,
+              undefined,
+              undefined,
+              clerkStateDir,
+              DesktopManagedPolicy.layerTest(policy),
+            ),
+          ),
+        ),
       );
 
       assert.deepEqual(events, [
@@ -366,48 +370,55 @@ describe("DesktopClerk", () => {
     },
   );
 
-  it.effect("cleans up the Clerk bridge in configure when a native policy disables Connect", () => {
-    const cleanup = vi.fn();
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockReturnValue({ cleanup, isPrimaryInstance: true });
-    const listeners = new Map<string, (...args: unknown[]) => void>();
-    const revealed = Promise.withResolvers<unknown>();
-    const window = { id: 1 };
-    const electronApp = {
-      on: (eventName: string, listener: (...args: unknown[]) => void) =>
-        Effect.sync(() => {
-          listeners.set(eventName, listener);
-        }),
-    } as unknown as ElectronApp.ElectronApp["Service"];
-    const electronWindow = {
-      currentMainOrFirst: Effect.succeedSome(window),
-      reveal: (value: unknown) => Effect.sync(() => revealed.resolve(value)),
-    } as unknown as ElectronWindow.ElectronWindow["Service"];
-
-    return Effect.gen(function* () {
-      const clerk = yield* DesktopClerk.DesktopClerk;
-      yield* clerk.configure;
-
-      assert.equal(cleanup.mock.calls.length, 1);
-      listeners.get("second-instance")!({}, ["t3"]);
-      assert.strictEqual(yield* Effect.promise(() => revealed.promise), window);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          layerDesktopClerk(false, [], "darwin", undefined, undefined, listeners),
-          DesktopManagedPolicy.layerTest({
-            schemaVersion: 1,
-            organization: "Example Corp",
-            limits: { connect: false },
+  it.effect(
+    "skips Clerk bridge acquisition while keeping window reveal working when DesktopManagedPolicy disables Connect",
+    () => {
+      const listeners = new Map<string, (...args: unknown[]) => void>();
+      const revealed = Promise.withResolvers<unknown>();
+      const window = { id: 1 };
+      const electronApp = {
+        on: (eventName: string, listener: (...args: unknown[]) => void) =>
+          Effect.sync(() => {
+            listeners.set(eventName, listener);
           }),
+      } as unknown as ElectronApp.ElectronApp["Service"];
+      const electronWindow = {
+        currentMainOrFirst: Effect.succeedSome(window),
+        reveal: (value: unknown) => Effect.sync(() => revealed.resolve(value)),
+      } as unknown as ElectronWindow.ElectronWindow["Service"];
+
+      return Effect.gen(function* () {
+        const clerk = yield* DesktopClerk.DesktopClerk;
+        yield* clerk.configure;
+
+        assert.equal(createClerkBridgeMock.mock.calls.length, 0);
+        assert.equal(storageMock.mock.calls.length, 0);
+        listeners.get("second-instance")!({}, ["t3"]);
+        assert.strictEqual(yield* Effect.promise(() => revealed.promise), window);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerDesktopClerk(
+            false,
+            [],
+            "darwin",
+            undefined,
+            undefined,
+            listeners,
+            clerkStateDir,
+            DesktopManagedPolicy.layerTest({
+              schemaVersion: 1,
+              organization: "Example Corp",
+              limits: { connect: false },
+            }),
+          ),
         ),
-      ),
-      Effect.provideService(ElectronApp.ElectronApp, electronApp),
-      Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
-      Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
-    );
-  });
+        Effect.provideService(ElectronApp.ElectronApp, electronApp),
+        Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
+        Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+      );
+    },
+  );
 });
 
 it.effect(

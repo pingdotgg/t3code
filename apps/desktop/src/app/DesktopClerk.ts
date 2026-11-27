@@ -16,7 +16,6 @@ import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
 import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import { readPairingAppLink } from "@t3tools/shared/remote";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { managedPolicyPath, readManagedPolicyFile } from "@t3tools/shared/managedPolicyFile";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
@@ -62,7 +61,6 @@ export class DesktopClerk extends Context.Service<
       never,
       | ElectronApp.ElectronApp
       | ElectronWindow.ElectronWindow
-      | DesktopManagedPolicy.DesktopManagedPolicy
       | DesktopWebLinks.DesktopWebLinks
       | Scope.Scope
     >;
@@ -139,34 +137,11 @@ export const make = Effect.gen(function* () {
     if (handleOpenUrl(url)) event.preventDefault();
   });
 
-  // Synchronous pre-ready check against the policy file so Connect-disabled deployments skip
-  // creating the Clerk bridge without yielding to the event loop. Platform-native policies
-  // (macOS MDM plist / Windows Registry) are checked in `configure` before Electron is ready.
-  const filePolicyAllowsConnect = yield* readManagedPolicyFile(
-    managedPolicyPath(environment.platform),
-  ).pipe(
-    Effect.map((document) => document?.limits?.connect !== false),
-    Effect.orElseSucceed(() => false),
-  );
-
-  let bridge: ReturnType<typeof createDesktopClerkBridge> | null = null;
-  const cleanupBridge = () => {
-    if (bridge === null) return Effect.void;
-    const activeBridge = bridge;
-    bridge = null;
-    return Effect.try({
-      try: () => activeBridge.cleanup(),
-      catch: (cause) =>
-        new DesktopClerkBridgeCleanupError({
-          stateDir: environment.stateDir,
-          isDevelopment: environment.isDevelopment,
-          cause,
-        }),
-    }).pipe(Effect.orDie);
-  };
-
-  if (filePolicyAllowsConnect) {
-    bridge = yield* Effect.acquireRelease(
+  // Evaluate the effective Managed Policy (including platform-native macOS MDM / Windows Registry)
+  // synchronously before Electron is ready so Connect-disabled deployments never register Clerk's
+  // bridge or privileged scheme.
+  if (yield* DesktopManagedPolicy.isConnectAllowed()) {
+    yield* Effect.acquireRelease(
       Effect.try({
         try: () =>
           createDesktopClerkBridge(
@@ -180,15 +155,21 @@ export const make = Effect.gen(function* () {
             cause,
           }),
       }),
-      () => cleanupBridge(),
+      (bridge) =>
+        Effect.try({
+          try: () => bridge.cleanup(),
+          catch: (cause) =>
+            new DesktopClerkBridgeCleanupError({
+              stateDir: environment.stateDir,
+              isDevelopment: environment.isDevelopment,
+              cause,
+            }),
+        }).pipe(Effect.orDie),
     );
   }
 
   return DesktopClerk.of({
     configure: Effect.gen(function* () {
-      if (!(yield* DesktopManagedPolicy.isConnectAllowed())) {
-        yield* cleanupBridge();
-      }
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
