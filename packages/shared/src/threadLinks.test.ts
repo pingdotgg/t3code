@@ -205,6 +205,21 @@ describe("thread links", () => {
   );
 
   it.each([
+    ["a paragraph with four spaces", "Intro\n    ~~~"],
+    ["a paragraph with eight spaces", "Intro\n        ~~~"],
+    ["a paragraph with a tab", "Intro\n\t```"],
+    ["a paragraph with a literal list marker", "Intro\n    - ```md"],
+    ["a list paragraph", "- Intro\n      ~~~"],
+    ["an HTML block", "<div>\n    ~~~\n</div>"],
+    ["deeply nested quotes", ">".repeat(6000) + " text\n\n    ~~~"],
+  ])("rewrites the prose link after %s", (_name, before) => {
+    const prose = `${before}\n\nSee `;
+    expect(replaceThreadLinks(`${prose}<t3-thread://v2/local/prose>`, () => "linked")).toBe(
+      `${prose}linked`,
+    );
+  });
+
+  it.each([
     ["4 spaces", "    ```md\n    <t3-thread://v1/abc>\n    ```", ""],
     ["tab", "\t```md\n\t<t3-thread://v1/abc>\n\t```", ""],
     ["list + 5 spaces", "-     ```md\n      <t3-thread://v1/abc>\n      ```", ""],
