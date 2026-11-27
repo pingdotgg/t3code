@@ -75,6 +75,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 
 import { changeRequestTermKind, type ChangeRequestTermKind } from "./changeRequestTerm";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface ReactionSurface {
   revealAnchor?: string | null;

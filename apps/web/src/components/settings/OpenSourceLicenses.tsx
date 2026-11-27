@@ -24,6 +24,7 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 class LicenseManifestLoadError extends Schema.TaggedError<LicenseManifestLoadError>()(
   "LicenseManifestLoadError",
