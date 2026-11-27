@@ -1185,7 +1185,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             return !!raw && !!populatedStrings[Number(raw)];
           }
           if (cell.attrs.t === "inlineStr") return hasXstringText(cell);
-          if (value && hasCellText(value)) return true;
+          if (value && hasXstringText(value)) return true;
           for (const formula of all(cell, "f")) if (hasCellText(formula)) return true;
           return false;
         };
@@ -1221,7 +1221,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             else if (cell.attrs.t === "b" && (raw.trim() === "0" || raw.trim() === "1"))
               yield* inCell([raw.trim() === "1" ? "true" : "false"]);
             else {
-              if (value && hasCellText(value)) yield* inCell(xstringText(value));
+              if (value && hasXstringText(value)) yield* inCell(xstringText(value));
               else for (const formula of all(cell, "f")) yield* inCell(text(formula));
               const formatId = formats[Number(cell.attrs.s ?? 0)]?.attrs.numFmtId;
               const format = formatId ? customFormats.get(formatId) : undefined;

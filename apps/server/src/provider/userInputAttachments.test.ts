@@ -1447,10 +1447,10 @@ describe("question answer paths", () => {
               '<Relationships><Relationship Id="a" Target="worksheets/a.xml"/></Relationships>',
             "xl/styles.xml": '<styleSheet><cellXfs><xf numFmtId="9"/></cellXfs></styleSheet>',
             "xl/worksheets/a.xml":
-              "<worksheet><row><c><f>SUM(11,22)</f><v/></c></row><row><c><f>SUM(33,44)</f><v> \n </v></c></row><row><c><f>SUM(55,66)</f></c></row><row><c><f>SUM(11,22)</f><v>33</v></c><c><f>SUM(0,0)</f><v>0</v></c></row></worksheet>",
+              '<worksheet><row><c><f>SUM(11,22)</f><v/></c></row><row><c><f>SUM(33,44)</f><v> \n </v></c></row><row><c><f>SUM(55,66)</f></c></row><row><c t="str"><f>CHAR(13)</f><v>_x000D_</v></c><c t="str"><f>CHAR(95)&amp;"x000D_"</f><v>_x005F_x000D_</v></c></row><row><c><f>SUM(11,22)</f><v>33</v></c><c><f>SUM(0,0)</f><v>0</v></c></row></worksheet>',
           },
           expected: [
-            "SUM(11,22)\nSUM(33,44)\nSUM(55,66)",
+            "SUM(11,22)\nSUM(33,44)\nSUM(55,66)\nCHAR(13)\t_x000D_",
             "33 [Excel numFmtId=9; date system 1900]\t0 [Excel numFmtId=9; date system 1900]",
           ],
           absent: ["SUM(0,0)", "[Extracted text truncated"],
