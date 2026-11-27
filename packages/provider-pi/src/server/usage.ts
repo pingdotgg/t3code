@@ -151,6 +151,7 @@ export const piUsageReader: ProviderUsageReader<PiSettings, PiUsageReaderEnv> = 
       environment,
       leafName: "sessions",
       filePattern: /^(?!rollout-|updates\.|session\.|chat_history\.|events\.).*\.jsonl$/,
+      fileProbeDepth: 1,
       exclude: [sessionsDir, ...(launchDir === undefined ? [] : [launchDir])],
     });
     // --session-dir moves only T3-launched sessions; terminal sessions stay in Pi's own directory.
