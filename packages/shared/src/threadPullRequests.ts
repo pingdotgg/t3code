@@ -43,11 +43,21 @@ export function threadSearchPullRequests(thread: {
     const newestFirst = [...visibleThreadPullRequests(thread.pullRequests)].sort(
       (left, right) => threadPullRequestUpdatedAtMs(right) - threadPullRequestUpdatedAtMs(left),
     );
-    return branch.concat(
-      newestFirst.map((link, index) =>
-        entry(link, index < SEARCHED_PULL_REQUEST_TITLES ? (link.snapshot?.title ?? null) : null),
-      ),
+    const synced = newestFirst.map((link, index) =>
+      entry(link, index < SEARCHED_PULL_REQUEST_TITLES ? (link.snapshot?.title ?? null) : null),
     );
+    // Synced entries first so a duplicate untitled branch PR cannot hide the title.
+    const branchPr = thread.branchPullRequest;
+    const duplicate =
+      branchPr !== null &&
+      branchPr !== undefined &&
+      newestFirst.some(
+        (link) =>
+          link.number === branchPr.number &&
+          (link.repository.toLowerCase() === branchPr.repository.toLowerCase() ||
+            link.url === branchPr.url),
+      );
+    return duplicate ? synced : synced.concat(branch);
   }
   return thread.linkedPullRequest ? branch.concat(entry(thread.linkedPullRequest, null)) : branch;
 }
