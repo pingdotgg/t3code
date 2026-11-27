@@ -1339,19 +1339,24 @@ type DelegatedChildControls = ProjectionRecords<
   readonly runsFloor?: OrchestrationV2Run | undefined;
 };
 
-/** A cancel also covers the run before the one it stopped, if that one completed as a monitor ack. */
+/**
+ * Callers pass the task's latest work run. A cancel also covers it when the run the cancel stopped
+ * can never be a result: it ended before starting, or it completed as a monitor acknowledgement.
+ */
 function cancelCoversRun(
   controls: Pick<DelegatedChildControls, "runs" | "messages">,
   cancelledRunId: RunId | undefined,
   run: OrchestrationV2Run,
 ): boolean {
-  if (cancelledRunId === undefined || cancelledRunId === run.id) return cancelledRunId === run.id;
-  const cancelledRun = controls.runs.find((candidate) => candidate.id === cancelledRunId);
-  return (
-    cancelledRun !== undefined &&
-    monitorUpdateRunIds(controls.messages, [cancelledRun]).has(cancelledRunId) &&
-    runRanAfter(cancelledRun, run)
-  );
+  if (cancelledRunId === run.id) return true;
+  if (cancelledRunId === undefined) return false;
+  const cancelled = controls.runs.find((candidate) => candidate.id === cancelledRunId);
+  if (cancelled === undefined || cancelled.completedAt === null) return false;
+  const neverResult =
+    cancelled.startedAt === null ||
+    (cancelled.status === "completed" &&
+      monitorUpdateRunIds(controls.messages, [cancelled]).has(cancelled.id));
+  return neverResult && runRanAfter(cancelled, run);
 }
 
 function ranSince(run: OrchestrationV2Run, floor: OrchestrationV2Run): boolean {
