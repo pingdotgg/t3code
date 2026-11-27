@@ -8886,11 +8886,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.take(harness.terminalReceipts);
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
-        const followUp = yield* harness.runtime.startTurn(turn(2, "default")).pipe(Effect.result);
-        assert.equal(
-          followUp._tag === "Failure" ? followUp.failure.cause?._tag : followUp._tag,
-          "Success",
-        );
+        yield* harness.runtime.startTurn(turn(2, "default"));
         assert.lengthOf(harness.offeredMessages, 2);
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
       }).pipe(
