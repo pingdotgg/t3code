@@ -354,6 +354,11 @@ function xml(source: string, extension: string): XmlNode {
         node.children = ["[", citation, ": ", body, "]"];
       }
     }
+    if (odf && node.name === "ruby" && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) {
+      const base = children(node).find((child) => child.name === "ruby-base");
+      const reading = children(node).find((child) => child.name === "ruby-text");
+      if (base?.hasText && reading?.hasText) node.children = [base, "(", reading, ")"];
+    }
     if (extension === ".epub" && node.name === "ruby" && stack[1]?.name === "html")
       separateRubyReadings(node);
     if (node.name === "Fallback" && !retainCompatibilityFallback(parent, node)) return;
