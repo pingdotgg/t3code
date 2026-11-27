@@ -530,6 +530,61 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
     );
 
+    it.effect("renews a startup-link DPoP session like a pairing link", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const key = makeDpopKey();
+        const exchange = (credential: string, proofKeyThumbprint?: string) =>
+          serverAuth.exchangeBootstrapCredentialForAccessToken(
+            credential,
+            undefined,
+            requestMetadata,
+            proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
+          );
+        const startup = () =>
+          serverAuth
+            .issueStartupPairingCredential()
+            .pipe(Effect.map((pairing) => pairing.credential));
+        const refused = (token: string) =>
+          serverAuth
+            .renewAccessToken(token, key.thumbprint, Effect.die("Refused before the proof."))
+            .pipe(
+              Effect.flip,
+              Effect.map((error) => error._tag),
+            );
+
+        // A client without a device key keeps the bearer session it always got.
+        const bearer = yield* exchange(yield* startup());
+        expect(bearer.expires_in).toBe(30 * 24 * 60 * 60);
+        expect(yield* refused(bearer.access_token)).toBe("ServerAuthInvalidCredentialError");
+        const desktop = yield* exchange("desktop-bootstrap-token", key.thumbprint);
+        expect(desktop.expires_in).toBe(60 * 60);
+        expect(yield* refused(desktop.access_token)).toBe("ServerAuthInvalidCredentialError");
+
+        const paired = yield* exchange(yield* startup(), key.thumbprint);
+        expect(paired.expires_in).toBe(60 * 60);
+        const { sessionId } = yield* sessions.verify(paired.access_token);
+        yield* TestClock.adjust("2 hours");
+        const renewed = yield* serverAuth.renewAccessToken(
+          paired.access_token,
+          key.thumbprint,
+          Effect.void,
+        );
+        expect((yield* sessions.verify(renewed.access_token)).sessionId).toBe(sessionId);
+        yield* TestClock.adjust("31 days");
+        expect(yield* refused(renewed.access_token)).toBe("ServerAuthInvalidCredentialError");
+      }).pipe(
+        Effect.provide(
+          layerEnvironmentAuth({
+            mode: "web",
+            host: "192.168.1.50",
+            desktopBootstrapToken: "desktop-bootstrap-token",
+          }),
+        ),
+      ),
+    );
+
     it.effect("renews a peer link's session while it is used, and no other MCP client's", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

@@ -22,9 +22,9 @@ model.
   credential; access listings expose metadata only.
 - **DPoP binding.** Browser cookies, bearer tokens, and DPoP tokens share the scoped session model.
   DPoP binds tokens to a client proof key; an invalid proof must fail rather than fall back to
-  bearer auth. Plain paired DPoP sessions renew in place so live sockets and Sharing & access rows
-  stay stable; T3 Connect, CLI, and desktop sessions never self-renew so revoking/unlinking cuts
-  them off.
+  bearer auth. Plain paired DPoP sessions, the startup pairing link's included, renew in place so
+  live sockets and Sharing & access rows stay stable; T3 Connect, CLI, and desktop sessions never
+  self-renew so revoking/unlinking cuts them off.
 - **WebSocket tickets and per-RPC authorization.** Bearer and DPoP clients mint short-lived tickets
   over authenticated HTTP so long-lived tokens never appear in socket URLs. DPoP RPC tickets stay
   proof-key bound at upgrade. A successful handshake grants no extra authority: every RPC declares
