@@ -6,6 +6,7 @@ import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "@t3tools/shared/remote";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import { m, type MessageResolver } from "../../i18n/messages";
+import { formatDateTimeTimestamp } from "../../timestampFormat";
 import {
   isLoopbackHostname,
   type ServerClientSessionRecord,
@@ -174,15 +175,7 @@ export async function applyWslEnableSelection(input: {
 }
 
 export function formatAccessTimestamp(value: string, timestampFormat: TimestampFormat): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-    ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
-  });
+  return formatDateTimeTimestamp(value, timestampFormat) || value;
 }
 
 export function parseManualDesktopSshTarget(
