@@ -12239,13 +12239,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             {
               threadId: nativeThreadId,
               cursor: null,
-              limit: 1,
+              limit: 2,
               sortDirection: "desc",
               itemsView: "summary",
             },
             {
               result: {
-                data: [{ id: "native-turn-second", items: [], status: "completed", error: null }],
+                data: [
+                  { id: "native-turn-second", items: [], status: "completed", error: null },
+                  { id: "native-turn-first", items: [], status: "completed", error: null },
+                ],
                 nextCursor: null,
               },
             },
@@ -12288,6 +12291,123 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
       assert.equal(snapshot.providerThread.nativeThreadRef?.nativeId, nativeThreadId);
       assert.deepEqual(snapshot.providerThread.nativeConversationHeadRef, firstTurn.nativeTurnRef);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("does not revert more Codex turns when a rollback is retried", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "retried-rollback-thread";
+      const thread = codexReplayThreadResult({ nativeThreadId, forkedFromId: null });
+      const exchange = (
+        id: number,
+        method: string,
+        params: unknown,
+        result: unknown,
+      ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+        { type: "expect_outbound", label: method, frame: { id, method, params } },
+        { type: "emit_inbound", label: method, frame: { id, result } },
+      ];
+      const readHistoryMode = (id: number) =>
+        exchange(
+          id,
+          "thread/read",
+          { threadId: nativeThreadId, includeTurns: false },
+          { thread: { id: nativeThreadId, historyMode: "paginated" } },
+        );
+      const listNewestTurns = (id: number, turnIds: ReadonlyArray<string>) =>
+        exchange(
+          id,
+          "thread/turns/list",
+          {
+            threadId: nativeThreadId,
+            cursor: null,
+            limit: 2,
+            sortDirection: "desc",
+            itemsView: "summary",
+          },
+          {
+            data: turnIds.map((turnId) => ({
+              id: turnId,
+              items: [],
+              status: "completed",
+              error: null,
+            })),
+            nextCursor: null,
+          },
+        );
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-retried-rollback",
+        entries: [
+          ...codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId: "retried-rollback-turn",
+            prompt: "unused",
+          }).slice(0, 5),
+          ...readHistoryMode(3),
+          ...listNewestTurns(4, ["native-turn-second", "native-turn-first"]),
+          ...exchange(
+            5,
+            "thread/revert",
+            { threadId: nativeThreadId, beforeTurnId: "native-turn-second" },
+            thread,
+          ),
+          ...readHistoryMode(6),
+          ...listNewestTurns(7, ["native-turn-first"]),
+          ...exchange(8, "thread/read", { threadId: nativeThreadId, includeTurns: false }, thread),
+        ],
+      });
+      const outbound: Array<string> = [];
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        () => Effect.void,
+        (method) =>
+          Effect.sync(() => {
+            outbound.push(method);
+          }),
+      );
+      const now = yield* DateTime.now;
+      const firstTurn = codexReplaySourceTurn({
+        id: "provider-turn-first",
+        ordinal: 1,
+        nativeId: "native-turn-first",
+        providerThreadId: harness.providerThread.id,
+        now,
+      });
+      const secondTurn = codexReplaySourceTurn({
+        id: "provider-turn-second",
+        ordinal: 2,
+        nativeId: "native-turn-second",
+        providerThreadId: harness.providerThread.id,
+        now,
+      });
+      // A failed file restore retries the rollback before its result is recorded,
+      // so the retry sees the same provider turns as the first attempt.
+      const rollbackToFirstTurn = harness.runtime.rollbackThread({
+        providerThread: harness.providerThread,
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("checkpoint-retried-rollback"),
+          appRunOrdinal: 1,
+          providerTurn: firstTurn,
+        },
+        providerThreadTurns: [firstTurn, secondTurn],
+      });
+
+      yield* rollbackToFirstTurn;
+      const retried = yield* rollbackToFirstTurn;
+
+      assert.deepEqual(retried.providerThread.nativeConversationHeadRef, firstTurn.nativeTurnRef);
+      assert.equal(outbound.filter((method) => method === "thread/revert").length, 1);
     }).pipe(
       Effect.scoped,
       Effect.provide(

@@ -3,7 +3,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as Effect from "effect/Effect";
 
-import { revertCodexThread } from "./CodexThreadRevert.ts";
+import { revertCodexThread, revertCodexThreadAfterTurn } from "./CodexThreadRevert.ts";
 
 const page = (
   id: number,
@@ -84,6 +84,57 @@ it.effect("rejects repeated cursors instead of looping or reverting incomplete h
         version: "test",
         scenario: "revert-loop",
         entries: [...page(1, null, 3, ["newest"], "again"), ...page(2, "again", 2, [], "again")],
+      }),
+    ),
+  ),
+);
+
+it.effect("reverts from the turn just newer than the kept turn across pages", () =>
+  Effect.gen(function* () {
+    const client = yield* CodexClient.CodexAppServerClient;
+    const result = yield* revertCodexThreadAfterTurn(client, "thread", "kept", 1).pipe(Effect.flip);
+    assert.equal(result.message, "boundary reached");
+  }).pipe(
+    Effect.provide(
+      CodexReplay.layerReplay({
+        provider: "codex",
+        protocol: "codex.app-server",
+        version: "test",
+        scenario: "revert-after-turn-pages",
+        entries: [
+          ...page(1, null, 2, ["newest", "unrecorded"], "older"),
+          ...page(2, "older", 2, ["kept", "oldest"], null),
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 3,
+              method: "thread/revert",
+              params: { threadId: "thread", beforeTurnId: "unrecorded" },
+            },
+          },
+          {
+            type: "emit_inbound",
+            frame: { id: 3, error: { code: -32603, message: "boundary reached" } },
+          },
+        ],
+      }),
+    ),
+  ),
+);
+
+it.effect("fails instead of reverting when the kept turn is not in the thread", () =>
+  Effect.gen(function* () {
+    const client = yield* CodexClient.CodexAppServerClient;
+    const result = yield* revertCodexThreadAfterTurn(client, "thread", "kept", 1).pipe(Effect.flip);
+    assert.equal(result.message, "Turn kept is not in Codex thread thread.");
+  }).pipe(
+    Effect.provide(
+      CodexReplay.layerReplay({
+        provider: "codex",
+        protocol: "codex.app-server",
+        version: "test",
+        scenario: "revert-after-missing-turn",
+        entries: page(1, null, 2, ["newest", "older"], null),
       }),
     ),
   ),
