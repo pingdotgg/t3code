@@ -921,12 +921,45 @@ class ClaudeMcpRegistrationTimeoutError extends Schema.TaggedError<ClaudeMcpRegi
   }
 }
 
+const ClaudeQueryReplacementChange = Schema.Literals([
+  "plan",
+  "access",
+  "workspace",
+  "tools",
+  "model",
+  "reasoning",
+  "restart",
+]);
+
+// Only model and reasoning changes are checked after every launch setting matched, so
+// reverting them is the one undo guaranteed to reuse the running process.
+const CLAUDE_QUERY_REPLACEMENT_CHANGE_TEXT = {
+  plan: { change: "leaving or entering Plan mode" },
+  access: { change: "changing the access mode" },
+  workspace: { change: "changing this thread's folders" },
+  tools: { change: "reconnecting Claude to T3's tools" },
+  model: {
+    change: "switching the model or its context window",
+    undo: "switch back to the previous model and settings",
+  },
+  reasoning: { change: "changing the thinking or effort setting", undo: "change it back" },
+  restart: { change: "restarting Claude for this message" },
+} satisfies Record<
+  typeof ClaudeQueryReplacementChange.Type,
+  { readonly change: string; readonly undo?: string }
+>;
+
 export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.TaggedError<ClaudeBackgroundWorkBlocksQueryReplacementError>()(
   "ClaudeBackgroundWorkBlocksQueryReplacementError",
-  {},
+  { change: ClaudeQueryReplacementChange },
 ) {
   override get message(): string {
-    return "Claude is still running background agents or commands, and this model or setting change would end them. Wait for them to finish, or press Stop, then send the message again.";
+    const text: { readonly change: string; readonly undo?: string } =
+      CLAUDE_QUERY_REPLACEMENT_CHANGE_TEXT[this.change];
+    const blocked = `Claude is still running background agents or commands, and ${text.change} would end them.`;
+    return text.undo === undefined
+      ? `${blocked} Wait for them to finish, or press Stop. Then send the message again.`
+      : `${blocked} To send now, ${text.undo}. Otherwise, wait for them to finish or press Stop, then send the message again.`;
   }
 }
 
@@ -4138,6 +4171,43 @@ export function claudeEffectiveQueryPolicyKey(
   });
 }
 
+// A new native session or launch setting replaces the process whatever the selection says.
+function claudeQueryReplacementChange(
+  live: ClaudeLiveQueryContext,
+  next: {
+    readonly nativeThreadId: string;
+    readonly resume: boolean;
+    readonly queryPolicy: ClaudeRuntimeQueryPolicy;
+    readonly queryPolicyKey: string;
+    readonly workspace: ProviderAdapter.ProviderAdapterV2RuntimePolicy["workspace"];
+    readonly selection: CompiledClaudeModelSelection;
+  },
+): typeof ClaudeQueryReplacementChange.Type {
+  if (next.resume || live.nativeThreadId !== next.nativeThreadId) return "restart";
+  if (live.queryPolicyKey !== next.queryPolicyKey) {
+    if (
+      claudeRuntimeQueryPolicyKey(live.queryPolicy) !==
+      claudeRuntimeQueryPolicyKey(next.queryPolicy)
+    ) {
+      return (live.queryPolicy.permissionMode === "plan") !==
+        (next.queryPolicy.permissionMode === "plan")
+        ? "plan"
+        : "access";
+    }
+    return JSON.stringify(live.workspace) !== JSON.stringify(next.workspace)
+      ? "workspace"
+      : "tools";
+  }
+  if (
+    live.selection.apiModelId !== next.selection.apiModelId ||
+    live.selection.pinnedAlias !== next.selection.pinnedAlias
+  ) {
+    return "model";
+  }
+  if (live.selection.queryIdentity !== next.selection.queryIdentity) return "reasoning";
+  return "restart";
+}
+
 type ClaudeToolItemType = Extract<
   OrchestrationV2TurnItem["type"],
   "command_execution" | "file_change" | "dynamic_tool" | "web_search"
@@ -5760,6 +5830,7 @@ interface ClaudeLiveQueryContext {
   readonly launchArgSettings: ClaudeSdkSettings | undefined;
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
+  readonly workspace: ProviderAdapter.ProviderAdapterV2RuntimePolicy["workspace"];
   selection: CompiledClaudeModelSelection;
   readonly program: string | undefined;
   readonly startedWithApiModelId: string;
@@ -14198,7 +14269,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             !existing.stopping &&
             (yield* liveProcessRunsBackgroundWork(existing))
           ) {
-            return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
+            return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError({
+              change: claudeQueryReplacementChange(existing, {
+                nativeThreadId,
+                resume: turnInput.resume === true,
+                queryPolicy,
+                queryPolicyKey,
+                workspace: turnInput.runtimePolicy.workspace,
+                selection: compiledSelection,
+              }),
+            });
           }
 
           if (reuseLaunchSettings) {
@@ -14355,6 +14435,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             launchArgSettings,
             query: querySession,
             queryPolicyKey,
+            workspace: turnInput.runtimePolicy.workspace,
             selection: compiledSelection,
             program,
             startedWithApiModelId: compiledSelection.apiModelId,

@@ -8815,9 +8815,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.strictEqual(harness.getOpenedOptions(), originalOptions);
         assert.lengthOf(harness.offeredMessages, 4);
 
-        for (const [ordinal, selection] of [
-          [5, CLAUDE_TEST_RESTART_MODEL_SELECTION],
-          [6, { ...normal, model: "claude-haiku-4-5-20251001" }],
+        for (const [ordinal, selection, change] of [
+          [5, CLAUDE_TEST_RESTART_MODEL_SELECTION, "model"],
+          [6, { ...normal, model: "claude-haiku-4-5-20251001" }, "model"],
         ] as const) {
           const refused = yield* harness.runtime
             .startTurn(turn(ordinal, selection))
@@ -8827,6 +8827,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             assert.instanceOf(
               refused.failure.cause,
               ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
+            );
+            assert.equal(
+              (
+                refused.failure
+                  .cause as ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError
+              ).change,
+              change,
             );
           }
         }
@@ -8844,6 +8851,101 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  const haiku = {
+    instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+    model: "claude-haiku-4-5-20251001",
+  } satisfies ModelSelection;
+  const fullAccessHaiku = { runtimeMode: "full-access", modelSelection: haiku } as const;
+  it.effect.each([
+    {
+      name: "leaving Plan with a model change",
+      first: { ...fullAccessHaiku, interactionMode: "plan" },
+      second: { ...fullAccessHaiku, modelSelection: { ...haiku, model: "claude-opus-5-5" } },
+      expected:
+        "leaving or entering Plan mode would end them. Wait for them to finish, or press Stop. Then send the message again.",
+    },
+    {
+      name: "an access mode change",
+      second: { runtimeMode: "approval-required", modelSelection: haiku },
+      expected:
+        "changing the access mode would end them. Wait for them to finish, or press Stop. Then send the message again.",
+    },
+    {
+      name: "a thinking change",
+      second: {
+        ...fullAccessHaiku,
+        modelSelection: { ...haiku, options: [{ id: "thinking", value: false }] },
+      },
+      expected:
+        "changing the thinking or effort setting would end them. To send now, change it back. Otherwise, wait for them to finish or press Stop, then send the message again.",
+    },
+    {
+      name: "a folder change",
+      second: {
+        ...fullAccessHaiku,
+        workspace: {
+          folders: [{ name: "second", path: "/second", isGitRepository: true }],
+          extraRoots: ["/second"],
+        },
+      },
+      expected:
+        "changing this thread's folders would end them. Wait for them to finish, or press Stop. Then send the message again.",
+    },
+  ] as const)("names $name as what background work blocks", (testCase) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const turn = (
+        ordinal: number,
+        input: {
+          readonly runtimeMode: "full-access" | "approval-required";
+          readonly modelSelection: ModelSelection;
+          readonly interactionMode?: "plan";
+          readonly workspace?: ProviderAdapter.ProviderAdapterV2RuntimeWorkspace;
+        },
+      ) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-named-change:${ordinal}`),
+          text: `Request ${ordinal}`,
+          attachments: [],
+          providerTurnOrdinal: ordinal,
+          modelSelection: input.modelSelection,
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: input.runtimeMode,
+            interactionMode: input.interactionMode ?? "default",
+            cwd: "/workspace",
+            ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
+          }),
+        });
+      yield* harness.runtime.startTurn(
+        turn(1, "first" in testCase ? testCase.first : fullAccessHaiku),
+      );
+      yield* harness.offerAndWait(wakeTaskStarted);
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+      const refused = yield* harness.runtime.startTurn(turn(2, testCase.second)).pipe(Effect.flip);
+      assert.equal(
+        makeProviderFailure({ cause: refused, class: "provider_error" }).message,
+        `Claude is still running background agents or commands, and ${testCase.expected}`,
+      );
+      assert.lengthOf(harness.offeredMessages, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   // regression: #34549 a model change sent with a steer was shown but never applied to the turn.
@@ -24714,7 +24816,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       assert.equal(
         makeProviderFailure({ cause: refused, class: "provider_error" }).message,
-        new ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError().message,
+        new ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError({ change: "model" })
+          .message,
       );
       assert.lengthOf(processQueues, 1);
 

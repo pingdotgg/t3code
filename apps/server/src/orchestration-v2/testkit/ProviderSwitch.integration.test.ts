@@ -334,7 +334,8 @@ function makeTestAdapter(input: {
                   providerThreadId: turnInput.providerThread.id,
                   runId: turnInput.runId,
                   cause:
-                    input.refusalCause ?? new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+                    input.refusalCause ??
+                    new ClaudeBackgroundWorkBlocksQueryReplacementError({ change: "model" }),
                 });
               yield* Effect.yieldNow;
               yield* Ref.update(input.capturedTurns, (turns) => [
@@ -2922,7 +2923,7 @@ describe("orchestration v2 provider switching", () => {
   );
 
   it.live.each([
-    ["background work", new ClaudeBackgroundWorkBlocksQueryReplacementError()],
+    ["background work", new ClaudeBackgroundWorkBlocksQueryReplacementError({ change: "model" })],
     ["an unreadable append file", new ClaudeAppendSystemPromptFileError({ path: "missing.md" })],
     [
       "an MCP registration timeout",
@@ -2953,12 +2954,12 @@ describe("orchestration v2 provider switching", () => {
     // Injected history is text only, so a refusal after injection must not settle the image.
     [
       "background work after native history injection",
-      new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+      new ClaudeBackgroundWorkBlocksQueryReplacementError({ change: "model" }),
       true,
     ],
     [
       "background work followed by a lost native session",
-      new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+      new ClaudeBackgroundWorkBlocksQueryReplacementError({ change: "model" }),
       false,
       true,
     ],
