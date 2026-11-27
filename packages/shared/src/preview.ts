@@ -174,7 +174,7 @@ export function resolveAddressBarInput(
     const host = authority.replace(/^[^@]*@/, "").replace(/:\d+$/, "");
     const hasPort = host.length < authority.replace(/^[^@]*@/, "").length;
     // URL parsing reads "3.14" as the IPv4 address 3.0.0.14; a short dotted number is a search.
-    const domain = /^[^.]+(?:\.[^.]+)+\.?$/.test(host) && !/^\d+(?:\.\d+){1,2}\.?$/.test(host);
+    const domain = /^[^.]+(?:\.[^.]+)+\.?$/.test(host) && !/^\d+(?:\.\d+){1,2}\.?$/.test(trimmed);
     if (hasPort || ADDRESS_HOST_PATTERN.test(host) || domain) {
       try {
         return normalizePreviewUrl(trimmed);

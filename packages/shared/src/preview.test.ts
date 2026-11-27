@@ -101,6 +101,8 @@ describe("resolveAddressBarInput", () => {
     expect(resolveAddressBarInput("10.0.0.2")).toBe("https://10.0.0.2/");
     expect(resolveAddressBarInput("10.0.0.2.")).toBe("https://10.0.0.2/");
     expect(resolveAddressBarInput("0x7f.0.0.2")).toBe("http://127.0.0.2/");
+    expect(resolveAddressBarInput("10.1/docs")).toBe("https://10.0.0.1/docs");
+    expect(resolveAddressBarInput("10.1?x=1")).toBe("https://10.0.0.1/?x=1");
   });
 
   it("still rejects empty input and unsupported schemes", () => {
