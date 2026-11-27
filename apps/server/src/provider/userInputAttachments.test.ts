@@ -1461,6 +1461,59 @@ describe("question answer paths", () => {
           absent: ["Omitted", "Draft", "Note", "Aside", "Formula"],
         },
         {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml": [
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="Retired"/></w:rPr><w:t>Old routing</w:t></w:r><w:r><w:rPr><w:rStyle w:val="RetiredChild"/></w:rPr><w:t>Old badge rules</w:t></w:r></w:p>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="VisibleChild"/></w:rPr><w:t>Current instructions</w:t></w:r></w:p>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="Retired"/><w:vanish w:val="0"/></w:rPr><w:t>Bring your badge.</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="WithToggle"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Retired"/></w:rPr><w:t>Both style levels toggle</w:t></w:r></w:p>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="CycleA"/></w:rPr><w:t>Unresolved cycle</w:t></w:r></w:p>',
+              '<w:tbl><w:tblPr><w:tblStyle w:val="ToggleTable"/></w:tblPr><w:tr><w:tc><w:p><w:r><w:rPr><w:rStyle w:val="Retired"/></w:rPr><w:t>Table style combination</w:t></w:r></w:p></w:tc></w:tr></w:tbl>',
+              "</w:body></w:document>",
+            ].join(""),
+            "word/_rels/document.xml.rels":
+              '<Relationships><Relationship Id="style" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="../styles/word.xml"/></Relationships>',
+            "styles/word.xml": [
+              '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+              '<w:style w:type="character" w:styleId="Retired"><w:rPr><w:vanish/></w:rPr></w:style>',
+              '<w:style w:type="character" w:styleId="RetiredChild"><w:basedOn w:val="Retired"/></w:style>',
+              '<w:style w:type="character" w:styleId="VisibleChild"><w:basedOn w:val="Retired"/><w:rPr><w:vanish w:val="false"/></w:rPr></w:style>',
+              '<w:style w:type="paragraph" w:styleId="WithToggle"><w:rPr><w:vanish/></w:rPr></w:style>',
+              '<w:style w:type="character" w:styleId="CycleA"><w:basedOn w:val="CycleB"/></w:style>',
+              '<w:style w:type="character" w:styleId="CycleB"><w:basedOn w:val="CycleA"/></w:style>',
+              '<w:style w:type="table" w:styleId="ToggleTable"><w:rPr><w:vanish/></w:rPr></w:style>',
+              "</w:styles>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "Current instructions\nBring your badge.\nBoth style levels toggle\nUnresolved cycle\nTable style combination",
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml": [
+              '<w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="Toggle"/></w:rPr><w:t>Default style combination</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="Plain"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Toggle"/></w:rPr><w:t>Hidden by strict document style</w:t></w:r></w:p>',
+              "</w:body></w:document>",
+            ].join(""),
+            "word/styles.xml": [
+              '<text:styles xmlns:text="http://purl.oclc.org/ooxml/wordprocessingml/main">',
+              '<text:style text:type="paragraph" text:styleId="Default" text:default="1"><text:rPr><text:vanish/></text:rPr></text:style>',
+              '<text:style text:type="character" text:styleId="Toggle"><text:rPr><text:vanish/></text:rPr></text:style>',
+              '<text:style text:type="paragraph" text:styleId="Plain"/>',
+              "</text:styles>",
+            ].join(""),
+          },
+          expected: [],
+          exact: "Default style combination",
+        },
+        {
           ext: "odt",
           parts: {
             "content.xml":

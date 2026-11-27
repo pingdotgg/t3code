@@ -211,7 +211,9 @@ function hasImportantDisplayNone(style: string): boolean {
   return hidden;
 }
 
-function xml(source: string, extension: string): XmlNode {
+type WordStyleRunHidden = (id: string, ancestors: readonly XmlNode[]) => boolean;
+
+function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRunHidden): XmlNode {
   const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
   const stack = [root];
@@ -306,6 +308,20 @@ function xml(source: string, extension: string): XmlNode {
     // MathML Core displays only the first element child of semantics by default.
     const isMathmlAlternative = parent.mathmlFirstChildSeen === true;
     if (parent.mathmlFirstChildSeen === false) parent.mathmlFirstChildSeen = true;
+    let wordRunHidden = false;
+    if (extension === ".docx" && node.name === "r") {
+      const properties = children(node).flatMap((child) =>
+        child.name === "rPr" ? children(child) : [],
+      );
+      const direct = wordVanish(properties.find((property) => property.name === "vanish"));
+      const style = properties.find((property) => property.name === "rStyle")?.attrs.val;
+      wordRunHidden =
+        direct ??
+        (style !== undefined &&
+          wordStyleRunHidden !== undefined &&
+          WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "") &&
+          wordStyleRunHidden(style, stack));
+    }
     const isCompatibilityChoice =
       node.name === "Choice" &&
       node.markupCompatibility &&
@@ -325,13 +341,7 @@ function xml(source: string, extension: string): XmlNode {
           !/^until-found$/i.test(String(tag.attributes.hidden))) ||
           hasImportantDisplayNone(tag.attributes.style ?? ""))) ||
       (extension === ".docx" && node.name === "del") ||
-      (extension === ".docx" &&
-        node.name === "r" &&
-        children(node)
-          .flatMap((child) => (child.name === "rPr" ? children(child) : []))
-          .some(
-            (prop) => prop.name === "vanish" && ["true", "1", "on"].includes(prop.attrs.val ?? "1"),
-          )) ||
+      wordRunHidden ||
       (odf && node.name === "annotation" && parent.name !== "semantics") ||
       (extension === ".odt" &&
         node.name === "section" &&
@@ -419,6 +429,12 @@ function xml(source: string, extension: string): XmlNode {
 
 const children = (node: XmlNode | undefined) =>
   node?.children.filter((child): child is XmlNode => typeof child !== "string") ?? [];
+
+function childNamed(node: XmlNode | undefined, name: string) {
+  return node?.children.find(
+    (child): child is XmlNode => typeof child !== "string" && child.name === name,
+  );
+}
 
 function slideRelationshipId(slide: XmlNode, inheritedAttributes: XmlNode["attrs"]) {
   for (const [name, value] of Object.entries(slide.attrs)) {
@@ -523,21 +539,64 @@ function hasXstringText(node: XmlNode): boolean {
   return false;
 }
 
-function wordStyleOutlineLevel(
-  outlines: Map<string, number | string | undefined>,
+function wordStyleProperty<Value extends number | boolean>(
+  styles: Map<string, Value | string | undefined>,
   id: string,
-): number | undefined {
-  let outline = outlines.get(id);
-  if (typeof outline !== "string") return outline;
+): Value | undefined {
+  let value = styles.get(id);
+  if (typeof value !== "string") return value;
   const visited = new Set<string>();
-  while (typeof outline === "string" && !visited.has(id)) {
+  while (typeof value === "string" && !visited.has(id)) {
     visited.add(id);
-    id = outline;
-    outline = outlines.get(id);
+    id = value;
+    value = styles.get(id);
   }
-  const level = typeof outline === "number" ? outline : undefined;
-  for (const styleId of visited) outlines.set(styleId, level);
-  return level;
+  const resolved = typeof value === "string" ? undefined : value;
+  for (const styleId of visited) styles.set(styleId, resolved);
+  return resolved;
+}
+
+function wordVanish(property: XmlNode | undefined): boolean | undefined {
+  if (!property) return;
+  const value = property.attrs.val?.trim() ?? "true";
+  if (["true", "1", "on"].includes(value)) return true;
+  if (["false", "0", "off"].includes(value)) return false;
+}
+
+function wordCharacterStyleVisibility(styles: XmlNode): WordStyleRunHidden | undefined {
+  const definitions = childNamed(styles, "styles");
+  const runDefaults = childNamed(childNamed(definitions, "docDefaults"), "rPrDefault");
+  if (wordVanish(childNamed(childNamed(runDefaults, "rPr"), "vanish"))) return;
+  const character = new Map<string, boolean | string | undefined>();
+  const paragraph = new Map<string, boolean | string | undefined>();
+  let defaultParagraph: string | undefined;
+  let tableCanToggle = false;
+  for (const style of children(definitions)) {
+    const { styleId, type } = style.attrs;
+    if (style.name !== "style" || !styleId) continue;
+    if (type === "table") {
+      tableCanToggle ||= [...all(style, "vanish", ["rPrChange"])].some(wordVanish);
+      continue;
+    }
+    const defined =
+      wordVanish(childNamed(childNamed(style, "rPr"), "vanish")) ??
+      childNamed(style, "basedOn")?.attrs.val;
+    if (type === "character") character.set(styleId, defined);
+    else if ((type ?? "paragraph") === "paragraph") {
+      paragraph.set(styleId, defined);
+      if (["true", "1", "on"].includes(style.attrs.default ?? "")) defaultParagraph = styleId;
+    }
+  }
+  if (![...character.values()].includes(true)) return;
+  return (id, ancestors) => {
+    if (!wordStyleProperty(character, id)) return false;
+    // A true value toggles the other style levels. Leave table formatting to the editor.
+    if (tableCanToggle && ancestors.some((ancestor) => ancestor.name === "tbl")) return false;
+    const owner = ancestors.findLast((ancestor) => ancestor.name === "p");
+    const named = childNamed(childNamed(owner, "pPr"), "pStyle")?.attrs.val;
+    const paragraphId = named && paragraph.has(named) ? named : defaultParagraph;
+    return paragraphId === undefined || wordStyleProperty(paragraph, paragraphId) !== true;
+  };
 }
 
 function* paragraphs(node: XmlNode): Generator<TextPart, void> {
@@ -1219,11 +1278,11 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
     const notes: string[] = [];
     const skip = (name: string) =>
       notes.push(`\n[Skipped document part: ${name} (missing or invalid XML).]\n`);
-    const read = (name: string): XmlNode => {
+    const read = (name: string, wordStyleRunHidden?: WordStyleRunHidden): XmlNode => {
       try {
         const data = files.get(part(name));
         if (!data) throw new Error("Missing document part");
-        return xml(data, extension);
+        return xml(data, extension, wordStyleRunHidden);
       } catch (error) {
         if (error instanceof Truncation) throw error;
         skip(name);
@@ -1255,7 +1314,6 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
     };
     if (extension === ".docx") {
       const main = mainPart("word/document.xml");
-      const doc = read(main);
       const rels = partRels(main);
       const target = has(rels)
         ? all(read(rels), "Relationship").find(
@@ -1263,11 +1321,13 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
           )?.attrs.Target
         : undefined;
       const dir = `/${NodePath.posix.dirname(main)}`;
-      const styles = NodePath.posix.resolve(dir, target || "styles.xml").slice(1);
-      if (has(styles)) {
+      const stylesPath = NodePath.posix.resolve(dir, target || "styles.xml").slice(1);
+      const styles = has(stylesPath) ? read(stylesPath) : undefined;
+      const doc = read(main, styles && wordCharacterStyleVisibility(styles));
+      if (styles) {
         const outlines = new Map<string, number | string | undefined>();
         const headings = new Map<string, string>();
-        for (const style of all(read(styles), "style")) {
+        for (const style of all(styles, "style")) {
           const id = style.attrs.styleId;
           if ((style.attrs.type ?? "paragraph") !== "paragraph" || !id) continue;
           const properties = children(style);
@@ -1283,7 +1343,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         if (outlines.size || headings.size)
           for (const pStyle of all(doc, "pStyle", ["pPrChange"])) {
             const id = pStyle.attrs.val ?? "";
-            const outline = wordStyleOutlineLevel(outlines, id);
+            const outline = wordStyleProperty(outlines, id);
             if (outline !== undefined) pStyle.wordOutlineHeadingLevel = outline;
             else {
               const heading = headings.get(id);
