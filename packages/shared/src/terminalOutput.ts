@@ -1091,9 +1091,8 @@ function redrawTabbedLine(line: string): string {
   }
   let text = leadingMarks;
   let emitted = 0;
-  for (const column of [...cells.keys()].sort((a, b) => a - b)) {
-    const cell = cells.get(column);
-    if (cell == null) continue;
+  for (const [column, cell] of [...cells].sort(([a], [b]) => a - b)) {
+    if (cell === null) continue;
     text += " ".repeat(column - emitted) + cell;
     emitted = column + (cells.get(column + 1) === null ? 2 : 1);
   }
