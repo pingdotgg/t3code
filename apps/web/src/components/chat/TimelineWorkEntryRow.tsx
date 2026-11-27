@@ -79,8 +79,8 @@ import {
   workEntryRawCommand,
   buildToolCallExpandedBody,
   workEntryIconName,
+  sliceThoughtPreviewSource,
   thoughtPreviewMarkdown,
-  THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
 } from "./TimelineWorkEntryRow.logic";
 
 export function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {
@@ -216,6 +216,7 @@ export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<Time
           threadRef={ctx.threadRef ?? undefined}
           skills={ctx.skills}
           isStreaming={isStreaming(entry)}
+          streamingId={entry.id}
           headingLevelOffset={MESSAGE_HEADING_LEVEL}
           onUseArtifactTemplate={ctx.onUseArtifactTemplate}
           onImageExpand={ctx.onImageExpand}
@@ -265,7 +266,7 @@ export function ViewedImagesTimelineRow({
   if (!threadRef) return null;
   return (
     <div className="flex flex-wrap items-start gap-2 px-0.5" data-image-gallery>
-      {row.paths.map((path) => {
+      {row.images.map(({ path, pending }) => {
         const image = resolveViewedImageAsset(path, {
           threadId: threadRef.threadId,
           workspaceRoot,
@@ -275,6 +276,7 @@ export function ViewedImagesTimelineRow({
             key={path}
             environmentId={threadRef.environmentId}
             resource={image.resource}
+            pending={pending}
             alt={image.alt}
             srcFragment={image.srcFragment}
             workspaceRoot={workspaceRoot}
@@ -603,10 +605,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               {isReasoning && !expanded ? (
                 <ChatMarkdown
                   inline
-                  text={(workEntry.detail ?? previewText).slice(
-                    0,
-                    THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
-                  )}
+                  text={sliceThoughtPreviewSource(workEntry.detail ?? previewText)}
                   cwd={ctx.markdownCwd}
                   parseRawHtml={false}
                   extensions={

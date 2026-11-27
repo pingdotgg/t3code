@@ -43,18 +43,16 @@ import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
 
 describe("resolveTimelineMinimapHitStrip", () => {
   it.each([
-    { viewport: 1280, content: 768, left: 32, width: 40 },
-    { viewport: 768, content: 672, left: 32, width: 16 },
-    { viewport: 768, content: 704, left: 0, width: 8 },
-    { viewport: 768, content: 720, left: 0, width: 8 },
-    { viewport: 768, content: 756, left: 0, width: 6 },
-    { viewport: 768, content: 768, left: 0, width: 0 },
-  ])(
-    "keeps the minimap inside the gutter at $viewport/$content",
-    ({ viewport, content, left, width }) => {
-      expect(resolveTimelineMinimapHitStrip(viewport, content)).toEqual({ left, width });
-    },
-  );
+    { gutter: 256, left: 32, width: 40 },
+    { gutter: 48, left: 32, width: 16 },
+    { gutter: 32, left: 0, width: 8 },
+    { gutter: 24, left: 0, width: 8 },
+    { gutter: 6, left: 0, width: 6 },
+    { gutter: 0, left: 0, width: 0 },
+    { gutter: -4, left: 0, width: 0 },
+  ])("keeps the minimap inside a $gutter px gutter", ({ gutter, left, width }) => {
+    expect(resolveTimelineMinimapHitStrip(gutter)).toEqual({ left, width });
+  });
 });
 
 describe("resolveAssistantMessageCopyState", () => {
@@ -2459,7 +2457,9 @@ describe("deriveMessagesTimelineRows", () => {
         supportsConversationRollback: false,
       });
       return rows.flatMap((row, index) =>
-        row.kind === "viewed-images" ? [{ after: rows[index - 1]?.kind, paths: row.paths }] : [],
+        row.kind === "viewed-images"
+          ? [{ after: rows[index - 1]?.kind, paths: row.images.map(({ path }) => path) }]
+          : [],
       );
     };
     const paths = ["/repo/docs/sidebar.png", "/repo/docs/topbar.png"];

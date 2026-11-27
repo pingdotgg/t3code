@@ -190,9 +190,10 @@ export function WorkflowStateWord({ node }: { readonly node: WorkflowRunNode }) 
 
 const nthTry = (count: number, resolve: MessageResolver) =>
   resolve(
-    msg("{count, plural, =1 {1st try} =2 {2nd try} =3 {3rd try} other {{count}th try}}", {
-      count,
-    }),
+    msg(
+      "{count, selectordinal, one {{count}st try} two {{count}nd try} few {{count}rd try} other {{count}th try}}",
+      { count },
+    ),
   );
 
 const queuedText = (beat: WorkflowBeat, resolve: MessageResolver) =>

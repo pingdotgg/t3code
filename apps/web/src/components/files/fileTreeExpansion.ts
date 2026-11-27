@@ -1,3 +1,4 @@
+import type { ProjectEntry } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
@@ -82,6 +83,18 @@ export function setAllDirectoriesExpanded(
   }
 }
 
+/** Maps each listed parent path to its only child, or to null when it holds several entries. */
+export function onlyChildren(
+  entries: readonly ProjectEntry[],
+): ReadonlyMap<string, ProjectEntry | null> {
+  const result = new Map<string, ProjectEntry | null>();
+  for (const entry of entries) {
+    const parent = entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/")));
+    result.set(parent, result.has(parent) ? null : entry);
+  }
+  return result;
+}
+
 /** Calls made while `run` is running rerun it once it returns, instead of nesting. */
 export function coalesceReentrantCalls(run: () => void): () => void {
   let running = false;
@@ -106,6 +119,8 @@ export function coalesceReentrantCalls(run: () => void): () => void {
 const EXPANDED_DIRECTORIES_STORAGE_KEY = "t3code.fileTreeExpandedDirectories";
 // Roots are kept most recent first and capped so worktrees that come and go do not grow storage.
 const MAX_STORED_ROOTS = 20;
+// Every restored folder is listed when the panel mounts, so a root keeps the folders nearest it.
+const MAX_STORED_PATHS_PER_ROOT = 100;
 const StoredExpandedDirectories = Schema.Array(
   Schema.Struct({ root: Schema.String, paths: Schema.Array(Schema.String) }),
 );
@@ -119,13 +134,23 @@ function readStoredExpandedDirectories() {
   }
 }
 
+function nearestToRoot(paths: readonly string[]): readonly string[] {
+  if (paths.length <= MAX_STORED_PATHS_PER_ROOT) return paths;
+  const depth = (path: string) => path.split("/").length;
+  return paths
+    .toSorted((left, right) => depth(left) - depth(right))
+    .slice(0, MAX_STORED_PATHS_PER_ROOT);
+}
+
 export function readExpandedDirectories(root: string): readonly string[] {
-  return readStoredExpandedDirectories().find((entry) => entry.root === root)?.paths ?? [];
+  return nearestToRoot(
+    readStoredExpandedDirectories().find((entry) => entry.root === root)?.paths ?? [],
+  );
 }
 
 export function writeExpandedDirectories(root: string, paths: readonly string[]): void {
   const others = readStoredExpandedDirectories().filter((entry) => entry.root !== root);
-  const next = paths.length > 0 ? [{ root, paths }, ...others] : others;
+  const next = paths.length > 0 ? [{ root, paths: nearestToRoot(paths) }, ...others] : others;
   try {
     setLocalStorageItem(
       EXPANDED_DIRECTORIES_STORAGE_KEY,

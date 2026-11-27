@@ -1543,6 +1543,7 @@ it.layer(
           ...previousProvider,
           checkedAt: "2026-10-30T00:01:00.000Z",
           models: [previousProvider.models[0]],
+          ...(driver === "claudeAgent" ? { modelsIncomplete: true } : {}),
         } satisfies ServerProvider;
 
         assert.deepStrictEqual(
@@ -1551,6 +1552,49 @@ it.layer(
         );
       },
     );
+
+    it("drops a Claude gateway model the same gateway no longer lists (#43603)", () => {
+      const auth = {
+        status: "authenticated",
+        type: "customEndpoint",
+        label: "Custom API endpoint",
+        endpoint: "http://127.0.0.1:15721",
+      } as const;
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth,
+        checkedAt: "2026-11-25T00:00:00.000Z",
+        version: "2.1.332",
+        models: [
+          { slug: "claude-sonnet-5-5", name: "Sonnet 5.5", isCustom: false, capabilities: null },
+          {
+            slug: "gw--model:free[1m]",
+            name: "gw--model:free",
+            isCustom: false,
+            capabilities: null,
+          },
+          { slug: "gw--model:free", name: "gw--model:free", isCustom: false, capabilities: null },
+        ],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const refreshedProvider = {
+        ...previousProvider,
+        checkedAt: "2026-11-26T00:00:00.000Z",
+        models: [previousProvider.models[0], previousProvider.models[1]],
+      } satisfies ServerProvider;
+
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models.map(
+          (model) => model.slug,
+        ),
+        ["claude-sonnet-5-5", "gw--model:free[1m]"],
+      );
+    });
 
     it("retains stale OpenCode models when a refresh fails or lists none", () => {
       const previousProvider = {
@@ -2934,6 +2978,28 @@ it.layer(
         displayName = "Account B";
         yield* PubSub.publish(changes, undefined);
         assert.isTrue(Option.isSome(yield* Fiber.join(relabelled)));
+      }),
+    );
+
+    it.effect("reports a provider's mode limits, and none where it has no say", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        const limitsOf = (id: ProviderInstanceId) =>
+          h.registry.runtimeModeLimits({ instanceId: id, scanCwd: "/workspace" });
+        assert.deepEqual(yield* limitsOf(h.first.instance.instanceId), []);
+        assert.deepEqual(yield* limitsOf(ProviderInstanceId.make("removed")), []);
+        yield* Ref.set(h.instances, [
+          {
+            ...h.first.instance,
+            runtimeModeLimitsForCwd: (cwd) =>
+              Effect.succeed(
+                cwd === "/workspace" ? [{ mode: "auto", reason: "project-settings" }] : [],
+              ),
+          },
+        ]);
+        assert.deepEqual(yield* limitsOf(h.first.instance.instanceId), [
+          { mode: "auto", reason: "project-settings" },
+        ]);
       }),
     );
 
@@ -4716,6 +4782,55 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
+    it.effect("drops a retired gateway model when the surviving model is configured manually", () =>
+      Effect.gen(function* () {
+        const surviving = { value: "gateway/current", displayName: "Current", description: "" };
+        const retired = { value: "gateway/retired", displayName: "Retired", description: "" };
+        const settings = {
+          ...defaultClaudeSettings,
+          customModels: [{ slug: surviving.value, name: "My current model" }],
+        };
+        const environment = {
+          ANTHROPIC_BASE_URL: "https://gateway.example",
+          CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+        };
+        const before = yield* checkClaudeProviderStatus(
+          settings,
+          claudeCapabilities({ models: [surviving, retired] }),
+          environment,
+        );
+        const after = yield* checkClaudeProviderStatus(
+          settings,
+          claudeCapabilities({ models: [surviving] }),
+          environment,
+        );
+        const instanceId = ProviderInstanceId.make("claudeAgent");
+        const driver = ProviderDriverKind.make("claudeAgent");
+        const visible = ProviderRegistry.mergeProviderSnapshot(
+          { ...before, instanceId, driver },
+          { ...after, instanceId, driver },
+        );
+        assert.include(
+          before.models.map((model) => model.slug),
+          retired.value,
+        );
+        assert.deepStrictEqual(
+          visible.models
+            .filter((model) => model.slug.startsWith("gateway/"))
+            .map((model) => model.slug),
+          [surviving.value],
+        );
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "2.1.332\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("adds models Claude Code reports that the catalog does not know", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(
@@ -4758,6 +4873,7 @@ it.layer(
             ["gateway/kimi-3[1m]", "Kimi (mine)", true],
           ],
         );
+        assert.strictEqual(status.modelsIncomplete, undefined);
         assert.deepStrictEqual(added[0]?.capabilities?.optionDescriptors, []);
         assert.deepStrictEqual(added[1]?.capabilities?.optionDescriptors, [
           {
@@ -4970,6 +5086,7 @@ it.layer(
         assert.strictEqual(status.auth.status, "authenticated");
         assert.strictEqual(status.auth.type, "customEndpoint");
         assert.strictEqual(status.auth.label, "Custom API endpoint");
+        assert.strictEqual(status.modelsIncomplete, true);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {
