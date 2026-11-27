@@ -597,7 +597,7 @@ class Terminal {
     }
   }
 
-  private applyLineControl(code: number): boolean {
+  private control(code: number): boolean {
     if (code === 0x0a) this.newline();
     else if (code === 0x0d) this.col = 0;
     else if (code === 0x08) this.col = Math.max(0, this.col - 1);
@@ -620,13 +620,13 @@ class Terminal {
       printable = index + 1;
       if (code === 0x1b) {
         let start = index + 1;
-        while (this.applyLineControl(input.charCodeAt(start))) start += 1;
+        while (this.control(input.charCodeAt(start))) start += 1;
         const end = escapeEnd(input, start);
         let sequence = ESC + input.slice(start, end === -1 ? input.length : end);
         if (sequence[1] === "[") {
           // Apply line controls now and leave them out of the CSI, including any pending fragment.
           sequence = sequence.replace(/[\b\n\r]/gu, (control) => {
-            this.applyLineControl(control.charCodeAt(0));
+            this.control(control.charCodeAt(0));
             return "";
           });
         }
@@ -642,7 +642,7 @@ class Terminal {
         index = end - 1;
         printable = end;
       } else {
-        this.applyLineControl(code);
+        this.control(code);
       }
     }
     const last = input.charCodeAt(input.length - 1);
