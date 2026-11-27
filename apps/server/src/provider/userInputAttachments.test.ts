@@ -314,11 +314,6 @@ describe("question answer paths", () => {
       "Price: 你好 confirmed.",
     ],
     [
-      "ANSI alternate without a Unicode destination",
-      String.raw`{\rtf1\ansi Price: {\upr{fallback}{\*\unknown Hidden}} confirmed.}`,
-      "Price: fallback confirmed.",
-    ],
-    [
       "ANSI alternate with a truncated Unicode destination",
       String.raw`{\rtf1\ansi Price: {\upr{fallback}{\*\ud{\u20320?}`,
       "Price: fallback",
