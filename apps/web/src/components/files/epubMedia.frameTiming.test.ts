@@ -66,6 +66,22 @@ it.each([
     "00:02:00:04",
     "00:02:00.087 --> 00:02:00.120",
   ],
+  [
+    "continuous SMPTE NTSC clocks without a frame label at a drop minute",
+    ttml,
+    `${smpte} ${ntscRate} p:dropMode="dropNTSC"`,
+    "00:00:59:27",
+    "00:01:00",
+    "00:00:59.960 --> 00:00:59.993",
+  ],
+  [
+    "continuous SMPTE PAL clocks without a frame label at a drop minute",
+    ttml,
+    `${smpte} ${ntscRate} p:dropMode="dropPAL"`,
+    "00:01:59:25",
+    "00:02:00",
+    "00:01:59.953 --> 00:01:59.987",
+  ],
 ])("keeps captions using %s", (_label, namespace, parameters, begin, end, timing) => {
   const captions = parseXml(`
     <tt xmlns="${namespace}" xmlns:p="${namespace}#parameter" ${parameters}>
