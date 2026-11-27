@@ -1145,8 +1145,11 @@ function opened(positionKey: string, children: ReactNode) {
   );
 }
 
-it("saves a large file from a native Windows path before the host OS is known", async () => {
-  const path = "C:\\workspace\\large.log";
+it.each([
+  { path: "/tmp/report\\draft.log", name: "report\\draft.log" },
+  { path: "C:\\workspace\\large.log", name: "large.log" },
+  { path: "//server/share\\large.log", name: "large.log" },
+])("saves $path as $name before the host OS is known", async ({ path, name }) => {
   state.file = { relativePath: path, contents: "log", byteLength: 1_200_000, truncated: true };
   state.mintUrl.mockResolvedValueOnce("data:text/plain,log");
   const download = Promise.withResolvers<string>();
@@ -1158,7 +1161,7 @@ it("saves a large file from a native Windows path before the host OS is known", 
 
   await using screen = await render(filePreview(path));
   await screen.getByRole("button", { name: "Save file", exact: true }).click();
-  expect(await download.promise).toBe("large.log");
+  expect(await download.promise).toBe(name);
 });
 
 describe("large text scroll position", () => {

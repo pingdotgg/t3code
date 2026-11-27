@@ -7,7 +7,9 @@ export function fileDownloadName(
   pathKind: FileDownloadPathKind,
   hostOs: ExecutionEnvironmentPlatformOs = "unknown",
 ): string {
-  const separator =
-    pathKind === "host" && (hostOs === "windows" || hostOs === "unknown") ? /[\\/]/ : "/";
+  const isSingleSlashRooted = path.startsWith("/") && !path.startsWith("//");
+  const usesWindowsSeparators =
+    pathKind === "host" && (hostOs === "windows" || (hostOs === "unknown" && !isSingleSlashRooted));
+  const separator = usesWindowsSeparators ? /[\\/]/ : "/";
   return path.split(separator).at(-1) || path;
 }
