@@ -236,8 +236,9 @@ function withStopNotice(
 type MonitorNotice = Pick<OrchestrationV2ConversationMessage, "runId" | "notification">;
 
 /**
- * Runs that only acknowledged a monitor update are never a task's work. One still executing, or
- * one that ended without completing, may have stopped or lost the work the task waits on.
+ * Monitor-update runs that are never a task's work: queued ones, which can wait on a usage limit
+ * without a hold, and completed ones, which only acknowledged the update. One executing, or one
+ * that ended without completing, may have stopped or lost the work the task waits on.
  */
 export function monitorUpdateRunIds(
   messages: ReadonlyArray<MonitorNotice>,
@@ -253,7 +254,11 @@ export function monitorUpdateRunIds(
       .map((message) => message.runId),
   );
   return new Set(
-    runs.flatMap((run) => (run.status === "completed" && updateRunIds.has(run.id) ? [run.id] : [])),
+    runs.flatMap((run) =>
+      (run.status === "completed" || run.status === "queued") && updateRunIds.has(run.id)
+        ? [run.id]
+        : [],
+    ),
   );
 }
 

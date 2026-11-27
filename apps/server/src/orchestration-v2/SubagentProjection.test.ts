@@ -378,6 +378,21 @@ it("waits for nested work and retains the report across monitor acknowledgements
   });
   assert.equal(failed.state, "result_available");
   assert.equal(failed.resultRun?.id, monitor.id);
+  // A usage limit leaves later wakes queued without a hold, so a queued update holds nothing.
+  const queuedUpdate = {
+    ...monitor,
+    status: "queued" as const,
+    startedAt: null,
+    completedAt: null,
+  };
+  assert.equal(
+    delegatedTaskProgress({
+      ...projection,
+      runs: [run, { ...report, status: "failed" }, queuedUpdate],
+      messages: [update],
+    }).state,
+    "result_available",
+  );
   const ended = { ...report, id: RunId.make("monitor-ended"), ordinal: 4 };
   const afterMonitorEnded = delegatedTaskProgress({
     ...projection,

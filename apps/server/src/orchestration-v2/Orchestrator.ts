@@ -1339,6 +1339,21 @@ type DelegatedChildControls = ProjectionRecords<
   readonly runsFloor?: OrchestrationV2Run | undefined;
 };
 
+/** A cancel also covers the run before the one it stopped, if that one completed as a monitor ack. */
+function cancelCoversRun(
+  controls: Pick<DelegatedChildControls, "runs" | "messages">,
+  cancelledRunId: RunId | undefined,
+  run: OrchestrationV2Run,
+): boolean {
+  if (cancelledRunId === undefined || cancelledRunId === run.id) return cancelledRunId === run.id;
+  const cancelledRun = controls.runs.find((candidate) => candidate.id === cancelledRunId);
+  return (
+    cancelledRun !== undefined &&
+    monitorUpdateRunIds(controls.messages, [cancelledRun]).has(cancelledRunId) &&
+    runRanAfter(cancelledRun, run)
+  );
+}
+
 function ranSince(run: OrchestrationV2Run, floor: OrchestrationV2Run): boolean {
   return run.id === floor.id || runRanAfter(run, floor);
 }
@@ -15565,7 +15580,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // A cancelled task's completed run ends it interrupted, as does one whose provider turn its
       // parent's Stop interrupted to kill background work. Stop's marker on an idle run names no
       // provider turn and interrupted nothing.
-      const cancelled = task.cancelledRunId === childRun.id;
+      const cancelled = cancelCoversRun(childControls, task.cancelledRunId, childRun);
       const stopped =
         task.completionDelivery?.state === "disposed" &&
         childResult.turnItems.some(
@@ -15787,7 +15802,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const resultTaskId = resultRun?.delegatedTaskId ?? forkedFrom.nodeId;
     const resultTask = parent.subagents.find((task) => task.id === resultTaskId);
     const taskCancelled =
-      resultTask?.cancelledRunId !== undefined && resultTask.cancelledRunId === resultRun?.id;
+      resultRun !== undefined &&
+      cancelCoversRun(childControls, resultTask?.cancelledRunId, resultRun);
     if (
       resultRun === undefined ||
       (taskCancelled ? cancelAwaitsWork : progress.state !== "result_available")
@@ -17428,13 +17444,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             const followUpRun = child.runs
               .filter((run) => run.delegatedTaskId === input.taskId)
               .toSorted((a, b) => b.ordinal - a.ordinal)[0];
-            const monitorRunIds = new Set(
-              child.messages
-                .filter((message) => message.notification?.source.kind === "monitor")
-                .map((message) => message.runId),
-            );
             const activeRun = child.runs
-              .filter((run) => isLiveRun(run) && !monitorRunIds.has(run.id))
+              .filter(isLiveRun)
               .toSorted((a, b) => b.ordinal - a.ordinal)[0];
             const cancelledRun = followUpRun ?? activeRun ?? progressAfterTurn(child).resultRun;
             const now = yield* DateTime.now;
