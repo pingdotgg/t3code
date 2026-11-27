@@ -86,6 +86,12 @@ export function UseInAnotherAppDialogHost() {
 function UseInAnotherAppDialog({ requested }: { readonly requested: EnvironmentId | null }) {
   const { environment, label } = useAccessEnvironment(requested);
   const gt = useGT();
+  const messages = useMessages();
+  const connectDenial = managedCapabilityDenial(
+    useManagedPolicy(environment?.environmentId),
+    "connect",
+    messages,
+  );
   const title = `${gt("Use T3 Code in another app (MCP)")} · ${label ?? "T3 Code"}`;
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : close())}>
@@ -100,7 +106,7 @@ function UseInAnotherAppDialog({ requested }: { readonly requested: EnvironmentI
                 title={
                   environment === null
                     ? gt("Connect to an environment first.")
-                    : gt("T3 Connect is not available in this build.")
+                    : (connectDenial ?? gt("T3 Connect is not available in this build."))
                 }
               />
             </WizardPanel>

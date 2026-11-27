@@ -85,9 +85,11 @@ describe("hasCloudPublicConfig", () => {
       });
       // The desktop answer is cached per session, so evaluate the module fresh for this case.
       vi.resetModules();
-      const { hasCloudPublicConfig: hasFreshCloudPublicConfig } = await import("./publicConfig.ts");
+      const fresh = await import("./publicConfig.ts");
 
-      expect(hasFreshCloudPublicConfig()).toBe(false);
+      expect(fresh.hasCloudPublicConfig()).toBe(false);
+      // Copy that explains a managed denial still knows cloud is configured.
+      expect(fresh.cloudConfigured()).toBe(true);
     });
   });
 });

@@ -51,7 +51,7 @@ import {
   resolveServerSelfUpdateCapability,
   supportsDesktopAppUpdate,
 } from "~/versionSkew";
-import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { cloudConfigured, hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
@@ -873,7 +873,19 @@ export function CloudLinkRow({
   readonly connectDeviceApproval: ConnectDeviceApprovalControl | null;
 }) {
   const gt = useGT();
-  if (!hasCloudPublicConfig()) return null;
+  const messages = useMessages();
+  const connectDenial = managedCapabilityDenial(
+    useManagedPolicy(environmentId),
+    "connect",
+    messages,
+  );
+  if (!cloudConfigured()) return null;
+  // Managed Policy turns Clerk off on this desktop, so only the organization's reason shows.
+  if (!hasCloudPublicConfig()) {
+    return connectDenial === undefined ? null : (
+      <SettingsRow title={gt("T3 Connect")} description={connectDenial} />
+    );
+  }
   if (!canReadRelay) {
     return (
       <SettingsRow

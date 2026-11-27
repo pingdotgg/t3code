@@ -103,8 +103,13 @@ function connectEnabledOnDesktop(): boolean {
   return desktopConnectEnabled;
 }
 
+/** Clerk may run: cloud is configured and, on desktop, Managed Policy allows T3 Connect. */
 export function hasCloudPublicConfig(): boolean {
-  if (!connectEnabledOnDesktop()) return false;
+  return connectEnabledOnDesktop() && cloudConfigured();
+}
+
+/** Cloud is configured for this origin, whatever Managed Policy says; used to explain a denial. */
+export function cloudConfigured(): boolean {
   const config = resolveCloudPublicConfig();
   if (!config.clerkPublishableKey || !config.clerkJwtTemplate || !config.relayUrl) {
     return false;
