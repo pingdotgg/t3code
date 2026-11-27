@@ -8975,6 +8975,39 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    // A read-only folder stops the delete partway, as a process still writing into it does.
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
+      "keeps a worktree Git can remove again when its folder cannot be fully deleted",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const pathService = yield* Path.Path;
+          const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "stuck");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/stuck",
+          });
+          const locked = pathService.join(worktreePath, "build");
+          yield* writeTextFile(worktreePath, "build/out.txt", "output\n");
+          NodeFS.chmodSync(locked, 0o555);
+
+          const result = yield* Effect.result(
+            driver.removeWorktree({ cwd, path: worktreePath, force: true }),
+          );
+          NodeFS.chmodSync(locked, 0o755);
+
+          assert.isTrue(Result.isFailure(result));
+          assert.include(yield* git(cwd, ["worktree", "list", "--porcelain"]), worktreePath);
+          yield* git(worktreePath, ["rev-parse", "--git-dir"]);
+          yield* driver.removeWorktree({ cwd, path: worktreePath, force: true });
+          assert.isFalse(NodeFS.existsSync(worktreePath));
+        }),
+    );
+
     it.effect("prunes stale registrations when removing an already-gone worktree", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

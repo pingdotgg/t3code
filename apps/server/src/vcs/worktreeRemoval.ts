@@ -1,5 +1,4 @@
 import { GitCommandError } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -46,9 +45,10 @@ export const isLinkedWorktree = Effect.fn("WorktreeRemoval.isLinkedWorktree")(fu
 });
 
 /**
- * Git for Windows before 2.54 follows NTFS junctions; newer Git leaves them behind.
- * On Windows, mirror Git's removal checks, then delete with Node's `rm`, which
- * unlinks junctions without following them. Git then removes the worktree metadata.
+ * Git drops a worktree's metadata even when it fails to delete the folder partway, leaving a
+ * folder no repository lists; Git for Windows before 2.54 also follows NTFS junctions. So mirror
+ * Git's removal checks, delete with Node's `rm`, which unlinks junctions without following them,
+ * and only then let Git remove the metadata.
  */
 export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorktree")(function* <
   A,
@@ -102,12 +102,10 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
       Effect.mapError((cause) => refuse(`failed to replace '${gitFile}'`, cause)),
     );
   }
-  const linked =
-    (yield* HostProcess.isWindows) &&
-    (yield* fileSystem.stat(gitFile).pipe(
-      Effect.map((info) => info.type === "File"),
-      Effect.orElseSucceed(() => false),
-    ));
+  const linked = yield* fileSystem.stat(gitFile).pipe(
+    Effect.map((info) => info.type === "File"),
+    Effect.orElseSucceed(() => false),
+  );
   if (!linked) {
     return yield* input.run([
       ...statusConfig,
