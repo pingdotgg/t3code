@@ -821,6 +821,21 @@ describe("copying a table as CSV", () => {
     expect(text).toBe(["```", "A  B", "-  -", "X  P", "Y  Z", "```"].join("\n"));
   });
 
+  it("keeps header rows before rows placed directly in the table", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(
+          new FakeElement("TH").append(new FakeText("A")),
+          new FakeElement("TH", [], { align: "right" }).append(new FakeText("B")),
+        ),
+      ),
+      row(td(new FakeText("x")), td(new FakeText("yy"))),
+    );
+
+    const { text } = serializeTableElementForChat(table as unknown as Element);
+    expect(text).toBe(["```", "A   B", "-  --", "x  yy", "```"].join("\n"));
+  });
+
   it("counts flag and keycap emoji as two columns, and plain digits as one", () => {
     const table = new FakeElement("TABLE").append(
       new FakeElement("THEAD").append(
