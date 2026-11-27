@@ -2333,7 +2333,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return { status: "skipped" } as const;
     }
     snoozingThreadKeysRef.current.add(threadKey);
-    const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
+    // Rescheduling an already-snoozed thread parks nothing new, so you stay put.
+    const navigateAfterSnooze = snoozedThreadKeysRef.current.has(threadKey)
+      ? null
+      : planForwardNavigation(threadKey, opts.coSnoozingKeys);
     if (navigateAfterSnooze) departRouteThread(threadKey);
     const result = await snoozeThread(threadRef, preset.snoozedUntil);
     snoozingThreadKeysRef.current.delete(threadKey);
