@@ -298,6 +298,7 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     projectId: task.projectId,
     boundThreadId: task.threadId,
     freshSession: scheduledTaskThreadMode(task) === "fresh_session",
+    runtimeMode: task.runtimeMode,
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
@@ -2474,6 +2475,16 @@ const make = Effect.gen(function* () {
       }
       const modelSelection =
         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+      // A caller names no mode for its task, so it starts with the project's
+      // effective default, as the composer and t3_thread_launch do. Its mode
+      // stays within the ceiling the caller was approved with.
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
+      const runtimeMode = yield* resolveRuntimeMode(
+        limits.runtimeMode,
+        resolveProjectSettings(settings, project.id, project).settings.defaultRuntimeMode,
+      ).pipe(Effect.orElseSucceed(() => limits.runtimeMode));
       // Never end on a lone high surrogate, which renders as a broken character.
       const derivedTitle = (input.prompt.split("\n")[0]?.trim() ?? "")
         .slice(0, 80)
@@ -2503,7 +2514,7 @@ const make = Effect.gen(function* () {
             : "new_thread",
         workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
         modelSelection,
-        runtimeMode: limits.runtimeMode,
+        runtimeMode,
         interactionMode: limits.interactionMode,
         createdBy: "agent",
         creationSource: "mcp",
@@ -2530,7 +2541,14 @@ const make = Effect.gen(function* () {
             failure("orchestration_error", `Could not schedule task: ${error.message}`),
           ),
         );
-      return yield* summarizeScheduledTask(scope, { parent, limits }, task);
+      yield* Effect.logInfo("Scheduled task created", {
+        scheduledTaskId: task.id,
+        projectId,
+        runtimeMode: task.runtimeMode,
+        ceiling: limits.runtimeMode,
+      });
+      const summary = yield* summarizeScheduledTask(scope, { parent, limits }, task);
+      return summary;
     }),
     listScheduledTasks: Effect.fn("OrchestratorMcpService.listScheduledTasks")(
       function* (scope, input) {
