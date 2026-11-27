@@ -9646,7 +9646,7 @@
   "42828d2fd1f35806": "Residentminne",
   "e97f1b37426da9ff": "{bytes} sammanlagda processtoppar",
   "3dd6eb5644a6ed8b": "Antal processer",
-  "85f0adb1de45cbc1": "{processStarts} starter · {processExits} avslut",
+  "57320c95780c065c": "{processStarts, plural, one {{processStarts} start} other {{processStarts} starter}} · {processExits} avslut",
   "0f0ae2813abd70e4": "Läsgenomströmning",
   "dc52330df5cc4586": "{bytes} observerade",
   "d032b2addb6f00dc": "Skrivgenomströmning",
