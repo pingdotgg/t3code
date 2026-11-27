@@ -9,6 +9,7 @@ import type { EnvironmentId, ReviewDiffPreviewSource, ThreadId } from "@t3tools/
 
 import { useCheckpointDiff } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { lastReviewGitSectionsAtom, reviewEnvironment } from "../../state/review";
 import { lastReviewTurnDiffsAtom, reviewTurnDiffText } from "../../state/reviewTurnDiffs";
@@ -162,6 +163,7 @@ export function useReviewSections(input: {
         ? branchPreview
         : null;
 
+  const fetchReviewBase = useAtomCommand(reviewEnvironment.fetchBase, { reportFailure: false });
   const refreshSelectedSection = async () => {
     if (!enabled) {
       return;
@@ -169,6 +171,14 @@ export function useReviewSections(input: {
     if (selectedSection?.kind === "turn") {
       activeTurnDiff.refresh();
       return;
+    }
+    // Automatic Git fetches can be off, so asking for a refresh first brings the base up to date.
+    if (
+      selectedSection?.kind === "branch-range" &&
+      environmentId !== undefined &&
+      selectedThreadCwd !== null
+    ) {
+      await fetchReviewBase({ environmentId, input: { cwd: selectedThreadCwd } });
     }
     if (selectedGitPreview) {
       selectedGitPreview.refresh();

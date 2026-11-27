@@ -41,6 +41,12 @@ export const ReviewDiffPreviewInput = Schema.Struct({
 });
 export type ReviewDiffPreviewInput = typeof ReviewDiffPreviewInput.Type;
 
+export const ReviewFetchBaseInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  baseRef: Schema.optional(GitRefName),
+});
+export type ReviewFetchBaseInput = typeof ReviewFetchBaseInput.Type;
+
 export const ReviewBranchCommitsInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   baseRef: Schema.optional(GitRefName),
