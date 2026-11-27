@@ -13,10 +13,14 @@ export const resolveCodexLaunchArgs = (
 const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
 
 // T3 unsubscribes only when it unloads a thread; Codex's own unload delay would stack on that.
+// The desktop app's bundled plugin fails without the app's private pipe; the app re-enables it itself.
+// Codex's -c parser takes this key unquoted and silently ignores the TOML-quoted form.
 export const codexAppServerArgs = (launchArgs?: string) => [
   "app-server",
   "-c",
   "thread_unload_delay_secs=0",
+  "-c",
+  "plugins.codex-app-tools@openai-bundled.enabled=false",
   ...codexLaunchArgv(launchArgs),
 ];
 
