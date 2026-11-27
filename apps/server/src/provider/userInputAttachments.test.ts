@@ -846,6 +846,9 @@ describe("question answer paths", () => {
               "<div>Note<div>  <em>indented</em></div></div>",
               "<section>Summary of decisions.<article><strong>Motion 12 carried.</strong></article><article><em>Motion 13 deferred.</em></article>Meeting adjourned.</section>",
               "<div>Keep <article></article>reading.</div>",
+              '<section>Choose a route.<nav><a href="#east">East pier</a> | <a href="#west">West pier</a></nav>All departures are in local time.</section>',
+              "<div>Keep <nav></nav>walking.</div>",
+              '<div>Keep<x:nav xmlns:x="urn:example"> this </x:nav>inline.</div>',
               "</body></html>",
             ].join(""),
           },
@@ -857,6 +860,7 @@ describe("question answer paths", () => {
             "Name\nValue",
             "Note\n  indented",
             "Summary of decisions.\nMotion 12 carried.\nMotion 13 deferred.\nMeeting adjourned.\nKeep reading.",
+            "Choose a route.\nEast pier | West pier\nAll departures are in local time.\nKeep walking.\nKeep this inline.",
           ],
         },
         // A prefixed span attribute is foreign markup, not an XHTML span.
@@ -1273,6 +1277,19 @@ describe("question answer paths", () => {
           },
           expected: ["Kept\n", "[Extracted text truncated at document extraction limits.]"],
           absent: ["Far"],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w"><w:body>\n\t<w:tbl>' +
+              "<w:tr><w:tc><w:p><w:r><w:t/></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>USD</w:t></w:r></w:p></w:tc></w:tr>" +
+              "<w:tr><w:tc><w:p><w:r><w:t>Revenue</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>900</w:t></w:r></w:p></w:tc></w:tr>" +
+              "</w:tbl>\n</w:body></w:document>",
+          },
+          expected: [],
+          exact: "\tUSD\nRevenue\t900",
         },
         {
           ext: "docx",
@@ -1915,6 +1932,7 @@ describe("question answer paths", () => {
           expect(extracted.split(item.occurrences.text).length - 1).toBe(item.occurrences.count);
         if ("absent" in item)
           for (const absent of item.absent) expect(extracted).not.toContain(absent);
+        if ("exact" in item) expect(extracted).toBe(item.exact);
         if (("bounded" in item && item.bounded) || item.ext === "epub") {
           expect(extracted.length).toBeLessThan(1_000_100);
           expect(extracted.match(/\[Extracted text truncated/g)?.length ?? 0).toBeLessThanOrEqual(

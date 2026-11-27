@@ -202,6 +202,34 @@ function isolateThemes() {
   };
 }
 
+it("keeps a numbered copy when the theme name expands in its ID", async () => {
+  using _themes = isolateThemes();
+  const name = "İstanbul İncisi İzmir İskenderun İnegöl İpsala";
+  const original = installCustomTheme(parseThemeFile(theme(name)));
+  const updated = theme(name, "#f97316");
+  await using _screen = await render(
+    <ThemeImportDialog
+      open
+      onOpenChange={() => {}}
+      onImported={() => true}
+      onImportedMany={() => {}}
+    />,
+  );
+
+  await userEvent.fill(page.getByRole("textbox", { name: "Theme JSON" }), JSON.stringify(updated));
+  await page.getByRole("button", { name: "Add theme", exact: true }).click();
+  await expect.element(page.getByText("Already installed")).toBeVisible();
+  await page.getByRole("button", { name: "Keep both" }).click();
+
+  const themes = getCustomThemes();
+  expect(themes).toHaveLength(2);
+  expect(themes.find(({ id }) => id === original.id)).toEqual(original);
+  expect(themes.find(({ id }) => id !== original.id)).toMatchObject({
+    label: "İstanbul İncisi İzmir İskenderun İnegöl İ (1)",
+    colors: parseThemeFile(updated).colors,
+  });
+});
+
 it("sizes an oversized theme file just under 1 MB as 1.00 MB", async () => {
   using _themes = isolateThemes();
   await using _screen = await render(
