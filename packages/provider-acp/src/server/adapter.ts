@@ -99,6 +99,7 @@ import {
   parsePermissionRequest,
   parseSessionUpdateEvent,
   sessionUpdateIsReplay,
+  TOOL_CALL_CONTENT_TRUNCATION_MARKER,
   toolCallVisibleOutputChanged,
   unreadToolCallUpdate,
   withTrackedChangedPaths,
@@ -1353,7 +1354,6 @@ function appendToolContentText(content: unknown, text: string): unknown[] {
 }
 
 const MAX_CLAIMED_TOOL_RESULT_IMAGE_BYTES = 16 * 1024 * 1024;
-const BOUNDED_TEXT_MARKER = "[Earlier output truncated]\n\n";
 
 function claimedToolResultImageSize(value: unknown): number {
   let bytes = 0;
@@ -5963,9 +5963,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 const partialHint =
                   hintMeta !== undefined &&
                   ((typeof hintMeta.url === "string" &&
-                    !hintMeta.url.includes(BOUNDED_TEXT_MARKER)) ||
+                    !hintMeta.url.includes(TOOL_CALL_CONTENT_TRUNCATION_MARKER)) ||
                     (typeof hintMeta.screenshotPath === "string" &&
-                      !hintMeta.screenshotPath.includes(BOUNDED_TEXT_MARKER)))
+                      !hintMeta.screenshotPath.includes(TOOL_CALL_CONTENT_TRUNCATION_MARKER)))
                     ? compactReported
                     : undefined;
                 if (
