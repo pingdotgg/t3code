@@ -1807,6 +1807,8 @@ interface ActiveTextSegment {
   emitted: boolean;
   // Text changed since the last emission; a delayed flush is scheduled.
   dirty: boolean;
+  /** An answer to a prompt that a steer then extended; it stays visible as `final_answer`. */
+  finalAnswer?: boolean;
 }
 
 interface ActiveTextStream {
@@ -1876,6 +1878,13 @@ interface ActiveAcpTurn {
   readonly pendingInjectedReport: Set<string>;
   /** Reports can precede monitor end notices; consume their completion marker without re-arming. */
   earlyInjectedReportObserved: boolean;
+  /**
+   * Steers the agent took while still working on an earlier prompt. Prompt-steering agents
+   * answer that prompt first in the same turn, so each one marks the next closing reply final.
+   */
+  steersAwaitingAnswer: number;
+  /** The turn's latest closed reply, which a steer that follows it marks final. */
+  lastClosedAssistant: ActiveTextSegment | null;
   readonly plans: Map<
     string,
     {
@@ -3720,9 +3729,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           kind: "user" | "assistant" | "reasoning",
           completed: boolean,
           flushOf?: ActiveTextSegment,
+          closedSegment?: ActiveTextSegment,
         ) {
           const stream = textStreamFor(context, kind);
-          const segment = stream.current;
+          const segment = closedSegment ?? stream.current;
           if (segment === null) return;
           if (flushOf !== undefined && (segment !== flushOf || !segment.dirty)) return;
           // The node carries no text, so it changes only when the segment
@@ -3835,6 +3845,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       messageId,
                       text,
                       streaming: !completed,
+                      ...(segment.finalAnswer === true ? { phase: "final_answer" as const } : {}),
                     },
                   },
             );
@@ -3894,11 +3905,38 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const stream = textStreamFor(context, kind);
           const segment = stream.current;
           if (segment === null) return;
+          const answers = kind === "assistant" && segment.text.trim().length > 0;
+          if (answers && context.steersAwaitingAnswer > 0 && segment.finalAnswer !== true) {
+            segment.finalAnswer = true;
+            context.steersAwaitingAnswer -= 1;
+          }
           yield* emitTextSegment(context, kind, true);
           if (segment.sourceMessageId !== null) {
             stream.closedNamedSegments.set(segment.sourceMessageId, segment);
           }
+          if (answers) context.lastClosedAssistant = segment;
           stream.current = null;
+        });
+
+        /**
+         * A prompt-steering agent answers the prompt it is on before it reads the steer, all in
+         * one turn, so the timeline would fold that answer away with the turn's work. A reply that
+         * closed as the turn's latest item is that answer; otherwise the next reply to close is.
+         */
+        const markAnswerBeforeSteer = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          const answered = context.lastClosedAssistant;
+          const latestOrdinal = context.input.providerTurnOrdinal * 100 + context.itemOrdinals.size;
+          if (
+            context.assistant.current === null &&
+            answered !== null &&
+            context.itemOrdinals.get(answered.nativeItemId) === latestOrdinal
+          ) {
+            if (answered.finalAnswer === true) return;
+            answered.finalAnswer = true;
+            yield* emitTextSegment(context, "assistant", true, undefined, answered);
+            return;
+          }
+          context.steersAwaitingAnswer += 1;
         });
 
         const closeTextStreams = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
@@ -10675,6 +10713,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               awaitingBackgroundHydration: new Set(),
               pendingInjectedReport: new Set(),
               earlyInjectedReportObserved: false,
+              steersAwaitingAnswer: 0,
+              lastClosedAssistant: null,
               plans: new Map(),
               interrupted: false,
               finalized: false,
@@ -11002,6 +11042,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     { type: "text", text },
                     ...attachmentBlocks,
                   ];
+                  yield* markAnswerBeforeSteer(context);
                   // The steer prompt carries the turn on, also past a prompt that already settled.
                   const released = context.foregroundIdle;
                   context.foregroundIdle = yield* Deferred.make<void>();

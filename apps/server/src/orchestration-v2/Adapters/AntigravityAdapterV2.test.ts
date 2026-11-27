@@ -1630,6 +1630,8 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   options?: {
     readonly profileDirectory?: string;
     readonly initialToolCalls?: ReadonlyArray<EffectAcpSchema.SessionUpdate>;
+    /** The first prompt only starts its work and writes no reply. */
+    readonly skipInitialReply?: boolean;
   },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1728,10 +1730,12 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
                       },
                 );
               }
-              yield* send({
-                sessionUpdate: "agent_message_chunk",
-                content: { type: "text", text: "I'll render once the fetch finishes." },
-              });
+              if (options?.skipInitialReply !== true) {
+                yield* send({
+                  sessionUpdate: "agent_message_chunk",
+                  content: { type: "text", text: "I'll render once the fetch finishes." },
+                });
+              }
               yield* send(usage);
               if (steering?.holdsFirstPrompt === true) yield* Deferred.await(steered);
               return { stopReason: "end_turn" as const };
@@ -2499,6 +2503,152 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       assert.equal(subagentStatuses.at(-1), "idle");
     }).pipe(Effect.provide(layerSession)),
   );
+
+  describe("the answer a steer extends", () => {
+    const replyPhase = (
+      events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+      text: string,
+    ) => {
+      const reply = events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "assistant_message" &&
+          event.turnItem.status === "completed" &&
+          event.turnItem.text === text,
+      );
+      assert.isDefined(reply, `expected a completed reply: ${text}`);
+      return reply?.type === "turn_item.updated" && reply.turnItem.type === "assistant_message"
+        ? (reply.turnItem.phase ?? null)
+        : undefined;
+    };
+    const thought = (text: string) =>
+      ({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text } }) as const;
+    const reply = (text: string) =>
+      ({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } }) as const;
+    const steerOf = (opened: Effect.Success<ReturnType<typeof openSessionWithRunningCommand>>) =>
+      Effect.fn("steerOf")(function* (
+        started: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+      ) {
+        const providerTurnId = started.flatMap((event) =>
+          event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+        )[0]!;
+        yield* opened.session.steerTurn({
+          threadId: ThreadId.make("thread-antigravity-wake"),
+          runId: RunId.make("run-antigravity-wake-1"),
+          providerThread: opened.providerThread,
+          providerTurnId,
+          message: {
+            messageId: MessageId.make("message-antigravity-steer"),
+            text: "and what does that mean",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        });
+      });
+    const finishSteeredTurn = (
+      opened: Effect.Success<ReturnType<typeof openSessionWithRunningCommand>>,
+    ) =>
+      Effect.gen(function* () {
+        yield* opened.send({
+          sessionUpdate: "tool_call_update",
+          ...opened.command,
+          status: "completed",
+          rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+        });
+        yield* opened.send(opened.usage);
+        yield* opened.releaseSteer;
+        return yield* opened.until((event) => event.type === "turn.terminal");
+      });
+
+    // agy answers the prompt it is on before it reads the steer, all in the one turn.
+    it.effect("keeps the answer written after a steer arrived mid-work visible", () =>
+      Effect.gen(function* () {
+        const opened = yield* openSessionWithRunningCommand(
+          {},
+          undefined,
+          { agentVersion: "1.5.11", holdsFirstPrompt: true },
+          { skipInitialReply: true },
+        );
+        yield* opened.startTurn(1, false);
+        const started = yield* opened.until(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === opened.command.toolCallId,
+        );
+        yield* opened.send(thought("Checking the CPU first."));
+        yield* steerOf(opened)(started);
+        yield* opened.send(reply("Yes, we're good right now."));
+        yield* opened.send(thought("Now the steer."));
+        yield* opened.send(reply("Proving it out means four checks."));
+        const run = [...started, ...(yield* finishSteeredTurn(opened))];
+        assert.equal(replyPhase(run, "Yes, we're good right now."), "final_answer");
+        assert.isNull(replyPhase(run, "Proving it out means four checks."));
+      }).pipe(Effect.provide(layerSession)),
+    );
+
+    it.effect("keeps an answer still streaming when the steer arrived visible", () =>
+      Effect.gen(function* () {
+        const opened = yield* openSessionWithRunningCommand({}, undefined, {
+          agentVersion: "1.5.11",
+          holdsFirstPrompt: true,
+        });
+        yield* opened.startTurn(1, false);
+        const started = yield* opened.until(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === opened.command.toolCallId,
+        );
+        yield* steerOf(opened)(started);
+        yield* opened.send(thought("Now the steer."));
+        yield* opened.send(reply("Proving it out means four checks."));
+        const run = [...started, ...(yield* finishSteeredTurn(opened))];
+        assert.equal(replyPhase(run, "I'll render once the fetch finishes."), "final_answer");
+        assert.isNull(replyPhase(run, "Proving it out means four checks."));
+      }).pipe(Effect.provide(layerSession)),
+    );
+
+    it.effect("keeps an answer that ended the prompt visible when a steer follows it", () =>
+      Effect.gen(function* () {
+        const opened = yield* openSessionWithRunningCommand({}, undefined, {
+          agentVersion: "1.5.11",
+          holdsFirstPrompt: false,
+        });
+        yield* opened.startTurn(1, false);
+        const started = yield* opened.throughPromptSettled;
+        assert.isNull(replyPhase(started, "I'll render once the fetch finishes."));
+        yield* steerOf(opened)(started);
+        yield* opened.send(thought("Now the steer."));
+        yield* opened.send(reply("Proving it out means four checks."));
+        const run = [...started, ...(yield* finishSteeredTurn(opened))];
+        assert.equal(replyPhase(run, "I'll render once the fetch finishes."), "final_answer");
+        assert.isNull(replyPhase(run, "Proving it out means four checks."));
+      }).pipe(Effect.provide(layerSession)),
+    );
+
+    it.effect("leaves replies in a turn without a steer unmarked", () =>
+      Effect.gen(function* () {
+        const opened = yield* openSessionWithRunningCommand({});
+        yield* opened.startTurn(1, false);
+        const started = yield* opened.throughPromptSettled;
+        yield* opened.send(thought("The fetch is back."));
+        yield* opened.send(reply("Chart rendered."));
+        yield* opened.send(thought("Done."));
+        const run = [
+          ...started,
+          ...(yield* opened.until(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.status === "completed" &&
+              event.turnItem.text === "Chart rendered.",
+          )),
+        ];
+        assert.isNull(replyPhase(run, "I'll render once the fetch finishes."));
+        assert.isNull(replyPhase(run, "Chart rendered."));
+      }).pipe(Effect.provide(layerSession)),
+    );
+  });
 
   // A wake run has no prompt of its own, yet agy can keep working in it for minutes.
   it.effect("steers a continuation run that keeps working after its wake", () =>
