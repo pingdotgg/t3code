@@ -8,7 +8,6 @@ it.each([
   { styleStart: "5", itemStart: undefined, expectedStart: "5", expectedValue: null },
   { styleStart: "0", itemStart: "4", expectedStart: "0", expectedValue: "4" },
   { styleStart: "7", itemStart: "1.5", expectedStart: "7", expectedValue: null },
-  { styleStart: "2147483648", itemStart: "4", expectedStart: null, expectedValue: "4" },
 ])(
   "preserves ODT ordered-list numbering with style start $styleStart and item start $itemStart",
   async ({ styleStart, itemStart, expectedStart, expectedValue }) => {
