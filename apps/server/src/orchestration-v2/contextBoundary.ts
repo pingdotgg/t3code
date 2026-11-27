@@ -31,6 +31,7 @@ export function contextBoundaryOrdinal(
     if (
       run.freshContext === true &&
       run.status !== "queued" &&
+      run.status !== "rolled_back" &&
       !cancelledBeforeStart(run) &&
       run.ordinal > boundary &&
       !isScheduledFreshRun(run, projection.turnItems)

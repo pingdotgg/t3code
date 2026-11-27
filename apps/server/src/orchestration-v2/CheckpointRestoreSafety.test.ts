@@ -87,11 +87,19 @@ it.effect.each([
       providerTurns: [],
       rootNodes: [],
       targetAttempt: undefined,
+      rollbackAttempts: [],
+      targetConversationThreadIds: [providerThreadId],
       rolledBackAttemptIds: [],
       staleCheckpoints: [],
+      spanningProviderThreads: [],
+      abandonedProviderThreads: [],
+      abandonedSessions: [],
+      backgroundCheckSessions: [],
       checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: null },
       scope: { id: scopeId, cwd },
-      runsToRollback: [{ id: "later-run", ordinal: 1, status: "completed", rootNodeId: null }],
+      runsToRollback: [
+        { id: "later-run", ordinal: 1, status: "completed", rootNodeId: null, providerThreadId },
+      ],
     } as unknown as ProjectionCheckpointRollbackContext;
     const layerTest = CheckpointRollbackService.layer.pipe(
       Layer.provide(
@@ -108,6 +116,8 @@ it.effect.each([
           }),
           Layer.mock(ProjectionStoreV2)({
             getThread: () => Effect.succeed(projection.thread),
+            getThreadRecords: () =>
+              Effect.succeed({ providerThreads: [], providerSessions: [] } as never),
             getCheckpointRollbackContext: () => Effect.succeed(projection),
             getShellSnapshot: () =>
               Effect.succeed({

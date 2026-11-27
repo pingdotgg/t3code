@@ -55,9 +55,11 @@ import type {
   RunAttemptId,
 } from "@t3tools/contracts";
 import {
+  didRunReachProvider,
   IDLE_COMPACTION_TEXT,
   idleCompactionOf,
   isQueuedProviderThreadPlaceholder,
+  isRetiredProviderThread,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
   OrchestrationV2CheckpointScopeJson as OrchestrationV2CheckpointScopeJsonSchema,
@@ -75,6 +77,8 @@ import {
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
+  providerThreadNativeConversationKey,
+  sameNativeConversation,
   RunId,
   MessageId,
   RuntimeRequestId,
@@ -303,12 +307,291 @@ export interface ProjectionCheckpointCaptureContext {
 }
 
 const RollbackTargetAttempts = Schema.Array(
-  OrchestrationV2RunAttemptJsonSchema.mapFields(({ id, providerTurnId }) => ({
-    id,
-    providerTurnId,
-  })),
+  Schema.Struct({
+    ordinal: Schema.Number,
+    runId: Schema.optional(OrchestrationV2RunAttemptJsonSchema.fields.runId),
+    id: OrchestrationV2RunAttemptJsonSchema.fields.id,
+    providerTurnId: OrchestrationV2RunAttemptJsonSchema.fields.providerTurnId,
+    isActive: Schema.optional(Schema.Number),
+  }),
 );
 const decodeRollbackTargetAttempts = Schema.decodeUnknownEffect(RollbackTargetAttempts);
+
+export type RollbackTargetAttempt = (typeof RollbackTargetAttempts.Type)[number];
+
+export interface RollbackSpanningProviderThread {
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly providerSession: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
+  readonly targetRun: OrchestrationV2Run;
+  readonly targetAttempt: RollbackTargetAttempt | undefined;
+  readonly targetCheckpointId: CheckpointId | null;
+  readonly conversationThreadIds: ReadonlyArray<ProviderThreadId>;
+  readonly needsRollback: boolean;
+}
+
+function capabilitiesSupportRollback(
+  capabilities: OrchestrationV2ThreadProjection["providerSessions"][number]["capabilities"],
+): boolean {
+  return (
+    capabilities.threads.canRollbackThread &&
+    (capabilities.checkpointing.providerCanRollbackConversation ||
+      capabilities.context.canConsumeHandoffSummaries) &&
+    capabilities.checkpointing.providerRollbackReturnsSnapshot
+  );
+}
+
+/**
+ * Classifies root provider threads for rollback into target-conversation rows, spanning rows
+ * with retained checkpoints, and abandoned rows that must be closed.
+ */
+export function classifyRollbackProviderThreads(input: {
+  readonly targetProviderThread: OrchestrationV2ProviderThread;
+  readonly activeProviderThreadId: ProviderThreadId | null;
+  readonly targetOrdinal: number;
+  readonly rootProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
+  readonly runsToRollback: ReadonlyArray<OrchestrationV2Run>;
+  readonly retainedRuns: ReadonlyArray<OrchestrationV2Run>;
+  readonly sessions: ReadonlyArray<OrchestrationV2ThreadProjection["providerSessions"][number]>;
+  readonly providerTurns?: ReadonlyArray<
+    Pick<OrchestrationV2ProviderTurn, "id" | "runAttemptId" | "promptDropped"> & {
+      readonly startedAt?: DateTime.Utc | null;
+    }
+  >;
+  readonly attempts?: ReadonlyArray<
+    Pick<OrchestrationV2ThreadProjection["attempts"][number], "id" | "providerTurnId"> & {
+      readonly runId?: RunId | undefined;
+    }
+  >;
+  readonly attemptByOrdinal?: ReadonlyMap<number, RollbackTargetAttempt>;
+  readonly canRollbackProvider?: (providerThread: OrchestrationV2ProviderThread) => boolean;
+}): {
+  readonly targetConversationThreadIds: ReadonlySet<ProviderThreadId>;
+  readonly needsTargetProviderRollback: boolean;
+  readonly spanningProviderThreads: ReadonlyArray<RollbackSpanningProviderThread>;
+  readonly abandonedProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
+  readonly abandonedSessionIds: ReadonlySet<
+    OrchestrationV2ThreadProjection["providerSessions"][number]["id"]
+  >;
+  readonly backgroundCheckProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
+} {
+  const sessionsById = new Map(input.sessions.map((session) => [session.id, session]));
+  const rootThreadsById = new Map(
+    input.rootProviderThreads.map((candidate) => [candidate.id, candidate]),
+  );
+  const threadIdsByConvKey = new Map<string, Array<ProviderThreadId>>();
+  const convKeyByThreadId = new Map<ProviderThreadId, string>();
+  for (const candidate of input.rootProviderThreads) {
+    const key = providerThreadNativeConversationKey(candidate);
+    convKeyByThreadId.set(candidate.id, key);
+    const existing = threadIdsByConvKey.get(key);
+    if (existing === undefined) {
+      threadIdsByConvKey.set(key, [candidate.id]);
+    } else {
+      existing.push(candidate.id);
+    }
+  }
+  const targetConvKey = providerThreadNativeConversationKey(input.targetProviderThread);
+  const targetConversationThreadIds = new Set<ProviderThreadId>([
+    input.targetProviderThread.id,
+    ...(threadIdsByConvKey.get(targetConvKey) ?? []),
+  ]);
+
+  const deliveredDiscardedConvKeys = new Set<string>();
+  let targetHasDeliveredDiscardedRun = false;
+  for (const run of input.runsToRollback) {
+    if (
+      !didRunReachProvider(run, input.providerTurns, input.attempts) ||
+      run.providerThreadId === null
+    ) {
+      continue;
+    }
+    if (targetConversationThreadIds.has(run.providerThreadId)) {
+      targetHasDeliveredDiscardedRun = true;
+    }
+    const key = convKeyByThreadId.get(run.providerThreadId) ?? run.providerThreadId;
+    deliveredDiscardedConvKeys.add(key);
+  }
+  const needsTargetProviderRollback =
+    targetHasDeliveredDiscardedRun ||
+    (input.targetOrdinal === 0 && input.runsToRollback.length === 0);
+
+  const nativeStartMillisForRun = (run: OrchestrationV2Run): number | null => {
+    let latestTurnMs: number | null = null;
+    if (input.providerTurns !== undefined && run.activeAttemptId !== null) {
+      const linkedTurnId = input.attempts?.find(
+        (attempt) => attempt.id === run.activeAttemptId,
+      )?.providerTurnId;
+      for (const turn of input.providerTurns) {
+        if (
+          turn.startedAt != null &&
+          (turn.runAttemptId === run.activeAttemptId ||
+            (linkedTurnId != null && turn.id === linkedTurnId))
+        ) {
+          const ms = DateTime.toEpochMillis(turn.startedAt);
+          if (latestTurnMs === null || ms > latestTurnMs) latestTurnMs = ms;
+        }
+      }
+    }
+    if (latestTurnMs !== null) return latestTurnMs;
+    return run.startedAt === null ? null : DateTime.toEpochMillis(run.startedAt);
+  };
+
+  const retainedRunByThreadId = new Map<ProviderThreadId, OrchestrationV2Run>();
+  const latestRetainedByConvKey = new Map<
+    string,
+    {
+      readonly threadId: ProviderThreadId;
+      readonly run: OrchestrationV2Run;
+      readonly nativeStartMs: number | null;
+    }
+  >();
+  for (const run of input.retainedRuns) {
+    if (
+      !didRunReachProvider(run, input.providerTurns, input.attempts) ||
+      run.providerThreadId === null
+    ) {
+      continue;
+    }
+    const prevThread = retainedRunByThreadId.get(run.providerThreadId);
+    if (prevThread === undefined || run.ordinal > prevThread.ordinal) {
+      retainedRunByThreadId.set(run.providerThreadId, run);
+    }
+    const convKey = convKeyByThreadId.get(run.providerThreadId) ?? run.providerThreadId;
+    const prevConv = latestRetainedByConvKey.get(convKey);
+    const nativeStartMs = nativeStartMillisForRun(run);
+    // Prefer native start order so a spanning rewind never truncates a retained turn
+    // that executed later in native history than another retained run.
+    const isLaterInNativeOrder =
+      prevConv === undefined ||
+      (nativeStartMs !== null &&
+      prevConv.nativeStartMs !== null &&
+      nativeStartMs !== prevConv.nativeStartMs
+        ? nativeStartMs > prevConv.nativeStartMs
+        : run.ordinal > prevConv.run.ordinal);
+    if (isLaterInNativeOrder) {
+      latestRetainedByConvKey.set(convKey, {
+        threadId: run.providerThreadId,
+        run,
+        nativeStartMs,
+      });
+    }
+  }
+
+  const canRollback = (candidate: OrchestrationV2ProviderThread): boolean => {
+    if (candidate.providerSessionId === null) return false;
+    if (input.canRollbackProvider !== undefined) return input.canRollbackProvider(candidate);
+    const session = sessionsById.get(candidate.providerSessionId);
+    return session !== undefined && capabilitiesSupportRollback(session.capabilities);
+  };
+
+  // A shared native conversation is either rewound as a unit or every open alias is retired so
+  // no earlier alias can later resume the discarded suffix.
+  const canRollbackConversation = (convKey: string): boolean => {
+    const latest = latestRetainedByConvKey.get(convKey);
+    if (latest === undefined) return false;
+    const latestThread = rootThreadsById.get(latest.threadId);
+    const latestRun = latest.run;
+    if (latestThread === undefined || isRetiredProviderThread(latestThread)) {
+      return false;
+    }
+    const latestAttempt = input.attemptByOrdinal?.get(latestRun.ordinal);
+    const hasRollbackTarget =
+      latestRun.checkpointId !== null &&
+      (input.attemptByOrdinal === undefined || latestAttempt !== undefined);
+    return canRollback(latestThread) && hasRollbackTarget;
+  };
+
+  const spanningProviderThreads: Array<RollbackSpanningProviderThread> = [];
+  const abandonedProviderThreads: Array<OrchestrationV2ProviderThread> = [];
+
+  for (const candidate of input.rootProviderThreads) {
+    if (candidate.id === input.targetProviderThread.id || isRetiredProviderThread(candidate)) {
+      continue;
+    }
+    const convKey = convKeyByThreadId.get(candidate.id) ?? candidate.id;
+    const hasDiscardedDeliveredRun = deliveredDiscardedConvKeys.has(convKey);
+    const hasPostTargetActivity =
+      hasDiscardedDeliveredRun ||
+      candidate.id === input.activeProviderThreadId ||
+      (candidate.lastRunOrdinal !== null && candidate.lastRunOrdinal > input.targetOrdinal) ||
+      (candidate.firstRunOrdinal !== null && candidate.firstRunOrdinal > input.targetOrdinal);
+    if (!hasPostTargetActivity) continue;
+
+    const retainedRun = retainedRunByThreadId.get(candidate.id);
+    if (retainedRun === undefined) {
+      abandonedProviderThreads.push(candidate);
+      continue;
+    }
+
+    const sharesTargetConversation = sameNativeConversation(candidate, input.targetProviderThread);
+    if (
+      !sharesTargetConversation &&
+      hasDiscardedDeliveredRun &&
+      !canRollbackConversation(convKey)
+    ) {
+      abandonedProviderThreads.push(candidate);
+      continue;
+    }
+    const latestInConversation = latestRetainedByConvKey.get(convKey);
+    const isLatestRetainedInConversation = latestInConversation?.threadId === candidate.id;
+    const needsNativeRollback =
+      !sharesTargetConversation && hasDiscardedDeliveredRun && isLatestRetainedInConversation;
+    const rollbackTargetRun =
+      needsNativeRollback && latestInConversation !== undefined
+        ? latestInConversation.run
+        : retainedRun;
+    const targetAttempt = input.attemptByOrdinal?.get(rollbackTargetRun.ordinal);
+
+    spanningProviderThreads.push({
+      providerThread: candidate,
+      providerSession:
+        candidate.providerSessionId === null
+          ? undefined
+          : sessionsById.get(candidate.providerSessionId),
+      targetRun: rollbackTargetRun,
+      targetAttempt,
+      targetCheckpointId: rollbackTargetRun.checkpointId,
+      conversationThreadIds: threadIdsByConvKey.get(convKey) ?? [candidate.id],
+      needsRollback: needsNativeRollback,
+    });
+  }
+
+  const abandonedIds = new Set(abandonedProviderThreads.map((candidate) => candidate.id));
+  const retainedSessionIds = new Set(
+    input.rootProviderThreads.flatMap((candidate) =>
+      !isRetiredProviderThread(candidate) &&
+      !abandonedIds.has(candidate.id) &&
+      candidate.providerSessionId !== null
+        ? [candidate.providerSessionId]
+        : [],
+    ),
+  );
+  if (input.targetProviderThread.providerSessionId !== null) {
+    retainedSessionIds.add(input.targetProviderThread.providerSessionId);
+  }
+  const abandonedSessionIds = new Set(
+    abandonedProviderThreads.flatMap((candidate) =>
+      candidate.providerSessionId !== null && !retainedSessionIds.has(candidate.providerSessionId)
+        ? [candidate.providerSessionId]
+        : [],
+    ),
+  );
+  const backgroundCheckProviderThreads = [
+    ...abandonedProviderThreads,
+    ...spanningProviderThreads
+      .filter((entry) => entry.needsRollback)
+      .map((entry) => entry.providerThread),
+  ];
+
+  return {
+    targetConversationThreadIds,
+    needsTargetProviderRollback,
+    spanningProviderThreads,
+    abandonedProviderThreads,
+    abandonedSessionIds,
+    backgroundCheckProviderThreads,
+  };
+}
 
 export interface ProjectionCheckpointRollbackContext {
   readonly thread: OrchestrationV2AppThread;
@@ -316,13 +599,28 @@ export interface ProjectionCheckpointRollbackContext {
   readonly providerSession: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
   readonly checkpoint: OrchestrationV2Checkpoint | undefined;
   readonly scope: OrchestrationV2CheckpointScope | undefined;
-  readonly targetAttempt: (typeof RollbackTargetAttempts.Type)[number] | undefined;
+  readonly targetRun: OrchestrationV2Run | undefined;
+  readonly targetAttempt: RollbackTargetAttempt | undefined;
+  readonly rollbackAttempts: ReadonlyArray<RollbackTargetAttempt>;
+  readonly targetConversationThreadIds: ReadonlyArray<ProviderThreadId>;
   readonly providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
   readonly rolledBackAttemptIds: ReadonlyArray<RunAttemptId>;
   readonly runsToRollback: ReadonlyArray<OrchestrationV2Run>;
   readonly rootNodes: ReadonlyArray<OrchestrationV2ExecutionNode>;
   /** Ready checkpoints of the target scope and of repository scopes that the rollback discards. */
   readonly staleCheckpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
+  /** Non-target root provider threads spanning the rewind point whose retained checkpoints stay usable. */
+  readonly spanningProviderThreads: ReadonlyArray<RollbackSpanningProviderThread>;
+  /** Non-retired root provider threads discarded when rewinding past their runs. */
+  readonly abandonedProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
+  /** Exclusive non-shared live sessions owned only by abandoned provider threads. */
+  readonly abandonedSessions: ReadonlyArray<
+    OrchestrationV2ThreadProjection["providerSessions"][number]
+  >;
+  /** Live sessions referenced by abandoned or spanning threads whose background work must be checked. */
+  readonly backgroundCheckSessions: ReadonlyArray<
+    OrchestrationV2ThreadProjection["providerSessions"][number]
+  >;
 }
 
 export interface ProjectionProviderControlContext {
@@ -1175,7 +1473,8 @@ export function applyToProjection(
         ...base,
         thread:
           event.payload.appThreadId === base.thread.id &&
-          !isQueuedProviderThreadPlaceholder(event.payload)
+          !isQueuedProviderThreadPlaceholder(event.payload) &&
+          !isRetiredProviderThread(event.payload)
             ? {
                 ...base.thread,
                 activeProviderThreadId: event.payload.id,
@@ -2998,7 +3297,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `;
               if (
                 event.payload.appThreadId !== null &&
-                !isQueuedProviderThreadPlaceholder(event.payload)
+                !isQueuedProviderThreadPlaceholder(event.payload) &&
+                !isRetiredProviderThread(event.payload)
               ) {
                 const threadRows = yield* sql<PayloadRow>`
                 SELECT payload_json
@@ -6549,50 +6849,72 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               checkpoint,
               scope,
               providerSession: undefined,
+              targetRun: undefined,
               targetAttempt: undefined,
+              rollbackAttempts: [],
+              targetConversationThreadIds: providerThread === undefined ? [] : [providerThread.id],
               providerTurns: [],
               rolledBackAttemptIds: [],
               runsToRollback: [],
               rootNodes: [],
               staleCheckpoints: [],
+              spanningProviderThreads: [],
+              abandonedProviderThreads: [],
+              abandonedSessions: [],
+              backgroundCheckSessions: [],
             };
             if (
               providerThread === undefined ||
               providerThread.providerSessionId === null ||
+              isRetiredProviderThread(providerThread) ||
               checkpoint === undefined ||
               scope === undefined ||
               checkpoint.scopeId !== scope.id ||
-              checkpoint.status === "stale" ||
-              providerThread.id !== thread.activeProviderThreadId ||
-              providerThread.providerInstanceId !== thread.modelSelection.instanceId
+              checkpoint.status === "stale"
             )
               return context;
 
             const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
-            const [attemptRows, runRows, sessionRows, rolledBackAttempts, staleRows] =
-              yield* Effect.all([
-                sql`SELECT attempt.attempt_id AS id, attempt.provider_turn_id AS "providerTurnId"
+            const [
+              attemptRows,
+              targetRunRows,
+              runRows,
+              sessionRows,
+              rootProviderThreadRows,
+              rolledBackAttempts,
+              staleRows,
+            ] = yield* Effect.all([
+              sql`SELECT run.ordinal AS ordinal,
+              attempt.run_id AS "runId",
+              attempt.attempt_id AS id,
+              attempt.provider_turn_id AS "providerTurnId",
+              CASE WHEN attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId') THEN 1 ELSE 0 END AS "isActive"
             FROM orchestration_v2_projection_run_attempts AS attempt
             JOIN orchestration_v2_projection_runs AS run
-              ON attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId')
-            WHERE run.thread_id = ${threadId} AND run.ordinal = ${targetOrdinal}
+              ON attempt.run_id = run.run_id
+            WHERE run.thread_id = ${threadId} AND run.ordinal >= ${targetOrdinal}
               AND run.status != 'rolled_back' AND attempt.thread_id = ${threadId}`,
-                sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
+            WHERE thread_id = ${threadId} AND ordinal = ${targetOrdinal}
+              AND status != 'rolled_back'
+            LIMIT 1`,
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
             WHERE thread_id = ${threadId} AND ordinal > ${targetOrdinal}
               AND status IN ('completed', 'interrupted', 'failed', 'cancelled')
             ORDER BY ordinal ASC`,
-                sql<PayloadRow>`SELECT session.payload_json
+              sql<PayloadRow>`SELECT session.payload_json
             FROM orchestration_v2_projection_provider_sessions AS session
             JOIN orchestration_v2_projection_provider_session_bindings AS binding
               ON binding.provider_session_id = session.provider_session_id
-            WHERE binding.thread_id = ${threadId}
-              AND session.provider_session_id = ${providerThread.providerSessionId}`,
-                sql<{ readonly id: RunAttemptId }>`SELECT attempt.attempt_id AS id
+            WHERE binding.thread_id = ${threadId}`,
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_threads
+            WHERE thread_id = ${threadId} AND owner_node_id IS NULL`,
+              sql<{ readonly id: RunAttemptId }>`SELECT attempt.attempt_id AS id
             FROM orchestration_v2_projection_run_attempts AS attempt
             JOIN orchestration_v2_projection_runs AS run ON run.run_id = attempt.run_id
             WHERE run.thread_id = ${threadId} AND run.status = 'rolled_back'
               AND attempt.thread_id = ${threadId}`,
-                sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoints
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoints
             WHERE thread_id = ${threadId} AND status = 'ready'
               AND ((scope_id = ${scope.id} AND app_run_ordinal > ${targetOrdinal})
                 -- Repository checkpoints carry no app run ordinal; theirs is the run's ordinal.
@@ -6600,9 +6922,96 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT scope_id FROM orchestration_v2_projection_checkpoint_scopes
                   WHERE thread_id = ${threadId} AND kind = 'manual')))
             ORDER BY scope_id = ${scope.id} DESC, scope_id ASC, ordinal_within_scope ASC`,
-              ]);
-            const targetAttempt = (yield* decodeRollbackTargetAttempts(attemptRows))[0];
+            ]);
+            const targetAttempts = yield* decodeRollbackTargetAttempts(attemptRows);
+            const rollbackAttempts: Array<RollbackTargetAttempt> = [...targetAttempts];
+            const attemptByOrdinal = new Map<number, RollbackTargetAttempt>();
+            for (const attempt of targetAttempts) {
+              if (attempt.isActive === 1 || !attemptByOrdinal.has(attempt.ordinal)) {
+                attemptByOrdinal.set(attempt.ordinal, attempt);
+              }
+            }
+            const targetAttempt = attemptByOrdinal.get(targetOrdinal);
+            const targetRun = (yield* decodeRows(decodeRunPayload, threadId)(targetRunRows))[0];
             const runsToRollback = yield* decodeRows(decodeRunPayload, threadId)(runRows);
+            const allSessions = yield* decodeRows(
+              decodeProviderSessionPayload,
+              threadId,
+            )(sessionRows);
+            const rootProviderThreads = yield* decodeRows(
+              decodeProviderThreadPayload,
+              threadId,
+            )(rootProviderThreadRows);
+            // Only read earlier runs for non-target open provider threads that could span the rewind point,
+            // so unrelated obsolete run payloads earlier in the thread are never decoded.
+            const potentialSpanningThreadIds = rootProviderThreads.flatMap((candidate) =>
+              candidate.id !== providerThread.id &&
+              !isRetiredProviderThread(candidate) &&
+              (candidate.firstRunOrdinal === null || candidate.firstRunOrdinal <= targetOrdinal)
+                ? [candidate.id]
+                : [],
+            );
+            const retainedRuns: Array<OrchestrationV2Run> =
+              targetRun === undefined ? [] : [targetRun];
+            if (potentialSpanningThreadIds.length > 0 && targetOrdinal > 0) {
+              const [spanningRunRows, spanningAttemptRows] = yield* Effect.all([
+                sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId} AND ordinal < ${targetOrdinal}
+                AND status IN ('completed', 'interrupted', 'failed', 'cancelled')
+                AND json_extract(payload_json, '$.providerThreadId') IN ${sql.in(potentialSpanningThreadIds)}
+              ORDER BY ordinal ASC`,
+                sql`SELECT run.ordinal AS ordinal,
+                attempt.run_id AS "runId",
+                attempt.attempt_id AS id,
+                attempt.provider_turn_id AS "providerTurnId",
+                CASE WHEN attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId') THEN 1 ELSE 0 END AS "isActive"
+              FROM orchestration_v2_projection_run_attempts AS attempt
+              JOIN orchestration_v2_projection_runs AS run
+                ON attempt.run_id = run.run_id
+              WHERE run.thread_id = ${threadId} AND run.ordinal < ${targetOrdinal}
+                AND run.status != 'rolled_back'
+                AND json_extract(run.payload_json, '$.providerThreadId') IN ${sql.in(potentialSpanningThreadIds)}
+                AND attempt.thread_id = ${threadId}`,
+              ]);
+              retainedRuns.push(
+                ...(yield* decodeRows(decodeRunPayload, threadId)(spanningRunRows)),
+              );
+              for (const attempt of yield* decodeRollbackTargetAttempts(spanningAttemptRows)) {
+                rollbackAttempts.push(attempt);
+                if (attempt.isActive === 1 || !attemptByOrdinal.has(attempt.ordinal)) {
+                  attemptByOrdinal.set(attempt.ordinal, attempt);
+                }
+              }
+            }
+            const turnProviderThreadIds = Array.from(
+              new Set([
+                providerThread.id,
+                ...rootProviderThreads.flatMap((candidate) =>
+                  !isRetiredProviderThread(candidate) ? [candidate.id] : [],
+                ),
+                ...runsToRollback.flatMap((run) =>
+                  run.providerThreadId === null ? [] : [run.providerThreadId],
+                ),
+              ]),
+            );
+            const relevantAttemptIds = Array.from(
+              new Set([
+                ...rollbackAttempts.map((attempt) => attempt.id),
+                ...runsToRollback.flatMap((run) =>
+                  run.activeAttemptId === null ? [] : [run.activeAttemptId],
+                ),
+                ...retainedRuns.flatMap((run) =>
+                  run.activeAttemptId === null ? [] : [run.activeAttemptId],
+                ),
+              ]),
+            );
+            const relevantTurnIds = Array.from(
+              new Set(
+                rollbackAttempts.flatMap((attempt) =>
+                  attempt.providerTurnId === null ? [] : [attempt.providerTurnId],
+                ),
+              ),
+            );
             const [nodeRows, turnRows] = yield* Effect.all([
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_nodes
             WHERE thread_id = ${threadId} AND ${sql.in(
@@ -6610,25 +7019,73 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               runsToRollback.map((run) => run.rootNodeId),
             )}
             ORDER BY node_id ASC`,
-              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_turns
-            WHERE thread_id = ${threadId} AND (
-              provider_thread_id = ${providerThread.id}
-              OR provider_turn_id = ${targetAttempt?.providerTurnId ?? null}
-              OR run_attempt_id = ${targetAttempt?.id ?? null})
-            ORDER BY provider_thread_id ASC, ordinal ASC`,
+              sql<PayloadRow>`SELECT turn.payload_json
+            FROM orchestration_v2_projection_provider_turns AS turn
+            LEFT JOIN orchestration_v2_projection_run_attempts AS attempt
+              ON attempt.thread_id = turn.thread_id AND attempt.attempt_id = turn.run_attempt_id
+            LEFT JOIN orchestration_v2_projection_runs AS run
+              ON run.thread_id = turn.thread_id AND run.run_id = attempt.run_id
+            WHERE turn.thread_id = ${threadId} AND (
+              ${sql.in("turn.provider_thread_id", turnProviderThreadIds)}
+              OR ${sql.in("turn.provider_turn_id", relevantTurnIds)}
+              OR ${sql.in("turn.run_attempt_id", relevantAttemptIds)})
+            ORDER BY
+              CASE WHEN turn.started_at IS NULL THEN 1 ELSE 0 END ASC,
+              turn.started_at ASC,
+              COALESCE(run.ordinal, 2147483647) ASC,
+              COALESCE(attempt.attempt_ordinal, 2147483647) ASC,
+              turn.ordinal ASC,
+              turn.provider_turn_id ASC`,
             ]);
+            const providerTurns = yield* decodeRows(decodeProviderTurnPayload, threadId)(turnRows);
+            const classified = classifyRollbackProviderThreads({
+              targetProviderThread: providerThread,
+              activeProviderThreadId: thread.activeProviderThreadId,
+              targetOrdinal,
+              rootProviderThreads,
+              runsToRollback,
+              retainedRuns,
+              sessions: allSessions,
+              providerTurns,
+              attempts: rollbackAttempts,
+              attemptByOrdinal,
+            });
+            const abandonedSessions = allSessions.filter(
+              (session) =>
+                classified.abandonedSessionIds.has(session.id) &&
+                session.status !== "stopped" &&
+                session.status !== "error" &&
+                !session.capabilities.sessions.supportsMultipleProviderThreadsPerSession,
+            );
+            const backgroundCheckSessionIds = new Set(
+              classified.backgroundCheckProviderThreads.flatMap((candidate) =>
+                candidate.providerSessionId === null ? [] : [candidate.providerSessionId],
+              ),
+            );
+            const backgroundCheckSessions = allSessions.filter(
+              (session) =>
+                backgroundCheckSessionIds.has(session.id) &&
+                session.status !== "stopped" &&
+                session.status !== "error",
+            );
             return {
               ...context,
+              targetRun,
               targetAttempt,
+              rollbackAttempts,
+              targetConversationThreadIds: Array.from(classified.targetConversationThreadIds),
               runsToRollback,
-              providerSession:
-                sessionRows[0] === undefined
-                  ? undefined
-                  : yield* decodeProviderSessionPayload(sessionRows[0].payload_json),
+              providerSession: allSessions.find(
+                (session) => session.id === providerThread.providerSessionId,
+              ),
               rolledBackAttemptIds: rolledBackAttempts.map(({ id }) => id),
               rootNodes: yield* decodeRows(decodeNodePayload, threadId)(nodeRows),
-              providerTurns: yield* decodeRows(decodeProviderTurnPayload, threadId)(turnRows),
+              providerTurns,
               staleCheckpoints: yield* decodeRows(decodeCheckpointPayload, threadId)(staleRows),
+              spanningProviderThreads: classified.spanningProviderThreads,
+              abandonedProviderThreads: classified.abandonedProviderThreads,
+              abandonedSessions,
+              backgroundCheckSessions,
             };
           }),
         )
@@ -6757,7 +7214,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND json_extract(payload_json, '$.queueHeld') IS NOT 1)
             AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs
               WHERE thread_id = ${threadId}
-                AND status IN ('preparing', 'starting', 'running', 'waiting'))`;
+                AND status IN ('preparing', 'starting', 'running', 'waiting'))
+            AND NOT EXISTS (SELECT 1 FROM orchestration_v2_effect_outbox AS rollback_effect
+              WHERE rollback_effect.thread_id = ${threadId}
+                AND rollback_effect.status IN ('pending', 'running')
+                AND rollback_effect.effect_type = 'provider-thread.rollback'
+                AND json_extract(thread.payload_json, '$.rollbackCompletedRequestId') IS NOT rollback_effect.command_id
+                AND json_extract(thread.payload_json, '$.rollbackFailure.requestId') IS NOT rollback_effect.command_id)`;
             return rows.length > 0;
           }),
         )

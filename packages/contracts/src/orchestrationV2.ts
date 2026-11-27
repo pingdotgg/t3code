@@ -568,6 +568,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   /** Set by a rename or a naming launch until a generated title replaces it; absent reads false. */
   titleRenamed: Schema.optional(Schema.Boolean),
   rollbackRequestId: Schema.optional(CommandId),
+  rollbackCompletedRequestId: Schema.optional(Schema.NullOr(CommandId)),
   rollbackFailure: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -1416,6 +1417,82 @@ export function isQueuedProviderThreadPlaceholder(
     providerThread.firstRunOrdinal === null &&
     providerThread.nativeThreadRef === null &&
     providerThread.providerSessionId === null
+  );
+}
+
+/** Closed or archived provider threads are retired and must not reclaim the active slot. */
+export function isRetiredProviderThread(
+  providerThread: Pick<OrchestrationV2ProviderThread, "status">,
+): boolean {
+  return providerThread.status === "closed" || providerThread.status === "archived";
+}
+
+/** Whether two provider thread rows belong to the same underlying native provider conversation. */
+export function sameNativeConversation(
+  left: Pick<OrchestrationV2ProviderThread, "id" | "driver" | "nativeThreadRef">,
+  right: Pick<OrchestrationV2ProviderThread, "id" | "driver" | "nativeThreadRef">,
+): boolean {
+  if (left.id === right.id) return true;
+  return (
+    left.driver === right.driver &&
+    left.nativeThreadRef != null &&
+    right.nativeThreadRef != null &&
+    left.nativeThreadRef.nativeId === right.nativeThreadRef.nativeId
+  );
+}
+
+/** Stable key grouping provider thread rows that share one native provider conversation. */
+export function providerThreadNativeConversationKey(
+  providerThread: Pick<OrchestrationV2ProviderThread, "id" | "driver" | "nativeThreadRef">,
+): string {
+  return providerThread.nativeThreadRef != null
+    ? `${providerThread.driver}:${providerThread.nativeThreadRef.nativeId}`
+    : providerThread.id;
+}
+
+/**
+ * Whether a settled run reached its provider conversation and therefore requires native rollback
+ * when discarded. Pre-start failures/interrupts/cancellations (`startedAt === null`) and runs
+ * with no delivered provider turn across any of their attempts did not mutate provider history.
+ */
+export function didRunReachProvider(
+  run: Pick<OrchestrationV2Run, "id" | "status" | "startedAt" | "activeAttemptId">,
+  providerTurns?: ReadonlyArray<
+    Pick<OrchestrationV2ProviderTurn, "id" | "runAttemptId" | "promptDropped">
+  >,
+  attempts?: ReadonlyArray<
+    Pick<OrchestrationV2RunAttempt, "id" | "providerTurnId"> & {
+      readonly runId?: RunId | undefined;
+    }
+  >,
+): boolean {
+  if (run.status === "completed") return true;
+  if (run.status !== "failed" && run.status !== "interrupted" && run.status !== "cancelled") {
+    return false;
+  }
+  if (run.startedAt === null) return false;
+  if (providerTurns === undefined) return true;
+  const runAttemptIds = new Set<RunAttemptId>();
+  const linkedProviderTurnIds = new Set<ProviderTurnId>();
+  if (run.activeAttemptId !== null) {
+    runAttemptIds.add(run.activeAttemptId);
+  }
+  if (attempts !== undefined) {
+    for (const attempt of attempts) {
+      if (attempt.runId === run.id || attempt.id === run.activeAttemptId) {
+        runAttemptIds.add(attempt.id);
+        if (attempt.providerTurnId !== null) {
+          linkedProviderTurnIds.add(attempt.providerTurnId);
+        }
+      }
+    }
+  }
+  if (runAttemptIds.size === 0 && linkedProviderTurnIds.size === 0) return false;
+  return providerTurns.some(
+    (turn) =>
+      ((turn.runAttemptId !== null && runAttemptIds.has(turn.runAttemptId)) ||
+        linkedProviderTurnIds.has(turn.id)) &&
+      isDeliveredProviderTurn(turn),
   );
 }
 

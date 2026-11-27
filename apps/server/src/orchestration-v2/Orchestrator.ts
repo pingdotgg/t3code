@@ -31,6 +31,7 @@ import {
   isDeliveredProviderTurn,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
+  isRetiredProviderThread,
   MessageId,
   type NodeId,
   type ModelSelection,
@@ -186,6 +187,7 @@ import {
 } from "./DispatchModeLimit.ts";
 import {
   applyToProjection,
+  classifyRollbackProviderThreads,
   emptyProjection,
   threadShellFromProjection,
   ProjectionStoreV2,
@@ -1511,8 +1513,12 @@ function conversationProviderThread(
   );
   if (active === undefined) return active;
   const boundary = contextBoundaryOrdinal(projection);
-  // A pre-clear session that is still alive (background work) can become active again on its updates.
-  if (!startedByScheduledFreshRun(active) && !providerThreadPredatesBoundary(active, boundary)) {
+  // A pre-clear or retired session that is still alive (background work) can appear active on updates.
+  if (
+    !startedByScheduledFreshRun(active) &&
+    !isRetiredProviderThread(active) &&
+    !providerThreadPredatesBoundary(active, boundary)
+  ) {
     return active;
   }
   return (
@@ -1522,11 +1528,12 @@ function conversationProviderThread(
           candidate.appThreadId === projection.thread.id &&
           candidate.ownerNodeId === null &&
           candidate.lastRunOrdinal !== null &&
+          !isRetiredProviderThread(candidate) &&
           !providerThreadPredatesBoundary(candidate, boundary) &&
           !startedByScheduledFreshRun(candidate),
       )
       .toSorted((left, right) => (right.lastRunOrdinal ?? 0) - (left.lastRunOrdinal ?? 0))[0] ??
-    active
+    (isRetiredProviderThread(active) ? undefined : active)
   );
 }
 
@@ -1596,6 +1603,7 @@ function rootProviderThreadsForProvider(
         providerThread.providerInstanceId === providerInstanceId &&
         providerThread.appThreadId === projection.thread.id &&
         providerThread.ownerNodeId === null &&
+        !isRetiredProviderThread(providerThread) &&
         !providerThreadPredatesBoundary(providerThread, boundary),
     )
     .toSorted(
@@ -2532,6 +2540,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return true;
   });
 
+  const hasPendingRollbackEffect = Effect.fn("Orchestrator.hasPendingRollbackEffect")(function* (
+    threadId: ThreadId,
+    thread: Pick<
+      OrchestrationV2AppThread,
+      "rollbackRequestId" | "rollbackCompletedRequestId" | "rollbackFailure"
+    >,
+  ) {
+    const requestId = thread.rollbackRequestId;
+    if (
+      requestId == null ||
+      thread.rollbackCompletedRequestId === requestId ||
+      thread.rollbackFailure?.requestId === requestId
+    ) {
+      return false;
+    }
+    const rollbackEffects = yield* effectOutbox.listByCommandId(requestId);
+    return rollbackEffects.some(
+      (effect) =>
+        effect.threadId === threadId &&
+        effect.request.type === "provider-thread.rollback" &&
+        (effect.status === "pending" || effect.status === "running"),
+    );
+  });
+
   const startNextQueuedRunOnce = Effect.fn("Orchestrator.startNextQueuedRun")(
     function* (
       threadId: ThreadId,
@@ -2551,6 +2583,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.deletedAt !== null ||
         projection.runs.some(isActiveRun)
       ) {
+        return;
+      }
+      if (yield* hasPendingRollbackEffect(threadId, projection.thread)) {
         return;
       }
 
@@ -2767,10 +2802,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : undefined;
       const activeProviderThread = dispatchProviderThread(projection, queuedMessage, freshContext);
       const contextBoundary = freshContext ? ordinal : contextBoundaryOrdinal(projection);
-      // A run queued before a fresh run started is bound to the conversation that run left behind.
+      // A run queued before a fresh run or rollback is bound to the conversation left behind.
+      const storedThreadRetired = isRetiredProviderThread(storedProviderThread);
       const followsLatestContext =
         !freshContext &&
         (followsCurrent ||
+          storedThreadRetired ||
           storedProviderThread.providerInstanceId !== queuedRun.providerInstanceId ||
           providerThreadPredatesBoundary(storedProviderThread, contextBoundary));
       const targetProviderThread = followsLatestContext
@@ -2780,7 +2817,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : rootProviderThreadsForProvider(projection, queuedRun.providerInstanceId)[0]
         : freshContext &&
             // The reserved row belongs to the instance the run queued on, which may have changed.
-            (storedProviderThread.providerInstanceId !== queuedRun.providerInstanceId ||
+            (storedThreadRetired ||
+              storedProviderThread.providerInstanceId !== queuedRun.providerInstanceId ||
               storedProviderThread.firstRunOrdinal !== null ||
               storedProviderThread.nativeThreadRef !== null)
           ? undefined
@@ -2792,9 +2830,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // that moved the run to another instance of the same driver must not replace that row.
           nativeThreadId: freshContext
             ? `pending:${queuedRun.id}:fresh`
-            : storedProviderThread.providerInstanceId === queuedRun.providerInstanceId
-              ? `pending:${queuedRun.id}`
-              : `pending:${queuedRun.id}:${queuedRun.providerInstanceId}`,
+            : storedThreadRetired
+              ? `pending:${queuedRun.id}:rebound`
+              : storedProviderThread.providerInstanceId === queuedRun.providerInstanceId
+                ? `pending:${queuedRun.id}`
+                : `pending:${queuedRun.id}:${queuedRun.providerInstanceId}`,
         }),
         driver: targetAdapter.driver,
         providerInstanceId: queuedRun.providerInstanceId,
@@ -8064,6 +8104,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         forceRestart: dispatchMode.type === "restart_active",
       });
       return;
+    }
+
+    // A pending rollback may close the currently active provider thread; reject new sends until it settles.
+    if (
+      yield* hasPendingRollbackEffect(command.threadId, projection.thread).pipe(
+        mapDispatchError(command),
+      )
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause:
+          "This thread is currently rewinding. Wait for the rewind to finish before sending a message.",
+      });
     }
 
     const activeProviderThread = dispatchProviderThread(
@@ -14817,7 +14871,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       const projection = yield* loadProjectionForCommand(
         command,
-        ["providerThreads", "checkpoints", "checkpointScopes", "runs", "providerTurns", "attempts"],
+        [
+          "providerThreads",
+          "providerSessions",
+          "checkpoints",
+          "checkpointScopes",
+          "runs",
+          "providerTurns",
+          "attempts",
+        ],
         { turnItemTypes: [], messageRoles: ["user"] },
       );
       if (projection.thread.deletedAt !== null) {
@@ -14827,44 +14889,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} is deleted.`,
         });
       }
-      const providerThread = projection.providerThreads.find(
-        (candidate) => candidate.id === projection.thread.activeProviderThreadId,
-      );
-      if (providerThread === undefined) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: "No active provider thread exists for rollback.",
-        });
-      }
-      if (providerThread.providerSessionId === null) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Provider thread ${providerThread.id} has no provider session.`,
-        });
-      }
-
-      const modelSelection = projection.thread.modelSelection;
-      const capabilities = yield* providerAdapters.get(modelSelection.instanceId).pipe(
-        Effect.flatMap((adapter) => adapter.getCapabilities()),
-        Effect.mapError(
-          (cause) =>
-            new OrchestratorProviderAdapterError({
-              commandId: command.commandId,
-              providerInstanceId: modelSelection.instanceId,
-              cause,
-            }),
-        ),
-      );
-      yield* mapDispatchError(command)(
-        commandPolicy.ensureRollback({
-          commandId: command.commandId,
-          threadId: command.threadId,
-          providerInstanceId: modelSelection.instanceId,
-          capabilities,
-        }),
-      );
 
       const targetCheckpoint = projection.checkpoints.find(
         (candidate) => candidate.id === command.checkpointId,
@@ -14876,6 +14900,164 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Checkpoint ${command.checkpointId} was not found.`,
         });
       }
+      const targetOrdinal = targetCheckpoint.appRunOrdinal ?? 0;
+
+      const providerThread = yield* Effect.gen(function* () {
+        if (targetOrdinal === 0) {
+          const active = projection.providerThreads.find(
+            (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+          );
+          if (active === undefined || isRetiredProviderThread(active)) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "No active provider thread exists for rollback.",
+            });
+          }
+          return active;
+        }
+        const targetRun = projection.runs.find((run) => run.ordinal === targetOrdinal);
+        const targetProviderTurn =
+          targetRun === undefined ? undefined : providerTurnForRun(projection, targetRun);
+        if (
+          targetRun === undefined ||
+          targetRun.status === "rolled_back" ||
+          targetProviderTurn === undefined
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Cannot roll back to checkpoint ${targetCheckpoint.id}: its provider turn is unavailable.`,
+          });
+        }
+        const owner = projection.providerThreads.find(
+          (candidate) => candidate.id === targetProviderTurn.providerThreadId,
+        );
+        if (
+          owner === undefined ||
+          owner.appThreadId !== command.threadId ||
+          owner.ownerNodeId !== null ||
+          isRetiredProviderThread(owner)
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Cannot roll back to checkpoint ${targetCheckpoint.id}: provider thread ${targetProviderTurn.providerThreadId} is unavailable.`,
+          });
+        }
+        return owner;
+      });
+      if (providerThread.providerSessionId === null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Provider thread ${providerThread.id} has no provider session.`,
+        });
+      }
+
+      const runsToRollback = projection.runs.filter(
+        (run) =>
+          run.ordinal > targetOrdinal &&
+          (run.status === "completed" ||
+            run.status === "interrupted" ||
+            run.status === "failed" ||
+            run.status === "cancelled"),
+      );
+      const retainedRuns = projection.runs.filter(
+        (run) =>
+          run.ordinal <= targetOrdinal &&
+          (run.status === "completed" ||
+            run.status === "interrupted" ||
+            run.status === "failed" ||
+            run.status === "cancelled"),
+      );
+      const rootProviderThreads = projection.providerThreads.filter(
+        (candidate) => candidate.appThreadId === command.threadId && candidate.ownerNodeId === null,
+      );
+      const classified = classifyRollbackProviderThreads({
+        targetProviderThread: providerThread,
+        activeProviderThreadId: projection.thread.activeProviderThreadId,
+        targetOrdinal,
+        rootProviderThreads,
+        runsToRollback,
+        retainedRuns,
+        sessions: projection.providerSessions,
+        providerTurns: projection.providerTurns,
+        attempts: projection.attempts,
+      });
+      if (classified.needsTargetProviderRollback) {
+        const capabilities = yield* providerAdapters.get(providerThread.providerInstanceId).pipe(
+          Effect.flatMap((adapter) => adapter.getCapabilities()),
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorProviderAdapterError({
+                commandId: command.commandId,
+                providerInstanceId: providerThread.providerInstanceId,
+                cause,
+              }),
+          ),
+        );
+        yield* mapDispatchError(command)(
+          commandPolicy.ensureRollback({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            providerInstanceId: providerThread.providerInstanceId,
+            capabilities,
+          }),
+        );
+      }
+
+      if (
+        classified.backgroundCheckProviderThreads.some(
+          (candidate) => (candidate.pendingBackgroundTasks?.length ?? 0) > 0,
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "A session being rewound is still running background agents or commands. Wait for them to finish, or press Stop, then rewind again.",
+        });
+      }
+      const backgroundCheckSessionIds = new Set(
+        classified.backgroundCheckProviderThreads.flatMap((candidate) =>
+          candidate.providerSessionId === null ? [] : [candidate.providerSessionId],
+        ),
+      );
+      const spanningRollbackSessionIds = new Set(
+        classified.spanningProviderThreads.flatMap((entry) =>
+          entry.needsRollback && entry.providerThread.providerSessionId !== null
+            ? [entry.providerThread.providerSessionId]
+            : [],
+        ),
+      );
+      for (const session of projection.providerSessions) {
+        if (
+          !backgroundCheckSessionIds.has(session.id) ||
+          session.status === "stopped" ||
+          session.status === "error"
+        ) {
+          continue;
+        }
+        const isMultiThread =
+          session.capabilities.sessions.supportsMultipleProviderThreadsPerSession;
+        if (
+          !isMultiThread &&
+          !classified.abandonedSessionIds.has(session.id) &&
+          !spanningRollbackSessionIds.has(session.id)
+        ) {
+          continue;
+        }
+        if (yield* sessionHasBackgroundWork(session, classified.backgroundCheckProviderThreads)) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "A session being rewound is still running background agents or commands. Wait for them to finish, or press Stop, then rewind again.",
+          });
+        }
+      }
+
       const worktreePath = projection.thread.worktreePath;
       const taskFolder =
         command.restoreFiles === false || worktreePath === null
@@ -14899,7 +15081,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             typeof scope.repositoryPath === "string" &&
             repositoryRewindCheckpoint(
               projection.checkpoints.filter((candidate) => candidate.scopeId === scope.id),
-              targetCheckpoint.appRunOrdinal ?? 0,
+              targetOrdinal,
             ) !== null,
         );
       // Missing or failed snapshots otherwise support conversation rewind only.
@@ -14971,31 +15153,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
       }
 
-      const targetOrdinal = targetCheckpoint.appRunOrdinal ?? 0;
-      if (targetOrdinal > 0) {
-        const targetRun = projection.runs.find((run) => run.ordinal === targetOrdinal);
-        const targetProviderTurn =
-          targetRun === undefined ? undefined : providerTurnForRun(projection, targetRun);
-        if (
-          targetRun === undefined ||
-          targetRun.status === "rolled_back" ||
-          targetProviderTurn === undefined
-        ) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: `Cannot roll back to checkpoint ${targetCheckpoint.id}: its provider turn is unavailable.`,
-          });
-        }
-        if (targetProviderTurn.providerThreadId !== providerThread.id) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: `Cannot roll back provider thread ${providerThread.id} to checkpoint ${targetCheckpoint.id}: target provider turn ${targetProviderTurn.id} belongs to provider thread ${targetProviderTurn.providerThreadId}.`,
-          });
-        }
-      }
-
       const now = yield* DateTime.now;
       yield* emit(
         events,
@@ -15008,6 +15165,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: {
           ...projection.thread,
           rollbackRequestId: command.commandId,
+          rollbackCompletedRequestId: null,
           rollbackFailure: null,
           rollbackUnrestored: null,
           updatedAt: now,
@@ -15019,7 +15177,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )({
         type: "checkpoint.rollback-requested",
         threadId: command.threadId,
-        providerInstanceId: modelSelection.instanceId,
+        providerInstanceId: providerThread.providerInstanceId,
         occurredAt: now,
         payload: {
           scopeId: targetScope.id,
@@ -16812,11 +16970,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.type === "queue.resume" ||
       command.type === "queued-run.start" ||
+      command.type === "checkpoint.rollback.fail" ||
       (command.type === "thread.runtime-mode.set" && runtimeModeCeiling !== undefined)
     ) {
       yield* mapDispatchError(command)(
         startNextQueuedRun(command.threadId, {
-          userStarted: command.type !== "thread.runtime-mode.set",
+          userStarted: command.type === "queue.resume" || command.type === "queued-run.start",
           ...(command.type === "queued-run.start" ? { queuedRunId: command.runId } : {}),
         }),
       );
@@ -17182,6 +17341,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ),
     Effect.forkScoped,
   );
+
+  // Resume any queued run waiting on a rollback that committed without rolling back any runs.
+  const lastCompletedRollbackByThread = new Map<ThreadId, CommandId>();
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "thread.metadata-updated" })
+    .pipe(
+      Stream.filter((stored) => {
+        if (stored.event.type !== "thread.metadata-updated") return false;
+        const completedId = stored.event.payload.rollbackCompletedRequestId;
+        if (completedId == null) return false;
+        if (lastCompletedRollbackByThread.get(stored.event.threadId) === completedId) return false;
+        lastCompletedRollbackByThread.set(stored.event.threadId, completedId);
+        return true;
+      }),
+      Stream.runForEach((stored) =>
+        threadReactions.run(
+          stored.event.threadId,
+          threadDispatch
+            .withLock(stored.event.threadId, startNextQueuedRun(stored.event.threadId))
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Failed to start queued V2 run after rollback", {
+                  threadId: stored.event.threadId,
+                  cause,
+                }),
+              ),
+            ),
+        ),
+      ),
+      Effect.forkScoped,
+    );
 
   const recoverDelegatedTasks = Effect.gen(function* () {
     yield* projectionStore.getRecoveryThreadIds("subagent-results").pipe(

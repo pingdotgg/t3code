@@ -1196,14 +1196,24 @@ const countTerminalTurnsAfterBoundary = (
   providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>,
   providerTurnId: ProviderTurnId,
 ): number | null => {
-  const boundaryTurn = providerTurns.find((turn) => turn.id === providerTurnId);
+  const boundaryIndex = providerTurns.findIndex((turn) => turn.id === providerTurnId);
+  const boundaryTurn = boundaryIndex === -1 ? undefined : providerTurns[boundaryIndex];
   if (boundaryTurn === undefined) {
     return null;
   }
+  const boundaryNativeId = boundaryTurn.nativeTurnRef?.nativeId ?? null;
 
-  return providerTurns.filter(
-    (turn) => turn.ordinal > boundaryTurn.ordinal && isTerminalProviderTurn(turn),
-  ).length;
+  return providerTurns.filter((turn, index) => {
+    if (!isTerminalProviderTurn(turn) || turn.id === boundaryTurn.id) return false;
+    if (turn.providerThreadId === boundaryTurn.providerThreadId) {
+      return turn.ordinal > boundaryTurn.ordinal;
+    }
+    if (boundaryNativeId !== null && turn.nativeTurnRef?.nativeId === boundaryNativeId) {
+      return false;
+    }
+    // Cross-row aliases restart row-local turn ordinals at 1, so compare native conversation order.
+    return index > boundaryIndex;
+  }).length;
 };
 
 const resolveCodexForkRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveForkRollbackTurnCount")(

@@ -1,9 +1,13 @@
 import {
   CheckpointId,
   CheckpointScopeId,
-  type CommandId,
+  CommandId,
+  didRunReachProvider,
+  isRetiredProviderThread,
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2ThreadProjection,
   ProviderThreadId,
   repositoryRewindCheckpoint,
   ThreadId,
@@ -33,6 +37,7 @@ import {
   SHARED_WORKSPACE_RESTORE_MESSAGE,
 } from "./CheckpointRestoreSafety.ts";
 import { CheckpointRestoreError, CheckpointServiceV2 } from "./CheckpointService.ts";
+import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
@@ -46,6 +51,9 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 export const ROLLBACK_FAILED_MESSAGE =
   "The provider could not roll back this conversation. Try again; if it keeps failing, check the provider and server logs.";
 
+const ROLLBACK_BACKGROUND_WORK_MESSAGE =
+  "A session being rewound is still running background agents or commands. Wait for them to finish, or press Stop, then rewind again.";
+
 export class CheckpointRollbackExecutionError extends Schema.TaggedError<CheckpointRollbackExecutionError>()(
   "CheckpointRollbackExecutionError",
   {
@@ -55,6 +63,7 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
       "provider-turn-unavailable",
       "unexpected-failure",
       "shared-workspace",
+      "background-work-active",
     ]),
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
@@ -72,6 +81,8 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
         return `Provider turn for rollback target ${this.checkpointId} is unavailable on provider thread ${this.providerThreadId}.`;
       case "shared-workspace":
         return SHARED_WORKSPACE_RESTORE_MESSAGE;
+      case "background-work-active":
+        return ROLLBACK_BACKGROUND_WORK_MESSAGE;
       case "unexpected-failure":
         return ROLLBACK_FAILED_MESSAGE;
     }
@@ -85,10 +96,11 @@ const isRuntimePolicyAboveCeilingError = Schema.is(RuntimePolicyAboveCeilingErro
 
 /**
  * The message clients see when a rollback fails. Only a held Git index lock
- * gets its own explanation; other reasons carry internal ids or raw Git
- * output, so they fall back to the generic message.
+ * or active background work gets its own explanation; other reasons carry
+ * internal ids or raw Git output, so they fall back to the generic message.
  */
 export function rollbackFailureClientMessage(error: CheckpointRollbackExecutionError): string {
+  if (error.reason === "background-work-active") return ROLLBACK_BACKGROUND_WORK_MESSAGE;
   if (isRuntimePolicyAboveCeilingError(error.cause)) return error.cause.message;
   const restoreCause = isCheckpointRestoreError(error.cause) ? error.cause.cause : undefined;
   return isVcsProcessExitError(restoreCause) && restoreCause.detail === GIT_INDEX_LOCKED_DETAIL
@@ -174,6 +186,7 @@ export const layer: Layer.Layer<
       if (
         providerThread === undefined ||
         providerThread.providerSessionId === null ||
+        isRetiredProviderThread(providerThread) ||
         checkpoint === undefined ||
         scope === undefined ||
         // A repository's checkpoints follow the thread's; they are not a place to rewind to.
@@ -187,10 +200,9 @@ export const layer: Layer.Layer<
       ) {
         return yield* invalidTarget();
       }
-      if (
-        providerThread.id !== context.thread.activeProviderThreadId ||
-        providerThread.providerInstanceId !== context.thread.modelSelection.instanceId
-      ) {
+
+      const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
+      if (targetOrdinal === 0 && providerThread.id !== context.thread.activeProviderThreadId) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "active-provider-changed",
           threadId: input.threadId,
@@ -198,8 +210,6 @@ export const layer: Layer.Layer<
           checkpointId: input.checkpointId,
         });
       }
-
-      const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
       const rollbackTarget: ProviderAdapter.ProviderAdapterV2RollbackTarget =
         targetOrdinal === 0
           ? {
@@ -391,44 +401,265 @@ export const layer: Layer.Layer<
       ];
       if (restoreFiles && restoreTargets.length === 0) return yield* invalidTarget();
 
-      const modelSelection = context.thread.modelSelection;
-      const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
-        thread: context.thread,
-        modelSelection,
-      });
-      const existingSession = context.providerSession;
-      const session = yield* sessions.open({
-        threadId: input.threadId,
-        providerSessionId: providerThread.providerSessionId,
-        modelSelection,
-        runtimePolicy: resolvedRuntimePolicy,
-        ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
-        ...(providerThread.nativeThreadRef?.nativeId == null
-          ? {}
-          : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
-        ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
-          ? {}
-          : {
-              initialProviderItemIdentityVersion: providerThread.nativeMetadata.itemIdentityVersion,
-            }),
-      });
+      const {
+        abandonedProviderThreads,
+        spanningProviderThreads,
+        backgroundCheckSessions,
+        abandonedSessions,
+      } = context;
+      const backgroundCheckProviderThreads = [
+        ...abandonedProviderThreads,
+        ...spanningProviderThreads
+          .filter((entry) => entry.needsRollback)
+          .map((entry) => entry.providerThread),
+      ];
+      const backgroundWorkActive = () =>
+        new CheckpointRollbackExecutionError({
+          reason: "background-work-active",
+          threadId: input.threadId,
+          providerThreadId: input.providerThreadId,
+          checkpointId: input.checkpointId,
+        });
+      if (
+        backgroundCheckProviderThreads.some(
+          (candidate) => (candidate.pendingBackgroundTasks?.length ?? 0) > 0,
+        )
+      ) {
+        return yield* backgroundWorkActive();
+      }
+      if (backgroundCheckProviderThreads.length > 0 && backgroundCheckSessions.length > 0) {
+        const abandonedSessionIds = new Set(abandonedSessions.map((session) => session.id));
+        const spanningRollbackSessionIds = new Set(
+          spanningProviderThreads.flatMap((entry) =>
+            entry.needsRollback && entry.providerThread.providerSessionId !== null
+              ? [entry.providerThread.providerSessionId]
+              : [],
+          ),
+        );
+        for (const checkSession of backgroundCheckSessions) {
+          const isMultiThread =
+            checkSession.capabilities.sessions.supportsMultipleProviderThreadsPerSession;
+          if (
+            !isMultiThread &&
+            !abandonedSessionIds.has(checkSession.id) &&
+            !spanningRollbackSessionIds.has(checkSession.id)
+          ) {
+            continue;
+          }
+          const runtimeOption = yield* sessions
+            .get(checkSession.id)
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          if (Option.isNone(runtimeOption)) continue;
+          const runtime = runtimeOption.value;
+          const probes =
+            !isMultiThread && runtime.hasPendingBackgroundWork !== undefined
+              ? [runtime.hasPendingBackgroundWork]
+              : backgroundCheckProviderThreads.flatMap((candidate) =>
+                  candidate.providerSessionId === checkSession.id &&
+                  runtime.hasPendingBackgroundWorkForThread !== undefined
+                    ? [runtime.hasPendingBackgroundWorkForThread(candidate)]
+                    : [],
+                );
+          for (const probe of probes) {
+            if (yield* probe.pipe(Effect.catchCause(() => Effect.succeed(true)))) {
+              return yield* backgroundWorkActive();
+            }
+          }
+        }
+      }
 
-      // Rolled-back turns remain in audit history but no longer exist in the provider conversation.
       const rolledBackAttemptIds = new Set(context.rolledBackAttemptIds);
-      const providerThreadTurns = context.providerTurns.filter(
-        (turn) =>
-          turn.providerThreadId === providerThread.id &&
-          (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
+      const targetConversationThreadIds = new Set(context.targetConversationThreadIds);
+      const targetRunsToRollback = runsToRollback.filter(
+        (run) =>
+          didRunReachProvider(run, context.providerTurns, context.rollbackAttempts) &&
+          run.providerThreadId !== null &&
+          targetConversationThreadIds.has(run.providerThreadId),
       );
+      // Cross-provider boundary rewind: every discarded delivered run belonged to other native
+      // conversations, so the target provider conversation already stands at `targetOrdinal`.
+      const isCrossProviderBoundaryRewind =
+        runsToRollback.length > 0 && targetRunsToRollback.length === 0;
+      // Mutate the target provider first so a target refusal never truncates a spanning
+      // conversation; any spanning rollback that fails afterward falls back to retiring that thread.
+      const snapshot = isCrossProviderBoundaryRewind
+        ? { providerThread }
+        : yield* Effect.gen(function* () {
+            const modelSelection =
+              providerThread.providerInstanceId === context.thread.modelSelection.instanceId
+                ? context.thread.modelSelection
+                : (context.targetRun?.modelSelection ??
+                  targetRunsToRollback.at(-1)?.modelSelection ??
+                  context.thread.modelSelection);
+            const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
+              thread: context.thread,
+              modelSelection,
+            });
+            const existingSession = context.providerSession;
+            const session = yield* sessions.open({
+              threadId: input.threadId,
+              providerSessionId: providerThread.providerSessionId!,
+              modelSelection,
+              runtimePolicy: resolvedRuntimePolicy,
+              ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
+              ...(providerThread.nativeThreadRef?.nativeId == null
+                ? {}
+                : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
+              ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+                ? {}
+                : {
+                    initialProviderItemIdentityVersion:
+                      providerThread.nativeMetadata.itemIdentityVersion,
+                  }),
+            });
 
-      const snapshot =
-        runsToRollback.length === 0
-          ? { providerThread }
-          : yield* session.rollbackThread({
+            if (targetRunsToRollback.length === 0) {
+              return { providerThread };
+            }
+
+            // Rolled-back turns remain in audit history but no longer exist in the provider conversation.
+            const providerThreadTurns = context.providerTurns.filter(
+              (turn) =>
+                targetConversationThreadIds.has(turn.providerThreadId) &&
+                (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
+            );
+
+            return yield* session.rollbackThread({
               providerThread,
               target: rollbackTarget,
               providerThreadTurns,
             });
+          });
+
+      const failedSpanningConversationIds = new Set<ProviderThreadId>();
+      const succeededSpanningById = new Map<
+        ProviderThreadId,
+        {
+          readonly providerThread: OrchestrationV2ProviderThread;
+          readonly lastRunOrdinal: number;
+        }
+      >();
+      for (const spanning of spanningProviderThreads) {
+        if (!spanning.needsRollback) continue;
+        const spanningOutcome = yield* Effect.gen(function* () {
+          const spanningAttempt = spanning.targetAttempt;
+          const spanningTurn =
+            latestProviderTurnForAttempt(context.providerTurns, spanningAttempt?.id) ??
+            context.providerTurns.find((turn) => turn.id === spanningAttempt?.providerTurnId);
+          if (
+            spanning.providerThread.providerSessionId === null ||
+            spanning.targetCheckpointId === null ||
+            spanningAttempt === undefined ||
+            spanningTurn === undefined ||
+            spanningTurn.providerThreadId !== spanning.providerThread.id
+          ) {
+            return yield* new CheckpointRollbackExecutionError({
+              reason: "provider-turn-unavailable",
+              threadId: input.threadId,
+              providerThreadId: spanning.providerThread.id,
+              checkpointId: spanning.targetCheckpointId ?? input.checkpointId,
+            });
+          }
+          const { attempt } = yield* projections.getProviderControlContext(input.threadId, {
+            providerThreadId: spanning.providerThread.id,
+            providerTurnId: spanningTurn.id,
+            attemptId: spanningAttempt.id,
+          });
+          const message =
+            attempt === undefined
+              ? undefined
+              : yield* projections.getRunMessage(input.threadId, attempt.runId);
+          const spanningModelSelection =
+            spanning.providerThread.providerInstanceId === context.thread.modelSelection.instanceId
+              ? context.thread.modelSelection
+              : spanning.targetRun.modelSelection;
+          const spanningRuntimePolicy = yield* runtimePolicy.resolve({
+            thread: context.thread,
+            modelSelection: spanningModelSelection,
+          });
+          const spanningSession = yield* sessions.open({
+            threadId: input.threadId,
+            providerSessionId: spanning.providerThread.providerSessionId,
+            modelSelection: spanningModelSelection,
+            runtimePolicy: spanningRuntimePolicy,
+            ...(spanning.providerSession === undefined
+              ? {}
+              : { resumeFromSession: spanning.providerSession }),
+            ...(spanning.providerThread.nativeThreadRef?.nativeId == null
+              ? {}
+              : { initialNativeThreadId: spanning.providerThread.nativeThreadRef.nativeId }),
+            ...(spanning.providerThread.nativeMetadata?.itemIdentityVersion === undefined
+              ? {}
+              : {
+                  initialProviderItemIdentityVersion:
+                    spanning.providerThread.nativeMetadata.itemIdentityVersion,
+                }),
+          });
+          const spanningConversationIds = new Set(spanning.conversationThreadIds);
+          const spanningTurns = context.providerTurns.filter(
+            (turn) =>
+              spanningConversationIds.has(turn.providerThreadId) &&
+              (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
+          );
+          const spanningResult = yield* spanningSession.rollbackThread({
+            providerThread: spanning.providerThread,
+            target: {
+              type: "provider_turn",
+              checkpointId: spanning.targetCheckpointId,
+              appRunOrdinal: spanning.targetRun.ordinal,
+              providerTurn: spanningTurn,
+              ...(message === undefined ? {} : { message }),
+            },
+            providerThreadTurns: spanningTurns,
+          });
+          return {
+            providerThread: spanningResult.providerThread,
+            lastRunOrdinal: spanning.targetRun.ordinal,
+          };
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning(
+              "Spanning provider thread rollback failed; retiring conversation instead.",
+              {
+                threadId: input.threadId,
+                providerThreadId: spanning.providerThread.id,
+                cause,
+              },
+            ).pipe(Effect.as(undefined)),
+          ),
+        );
+        if (spanningOutcome === undefined) {
+          for (const threadIdInConv of spanning.conversationThreadIds) {
+            failedSpanningConversationIds.add(threadIdInConv);
+          }
+        } else {
+          succeededSpanningById.set(spanning.providerThread.id, spanningOutcome);
+        }
+      }
+      const spanningSnapshots: Array<{
+        readonly providerThread: OrchestrationV2ProviderThread;
+        readonly lastRunOrdinal: number;
+        readonly rolledBack: boolean;
+      }> = [];
+      const effectiveAbandonedProviderThreads: Array<OrchestrationV2ProviderThread> = [
+        ...abandonedProviderThreads,
+      ];
+      for (const spanning of spanningProviderThreads) {
+        if (failedSpanningConversationIds.has(spanning.providerThread.id)) {
+          effectiveAbandonedProviderThreads.push(spanning.providerThread);
+          continue;
+        }
+        const rolledBack = succeededSpanningById.get(spanning.providerThread.id);
+        spanningSnapshots.push(
+          rolledBack !== undefined
+            ? { ...rolledBack, rolledBack: true }
+            : {
+                providerThread: spanning.providerThread,
+                lastRunOrdinal: spanning.targetRun.ordinal,
+                rolledBack: false,
+              },
+        );
+      }
       if (restoreFiles) {
         yield* checkpoints.restore({ targets: restoreTargets, scopes: [scope, ...repositories] });
       }
@@ -457,8 +688,8 @@ export const layer: Layer.Layer<
                 }) as Event,
             );
           const events: Array<OrchestrationV2DomainEvent> = [];
-          // First, so a client that sees the runs rolled back already knows what was left.
-          if (input.requestId !== undefined && unrestorable.length > 0) {
+          // First, so a client that sees the runs rolled back already knows the outcome.
+          if (input.requestId !== undefined) {
             const thread = yield* projections.getThread(input.threadId);
             events.push(
               yield* makeEvent({
@@ -468,17 +699,78 @@ export const layer: Layer.Layer<
                 occurredAt: now,
                 payload: {
                   ...thread,
-                  rollbackUnrestored: {
-                    requestId: input.requestId,
-                    repositories: unrestorable.map(
-                      (repository) => repository.label ?? path.basename(repository.cwd),
-                    ),
-                  },
+                  rollbackCompletedRequestId: input.requestId,
+                  ...(unrestorable.length === 0
+                    ? {}
+                    : {
+                        rollbackUnrestored: {
+                          requestId: input.requestId,
+                          repositories: unrestorable.map(
+                            (repository) => repository.label ?? path.basename(repository.cwd),
+                          ),
+                        },
+                      }),
                   updatedAt: now,
                 },
               }),
             );
           }
+          // Reread provider rows under the lock so concurrent updates (e.g. pendingBackgroundTasks
+          // or session ownership) are never overwritten by snapshots read before rollback.
+          const needsFreshSessions =
+            context.abandonedSessions.length > 0 || failedSpanningConversationIds.size > 0;
+          const freshRecords = yield* projections.getThreadRecords(
+            input.threadId,
+            needsFreshSessions ? ["providerThreads", "providerSessions"] : ["providerThreads"],
+          );
+          const freshProviderThreadsById = new Map(
+            freshRecords.providerThreads.map((row) => [row.id, row]),
+          );
+          for (const spanning of spanningSnapshots) {
+            const current = freshProviderThreadsById.get(spanning.providerThread.id);
+            const payloadBase = spanning.rolledBack
+              ? {
+                  ...(current ?? spanning.providerThread),
+                  ...spanning.providerThread,
+                  ...(current?.pendingBackgroundTasks === undefined
+                    ? {}
+                    : { pendingBackgroundTasks: current.pendingBackgroundTasks }),
+                }
+              : (current ?? spanning.providerThread);
+            events.push(
+              yield* makeEvent({
+                type: "provider-thread.updated",
+                threadId: input.threadId,
+                driver: payloadBase.driver,
+                providerInstanceId: payloadBase.providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  ...payloadBase,
+                  lastRunOrdinal: spanning.lastRunOrdinal,
+                  updatedAt: now,
+                },
+              }),
+            );
+          }
+          for (const abandoned of effectiveAbandonedProviderThreads) {
+            const current = freshProviderThreadsById.get(abandoned.id) ?? abandoned;
+            events.push(
+              yield* makeEvent({
+                type: "provider-thread.updated",
+                threadId: input.threadId,
+                driver: current.driver,
+                providerInstanceId: current.providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  ...current,
+                  status: "closed",
+                  lastRunOrdinal: null,
+                  updatedAt: now,
+                },
+              }),
+            );
+          }
+          const currentTarget = freshProviderThreadsById.get(providerThread.id);
           events.push(
             yield* makeEvent({
               type: "provider-thread.updated",
@@ -487,12 +779,105 @@ export const layer: Layer.Layer<
               providerInstanceId: providerThread.providerInstanceId,
               occurredAt: now,
               payload: {
+                ...(currentTarget ?? providerThread),
                 ...snapshot.providerThread,
+                ...(currentTarget?.pendingBackgroundTasks === undefined
+                  ? {}
+                  : { pendingBackgroundTasks: currentTarget.pendingBackgroundTasks }),
                 lastRunOrdinal: targetOrdinal === 0 ? null : targetOrdinal,
                 updatedAt: now,
               },
             }),
           );
+          const effectiveAbandonedSessions = (() => {
+            if (!needsFreshSessions) {
+              return [];
+            }
+            const closedIds = new Set(effectiveAbandonedProviderThreads.map((row) => row.id));
+            const retainedSessionIds = new Set<string>();
+            if (providerThread.providerSessionId !== null) {
+              retainedSessionIds.add(providerThread.providerSessionId);
+            }
+            if (snapshot.providerThread.providerSessionId !== null) {
+              retainedSessionIds.add(snapshot.providerThread.providerSessionId);
+            }
+            for (const row of freshRecords.providerThreads) {
+              if (
+                row.appThreadId === input.threadId &&
+                row.ownerNodeId === null &&
+                !isRetiredProviderThread(row) &&
+                !closedIds.has(row.id) &&
+                row.providerSessionId !== null
+              ) {
+                retainedSessionIds.add(row.providerSessionId);
+              }
+            }
+            const freshSessionsById = new Map(
+              freshRecords.providerSessions.map((session) => [session.id, session]),
+            );
+            const byId = new Map<
+              OrchestrationV2ThreadProjection["providerSessions"][number]["id"],
+              OrchestrationV2ThreadProjection["providerSessions"][number]
+            >();
+            for (const session of context.abandonedSessions) {
+              if (retainedSessionIds.has(session.id)) continue;
+              const currentSession = freshSessionsById.get(session.id) ?? session;
+              if (
+                currentSession.status !== "stopped" &&
+                currentSession.status !== "error" &&
+                !currentSession.capabilities.sessions.supportsMultipleProviderThreadsPerSession
+              ) {
+                byId.set(currentSession.id, currentSession);
+              }
+            }
+            for (const abandoned of effectiveAbandonedProviderThreads) {
+              const current = freshProviderThreadsById.get(abandoned.id) ?? abandoned;
+              const sessionId = current.providerSessionId;
+              if (sessionId === null || retainedSessionIds.has(sessionId) || byId.has(sessionId)) {
+                continue;
+              }
+              const session = freshSessionsById.get(sessionId);
+              if (
+                session !== undefined &&
+                session.status !== "stopped" &&
+                session.status !== "error" &&
+                !session.capabilities.sessions.supportsMultipleProviderThreadsPerSession
+              ) {
+                byId.set(session.id, session);
+              }
+            }
+            return Array.from(byId.values());
+          })();
+          const detachEffects: Array<PendingOrchestrationEffectV2> = [];
+          const detachCommandId =
+            input.requestId ??
+            CommandId.make(`command:rollback-detach:${input.threadId}:${input.checkpointId}`);
+          for (const abandonedSession of effectiveAbandonedSessions) {
+            events.push(
+              yield* makeEvent({
+                type: "provider-session.detached",
+                threadId: input.threadId,
+                driver: abandonedSession.driver,
+                providerInstanceId: abandonedSession.providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  providerSessionId: abandonedSession.id,
+                  detachedAt: now,
+                  reason: "Rewound past this provider session.",
+                },
+              }),
+            );
+            detachEffects.push({
+              id: `effect:${detachCommandId}:provider-session.detach:${abandonedSession.id}`,
+              commandId: detachCommandId,
+              threadId: input.threadId,
+              request: {
+                type: "provider-session.detach",
+                providerSessionId: abandonedSession.id,
+                detail: "Rewound past this provider session.",
+              },
+            });
+          }
           for (const staleCheckpoint of staleCheckpoints) {
             events.push(
               yield* makeEvent({
@@ -533,7 +918,11 @@ export const layer: Layer.Layer<
               );
             }
           }
-          yield* eventSink.write({ events });
+          if (detachEffects.length > 0) {
+            yield* eventSink.writeWithEffects({ events, effects: detachEffects });
+          } else {
+            yield* eventSink.write({ events });
+          }
         }),
       );
     });

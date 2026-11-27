@@ -3,7 +3,14 @@ import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
-import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
+import {
+  didRunReachProvider,
+  isRetiredProviderThread,
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2Run,
+  providerThreadNativeConversationKey,
+  type RunAttemptId,
+} from "@t3tools/contracts";
 import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
@@ -935,6 +942,15 @@ export function getStartedThreadModelChangeBlockReason(
   };
 }
 
+function isRollbackableSettledRunStatus(status: OrchestrationV2Run["status"]): boolean {
+  return (
+    status === "completed" ||
+    status === "interrupted" ||
+    status === "failed" ||
+    status === "cancelled"
+  );
+}
+
 export async function waitForRevertedMessage(
   threadRef: ScopedThreadRef,
   turnCount: number,
@@ -945,24 +961,20 @@ export async function waitForRevertedMessage(
   const threadAtom = environmentThreadDetails.stateAtom(threadRef);
   const readProjection = () => Option.getOrNull(appAtomRegistry.get(threadAtom).data);
   const initial = readProjection();
-  const providerThreadId = initial?.thread.activeProviderThreadId;
+  const initialActiveProviderThreadId = initial?.thread.activeProviderThreadId;
   const initialProviderThread = initial?.providerThreads.find(
-    (providerThread) => providerThread.id === providerThreadId,
+    (providerThread) => providerThread.id === initialActiveProviderThreadId,
   );
   const initialProviderThreadIds = new Set(initial?.providerThreads.map((thread) => thread.id));
-  // Paging can omit the source run. Rollback commits the entire settled suffix atomically.
-  const witness = initial?.runs.reduce<(typeof initial.runs)[number] | undefined>((latest, run) => {
-    if (
-      run.ordinal <= turnCount ||
-      (run.status !== "completed" &&
-        run.status !== "interrupted" &&
-        run.status !== "failed" &&
-        run.status !== "cancelled")
-    )
-      return latest;
-    return latest === undefined || run.ordinal > latest.ordinal ? run : latest;
-  }, undefined);
-  if (witness === undefined) {
+  const resolvedTargetProviderThreadId =
+    turnCount === 0 || initial === null
+      ? initialActiveProviderThreadId
+      : resolveTargetProviderThreadIdForRun(initial, turnCount);
+  const expectedRolledBackRunIds =
+    initial?.runs
+      .filter((run) => run.ordinal > turnCount && isRollbackableSettledRunStatus(run.status))
+      .map((run) => run.id) ?? [];
+  if (expectedRolledBackRunIds.length === 0) {
     throw new Error(m(msg("The thread has changed. Select a message to rewind again.")));
   }
   return new Promise<ReadonlyArray<string>>((resolve, reject) => {
@@ -987,20 +999,35 @@ export async function waitForRevertedMessage(
         finish(new Error(failure.message));
         return;
       }
+      if (accepted && thread.thread.rollbackCompletedRequestId === requestId) {
+        finish();
+        return;
+      }
       if (
         accepted &&
+        thread.thread.rollbackCompletedRequestId === undefined &&
         thread.providerThreads.some(
           (providerThread) =>
-            (providerThread.id === providerThreadId ||
-              // Claude resets to a fresh root session when rewinding to thread start.
-              (turnCount === 0 &&
-                providerThread.ownerNodeId === null &&
-                providerThread.appThreadId === initial?.thread.id &&
-                providerThread.providerInstanceId === initialProviderThread?.providerInstanceId &&
-                !initialProviderThreadIds.has(providerThread.id))) &&
+            !isRetiredProviderThread(providerThread) &&
+            (turnCount === 0
+              ? providerThread.id === resolvedTargetProviderThreadId ||
+                // Claude resets to a fresh root session when rewinding to thread start.
+                (providerThread.ownerNodeId === null &&
+                  providerThread.appThreadId === initial?.thread.id &&
+                  providerThread.providerInstanceId === initialProviderThread?.providerInstanceId &&
+                  !initialProviderThreadIds.has(providerThread.id))
+              : providerThread.id === thread.thread.activeProviderThreadId &&
+                (resolvedTargetProviderThreadId !== undefined
+                  ? providerThread.id === resolvedTargetProviderThreadId
+                  : providerThread.ownerNodeId === null)) &&
             providerThread.lastRunOrdinal === (turnCount === 0 ? null : turnCount),
         ) &&
-        thread.runs.some((run) => run.id === witness.id && run.status === "rolled_back")
+        expectedRolledBackRunIds.every((id) =>
+          thread.runs.some((run) => run.id === id && run.status === "rolled_back"),
+        ) &&
+        !thread.runs.some(
+          (run) => run.ordinal > turnCount && isRollbackableSettledRunStatus(run.status),
+        )
       )
         finish();
     };
@@ -1684,22 +1711,56 @@ export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure |
   ];
 }
 
-/**
- * Run ordinals the conversation can be reverted to: those whose provider turn belongs to the
- * active provider thread, plus 0 for the thread start. Empty without a live provider session
- * on the thread's selected instance.
- */
-export function deriveAvailableRevertTurnCounts(projection: ThreadStructure | null) {
-  const available = new Set<number>();
-  const providerThread = projection?.providerThreads.find(
-    (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+function resolveTargetProviderThreadIdForRun(
+  projection: Pick<ThreadStructure, "runs" | "attempts" | "providerTurns">,
+  turnCount: number,
+): ProviderThreadId | undefined {
+  const run = projection.runs.find(
+    (candidate) => candidate.ordinal === turnCount && candidate.status !== "rolled_back",
   );
+  if (run?.activeAttemptId == null) return undefined;
+  let latest: OrchestrationV2ProviderTurn | undefined;
+  for (const turn of projection.providerTurns) {
+    if (turn.runAttemptId !== run.activeAttemptId) continue;
+    if (latest === undefined || turn.ordinal > latest.ordinal) latest = turn;
+  }
+  if (latest !== undefined) return latest.providerThreadId;
+  const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
+  if (attempt?.providerTurnId == null) return undefined;
+  return projection.providerTurns.find((turn) => turn.id === attempt.providerTurnId)
+    ?.providerThreadId;
+}
+
+/**
+ * Run ordinals the conversation can be reverted to: 0 for the thread start when the active
+ * provider thread can roll back, plus any non-rolled-back run whose owning open provider thread
+ * either supports rollback or has no later runs to unwind (cross-provider boundary rewind).
+ */
+export function deriveAvailableRevertTurnCounts(
+  projection: ThreadStructure | null,
+  options?: {
+    readonly supportsConversationRollback?: (providerInstanceId: ProviderInstanceId) => boolean;
+  },
+) {
+  const available = new Set<number>();
+  if (projection === null) return available;
+  const supportsRollback = (instanceId: ProviderInstanceId) =>
+    options?.supportsConversationRollback?.(instanceId) ?? true;
+  const providerThreadsById = new Map(
+    projection.providerThreads.map((providerThread) => [providerThread.id, providerThread]),
+  );
+  const activeProviderThread =
+    projection.thread.activeProviderThreadId === null
+      ? undefined
+      : providerThreadsById.get(projection.thread.activeProviderThreadId);
   if (
-    !providerThread?.providerSessionId ||
-    providerThread.providerInstanceId !== projection?.thread.modelSelection.instanceId
-  )
-    return available;
-  available.add(0);
+    activeProviderThread !== undefined &&
+    Boolean(activeProviderThread.providerSessionId) &&
+    !isRetiredProviderThread(activeProviderThread) &&
+    supportsRollback(activeProviderThread.providerInstanceId)
+  ) {
+    available.add(0);
+  }
   const attemptsById = new Map(projection.attempts.map((attempt) => [attempt.id, attempt]));
   const providerTurnsById = new Map<
     OrchestrationV2ProviderTurn["id"],
@@ -1714,14 +1775,48 @@ export function deriveAvailableRevertTurnCounts(projection: ThreadStructure | nu
       latestTurnByAttempt.set(turn.runAttemptId, turn);
     }
   }
+  const maxDeliveredOrdinalByConversation = new Map<string, number>();
+  let maxRollbackableOrdinal = 0;
   for (const run of projection.runs) {
-    if (run.activeAttemptId === null) continue;
+    if (!isRollbackableSettledRunStatus(run.status)) continue;
+    if (run.ordinal > maxRollbackableOrdinal) maxRollbackableOrdinal = run.ordinal;
+    if (
+      !didRunReachProvider(run, projection.providerTurns, projection.attempts) ||
+      run.providerThreadId === null
+    ) {
+      continue;
+    }
+    const runOwner = providerThreadsById.get(run.providerThreadId);
+    const conversationKey =
+      runOwner === undefined ? run.providerThreadId : providerThreadNativeConversationKey(runOwner);
+    const current = maxDeliveredOrdinalByConversation.get(conversationKey) ?? 0;
+    if (run.ordinal > current) {
+      maxDeliveredOrdinalByConversation.set(conversationKey, run.ordinal);
+    }
+  }
+  for (const run of projection.runs) {
+    if (run.status === "rolled_back" || run.activeAttemptId === null) continue;
     const attempt = attemptsById.get(run.activeAttemptId);
     const providerTurn =
       latestTurnByAttempt.get(run.activeAttemptId) ??
       (attempt?.providerTurnId == null ? undefined : providerTurnsById.get(attempt.providerTurnId));
-    // A ready file checkpoint alone cannot restore the provider conversation.
-    if (providerTurn?.providerThreadId === providerThread.id) available.add(run.ordinal);
+    if (providerTurn === undefined) continue;
+    const owner = providerThreadsById.get(providerTurn.providerThreadId);
+    if (
+      owner === undefined ||
+      !owner.providerSessionId ||
+      owner.ownerNodeId != null ||
+      isRetiredProviderThread(owner)
+    ) {
+      continue;
+    }
+    const conversationKey = providerThreadNativeConversationKey(owner);
+    const needsOwnerRollback =
+      (maxDeliveredOrdinalByConversation.get(conversationKey) ?? 0) > run.ordinal;
+    const canBoundaryRewind = !needsOwnerRollback && maxRollbackableOrdinal > run.ordinal;
+    if (supportsRollback(owner.providerInstanceId) || canBoundaryRewind) {
+      available.add(run.ordinal);
+    }
   }
   return available;
 }

@@ -126,6 +126,9 @@ function makeTestAdapter(input: {
   readonly cancelledRunOrdinals?: ReadonlySet<number>;
   readonly holdRunOrdinal?: number;
   readonly pendingBackgroundWork?: Ref.Ref<boolean>;
+  readonly pendingBackgroundWorkByThread?: (
+    providerThread: OrchestrationV2ProviderThread,
+  ) => Effect.Effect<boolean>;
   readonly subagentOnlyBackgroundWork?: boolean;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
@@ -142,6 +145,12 @@ function makeTestAdapter(input: {
   readonly runtimeStarts?: Ref.Ref<ReadonlyArray<string>>;
   // ACP cannot truncate, so its rollback answers with a fresh, empty native session.
   readonly rollback?: "truncates" | "replaces_native_thread";
+  readonly rollbackCalls?: Ref.Ref<
+    ReadonlyArray<{
+      readonly providerThreadId: ProviderThreadId;
+      readonly targetOrdinal: number;
+    }>
+  >;
   readonly beforeForcedNativeThread?: Effect.Effect<void>;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
@@ -188,13 +197,16 @@ function makeTestAdapter(input: {
           ...(input.backgroundTasksEndWithProcess === undefined
             ? {}
             : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
-          ...(input.pendingBackgroundWork === undefined
+          ...(input.pendingBackgroundWork === undefined &&
+          input.pendingBackgroundWorkByThread === undefined
             ? {}
             : {
-                hasPendingBackgroundWorkForThread: (_thread, options) =>
+                hasPendingBackgroundWorkForThread: (thread, options) =>
                   input.subagentOnlyBackgroundWork && options?.includeSubagents !== true
                     ? Effect.succeed(false)
-                    : Ref.get(input.pendingBackgroundWork!),
+                    : input.pendingBackgroundWorkByThread !== undefined
+                      ? input.pendingBackgroundWorkByThread(thread)
+                      : Ref.get(input.pendingBackgroundWork!),
               }),
           ...(input.getModelContextWindow === undefined
             ? {}
@@ -512,25 +524,36 @@ function makeTestAdapter(input: {
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () =>
             unimplemented(input.driver, "readThreadSnapshot unused in provider switch test"),
-          rollbackThread: ({ providerThread }) =>
+          rollbackThread: ({ providerThread, target }) =>
             input.rollback === undefined
               ? unimplemented(input.driver, "rollbackThread unused in provider switch test")
-              : Effect.succeed({
-                  providerThread:
-                    input.rollback === "truncates" || providerThread.nativeThreadRef === null
-                      ? providerThread
-                      : {
-                          ...providerThread,
-                          nativeThreadRef: {
-                            ...providerThread.nativeThreadRef,
-                            nativeId: `${providerThread.nativeThreadRef.nativeId}:after-rollback`,
+              : (input.rollbackCalls === undefined
+                  ? Effect.void
+                  : Ref.update(input.rollbackCalls, (calls) => [
+                      ...calls,
+                      {
+                        providerThreadId: providerThread.id,
+                        targetOrdinal: target.appRunOrdinal,
+                      },
+                    ])
+                ).pipe(
+                  Effect.as({
+                    providerThread:
+                      input.rollback === "truncates" || providerThread.nativeThreadRef === null
+                        ? providerThread
+                        : {
+                            ...providerThread,
+                            nativeThreadRef: {
+                              ...providerThread.nativeThreadRef,
+                              nativeId: `${providerThread.nativeThreadRef.nativeId}:after-rollback`,
+                            },
+                            nativeConversationHeadRef: null,
                           },
-                          nativeConversationHeadRef: null,
-                        },
-                  providerTurns: [],
-                  messages: [],
-                  runtimeRequests: [],
-                }),
+                    providerTurns: [],
+                    messages: [],
+                    runtimeRequests: [],
+                  }),
+                ),
           forkThread: () =>
             unimplemented(input.driver, "forkThread unused in provider switch test"),
         };
@@ -6927,5 +6950,920 @@ describe("orchestration v2 provider switching", () => {
         ),
       );
     }),
+  );
+
+  it.effect(
+    "rewinds across a provider switch by closing abandoned sessions and restoring the target provider thread",
+    () =>
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("cross-provider-rollback");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const claudeRollbacks = yield* Ref.make<
+          ReadonlyArray<{
+            readonly providerThreadId: ProviderThreadId;
+            readonly targetOrdinal: number;
+          }>
+        >([]);
+        const codexRollbacks = yield* Ref.make<
+          ReadonlyArray<{
+            readonly providerThreadId: ProviderThreadId;
+            readonly targetOrdinal: number;
+          }>
+        >([]);
+        const codexNativeGeneration = yield* Ref.make(0);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            rollback: "truncates",
+            rollbackCalls: claudeRollbacks,
+            responseByRunOrdinal: {
+              1: "Claude turn 1 answer (alpha).",
+              2: "Claude turn 2 answer (beta).",
+            },
+            capturedTurns,
+          }),
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            rollback: "truncates",
+            rollbackCalls: codexRollbacks,
+            nativeThreadGeneration: codexNativeGeneration,
+            responseByRunOrdinal: {
+              3: "Codex turn 3 answer (gamma).",
+              4: "Codex turn 4 answer (delta).",
+              5: "Codex turn 5 answer (epsilon).",
+            },
+            capturedTurns,
+          }),
+        ]);
+
+        return yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const testThreadId = ThreadId.make("thread:cross-provider-rollback");
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("command:cross-provider-rollback:create"),
+            threadId: testThreadId,
+            projectId,
+            title: "Cross-provider rollback",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          let step = 0;
+          const send = (text: string, modelSelection: ModelSelection) =>
+            Effect.gen(function* () {
+              step += 1;
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`command:cross-provider-rollback:msg-${step}`),
+                threadId: testThreadId,
+                messageId: MessageId.make(`message:cross-provider-rollback:${step}`),
+                text,
+                attachments: [],
+                modelSelection,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* worker.drain();
+              yield* waitForIdle(testThreadId);
+              yield* worker.drain();
+              return yield* orchestrator.getThreadProjection(testThreadId);
+            });
+          const rollbackToOrdinal = (targetOrdinal: number, label: string) =>
+            Effect.gen(function* () {
+              const before = yield* orchestrator.getThreadProjection(testThreadId);
+              const checkpoint = before.checkpoints.find(
+                (candidate) =>
+                  (candidate.appRunOrdinal ?? 0) === targetOrdinal && candidate.status === "ready",
+              );
+              if (checkpoint === undefined) {
+                return yield* Effect.die(`Expected ready checkpoint at ordinal ${targetOrdinal}`);
+              }
+              yield* orchestrator.dispatch({
+                type: "checkpoint.rollback",
+                commandId: CommandId.make(`command:cross-provider-rollback:${label}`),
+                threadId: testThreadId,
+                scopeId: checkpoint.scopeId,
+                checkpointId: checkpoint.id,
+                restoreFiles: false,
+              });
+              yield* worker.drain();
+              const after = yield* orchestrator.getThreadProjection(testThreadId);
+              assert.equal(after.thread.rollbackFailure ?? null, null);
+              return after;
+            });
+
+          yield* send("Claude prompt 1", CLAUDE_MODEL_SELECTION);
+          const afterClaude2 = yield* send("Claude prompt 2", CLAUDE_MODEL_SELECTION);
+          const claudeProviderThreadId = afterClaude2.thread.activeProviderThreadId!;
+          const afterCodex3 = yield* send("Codex prompt 3", CODEX_MODEL_SELECTION);
+          const firstCodexThreadId = afterCodex3.thread.activeProviderThreadId!;
+          const run3Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.notEqual(firstCodexThreadId, claudeProviderThreadId);
+
+          // 1. Boundary rollback: discard Codex run 3, land cleanly on Claude run 2 without
+          // invoking rollbackThread on either provider. Also verify a message sent while rollback
+          // is still pending cannot bind to the abandoned Codex thread.
+          const cp2 = afterCodex3.checkpoints.find(
+            (candidate) => (candidate.appRunOrdinal ?? 0) === 2 && candidate.status === "ready",
+          )!;
+          yield* orchestrator.dispatch({
+            type: "checkpoint.rollback",
+            commandId: CommandId.make("command:cross-provider-rollback:boundary"),
+            threadId: testThreadId,
+            scopeId: cp2.scopeId,
+            checkpointId: cp2.id,
+            restoreFiles: false,
+          });
+          const pendingRollbackSendError = yield* orchestrator
+            .dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:cross-provider-rollback:during-rollback"),
+              threadId: testThreadId,
+              messageId: MessageId.make("message:cross-provider-rollback:during-rollback"),
+              text: "Sent while rollback is pending",
+              attachments: [],
+              modelSelection: CODEX_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            })
+            .pipe(Effect.flip);
+          assert.equal(pendingRollbackSendError._tag, "OrchestratorDispatchError");
+          assert.include(String(pendingRollbackSendError.cause), "currently rewinding");
+          yield* worker.drain();
+          const afterBoundary = yield* orchestrator.getThreadProjection(testThreadId);
+          assert.equal(afterBoundary.thread.rollbackFailure ?? null, null);
+          assert.equal(afterBoundary.thread.activeProviderThreadId, claudeProviderThreadId);
+          assert.equal(
+            afterBoundary.thread.modelSelection.instanceId,
+            CODEX_MODEL_SELECTION.instanceId,
+          );
+          assert.equal(
+            afterBoundary.providerThreads.find((thread) => thread.id === firstCodexThreadId)
+              ?.status,
+            "closed",
+          );
+          assert.equal(
+            afterBoundary.providerThreads.find((thread) => thread.id === claudeProviderThreadId)
+              ?.lastRunOrdinal,
+            2,
+          );
+          assert.equal(afterBoundary.runs.find((run) => run.ordinal === 3)?.status, "rolled_back");
+          assert.deepEqual(yield* Ref.get(claudeRollbacks), []);
+          assert.deepEqual(yield* Ref.get(codexRollbacks), []);
+
+          // Resending on Codex starts a brand-new Codex provider thread and native conversation
+          // with a fresh handoff that includes Claude runs 1-2 and excludes rolled-back run 3.
+          const afterCodex4 = yield* send("Codex prompt 4 (edited)", CODEX_MODEL_SELECTION);
+          const secondCodexThreadId = afterCodex4.thread.activeProviderThreadId!;
+          assert.notEqual(secondCodexThreadId, firstCodexThreadId);
+          const run4Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.equal(run4Turn.providerThreadId, secondCodexThreadId);
+          assert.isNotNull(run3Turn.nativeThreadId);
+          assert.isNotNull(run4Turn.nativeThreadId);
+          assert.notEqual(run4Turn.nativeThreadId, run3Turn.nativeThreadId);
+          assert.include(run4Turn.text, "Claude turn 2 answer (beta).");
+          assert.notInclude(run4Turn.text, "Codex prompt 3");
+          assert.notInclude(run4Turn.text, "Codex turn 3 answer (gamma).");
+
+          // 2. Deep cross-provider rollback: from Codex run 4, rewind into Claude run 1.
+          // Must close secondCodexThreadId and roll back Claude past run 2.
+          const afterDeep = yield* rollbackToOrdinal(1, "deep");
+          assert.equal(afterDeep.thread.activeProviderThreadId, claudeProviderThreadId);
+          assert.equal(
+            afterDeep.providerThreads.find((thread) => thread.id === secondCodexThreadId)?.status,
+            "closed",
+          );
+          assert.equal(afterDeep.runs.find((run) => run.ordinal === 2)?.status, "rolled_back");
+          assert.equal(afterDeep.runs.find((run) => run.ordinal === 4)?.status, "rolled_back");
+          assert.deepEqual(yield* Ref.get(claudeRollbacks), [
+            { providerThreadId: claudeProviderThreadId, targetOrdinal: 1 },
+          ]);
+
+          // 3. Rewind to thread start after switching providers again: closes Claude too and
+          // detaches Claude's non-shared session so a future switch does not reuse it.
+          const afterCodex5 = yield* send("Codex prompt 5", CODEX_MODEL_SELECTION);
+          const thirdCodexThreadId = afterCodex5.thread.activeProviderThreadId!;
+          const afterStart = yield* rollbackToOrdinal(0, "thread-start");
+          assert.equal(afterStart.thread.activeProviderThreadId, thirdCodexThreadId);
+          assert.equal(
+            afterStart.providerThreads.find((thread) => thread.id === claudeProviderThreadId)
+              ?.status,
+            "closed",
+          );
+          assert.equal(
+            afterStart.providerSessions.some(
+              (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+            ),
+            false,
+          );
+          assert.isTrue(afterStart.runs.every((run) => run.status === "rolled_back"));
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "cross-provider-rollback",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+  );
+
+  it.effect(
+    "allows boundary rollback onto a non-rollback provider (including past an unstarted cancelled run) and rejects deep rollback into it",
+    () =>
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("cross-provider-no-rollback");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const codexHold = yield* Deferred.make<void>();
+        const codexRelease = yield* Deferred.make<void>();
+        const noRollbackCapabilities: OrchestrationV2ProviderCapabilities = {
+          ...AcpProviderCapabilitiesV2,
+          threads: {
+            ...AcpProviderCapabilitiesV2.threads,
+            canRollbackThread: false,
+          },
+          checkpointing: {
+            ...AcpProviderCapabilitiesV2.checkpointing,
+            providerCanRollbackConversation: false,
+            providerRollbackReturnsSnapshot: false,
+          },
+        };
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: GROK_MODEL_SELECTION.instanceId,
+            driver: GROK_DRIVER,
+            capabilities: noRollbackCapabilities,
+            modelSelection: GROK_MODEL_SELECTION,
+            responseByRunOrdinal: {
+              1: "Grok turn 1.",
+              2: "Grok turn 2.",
+            },
+            capturedTurns,
+          }),
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            rollback: "truncates",
+            holdRunOrdinal: 3,
+            holdFirstTurn: codexHold,
+            releaseFirstTurn: codexRelease,
+            responseByRunOrdinal: {
+              3: "Codex turn 3.",
+            },
+            capturedTurns,
+          }),
+        ]);
+
+        return yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const testThreadId = ThreadId.make("thread:cross-provider-no-rollback");
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("command:cross-provider-no-rollback:create"),
+            threadId: testThreadId,
+            projectId,
+            title: "Cross-provider non-rollback boundary",
+            modelSelection: GROK_MODEL_SELECTION,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          let step = 0;
+          const send = (text: string, modelSelection: ModelSelection) =>
+            Effect.gen(function* () {
+              step += 1;
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`command:cross-provider-no-rollback:msg-${step}`),
+                threadId: testThreadId,
+                messageId: MessageId.make(`message:cross-provider-no-rollback:${step}`),
+                text,
+                attachments: [],
+                modelSelection,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* worker.drain();
+              yield* waitForIdle(testThreadId);
+              yield* worker.drain();
+              return yield* orchestrator.getThreadProjection(testThreadId);
+            });
+
+          yield* send("Grok 1", GROK_MODEL_SELECTION);
+          const afterGrok2 = yield* send("Grok 2", GROK_MODEL_SELECTION);
+          const grokThreadId = afterGrok2.thread.activeProviderThreadId!;
+
+          // Start Codex run 3, hold it in flight, queue a Grok message, and cancel it before delivery.
+          step += 1;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:cross-provider-no-rollback:msg-${step}`),
+            threadId: testThreadId,
+            messageId: MessageId.make(`message:cross-provider-no-rollback:${step}`),
+            text: "Codex 3",
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Deferred.await(codexHold);
+          step += 1;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:cross-provider-no-rollback:msg-${step}`),
+            threadId: testThreadId,
+            messageId: MessageId.make(`message:cross-provider-no-rollback:${step}`),
+            text: "Cancelled Grok message",
+            attachments: [],
+            modelSelection: GROK_MODEL_SELECTION,
+            dispatchMode: { type: "queue_after_active" },
+          });
+          const withQueued = yield* orchestrator.getThreadProjection(testThreadId);
+          const queuedGrokRun = withQueued.runs.find((run) => run.status === "queued")!;
+          assert.equal(queuedGrokRun.providerThreadId, grokThreadId);
+          yield* orchestrator.dispatch({
+            type: "queued-run.cancel",
+            commandId: CommandId.make("command:cross-provider-no-rollback:cancel-queued"),
+            threadId: testThreadId,
+            runId: queuedGrokRun.id,
+          });
+          yield* Deferred.succeed(codexRelease, undefined);
+          yield* worker.drain();
+          yield* waitForIdle(testThreadId);
+          yield* worker.drain();
+          const afterCodex3 = yield* orchestrator.getThreadProjection(testThreadId);
+          const codexThreadId = afterCodex3.thread.activeProviderThreadId!;
+          const cancelledGrokRun = afterCodex3.runs.find((run) => run.id === queuedGrokRun.id)!;
+          assert.equal(cancelledGrokRun.status, "cancelled");
+          assert.isNull(cancelledGrokRun.startedAt);
+
+          // Deep rollback into Grok run 1 requires rewinding Grok past run 2 -> rejected.
+          const cp1 = afterCodex3.checkpoints.find(
+            (checkpoint) => checkpoint.appRunOrdinal === 1 && checkpoint.status === "ready",
+          )!;
+          const deepError = yield* orchestrator
+            .dispatch({
+              type: "checkpoint.rollback",
+              commandId: CommandId.make("command:cross-provider-no-rollback:deep"),
+              threadId: testThreadId,
+              scopeId: cp1.scopeId,
+              checkpointId: cp1.id,
+              restoreFiles: false,
+            })
+            .pipe(Effect.flip);
+          assert.equal(deepError._tag, "OrchestratorDispatchError");
+          assert.instanceOf(deepError.cause, CommandPolicyCapabilityUnsupportedError);
+          assert.equal(deepError.cause.providerInstanceId, GROK_MODEL_SELECTION.instanceId);
+          assert.equal(deepError.cause.capability, "rollback");
+
+          // Boundary rollback onto Grok run 2 ignores the unstarted cancelled Grok run -> succeeds.
+          const cp2 = afterCodex3.checkpoints.find(
+            (checkpoint) => checkpoint.appRunOrdinal === 2 && checkpoint.status === "ready",
+          )!;
+          yield* orchestrator.dispatch({
+            type: "checkpoint.rollback",
+            commandId: CommandId.make("command:cross-provider-no-rollback:boundary"),
+            threadId: testThreadId,
+            scopeId: cp2.scopeId,
+            checkpointId: cp2.id,
+            restoreFiles: false,
+          });
+          yield* worker.drain();
+          const afterBoundary = yield* orchestrator.getThreadProjection(testThreadId);
+          assert.equal(afterBoundary.thread.rollbackFailure ?? null, null);
+          assert.equal(afterBoundary.thread.activeProviderThreadId, grokThreadId);
+          assert.equal(
+            afterBoundary.providerThreads.find((thread) => thread.id === codexThreadId)?.status,
+            "closed",
+          );
+          assert.equal(afterBoundary.runs.find((run) => run.ordinal === 3)?.status, "rolled_back");
+          assert.equal(
+            afterBoundary.runs.find((run) => run.id === queuedGrokRun.id)?.status,
+            "rolled_back",
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "cross-provider-no-rollback",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+  );
+
+  it.effect(
+    "keeps spanning provider threads usable, checks abandoned Codex background work, and rebinds held queued runs",
+    () =>
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("cross-provider-spanning-and-queue");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const claudeRollbacks = yield* Ref.make<
+          ReadonlyArray<{
+            readonly providerThreadId: ProviderThreadId;
+            readonly targetOrdinal: number;
+          }>
+        >([]);
+        const codexRollbacks = yield* Ref.make<
+          ReadonlyArray<{
+            readonly providerThreadId: ProviderThreadId;
+            readonly targetOrdinal: number;
+          }>
+        >([]);
+        const codexNativeGeneration = yield* Ref.make(0);
+        const busyCodexThreadIds = yield* Ref.make<ReadonlySet<ProviderThreadId>>(new Set());
+        const holdCodexRun = yield* Deferred.make<void>();
+        const releaseCodexRun = yield* Deferred.make<void>();
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            rollback: "truncates",
+            rollbackCalls: claudeRollbacks,
+            responseByRunOrdinal: {
+              1: "Claude A1.",
+              3: "Claude A3.",
+            },
+            capturedTurns,
+          }),
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            rollback: "truncates",
+            rollbackCalls: codexRollbacks,
+            nativeThreadGeneration: codexNativeGeneration,
+            failedRunOrdinals: new Set([4]),
+            holdRunOrdinal: 4,
+            holdFirstTurn: holdCodexRun,
+            releaseFirstTurn: releaseCodexRun,
+            pendingBackgroundWorkByThread: (providerThread) =>
+              Ref.get(busyCodexThreadIds).pipe(Effect.map((ids) => ids.has(providerThread.id))),
+            responseByRunOrdinal: {
+              2: "Codex B2.",
+              4: "Codex B4.",
+              5: "Codex B5 rebound.",
+            },
+            capturedTurns,
+          }),
+        ]);
+
+        return yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const testThreadId = ThreadId.make("thread:cross-provider-spanning");
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("command:spanning:create"),
+            threadId: testThreadId,
+            projectId,
+            title: "Spanning provider rollback",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          let step = 0;
+          const send = (text: string, modelSelection: ModelSelection) =>
+            Effect.gen(function* () {
+              step += 1;
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`command:spanning:msg-${step}`),
+                threadId: testThreadId,
+                messageId: MessageId.make(`message:spanning:${step}`),
+                text,
+                attachments: [],
+                modelSelection,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* worker.drain();
+              yield* waitForIdle(testThreadId);
+              yield* worker.drain();
+              return yield* orchestrator.getThreadProjection(testThreadId);
+            });
+          const rollbackToOrdinal = (targetOrdinal: number, label: string) =>
+            Effect.gen(function* () {
+              const before = yield* orchestrator.getThreadProjection(testThreadId);
+              const checkpoint = before.checkpoints.find(
+                (candidate) =>
+                  (candidate.appRunOrdinal ?? 0) === targetOrdinal && candidate.status === "ready",
+              )!;
+              yield* orchestrator.dispatch({
+                type: "checkpoint.rollback",
+                commandId: CommandId.make(`command:spanning:rollback:${label}`),
+                threadId: testThreadId,
+                scopeId: checkpoint.scopeId,
+                checkpointId: checkpoint.id,
+                restoreFiles: false,
+              });
+              yield* worker.drain();
+              const after = yield* orchestrator.getThreadProjection(testThreadId);
+              assert.equal(after.thread.rollbackFailure ?? null, null);
+              return after;
+            });
+
+          // 1. Live multi-thread Codex background work on an abandoned thread blocks rewind to A1.
+          const afterA1 = yield* send("A1", CLAUDE_MODEL_SELECTION);
+          const claudeThreadId = afterA1.thread.activeProviderThreadId!;
+          const afterB2 = yield* send("B2", CODEX_MODEL_SELECTION);
+          const codexThreadId = afterB2.thread.activeProviderThreadId!;
+
+          yield* Ref.set(busyCodexThreadIds, new Set([codexThreadId]));
+          const cp1BeforeA3 = afterB2.checkpoints.find(
+            (candidate) => candidate.appRunOrdinal === 1 && candidate.status === "ready",
+          )!;
+          const busyError = yield* orchestrator
+            .dispatch({
+              type: "checkpoint.rollback",
+              commandId: CommandId.make("command:spanning:busy-codex"),
+              threadId: testThreadId,
+              scopeId: cp1BeforeA3.scopeId,
+              checkpointId: cp1BeforeA3.id,
+              restoreFiles: false,
+            })
+            .pipe(Effect.flip);
+          assert.equal(busyError._tag, "OrchestratorDispatchError");
+          assert.include(String(busyError.cause), "background agents or commands");
+
+          // Clearing abandoned thread's work (even if an unrelated Codex thread is busy) unblocks switching and rewind.
+          yield* Ref.set(
+            busyCodexThreadIds,
+            new Set([ProviderThreadId.make("provider-thread:unrelated-codex")]),
+          );
+
+          // 2. Spanning provider thread: A1 (Claude) -> B2 (Codex) -> A3 (Claude).
+          const afterA3 = yield* send("A3", CLAUDE_MODEL_SELECTION);
+          assert.equal(afterA3.thread.activeProviderThreadId, claudeThreadId);
+
+          // Rewind to B2: Claude spans the rewind point, so Claude rolls back to A1 and stays open.
+          const afterRewindToB2 = yield* rollbackToOrdinal(2, "to-b2");
+          assert.equal(afterRewindToB2.thread.activeProviderThreadId, codexThreadId);
+          const claudeAfterB2 = afterRewindToB2.providerThreads.find(
+            (thread) => thread.id === claudeThreadId,
+          )!;
+          assert.notEqual(claudeAfterB2.status, "closed");
+          assert.equal(claudeAfterB2.lastRunOrdinal, 1);
+          assert.deepEqual(yield* Ref.get(claudeRollbacks), [
+            { providerThreadId: claudeThreadId, targetOrdinal: 1 },
+          ]);
+
+          // Retained Claude A1 checkpoint remains usable as a pure boundary rewind target.
+          const afterRewindToA1 = yield* rollbackToOrdinal(1, "to-a1");
+          assert.equal(afterRewindToA1.thread.activeProviderThreadId, claudeThreadId);
+          assert.equal(
+            afterRewindToA1.providerThreads.find((thread) => thread.id === codexThreadId)?.status,
+            "closed",
+          );
+          // Claude was already rolled back to A1 above, so rewinding from B2 to A1 is a pure boundary rewind.
+          assert.equal((yield* Ref.get(claudeRollbacks)).length, 1);
+
+          // 3. Held queued message bound to a rollback-closed Codex thread rebinds to a fresh thread.
+          step += 1;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:spanning:msg-${step}`),
+            threadId: testThreadId,
+            messageId: MessageId.make(`message:spanning:${step}`),
+            text: "Codex B4",
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Deferred.await(holdCodexRun);
+          const duringB4 = yield* orchestrator.getThreadProjection(testThreadId);
+          const codexB4ThreadId = duringB4.thread.activeProviderThreadId!;
+          const codexB4Run = duringB4.runs.find((run) => run.ordinal === 4)!;
+          step += 1;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:spanning:msg-${step}`),
+            threadId: testThreadId,
+            messageId: MessageId.make(`message:spanning:${step}`),
+            text: "Held Codex follow-up",
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "queue_after_active" },
+          });
+          // Let B4 fail so the queued Codex run stays held while bound to codexB4ThreadId.
+          yield* Deferred.succeed(releaseCodexRun, undefined);
+          yield* orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.runId === codexB4Run.id &&
+                event.payload.status === "failed",
+            ),
+            Stream.runHead,
+          );
+          yield* worker.drain();
+
+          const beforeRewindWithHeld = yield* orchestrator.getThreadProjection(testThreadId);
+          const heldRun = beforeRewindWithHeld.runs.find((run) => run.status === "queued")!;
+          assert.equal(heldRun.status, "queued");
+          assert.equal(heldRun.providerThreadId, codexB4ThreadId);
+          const b4Turn = (yield* Ref.get(capturedTurns)).find(
+            (turn) => turn.providerThreadId === codexB4ThreadId,
+          )!;
+
+          // Dispatch rewind to A1 and resume the held queue while the rollback effect is still pending:
+          // the queued run must stay queued (not marked failed) and start once the rollback settles.
+          const cp1ForHeld = beforeRewindWithHeld.checkpoints.find(
+            (candidate) => candidate.appRunOrdinal === 1 && candidate.status === "ready",
+          )!;
+          yield* orchestrator.dispatch({
+            type: "checkpoint.rollback",
+            commandId: CommandId.make("command:spanning:rollback:with-held-queue"),
+            threadId: testThreadId,
+            scopeId: cp1ForHeld.scopeId,
+            checkpointId: cp1ForHeld.id,
+            restoreFiles: false,
+          });
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make("command:spanning:resume-held"),
+            threadId: testThreadId,
+          });
+          const whileRollbackPending = yield* orchestrator.getThreadProjection(testThreadId);
+          const pendingQueuedRun = whileRollbackPending.runs.find((run) => run.id === heldRun.id);
+          assert.equal(pendingQueuedRun?.status, "queued");
+          assert.notEqual(pendingQueuedRun?.queueHeld, true);
+
+          // Drain the pending rollback effect; the queued run must now automatically start and
+          // rebind to a brand-new Codex thread and native conversation, never codexB4ThreadId.
+          yield* worker.drain();
+          yield* waitForIdle(testThreadId);
+          yield* worker.drain();
+          const afterResumed = yield* orchestrator.getThreadProjection(testThreadId);
+          assert.equal(afterResumed.thread.rollbackFailure ?? null, null);
+          assert.equal(
+            afterResumed.thread.rollbackCompletedRequestId,
+            CommandId.make("command:spanning:rollback:with-held-queue"),
+          );
+          const resumedRun = afterResumed.runs.find((run) => run.id === heldRun.id);
+          assert.equal(resumedRun?.status, "completed");
+          const resumedTurn = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.notEqual(resumedTurn.providerThreadId, codexB4ThreadId);
+          assert.notEqual(resumedTurn.nativeThreadId, b4Turn.nativeThreadId);
+          assert.equal(
+            afterResumed.providerThreads.find((thread) => thread.id === codexB4ThreadId)?.status,
+            "closed",
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "cross-provider-spanning",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+  );
+
+  it.effect(
+    "invokes native rollback when rewinding past a restart_and_resume instance switch sharing nativeThreadRef",
+    () =>
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("cross-provider-shared-native");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const claudeRollbacks = yield* Ref.make<
+          ReadonlyArray<{
+            readonly providerThreadId: ProviderThreadId;
+            readonly targetOrdinal: number;
+          }>
+        >([]);
+        const altClaudeInstance = ProviderInstanceId.make("claudeAgentAlt");
+        const altClaudeModelSelection: ModelSelection = {
+          instanceId: altClaudeInstance,
+          model: CLAUDE_MODEL_SELECTION.model,
+        };
+        const nativeThreadGeneration = yield* Ref.make(0);
+        const holdFirstTurn = yield* Deferred.make<void>();
+        const releaseFirstTurn = yield* Deferred.make<void>();
+        const adapters = [
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            rollback: "truncates",
+            rollbackCalls: claudeRollbacks,
+            nativeThreadGeneration,
+            holdFirstTurn,
+            releaseFirstTurn,
+            responseByRunOrdinal: {
+              1: "Claude account 1 turn 1.",
+            },
+            capturedTurns,
+          }),
+          makeTestAdapter({
+            instanceId: altClaudeInstance,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: altClaudeModelSelection,
+            rollback: "truncates",
+            rollbackCalls: claudeRollbacks,
+            nativeThreadGeneration,
+            responseByRunOrdinal: {
+              2: "Claude account 2 turn 2.",
+            },
+            capturedTurns,
+          }),
+        ];
+        const layerRegistry = Layer.succeed(
+          ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+          ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+            get: (instanceId) => {
+              const adapter = adapters.find((candidate) => candidate.instanceId === instanceId);
+              return adapter === undefined
+                ? Effect.fail(
+                    new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({
+                      instanceId,
+                    }),
+                  )
+                : Effect.succeed(adapter);
+            },
+            list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
+            getMetadata: () =>
+              Effect.succeed({
+                driver: CLAUDE_DRIVER,
+                continuationKey: "claude:shared-native-account-history",
+                enabled: true,
+                capabilities: ClaudeProviderCapabilitiesV2,
+              }),
+          }),
+        );
+
+        return yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const testThreadId = ThreadId.make("thread:cross-provider-shared-native");
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("command:shared-native:create"),
+            threadId: testThreadId,
+            projectId,
+            title: "Shared native restart_and_resume rollback",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          // Start turn 1 on account 1, queue turn 2 on compatible account 2 while turn 1 runs so
+          // turn 2 reserves its own provider-thread row and resumes the same nativeThreadRef.
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:shared-native:msg-1"),
+            threadId: testThreadId,
+            messageId: MessageId.make("message:shared-native:1"),
+            text: "Turn 1 on account 1",
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Deferred.await(holdFirstTurn);
+          const during1 = yield* orchestrator.getThreadProjection(testThreadId);
+          const thread1Id = during1.thread.activeProviderThreadId!;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:shared-native:msg-2"),
+            threadId: testThreadId,
+            messageId: MessageId.make("message:shared-native:2"),
+            text: "Turn 2 on account 2",
+            attachments: [],
+            modelSelection: altClaudeModelSelection,
+            dispatchMode: { type: "queue_after_active" },
+          });
+          yield* Deferred.succeed(releaseFirstTurn, undefined);
+          yield* waitForIdle(testThreadId);
+          yield* worker.drain();
+          const after2 = yield* orchestrator.getThreadProjection(testThreadId);
+          const thread2Id = after2.thread.activeProviderThreadId!;
+          assert.notEqual(thread2Id, thread1Id);
+          const thread1 = after2.providerThreads.find((t) => t.id === thread1Id)!;
+          const thread2 = after2.providerThreads.find((t) => t.id === thread2Id)!;
+          assert.isNotNull(thread1.nativeThreadRef?.nativeId);
+          assert.equal(thread2.nativeThreadRef?.nativeId, thread1.nativeThreadRef?.nativeId);
+
+          // Rewind to turn 1: even though turn 2 has a different providerThreadId, it appended to
+          // the same nativeThreadRef, so native rollback MUST execute on thread1.
+          const cp1 = after2.checkpoints.find(
+            (candidate) => candidate.appRunOrdinal === 1 && candidate.status === "ready",
+          )!;
+          yield* orchestrator.dispatch({
+            type: "checkpoint.rollback",
+            commandId: CommandId.make("command:shared-native:rollback"),
+            threadId: testThreadId,
+            scopeId: cp1.scopeId,
+            checkpointId: cp1.id,
+            restoreFiles: false,
+          });
+          yield* worker.drain();
+          const afterRollback = yield* orchestrator.getThreadProjection(testThreadId);
+          assert.equal(afterRollback.thread.rollbackFailure ?? null, null);
+          assert.equal(afterRollback.thread.activeProviderThreadId, thread1Id);
+          assert.equal(
+            afterRollback.providerThreads.find((t) => t.id === thread2Id)?.status,
+            "closed",
+          );
+          assert.deepEqual(yield* Ref.get(claudeRollbacks), [
+            { providerThreadId: thread1Id, targetOrdinal: 1 },
+          ]);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "cross-provider-shared-native",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
   );
 });

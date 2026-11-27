@@ -1463,10 +1463,16 @@ export default function ChatView(props: ChatViewProps) {
   const conversationProviderStatus =
     providerStatuses.find((status) => status.instanceId === activeRuntime?.providerInstanceId) ??
     activeProviderStatus;
+  const availableRevertTurnCounts = deriveAvailableRevertTurnCounts(serverProjection, {
+    supportsConversationRollback: (instanceId) =>
+      providerStatuses.find((status) => status.instanceId === instanceId)
+        ?.supportsConversationRollback !== false,
+  });
   const supportsConversationRollback =
     canOperateThread &&
-    conversationProviderStatus !== null &&
-    conversationProviderStatus.supportsConversationRollback !== false;
+    (availableRevertTurnCounts.size > 0 ||
+      (conversationProviderStatus !== null &&
+        conversationProviderStatus.supportsConversationRollback !== false));
   const phase = derivePhase(activeRuntime);
   const serverThreadId = serverThread?.id;
   const serverThreadEnvironmentId = serverThread?.environmentId;
@@ -1755,7 +1761,6 @@ export default function ChatView(props: ChatViewProps) {
     panelAnimationDurationMs,
   );
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadDetailRef);
-  const availableRevertTurnCounts = deriveAvailableRevertTurnCounts(serverProjection);
   // A paged history window cannot identify the first loaded run as the thread start.
   const threadStartCheckpointAvailable =
     !serverThreadHistory.hasMoreHistory && findRevertCheckpoint(serverProjection, 0) !== undefined;
