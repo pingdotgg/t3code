@@ -13020,8 +13020,6 @@
   "b9357a68c93b554b": "Dégrouper",
   "987de7870e17d4ed": "Impossible de mettre à jour le Bot",
   "69d31508eb4d8dbb": "Impossible de mettre à jour le groupe",
-  "ab8ce40d94482b3e": "Impossible d’enregistrer les notes du Bot",
-  "77a197a16cc26cc0": "Ce que le Bot retient d’un tour à l’autre.",
   "b7266adde1825b8c": "Comment vous souhaitez que le Bot travaille.",
   "2f4ef70d15027bb0": "Notes",
   "de21972169ea02a3": "Couper le bruit de l’équipe",
@@ -13044,5 +13042,16 @@
   "97884c869683f97f": "{count, plural, one {{count} vous attend} other {{count} vous attendent}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Arrêté",
-  "ff1728d6a7065373": "En cours"
+  "ff1728d6a7065373": "En cours",
+  "aac83e1098082197": "Impossible d’enregistrer les instructions du Bot",
+  "6c3933378cf5aa90": "Donnez un titre à la note.",
+  "95dec29742162dfb": "Supprimer la note « {title} » ?",
+  "5db766374f823efe": "Une ligne, pour que le Bot sache quand la lire.",
+  "3ac8ed47fe50bd34": "Titre",
+  "c710ee112651e1dd": "Résumé",
+  "16062ac4bcd9ab9e": "Note",
+  "aba29e77e52bca46": "Supprimer",
+  "58e20fe508eef1a3": "Toutes les notes",
+  "e807fee27e5cd426": "Nouvelle note",
+  "61a43a89f093e3f0": "Le Bot conserve ses notes ici."
 }

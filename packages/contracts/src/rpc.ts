@@ -200,7 +200,11 @@ import {
   BotError,
   BotFilesReadInput,
   BotFilesReadResult,
-  BotFileWriteInput,
+  BotNote,
+  BotNoteDeleteInput,
+  BotNoteReadInput,
+  BotNoteWriteInput,
+  BotPreferencesWriteInput,
   BotCreateInput,
   BotStartInput,
   BotStartResult,
@@ -535,6 +539,9 @@ export const WS_METHODS = {
 
   botFilesRead: "bot.files.read",
   botFilesWrite: "bot.files.write",
+  botNoteRead: "bot.note.read",
+  botNoteWrite: "bot.note.write",
+  botNoteDelete: "bot.note.delete",
   botStart: "bot.start",
   botCreate: "bot.create",
 
@@ -1843,7 +1850,23 @@ const WsBotFilesReadRpc = Rpc.make(WS_METHODS.botFilesRead, {
 });
 
 const WsBotFilesWriteRpc = Rpc.make(WS_METHODS.botFilesWrite, {
-  payload: BotFileWriteInput,
+  payload: BotPreferencesWriteInput,
+  error: Schema.Union([BotError, EnvironmentAuthorizationError]),
+});
+
+const WsBotNoteReadRpc = Rpc.make(WS_METHODS.botNoteRead, {
+  payload: BotNoteReadInput,
+  success: BotNote,
+  error: Schema.Union([BotError, EnvironmentAuthorizationError]),
+});
+
+const WsBotNoteWriteRpc = Rpc.make(WS_METHODS.botNoteWrite, {
+  payload: BotNoteWriteInput,
+  error: Schema.Union([BotError, EnvironmentAuthorizationError]),
+});
+
+const WsBotNoteDeleteRpc = Rpc.make(WS_METHODS.botNoteDelete, {
+  payload: BotNoteDeleteInput,
   error: Schema.Union([BotError, EnvironmentAuthorizationError]),
 });
 
@@ -2718,6 +2741,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsMcpAppsUpdateModelContextRpc,
   WsBotFilesReadRpc,
   WsBotFilesWriteRpc,
+  WsBotNoteReadRpc,
+  WsBotNoteWriteRpc,
+  WsBotNoteDeleteRpc,
   WsBotStartRpc,
   WsBotCreateRpc,
   WsProviderUploadFeedbackRpc,

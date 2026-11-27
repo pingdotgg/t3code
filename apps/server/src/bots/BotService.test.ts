@@ -71,29 +71,64 @@ it.effect("keeps a Bot's memory in its own folder and refuses writes from other 
   return Effect.gen(function* () {
     const bots = yield* BotService.BotService;
     assert.deepStrictEqual(yield* bots.readFiles({ threadId: botThread.id }), {
-      notes: "",
       preferences: "",
+      notes: [],
     });
     const refused = yield* bots
-      .writeFile({ threadId: ThreadId.make("thread:plain"), file: "notes", contents: "x" })
+      .writeNote({
+        threadId: ThreadId.make("thread:plain"),
+        slug: "plan",
+        title: "Plan",
+        summary: "",
+        body: "x",
+      })
       .pipe(Effect.flip);
     assert.strictEqual(refused.reason, "not_a_bot");
 
-    yield* bots.writeFile({ threadId: botThread.id, file: "notes", contents: "# Plan" });
+    // A Bot from before notes were split keeps its notes.md as the note "notes".
+    const { baseDir } = yield* ServerConfig.ServerConfig;
+    const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const botFolder = path.join(baseDir, "bots", "thread-~2e~2e~2fbot");
+    yield* fileSystem.makeDirectory(botFolder, { recursive: true });
+    yield* fileSystem.writeFileString(path.join(botFolder, "notes.md"), "# Old plan\n");
+
+    yield* bots.writeNote({
+      threadId: botThread.id,
+      slug: "release",
+      title: "Release 2.1",
+      summary: "What ships and when",
+      body: "Tag on Friday.",
+    });
     yield* bots.appendPreference({ threadId: botThread.id, text: "Use pnpm" });
     yield* bots.appendPreference({ threadId: botThread.id, text: "  Small PRs  " });
-    assert.deepStrictEqual(yield* bots.readFiles({ threadId: botThread.id }), {
-      notes: "# Plan",
-      preferences: "Use pnpm\nSmall PRs\n",
-    });
+    const files = yield* bots.readFiles({ threadId: botThread.id });
+    assert.strictEqual(files.preferences, "Use pnpm\nSmall PRs\n");
+    assert.deepStrictEqual(files.notes.map(({ slug, title }) => [slug, title]).sort(), [
+      ["notes", "Notes"],
+      ["release", "Release 2.1"],
+    ]);
+    assert.strictEqual(
+      (yield* bots.readNote({ threadId: botThread.id, slug: "notes" })).body,
+      "# Old plan\n",
+    );
+    assert.deepStrictEqual(
+      (yield* bots.searchNotes({ threadId: botThread.id, query: "friday" })).map(
+        ({ slug, excerpt }) => [slug, excerpt],
+      ),
+      [["release", "Tag on Friday."]],
+    );
+    yield* bots.deleteNote({ threadId: botThread.id, slug: "notes" });
+    const missing = yield* bots
+      .readNote({ threadId: botThread.id, slug: "notes" })
+      .pipe(Effect.flip);
+    assert.strictEqual(missing.reason, "note_not_found");
+
     // An archived Bot keeps its memory but can no longer change it.
     botThread.archivedAt = "2026-11-20T00:00:00.000Z";
     assert.isFalse(yield* bots.isBot(botThread.id));
 
     // "../bot" cannot climb out: its folder name is escaped.
-    const { baseDir } = yield* ServerConfig.ServerConfig;
-    const path = yield* Path.Path;
-    const fileSystem = yield* FileSystem.FileSystem;
     assert.deepStrictEqual(yield* fileSystem.readDirectory(path.join(baseDir, "bots")), [
       "thread-~2e~2e~2fbot",
     ]);

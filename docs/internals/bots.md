@@ -19,8 +19,12 @@ staff does that job without a guarded folder, a settings-owned grant or a lifecy
   folder holds nothing; a project would only tie it to one repo and hide that its crew go anywhere.
 - Crew is `groupedUnderThreadId`, one level deep. Threads a thread launches join its group, so a
   Bot's launches become its crew, in whatever project each one names.
-- Memory is `<base>/bots/thread-<id>/notes.md` and `preferences.md`. These files are user-owned and
-  never rewritten by the server.
+- Memory is `<base>/bots/thread-<id>/`: `preferences.md` (the user's instructions) and one file per
+  note in `notes/<slug>.md`, whose header holds its title and one-line summary. The index the Bot
+  reads is built from those headers on every read, so hand edits cannot leave it stale. Bots reach
+  memory only through the `t3_bot_*` tools: their instructions forbid file tools, and provider
+  sandboxes treat paths outside the workspace differently. These files are user-owned; the server
+  only moves an old single `notes.md` to `notes/notes.md`, once.
 - Explicit watches (threads outside the crew, workflow runs) live in `<base>/bots/watches.json`,
   read once and matched in memory against every milestone.
 

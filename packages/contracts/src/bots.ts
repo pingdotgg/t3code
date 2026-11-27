@@ -15,26 +15,66 @@ export const ThreadBotConfig = Schema.Struct({
 });
 export type ThreadBotConfig = typeof ThreadBotConfig.Type;
 
-export const BotFileKind = Schema.Literals(["notes", "preferences"]);
-export type BotFileKind = typeof BotFileKind.Type;
-
 export const BOT_FILE_MAX_CHARS = 64_000;
+export const BOT_NOTE_MAX_COUNT = 200;
+
+/** A note's file name under the Bot's notes folder, without `.md`. */
+export const BotNoteSlug = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,63}$/u, {
+    message:
+      "A note slug is 1-64 lowercase letters, digits and dashes, starting with a letter or digit.",
+  }),
+);
+export type BotNoteSlug = typeof BotNoteSlug.Type;
+
+const NoteTitle = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(120));
+const NoteSummary = Schema.String.check(Schema.isMaxLength(300));
+
+/** One line of a Bot's memory index: enough to decide whether to read the note. */
+export const BotNoteSummary = Schema.Struct({
+  slug: BotNoteSlug,
+  title: Schema.String,
+  summary: Schema.String,
+  updatedAt: IsoDateTime,
+});
+export type BotNoteSummary = typeof BotNoteSummary.Type;
+
+export const BotNote = Schema.Struct({
+  ...BotNoteSummary.fields,
+  body: Schema.String,
+});
+export type BotNote = typeof BotNote.Type;
 
 export const BotFilesReadInput = Schema.Struct({ threadId: ThreadId });
 export type BotFilesReadInput = typeof BotFilesReadInput.Type;
 
+/** `preferences` is the user's instructions; `notes` is the index of the Bot's notes. */
 export const BotFilesReadResult = Schema.Struct({
-  notes: Schema.String,
   preferences: Schema.String,
+  notes: Schema.Array(BotNoteSummary),
 });
 export type BotFilesReadResult = typeof BotFilesReadResult.Type;
 
-export const BotFileWriteInput = Schema.Struct({
+export const BotPreferencesWriteInput = Schema.Struct({
   threadId: ThreadId,
-  file: BotFileKind,
   contents: Schema.String.check(Schema.isMaxLength(BOT_FILE_MAX_CHARS)),
 });
-export type BotFileWriteInput = typeof BotFileWriteInput.Type;
+export type BotPreferencesWriteInput = typeof BotPreferencesWriteInput.Type;
+
+export const BotNoteReadInput = Schema.Struct({ threadId: ThreadId, slug: BotNoteSlug });
+export type BotNoteReadInput = typeof BotNoteReadInput.Type;
+
+export const BotNoteWriteFields = {
+  slug: BotNoteSlug,
+  title: NoteTitle,
+  summary: NoteSummary,
+  body: Schema.String.check(Schema.isMaxLength(BOT_FILE_MAX_CHARS)),
+};
+export const BotNoteWriteInput = Schema.Struct({ threadId: ThreadId, ...BotNoteWriteFields });
+export type BotNoteWriteInput = typeof BotNoteWriteInput.Type;
+
+export const BotNoteDeleteInput = BotNoteReadInput;
+export type BotNoteDeleteInput = typeof BotNoteDeleteInput.Type;
 
 /** Starts a new Bot seeded with a handoff of `threadId`, which becomes its first crew member. */
 export const BotStartInput = Schema.Struct({ threadId: ThreadId });
@@ -86,7 +126,15 @@ export const botWatchKey = (target: BotWatchTarget): string =>
 
 export class BotError extends Schema.TaggedError<BotError>()("BotError", {
   threadId: ThreadId,
-  reason: Schema.Literals(["not_a_bot", "too_large", "io", "cannot_start", "launch_failed"]),
+  reason: Schema.Literals([
+    "not_a_bot",
+    "too_large",
+    "io",
+    "cannot_start",
+    "launch_failed",
+    "note_not_found",
+    "too_many_notes",
+  ]),
   /** Why a Bot cannot start from the thread; safe to show. */
   detail: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Defect()),
@@ -103,6 +151,10 @@ export class BotError extends Schema.TaggedError<BotError>()("BotError", {
         return this.detail ?? `A Bot cannot start from thread ${this.threadId}.`;
       case "launch_failed":
         return `The Bot for thread ${this.threadId} could not be started.`;
+      case "note_not_found":
+        return this.detail ?? "That note does not exist.";
+      case "too_many_notes":
+        return `A Bot keeps at most ${BOT_NOTE_MAX_COUNT} notes. Merge or delete some first.`;
     }
   }
 }

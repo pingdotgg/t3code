@@ -1,8 +1,10 @@
 import {
   BOT_FILE_MAX_CHARS,
+  BOT_NOTE_MAX_COUNT,
   BotError,
-  type BotFileKind,
   type BotFilesReadResult,
+  type BotNote,
+  type BotNoteSummary,
   type BotCreateInput,
   type BotStartResult,
   type BotWatch,
@@ -24,12 +26,14 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
+import { parseNote, serializeNote } from "./botNotes.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
   readForkHistoryItems,
@@ -55,16 +59,36 @@ export class BotService extends Context.Service<
   {
     /** Whether the thread is a live Bot right now: not archived or deleted. */
     readonly isBot: (threadId: ThreadId) => Effect.Effect<boolean>;
-    /** Both memory files, empty when not written yet. */
+    /** The user's instructions (preferences.md) and the index of the Bot's notes. */
     readonly readFiles: (input: {
       readonly threadId: ThreadId;
     }) => Effect.Effect<BotFilesReadResult, BotError>;
-    /** Replaces one memory file. Only a live Bot's files can change. */
-    readonly writeFile: (input: {
+    /** Replaces preferences.md. Only a live Bot's files can change. */
+    readonly writePreferences: (input: {
       readonly threadId: ThreadId;
-      readonly file: BotFileKind;
       readonly contents: string;
     }) => Effect.Effect<void, BotError>;
+    readonly readNote: (input: {
+      readonly threadId: ThreadId;
+      readonly slug: string;
+    }) => Effect.Effect<BotNote, BotError>;
+    /** Creates or replaces one note. Only a live Bot's notes can change. */
+    readonly writeNote: (input: {
+      readonly threadId: ThreadId;
+      readonly slug: string;
+      readonly title: string;
+      readonly summary: string;
+      readonly body: string;
+    }) => Effect.Effect<void, BotError>;
+    readonly deleteNote: (input: {
+      readonly threadId: ThreadId;
+      readonly slug: string;
+    }) => Effect.Effect<void, BotError>;
+    /** Notes whose title, summary or body contains `query`, case-insensitively. */
+    readonly searchNotes: (input: {
+      readonly threadId: ThreadId;
+      readonly query: string;
+    }) => Effect.Effect<ReadonlyArray<BotNoteSummary & { readonly excerpt: string }>, BotError>;
     /** Adds a line to preferences.md. Only a live Bot's files can change. */
     readonly appendPreference: (input: {
       readonly threadId: ThreadId;
@@ -103,6 +127,7 @@ const escapeId = (threadId: ThreadId) =>
   );
 
 const memoryFolderName = (threadId: ThreadId) => `thread-${escapeId(threadId)}`;
+const NOTE_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 
 const WatchesFile = Schema.fromJsonString(
   Schema.Record(Schema.String, Schema.Array(BotWatchSchema)),
@@ -277,28 +302,94 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const filePath = (threadId: ThreadId, file: BotFileKind) => {
-    const directory = path.join(botsDir, memoryFolderName(threadId));
-    const target = path.join(directory, `${file}.md`);
-    if (path.relative(botsDir, target).startsWith("..")) {
-      return Effect.die(new Error("Bot file path escaped the bots directory."));
-    }
-    return Effect.succeed({ directory, target });
-  };
+  const botDirectory = (threadId: ThreadId) => path.join(botsDir, memoryFolderName(threadId));
+  const notesDirectory = (threadId: ThreadId) => path.join(botDirectory(threadId), "notes");
+  const preferencesPath = (threadId: ThreadId) =>
+    path.join(botDirectory(threadId), "preferences.md");
+  // Slugs are validated by the contracts; this keeps a bad one from naming another folder.
+  const notePath = (threadId: ThreadId, slug: string) =>
+    NOTE_SLUG.test(slug)
+      ? Effect.succeed(path.join(notesDirectory(threadId), `${slug}.md`))
+      : Effect.fail(
+          new BotError({ threadId, reason: "note_not_found", detail: `No note "${slug}".` }),
+        );
 
-  const readFile = Effect.fn("BotService.readFile")(function* (
-    threadId: ThreadId,
-    file: BotFileKind,
-  ) {
-    const { target } = yield* filePath(threadId, file);
-    return yield* fileSystem.readFileString(target).pipe(
+  const readText = (threadId: ThreadId, target: string) =>
+    fileSystem.readFileString(target).pipe(
+      Effect.map((text): string | null => text),
       Effect.catchTags({
         PlatformError: (error) =>
           error.reason._tag === "NotFound"
-            ? Effect.succeed("")
+            ? Effect.succeed(null)
             : Effect.fail(ioError(threadId)(error)),
       }),
     );
+
+  const writeText = (threadId: ThreadId, target: string, contents: string) =>
+    fileSystem
+      .makeDirectory(path.dirname(target), { recursive: true })
+      .pipe(
+        Effect.andThen(fileSystem.writeFileString(target, contents)),
+        Effect.mapError(ioError(threadId)),
+      );
+
+  const modifiedAt = (target: string) =>
+    fileSystem.stat(target).pipe(
+      Effect.map((info) =>
+        DateTime.formatIso(DateTime.makeUnsafe(Option.getOrElse(info.mtime, () => 0))),
+      ),
+      Effect.orElseSucceed(() => DateTime.formatIso(DateTime.makeUnsafe(0))),
+    );
+
+  /** The single notes.md of earlier Bots becomes a note named "notes", once. */
+  const migrateLegacyNotes = Effect.fn("BotService.migrateLegacyNotes")(function* (
+    threadId: ThreadId,
+  ) {
+    const legacy = path.join(botDirectory(threadId), "notes.md");
+    const text = yield* readText(threadId, legacy);
+    if (text === null) return;
+    if (text.trim() !== "") {
+      yield* writeText(
+        threadId,
+        path.join(notesDirectory(threadId), "notes.md"),
+        serializeNote({
+          title: "Notes",
+          summary: "Notes from before notes were split up.",
+          body: text,
+        }),
+      );
+    }
+    yield* fileSystem.remove(legacy).pipe(Effect.mapError(ioError(threadId)));
+  });
+
+  const loadNote = Effect.fn("BotService.loadNote")(function* (threadId: ThreadId, slug: string) {
+    const target = yield* notePath(threadId, slug);
+    const text = yield* readText(threadId, target);
+    if (text === null) return null;
+    const parsed = parseNote(slug, text);
+    return { slug, ...parsed, updatedAt: yield* modifiedAt(target) };
+  });
+
+  const loadNotes = Effect.fn("BotService.loadNotes")(function* (threadId: ThreadId) {
+    yield* migrateLegacyNotes(threadId);
+    const names = yield* fileSystem.readDirectory(notesDirectory(threadId)).pipe(
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed([] as Array<string>)
+            : Effect.fail(ioError(threadId)(error)),
+      }),
+    );
+    const slugs = names
+      .filter((name) => name.endsWith(".md"))
+      .map((name) => name.slice(0, -3))
+      .filter((slug) => NOTE_SLUG.test(slug));
+    const notes = yield* Effect.forEach(slugs, (slug) => loadNote(threadId, slug), {
+      concurrency: 8,
+    });
+    return notes
+      .filter((note) => note !== null)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   });
 
   const isBot: BotService["Service"]["isBot"] = Effect.fn("BotService.isBot")(function* (threadId) {
@@ -319,37 +410,37 @@ const make = Effect.gen(function* () {
 
   const store = Effect.fn("BotService.store")(function* (
     threadId: ThreadId,
-    file: BotFileKind,
+    target: string,
     contents: string,
   ) {
     if (contents.length > BOT_FILE_MAX_CHARS) {
       return yield* new BotError({ threadId, reason: "too_large" });
     }
-    const { directory, target } = yield* filePath(threadId, file);
-    yield* fileSystem
-      .makeDirectory(directory, { recursive: true })
-      .pipe(
-        Effect.andThen(fileSystem.writeFileString(target, contents)),
-        Effect.mapError(ioError(threadId)),
-      );
+    yield* writeText(threadId, target, contents);
   });
 
   const readFiles: BotService["Service"]["readFiles"] = Effect.fn("BotService.readFiles")(
     function* ({ threadId }) {
-      const [notes, preferences] = yield* Effect.all(
-        [readFile(threadId, "notes"), readFile(threadId, "preferences")],
-        { concurrency: 2 },
-      );
-      return { notes, preferences };
+      const preferences = (yield* readText(threadId, preferencesPath(threadId))) ?? "";
+      const notes = yield* loadNotes(threadId);
+      return {
+        preferences,
+        notes: notes.map(({ slug, title, summary, updatedAt }) => ({
+          slug,
+          title,
+          summary,
+          updatedAt,
+        })),
+      };
     },
   );
 
-  const writeFile: BotService["Service"]["writeFile"] = Effect.fn("BotService.writeFile")(
-    function* ({ threadId, file, contents }) {
-      yield* requireBot(threadId);
-      yield* store(threadId, file, contents);
-    },
-  );
+  const writePreferences: BotService["Service"]["writePreferences"] = Effect.fn(
+    "BotService.writePreferences",
+  )(function* ({ threadId, contents }) {
+    yield* requireBot(threadId);
+    yield* store(threadId, preferencesPath(threadId), contents);
+  });
 
   const appendPreference: BotService["Service"]["appendPreference"] = Effect.fn(
     "BotService.appendPreference",
@@ -357,10 +448,75 @@ const make = Effect.gen(function* () {
     yield* requireBot(threadId);
     const line = text.trim();
     if (line === "") return;
-    const current = yield* readFile(threadId, "preferences");
+    const current = (yield* readText(threadId, preferencesPath(threadId))) ?? "";
     const separator = current === "" || current.endsWith("\n") ? "" : "\n";
-    yield* store(threadId, "preferences", `${current}${separator}${line}\n`);
+    yield* store(threadId, preferencesPath(threadId), `${current}${separator}${line}\n`);
   }, locked);
+
+  const readNote: BotService["Service"]["readNote"] = Effect.fn("BotService.readNote")(function* ({
+    threadId,
+    slug,
+  }) {
+    yield* migrateLegacyNotes(threadId);
+    const note = yield* loadNote(threadId, slug);
+    if (note === null) {
+      return yield* new BotError({
+        threadId,
+        reason: "note_not_found",
+        detail: `No note "${slug}".`,
+      });
+    }
+    return note;
+  });
+
+  const writeNote: BotService["Service"]["writeNote"] = Effect.fn("BotService.writeNote")(
+    function* ({ threadId, slug, title, summary, body }) {
+      yield* requireBot(threadId);
+      const target = yield* notePath(threadId, slug);
+      const existing = yield* loadNotes(threadId);
+      if (existing.length >= BOT_NOTE_MAX_COUNT && !existing.some((note) => note.slug === slug)) {
+        return yield* new BotError({ threadId, reason: "too_many_notes" });
+      }
+      yield* store(threadId, target, serializeNote({ title, summary, body }));
+    },
+    locked,
+  );
+
+  const deleteNote: BotService["Service"]["deleteNote"] = Effect.fn("BotService.deleteNote")(
+    function* ({ threadId, slug }) {
+      yield* requireBot(threadId);
+      const target = yield* notePath(threadId, slug);
+      yield* fileSystem.remove(target).pipe(
+        Effect.catchTags({
+          PlatformError: (error) =>
+            error.reason._tag === "NotFound"
+              ? Effect.fail(
+                  new BotError({
+                    threadId,
+                    reason: "note_not_found",
+                    detail: `No note "${slug}".`,
+                  }),
+                )
+              : Effect.fail(ioError(threadId)(error)),
+        }),
+      );
+    },
+    locked,
+  );
+
+  const searchNotes: BotService["Service"]["searchNotes"] = Effect.fn("BotService.searchNotes")(
+    function* ({ threadId, query }) {
+      const needle = query.trim().toLowerCase();
+      if (needle === "") return [];
+      const notes = yield* loadNotes(threadId);
+      return notes.flatMap(({ body, ...summary }) => {
+        const inHeader = `${summary.title}\n${summary.summary}`.toLowerCase().includes(needle);
+        const line = body.split("\n").find((entry) => entry.toLowerCase().includes(needle));
+        if (!inHeader && line === undefined) return [];
+        return [{ ...summary, excerpt: (line ?? summary.summary).trim().slice(0, 200) }];
+      });
+    },
+  );
 
   const watches: BotService["Service"]["watches"] = (botThreadId) =>
     Ref.get(watchesRef).pipe(Effect.map((all) => all.get(botThreadId) ?? []));
@@ -548,7 +704,7 @@ const make = Effect.gen(function* () {
     const environmentId = yield* environment.getEnvironmentId;
     const text = [
       `You are the new Bot for ${formatThreadLink({ environmentId, threadId }, thread.title)} (threadId ${threadId}). That thread is now your first crew member: it keeps its work, and you are woken when it finishes or needs input.`,
-      "Read the handoff below, save what matters with t3_bot_notes_write, then tell the user in a few lines what you understand and what you will delegate next.",
+      "Read the handoff below, save what matters as notes with t3_bot_note_write, then tell the user in a few lines what you understand and what you will delegate next.",
       "",
       renderThreadSummaryHandoff({
         sourceThreadId: threadId,
@@ -593,7 +749,8 @@ const make = Effect.gen(function* () {
     const failed = (cause: unknown) =>
       new BotError({ threadId: botThreadId, reason: "launch_failed", cause });
     const instructions = input.instructions.trim();
-    if (instructions !== "") yield* store(botThreadId, "preferences", `${instructions}\n`);
+    if (instructions !== "")
+      yield* store(botThreadId, preferencesPath(botThreadId), `${instructions}\n`);
     // A Bot belongs to no project: it runs in a scratch folder and sends crew anywhere.
     const { projectId } = yield* managedFolders.ensureScratchProject.pipe(Effect.mapError(failed));
     const text = [
@@ -627,8 +784,12 @@ const make = Effect.gen(function* () {
   return BotService.of({
     isBot,
     readFiles,
-    writeFile,
+    writePreferences,
     appendPreference,
+    readNote,
+    writeNote,
+    deleteNote,
+    searchNotes,
     watches,
     addWatch,
     removeWatch,

@@ -10,7 +10,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
 } from "./runtime.ts";
 
-/** A Bot's notes.md and preferences.md (a save refreshes the read), and starting or creating a Bot. */
+/** A Bot's instructions and notes (a save refreshes the reads), and starting or creating a Bot. */
 export function createBotFilesEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Persistence.EnvironmentCacheStore | R, E>,
 ) {
@@ -18,16 +18,50 @@ export function createBotFilesEnvironmentAtoms<R, E>(
     label: "environment-data:bot-files:read",
     tag: WS_METHODS.botFilesRead,
   });
+  const note = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:bot-note:read",
+    tag: WS_METHODS.botNoteRead,
+  });
+  // One queue per Bot, so a note save and a delete of it cannot race.
+  const scheduler = createAtomCommandScheduler();
+  const botKey = ({
+    environmentId,
+    input,
+  }: {
+    readonly environmentId: string;
+    readonly input: { readonly threadId: string };
+  }) => JSON.stringify([environmentId, input.threadId]);
   return {
     files,
-    write: createEnvironmentRpcCommand(runtime, {
+    note,
+    writePreferences: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:bot-files:write",
       tag: WS_METHODS.botFilesWrite,
-      scheduler: createAtomCommandScheduler(),
-      concurrency: {
-        mode: "serial",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
-      },
+      scheduler,
+      concurrency: { mode: "serial", key: botKey },
+      onSettled: ({ environmentId, input }, registry) =>
+        Effect.sync(() =>
+          registry.refresh(files({ environmentId, input: { threadId: input.threadId } })),
+        ),
+    }),
+    writeNote: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:bot-note:write",
+      tag: WS_METHODS.botNoteWrite,
+      scheduler,
+      concurrency: { mode: "serial", key: botKey },
+      onSettled: ({ environmentId, input }, registry) =>
+        Effect.sync(() => {
+          registry.refresh(files({ environmentId, input: { threadId: input.threadId } }));
+          registry.refresh(
+            note({ environmentId, input: { threadId: input.threadId, slug: input.slug } }),
+          );
+        }),
+    }),
+    deleteNote: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:bot-note:delete",
+      tag: WS_METHODS.botNoteDelete,
+      scheduler,
+      concurrency: { mode: "serial", key: botKey },
       onSettled: ({ environmentId, input }, registry) =>
         Effect.sync(() =>
           registry.refresh(files({ environmentId, input: { threadId: input.threadId } })),

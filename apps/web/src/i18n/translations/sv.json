@@ -13027,8 +13027,6 @@
   "b9357a68c93b554b": "Dela upp grupp",
   "987de7870e17d4ed": "Det gick inte att uppdatera Bot",
   "69d31508eb4d8dbb": "Det gick inte att uppdatera gruppen",
-  "ab8ce40d94482b3e": "Det gick inte att spara Bot-anteckningar",
-  "77a197a16cc26cc0": "Det Bot håller reda på mellan omgångar.",
   "b7266adde1825b8c": "Hur du vill att Bot ska arbeta.",
   "2f4ef70d15027bb0": "Anteckningar",
   "de21972169ea02a3": "Tysta besättningens aviseringar",
@@ -13051,5 +13049,16 @@
   "97884c869683f97f": "{count, plural, one {{count} behöver dig} other {{count} behöver dig}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Stoppad",
-  "ff1728d6a7065373": "Arbetar"
+  "ff1728d6a7065373": "Arbetar",
+  "aac83e1098082197": "Det gick inte att spara Bot-instruktionerna",
+  "6c3933378cf5aa90": "Ge anteckningen en titel.",
+  "95dec29742162dfb": "Ta bort anteckningen ”{title}”?",
+  "5db766374f823efe": "En rad, så att Bot vet när den ska läsas.",
+  "3ac8ed47fe50bd34": "Titel",
+  "c710ee112651e1dd": "Sammanfattning",
+  "16062ac4bcd9ab9e": "Anteckning",
+  "aba29e77e52bca46": "Ta bort",
+  "58e20fe508eef1a3": "Alla anteckningar",
+  "e807fee27e5cd426": "Ny anteckning",
+  "61a43a89f093e3f0": "Bot sparar sina anteckningar här."
 }

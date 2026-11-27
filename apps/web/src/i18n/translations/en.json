@@ -13029,8 +13029,6 @@
   "b9357a68c93b554b": "Ungroup",
   "987de7870e17d4ed": "Failed to update Bot",
   "69d31508eb4d8dbb": "Failed to update group",
-  "ab8ce40d94482b3e": "Failed to save Bot notes",
-  "77a197a16cc26cc0": "What the Bot keeps track of between turns.",
   "b7266adde1825b8c": "How you like the Bot to work.",
   "2f4ef70d15027bb0": "Notes",
   "de21972169ea02a3": "Mute crew noise",
@@ -13053,5 +13051,16 @@
   "97884c869683f97f": "{count, plural, one {{count} needs you} other {{count} need you}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Stopped",
-  "ff1728d6a7065373": "Working"
+  "ff1728d6a7065373": "Working",
+  "aac83e1098082197": "Failed to save Bot instructions",
+  "6c3933378cf5aa90": "Give the note a title.",
+  "95dec29742162dfb": "Delete note \"{title}\"?",
+  "5db766374f823efe": "One line, so the Bot knows when to read it.",
+  "3ac8ed47fe50bd34": "Title",
+  "c710ee112651e1dd": "Summary",
+  "16062ac4bcd9ab9e": "Note",
+  "aba29e77e52bca46": "Delete",
+  "58e20fe508eef1a3": "All notes",
+  "e807fee27e5cd426": "New note",
+  "61a43a89f093e3f0": "The Bot keeps its notes here."
 }

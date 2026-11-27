@@ -13020,8 +13020,6 @@
   "b9357a68c93b554b": "Desagrupar",
   "987de7870e17d4ed": "Falha ao atualizar o Bot",
   "69d31508eb4d8dbb": "Falha ao atualizar o grupo",
-  "ab8ce40d94482b3e": "Falha ao salvar as notas do Bot",
-  "77a197a16cc26cc0": "O que o Bot acompanha entre os turnos.",
   "b7266adde1825b8c": "Como você prefere que o Bot trabalhe.",
   "2f4ef70d15027bb0": "Notas",
   "de21972169ea02a3": "Silenciar avisos da equipe",
@@ -13044,5 +13042,16 @@
   "97884c869683f97f": "{count, plural, one {{count} precisa de você} other {{count} precisam de você}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Parado",
-  "ff1728d6a7065373": "Trabalhando"
+  "ff1728d6a7065373": "Trabalhando",
+  "aac83e1098082197": "Falha ao salvar as instruções do Bot",
+  "6c3933378cf5aa90": "Dê um título à nota.",
+  "95dec29742162dfb": "Excluir a nota \"{title}\"?",
+  "5db766374f823efe": "Uma linha, para o Bot saber quando lê-la.",
+  "3ac8ed47fe50bd34": "Título",
+  "c710ee112651e1dd": "Resumo",
+  "16062ac4bcd9ab9e": "Nota",
+  "aba29e77e52bca46": "Excluir",
+  "58e20fe508eef1a3": "Todas as notas",
+  "e807fee27e5cd426": "Nova nota",
+  "61a43a89f093e3f0": "O Bot guarda as notas dele aqui."
 }

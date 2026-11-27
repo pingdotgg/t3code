@@ -55,16 +55,40 @@ export const layer = McpToolAccess.toLayer(BotToolkit, {
     Effect.gen(function* () {
       const { bots, threadId } = yield* callerBot;
       const files = yield* bots.readFiles({ threadId }).pipe(Effect.mapError(botFailure));
-      return { ...files, watches: yield* bots.watches(threadId) };
+      return {
+        instructions: files.preferences,
+        notes: files.notes,
+        watches: yield* bots.watches(threadId),
+      };
     }),
   ),
-  t3_bot_notes_write: McpToolAccess.actsAsCaller(({ contents }) =>
+  t3_bot_note_read: McpToolAccess.readsAsCaller(({ slug }) =>
     Effect.gen(function* () {
       const { bots, threadId } = yield* callerBot;
-      yield* bots
-        .writeFile({ threadId, file: "notes", contents })
-        .pipe(Effect.mapError(botFailure));
+      return yield* bots.readNote({ threadId, slug }).pipe(Effect.mapError(botFailure));
+    }),
+  ),
+  t3_bot_note_write: McpToolAccess.actsAsCaller((note) =>
+    Effect.gen(function* () {
+      const { bots, threadId } = yield* callerBot;
+      yield* bots.writeNote({ threadId, ...note }).pipe(Effect.mapError(botFailure));
       return { saved: true };
+    }),
+  ),
+  t3_bot_note_delete: McpToolAccess.actsAsCaller(({ slug }) =>
+    Effect.gen(function* () {
+      const { bots, threadId } = yield* callerBot;
+      yield* bots.deleteNote({ threadId, slug }).pipe(Effect.mapError(botFailure));
+      return { saved: true };
+    }),
+  ),
+  t3_bot_note_search: McpToolAccess.readsAsCaller(({ query }) =>
+    Effect.gen(function* () {
+      const { bots, threadId } = yield* callerBot;
+      const matches = yield* bots
+        .searchNotes({ threadId, query })
+        .pipe(Effect.mapError(botFailure));
+      return { matches };
     }),
   ),
   t3_bot_preferences_append: McpToolAccess.actsAsCaller(({ text }) =>

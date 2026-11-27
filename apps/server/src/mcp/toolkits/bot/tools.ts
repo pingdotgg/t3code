@@ -1,5 +1,8 @@
 import {
-  BOT_FILE_MAX_CHARS,
+  BotNote,
+  BotNoteSlug,
+  BotNoteSummary,
+  BotNoteWriteFields,
   BotWatch,
   OrchestratorMcpFailure,
   ThreadId,
@@ -36,12 +39,12 @@ const WatchTargetInput = Schema.Struct({
 const MemoryRead = Tool.make("t3_bot_memory_read", {
   ...shared,
   description:
-    "Read your memory: notes.md (your working notes), preferences.md (what the user wants you to keep doing), and the threads and workflow runs you watch beyond your crew.",
+    "Read your memory: the user's instructions (preferences.md), the index of your notes (slug, title, one-line summary), and the threads and workflow runs you watch beyond your crew. Read a note with t3_bot_note_read when its summary says you need it.",
   // No `parameters`: an explicit Schema.Struct({}) advertises `anyOf: [object, array]`,
   // which MCP clients reject. The default EmptyParams advertises `type: "object"`.
   success: Schema.Struct({
-    notes: Schema.String,
-    preferences: Schema.String,
+    instructions: Schema.String,
+    notes: Schema.Array(BotNoteSummary),
     watches: Schema.Array(BotWatch),
   }),
 })
@@ -52,27 +55,75 @@ const MemoryRead = Tool.make("t3_bot_memory_read", {
   .annotate(Tool.OpenWorld, false)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromNonBots);
 
-const NotesWrite = Tool.make("t3_bot_notes_write", {
+const NoteRead = Tool.make("t3_bot_note_read", {
+  ...shared,
+  description: "Read one of your notes in full.",
+  parameters: Schema.Struct({ slug: BotNoteSlug }),
+  success: BotNote,
+})
+  .annotate(Tool.Title, "Read a Bot note")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromNonBots);
+
+const NoteWrite = Tool.make("t3_bot_note_write", {
   ...shared,
   description:
-    "Replace your notes.md: ongoing efforts, which crew thread owns what, decisions. Keep it short and current; the user can read it.",
+    "Create or replace one note: one topic per note (a project, an effort, a person, a decision log). The title and summary form your index, so make the summary say when the note matters. Read a note before replacing it.",
   parameters: Schema.Struct({
-    contents: Schema.String.check(Schema.isMaxLength(BOT_FILE_MAX_CHARS)).annotate({
-      description: "The whole new Markdown file.",
+    ...BotNoteWriteFields,
+    slug: BotNoteSlug.annotate({ description: "File name, e.g. `release-2-1`." }),
+    summary: BotNoteWriteFields.summary.annotate({
+      description: "One line for the index: what is in it and when to read it.",
     }),
+    body: BotNoteWriteFields.body.annotate({ description: "The whole Markdown note." }),
   }),
   success: Saved,
 })
-  .annotate(Tool.Title, "Write Bot notes")
+  .annotate(Tool.Title, "Write a Bot note")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromNonBots);
 
+const NoteDelete = Tool.make("t3_bot_note_delete", {
+  ...shared,
+  description: "Delete a note that is no longer useful, or that you merged into another.",
+  parameters: Schema.Struct({ slug: BotNoteSlug }),
+  success: Saved,
+})
+  .annotate(Tool.Title, "Delete a Bot note")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromNonBots);
+
+const NoteSearch = Tool.make("t3_bot_note_search", {
+  ...shared,
+  description:
+    "Find notes whose title, summary or text contains a phrase (case-insensitive), with the first matching line.",
+  parameters: Schema.Struct({
+    query: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  }),
+  success: Schema.Struct({
+    matches: Schema.Array(Schema.Struct({ ...BotNoteSummary.fields, excerpt: Schema.String })),
+  }),
+})
+  .annotate(Tool.Title, "Search Bot notes")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromNonBots);
+
 const PreferencesAppend = Tool.make("t3_bot_preferences_append", {
   ...shared,
-  description: "Add one lasting user preference to your preferences.md.",
+  description:
+    "Add one lasting user wish to the instructions in your preferences.md, in the user's terms.",
   parameters: Schema.Struct({
     text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2_000)).annotate({
       description: "One line, in the user's terms.",
@@ -116,7 +167,10 @@ const WatchRemove = Tool.make("t3_bot_watch_remove", {
 
 export const BotToolkit = Toolkit.make(
   MemoryRead,
-  NotesWrite,
+  NoteRead,
+  NoteWrite,
+  NoteDelete,
+  NoteSearch,
   PreferencesAppend,
   WatchAdd,
   WatchRemove,

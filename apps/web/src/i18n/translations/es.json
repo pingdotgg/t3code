@@ -13015,8 +13015,6 @@
   "b9357a68c93b554b": "Desagrupar",
   "987de7870e17d4ed": "No se pudo actualizar el Bot",
   "69d31508eb4d8dbb": "No se pudo actualizar el grupo",
-  "ab8ce40d94482b3e": "No se pudieron guardar las notas del Bot",
-  "77a197a16cc26cc0": "Lo que el Bot recuerda entre turnos.",
   "b7266adde1825b8c": "Cómo prefieres que trabaje el Bot.",
   "2f4ef70d15027bb0": "Notas",
   "de21972169ea02a3": "Silenciar avisos del equipo",
@@ -13039,5 +13037,16 @@
   "97884c869683f97f": "{count, plural, one {{count} te necesita} other {{count} te necesitan}}",
   "085f3d64c434cafd": "Bots",
   "7cda14a9e8aaefb0": "Detenido",
-  "ff1728d6a7065373": "Trabajando"
+  "ff1728d6a7065373": "Trabajando",
+  "aac83e1098082197": "No se pudieron guardar las instrucciones del Bot",
+  "6c3933378cf5aa90": "Ponle un título a la nota.",
+  "95dec29742162dfb": "¿Eliminar la nota \"{title}\"?",
+  "5db766374f823efe": "Una línea, para que el Bot sepa cuándo leerla.",
+  "3ac8ed47fe50bd34": "Título",
+  "c710ee112651e1dd": "Resumen",
+  "16062ac4bcd9ab9e": "Nota",
+  "aba29e77e52bca46": "Eliminar",
+  "58e20fe508eef1a3": "Todas las notas",
+  "e807fee27e5cd426": "Nueva nota",
+  "61a43a89f093e3f0": "El Bot guarda aquí sus notas."
 }

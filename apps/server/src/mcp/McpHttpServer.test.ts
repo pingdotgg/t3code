@@ -2405,7 +2405,18 @@ it.effect("lists and runs Bot tools only for a Bot thread, deferred or not", () 
         Layer.provide(
           Layer.mock(BotService.BotService)({
             isBot: (threadId) => Effect.succeed(threadId.startsWith("thread-bot")),
-            readFiles: () => Effect.succeed({ notes: "Ship on Fridays.", preferences: "" }),
+            readFiles: () =>
+              Effect.succeed({
+                preferences: "",
+                notes: [
+                  {
+                    slug: "release",
+                    title: "Release",
+                    summary: "Ship on Fridays.",
+                    updatedAt: "2026-11-20T00:00:00.000Z",
+                  },
+                ],
+              }),
             watches: () => Effect.succeed([]),
           }),
         ),
@@ -2478,7 +2489,10 @@ it.effect("lists and runs Bot tools only for a Bot thread, deferred or not", () 
 
       const botTools = [
         "t3_bot_memory_read",
-        "t3_bot_notes_write",
+        "t3_bot_note_delete",
+        "t3_bot_note_read",
+        "t3_bot_note_search",
+        "t3_bot_note_write",
         "t3_bot_preferences_append",
         "t3_bot_watch_add",
         "t3_bot_watch_remove",
@@ -2497,8 +2511,15 @@ it.effect("lists and runs Bot tools only for a Bot thread, deferred or not", () 
       ).toEqual({ tools: [] });
 
       expect((yield* bot.call("t3_bot_memory_read", {})).result?.structuredContent).toEqual({
-        notes: "Ship on Fridays.",
-        preferences: "",
+        instructions: "",
+        notes: [
+          {
+            slug: "release",
+            title: "Release",
+            summary: "Ship on Fridays.",
+            updatedAt: "2026-11-20T00:00:00.000Z",
+          },
+        ],
         watches: [],
       });
       const refused = yield* plain.call("t3_bot_memory_read", {});
