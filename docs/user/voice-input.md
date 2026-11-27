@@ -8,13 +8,19 @@ Dictate into the composer, citation comments, diff/file annotations, PR comments
   - **On this Mac (Apple Speech)** (macOS 26+ desktop): Transcribes locally on your Mac (silence filtering and filler removal unavailable; dictionary applies only with cleanup enabled).
   - **A connected environment**: Sends audio over your authenticated connection to transcribe locally on that host and discards the audio. Never silently fails over to another host.
   - **Cloud providers (OpenAI, Grok Voice Transcribe, OpenRouter)**: Configure an API key (or [secret reference](./secrets.md)) on an environment to forward recordings to that provider. OpenRouter lets each user pick a model from its live STT catalog and requests zero data retention.
-- **Mobile (iOS and Android)**: Transcribes on-device by default (iOS 26+ or Android 12+ with compatible Google speech services; first use may download a speech model, then works offline). To transcribe on a paired environment or cloud provider instead, configure **Settings → Voice → Transcribe on**. Keep T3 Code open while dictating on Android.
+- **Mobile (iOS and Android)**: Transcribes on-device by default. Apple Speech is the default on supported iPhones with iOS 26 or later. Android requires Android 12 or later with compatible Google speech services. First use may download a speech model. To transcribe on a paired environment or cloud provider, configure **Settings → Voice → Transcribe on**. Keep T3 Code open while dictating on Android.
 
 ## Set up a local transcription model
 
 In **Settings → Voice → Transcription**, filter by language, download a model, and select **Use model** (reuses matching files from Handy or the Hugging Face cache, or link an existing file via **Use existing**—Core ML/ONNX/MLX builds aren't supported).
 
 - **Advanced**: Configure GPU/CPU (**Auto** falls back to CPU once on GPU error), idle unload timeout, and **Streaming transcription** (disable if live preview lags).
+
+### Local models on iPhone
+
+Open **Settings → Voice → This device → Local model**, then download and select a model to dictate offline. The picker shows benchmark accuracy by language and offers downloads that fit the app's available memory. Models with language detection identify the spoken language. Other models use a supported device language when available.
+
+Swipe left on a downloaded model to remove it. Choose **Apple Speech** in **Settings → Voice** to switch back.
 
 ## Dictate and shortcuts
 

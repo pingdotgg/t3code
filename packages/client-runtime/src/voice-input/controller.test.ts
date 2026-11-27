@@ -232,6 +232,8 @@ describe("environment voice input", () => {
 describe("resolveTranscriptCommit", () => {
   it.each([
     ["Hello", "world", "Hello world"],
+    ["Вітаю", "світ", "Вітаю світ"],
+    ["Γεια", "σου", "Γεια σου"],
     ["Hello", "世界", "Hello世界"],
     ["Hello", "𝟚", "Hello 𝟚"],
     ["你好", "世界", "你好世界"],

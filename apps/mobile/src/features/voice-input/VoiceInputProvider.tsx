@@ -7,6 +7,7 @@ import { useSyncExternalStore } from "react";
 import { Platform } from "react-native";
 import { Effect } from "effect";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
+import { msg } from "gt-react-native";
 import { makeMutable } from "react-native-reanimated";
 
 import {
@@ -16,11 +17,18 @@ import {
   rememberMicrophones,
 } from "../../lib/microphonePriority";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
+import {
+  deviceSpeechModelStatesAtom,
+  deviceSpeechTranscriber,
+  findRunnableDeviceSpeechModel,
+} from "../../native/deviceSpeechModels";
 import { createVoiceRecorder } from "../../native/voiceRecorder";
+import { m } from "../../i18n/messages";
 import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import {
   voiceInputBlocksSubmission,
+  VoiceTranscriptionError,
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
 import { createLazyVoiceRecorder } from "./lazyVoiceRecorder";
@@ -66,9 +74,24 @@ export const localVoiceTranscriberAtom = makePermissionStatusAtom<
   read: () => getLocalVoiceTranscriber().catch(() => null),
 }).pipe(Atom.keepAlive);
 
-const voiceInputAvailableAtom = Atom.make((get) => {
+export const iosVoiceModelAtom = Atom.make((get): string | null | undefined => {
+  const preferences = get(mobilePreferencesAtom);
+  if (!AsyncResult.isSuccess(preferences)) return undefined;
+  return preferences.value.deviceVoiceModelId ?? null;
+});
+
+export const voiceInputAvailableAtom = Atom.make((get) => {
   const route = get(voiceRouteAtom);
   if (route) return route.transcriber !== null;
+  if (Platform.OS === "ios") {
+    const id = get(iosVoiceModelAtom);
+    if (id === undefined) return false;
+    if (id !== null) {
+      if (!findRunnableDeviceSpeechModel(id)) return false;
+      const catalog = get(deviceSpeechModelStatesAtom);
+      return catalog.kind === "ready" && catalog.states[id]?.kind === "ready";
+    }
+  }
   const transcriber = get(localVoiceTranscriberAtom);
   return transcriber !== null && transcriber !== "checking";
 });
@@ -79,8 +102,16 @@ const voiceInputAvailableAtom = Atom.make((get) => {
  */
 export const voiceInputAtom = Atom.make((get) => {
   const registry = get.registry;
-  // Mounted so the recorder can read known microphones synchronously.
   get.mount(mobilePreferencesAtom);
+  const systemTranscriber = () => {
+    const transcriber = registry.get(localVoiceTranscriberAtom);
+    return transcriber === "checking" ? null : transcriber;
+  };
+  const iosTranscriber = (id: string | null) => {
+    if (id === null) return systemTranscriber();
+    const model = findRunnableDeviceSpeechModel(id);
+    return model ? deviceSpeechTranscriber(model) : null;
+  };
   const audioLevels = makeMutable<ReadonlyArray<number>>(
     Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0),
   );
@@ -123,8 +154,25 @@ export const voiceInputAtom = Atom.make((get) => {
     getTranscriber: () => {
       const route = registry.get(voiceRouteAtom);
       if (route) return route.transcriber;
-      const transcriber = registry.get(localVoiceTranscriberAtom);
-      return transcriber === "checking" ? null : transcriber;
+      if (Platform.OS !== "ios") return systemTranscriber();
+      const id = registry.get(iosVoiceModelAtom);
+      if (id !== undefined) return iosTranscriber(id);
+      return {
+        prepare: async (options) => {
+          const preferences = await Effect.runPromise(
+            AtomRegistry.getResult(registry, mobilePreferencesAtom),
+            { signal: options.signal },
+          );
+          const transcriber = iosTranscriber(preferences.deviceVoiceModelId ?? null);
+          if (!transcriber) {
+            throw new VoiceTranscriptionError({
+              code: "unavailable",
+              message: m(msg("Voice transcription is not available.")),
+            });
+          }
+          return transcriber.prepare(options);
+        },
+      };
     },
     requestPermission: permission.requestPermission,
     configureRecording: async () => {

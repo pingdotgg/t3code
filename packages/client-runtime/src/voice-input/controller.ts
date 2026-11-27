@@ -133,6 +133,11 @@ type TranscriptCommitResult =
   | { readonly kind: "empty" };
 
 const WORD_SPACELESS_LANGUAGES = new Set(["ja", "zh", "cmn", "yue", "th", "lo", "km", "my"]);
+const AUTO_WORD_CHARACTERS = String.raw`\p{Script=Latin}\p{Script=Cyrillic}\p{Script=Greek}\p{N}`;
+const AUTO_LEFT_EDGE = new RegExp(String.raw`(?:[${AUTO_WORD_CHARACTERS}]|[.!?,:;)\]}'"])$`, "u");
+const AUTO_RIGHT_EDGE = new RegExp(`^(?:[${AUTO_WORD_CHARACTERS}]|[([{'"])`, "u");
+const AUTO_WORD_START = new RegExp(`^[${AUTO_WORD_CHARACTERS}]`, "u");
+const AUTO_WORD_END = new RegExp(`[${AUTO_WORD_CHARACTERS}]$`, "u");
 
 const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
 const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
@@ -191,14 +196,14 @@ export function resolveTranscriptCommit(
     const auto = language === "auto";
     const left = text.slice(Math.max(0, start - 2), start);
     const right = text.slice(start, start + 2);
-    const leftEdge = auto ? /[A-Za-z0-9.!?,:;)\]}'"]$/ : /(?:\p{L}|\p{M}|\p{N}|[.!?,:;)\]}'"])$/u;
-    const rightEdge = auto ? /^[A-Za-z0-9([{'"]/ : /^[\p{L}\p{M}\p{N}([{'"]/u;
+    const leftEdge = auto ? AUTO_LEFT_EDGE : /(?:\p{L}|\p{M}|\p{N}|[.!?,:;)\]}'"])$/u;
+    const rightEdge = auto ? AUTO_RIGHT_EDGE : /^[\p{L}\p{M}\p{N}([{'"]/u;
     const leftNeedsBoundary =
-      (!auto || /^[\p{Script=Latin}\p{N}]/u.test(replacement)) &&
+      (!auto || AUTO_WORD_START.test(replacement)) &&
       leftEdge.test(left) &&
       (!right || /^\s/.test(right));
     const rightNeedsBoundary =
-      (!auto || /(?:\p{Script=Latin}|\p{N})$/u.test(replacement)) &&
+      (!auto || AUTO_WORD_END.test(replacement)) &&
       rightEdge.test(right) &&
       (!left || /\s$/.test(left));
     insertion = `${leftNeedsBoundary ? " " : ""}${replacement}${rightNeedsBoundary ? " " : ""}`;

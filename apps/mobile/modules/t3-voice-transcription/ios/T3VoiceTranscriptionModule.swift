@@ -1,10 +1,26 @@
-import AudioToolbox
 import ExpoModulesCore
 import Foundation
 
 public class T3VoiceTranscriptionModule: Module {
+  private let models = DeviceSpeechModelStore()
+
+  private func publishModelStates(_ snapshot: DeviceSpeechModelStore.Snapshot) {
+    sendEvent("deviceSpeechModelStates", snapshot.payload)
+  }
+
   public func definition() -> ModuleDefinition {
     Name("T3VoiceTranscription")
+    Events("deviceSpeechModelStates")
+
+    OnCreate {
+      let models = self.models
+      Task { await models.prepareStorage() }
+    }
+
+    OnDestroy {
+      let models = self.models
+      Task { await models.stop() }
+    }
 
     Function("isAppleSpeechAvailable") {
       if #available(iOS 26, *) { return AppleSpeechEngine.isAvailable }
@@ -20,44 +36,43 @@ public class T3VoiceTranscriptionModule: Module {
       }
     }
 
-    AsyncFunction("transcribeWithAppleSpeech") { (uri: URL, locale: String) async throws -> String in
+    AsyncFunction("transcribeWithAppleSpeech") {
+      (uri: URL, locale: String) async throws -> String in
       guard #available(iOS 26, *) else { throw CocoaError(.featureUnsupported) }
       return try await AppleSpeechEngine.transcribe(locale, file: uri)
     }
 
     AsyncFunction("decodeRecording") { (uri: URL) throws -> Data in
-      guard uri.isFileURL else { throw CocoaError(.fileReadUnsupportedScheme) }
-      var opened: ExtAudioFileRef?
-      try check(ExtAudioFileOpenURL(uri as CFURL, &opened))
-      guard let file = opened else { throw CocoaError(.fileReadCorruptFile) }
-      defer { ExtAudioFileDispose(file) }
-      var format = AudioStreamBasicDescription(
-        mSampleRate: 16_000, mFormatID: kAudioFormatLinearPCM,
-        mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
-        mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
-        mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
-      let formatSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-      try check(ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat, formatSize, &format))
-      var pcm = Data()
-      var chunk = [Int16](repeating: 0, count: 8192)
-      try chunk.withUnsafeMutableBytes { bytes in
-        while true {
-          var frames = UInt32(bytes.count / 2)
-          var buffers = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(
-            mNumberChannels: 1, mDataByteSize: UInt32(bytes.count), mData: bytes.baseAddress))
-          try check(ExtAudioFileRead(file, &frames, &buffers))
-          if frames == 0 { break }
-          let count = Int(frames) * 2
-          guard pcm.count + count <= 16_000 * 2 * 301 else { throw CocoaError(.fileReadTooLarge) }
-          pcm.append(contentsOf: bytes.prefix(count))
-        }
+      try VoiceRecordingPCM.signed16(file: uri)
+    }
+
+    Function("getDeviceSpeechCatalog") { DeviceSpeechCatalog.models.map(\.payload) }
+
+    AsyncFunction("getDeviceSpeechModelStates") { () async -> [String: Any] in
+      await self.models.snapshot(publish: self.publishModelStates).payload
+    }
+
+    AsyncFunction("startDeviceSpeechModelDownload") { (modelId: String) async throws in
+      try await self.models.startDownload(modelId) { [weak self] snapshot in
+        self?.publishModelStates(snapshot)
       }
-      guard !pcm.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
-      return pcm
+    }
+
+    AsyncFunction("cancelDeviceSpeechModelDownload") { (modelId: String) async in
+      await self.models.cancelDownload(modelId, publish: self.publishModelStates)
+    }
+
+    AsyncFunction("removeDeviceSpeechModel") { (modelId: String) async throws in
+      try await self.models.remove(modelId, publish: self.publishModelStates)
+    }
+
+    AsyncFunction("transcribeWithDeviceSpeechModel") {
+      (modelId: String, id: String, uri: URL) async throws -> [String: String] in
+      try await self.models.transcribe(modelId: modelId, id: id, file: uri).payload
+    }
+
+    AsyncFunction("cancelDeviceSpeechInference") { (id: String) async in
+      await self.models.cancelInference(id: id)
     }
   }
-}
-
-private func check(_ status: OSStatus) throws {
-  guard status == noErr else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
 }

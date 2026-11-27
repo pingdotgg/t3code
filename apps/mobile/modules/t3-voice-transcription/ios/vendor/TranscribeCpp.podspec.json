@@ -1,0 +1,15 @@
+{
+  "name": "TranscribeCpp",
+  "version": "0.4.1",
+  "summary": "On-device speech recognition for T3 Code dictation.",
+  "homepage": "https://github.com/handy-computer/transcribe.cpp",
+  "authors": "transcribe.cpp contributors",
+  "license": { "type": "MIT", "file": "CTranscribe.xcframework/LICENSE" },
+  "platforms": { "ios": "18.0" },
+  "source": {
+    "http": "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.1/TranscribeCpp.xcframework.zip",
+    "sha256": "fb5646e564036a6c49659e3efcf72eb567af20da31b8569045c9a08181d35126"
+  },
+  "prepare_command": "mv TranscribeCpp.xcframework CTranscribe.xcframework",
+  "vendored_frameworks": "CTranscribe.xcframework"
+}

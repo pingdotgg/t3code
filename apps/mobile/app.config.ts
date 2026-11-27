@@ -470,6 +470,10 @@ const config: ExpoConfig = {
           extraPods: [
             { name: "GoogleUtilities", modular_headers: true },
             { name: "RecaptchaInterop", modular_headers: true },
+            {
+              name: "TranscribeCpp",
+              podspec: "../modules/t3-voice-transcription/ios/vendor/TranscribeCpp.podspec.json",
+            },
           ],
         },
       },

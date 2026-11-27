@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { Platform, View } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
@@ -8,16 +8,21 @@ import { ListRowLayout } from "./ListRowLayout";
 import { RadioIndicator } from "./RadioIndicator";
 import { RowPressable } from "./RowPressable";
 
-export function ListChoiceRow(props: {
-  readonly label: string;
-  readonly leading?: ReactNode;
-  readonly description?: string;
-  readonly meta?: ReactNode;
-  readonly selected: boolean;
-  readonly separated?: boolean;
-  readonly disabled?: boolean;
-  readonly onPress: () => void;
-}) {
+export function ListChoiceRow(
+  props: Pick<
+    ComponentProps<typeof RowPressable>,
+    "accessibilityActions" | "onAccessibilityAction"
+  > & {
+    readonly label: string;
+    readonly leading?: ReactNode;
+    readonly description?: string;
+    readonly meta?: ReactNode;
+    readonly selected: boolean;
+    readonly separated?: boolean;
+    readonly disabled?: boolean;
+    readonly onPress?: (() => void) | undefined;
+  },
+) {
   const rippleStyle = useResolveClassNames("bg-subtle-strong");
   return (
     <RowPressable
@@ -25,6 +30,8 @@ export function ListChoiceRow(props: {
       accessibilityLabel={props.label}
       accessibilityHint={props.description}
       accessibilityState={{ checked: props.selected, disabled: Boolean(props.disabled) }}
+      accessibilityActions={props.accessibilityActions}
+      onAccessibilityAction={props.onAccessibilityAction}
       disabled={props.disabled}
       onPress={props.onPress}
       android_ripple={{ color: rippleStyle.backgroundColor }}

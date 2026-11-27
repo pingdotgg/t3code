@@ -5,6 +5,7 @@ import { useNavigation } from "@react-navigation/native";
 import {
   cancelEnvironmentSpeechModelDownload,
   installEnvironmentSpeechModel,
+  removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
 } from "@t3tools/client-runtime/voice-input";
 import {
@@ -14,8 +15,11 @@ import {
 } from "@t3tools/contracts";
 import { speechModelDownloadPercent } from "@t3tools/shared/speech";
 import { AsyncResult } from "effect/reactivity";
-import { type ReactNode, useEffect, useState } from "react";
-import { Platform, Text as NativeText, View } from "react-native";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Platform, Pressable, Text as NativeText, View } from "react-native";
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from "react-native-gesture-handler/ReanimatedSwipeable";
 import { m } from "../../i18n/messages";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -34,8 +38,37 @@ import {
   voiceSpeechStatusAtom,
 } from "../voice-input/voiceDestination";
 
-const isDownloading = (model: EnvironmentSpeechModel) =>
-  model.state === "downloading" || model.state === "verifying";
+export type VoiceModel = Pick<
+  EnvironmentSpeechModel,
+  | "id"
+  | "name"
+  | "description"
+  | "size"
+  | "languages"
+  | "benchmark"
+  | "active"
+  | "downloaded"
+  | "linkedFrom"
+> & {
+  readonly state: EnvironmentSpeechModel["state"] | "cancelling" | "failed";
+  readonly canRun?: boolean;
+};
+
+export type VoiceModelList = {
+  readonly models: ReadonlyArray<VoiceModel>;
+  readonly loading: boolean;
+  readonly canManage: boolean;
+  readonly requested?: string | null;
+  readonly busy: boolean;
+  readonly downloading: boolean;
+  download(model: VoiceModel): void;
+  select(model: VoiceModel): void;
+  cancel(model: VoiceModel): void;
+  remove(model: VoiceModel): void;
+};
+
+export const isDownloading = (model: VoiceModel) =>
+  model.state === "downloading" || model.state === "verifying" || model.state === "cancelling";
 
 export function useVoiceModels(environmentId: EnvironmentId, label: string) {
   const gt = useGT();
@@ -87,7 +120,7 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
     busy,
     downloading,
     label,
-    download: (model: EnvironmentSpeechModel) => {
+    download: (model: VoiceModel) => {
       if (!ready) return;
       Dialog.confirm({
         title: gt("Download {model}?", { model: model.name }),
@@ -104,22 +137,26 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
           ),
       });
     },
-    select: (model: EnvironmentSpeechModel) => {
+    select: (model: VoiceModel) => {
       if (!ready || model.active) return;
       void run(gt("Could not select the model"), () =>
         runSpeech(selectEnvironmentSpeechModel(connection, model.id)),
       );
     },
-    cancel: (model: EnvironmentSpeechModel) => {
+    cancel: (model: VoiceModel) => {
       if (!ready) return;
       void run(gt("Could not cancel the download"), () =>
         runSpeech(cancelEnvironmentSpeechModelDownload(connection, model.id)),
       );
     },
+    remove: (model: VoiceModel) => {
+      if (!ready) return;
+      void run(gt("Could not remove the model"), () =>
+        runSpeech(removeEnvironmentSpeechModel(connection, model.id)),
+      );
+    },
   };
 }
-
-export type VoiceModels = ReturnType<typeof useVoiceModels>;
 
 const languageNames = new Map<string, Intl.DisplayNames>();
 function languageLabel(code: string, locale: string) {
@@ -130,7 +167,7 @@ function languageLabel(code: string, locale: string) {
   return names.of(code) ?? code.toUpperCase();
 }
 
-function ModelStats(props: { readonly model: EnvironmentSpeechModel; readonly language: string }) {
+function ModelStats(props: { readonly model: VoiceModel; readonly language: string }) {
   const { model, language } = props;
   const locale = useLocale();
   const data = model.benchmark;
@@ -203,52 +240,132 @@ function ModelStats(props: { readonly model: EnvironmentSpeechModel; readonly la
   );
 }
 
-function DownloadedGlyph() {
+function InstalledModelGlyph(props: { readonly linked: boolean }) {
   return (
     <View className="size-6">
       <SymbolView
-        name="tray.and.arrow.down"
+        name={props.linked ? "link" : "tray.and.arrow.down"}
         size={Platform.OS === "android" ? 24 : 22}
         tintColorClassName="accent-icon"
         type="monochrome"
         weight="regular"
       />
-      <View className="absolute -right-1.5 -bottom-1 size-3.5 items-center justify-center rounded-full bg-primary ring-2 ring-grouped-card">
-        <SymbolView
-          name="checkmark"
-          size={9}
-          tintColorClassName="accent-primary-foreground"
-          type="monochrome"
-          weight="bold"
-        />
-      </View>
+      {props.linked ? null : (
+        <View className="absolute -right-1.5 -bottom-1 size-3.5 items-center justify-center rounded-full bg-primary ring-2 ring-grouped-card">
+          <SymbolView
+            name="checkmark"
+            size={9}
+            tintColorClassName="accent-primary-foreground"
+            type="monochrome"
+            weight="bold"
+          />
+        </View>
+      )}
     </View>
   );
 }
 
+const FAIL_OFFSET_Y: [number, number] = [-10, 10];
+
 export function VoiceModelRow(props: {
-  readonly model: EnvironmentSpeechModel;
-  readonly voice: VoiceModels;
+  readonly model: VoiceModel;
+  readonly voice: VoiceModelList;
   readonly separated: boolean;
   /** The language whose benchmark score to show, when the model has one. */
   readonly language: string;
+  readonly onSwipeableOpen: (methods: SwipeableMethods) => void;
+  readonly onSwipeableClose: (methods: SwipeableMethods) => void;
 }) {
   const gt = useGT();
+  const swipeable = useRef<SwipeableMethods>(null);
   const { model, voice, separated } = props;
   const meta = <ModelStats model={model} language={props.language} />;
-  if (model.state === "installed")
-    return (
+  const disabled = !voice.canManage || voice.busy || voice.downloading;
+  if (model.state === "installed") {
+    const linked = Boolean(model.linkedFrom);
+    const canRun = model.canRun !== false;
+    const actionLabel = linked ? gt("Unlink") : gt("Remove", { $context: "verb" });
+    const accessibilityLabel = linked
+      ? gt("Unlink {model}", { model: model.name })
+      : gt("Remove {model}", { model: model.name });
+    const confirmRemoval = () => {
+      swipeable.current?.close();
+      Dialog.confirm({
+        title: linked
+          ? gt("Unlink {model}?", { model: model.name })
+          : gt("Remove {model}?", { model: model.name }),
+        message: linked
+          ? gt("Your model file stays on disk.")
+          : !canRun
+            ? undefined
+            : model.active
+              ? gt(
+                  "This model is selected for dictation. Download it again to use it after removal.",
+                )
+              : gt("Download the model again to use it for dictation."),
+        confirmText: actionLabel,
+        destructive: !linked,
+        onConfirm: () => voice.remove(model),
+      });
+    };
+    const choice = (
       <ListChoiceRow
-        leading={<DownloadedGlyph />}
+        leading={<InstalledModelGlyph linked={linked} />}
         label={model.name}
-        description={model.description}
+        description={canRun ? model.description : gt("Transcription unavailable")}
         meta={meta}
         selected={model.active}
         separated={separated}
-        disabled={!voice.canManage || voice.busy || voice.downloading}
-        onPress={() => voice.select(model)}
+        disabled={disabled}
+        onPress={canRun ? () => voice.select(model) : undefined}
+        accessibilityActions={
+          disabled ? undefined : [{ name: "remove", label: accessibilityLabel }]
+        }
+        onAccessibilityAction={
+          disabled
+            ? undefined
+            : ({ nativeEvent }) => {
+                if (nativeEvent.actionName === "remove") confirmRemoval();
+              }
+        }
       />
     );
+    if (disabled) return choice;
+    return (
+      <ReanimatedSwipeable
+        key={model.id}
+        ref={swipeable}
+        dragOffsetFromRight={-8}
+        failOffsetY={FAIL_OFFSET_Y}
+        overshootRight={false}
+        onSwipeableWillOpen={() => {
+          if (swipeable.current) props.onSwipeableOpen(swipeable.current);
+        }}
+        onSwipeableClose={() => {
+          if (swipeable.current) props.onSwipeableClose(swipeable.current);
+        }}
+        renderRightActions={() => (
+          <Pressable
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            onPress={confirmRemoval}
+            className="min-w-20 items-center justify-center gap-1 bg-danger px-3 active:opacity-75"
+          >
+            <SymbolView
+              name={linked ? "link" : "trash"}
+              size={18}
+              tintColorClassName="accent-danger-foreground"
+            />
+            <Text textRole="footnote" className="font-t3-medium text-danger-foreground">
+              {actionLabel}
+            </Text>
+          </Pressable>
+        )}
+      >
+        {choice}
+      </ReanimatedSwipeable>
+    );
+  }
   const percent =
     model.downloaded === undefined
       ? undefined
@@ -262,11 +379,13 @@ export function VoiceModelRow(props: {
           description={
             model.state === "verifying"
               ? gt("Verifying download…")
-              : gt("{percent}% downloaded · Tap to cancel", {
-                  percent: percent ?? 0,
-                })
+              : model.state === "cancelling"
+                ? gt("Cancelling download…")
+                : gt("{percent}% downloaded · Tap to cancel", {
+                    percent: percent ?? 0,
+                  })
           }
-          disabled={!voice.canManage || voice.busy}
+          disabled={!voice.canManage || voice.busy || model.state === "cancelling"}
           onPress={() => voice.cancel(model)}
         />
         <Progress
@@ -281,9 +400,11 @@ export function VoiceModelRow(props: {
       <ListActionRow
         icon="tray.and.arrow.down"
         label={model.name}
-        description={model.description}
+        description={
+          model.state === "failed" ? gt("Download failed. Try again.") : model.description
+        }
         meta={meta}
-        disabled={!voice.canManage || voice.busy || voice.downloading}
+        disabled={disabled}
         onPress={() => voice.download(model)}
       />
     </View>
@@ -302,7 +423,10 @@ export function LocalModelChoice(props: {
   const voice = useVoiceModels(props.environmentId, props.label);
   const { status } = voice;
   const open = () =>
-    navigation.navigate("SettingsVoiceModels", { environmentId: props.environmentId });
+    navigation.navigate("SettingsVoiceModels", {
+      source: "environment",
+      environmentId: props.environmentId,
+    });
   if (!voice.connection || !status || !status.supported)
     return (
       <ListChoiceRow

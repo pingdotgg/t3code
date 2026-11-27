@@ -22,5 +22,10 @@ module.exports = {
       filePath: "../../native/apple-speech/AppleSpeechEngine.swift",
       reasons: ["appleSpeech"],
     },
+    {
+      type: "file",
+      filePath: "../server/src/speech/catalog.json",
+      reasons: ["deviceSpeechCatalog"],
+    },
   ],
 };

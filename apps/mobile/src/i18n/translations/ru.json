@@ -5794,5 +5794,21 @@
   "99451a5d2d40440f": "Отозван: {by}.",
   "3ee30a50b70fffab": "Отозван ({by}): {reason}",
   "201490988858b511": "отозван: {by}",
-  "46d614fa7b4bf1e5": "Запуски воркфлоу"
+  "46d614fa7b4bf1e5": "Запуски воркфлоу",
+  "f248baa236fb70ca": "Download {model} in Settings → Voice to use it for dictation.",
+  "7ac0f48b44b95f3f": "Download {size} for offline dictation.",
+  "bbed5949ca5cade3": "Could not remove the model",
+  "a4be2da8ba636a75": "Cancelling download…",
+  "31187edd3f8e47a3": "Method on this device",
+  "742f43aa55a39f9f": "Unlink {model}",
+  "651cb409bda342a8": "Remove {model}",
+  "ee3d5202bc8f6a67": "Unlink {model}?",
+  "68f05c5e4e67c24d": "Remove {model}?",
+  "75790292ba0ac57e": "Your model file stays on disk.",
+  "9be40a016dc63138": "Download the model again to use it for dictation.",
+  "ce63a11bca54e095": "Unlink",
+  "16182194d9202688": "Remove",
+  "1fa254d98545ab8e": "Download failed. Try again.",
+  "e5c5b014c7bff41a": "Swipe left on an installed model to remove it.",
+  "d7403a7fed071f40": "This model is selected for dictation. Download it again to use it after removal."
 }
