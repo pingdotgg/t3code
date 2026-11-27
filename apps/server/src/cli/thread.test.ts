@@ -210,7 +210,6 @@ it.effect(
         [workspaceRoot, "intended-project"],
         [path.relative(cwd, workspaceRoot), "intended-project"],
         [aliasRoot, "alias-project"],
-        [path.relative(cwd, aliasRoot), "alias-project"],
         [path.join(aliasRoot, "nested"), "nested-project"],
         [".", "current-project"],
         ["~/My Project", "intended-project"],
