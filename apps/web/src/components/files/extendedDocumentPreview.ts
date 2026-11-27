@@ -112,7 +112,8 @@ async function odfHtml(
       "text:alphabetical-index-source",
       "text:bibliography-source",
       "table:covered-table-cell",
-    ].includes(node.name)
+    ].includes(node.name) ||
+    (node.name === "text:section" && node.attrs["text:display"]?.trim() === "none")
   )
     return "";
   const childImageAlt =
