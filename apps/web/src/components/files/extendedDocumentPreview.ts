@@ -304,8 +304,9 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   const notebook = record(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
   if (notebook.nbformat !== 4 || !Array.isArray(notebook.cells) || notebook.cells.length > 500)
     throw new PreviewError({ code: "notebook-unsupported" });
+  const metadata = record(notebook.metadata);
   const language =
-    String(record(record(notebook.metadata).language_info).name ?? "")
+    String(record(metadata.language_info).name || record(metadata.kernelspec).language || "")
       .replaceAll(/[^a-z\d+#-]/gi, "")
       .slice(0, 40) || "text";
   const cells: NotebookCell[] = notebook.cells.map((value) => {
@@ -616,7 +617,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         }
         fallback = state.uc;
       } else if (!hidden() && word === "page") finishPage();
-      else if (word === "cell") emit("\t", state.skip);
+      else if (word === "cell" || word === "nestcell") emit("\t", state.skip);
       else if (
         (!state.skip && word === "row") ||
         (!hidden() && (word === "par" || word === "line"))

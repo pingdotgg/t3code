@@ -2730,8 +2730,8 @@
   "322f9f6712e4a3a7": "{count, plural, other {{count}개 확인함}}",
   "ccd5fc4db08374d7": "{count, plural, other {테스트 파일 {count}개 숨겨짐}}",
   "cb1e1e72fc3d2382": "테스트 파일 포함",
-  "2ab7e87f961a419e": "{path} 변경 사항 보기, 추가 {additions}줄, 삭제 {deletions}줄, 확인함",
-  "e6fef106eeaa76ce": "{path} 변경 사항 보기, 추가 {additions}줄, 삭제 {deletions}줄",
+  "71828d9827de3793": "{path} 변경 사항 보기, 추가 {additions}줄, 삭제 {deletions}줄, 확인함",
+  "9103c6fa7accc088": "{path} 변경 사항 보기, 추가 {additions}줄, 삭제 {deletions}줄",
   "a52407bfe5da5df2": "파일 검토",
   "a7764874320578a8": "테스트 파일 숨기기",
   "186b7ac75ed4674c": "검토 파일 필터",
@@ -5700,5 +5700,8 @@
   "99451a5d2d40440f": "{by}에서 철회했습니다.",
   "3ee30a50b70fffab": "{by}에서 철회했습니다: {reason}",
   "201490988858b511": "{by}에서 철회함",
-  "46d614fa7b4bf1e5": "워크플로 실행"
+  "46d614fa7b4bf1e5": "워크플로 실행",
+  "f6cf1627f4acc5ef": "댓글 공개 범위",
+  "eb1fd384ad5919dd": "내부 메모",
+  "b45f0b467e9406d0": "고객에게 답변"
 }

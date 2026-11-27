@@ -2729,8 +2729,8 @@
   "322f9f6712e4a3a7": "{count, plural, one {{count} consulté} other {{count} consultés}}",
   "ccd5fc4db08374d7": "{count, plural, one {{count} fichier de test masqué} other {{count} fichiers de test masqués}}",
   "cb1e1e72fc3d2382": "Fichiers de test inclus",
-  "2ab7e87f961a419e": "Voir le diff de {path}, {additions} ajouts, {deletions} suppressions, consulté",
-  "e6fef106eeaa76ce": "Voir le diff de {path}, {additions} ajouts, {deletions} suppressions",
+  "71828d9827de3793": "Voir le diff de {path}, {additions, plural, =1 {{additions} ajout} other {{additions} ajouts}}, {deletions, plural, =1 {{deletions} suppression} other {{deletions} suppressions}}, consulté",
+  "9103c6fa7accc088": "Voir le diff de {path}, {additions, plural, =1 {{additions} ajout} other {{additions} ajouts}}, {deletions, plural, =1 {{deletions} suppression} other {{deletions} suppressions}}",
   "a52407bfe5da5df2": "Fichiers de la revue",
   "a7764874320578a8": "Masquer les fichiers de test",
   "186b7ac75ed4674c": "Filtrer les fichiers de la revue",
@@ -5716,5 +5716,8 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "201490988858b511": "retirée par {by}",
-  "46d614fa7b4bf1e5": "Exécutions de workflow"
+  "46d614fa7b4bf1e5": "Exécutions de workflow",
+  "f6cf1627f4acc5ef": "Visibilité du commentaire",
+  "eb1fd384ad5919dd": "Note interne",
+  "b45f0b467e9406d0": "Répondre au client"
 }

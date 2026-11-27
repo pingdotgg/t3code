@@ -2733,8 +2733,8 @@
   "322f9f6712e4a3a7": "{count, plural, one {{count} viewed} other {{count} viewed}}",
   "ccd5fc4db08374d7": "{count, plural, one {{count} test file hidden} other {{count} test files hidden}}",
   "cb1e1e72fc3d2382": "Test files included",
-  "2ab7e87f961a419e": "View diff for {path}, {additions} additions, {deletions} deletions, viewed",
-  "e6fef106eeaa76ce": "View diff for {path}, {additions} additions, {deletions} deletions",
+  "71828d9827de3793": "View diff for {path}, {additions, plural, one {{additions} addition} other {{additions} additions}}, {deletions, plural, one {{deletions} deletion} other {{deletions} deletions}}, viewed",
+  "9103c6fa7accc088": "View diff for {path}, {additions, plural, one {{additions} addition} other {{additions} additions}}, {deletions, plural, one {{deletions} deletion} other {{deletions} deletions}}",
   "a52407bfe5da5df2": "Review files",
   "a7764874320578a8": "Hide test files",
   "186b7ac75ed4674c": "Filter review files",
@@ -5724,5 +5724,8 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "201490988858b511": "withdrawn by {by}",
-  "46d614fa7b4bf1e5": "Workflow runs"
+  "46d614fa7b4bf1e5": "Workflow runs",
+  "f6cf1627f4acc5ef": "Comment audience",
+  "eb1fd384ad5919dd": "Internal note",
+  "b45f0b467e9406d0": "Reply to customer"
 }
