@@ -556,6 +556,16 @@ describe("question answer paths", () => {
                 metadata: {},
               },
               {
+                output_type: "display_data",
+                data: { "text/plain": "", "text/markdown": "**No missing readings**" },
+                metadata: {},
+              },
+              {
+                output_type: "display_data",
+                data: { "text/plain": "\0", "text/markdown": "**Complete**" },
+                metadata: {},
+              },
+              {
                 output_type: "execute_result",
                 execution_count: 2,
                 data: { "text/markdown": "*Markdown summary*", "text/plain": "Plain summary" },
@@ -579,9 +589,23 @@ describe("question answer paths", () => {
             ],
           },
           { cell_type: "raw", source: [rawSource] },
+          { cell_type: "code", source: "total = 42", execution_count: null, outputs: [] },
+          {
+            cell_type: "code",
+            source: "display(chart)",
+            execution_count: 3,
+            outputs: [
+              {
+                output_type: "display_data",
+                data: { "image/png": "iVBORw0KGgo=" },
+                metadata: {},
+              },
+            ],
+          },
         ],
       });
-      NodeFS.writeFileSync(path, notebook);
+      const notebookWithBom = `\uFEFF${notebook}`;
+      NodeFS.writeFileSync(path, notebookWithBom);
       const answers = yield* appendUserInputAttachmentPaths({
         answers: { q: "Read this" },
         attachmentsDir: config.attachmentsDir,
@@ -596,16 +620,20 @@ describe("question answer paths", () => {
       expect(extracted).toContain("42\nNext line");
       expect(extracted).toContain("raw\rvalue");
       expect(extracted).toContain("| Region | Tonnes |\n| North | 120 |\n");
+      expect(extracted).toContain("**No missing readings**");
+      expect(extracted).toContain("**Complete**");
       expect(extracted).toContain("Plain summary\n");
       expect(extracted).not.toContain("*Markdown summary*");
       expect(extracted).not.toContain("iVBORw0KGgo");
       expect(extracted).not.toContain("<script>");
       expect(extracted).toContain(`## Cell 3 (raw)\n${rawSource}`);
+      expect(extracted).toContain("## Cell 4 (code)\ntotal = 42\n\n## Cell 5 (code)");
+      expect(extracted).toMatch(/## Cell 5 \(code\)\ndisplay\(chart\)$/u);
       expect(extracted).toContain(
         "ZeroDivisionError: division by zero\nCell In[1], line 1\n----> 1 1 / 0\nZeroDivisionError: division by zero",
       );
       expect(extracted).not.toContain("\u001b");
-      expect(NodeFS.readFileSync(path, "utf8")).toBe(notebook);
+      expect(NodeFS.readFileSync(path, "utf8")).toBe(notebookWithBom);
       const before = NodeFS.statSync(path + ".txt").mtimeMs;
       // A changed binary would fail parsing if the cached extraction were not reused.
       NodeFS.writeFileSync(path, "invalid notebook");
@@ -776,12 +804,20 @@ describe("question answer paths", () => {
             "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
             "book.opf":
               '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
-            "chapter.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Departure information.<aside>Check local time.</aside>Board promptly.</div><div>Keep <aside></aside>walking.</div><div>Contact the duty editor.<address><strong>Harbor Office</strong><br/>Pier 7</address>Include your reference.</div></body></html>',
+            "chapter.xhtml": [
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body>',
+              "<div>Departure information.<aside>Check local time.</aside>Board promptly.</div>",
+              "<div>Keep <aside></aside>walking.</div>",
+              "<div>Contact the duty editor.<address><strong>Harbor Office</strong><br/>Pier 7</address>Include your reference.</div>",
+              "<section>Updated timetable.<header><strong>Harbor departures</strong></header>Confirm your berth.<footer>Source: Harbor Office</footer>Keep this guide.</section>",
+              "<section>Keep <header></header><footer></footer>reading.</section>",
+              "</body></html>",
+            ].join(""),
           },
           expected: [
             "Departure information.\nCheck local time.\nBoard promptly.\nKeep walking.",
             "Contact the duty editor.\nHarbor Office\nPier 7\nInclude your reference.",
+            "Updated timetable.\nHarbor departures\nConfirm your berth.\nSource: Harbor Office\nKeep this guide.\nKeep reading.",
           ],
         },
         {
