@@ -13043,15 +13043,6 @@
   "c23c1f8ee3808edb": "Tillåt",
   "53d6f3510e1d2505": "Ta med dina projekt",
   "f38cfff76578bff1": "Hitta mina projekt",
-  "e6af2ef0f498384a": [
-    "T3 Code kan läsa din sessionshistorik från ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " på den här datorn för att hitta mapparna du har arbetat i och deras git-fjärrar."
-  ],
   "4794e53fc07e3d86": "Läser sessionshistoriken och inloggningen för att fråga Anthropic om dina återställningskrediter.",
   "845c5d64893a2cd1": "Läser sessionshistoriken och inloggningen för att fråga xAI om dina krediter.",
   "693a46777fff9c2c": "Läser användningsdatabasen och Go-nyckeln för att fråga OpenCode om dina Go-gränser.",
@@ -13104,5 +13095,14 @@
     "."
   ],
   "75543f378b9076b9": "T3 Code kan visa tokens, kostnad och gränser utifrån det dina agenter sparar på datorn där de körs. Välj vilka agenter som ska ingå.",
-  "1c90379ba4454864": "Visa även min användningsstatistik från dessa agenter, vilket kan läsa deras inloggning för att kontrollera gränser"
+  "1c90379ba4454864": "Visa även min användningsstatistik från dessa agenter, vilket kan läsa deras inloggning för att kontrollera gränser",
+  "16d657e5243b12c1": [
+    "T3 Code kan läsa din sessionshistorik från ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " för att hitta mapparna du arbetat i och deras git-remotes."
+  ]
 }
