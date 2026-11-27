@@ -305,17 +305,17 @@ function UsageChartPlot({
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const plotRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const tooltipSizeRef = useRef<{ width: number; height: number } | null>(null);
   const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
 
   const positionTooltip = () => {
     const plot = plotRef.current;
-    const tooltip = tooltipRef.current;
     const hoverPosition = hoverPositionRef.current;
-    if (plot === null || tooltip === null || hoverPosition === null) return;
+    const tooltipSize = tooltipSizeRef.current;
+    if (plot === null || tooltipSize === null || hoverPosition === null) return;
 
     const gap = 12;
-    const tooltipWidth = tooltip.offsetWidth;
-    const tooltipHeight = tooltip.offsetHeight;
+    const { width: tooltipWidth, height: tooltipHeight } = tooltipSize;
     const plotWidth = plot.clientWidth;
     const plotHeight = plot.clientHeight;
     const preferredLeft =
@@ -335,13 +335,20 @@ function UsageChartPlot({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions the hover tooltip through plot CSS variables before paint and on ResizeObserver
   useLayoutEffect(() => {
     if (hoverIndex === null) return;
-    positionTooltip();
 
     const plot = plotRef.current;
     const tooltip = tooltipRef.current;
     if (plot === null || tooltip === null) return;
 
-    return observeResize([plot, tooltip], positionTooltip);
+    const updateTooltipPosition = () => {
+      tooltipSizeRef.current = {
+        width: tooltip.offsetWidth,
+        height: tooltip.offsetHeight,
+      };
+      positionTooltip();
+    };
+    updateTooltipPosition();
+    return observeResize([plot, tooltip], updateTooltipPosition);
   }, [hoverIndex, positionTooltip]);
 
   const handleMove = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -367,6 +374,7 @@ function UsageChartPlot({
       onMouseMove={handleMove}
       onMouseLeave={() => {
         hoverPositionRef.current = null;
+        tooltipSizeRef.current = null;
         setHoverIndex(null);
       }}
     >
