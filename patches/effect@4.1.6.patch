@@ -1,5 +1,5 @@
 diff --git a/dist/ai/McpSchema.d.ts b/dist/ai/McpSchema.d.ts
-index 8f86c27..aed42ae 100644
+index f5e7ced..d7b6560 100644
 --- a/dist/ai/McpSchema.d.ts
 +++ b/dist/ai/McpSchema.d.ts
 @@ -941,6 +941,52 @@ export declare const HEADER_MISMATCH_ERROR_CODE: -32020;
@@ -381,7 +381,7 @@ index bff6370..0a6962c 100644
  // =============================================================================
  /**
 diff --git a/dist/ai/McpServer.d.ts b/dist/ai/McpServer.d.ts
-index fe6f18e..c67169e 100644
+index 5a676a7..49d0793 100644
 --- a/dist/ai/McpServer.d.ts
 +++ b/dist/ai/McpServer.d.ts
 @@ -17,6 +17,7 @@ import * as Context from "../Context.ts";
@@ -400,7 +400,7 @@ index fe6f18e..c67169e 100644
  import type * as Types from "../Types.ts";
  import type * as McpProtocol from "./McpProtocol.ts";
  import * as McpSchema from "./McpSchema.ts";
-@@ -113,7 +115,7 @@ export interface MiddlewareSuccess {
+@@ -114,7 +116,7 @@ export interface MiddlewareSuccess {
   * @category middleware
   * @since 4.0.0
   */
@@ -409,11 +409,10 @@ index fe6f18e..c67169e 100644
  /**
   * Request metadata passed to MCP middleware.
   *
-@@ -1276,6 +1278,266 @@ export declare const registerSkill: (options: SkillOptions) => Effect.Effect<voi
-  * @since 4.1.1
-  */
- export declare const skill: (options: SkillOptions) => Layer.Layer<never, Cause.IllegalArgumentError, McpServer>;
-+
+@@ -1426,6 +1428,265 @@ export declare const skill: {
+      */
+     (options: SkillOptions): Layer.Layer<never, Cause.IllegalArgumentError, McpServer>;
+ };
 +/**
 + * A failure an event handler reports to the client: a JSON-RPC error on a
 + * poll or when a push stream opens, and `notifications/events/terminated`
@@ -677,7 +676,7 @@ index fe6f18e..c67169e 100644
   * Registers an MCP prompt from an Effect program.
   *
 diff --git a/dist/ai/McpServer.js b/dist/ai/McpServer.js
-index 4bf6bca..5ad258e 100644
+index 6c3f978..c41ef36 100644
 --- a/dist/ai/McpServer.js
 +++ b/dist/ai/McpServer.js
 @@ -16,6 +16,8 @@ import * as Cause from "../Cause.js";
@@ -705,7 +704,7 @@ index 4bf6bca..5ad258e 100644
  import * as InternalStructuredOutput from "./internal/structured-output.js";
  import * as McpSchema from "./McpSchema.js";
  import { CallToolResult, ElicitationDeclined, EnabledWhen, GetPromptResult, InternalError, InvalidParams, InvalidRequest, isParam, McpRequestContext, McpServerClient, McpServerClientMiddleware, MethodNotFound, Prompt, Resource, ResourceTemplate, ServerNotificationRpcs, TextContent, Tool as McpTool, ToolJson } from "./McpSchema.js";
-@@ -413,6 +417,9 @@ const notFound = (method, target) => {
+@@ -414,6 +418,9 @@ const notFound = (method, target) => {
        return new McpCore.SkillNotFound({
          uri: target
        });
@@ -715,10 +714,10 @@ index 4bf6bca..5ad258e 100644
    }
  };
  const isHidden = error => error instanceof Hidden;
-@@ -2637,6 +2644,155 @@ export const registerSkill = /*#__PURE__*/Effect.fnUntraced(function* (options)
+@@ -2643,6 +2650,155 @@ const registerSkillFiles = /*#__PURE__*/Effect.fnUntraced(function* (options) {
   * @since 4.1.1
   */
- export const skill = options => Layer.effectDiscard(registerSkill(options));
+ export const skill = (skillOrOptions, registration) => Layer.effectDiscard(registerSkillFiles(toSkillOptions(skillOrOptions, registration)));
 +// =============================================================================
 +// Events
 +// =============================================================================
@@ -2113,7 +2112,7 @@ index ba6c830..1e58fb9 100644
  // Prompts
  // =============================================================================
 diff --git a/src/ai/McpServer.ts b/src/ai/McpServer.ts
-index 4c2e191..bedd064 100644
+index d80028c..48f66e3 100644
 --- a/src/ai/McpServer.ts
 +++ b/src/ai/McpServer.ts
 @@ -16,6 +16,8 @@ import * as Cause from "../Cause.ts"
@@ -2141,7 +2140,7 @@ index 4c2e191..bedd064 100644
  import * as InternalStructuredOutput from "./internal/structured-output.ts"
  import type * as McpProtocol from "./McpProtocol.ts"
  import * as McpSchema from "./McpSchema.ts"
-@@ -344,6 +348,9 @@ export type MiddlewareMethod =
+@@ -345,6 +349,9 @@ export type MiddlewareMethod =
    | "skills/list"
    | "skills/get"
    | "resources/directory/read"
@@ -2151,7 +2150,7 @@ index 4c2e191..bedd064 100644
  
  /**
   * Request metadata passed to MCP middleware.
-@@ -819,7 +826,14 @@ const internalError = new InternalError({ message: "Internal error" })
+@@ -820,7 +827,14 @@ const internalError = new InternalError({ message: "Internal error" })
  const rejectWith = (error: McpErrorBase) =>
    Effect.fail(new McpCore.RequestRejected({ code: error.code, message: error.message, data: error.data, error }))
  
@@ -2167,7 +2166,7 @@ index 4c2e191..bedd064 100644
  
  type ListMethod = Exclude<MiddlewareMethod, CallMethod>
  
-@@ -829,6 +843,8 @@ interface NotFoundErrors {
+@@ -830,6 +844,8 @@ interface NotFoundErrors {
    readonly "prompts/get": McpCore.PromptNotFound
    readonly "completion/complete": InvalidParams
    readonly "skills/get": McpCore.SkillNotFound
@@ -2176,7 +2175,7 @@ index 4c2e191..bedd064 100644
  }
  
  const notFound = (method: CallMethod, target: string): NotFoundErrors[CallMethod] => {
-@@ -843,6 +859,9 @@ const notFound = (method: CallMethod, target: string): NotFoundErrors[CallMethod
+@@ -844,6 +860,9 @@ const notFound = (method: CallMethod, target: string): NotFoundErrors[CallMethod
        return new InvalidParams({ message: "Unknown completion reference or argument" })
      case "skills/get":
        return new McpCore.SkillNotFound({ uri: target })
@@ -2186,9 +2185,9 @@ index 4c2e191..bedd064 100644
    }
  }
  
-@@ -4134,6 +4153,404 @@ export const registerSkill: (options: SkillOptions) => Effect.Effect<void, Cause
- export const skill = (options: SkillOptions): Layer.Layer<never, Cause.IllegalArgumentError, McpServer> =>
-   Layer.effectDiscard(registerSkill(options))
+@@ -4291,6 +4310,404 @@ export const skill: {
+ } = (skillOrOptions: Skill.Skill | SkillOptions, registration?: SkillRegistration) =>
+   Layer.effectDiscard(registerSkillFiles(toSkillOptions(skillOrOptions, registration)))
  
 +// =============================================================================
 +// Events
@@ -4084,57 +4083,3 @@ index 0000000..5b53d08
 +    size: Effect.sync(() => subscriptions.size)
 +  } satisfies Webhooks
 +})
-diff --git a/dist/sql/SqlClient.js b/dist/sql/SqlClient.js
---- a/dist/sql/SqlClient.js
-+++ b/dist/sql/SqlClient.js
-@@ -238,6 +238,9 @@
-   log: "Unhandled",
-   message: "Unhandled error in SqlClient.afterCommit callback"
- });
-+// The transaction context extends the fiber's own, so merging the two would only copy every
-+// service twice per transaction and savepoint.
-+const provideTransactionContext = (effect, services, context) => Effect.updateContext(effect, current => current === services ? context : Context.merge(current, context));
- const makeAfterCommit = transactionService => effect => Effect.withFiber(fiber => {
-   const transaction = Context.getOrUndefined(fiber.context, transactionService);
-   const buffer = transaction && afterCommitBuffers.get(transaction);
-@@ -328,7 +331,7 @@
-     const transaction = Effect.flatMap(conn, ([scope, conn]) => start(conn).pipe(Effect.flatMap(() => {
-       const level = [conn, id];
-       afterCommitBuffers.set(level, buffer);
--      return Effect.onExitPrimitive(Effect.provideContext(restore(effect), services.pipe(Context.add(options.transactionService, level), Context.add(CurrentTransactionService, options.transactionService), reactivity ? Context.add(Reactivity, deferInvalidations(reactivity)) : identity, Context.add(transactionSemaphore, Semaphore.makeUnsafe(1)), Context.add(Tracer.ParentSpan, span))), exit => {
-+      return Effect.onExitPrimitive(provideTransactionContext(restore(effect), services, services.pipe(Context.add(options.transactionService, level), Context.add(CurrentTransactionService, options.transactionService), reactivity ? Context.add(Reactivity, deferInvalidations(reactivity)) : identity, Context.add(transactionSemaphore, Semaphore.makeUnsafe(1)), Context.add(Tracer.ParentSpan, span))), exit => {
-         buffer.open = false;
-         // The savepoint ended with its parent, and the connection
-         // may already be in another transaction.
-diff --git a/src/sql/SqlClient.ts b/src/sql/SqlClient.ts
---- a/src/sql/SqlClient.ts
-+++ b/src/sql/SqlClient.ts
-@@ -596,6 +596,17 @@
- const runAfterCommit = <R>(effect: Effect.Effect<void, never, R>): Effect.Effect<void, never, R> =>
-   Effect.ignoreCause(effect, { log: "Unhandled", message: "Unhandled error in SqlClient.afterCommit callback" })
- 
-+// The transaction context extends the fiber's own, so merging the two would only copy every
-+// service twice per transaction and savepoint.
-+const provideTransactionContext = <A, E, R, XR>(
-+  effect: Effect.Effect<A, E, R>,
-+  services: Context.Context<never>,
-+  context: Context.Context<XR>
-+): Effect.Effect<A, E, Exclude<R, XR>> =>
-+  Effect.updateContext(effect, (current: Context.Context<Exclude<R, XR>>) =>
-+    (current === services ? context : Context.merge(current, context)) as Context.Context<R>
-+  )
-+
- const makeAfterCommit =
-   (transactionService: Context.Key<any, any>) =>
-   <R>(effect: Effect.Effect<void, never, R>): Effect.Effect<void, never, R> =>
-@@ -747,8 +758,9 @@
-                     const level = [conn, id] as const
-                     afterCommitBuffers.set(level, buffer)
-                     return Effect.onExitPrimitive(
--                      Effect.provideContext(
-+                      provideTransactionContext(
-                         restore(effect),
-+                        services,
-                         services.pipe(
-                           Context.add(options.transactionService, level),
-                           Context.add(CurrentTransactionService, options.transactionService),
