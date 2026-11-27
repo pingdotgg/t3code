@@ -267,7 +267,7 @@ function ZipTreeRowView(props: {
       accessibilityLabel={entry ? entry.path : gt("{path} folder", { path: node.path })}
       accessibilityState={entry ? undefined : { expanded: !props.collapsed }}
       onPress={() => (entry ? props.onOpen(entry) : props.onToggle(node.path))}
-      className="mx-2 h-11 flex-row items-center gap-1.5 rounded-lg pr-2.5 active:bg-subtle"
+      className="mx-2 min-h-[44px] flex-row items-center gap-1.5 rounded-lg pr-2.5 active:bg-subtle android:min-h-[48px]"
       style={{ paddingLeft: 8 + depth * 18 }}
     >
       <View className="w-4 items-center">

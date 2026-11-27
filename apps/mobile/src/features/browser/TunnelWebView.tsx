@@ -21,6 +21,9 @@ export interface TunnelNavigation {
   readonly pageColor?: string;
 }
 
+const TUNNEL_FAILURE_CAUSES = ["environment", "port", "outdated"] as const;
+type TunnelFailureCause = (typeof TUNNEL_FAILURE_CAUSES)[number];
+
 export interface TunnelWebViewRef {
   readonly loadUrl: (url: string) => Promise<void>;
   readonly goBack: () => Promise<void>;
@@ -80,10 +83,10 @@ export function TunnelWebView({
     /** What the native proxy saw, shown with the error so a report carries it. iOS only. */
     readonly debug?: string;
     /**
-     * iOS only: whether the environment itself was out of reach (`environment`) or answered that
-     * nothing listens on the port (`port`).
+     * Whether the environment itself was out of reach (`environment`), answered that nothing
+     * listens on the port (`port`), or runs a T3 Code server without the tunnel (`outdated`).
      */
-    readonly cause?: "environment" | "port";
+    readonly cause?: TunnelFailureCause;
   }) => void;
   /** Whether the last connection could get into the environment's tunnel at all. */
   readonly onAccess?: (available: boolean) => void;
@@ -121,10 +124,7 @@ export function TunnelWebView({
             unsupported: nativeEvent.code === -1 && nativeEvent.url === "",
             description: nativeEvent.description,
             debug: nativeEvent.debug,
-            cause:
-              nativeEvent.cause === "environment" || nativeEvent.cause === "port"
-                ? nativeEvent.cause
-                : undefined,
+            cause: TUNNEL_FAILURE_CAUSES.find((cause) => cause === nativeEvent.cause),
           })
         }
       />

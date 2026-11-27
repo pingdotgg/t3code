@@ -51,7 +51,7 @@ export function SearchField({
         cursorColorClassName="accent-focus"
         selectionHandleColorClassName="accent-focus"
         className="min-w-0 flex-1 font-sans text-base text-foreground"
-        style={{ paddingVertical: 7 * scale }}
+        style={{ minHeight: Math.max(48, 42 * scale), paddingVertical: 7 * scale }}
         value={value}
         onChangeText={onChangeText}
       />

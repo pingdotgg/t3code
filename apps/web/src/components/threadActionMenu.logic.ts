@@ -95,7 +95,11 @@ export function buildDraftActionMenuItems(
 
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
+  /** Settle, snooze and their undo stay available until the host denies the operate scope. */
+  readonly canTriage?: boolean;
   readonly canFind?: boolean;
+  /** False where no inline title editor is rendered, such as sidebar search results. */
+  readonly canRename?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;
@@ -109,6 +113,8 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects attached providers, so disable it while running. */
   readonly isRunning: boolean;
+  /** The server marks unread against the latest run's completion, so in-flight runs cannot be. */
+  readonly hasCompletedRun: boolean;
   readonly supports: {
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
@@ -137,6 +143,16 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "copy-thread",
     "copy-thread-id",
   ].includes(action);
+}
+
+export function isThreadTriageAction(action: string): boolean {
+  return (
+    action === "settle" ||
+    action === "unsettle" ||
+    action === "snooze" ||
+    action === "unsnooze" ||
+    action.startsWith("snooze:")
+  );
 }
 
 export function buildThreadActionMenuItems(
@@ -198,7 +214,13 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
-    { id: "rename", label: resolve(msg("Rename thread")), icon: "pencil", separatorBefore: true },
+    {
+      id: "rename",
+      label: resolve(msg("Rename thread")),
+      icon: "pencil",
+      disabled: state.canRename === false,
+      separatorBefore: true,
+    },
     ...(state.supports.titleRegeneration
       ? [
           {
@@ -211,7 +233,9 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },
+    ...(state.hasCompletedRun && !state.isRunning
+      ? [{ id: "mark-unread" as const, label: resolve(msg("Mark unread")), icon: "mail-open" }]
+      : []),
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: resolve(msg("Share with guest")), icon: "user-plus" }]
       : []),
@@ -303,7 +327,8 @@ export function buildThreadActionMenuItems(
   return state.canOperate
     ? items
     : items.map((item) =>
-        threadActionRequiresOperate(item.id)
+        threadActionRequiresOperate(item.id) &&
+        !(state.canTriage === true && isThreadTriageAction(item.id))
           ? {
               ...item,
               disabled: true,

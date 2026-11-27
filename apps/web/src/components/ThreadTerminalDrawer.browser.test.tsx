@@ -5,9 +5,11 @@ import {
 import {
   EnvironmentId,
   ThreadId,
+  TerminalProcessChangedError,
   type ScopedThreadRef,
   type FilesystemEntryMetadata,
   type ResolvedKeybindingsConfig,
+  type TerminalSummary,
 } from "@t3tools/contracts";
 import { Cause } from "effect";
 import { compileResolvedKeybindingsConfig, DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -23,23 +25,34 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 
 const fixture = vi.hoisted(() => ({
   statusByThreadId: new Map<string, "starting" | "running" | "exited">(),
+  supportsConditionalWrites: true,
   pendingSurfaces: [] as Array<() => void>,
   typeIntoSurface: null as ((data: string) => void) | null,
   pressKey: null as ((event: KeyboardEvent) => boolean) | null,
-  writes: [] as Array<{ threadId: string; data: string }>,
+  writes: [] as Array<{ threadId: string; data: string; expectedPid?: number }>,
   messages: [] as string[],
   resetSessions: () => {},
+  terminalMetadata: (
+    _environmentId: EnvironmentId,
+  ): Atom.Atom<AsyncResult.AsyncResult<ReadonlyArray<TerminalSummary>>> =>
+    Atom.make(AsyncResult.success([])),
+  setMetadataPid: (_thread: ScopedThreadRef, _pid: number) => {},
   setSession: (
     _thread: ScopedThreadRef,
     _status: "closed" | "starting" | "running",
     _version: number,
     _generation?: number,
   ) => {},
-  sessionEvent: (_thread: ScopedThreadRef, _type: "snapshot" | "restarted", _pid = 123) => {},
+  sessionEvent: (
+    _thread: ScopedThreadRef,
+    _type: "snapshot" | "restarted" | "closed",
+    _pid = 123,
+  ) => {},
   surfaceOptions: [] as GhosttyTerminalSurfaceOptions[],
   reportedSize: null as { cols: number; rows: number } | null,
   resizeCommand: {},
-  runWrite: (): Promise<{ _tag: "Success" }> => Promise.resolve({ _tag: "Success" }),
+  runWrite: (): Promise<{ _tag: "Success" } | AsyncResult.Failure<void, unknown>> =>
+    Promise.resolve({ _tag: "Success" }),
   runResize: (_input: unknown): Promise<AsyncResult.AsyncResult<unknown, unknown>> =>
     Promise.resolve(AsyncResult.success(undefined)),
   metadata: new Map<
@@ -97,6 +110,8 @@ vi.mock("../state/terminalSessions", async () => {
     Atom.make<typeof EMPTY_TERMINAL_SESSION_STATE>({
       ...EMPTY_TERMINAL_SESSION_STATE,
       summary: summary(threadId, 123),
+      pid: 123,
+      supportsConditionalWrites: fixture.supportsConditionalWrites,
       status: fixture.statusByThreadId.get(threadId) ?? "closed",
       version: 1,
     });
@@ -110,6 +125,17 @@ vi.mock("../state/terminalSessions", async () => {
   fixture.resetSessions = () => {
     sessions = new Map();
   };
+  const metadata = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make<AsyncResult.AsyncResult<ReadonlyArray<TerminalSummary>>>(
+      AsyncResult.waiting(AsyncResult.success([])),
+    ).pipe(Atom.keepAlive),
+  );
+  fixture.terminalMetadata = metadata;
+  fixture.setMetadataPid = (thread, pid) =>
+    appAtomRegistry.set(
+      metadata(thread.environmentId),
+      AsyncResult.waiting(AsyncResult.success([summary(thread.threadId, pid)])),
+    );
   fixture.setSession = (thread, status, version, generation) => {
     appAtomRegistry.set(session(thread.environmentId, thread.threadId), {
       ...EMPTY_TERMINAL_SESSION_STATE,
@@ -125,24 +151,28 @@ vi.mock("../state/terminalSessions", async () => {
     const current = appAtomRegistry.get(atom);
     appAtomRegistry.set(atom, {
       ...current,
-      summary: summary(thread.threadId, pid),
       ...applyTerminalAttachStreamEvent(current, {
-        type,
         threadId: thread.threadId,
         terminalId: "term-1",
-        snapshot: {
-          threadId: thread.threadId,
-          terminalId: "term-1",
-          cwd: "/repo",
-          worktreePath: null,
-          status: "running",
-          pid,
-          history: "",
-          exitCode: null,
-          exitSignal: null,
-          label: "Terminal 1",
-          updatedAt: "2026-11-15T00:00:00.000Z",
-        },
+        ...(type === "closed"
+          ? { type }
+          : {
+              type,
+              snapshot: {
+                threadId: thread.threadId,
+                terminalId: "term-1",
+                cwd: "/repo",
+                worktreePath: null,
+                status: "running",
+                pid,
+                supportsConditionalWrites: fixture.supportsConditionalWrites,
+                history: "",
+                exitCode: null,
+                exitSignal: null,
+                label: "Terminal 1",
+                updatedAt: "2026-11-15T00:00:00.000Z",
+              },
+            }),
       }),
     });
   };
@@ -157,10 +187,16 @@ vi.mock("../state/session", () => ({
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand:
-    (command: object) => async (args: { input: { threadId: string; data?: string } }) => {
+    (command: object) =>
+    async (args: { input: { threadId: string; data?: string; expectedPid?: number } }) => {
       if (command === fixture.resizeCommand) return fixture.runResize(args);
       if (args.input.data !== undefined) {
-        fixture.writes.push({ threadId: args.input.threadId, data: args.input.data });
+        const { threadId, data, expectedPid } = args.input;
+        fixture.writes.push({
+          threadId,
+          data,
+          ...(expectedPid === undefined ? {} : { expectedPid }),
+        });
         return fixture.runWrite();
       }
       return { _tag: "Success" };
@@ -173,7 +209,12 @@ vi.mock("../state/server", async () => {
   return { serverEnvironment: { configValueAtom: () => config } };
 });
 vi.mock("../state/terminal", () => ({
-  terminalEnvironment: { write: {}, resize: fixture.resizeCommand },
+  terminalEnvironment: {
+    write: {},
+    resize: fixture.resizeCommand,
+    metadata: ({ environmentId }: { environmentId: EnvironmentId }) =>
+      fixture.terminalMetadata(environmentId),
+  },
 }));
 vi.mock("../state/preview", () => ({ previewEnvironment: { open: {} } }));
 vi.mock("../state/projects", async () => {
@@ -264,6 +305,7 @@ function setup(originalStatus: "starting" | "exited" = "exited") {
   fixture.reportedSize = null;
   fixture.runResize = () => Promise.resolve(AsyncResult.success(undefined));
   fixture.runWrite = () => Promise.resolve({ _tag: "Success" });
+  fixture.supportsConditionalWrites = true;
   fixture.metadata.clear();
   useRightPanelStore.setState(useRightPanelStore.getInitialState());
   useTerminalUiStateStore.setState(useTerminalUiStateStore.getInitialState());
@@ -379,8 +421,8 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
   });
   const canActivate = (text: string) => fixture.surfaceOptions.at(-1)!.canActivateLink!(text);
   const validate = (text: string) => fixture.surfaceOptions.at(-1)!.validateLink!(text);
-  const hover = (text: string | null) =>
-    act(() => fixture.surfaceOptions.at(-1)!.onLinkHover!(text));
+  const hover = (text: string | null, fallback?: string) =>
+    act(() => fixture.surfaceOptions.at(-1)!.onLinkHover!(text, fallback));
 
   expect(canActivate("https://example.com")).toBe(true);
   for (const branch of ["t3/fix-html-image-details", "t3/fix-html-…mage-details"]) {
@@ -408,6 +450,32 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
     await hover(path);
     expect(canActivate(path)).toBe(true);
   }
+  const grepHit = Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+    AsyncResult.initial(),
+  );
+  fixture.metadata.set(key("/repo/src/a.js:1:function"), grepHit);
+  fixture.metadata.set(
+    key("/repo/src/a.js"),
+    Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+      AsyncResult.success<FilesystemEntryMetadata | null>({ kind: "file" }),
+    ),
+  );
+  await hover("./src/a.js:1:function", "./src/a.js:1");
+  expect(canActivate("./src/a.js:1")).toBe(false);
+  await act(async () => {
+    appAtomRegistry.set(grepHit, AsyncResult.success(null));
+  });
+  expect(canActivate("./src/a.js:1:function")).toBe(false);
+  expect(canActivate("./src/a.js:1")).toBe(true);
+  fixture.metadata.set(
+    key("/repo/src:1:22:DD"),
+    Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+      AsyncResult.success<FilesystemEntryMetadata | null>({ kind: "directory" }),
+    ),
+  );
+  await hover("/repo/src:1:22:DD", "/repo/src:1:22");
+  expect(canActivate("/repo/src:1:22:DD")).toBe(true);
+  expect(canActivate("/repo/src:1:22")).toBe(false);
   await hover(null);
   expect(canActivate("/repo/src")).toBe(false);
   fixture.metadata.set(
@@ -450,12 +518,16 @@ it("drops the rest of a split paste when the shell restarts mid-paste", async ()
 });
 
 it.each([
-  { pid: 123, closes: true },
-  { pid: 456, closes: false },
+  { pid: 123, guarded: true, recovers: true },
+  { pid: 456, guarded: true, recovers: true },
+  { pid: 123, guarded: false, recovers: true },
+  { pid: 456, guarded: false, recovers: false },
 ])(
-  "closes interrupted bracket framing only for its process (PID $pid)",
-  async ({ pid, closes }) => {
+  "recovers interrupted paste with conditional writes $guarded and attachment PID $pid",
+  async ({ pid, guarded, recovers }) => {
     const { other: threadRef } = setup();
+    fixture.supportsConditionalWrites = guarded;
+    if (!guarded) fixture.setMetadataPid(threadRef, 123);
     let settleWrite = () => {};
     fixture.runWrite = () =>
       new Promise((resolve) => {
@@ -480,13 +552,72 @@ it.each([
     expect(
       fixture.messages.filter((message) => message.includes("paste interrupted")),
     ).toHaveLength(1);
-    expect(fixture.writes.map(({ data }) => data)).toEqual([
-      large.slice(0, 65_536),
-      ...(closes ? ["\x1b[201~"] : []),
-      "after",
+    const identity = guarded ? { expectedPid: 123 } : {};
+    expect(fixture.writes.map(({ threadId: _, ...write }) => write)).toEqual([
+      { data: large.slice(0, 65_536), ...identity },
+      ...(recovers ? [{ data: "\x1b[201~", ...identity }] : []),
+      { data: "after" },
     ]);
   },
 );
+
+it.each(["metadata first", "closed"] as const)(
+  "clears legacy paste recovery when the process is gone (%s)",
+  async (change) => {
+    const { other: threadRef } = setup();
+    fixture.supportsConditionalWrites = false;
+    fixture.setMetadataPid(threadRef, 123);
+    let failWrite = () => {};
+    fixture.runWrite = () =>
+      new Promise((resolve) => {
+        failWrite = () => {
+          fixture.runWrite = () => Promise.resolve({ _tag: "Success" });
+          resolve(AsyncResult.failure(Cause.die(new Error("acknowledgement lost"))));
+        };
+      });
+    await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+    await act(async () => {
+      fixture.pendingSurfaces.shift()?.();
+    });
+    const paste = `\x1b[200~${"p".repeat(70_000)}\x1b[201~`;
+    fixture.typeIntoSurface?.(paste);
+    await act(async () => {
+      if (change === "closed") fixture.sessionEvent(threadRef, "closed");
+      else fixture.setMetadataPid(threadRef, 456);
+      failWrite();
+    });
+    expect(fixture.writes.map(({ data }) => data)).toEqual([paste.slice(0, 65_536)]);
+    await act(async () => {
+      // After close, reopen without a PID change to expose any stale recovery obligation.
+      fixture.sessionEvent(threadRef, "snapshot", change === "closed" ? 123 : 456);
+      fixture.typeIntoSurface?.("after");
+    });
+    expect(fixture.writes.map(({ data }) => data)).toEqual([paste.slice(0, 65_536), "after"]);
+  },
+);
+
+it("stops a split paste on its original process once that process is replaced", async () => {
+  const { other: threadRef } = setup();
+  fixture.runWrite = async () =>
+    fixture.writes.length >= 2 && fixture.writes.at(-1)?.expectedPid !== undefined
+      ? AsyncResult.failure(Cause.fail(new TerminalProcessChangedError()))
+      : { _tag: "Success" };
+  await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  const paste = `\x1b[200~${"p".repeat(140_000)}\x1b[201~`;
+  await act(async () => {
+    fixture.typeIntoSurface?.(paste);
+    fixture.typeIntoSurface?.("after");
+  });
+  expect(fixture.writes.map(({ data, expectedPid }) => ({ data, expectedPid }))).toEqual([
+    { data: paste.slice(0, 65_536), expectedPid: 123 },
+    { data: paste.slice(65_536, 131_072), expectedPid: 123 },
+    { data: "\x1b[201~", expectedPid: 123 },
+    { data: "after", expectedPid: undefined },
+  ]);
+});
 
 it("closes an interrupted paste after disposal before input from a remounted view", async () => {
   const { other: threadRef } = setup();

@@ -599,6 +599,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly action: PullRequestAction;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly removeAgentCreditsOnMerge?: boolean;
+      /** The head the caller reviewed; a merge refuses any other. */
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<ProviderChangeRequestSummary | void, GitLabPullRequestCliError>;
 
     readonly updateMergeRequest: (input: {
@@ -643,6 +645,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly verdict: PullRequestReviewVerdict;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+      /** The head the caller reviewed; an approval refuses any other. */
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<void, GitLabPullRequestCliError>;
 
     readonly replyToDiscussion: (input: {
@@ -2844,11 +2848,27 @@ export const make = Effect.gen(function* () {
         const [subcommand, ...flags] = actionArgs(input.action, input.mergeMethod);
         if (input.action === "merge" || input.action === "enable-auto-merge") {
           if (input.mergeMethod === "rebase") {
+            // GitLab's rebase takes no SHA, so the reviewed head is checked just before it.
+            if (input.expectedHeadSha !== undefined) {
+              const current = yield* getDiffRefs(input);
+              if (current.headSha !== input.expectedHeadSha) {
+                return yield* new GitLabMutationRefusedError({
+                  command: "glab",
+                  cwd: input.cwd,
+                  operation: "runMergeRequestAction",
+                  reasons: [`the head is now ${current.headSha}, not ${input.expectedHeadSha}`],
+                });
+              }
+            }
             // A rebase changes the source SHA, so wait for it before reading the merge guard.
             yield* executeMr("rebase");
           }
           const refs = yield* getDiffRefs(input);
-          flags.push("--sha", refs.headSha);
+          // After a rebase, the head checked above is replaced by its rebased commits.
+          flags.push(
+            "--sha",
+            input.mergeMethod === "rebase" ? refs.headSha : (input.expectedHeadSha ?? refs.headSha),
+          );
           if (input.removeAgentCreditsOnMerge === true) {
             // Read after the SHA guard, so a push since then fails the merge instead of
             // merging commits whose credits these messages don't cover.
@@ -2960,6 +2980,15 @@ export const make = Effect.gen(function* () {
       }
       if (input.comments.length > 0) {
         const refs = yield* getDiffRefs(input);
+        // Line comments are placed on the head read here, so it must be the one reviewed.
+        if (input.expectedHeadSha !== undefined && refs.headSha !== input.expectedHeadSha) {
+          return yield* new GitLabMutationRefusedError({
+            command: "glab",
+            cwd: input.cwd,
+            operation: "submitReview",
+            reasons: [`the head is now ${refs.headSha}, not ${input.expectedHeadSha}`],
+          });
+        }
         const rangedFileHeaders = input.comments.flatMap((comment) =>
           comment.startPosition !== undefined &&
           (comment.startPosition.kind !== "context" || comment.position.kind !== "context")
@@ -3019,6 +3048,11 @@ export const make = Effect.gen(function* () {
           host: input.host,
           path: `${mergeRequest}/approve`,
           method: "POST",
+          // GitLab answers 409 when `sha` is no longer the merge request's head.
+          ...(input.expectedHeadSha === undefined
+            ? {}
+            : // @effect-diagnostics-next-line globalJsonInEffect:off
+              { stdin: JSON.stringify({ sha: input.expectedHeadSha }) }),
         });
       }
     }),

@@ -7,6 +7,9 @@
  * and `Layer`, while this module is useful when code needs to create, provide,
  * fork, close, or inspect scopes directly.
  *
+ * By default, closing a scope runs finalizers one at a time, most recently
+ * registered first. A scope with the parallel strategy runs them concurrently.
+ *
  * @stability stable
  * @since 2.0.0
  */
@@ -224,7 +227,8 @@ export declare namespace State {
 export const Scope: Context.Service<Scope, Scope> = effect.scopeTag
 
 /**
- * Creates a new `Scope` with the specified finalizer strategy.
+ * Creates a scope with the given finalizer strategy, defaulting to
+ * `"sequential"`.
  *
  * **Example** (Creating a scope)
  *
@@ -251,8 +255,7 @@ export const make: (finalizerStrategy?: "sequential" | "parallel") => Effect<Clo
 
 /**
  * Creates a new `Scope` synchronously without wrapping it in an `Effect`.
- * This is useful when you need a scope immediately but should be used with caution
- * as it doesn't provide the same safety guarantees as the `Effect`-wrapped version.
+ * The finalizer strategy defaults to `"sequential"`.
  *
  * **When to use**
  *
@@ -481,10 +484,13 @@ export const forkUnsafe: (scope: Scope, finalizerStrategy?: "sequential" | "para
  *
  * **Details**
  *
- * Finalizers run in the scope's configured order and receive the supplied
- * `Exit`.
+ * Each finalizer receives the supplied `Exit`. A sequential scope runs them
+ * one at a time in reverse registration order; a parallel scope runs them
+ * concurrently.
+ *
  * By default, finalizers run uninterruptibly, so interrupting the closing fiber
- * waits for them to finish; a finalizer can explicitly restore interruptibility.
+ * waits for them to finish. A finalizer can use `Effect.interruptible` to
+ * allow interruption within part of its cleanup.
  *
  * **Gotchas**
  *

@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as HttpEffect from "effect/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import { requireEnvironmentScope } from "../auth/http.ts";
@@ -20,7 +20,6 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
-import { canLinkHere } from "./linkChecks.ts";
 import type { RelayRequestError } from "./relayResponse.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
 
@@ -119,8 +118,7 @@ export const layer = HttpApiBuilder.group(
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
           yield* requireEnvironmentScope(AuthRelayConfigureScope);
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          const proof = yield* toHttpError(cloudLink.linkProof(payload, request));
+          const proof = yield* toHttpError(cloudLink.linkProof(payload));
           yield* appendCloudCredentialResponseHeaders;
           return proof;
         }),
@@ -135,8 +133,11 @@ export const layer = HttpApiBuilder.group(
         Effect.gen(function* () {
           const principal = yield* requireEnvironmentScope(AuthRelayReadScope);
           const state = yield* toHttpError(cloudLink.linkState());
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          return { ...state, linkableHere: canLinkHere(request, principal.subject) };
+          // Linking also writes relay preferences, so configure alone cannot finish it.
+          const linkableHere =
+            principal.scopes.has(AuthRelayConfigureScope) &&
+            principal.scopes.has(AuthRelayWriteScope);
+          return { ...state, linkableHere };
         }),
       )
       .handle("checkReachability", () =>

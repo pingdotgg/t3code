@@ -134,7 +134,7 @@ export interface LayerRef<in out I, in out E = never> {
  * @since 4.0.0
  */
 export const make = Effect.fnUntraced(
-  function*<I, E, R, X, const Preload extends boolean = never, SE = never, SR = never>(
+  function*<I, E, R, X, const Preload extends boolean = false, SE = never, SR = never>(
     layer: Layer.Layer<I, E, R>,
     options?: {
       /**
@@ -317,7 +317,7 @@ export const Service = <Self>() =>
   R,
   X,
   const Deps extends ReadonlyArray<Layer.Layer<any, any, any>> = [],
-  const Preload extends boolean = never,
+  const Preload extends boolean = false,
   SE = never,
   SR = never
 >(

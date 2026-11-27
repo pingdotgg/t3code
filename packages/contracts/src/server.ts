@@ -164,6 +164,34 @@ export function isProviderWorkspaceSnapshotPending(
   return snapshot.slashCommandsPending === true || snapshot.modelsPending === true;
 }
 
+/** Whose settings keep a provider from running a mode; "settings" when the source is not known. */
+export const ProviderRuntimeModeLimitReason = Schema.Literals([
+  "managed-settings",
+  "user-settings",
+  "project-settings",
+  "settings",
+]);
+export type ProviderRuntimeModeLimitReason = typeof ProviderRuntimeModeLimitReason.Type;
+
+/**
+ * A mode a provider offers that cannot run in one folder. The mode stays selectable by every
+ * caller; clients show it as unavailable with the reason.
+ */
+export const ProviderRuntimeModeLimit = Schema.Struct({
+  mode: RuntimeMode,
+  reason: ProviderRuntimeModeLimitReason,
+});
+export type ProviderRuntimeModeLimit = typeof ProviderRuntimeModeLimit.Type;
+
+export const ProviderRuntimeModeLimitsInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  cwd: TrimmedNonEmptyString,
+});
+export const ProviderRuntimeModeLimitsResult = Schema.Struct({
+  limits: ForwardCompatibleArray(ProviderRuntimeModeLimit),
+});
+export type ProviderRuntimeModeLimitsResult = typeof ProviderRuntimeModeLimitsResult.Type;
+
 /** Unavailable snapshots must set installed and enabled false. */
 export const ServerProviderAvailability = Schema.Literals(["available", "unavailable"]);
 export type ServerProviderAvailability = typeof ServerProviderAvailability.Type;
@@ -279,6 +307,10 @@ export const ServerProvider = Schema.Struct({
   models: Schema.Array(ServerProviderModel),
   // Pickers group `models` under these, in order, by `subProvider`.
   subProviders: Schema.optional(Schema.Array(ServerProviderSubProvider)),
+  // Set for the one failed check that follows a ready one: pickers keep offering `models`.
+  modelsRetained: Schema.optionalKey(Schema.Boolean),
+  // Set by a ready check whose `models` may lack some the provider still offers, so they are kept.
+  modelsIncomplete: Schema.optionalKey(Schema.Boolean),
   // Kept apart from `models` so clients that predate it never offer them.
   updateRequiredModels: Schema.optionalKey(Schema.Array(ServerProviderUpdateRequiredModel)),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
@@ -381,6 +413,8 @@ export const ServerObservability = Schema.Struct({
   otlpLogsSource: Schema.optional(OtlpEndpointSource),
   otlpLogsVariable: Schema.optional(TrimmedNonEmptyString),
   otlpLogsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Relay tracing policy for browsers opened from this server. */
+  relayTracingAllowed: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerObservability = typeof ServerObservability.Type;
 
@@ -698,6 +732,13 @@ export const ServerEventLoopStall = Schema.Struct({
 });
 export type ServerEventLoopStall = typeof ServerEventLoopStall.Type;
 
+/** The boolean `T3CODE_FEATURE_FLAGS` a server started with. Unset flags are off. */
+export const ServerFeatureFlags = Schema.Struct({
+  secretProviders: Schema.optionalKey(Schema.Boolean),
+  tanstackSource: Schema.optionalKey(Schema.Boolean),
+});
+export type ServerFeatureFlags = typeof ServerFeatureFlags.Type;
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -735,6 +776,7 @@ export const ServerConfig = Schema.Struct({
   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
   threadFind: Schema.optionalKey(Schema.Boolean),
   threadFindProgressive: Schema.optionalKey(Schema.Boolean),
+  featureFlags: Schema.optionalKey(ServerFeatureFlags),
   /** Settings patches may carry `secretProviders`; older servers drop the key without an error. */
   secretProviderSettings: Schema.optionalKey(Schema.Boolean),
   /** Secret settings may point at a secret provider; older servers drop the reference. */
@@ -1002,6 +1044,18 @@ export class ServerProviderUpdateError extends Schema.TaggedError<ServerProvider
   }
 }
 
+export const DatabaseMigrationProgress = Schema.Struct({
+  current: Schema.Int.check(Schema.isGreaterThan(0)),
+  total: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type DatabaseMigrationProgress = typeof DatabaseMigrationProgress.Type;
+
+export const ServerStartupStatus = Schema.Struct({
+  status: Schema.Literal("starting"),
+  migration: Schema.NullOr(DatabaseMigrationProgress),
+});
+export type ServerStartupStatus = typeof ServerStartupStatus.Type;
+
 export const ServerNpmReleaseInput = Schema.Struct({
   spec: Schema.String.check(
     Schema.isMaxLength(64),
@@ -1068,6 +1122,13 @@ export class ServerSelfUpdateError extends Schema.TaggedError<ServerSelfUpdateEr
   "ServerSelfUpdateError",
   {
     reason: TrimmedNonEmptyString,
+    /** Set when the host's desktop app refused only because its build and saved tracks differ. */
+    trackMismatch: Schema.optionalKey(
+      Schema.Struct({
+        buildChannel: DesktopUpdateChannelSchema,
+        savedChannel: DesktopUpdateChannelSchema,
+      }),
+    ),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

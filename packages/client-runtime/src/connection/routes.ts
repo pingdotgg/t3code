@@ -200,7 +200,11 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
     case "lan":
       return "LAN";
     case "tailnet":
-      return "Tailscale";
+      // Tailscale Serve answers over HTTPS on the machine's name; the same machine's
+      // plain address is another route, so the two are told apart.
+      return routeHttpBaseUrl(route)?.startsWith("https:") === true
+        ? msg("Tailscale HTTPS")
+        : "Tailscale";
     case "vpn":
       return "VPN";
     case "ssh": {
@@ -471,6 +475,20 @@ export function routesAfterRemoving(
     }
     return credentialConnectionId(connectionRouteId(route.target)) !== removedId;
   });
+}
+
+/**
+ * A route is offered for removal only when removing it leaves a route behind.
+ * A learned route would be learned again, and the last route a learned route
+ * borrows from would take the whole environment with it.
+ */
+export function canRemoveRoute(
+  routes: ReadonlyArray<ConnectionRoute>,
+  route: ConnectionRoute,
+): boolean {
+  return (
+    !isLearned(route) && routesAfterRemoving(routes, connectionRouteId(route.target)).length > 0
+  );
 }
 
 /**

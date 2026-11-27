@@ -184,30 +184,134 @@ function runShellEnvironment(input: {
 }
 
 describe("DesktopShellEnvironment", () => {
-  it.effect("does not wait for discovery when the cache is missing", () =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      yield* runShellEnvironment({
-        env: { SHELL: "/test-shell", PATH: "/usr/bin" },
-        platform: "darwin",
-        handler: () => "",
-        processSpawner: ChildProcessSpawner.make(() =>
-          Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Deferred.await(release)),
-            Effect.as(makeProcess(envOutput({ PATH: "/fresh/bin" }))),
-          ),
-        ),
-        use: (service) =>
-          Effect.gen(function* () {
-            const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
-            yield* Deferred.await(started);
-            assert.isDefined(startup.pollUnsafe());
-            yield* Deferred.succeed(release, undefined);
-            return yield* service.awaitDiscovery;
+  it.effect.each([
+    { platform: "linux" as const, runtime: { APPDIR: "/opt/t3.AppDir/" }, scrub: true },
+    { platform: "linux" as const, runtime: { APPIMAGE: "/opt/T3.AppImage" }, scrub: true },
+    { platform: "linux" as const, runtime: {}, scrub: false },
+    { platform: "darwin" as const, runtime: { APPDIR: "/opt/t3.AppDir/" }, scrub: false },
+  ])(
+    "keeps AppImage mounts out of cached and discovered PATH: %j",
+    ({ platform, runtime, scrub }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const stateDir = yield* fs.makeTempDirectoryScoped();
+        const cachePath = `${stateDir}/shell-environment-cache.json`;
+        const inheritedPath =
+          "/tmp/.mount_T3-Codold123/usr/bin:/launcher/bin:/opt/t3.AppDir/usr/bin";
+        const cachedPath = "/cached/bin:/tmp/.mount_T3-Codcache1/usr/bin";
+        const discoveredPath = "/fresh/bin:/tmp/.mount_T3-Codprobe1/usr/bin";
+        const retainedPath = "/tmp/tools:/tmp/.mount_Other123/usr/bin:/opt/t3.AppDir-backup/bin";
+        const cleanInherited = scrub
+          ? `/launcher/bin${runtime.APPDIR ? "" : ":/opt/t3.AppDir/usr/bin"}`
+          : inheritedPath;
+        const cleanCached = scrub ? "/cached/bin" : cachedPath;
+        const cleanDiscovered = scrub ? "/fresh/bin" : discoveredPath;
+        const env: NodeJS.ProcessEnv = {
+          ...runtime,
+          SHELL: "/bin/bash",
+          PATH: `${inheritedPath}:${retainedPath}`,
+        };
+        yield* fs.writeFileString(
+          cachePath,
+          encodeCache({
+            version: 1,
+            key: JSON.stringify([platform, "/test-home", "/bin/bash", ""]),
+            environment: { PATH: cachedPath, __MISE_DIFF: "cached-mise" },
           }),
-      });
-    }),
+        );
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const probePath = yield* Deferred.make<string | undefined>();
+        yield* runShellEnvironment({
+          env,
+          platform,
+          stateDir,
+          handler: () => "",
+          processSpawner: ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              const value =
+                command._tag === "StandardCommand" ? command.options.env?.PATH : undefined;
+              const path = typeof value === "string" ? value : undefined;
+              yield* Deferred.succeed(probePath, path);
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+              return makeProcess(
+                envOutput({ PATH: `${discoveredPath}:${path}`, __MISE_DIFF: "fresh-mise" }),
+              );
+            }),
+          ),
+          use: (service) =>
+            Effect.gen(function* () {
+              yield* service.installIntoProcess;
+              const expectedCached = `${cleanCached}:${cleanInherited}:${retainedPath}`;
+              assert.equal(env.PATH, expectedCached);
+              assert.equal(env.__MISE_DIFF, "cached-mise");
+              const cached = yield* Stream.runHead(service.updates);
+              assert.equal(Option.getOrThrow(cached).environment.PATH, expectedCached);
+              yield* Deferred.await(started);
+              assert.equal(yield* Deferred.await(probePath), `${cleanInherited}:${retainedPath}`);
+              yield* Deferred.succeed(release, undefined);
+              yield* service.awaitDiscovery;
+              const expectedFresh = `${cleanDiscovered}:${cleanInherited}:${retainedPath}`;
+              assert.equal(env.PATH, expectedFresh);
+              assert.equal(env.__MISE_DIFF, "fresh-mise");
+              const fresh = yield* Stream.runHead(service.updates);
+              assert.equal(Option.getOrThrow(fresh).environment.PATH, expectedFresh);
+              return true;
+            }),
+        });
+        const cached = yield* fs.readFileString(cachePath).pipe(Effect.flatMap(decodeCache));
+        assert.equal(cached.environment.PATH, env.PATH);
+        assert.equal(cached.environment.__MISE_DIFF, "fresh-mise");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    { platform: "darwin" as const, env: { PATH: "/usr/bin" }, expectedPath: "/usr/bin" },
+    {
+      platform: "linux" as const,
+      env: { APPDIR: "/tmp/.mount_T3-Codnew123", PATH: ":/tmp/.mount_T3-Codold123/bin::/usr/bin:" },
+      expectedPath: "::/usr/bin:",
+    },
+    {
+      platform: "linux" as const,
+      env: { APPDIR: "/tmp/.mount_T3-Codnew123", PATH: "/tmp/.mount_T3-Codnew123/bin" },
+      expectedPath: undefined,
+    },
+  ])(
+    "does not wait for discovery when the cache is missing: %j",
+    ({ platform, env: initial, expectedPath }) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const env: NodeJS.ProcessEnv = { SHELL: "/test-shell", ...initial };
+        let probePath: string | undefined;
+        yield* runShellEnvironment({
+          env,
+          platform,
+          handler: () => "",
+          processSpawner: ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              const value =
+                command._tag === "StandardCommand" ? command.options.env?.PATH : undefined;
+              probePath = typeof value === "string" ? value : undefined;
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+              return makeProcess(envOutput({ PATH: "/fresh/bin" }));
+            }),
+          ),
+          use: (service) =>
+            Effect.gen(function* () {
+              const startup = yield* service.installIntoProcess.pipe(Effect.forkChild);
+              yield* Deferred.await(started);
+              assert.isDefined(startup.pollUnsafe());
+              assert.equal(env.PATH, expectedPath);
+              assert.equal(probePath, expectedPath);
+              yield* Deferred.succeed(release, undefined);
+              return yield* service.awaitDiscovery;
+            }),
+        });
+      }),
   );
 
   it.effect(
@@ -511,7 +615,7 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on macOS", () =>
+  it.effect("hydrates PATH, SSH_AUTH_SOCK, and DO_NOT_TRACK from the login shell on macOS", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
@@ -528,6 +632,7 @@ describe("DesktopShellEnvironment", () => {
             PATH: "/opt/homebrew/bin:/usr/bin:/opt/bin ",
             SSH_AUTH_SOCK: "/tmp/secretive.sock",
             HOMEBREW_PREFIX: "/opt/homebrew",
+            DO_NOT_TRACK: "1",
           });
         },
       });
@@ -537,6 +642,7 @@ describe("DesktopShellEnvironment", () => {
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/opt/bin : /Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
+      assert.equal(env.DO_NOT_TRACK, "1");
       assert.isTrue(prepared);
     }),
   );
@@ -879,11 +985,13 @@ describe("DesktopShellEnvironment", () => {
         USERPROFILE: "C:\\Users\\testuser",
       };
 
+      const scripts: Array<string> = [];
       const prepared = yield* runShellEnvironment({
         env,
         platform: "win32",
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
+          scripts.push(String(command.args.at(-1)));
           const loadProfile = !command.args.includes("-NoProfile");
           return loadProfile
             ? envOutput({
@@ -917,6 +1025,13 @@ describe("DesktopShellEnvironment", () => {
         env.FNM_MULTISHELL_PATH,
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
+      assert.isNotEmpty(scripts);
+      for (const script of scripts) {
+        assert.include(
+          script,
+          "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+        );
+      }
     }),
   );
 
@@ -971,6 +1086,29 @@ describe("DesktopShellEnvironment", () => {
       yield* TestClock.adjust("5 seconds");
       yield* Fiber.join(fiber);
       assert.deepEqual([...new Set(commands)], ["pwsh.exe", "powershell.exe"]);
+    }),
+  );
+
+  it.effect("applies saved Windows user telemetry opt-outs missing from the launcher", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        handler: (command) =>
+          command._tag === "StandardCommand" &&
+          String(command.args.at(-1)).includes("T3CODE_TELEMETRY_ENABLED")
+            ? envOutput({
+                PATH: "C:\\Windows\\System32",
+                T3CODE_TELEMETRY_ENABLED: "false",
+                DO_NOT_TRACK: "1",
+              })
+            : envOutput({ PATH: "C:\\Windows\\System32" }),
+      });
+
+      assert.equal(env.T3CODE_TELEMETRY_ENABLED, "false");
+      assert.equal(env.DO_NOT_TRACK, "1");
     }),
   );
 

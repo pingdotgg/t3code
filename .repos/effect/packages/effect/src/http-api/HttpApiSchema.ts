@@ -12,10 +12,12 @@
  */
 import * as Arr from "../Array.ts"
 import * as ByteSize from "../ByteSize.ts"
+import * as Duration from "../Duration.ts"
 import * as Sse from "../encoding/Sse.ts"
 import { constVoid, type LazyArg } from "../Function.ts"
 import { hasBody, type HttpMethod } from "../http/HttpMethod.ts"
 import * as HttpStatus from "../http/HttpStatus.ts"
+import * as MediaType from "../http/internal/mediaType.ts"
 import type * as Multipart_ from "../http/Multipart.ts"
 import * as ProblemDetails from "../http/ProblemDetails.ts"
 import * as Predicate from "../Predicate.ts"
@@ -24,7 +26,6 @@ import * as SchemaAST from "../SchemaAST.ts"
 import * as SchemaTransformation from "../SchemaTransformation.ts"
 import * as Socket from "../socket/Socket.ts"
 import * as Stream from "../Stream.ts"
-import * as MediaType from "./internal/mediaType.ts"
 
 declare module "../Schema.ts" {
   namespace Annotations {
@@ -53,7 +54,7 @@ declare module "../Schema.ts" {
  */
 export interface WithHeadersAnnotation {
   readonly body: Schema.Top
-  readonly headers: Schema.Top
+  readonly headers: Schema.Struct<Schema.Struct.Fields>
   /**
    * Codecs from the body and headers types to their response representation.
    * `HttpApiEndpoint` replaces them with the response encoding codecs.
@@ -408,6 +409,7 @@ export interface StreamSse<
   readonly contentTypes: Arr.NonEmptyReadonlyArray<string>
   readonly events: Events
   readonly error: Error
+  readonly keepAlive: Duration.Duration | undefined
   readonly "~Value"?: Value | undefined
 }
 
@@ -551,6 +553,11 @@ const defaultMaxElementBytes = ByteSize.mebibytes(1)
  *
  * `StreamSse` is response-only. Endpoint construction rejects it in `payload`.
  *
+ * When `keepAlive` is set, the server writes a `: keepalive` comment each
+ * time the interval elapses while the response is open, and stops when the
+ * event stream ends. SSE clients ignore comment lines, so idle connections stay
+ * open through proxies and runtimes that close silent responses.
+ *
  * @stability unstable
  * @category constructors
  * @since 4.0.0
@@ -560,17 +567,20 @@ export const StreamSse: {
     readonly contentType?: string | undefined
     readonly events: Events
     readonly error?: Error | undefined
+    readonly keepAlive?: Duration.Input | undefined
   }): StreamSse<Events, Error, Events["Type"]>
   <Data extends Schema.Constraint, Error extends Schema.Constraint = Schema.Never>(options: {
     readonly contentType?: string | undefined
     readonly data: Data
     readonly error?: Error | undefined
+    readonly keepAlive?: Duration.Input | undefined
   }): StreamSse<SseEventFromData<Data>, Error, Data["Type"]>
 } = (options: {
   readonly contentType?: string | undefined
   readonly events?: Sse.EventCodec | undefined
   readonly data?: Schema.Constraint | undefined
   readonly error?: Schema.Constraint | undefined
+  readonly keepAlive?: Duration.Input | undefined
 }): StreamSse<Sse.EventCodec, Schema.Top, unknown> => {
   const events = options.events ?? (options.data === undefined ? undefined : Schema.Struct({
     ...Sse.EventEncoded.fields,
@@ -586,7 +596,8 @@ export const StreamSse: {
     sseMode: options.events === undefined ? "data" : "events",
     ...streamContentTypes(options.contentType, "sse"),
     events,
-    error: options.error ?? Schema.Never
+    error: options.error ?? Schema.Never,
+    keepAlive: options.keepAlive === undefined ? undefined : Duration.fromInputUnsafe(options.keepAlive)
   })
 }
 
@@ -1447,6 +1458,44 @@ const resolveHttpApiEncoding = SchemaAST.resolveAt<Encoding>("~httpApiEncoding")
  */
 export const getWithHeadersAnnotation = SchemaAST.resolveAt<WithHeadersAnnotation>("~httpApiWithHeaders")
 
+/**
+ * Returns the declared body and headers schemas of an `encodeToWithHeaders`
+ * response, or `undefined` for any other schema.
+ *
+ * **When to use**
+ *
+ * Use to inspect response schemas for code generation before a response exists,
+ * including schemas obtained through `HttpApi.reflect`.
+ *
+ * **Details**
+ *
+ * Both schemas keep their declared identity through endpoint construction and
+ * reflection, with or without `disableCodecs`. The headers schema is a
+ * `Schema.Struct`, so its fields can be inspected directly.
+ *
+ * **Gotchas**
+ *
+ * These are declared schemas, not the response codecs installed by an endpoint.
+ * Plain schemas, `WithHeaders` wrappers, and ordinary transformations from an
+ * identical `{ body, headers }` struct return `undefined`. So do schemas derived
+ * from the result with operations such as `.check`, `Schema.Union`, or
+ * `Schema.decodeTo` with a target that lacks this metadata, while `.annotate`,
+ * `Schema.brand`, and `Schema.decode` keep the parts.
+ *
+ * @see encodeToWithHeaders
+ * @see getResponseEncodingSchema
+ * @stability unstable
+ * @category getters
+ * @since 4.1.4
+ */
+export function getEncodeToWithHeadersParts(schema: Schema.Constraint): {
+  readonly body: Schema.Top
+  readonly headers: Schema.Struct<Schema.Struct.Fields>
+} | undefined {
+  const annotation = getWithHeadersAnnotation(schema.ast)
+  return annotation === undefined ? undefined : { body: annotation.body, headers: annotation.headers }
+}
+
 function findHttpApiStatusAnnotation(
   ast: SchemaAST.AST | SchemaAST.FilterGroup<any>
 ): Schema.Annotations.Annotations | undefined {
@@ -1522,7 +1571,35 @@ export function getStatusSuccessSchema(schema: Schema.Constraint): number {
 }
 
 /**
- * @internal
+ * Returns the buffered response encoding resolved from a schema's annotations,
+ * defaulting to `{ _tag: "Json", contentType: "application/json" }`.
+ *
+ * **When to use**
+ *
+ * Use to read response media types from declared schemas or schemas obtained
+ * through `HttpApi.reflect` without encoding a response value.
+ *
+ * **Details**
+ *
+ * For `WithHeaders`, the wrapper's encoding takes precedence over the inner
+ * schema's encoding. For `encodeToWithHeaders`, the body schema's encoding is
+ * used. Re-annotating the result changes what this function returns, not what
+ * the server sends.
+ *
+ * **Gotchas**
+ *
+ * - No-content schemas also receive the JSON default. Check `isNoContent` on
+ *   the body AST first: `schema.schema.ast` for `WithHeaders`, `parts.body.ast`
+ *   from `getEncodeToWithHeadersParts`, or `schema.ast` otherwise.
+ * - Streaming and upgrade schemas are outside this buffered-response contract;
+ *   their JSON fallback does not describe their wire representation.
+ * - Multipart encoding throws because multipart responses are not supported.
+ *
+ * @see getEncodeToWithHeadersParts
+ * @see isNoContent
+ * @stability unstable
+ * @category getters
+ * @since 4.1.4
  */
 export function getResponseEncodingSchema(schema: Schema.Constraint): ResponseEncoding {
   if (isWithHeaders(schema) && resolveHttpApiEncoding(schema.ast) === undefined) {

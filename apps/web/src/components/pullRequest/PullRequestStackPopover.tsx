@@ -1,4 +1,3 @@
-import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import type { EnvironmentId, PullRequestRef, PullRequestStackMembership } from "@t3tools/contracts";
 import { T, useGT, Var } from "gt-react";
 import { useState } from "react";
@@ -7,6 +6,7 @@ import { Menu, MenuTrigger, MenuPopup, MenuGroup, MenuGroupLabel, MenuItem } fro
 import { PullRequestStackLayers } from "./PullRequestStackLayers";
 import { PullRequestStackHeader } from "./PullRequestStackHeader";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 // Mount only on open to avoid per-row stack fetches.
 function StackBody({
@@ -67,38 +67,38 @@ export function PullRequestStackPopover({
   const [open, setOpen] = useState(false);
   return (
     <Menu open={open} onOpenChange={setOpen}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              nativeButton={false}
-              render={
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-xs font-normal text-muted-foreground"
-                />
-              }
-              aria-label={gt("Stack {number}, layer {position} of {size}", {
-                number: membership.number,
-                position: membership.position,
-                size: membership.size,
-              })}
-              onClick={(event) => event.stopPropagation()}
-              onKeyDown={(event) => event.stopPropagation()}
-            >
-              <PullRequestGlyph.stack aria-hidden className="size-3" />
-              {membership.position}/{membership.size}
-            </MenuTrigger>
-          }
-        />
-        <TooltipPopup>
-          <T>
-            View stack #<Var>{membership.number}</Var>, layer <Var>{membership.position}</Var> of{" "}
-            <Var>{membership.size}</Var>
-          </T>
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <MenuTrigger
+            nativeButton={false}
+            render={
+              <span
+                role="button"
+                tabIndex={0}
+                className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-xs font-normal text-muted-foreground"
+              />
+            }
+            aria-label={gt("Stack {number}, layer {position} of {size}", {
+              number: membership.number,
+              position: membership.position,
+              size: membership.size,
+            })}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <PullRequestGlyph.stack aria-hidden className="size-3" />
+            {membership.position}/{membership.size}
+          </MenuTrigger>
+        }
+        label={
+          <>
+            <T>
+              View stack #<Var>{membership.number}</Var>, layer <Var>{membership.position}</Var> of{" "}
+              <Var>{membership.size}</Var>
+            </T>
+          </>
+        }
+      />
       <MenuPopup
         align="start"
         onClick={(event) => event.stopPropagation()}

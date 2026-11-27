@@ -375,6 +375,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   fun blurEditor() {
+    // The IME belongs to the window: leave it alone when another text field holds focus.
+    val focused = editor.rootView.findFocus()
+    if (focused != null && focused !== editor && focused.onCheckIsTextEditor()) return
     editor.clearFocus()
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
     imm?.hideSoftInputFromWindow(editor.windowToken, 0)
@@ -903,7 +906,8 @@ internal class SelectionAwareEditText(
   private fun pasteContextOrImages(): Boolean {
     val payload = T3ComposerClipboard.read(context)
     return when {
-      payload["html"]?.contains("data-t3-context-fragment=") == true -> pasteContext(payload)
+      !payload["fragment"].isNullOrEmpty() ||
+        payload["html"]?.contains("data-t3-context-fragment=") == true -> pasteContext(payload)
       pasteImagesOrInterceptedText() -> true
       isSingleItemClip() && T3ComposerClipboard.hasThreadLink(payload["text"].orEmpty()) ->
         pasteContext(payload)

@@ -17,6 +17,8 @@ import * as Schema from "effect/Schema"
 import type * as SchemaIssue from "effect/SchemaIssue"
 import * as SchemaRepresentation from "effect/SchemaRepresentation"
 import * as NodeCrypto from "node:crypto"
+import { withGeneratedModule } from "../utils/generatedModule.ts"
+import { makeModule } from "../utils/schemaCodegen.ts"
 
 // An Ed25519 key pair encoded by node:crypto, independently of the module
 // under test.
@@ -65,16 +67,13 @@ describe("Schema crypto keys", () => {
       const schema = Schema.SignaturePublicKey(algorithm)
       assert.isTrue(Schema.is(schema)(key))
 
-      const output = SchemaRepresentation.toCodeDocument(SchemaRepresentation.toRepresentations([schema.ast]))
-      assert.includeDeepMembers([...output.artifacts], [
-        { _tag: "Import", importDeclaration: `import * as Digest from "effect/crypto/Digest"` }
-      ])
-      const generated = new Function("Schema", "Signature", "Digest", `return ${output.codes[0].runtime}`)(
-        Schema,
-        Signature,
-        Digest
+      const module = makeModule(SchemaRepresentation.toRepresentations([schema.ast]))
+      assert.include(module.finalize().imports, `import * as Digest from "effect/crypto/Digest"`)
+      yield* Effect.promise(() =>
+        withGeneratedModule<{ TestRoot0: typeof schema }>(module.print(), ({ TestRoot0 }) => {
+          assert.isTrue(Schema.is(TestRoot0)(key))
+        })
       )
-      assert.isTrue(Schema.is(generated)(key))
     }))
 
   it.effect("declared RSA schemas ignore generation-only modulus length", () =>

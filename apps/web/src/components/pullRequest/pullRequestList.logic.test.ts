@@ -17,14 +17,17 @@ import {
   findScopedProject,
   mergePullRequestLists,
   pullRequestEntryKey,
+  pullRequestListAnsweredEmpty,
   groupPullRequestsByInvolvement,
   pullRequestStatsBatches,
   pullRequestStatsKeysToRequest,
   pullRequestStatsRefreshBatches,
   mergePullRequestDiffStats,
+  withDiffStat,
   partitionPullRequestsWithPriority,
   pullRequestAuthorChoices,
   selectedPullRequestAuthor,
+  selectedPullRequestLabels,
   pullRequestLabelChoices,
   rankPullRequestMatches,
   rankPullRequestsBlockedOnAuthor,
@@ -87,6 +90,7 @@ describe("visible pull request line-count targets", () => {
       {
         environmentId: ENV_1,
         projectId: "project-1",
+        repository: "pingdotgg/t3code",
         number: 1,
         additions: 1,
         deletions: 1,
@@ -103,6 +107,24 @@ describe("visible pull request line-count targets", () => {
     expect(pullRequestStatsBatches(entriesByKey, keys)[0]?.input.refs).toEqual([
       { projectId: "project-1", repository: "pingdotgg/t3code", number: 2 },
     ]);
+  });
+
+  it("matches diff stats by repository, ignoring case", () => {
+    const own = entry({ additions: 0, deletions: 0, number: 42 });
+    const stat = { environmentId: ENV_1, projectId: "project-1", number: 42, deletions: 2 };
+    const stats = mergePullRequestDiffStats(new Map(), [
+      { ...stat, repository: "other/lib", additions: 120 },
+    ]);
+
+    expect(withDiffStat(own, stats)).toEqual(own);
+    expect(
+      withDiffStat(
+        own,
+        mergePullRequestDiffStats(stats, [
+          { ...stat, repository: "PingDotGG/T3Code", additions: 7 },
+        ]),
+      ),
+    ).toMatchObject({ additions: 7, deletions: 2 });
   });
 
   it("keeps every per-environment batch within the stats contract limit", () => {
@@ -552,6 +574,18 @@ describe("merging the environments' own listings", () => {
     expect(merged?.errors).toEqual([{ ...error, environmentId: ENV_1 }]);
   });
 
+  it("counts a listing with no rows as empty even when a project could not be read", () => {
+    const error = {
+      projectId: "project-1" as ProjectId,
+      projectTitle: "Web",
+      message: "acme/web could not be read.",
+    } as const;
+    const data = mergePullRequestLists([[ENV_1, answer({ errors: [error] })]]);
+
+    expect(pullRequestListAnsweredEmpty({ data, isPending: false, error: null })).toBe(true);
+    expect(pullRequestListAnsweredEmpty({ data, isPending: true, error: null })).toBe(false);
+  });
+
   it("folds a host reached from two environments into one switcher row", () => {
     const merged = mergePullRequestLists([
       [ENV_1, answer()],
@@ -971,6 +1005,17 @@ describe("filter picker choices", () => {
     expect(choices).toEqual([
       { name: "size:XL", color: "d93f0b", count: 7 },
       { name: "bug", color: null, count: 0 },
+    ]);
+  });
+
+  it("restores a selected label's color and count from loaded facets or host labels", () => {
+    const loaded = [{ name: "bug", color: "d73a4a", count: 5 }];
+    const hosted = [{ name: "size:XL", color: "d93f0b" }];
+
+    expect(selectedPullRequestLabels(loaded, hosted, ["BUG", "size:xl", "custom"])).toEqual([
+      { name: "bug", color: "d73a4a", count: 5 },
+      { name: "size:XL", color: "d93f0b", count: 0 },
+      { name: "custom", color: null, count: 0 },
     ]);
   });
 });

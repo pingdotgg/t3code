@@ -7,7 +7,9 @@ import {
   SecretProviderKind,
   type ServerSettings,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -15,14 +17,19 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
   DEV_REPLAY_INSTANCE_ID,
   deriveProviderInstanceConfigMap,
   layerSettingsWatcher,
+  providerHostLayer,
   seedDevReplayInstance,
 } from "./ProviderInstanceRegistryHydration.ts";
+import * as ProviderHostLive from "./ProviderHostLive.ts";
 import { ProviderInstanceRegistryMutator } from "./ProviderInstanceRegistryMutator.ts";
 
 const projectId = ProjectId.make("project-a");
@@ -211,5 +218,50 @@ describe("layerSettingsWatcher", () => {
 
         expect(reloads()).toBe(1);
       }).pipe(Effect.scoped, Effect.provide(ServerSettingsService.layerTest())),
+  );
+});
+
+describe("providerHostLayer", () => {
+  const layerHostDeps = ServerConfig.layerTest(process.cwd(), {
+    prefix: "provider-host-hydration-test",
+  }).pipe(
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
+    Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+  );
+
+  effectIt.effect(
+    "gives drivers trackAgent when a host without PortDiscovery was built first",
+    () =>
+      Effect.gen(function* () {
+        const seen = new Map<string, ProviderHost.ProviderHost["Service"]>();
+        const capture = (label: string) =>
+          Layer.effectDiscard(
+            Effect.map(ProviderHost.ProviderHost, (host) => {
+              seen.set(label, host);
+            }),
+          );
+        // Like server.ts: the ACP registry builds ProviderHostLive.layer before PortDiscovery exists.
+        const early = capture("early").pipe(
+          Layer.provide(ProviderHostLive.layer),
+          Layer.provide(layerHostDeps),
+        );
+        const hydrated = capture("hydrated").pipe(
+          Layer.provide(providerHostLayer),
+          Layer.provide(
+            Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => undefined }),
+          ),
+          Layer.provide(layerHostDeps),
+        );
+        // Build in order on one memo map, so a reused early host would fail the hydrated check.
+        const memoMap = yield* Layer.makeMemoMap;
+        const scope = yield* Effect.scope;
+        yield* Layer.buildWithMemoMap(early, memoMap, scope);
+        yield* Layer.buildWithMemoMap(hydrated, memoMap, scope);
+        expect(seen.size).toBe(2);
+        expect(seen.get("early")?.trackAgent).toBeUndefined();
+        expect(seen.get("hydrated")?.trackAgent).toBeTypeOf("function");
+      }),
   );
 });
