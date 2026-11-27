@@ -1039,8 +1039,8 @@ Third}`;
         `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
           <filter id="tint"><feComponentTransfer>
             <feFuncR type="linear" slope="0.5"/>
-            <feFuncG type="linear" slope="0.6"/>
-            <feFuncB type="linear" slope="0.7"/>
+            <feFuncG type="discrete" tableValues="0 0.5 1"/>
+            <feFuncB type="gamma" amplitude="2" exponent="3"/>
           </feComponentTransfer></filter>
           <rect width="80" height="80" fill="orange" filter="url(#tint)"/>
         </svg>`,
@@ -1049,8 +1049,8 @@ Third}`;
     const { html } = await book.page(0);
     expect(html.match(/<feFunc[RGB][^>]*>/g) ?? []).toEqual([
       '<feFuncR type="linear" slope="0.5">',
-      '<feFuncG type="linear" slope="0.6">',
-      '<feFuncB type="linear" slope="0.7">',
+      '<feFuncG type="discrete" tableValues="0 0.5 1">',
+      '<feFuncB type="gamma" amplitude="2" exponent="3">',
     ]);
   });
 
