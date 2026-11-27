@@ -1098,16 +1098,10 @@ function queueTailModelSelection(
   );
 }
 
-/**
- * The provider's latest run stopped on its usage limit and nothing ran after it.
- * With `now` (automatic starts), a run on another provider since does not lift
- * a reported reset still in the future; an unknown reset is lifted, as transient 429s are.
- */
-function usageLimitHoldsQueue(
+function usageLimitBlockedRunForProvider(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
   providerInstanceId: ModelSelection["instanceId"],
-  now?: DateTime.Utc,
-): boolean {
+): OrchestrationV2Run | null {
   let latestSession: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
   for (const session of projection.providerSessions) {
     if (
@@ -1118,11 +1112,24 @@ function usageLimitHoldsQueue(
       latestSession = session;
     }
   }
-  const limited = usageLimitBlockedRun(
+  return usageLimitBlockedRun(
     projection.runs.filter((run) => run.providerInstanceId === providerInstanceId),
     projection.turnItems,
     latestSession?.lastError ?? null,
   );
+}
+
+/**
+ * The provider's latest run stopped on its usage limit and nothing ran after it.
+ * With `now` (automatic starts), a run on another provider since does not lift
+ * a reported reset still in the future; an unknown reset is lifted, as transient 429s are.
+ */
+function usageLimitHoldsQueue(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
+  providerInstanceId: ModelSelection["instanceId"],
+  now?: DateTime.Utc,
+): boolean {
+  const limited = usageLimitBlockedRunForProvider(projection, providerInstanceId);
   if (limited === null) return false;
   if (latestExecutedRun(projection.runs)?.id === limited.id) return true;
   if (now === undefined) return false;
@@ -8084,12 +8091,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
+    // A delegated completion must not wake a parent waiting on a provider usage limit:
+    // starting immediately hits the limit again and drops any armed auto-resume.
+    let usageLimitWaitingRun: OrchestrationV2Run | undefined;
+    if (
+      activeRun === undefined &&
+      delegatedCompletion !== undefined &&
+      dispatchMode.type === "queue_after_active"
+    ) {
+      const limited = usageLimitBlockedRunForProvider(projection, modelSelection.instanceId);
+      if (limited !== null) {
+        const resetAt = latestRootProviderFailure(limited, projection.turnItems)?.resetAt;
+        const resetMs = resetAt != null ? Date.parse(resetAt) : Number.NaN;
+        const now = yield* DateTime.now;
+        if (
+          (Number.isFinite(resetMs) && resetMs > DateTime.toEpochMillis(now)) ||
+          (projection.thread.limitRecovery?.autoResume === true &&
+            projection.thread.limitRecovery.runId === limited.id)
+        ) {
+          usageLimitWaitingRun = limited;
+        }
+      }
+    }
     // A steer whose run already ended still keeps its place in the queue.
     const steerFollowUpSource =
       command.steerFollowUpOfRunId === undefined
         ? undefined
         : projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
-    const queueBehindRun = activeRun ?? worktreeMissingRun ?? steerFollowUpSource;
+    const queueBehindRun =
+      activeRun ?? worktreeMissingRun ?? usageLimitWaitingRun ?? steerFollowUpSource;
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||

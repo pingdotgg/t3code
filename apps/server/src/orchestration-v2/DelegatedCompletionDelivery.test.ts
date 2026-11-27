@@ -6161,4 +6161,148 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         assert.notEqual(finished?.completionDelivery?.state, "disposed");
       }),
   );
+
+  it.effect(
+    "queues a delegated completion behind a usage-limited parent run so armed auto-resume stays intact",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 10 }));
+        const threadId = ThreadId.make("thread:delegated-limit-parent");
+        const projectId = ProjectId.make("project:delegated-limit");
+        const parentRunId = RunId.make("run:delegated-limit-parent");
+        const rootNodeId = NodeId.make("node:delegated-limit-parent");
+        const taskId = NodeId.make("node:delegated-limit-task");
+        const wakeMessageId = MessageId.make("message:delegated-limit-wake");
+
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId,
+          deliveryState: "claimed",
+          deliveryTaskIds: [taskId],
+          now,
+        });
+
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const parentRun = before.runs.find((run) => run.id === parentRunId)!;
+        const providerThreadId = parentRun.providerThreadId!;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("event:delegated-limit:run-failed"),
+              type: "run.updated",
+              threadId,
+              runId: parentRun.id,
+              nodeId: rootNodeId,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                ...parentRun,
+                status: "failed",
+                startedAt: now,
+                completedAt: now,
+                delegatedCompletion: {
+                  disposition: "open",
+                  nextGeneration: 2,
+                  delivery: {
+                    generation: 1,
+                    messageId: wakeMessageId,
+                    taskIds: [taskId],
+                  },
+                },
+              },
+            },
+            {
+              id: EventId.make("event:delegated-limit:error"),
+              type: "turn-item.updated",
+              threadId,
+              runId: parentRun.id,
+              nodeId: rootNodeId,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("turn-item:delegated-limit:error"),
+                threadId,
+                runId: parentRun.id,
+                nodeId: rootNodeId,
+                providerThreadId,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                type: "error",
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+          ],
+        });
+
+        const initialShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const arm = limitRecoveryCommand(initialShell, true, DateTime.toEpochMillis(now));
+        assert(arm?.type === "thread.metadata.update" && arm.limitRecovery != null);
+        yield* orchestrator.dispatch(arm);
+
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("command:delegated-limit:wake"),
+          threadId,
+          messageId: wakeMessageId,
+          text: `Delegated task ${taskId} reached a terminal state.`,
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+          delegatedCompletion: {
+            parentRunId: parentRun.id,
+            generation: 1,
+            taskIds: [taskId],
+          },
+        });
+
+        const afterWake = yield* orchestrator.getThreadProjection(threadId);
+        const wakeRun = afterWake.runs.find((run) => run.userMessageId === wakeMessageId);
+        assert.equal(wakeRun?.status, "queued");
+        assert.notEqual(wakeRun?.queueHeld, true);
+
+        const shellAfterWake = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        assert.equal(shellAfterWake.status, "failed");
+        assert.equal(shellAfterWake.latestRunId, parentRun.id);
+        assert.isTrue(shellAfterWake.limitRecovery?.autoResume);
+
+        // Once the reset arrives, auto-resume starts cleanly and the queued wake runs after it completes.
+        yield* TestClock.adjust("10 minutes");
+        const resume = limitRecoveryCommand(
+          shellAfterWake,
+          true,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        assert(resume?.type === "message.dispatch");
+        yield* orchestrator.dispatch(resume);
+
+        const afterResume = yield* orchestrator.getThreadProjection(threadId);
+        const resumeRun = afterResume.runs.find((run) => run.userMessageId === resume.messageId);
+        assert.equal(resumeRun?.status, "starting");
+        assert.equal(afterResume.runs.find((run) => run.id === wakeRun!.id)?.status, "queued");
+      }),
+  );
 });
