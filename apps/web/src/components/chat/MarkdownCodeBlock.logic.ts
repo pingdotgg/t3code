@@ -12,7 +12,7 @@ export function extractFenceLanguage(className: string | undefined): string {
 
 export function highlighterLanguageOf(language: string): string {
   // Shiki doesn't bundle a gitignore grammar; ini is a close match.
-  return language === "gitignore" ? "ini" : language;
+  return language.toLowerCase() === "gitignore" ? "ini" : language;
 }
 
 const FENCE_TITLE_ATTR_REGEX = /(?:^|\s)(?:title|file(?:name)?)=(?:"([^"]+)"|'([^']+)'|(\S+))/i;

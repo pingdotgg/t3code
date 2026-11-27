@@ -386,6 +386,13 @@ it("highlights a code block's own source when an earlier block of the same lengt
   await vi.waitFor(() => expect(highlightedText(screen.container)).toBe(second));
 });
 
+it("renders a Mermaid diagram for capitalized Mermaid fences", async () => {
+  setup();
+  await using screen = await renderText("```Mermaid\ngraph TD\n```");
+  await expect.element(screen.getByRole("img", { name: "Diagram" })).toBeVisible();
+  expect(buttonsLabelled(screen.container, "Show code")).toHaveLength(1);
+});
+
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {
     setup();
@@ -490,6 +497,8 @@ describe("ChatMarkdown streaming", () => {
       "````bash\necho four\n````",
       "- Command\n\n  ```bash\n  echo list\n  ```",
       "```bash\r\necho crlf\r\n```\r",
+      "```Bash\necho caps\n```",
+      "```PowerShell\nGet-Date\n```",
     ]) {
       await rerender(message(text));
       expect(runButtons()).toHaveLength(1);

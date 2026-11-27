@@ -1898,7 +1898,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         </Suspense>
       </RenderErrorBoundary>
     );
-    if (language === "mermaid") {
+    if (language.toLowerCase() === "mermaid") {
       return (
         <MarkdownMermaidCodeBlock
           code={codeBlock.code}

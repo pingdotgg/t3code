@@ -75,7 +75,7 @@ export function createIncrementalHighlightedDocument(
   return Object.assign(
     (code: string) => {
       // ANSI and partial CRLF sequences need the full-source normalization path.
-      if (language === "ansi" || code.includes("\r")) {
+      if (language.toLowerCase() === "ansi" || code.includes("\r")) {
         dispose();
         return highlightCodeToHast(highlighter, code, language, theme);
       }

@@ -353,6 +353,9 @@ describe("wordsHast", () => {
         },
       ),
     ).toBe('<p dir="ltr">a b c </p>\n<pre><code class="language-text">A\n</code></pre>');
+    expect(wordsHtml("```Mermaid\nA\n```", { extensions: { inert: true } })).toBe(
+      '<pre><code class="language-text">A\n</code></pre>',
+    );
   });
 
   it("links a change request's references and resolves its root-relative media", () => {

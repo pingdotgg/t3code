@@ -1175,7 +1175,7 @@ function makeInert(node: Root | Element) {
     }
     if (
       child.tagName === "code" &&
-      String(child.properties.className ?? "").includes("language-mermaid")
+      /language-mermaid/i.test(String(child.properties.className ?? ""))
     ) {
       child.properties.className = ["language-text"];
     }

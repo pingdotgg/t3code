@@ -106,3 +106,28 @@ describe.each(["shiki-wasm", "highlights"] as const)(
     });
   },
 );
+
+it("highlights capitalized ANSI the same as ansi", async () => {
+  disposeHighlighter();
+  try {
+    const highlighter = await getSharedHighlighter({
+      langs: ["ansi"],
+      themes: ["pierre-dark"],
+      preferredHighlighter: "highlights",
+    });
+    const code = "\u001b[31mred\u001b[0m\n";
+    const lower = createIncrementalHighlightedDocument(highlighter, "ansi", "pierre-dark");
+    const upper = createIncrementalHighlightedDocument(highlighter, "ANSI", "pierre-dark");
+    try {
+      for (let end = 0; end <= code.length; end++) {
+        const text = code.slice(0, end);
+        expect(toHtml(upper(text)), `prefix ${end}`).toBe(toHtml(lower(text)));
+      }
+    } finally {
+      lower.dispose();
+      upper.dispose();
+    }
+  } finally {
+    disposeHighlighter();
+  }
+});

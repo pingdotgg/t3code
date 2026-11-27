@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { markdownTree } from "../../markdown/wordsHast";
-import { isClosedCodeFence } from "./MarkdownCodeBlock.logic";
+import { extractFenceLanguage, isClosedCodeFence } from "./MarkdownCodeBlock.logic";
+
+describe("extractFenceLanguage", () => {
+  it("maps gitignore fences to ini regardless of case", () => {
+    expect(extractFenceLanguage("language-gitignore")).toBe("ini");
+    expect(extractFenceLanguage("language-Gitignore")).toBe("ini");
+  });
+});
 
 describe("isClosedCodeFence", () => {
   it.each(["\n", "\r\n", "\r"])("tells closed from unclosed fences with %j line endings", (eol) => {

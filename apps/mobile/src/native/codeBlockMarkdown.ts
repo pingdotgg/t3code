@@ -45,7 +45,7 @@ type CodeFenceRenderer =
 
 /** Mermaid and math fences first: highlights knows `mermaid` too, and would claim it as code. */
 export function codeFenceRenderer(fence: string, mathRenderingEnabled: boolean): CodeFenceRenderer {
-  if (fence === "mermaid") return { kind: "mermaid" };
+  if (fence.toLowerCase() === "mermaid") return { kind: "mermaid" };
   if (fence === "math" && mathRenderingEnabled) return { kind: "math" };
   const name = fence.toLowerCase();
   if (NATIVE_HIGHLIGHT_FENCES.has(name)) return { kind: "native" };

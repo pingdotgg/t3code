@@ -15,6 +15,7 @@ describe("fencedCodeMarkdown", () => {
 describe("codeFenceRenderer", () => {
   it.each([
     ["mermaid", true, { kind: "mermaid" }],
+    ["Mermaid", true, { kind: "mermaid" }],
     ["math", true, { kind: "math" }],
     ["math", false, { kind: "native" }],
     ["kotlin", true, { kind: "highlight", language: "kotlin" }],

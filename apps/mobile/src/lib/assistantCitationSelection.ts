@@ -18,7 +18,7 @@ function renderedText(node: MarkdownNode, restoreMath: (value: string) => string
     node.type === "image" ||
     node.type === "imageReference" ||
     node.type === "html" ||
-    (node.type === "code" && node.lang === "mermaid")
+    (node.type === "code" && node.lang?.toLowerCase() === "mermaid")
   )
     return "";
   if ("value" in node) return restoreMath(node.value);

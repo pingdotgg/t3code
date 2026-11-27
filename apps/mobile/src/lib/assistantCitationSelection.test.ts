@@ -67,6 +67,10 @@ it("offers distinct source choices within a block and maps recursive folds witho
       path: "0:0",
     },
     {
+      source: 'quote\n\n```Mermaid\nflowchart TD\nA["quote"]\n```\n\nquote',
+      path: "0:0",
+    },
+    {
       source:
         "![before](image.png)\n\n<details><summary>More</summary>\n\nquote quote\n\n</details>\n\n![after](image.png)",
       path: "1/0:0",
