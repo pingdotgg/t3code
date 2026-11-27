@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { decodeMsg, useGT, useMessages } from "gt-react";
+import { decodeMsg, useMessages } from "gt-react";
 import { SettingsIcon } from "lucide-react";
 
 import { ITEM_ICON_CLASS, type CommandPaletteActionItem } from "./CommandPalette.logic";
@@ -20,7 +20,6 @@ const NO_SETTINGS_ITEMS: ReadonlyArray<CommandPaletteActionItem> = [];
 export function useCommandPaletteSettingsItems(
   searching: boolean,
 ): ReadonlyArray<CommandPaletteActionItem> {
-  const gt = useGT();
   const messages = useMessages();
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -37,9 +36,7 @@ export function useCommandPaletteSettingsItems(
       ...(item.searchTerms ?? []),
     ].flatMap((term) => [messages(term), decodeMsg(term)]),
     title: messages(item.title),
-    description: gt("Settings · {section}", {
-      section: messages(SETTINGS_SECTION_LABELS[item.to]),
-    }),
+    description: messages(SETTINGS_SECTION_LABELS[item.to]),
     ...(item.secondary ? { secondary: true } : {}),
     icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
