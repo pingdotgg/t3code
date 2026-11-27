@@ -2640,11 +2640,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           Effect.timeoutOption(options.cancelTimeout ?? defaultCancelTimeout),
         )
       : Effect.void;
-    if (options.cancelBehavior !== "wait-for-prompt") {
-      if (options.interruptPromptOnCancel === false) {
-        yield* promptQueued;
-        return yield* acp.agent.cancel(cancelPayload);
-      }
+    if (options.cancelBehavior !== "wait-for-prompt" && options.interruptPromptOnCancel !== false) {
       if (Option.isSome(activePrompt)) {
         yield* Fiber.interrupt(activePrompt.value.fiber).pipe(Effect.ignore);
       }
@@ -2654,8 +2650,16 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     }
 
     yield* promptQueued;
-    yield* acp.agent.cancel(cancelPayload);
-    if (Option.isNone(activePrompt)) {
+    yield* acp.agent.cancel(cancelPayload).pipe(
+      Effect.tapError((error) =>
+        Effect.gen(function* () {
+          if (Option.isSome(activePrompt) && (yield* Ref.get(activePromptRef)) === activePrompt) {
+            yield* retireRuntime(error);
+          }
+        }),
+      ),
+    );
+    if (options.cancelBehavior !== "wait-for-prompt" || Option.isNone(activePrompt)) {
       return;
     }
     const completed = yield* Effect.gen(function* () {
@@ -2893,11 +2897,6 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
                   } satisfies EffectAcpSchema.PromptResponse).pipe(Effect.forkIn(runtimeScope));
                   const cancelledCompleted = yield* Deferred.make<void>();
                   const cancelledQueued = yield* Deferred.make<void>();
-                  // The steer path awaits `dispatched` unconditionally, so the
-                  // bail settles it too, even though nothing reached the agent.
-                  if (promptOptions.dispatched !== undefined) {
-                    yield* Deferred.succeed(promptOptions.dispatched, undefined);
-                  }
                   return {
                     fiber: cancelledFiber,
                     completed: cancelledCompleted,

@@ -216,16 +216,11 @@ function sendPromptWhenIdle<A>(
   prompt: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
   superseded: () => boolean = () => false,
   stoppedValue?: A,
-  onStopped?: () => Effect.Effect<void>,
 ): Effect.Effect<A, EffectAcpErrors.AcpError> {
   // A Stop or a prompt-steer can land during the wait, so both are rechecked before each resend.
   const stopped = () => turn.interrupted || turn.finalized || superseded();
-  // A stopped exit never calls `runtime.prompt`, so the steer's `dispatched`
-  // wait must be released here or `steerWithPrompt` blocks on it forever.
-  const exitStopped = (value: A): Effect.Effect<A, EffectAcpErrors.AcpError> =>
-    (onStopped?.() ?? Effect.void).pipe(Effect.andThen(Effect.succeed(value)));
   return Effect.suspend(() =>
-    stopped() && stoppedValue !== undefined ? exitStopped(stoppedValue) : prompt(),
+    stopped() && stoppedValue !== undefined ? Effect.succeed(stoppedValue) : prompt(),
   ).pipe(
     Effect.catchIf(
       (error) => isAgentBusyPromptError(error) && !stopped(),
@@ -236,8 +231,8 @@ function sendPromptWhenIdle<A>(
               stopped()
                 ? stoppedValue === undefined
                   ? Effect.fail(error)
-                  : exitStopped(stoppedValue)
-                : sendPromptWhenIdle(turn, prompt, superseded, stoppedValue, onStopped),
+                  : Effect.succeed(stoppedValue)
+                : sendPromptWhenIdle(turn, prompt, superseded, stoppedValue),
             ),
           ),
         ),
@@ -938,6 +933,7 @@ export interface AcpAdapterV2Options {
     readonly onDeferredFinalizeScheduled?: (debounce: Duration.Input) => Effect.Effect<void>;
     /** Suspends the start fiber right before `session/prompt` is handed to the runtime. */
     readonly beforePromptDispatch?: () => Effect.Effect<void>;
+    readonly afterPromptFork?: () => Effect.Effect<void>;
     /** `cancelAfterPromptStarts`: Stop is holding `session/cancel` until the prompt starts. */
     readonly onCancelHeld?: () => Effect.Effect<void>;
     readonly afterPromptWireSettled?: () => Effect.Effect<void>;
@@ -10915,6 +10911,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 compactSession,
               },
             ).pipe(Effect.forkIn(sessionScope));
+            yield* options.testHooks?.afterPromptFork?.() ?? Effect.void;
           },
           (effect, turnInput) =>
             effect.pipe(
@@ -10957,7 +10954,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             text,
             turnInput.message.attachments,
           );
-          const [dispatched, context] = yield* runtimeTransitionPermit.withPermit(
+          const [dispatched, context, promptFiber] = yield* runtimeTransitionPermit.withPermit(
             Effect.gen(function* () {
               const context = yield* Ref.get(activeTurn);
               if (
@@ -11043,7 +11040,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     ).pipe(Effect.forkIn(sessionScope));
                   }
                   const releasedForSteer = context.foregroundIdle;
-                  yield* followPrompt(
+                  const promptFiber = yield* followPrompt(
                     context,
                     (superseded) =>
                       sendPromptWhenIdle(
@@ -11060,7 +11057,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           ),
                         superseded,
                         { stopReason: "cancelled" } satisfies EffectAcpSchema.PromptResponse,
-                        () => Deferred.succeed(dispatched, undefined),
                       ),
                     {
                       generation,
@@ -11071,21 +11067,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     },
                   ).pipe(Effect.forkIn(sessionScope));
                   yield* Deferred.succeed(released, undefined);
-                  return true;
+                  return promptFiber;
                 }),
               );
-              if (!Option.contains(steered, true)) {
+              if (Option.isNone(steered) || steered.value === false) {
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver,
                   detail: `Provider turn ${turnInput.providerTurnId} ended before it could be steered.`,
                 });
               }
-              return [dispatched, context] as const;
+              return [dispatched, context, steered.value] as const;
             }),
           );
-          yield* Deferred.await(dispatched);
+          yield* Effect.raceFirst(Deferred.await(dispatched), Fiber.await(promptFiber));
           // A wake run sent no prompt, so its inactivity watchdog waits for this one.
-          yield* Deferred.succeed(context.promptDispatched, undefined);
+          if (yield* Deferred.isDone(dispatched)) {
+            yield* Deferred.succeed(context.promptDispatched, undefined);
+          }
         });
 
         yield* Effect.addFinalizer(() =>
