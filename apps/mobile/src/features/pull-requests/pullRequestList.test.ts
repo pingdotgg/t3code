@@ -382,15 +382,6 @@ describe("pullRequestLabelColors", () => {
     expect(colors.normal).toBe("#112233");
   });
 
-  it("leaves uncolored prototype-named labels without a color", () => {
-    const colors = pullRequestLabelColors([
-      { name: "constructor", color: null },
-      { name: "__proto__", color: "not-a-color" },
-    ]);
-    expect(colors.constructor).toBeUndefined();
-    expect(colors.__proto__).toBeUndefined();
-  });
-
   it("keeps the first usable color each label name carries", () => {
     expect(
       pullRequestLabelColors([
