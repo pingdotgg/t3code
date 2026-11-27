@@ -1304,6 +1304,7 @@ function* rtfParts(
     skip: false,
     deleted: false,
     hiddenText: false,
+    inTable: false,
     uc: 1,
     font: 0,
     fontTable: false,
@@ -1455,6 +1456,9 @@ function* rtfParts(
           const codePage = rtfCodePage(value);
           if (codePage) fonts.set(state.font, new TextDecoder(codePage));
         }
+        // \intbl is a paragraph property, so it lasts until \pard resets the paragraph.
+        if (control === "intbl") state.inTable = true;
+        else if (control === "pard") state.inTable = false;
         if (control === "deleted") state.deleted = value !== 0;
         else if (control === "v") state.hiddenText = value !== 0;
         else if (control === "plain") {
@@ -1475,7 +1479,8 @@ function* rtfParts(
           if (!hidden()) yield String.fromCharCode(value < 0 ? value + 65536 : value);
           fallback = state.uc;
         } else if (!hidden() && ["par", "line", "sect", "page", "column"].includes(control))
-          yield "\n";
+          // A cell's paragraphs share its column, as in DOCX and ODT tables.
+          yield state.inTable && (control === "par" || control === "line") ? " " : "\n";
         else if (!hidden() && control === "tab") yield "\t";
         // Table structure survives tracked deletions; only the deleted cell text is dropped.
         else if (!state.skip && control === "row") yield "\n";
@@ -1492,7 +1497,8 @@ function* rtfParts(
           // Shape instructions are an optional destination, but a text box keeps its text there.
           if (rest[0] === "*" && !/^\*[\r\n]*\\shpinst(?![a-z])/i.test(rest)) state.skip = true;
           // A backslash before a line break is \par; TextEdit ends paragraphs this way.
-          else if (!hidden() && (rest[0] === "\n" || rest[0] === "\r")) yield "\n";
+          else if (!hidden() && (rest[0] === "\n" || rest[0] === "\r"))
+            yield state.inTable ? " " : "\n";
           else if (!hidden() && symbols.has(rest[0]!)) yield symbols.get(rest[0]!)!;
         }
       }
