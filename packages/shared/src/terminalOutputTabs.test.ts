@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   appendTerminalOutput,
   EMPTY_TERMINAL_OUTPUT,
+  restoreTerminalOutput,
   terminalOutputCollapseRedraws,
   terminalOutputResumeText,
 } from "./terminalOutput.ts";
@@ -15,11 +16,7 @@ describe("tab stops in retained command output", () => {
     ["abcde\nabcdEF\u001b[A", "\u001b[B\u001b[4G\tZ", 8, "dEF  Z"],
   ])("preserves the tab stop after trimming %j", (prefix, chunk, maxChars, expected) => {
     const source = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, prefix, maxChars);
-    const resumed = appendTerminalOutput(
-      EMPTY_TERMINAL_OUTPUT,
-      terminalOutputResumeText(source),
-      maxChars,
-    );
+    const resumed = restoreTerminalOutput(terminalOutputResumeText(source), maxChars);
     for (const state of [source, resumed]) {
       expect(appendTerminalOutput(state, chunk, maxChars).text).toBe(expected);
     }
