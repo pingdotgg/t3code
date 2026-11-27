@@ -42,6 +42,8 @@ const layerProvidedClientConnection = layerSnapshotLoader.pipe(
       providerCatalogsOnDemand: true,
       providerCatalogDigests: true,
       providerStatusDeltas: true,
+      // Halves idle pings. A socket drops after two silent ticks: within 25 s of its
+      // last frame (20 s at the 5 s default), or when the host stalls for 10 s (15 s).
       pingInterval: "10 seconds",
     }),
   ),

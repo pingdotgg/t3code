@@ -1,5 +1,5 @@
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
-import { EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import { type ClientActivityReportInput, EnvironmentId, WS_METHODS } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -27,6 +27,19 @@ vi.mock("react-native", () => ({
   },
 }));
 
+const reports = vi.hoisted((): Array<ClientActivityReportInput> => []);
+
+vi.mock("@t3tools/client-runtime/rpc", async (importOriginal) => {
+  const { void: sent } = await import("effect/Effect");
+  return {
+    ...(await importOriginal<typeof import("@t3tools/client-runtime/rpc")>()),
+    request: (_method: string, input: ClientActivityReportInput) => {
+      reports.push(input);
+      return sent;
+    },
+  };
+});
+
 vi.mock("expo-secure-store", () => ({
   deleteItemAsync: vi.fn(),
   getItemAsync: vi.fn(),
@@ -45,6 +58,7 @@ import {
 function setup() {
   appState.current = "active";
   appState.listener = undefined;
+  reports.length = 0;
 }
 
 function changeAppState(next: string) {
@@ -175,12 +189,27 @@ describe("mobile background activity", () => {
       expect(calls).toBe(4);
 
       changeAppState("inactive");
-      changeAppState("active");
-      yield* TestClock.adjust("1 second");
-      expect(calls).toBe(4);
-
       yield* TestClock.adjust("25 seconds");
       expect(calls).toBe(5);
+      expect(reports.at(-1)).toMatchObject({
+        appState: "inactive",
+        visible: true,
+        focused: true,
+        recentlyInteracted: true,
+      });
+
+      changeAppState("active");
+      yield* TestClock.adjust("1 second");
+      expect(calls).toBe(5);
+
+      changeAppState("background");
+      yield* TestClock.adjust("1 second");
+      expect(calls).toBe(6);
+      expect(reports.at(-1)).toMatchObject({ appState: "background", visible: false });
+
+      changeAppState("unknown");
+      yield* TestClock.adjust("30 seconds");
+      expect(calls).toBe(6);
     }),
   );
 });

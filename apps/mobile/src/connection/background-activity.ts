@@ -36,6 +36,11 @@ function normalizeAppState(
   return "unknown";
 }
 
+// Control Center, alerts, and the app switcher leave the app on screen as `inactive`.
+function isForeground(state: string | null | undefined): boolean {
+  return state === "active" || state === "inactive";
+}
+
 export const layerObserver = Layer.succeed(
   EnvironmentRpcSubscriptionObserver,
   EnvironmentRpcSubscriptionObserver.of({
@@ -57,8 +62,7 @@ export const layerReporter = Layer.effectDiscard(
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
-      // Control Center, alerts, and the app switcher leave the app on screen as `inactive`.
-      const foreground = appState !== "background";
+      const foreground = isForeground(appState);
       const entries = yield* SubscriptionRef.get(registry.entries);
       yield* Effect.forEach(
         entries.keys(),
@@ -94,7 +98,7 @@ export const layerReporter = Layer.effectDiscard(
       Effect.sync(() => {
         const removeScopeListener = onRetainedMobileBackgroundScopesChange(requestReport);
         const subscription = AppState.addEventListener("change", (nextState) => {
-          const changed = (appState === "background") !== (nextState === "background");
+          const changed = isForeground(appState) !== isForeground(nextState);
           appState = nextState;
           if (changed) requestReport();
         });
@@ -116,7 +120,7 @@ export const layerReporter = Layer.effectDiscard(
       Effect.forkScoped,
     );
     yield* Effect.sync(() => {
-      if (appState !== "background") requestReport();
+      if (isForeground(appState)) requestReport();
     }).pipe(Effect.repeat(Schedule.spaced(`${REPORT_INTERVAL_MS} millis`)), Effect.forkScoped);
   }),
 );
