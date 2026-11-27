@@ -647,6 +647,26 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("hydrates source-control CLI config locations from the login shell on macOS", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            AZURE_CONFIG_DIR: "/Users/me/.local/share/azure",
+            GH_CONFIG_DIR: "/Users/me/.config/gh-work",
+          }),
+      });
+
+      assert.equal(env.AZURE_CONFIG_DIR, "/Users/me/.local/share/azure");
+      assert.equal(env.GH_CONFIG_DIR, "/Users/me/.config/gh-work");
+    }),
+  );
+
   it.effect("does not mix login-shell locale categories into an inherited locale", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
