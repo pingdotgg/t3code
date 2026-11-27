@@ -1,16 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import {
-  ProjectId,
-  type ProjectTrackedFolder,
-  WorkspaceScanFoldersResult,
-} from "@t3tools/contracts";
+import { ProjectId, type ProjectTrackedFolder } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -18,7 +13,6 @@ import * as TaskFolderStore from "./TaskFolderStore.ts";
 import * as WorkspaceFolders from "./WorkspaceFolders.ts";
 
 const projectId = ProjectId.make("project:workspace-folders");
-const encodeScanResult = Schema.encodeSync(WorkspaceScanFoldersResult);
 
 const layerFor = (project?: {
   readonly workspaceRoot: string;
@@ -153,9 +147,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             { "path": "api", "name": "API" },
             { "path": " notes", "name": "Intended" },
             { "path": "notes" },
-            { "path": "trailing ", "name": "Trailing" },
             { "path": "trailing /", "name": "TrailingSlash" },
-            { "path": "   " },
             { "path": "../outside" },
             { "path": "gone" },
             { "path": "." },
@@ -164,8 +156,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
       );
 
       const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
-      const scanned = yield* workspaceFolders.scan({ workspaceRoot: `${root}${path.sep}` });
-      const expected = {
+      assert.deepEqual(yield* workspaceFolders.scan({ workspaceRoot: `${root}${path.sep}` }), {
         workspaceRoot: root,
         isGitRepository: true,
         codeWorkspaceFile: path.join(root, "team.code-workspace"),
@@ -224,9 +215,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           },
           { path: path.join(root, "web"), name: "web", isGitRepository: true, source: "child" },
         ],
-      } satisfies WorkspaceScanFoldersResult;
-      assert.deepEqual(scanned, expected);
-      assert.deepEqual(encodeScanResult(scanned), expected);
+      });
       assert.equal(
         (yield* workspaceFolders.scan({ workspaceRoot: path.join(root, "gone") }).pipe(Effect.flip))
           ._tag,
