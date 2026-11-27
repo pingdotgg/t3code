@@ -31,7 +31,7 @@ const staticControls = new Set(["button", "input", "select", "textarea"]);
 const svgTags = new Set(
   (
     "svg g a defs desc title path rect circle ellipse line polyline polygon text tspan image use symbol switch textPath clipPath mask pattern marker linearGradient radialGradient stop " +
-    "filter feGaussianBlur feColorMatrix feSpecularLighting feDistantLight feComposite feOffset feComponentTransfer feFuncA feFlood feBlend feMerge feMergeNode feDropShadow"
+    "filter feGaussianBlur feColorMatrix feSpecularLighting feDistantLight feComposite feOffset feComponentTransfer feFuncA feFuncR feFuncG feFuncB feFlood feBlend feMerge feMergeNode feDropShadow"
   ).split(" "),
 );
 const mathTags = new Set(
