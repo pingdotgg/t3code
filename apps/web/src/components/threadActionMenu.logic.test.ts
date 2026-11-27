@@ -98,7 +98,7 @@ describe("continue on another machine", () => {
   }
 
   it("is offered for a thread that can continue on a linked machine", () => {
-    expect(continueItem({ canContinueOnMachine: true })).toEqual({
+    expect(continueItem({ canContinueOnMachine: "ready" })).toEqual({
       id: "continue-on-machine",
       label: "Continue on another machine",
       icon: "git-branch",
@@ -107,13 +107,16 @@ describe("continue on another machine", () => {
   });
 
   it("is hidden for a thread without a git remote or linked environments", () => {
-    expect(continueItem({ canContinueOnMachine: false })).toBeUndefined();
+    expect(continueItem({ canContinueOnMachine: null })).toBeUndefined();
   });
 
   it.each([
-    ["while the thread is running", { isRunning: true }],
+    ["while a run is active or waiting", { canContinueOnMachine: "busy" }],
     ["without permission to change threads", { canOperate: false }],
-  ])("is disabled %s", (_, overrides) => {
-    expect(continueItem({ canContinueOnMachine: true, ...overrides })?.disabled).toBe(true);
-  });
+  ] satisfies ReadonlyArray<[string, Partial<ThreadActionMenuState>]>)(
+    "is disabled %s",
+    (_, overrides) => {
+      expect(continueItem({ canContinueOnMachine: "ready", ...overrides })?.disabled).toBe(true);
+    },
+  );
 });

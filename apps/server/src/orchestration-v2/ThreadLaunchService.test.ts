@@ -3801,6 +3801,33 @@ it.effect("names a new worktree thread's branch while its worktree is being crea
   }),
 );
 
+it.effect(
+  "keeps a temporary-looking branch name when the branch starts from its own remote",
+  () => {
+    const publishedBranch = "t3code/0a1b2c3d";
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "launch:published-branch",
+          thread: "thread:published-branch",
+          message: "Start",
+          workspace: {
+            type: "worktree",
+            baseRef: `origin/${publishedBranch}`,
+            branch: publishedBranch,
+          },
+        }),
+      );
+      const projection = yield* preparationSettled(launched.threadId);
+      assert.equal(projection.thread.branch, publishedBranch);
+      assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.newRefName, publishedBranch);
+      assert.equal(harness.renameBranch.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
 it.effect("tells the thread when its worktree branch could not be renamed", () =>
   Effect.gen(function* () {
     const harness = makeHarness({

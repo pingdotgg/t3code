@@ -16,6 +16,7 @@ import {
 import { PeerLinkLinkPairingInput } from "./peerLink.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
+import { ThreadContinueOnEnvironmentInput } from "./threadContinuation.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
@@ -112,6 +113,7 @@ export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeLinkPairing = Schema.decodeUnknownSync(PeerLinkLinkPairingInput);
+const decodeContinueOnEnvironment = Schema.decodeUnknownSync(ThreadContinueOnEnvironmentInput);
 
 export function clientRpcRequiredScopes(
   method: string,
@@ -134,6 +136,14 @@ export function clientRpcRequiredScopes(
   if (method === WS_METHODS.peerLinksPairLink && input !== undefined) {
     const held = mcpClientScopes(decodeLinkPairing(input).access);
     return [AuthAccessWriteScope, ...held];
+  }
+  // Committing and pushing the thread's work first is a source control write, as Commit & push is.
+  if (
+    method === WS_METHODS.threadsContinueOnEnvironment &&
+    input !== undefined &&
+    decodeContinueOnEnvironment(input).commitAndPush
+  ) {
+    return [AuthOrchestrationOperateScope, AuthSourceControlWriteScope];
   }
   if (method === WS_METHODS.guestShareCreate) {
     return [AuthAccessWriteScope, AuthOrchestrationReadScope];

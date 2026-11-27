@@ -3868,12 +3868,6 @@ export const OrchestrationV2Command = Schema.Union([
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
-    type: Schema.Literal("thread.moved.set"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    movedTo: OrchestrationV2ThreadMovedTo,
-  }),
-  Schema.Struct({
     type: Schema.Literal("thread.moved.clear"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -3945,6 +3939,13 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  // The server sets this after the other environment accepted the thread.
+  Schema.Struct({
+    type: Schema.Literal("thread.moved.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    movedTo: OrchestrationV2ThreadMovedTo,
+  }),
   // The server issues this after checking the value against the run's declared schema.
   Schema.Struct({
     type: Schema.Literal("run.output.submit"),

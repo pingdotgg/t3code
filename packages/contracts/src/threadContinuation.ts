@@ -38,14 +38,18 @@ export type ThreadContinueOnEnvironmentResult = typeof ThreadContinueOnEnvironme
 export const ThreadReceiveInput = Schema.Struct({
   repository: Schema.Struct({
     remoteUrl: TrimmedNonEmptyString,
+    /** The key of the remote the branch is pushed to, which can be a fork. */
     canonicalKey: TrimmedNonEmptyString,
   }),
-  remoteName: TrimmedNonEmptyString,
+  /** The sender's name for that remote. Receivers use their own remote; older ones read this. */
+  remoteName: Schema.optional(TrimmedNonEmptyString),
   branch: GitRefName,
   title: TrimmedNonEmptyString,
   modelSelection: Schema.optional(ModelSelection),
   importedHistory: OrchestrationV2ImportedHistory,
   message: Schema.optional(ContinuationMessage),
+  /** The same for every retry of one send, so a retry returns the thread the first one made. */
+  requestId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
 });
 export type ThreadReceiveInput = typeof ThreadReceiveInput.Type;
 

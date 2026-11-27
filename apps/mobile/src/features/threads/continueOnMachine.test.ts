@@ -56,25 +56,30 @@ function link(target: string, overrides: Partial<PeerLinkSummary> = {}): PeerLin
   };
 }
 
+function availability(
+  overrides: Partial<Parameters<typeof continueOnMachineAvailability>[0]> = {},
+) {
+  return continueOnMachineAvailability({
+    project: repositoryProject,
+    linkedEnvironmentsOffered: true,
+    runtime: null,
+    ...overrides,
+  });
+}
+
 describe("continueOnMachineAvailability", () => {
   it("is ready for an idle thread in a project with a Git remote", () => {
-    expect(
-      continueOnMachineAvailability({
-        project: repositoryProject,
-        linkedEnvironmentsOffered: true,
-        runtime: null,
-      }),
-    ).toBe("ready");
+    expect(availability()).toBe("ready");
   });
 
-  it("is busy while a run is active", () => {
-    expect(
-      continueOnMachineAvailability({
-        project: repositoryProject,
-        linkedEnvironmentsOffered: true,
-        runtime: runtime("running"),
-      }),
-    ).toBe("busy");
+  it("is busy for every run status the server refuses as still working", () => {
+    const statuses = ["preparing", "starting", "running", "waiting"] as const;
+    expect(statuses.map((status) => availability({ runtime: runtime(status) }))).toEqual([
+      "busy",
+      "busy",
+      "busy",
+      "busy",
+    ]);
   });
 
   it("is hidden for a No project thread, a project without a remote, or an unknown project", () => {
@@ -82,20 +87,12 @@ describe("continueOnMachineAvailability", () => {
       { ...repositoryProject, isScratch: true as const },
       { repositoryIdentity: null },
       null,
-    ].map((project) =>
-      continueOnMachineAvailability({ project, linkedEnvironmentsOffered: true, runtime: null }),
-    );
+    ].map((project) => availability({ project }));
     expect(hidden).toEqual(["hidden", "hidden", "hidden"]);
   });
 
   it("is hidden while the environment does not offer linked environments", () => {
-    expect(
-      continueOnMachineAvailability({
-        project: repositoryProject,
-        linkedEnvironmentsOffered: false,
-        runtime: null,
-      }),
-    ).toBe("hidden");
+    expect(availability({ linkedEnvironmentsOffered: false })).toBe("hidden");
   });
 });
 

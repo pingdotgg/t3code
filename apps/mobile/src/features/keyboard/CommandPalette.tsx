@@ -2,6 +2,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
+import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
 import {
   claimThreadOpen,
   nextShownOrder,
@@ -55,6 +56,7 @@ import {
 import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { useCanShareWithGuest } from "../threads/useCanShareWithGuest";
+import { continueOnMachineAvailability } from "../threads/continueOnMachine";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "../../state/server";
@@ -103,6 +105,7 @@ const ACTION_ICONS: Record<string, AppSymbolName> = {
   terminal: "terminal",
   review: PullRequestGlyph.pullRequest,
   copyThreadReference: "link",
+  continueOnMachine: "laptopcomputer",
 };
 
 function itemIcon(item: CommandPaletteItem): AppSymbolName {
@@ -422,6 +425,26 @@ export function CommandPalette(props: {
           run: () => navigation.navigate("ThreadGuestShare", activeThreadRef),
         });
       }
+      // The palette has no disabled rows, so a thread that is still working leaves it out.
+      const continueOnMachine =
+        activeThread === null
+          ? "hidden"
+          : continueOnMachineAvailability({
+              project: activeProject ?? null,
+              linkedEnvironmentsOffered: offersLinkedEnvironments(
+                serverConfigs.get(activeThread.environmentId),
+              ),
+              runtime: activeThread.runtime,
+            });
+      if (continueOnMachine === "ready") {
+        actions.push({
+          key: "continueOnMachine",
+          kind: "action",
+          title: gt("Continue on another machine"),
+          searchTerms: ["continue", "machine", "move", "handoff", "linked", "computer"],
+          run: () => navigation.navigate("ThreadContinueOnMachine", activeThreadRef),
+        });
+      }
     }
     const openProjects = projects.filter((project) => project.archivedAt == null);
     const projectItems: CommandPaletteItem[] = [
@@ -501,6 +524,7 @@ export function CommandPalette(props: {
     canTriage,
     canShareWithGuest,
     navigation,
+    serverConfigs,
     projects,
     runCommand,
     savedConnectionsById,

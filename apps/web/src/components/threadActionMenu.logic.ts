@@ -126,8 +126,8 @@ export interface ThreadActionMenuState {
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
   /** Guest links need their own grant, so the caller checks it instead of `canOperate`. */
   readonly canShareWithGuest?: boolean;
-  /** A thread in a project with a git remote, on a server that offers linked environments. */
-  readonly canContinueOnMachine?: boolean;
+  /** A thread in a project with a git remote, on a server that offers linked environments. "busy" while a run blocks it. */
+  readonly canContinueOnMachine?: "ready" | "busy" | null;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
 }
@@ -259,7 +259,7 @@ export function buildThreadActionMenuItems(
             id: "continue-on-machine" as const,
             label: resolve(msg("Continue on another machine")),
             icon: "git-branch",
-            disabled: state.isRunning,
+            disabled: state.canContinueOnMachine === "busy",
           },
         ]
       : []),

@@ -120,6 +120,8 @@ export class ManagedProjectFolders extends Context.Service<
       readonly text: string;
     }) => Effect.Effect<Option.Option<string>, ScratchFolderError>;
     readonly namedProjectsRoot: string;
+    /** Makes an empty folder for project `name` in `namedProjectsRoot`: `name`, else `name-2`, ... */
+    readonly claimNamedFolder: (name: string) => Effect.Effect<string, NamedProjectFolderError>;
     /** Removes failed/cancelled creations' folders only while no project owns them. */
     readonly createNamedProject: (input: { readonly name: string }) => Effect.Effect<
       {
@@ -392,9 +394,9 @@ const make = Effect.gen(function* () {
 
   const namedProjectsRoot = path.resolve(config.baseDir, "projects");
 
-  const claimNamedFolder = Effect.fn("ManagedProjectFolders.claimNamedFolder")(function* (
-    name: string,
-  ) {
+  const claimNamedFolder: ManagedProjectFolders["Service"]["claimNamedFolder"] = Effect.fn(
+    "ManagedProjectFolders.claimNamedFolder",
+  )(function* (name) {
     yield* fileSystem
       .makeDirectory(namedProjectsRoot, { recursive: true })
       .pipe(
@@ -514,6 +516,7 @@ const make = Effect.gen(function* () {
     isScratchProject,
     folderForThread,
     namedProjectsRoot,
+    claimNamedFolder,
     createNamedProject,
   });
 });

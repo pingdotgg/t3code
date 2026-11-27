@@ -14,6 +14,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthSourceControlWriteScope,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type EnvironmentId,
   type ThreadId,
@@ -37,6 +38,7 @@ import { useProject, useThreadShell } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { peerLinkEnvironment } from "../../state/peerLinks";
 import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
@@ -84,6 +86,7 @@ export function ContinueOnMachineSheet({ route }: StaticScreenProps<ContinueTarg
   const canContinue = useAtomValue(
     threadEnvironment.continueOnEnvironment.permissionAtom(environmentId),
   );
+  const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const continueOnEnvironment = useAtomCommand(threadEnvironment.continueOnEnvironment, {
     reportFailure: false,
   });
@@ -91,7 +94,7 @@ export function ContinueOnMachineSheet({ route }: StaticScreenProps<ContinueTarg
   const openLinkedRead = useOpenLinkedThreadRead();
 
   const [pickedId, setPickedId] = useState<EnvironmentId | null>(null);
-  const [commitAndPush, setCommitAndPush] = useState(false);
+  const [commitAndPushPicked, setCommitAndPushPicked] = useState(false);
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -102,6 +105,7 @@ export function ContinueOnMachineSheet({ route }: StaticScreenProps<ContinueTarg
   const available = targets.filter((target) => target.block === null);
   const picked =
     available.find((target) => target.environmentId === pickedId) ?? available[0] ?? null;
+  const commitAndPush = commitAndPushPicked && canWriteSourceControl;
   const work = gitStatus.data === null ? null : unpushedWork(gitStatus.data);
   const needsPush = work !== null && hasUnpushedWork(work) && !commitAndPush;
   const running = thread !== null && threadRuntimeIsActive(thread.runtime);
@@ -121,7 +125,9 @@ export function ContinueOnMachineSheet({ route }: StaticScreenProps<ContinueTarg
   const confirmReason = running
     ? gt("The agent is working. Wait for the turn to end, or stop it.")
     : needsPush
-      ? gt("Turn on Commit and push my changes first, or push this branch yourself.")
+      ? canWriteSourceControl
+        ? gt("Turn on Commit and push my changes first, or push this branch yourself.")
+        : gt("Commit and push this branch yourself first.")
       : null;
 
   const submit = async () => {
@@ -235,9 +241,14 @@ export function ContinueOnMachineSheet({ route }: StaticScreenProps<ContinueTarg
         <ListSection>
           <ListToggleRow
             label={gt("Commit and push my changes first")}
+            description={
+              canWriteSourceControl
+                ? undefined
+                : gt("This connection cannot change source control.")
+            }
             value={commitAndPush}
-            disabled={submitting}
-            onValueChange={setCommitAndPush}
+            disabled={submitting || !canWriteSourceControl}
+            onValueChange={setCommitAndPushPicked}
           />
         </ListSection>
       </View>

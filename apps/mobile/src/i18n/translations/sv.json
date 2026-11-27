@@ -5741,5 +5741,6 @@
   "4bc174490c794628": "Kunde inte fortsätta arbeta här",
   "10af830a8050bba0": "Öppnar tråden på den datorn",
   "89e899ed840385f7": "Flyttad till {label}",
-  "5863e5a932c8cc75": "Fortsätt arbeta här"
+  "5863e5a932c8cc75": "Fortsätt arbeta här",
+  "896c0087ed1e3b4d": "Committa och pusha den här grenen själv först."
 }

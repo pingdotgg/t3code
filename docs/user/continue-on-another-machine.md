@@ -12,7 +12,7 @@ You started a thread on your PC, and now you sit at your Mac. **Continue on anot
 
 1. Open the thread **...** menu in the thread header, and select **Continue on another machine**. The command palette and the right-click menu of a thread in the sidebar also have this action.
 2. Pick the machine. You can pick only reachable machines with a Full access link. The other machines show why you cannot pick them.
-3. If the dialog shows uncommitted changes or unpushed commits, tick **Commit and push my changes first**.
+3. If the dialog shows uncommitted changes or unpushed commits, tick **Commit and push my changes first**. If you cannot tick it, this device cannot change source control. Push the changes yourself first.
 4. Optional: write a message for the agent on the other machine.
 5. Confirm the dialog.
 
@@ -53,6 +53,6 @@ Open the thread menu and tap **Continue on another machine**. The same dialog op
 
 ## Ask an agent
 
-Tell the agent in the thread "continue this on my Mac". The agent sends the thread for you. [Outside agents](./outside-agents.md) can do the same with `t3_thread_transfer` and the action `continue_on`.
+Tell the agent in the thread "continue this on my Mac". The agent sends the thread for you, then ends its turn. [Outside agents](./outside-agents.md) can do the same with `t3_thread_transfer` and the action `continue_on`.
 
 Done: the thread now runs on the other machine, with its branch and its history.

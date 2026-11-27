@@ -136,6 +136,15 @@ export interface ThreadLaunchInput {
   readonly workflowRun?: OrchestrationV2WorkflowOrigin;
 }
 
+/**
+ * A branch made from its own remote branch, as a thread continued from another environment is,
+ * keeps its name even when it looks temporary: a new name would split it from that remote.
+ */
+const startsFromOwnRemoteBranch = (strategy: ThreadLaunchWorkspaceStrategy) =>
+  strategy.type === "worktree" &&
+  strategy.branch !== undefined &&
+  strategy.baseRef.endsWith(`/${strategy.branch}`);
+
 type PreparationInput = Pick<
   ThreadLaunchInput,
   "commandId" | "projectId" | "workspaceStrategy" | "initialMessage" | "linkOrigin"
@@ -518,7 +527,7 @@ const make = Effect.gen(function* () {
         branch,
       });
     // Provisioning flattens temporary names that collide, so only explicit names are refused.
-    if (isTemporaryWorktreeBranch(branch)) return;
+    if (isTemporaryWorktreeBranch(branch) && !startsFromOwnRemoteBranch(strategy)) return;
     const conflictingBranch = localBranches.find(
       (existing) => existing.startsWith(`${branch}/`) || branch.startsWith(`${existing}/`),
     );
@@ -707,6 +716,9 @@ const make = Effect.gen(function* () {
       const requestedBranch = input.workspaceStrategy.branch;
       const generatedTemporaryBranch =
         input.workspaceStrategy.type === "worktree" && requestedBranch === undefined;
+      const isRenamedTemporaryBranch = (name: string) =>
+        !startsFromOwnRemoteBranch(input.workspaceStrategy) &&
+        (generatedTemporaryBranch || isTemporaryWorktreeBranch(name));
       let branch: string | null;
       if (generatedTemporaryBranch) {
         const uuid = yield* randomUuidV4;
@@ -735,7 +747,7 @@ const make = Effect.gen(function* () {
         initialMessage !== undefined &&
         (input.workspaceStrategy.type === "worktree" || worktreePath !== null) &&
         branch !== null &&
-        (generatedTemporaryBranch || isTemporaryWorktreeBranch(branch))
+        isRenamedTemporaryBranch(branch)
           ? yield* generateBranchNameFor(
               worktreePath ?? project.workspaceRoot,
               initialMessage,
@@ -820,11 +832,7 @@ const make = Effect.gen(function* () {
             }));
           }
         }
-        if (
-          branch !== null &&
-          projectIsRepository &&
-          (generatedTemporaryBranch || isTemporaryWorktreeBranch(branch))
-        ) {
+        if (branch !== null && projectIsRepository && isRenamedTemporaryBranch(branch)) {
           const parts = branch.split("/");
           for (let depth = 1; depth < parts.length; depth++) {
             if (
@@ -984,7 +992,7 @@ const make = Effect.gen(function* () {
         worktreePath !== null &&
         branch !== null &&
         initialMessage !== undefined &&
-        (generatedTemporaryBranch || isTemporaryWorktreeBranch(branch))
+        isRenamedTemporaryBranch(branch)
       ) {
         const oldBranch = branch;
         const worktreeCwd = worktreePath;

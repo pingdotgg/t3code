@@ -5735,5 +5735,6 @@
   "4bc174490c794628": "Impossible de continuer à travailler ici",
   "10af830a8050bba0": "Ouvre le fil sur cette machine",
   "89e899ed840385f7": "Déplacé vers {label}",
-  "5863e5a932c8cc75": "Continuer à travailler ici"
+  "5863e5a932c8cc75": "Continuer à travailler ici",
+  "896c0087ed1e3b4d": "Commitez et poussez d’abord vous-même cette branche."
 }

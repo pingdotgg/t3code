@@ -5735,5 +5735,6 @@
   "4bc174490c794628": "No se pudo seguir trabajando aquí",
   "10af830a8050bba0": "Abre el hilo en esa máquina",
   "89e899ed840385f7": "Movido a {label}",
-  "5863e5a932c8cc75": "Seguir trabajando aquí"
+  "5863e5a932c8cc75": "Seguir trabajando aquí",
+  "896c0087ed1e3b4d": "Primero haz commit y push de esta rama tú mismo."
 }

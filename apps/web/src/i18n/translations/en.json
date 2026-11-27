@@ -13077,5 +13077,6 @@
   "7a8df2c358b21507": "Optional. Without a message, the new thread waits for you.",
   "6ba4cfbd0c498161": "Moved to {machine}",
   "b3a063307e54fd0c": "Could not remove the Moved note",
-  "5863e5a932c8cc75": "Keep working here"
+  "5863e5a932c8cc75": "Keep working here",
+  "00e460ab5809aff7": "Push the changes from a client that can, or push them yourself."
 }

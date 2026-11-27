@@ -5,13 +5,13 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthSourceControlWriteScope,
   type EnvironmentId,
   type PeerLinkSummary,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
@@ -25,12 +25,14 @@ import { T, useGT, useMessages, Var } from "gt-react";
 import { useId, useState } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { threadRuntimeBlocksContinueOnMachine } from "../../hooks/useThreadActions";
 import { openLinkedThreadRead } from "../../lib/sideChatPane";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { readEnvironment } from "../../state/environments";
 import { peerLinkEnvironment } from "../../state/peerLinks";
 import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
@@ -66,6 +68,13 @@ export function openContinueOnMachineDialog(threadRef: ScopedThreadRef): void {
   appAtomRegistry.set(continueOnMachineThreadAtom, threadRef);
 }
 
+/** A send that ends after the dialog moved to another thread must not close that dialog. */
+function closeContinueOnMachineDialog(threadRef: ScopedThreadRef) {
+  const open = appAtomRegistry.get(continueOnMachineThreadAtom);
+  if (open === null || scopedThreadKey(open) !== scopedThreadKey(threadRef)) return;
+  appAtomRegistry.set(continueOnMachineThreadAtom, null);
+}
+
 export function ContinueOnMachineDialogHost() {
   const threadRef = useAtomValue(continueOnMachineThreadAtom);
   if (threadRef === null) return null;
@@ -73,7 +82,7 @@ export function ContinueOnMachineDialogHost() {
     <ContinueOnMachineDialog
       key={scopedThreadKey(threadRef)}
       threadRef={threadRef}
-      onClose={() => appAtomRegistry.set(continueOnMachineThreadAtom, null)}
+      onClose={() => closeContinueOnMachineDialog(threadRef)}
     />
   );
 }
@@ -137,6 +146,7 @@ function ContinueOnMachineDialog({
   const canContinue = useAtomValue(
     threadEnvironment.continueOnEnvironment.permissionAtom(environmentId),
   );
+  const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const continueOnEnvironment = useAtomCommand(threadEnvironment.continueOnEnvironment, {
     reportFailure: false,
   });
@@ -161,11 +171,15 @@ function ContinueOnMachineDialog({
   const unpushedCommits = gitStatus?.hasUpstream ? gitStatus.aheadCount : 0;
   const branchUnpublished = gitStatus?.refName != null && !gitStatus.hasUpstream;
   const hasUnpushedWork = uncommittedFiles > 0 || unpushedCommits > 0 || branchUnpublished;
-  const isRunning = thread !== null && !threadRuntimeCanArchive(thread.runtime);
-  const blockedReason = isRunning
+  const willCommitAndPush = commitAndPush && canWriteSourceControl;
+  const isBusy = thread !== null && threadRuntimeBlocksContinueOnMachine(thread.runtime);
+  const unpushedWorkReason = canWriteSourceControl
+    ? gt("Tick Commit and push my changes first, or push the changes yourself.")
+    : gt("Push the changes from a client that can, or push them yourself.");
+  const blockedReason = isBusy
     ? gt("The agent is working. Wait for the turn to end, or stop it.")
-    : hasUnpushedWork && !commitAndPush
-      ? gt("Tick Commit and push my changes first, or push the changes yourself.")
+    : hasUnpushedWork && !willCommitAndPush
+      ? unpushedWorkReason
       : null;
   const unavailable = !canContinue || target === null || blockedReason !== null;
 
@@ -179,7 +193,7 @@ function ContinueOnMachineDialog({
       input: {
         threadId: threadRef.threadId,
         targetEnvironmentId: target.link.environmentId,
-        commitAndPush,
+        commitAndPush: willCommitAndPush,
         ...(trimmedMessage.length > 0 ? { message: trimmedMessage } : {}),
       },
     });
@@ -219,10 +233,10 @@ function ContinueOnMachineDialog({
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) onClose();
+        if (!open && !submitting) onClose();
       }}
     >
-      <DialogPopup className="sm:max-w-lg">
+      <DialogPopup className="sm:max-w-lg" showCloseButton={!submitting}>
         <form
           className="flex min-h-0 flex-col"
           onSubmit={(event) => {
@@ -318,14 +332,20 @@ function ContinueOnMachineDialog({
                   </ul>
                 </div>
               ) : null}
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <label className="flex cursor-pointer items-center gap-2 text-sm has-disabled:cursor-not-allowed">
                 <Checkbox
-                  checked={commitAndPush}
-                  disabled={submitting}
+                  checked={willCommitAndPush}
+                  disabled={submitting || !canWriteSourceControl}
+                  aria-describedby={canWriteSourceControl ? undefined : `${id}-push-denied`}
                   onCheckedChange={(checked) => setCommitAndPush(checked)}
                 />
                 <T>Commit and push my changes first</T>
               </label>
+              {canWriteSourceControl ? null : (
+                <p id={`${id}-push-denied`} className="text-muted-foreground text-xs">
+                  {gt("This connection cannot change source control.")}
+                </p>
+              )}
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -358,7 +378,7 @@ function ContinueOnMachineDialog({
             ) : null}
           </DialogPanel>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
+            <Button type="button" variant="outline" disabled={submitting} onClick={onClose}>
               <T>Cancel</T>
             </Button>
             <Button

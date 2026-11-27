@@ -9,20 +9,22 @@ import {
   ProjectId,
   type ThreadContinueOnEnvironmentInput,
   type ThreadContinueOnEnvironmentResult,
+  ThreadId,
   type ThreadReceiveInput,
   ThreadReceiveResult,
 } from "@t3tools/contracts";
 import { withoutRemoteUrlCredentials } from "@t3tools/shared/cloneUrl";
-import { newProjectFolderName } from "@t3tools/shared/path";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -35,6 +37,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as PeerLinks from "./PeerLinks.ts";
@@ -44,10 +47,17 @@ import * as PeerMcpClient from "./PeerMcpClient.ts";
 const RECEIVE_TOOL = "t3_thread_receive";
 
 // The user asked for this move, so the only ceiling on the receiver is the link's Full access.
-const RECEIVE_LIMITS = { runtimeMode: "full-access", interactionMode: "default" } as const;
+const USER_LIMITS = { runtimeMode: "full-access", interactionMode: "default" } as const;
 
-// `git clone` names the remote it clones from `origin`.
-const CLONE_REMOTE_NAME = "origin";
+// `git clone` names the remote it clones from `origin`, and an identity's `origin` is that remote.
+const ORIGIN = "origin";
+
+/** An agent that asks for a move. Its limits go with the call, as they do for forwarded tools. */
+export interface ThreadContinuationAgent {
+  readonly limits: PeerMcpClient.PeerCallLimits;
+  /** The agent's own thread here, if it runs in one. */
+  readonly threadId: ThreadId | undefined;
+}
 
 export class ThreadContinuationError extends Schema.TaggedError<ThreadContinuationError>()(
   "ThreadContinuationError",
@@ -100,7 +110,11 @@ export function selectTranscriptForTransfer(messages: ReadonlyArray<Transferable
     bytes -= textBytes(newest[dropped]!);
     dropped++;
   }
-  const kept = [...(firstUser === undefined ? [] : [firstUser]), ...newest.slice(dropped)];
+  const keptSet = new Set([
+    ...(firstUser === undefined ? [] : [firstUser]),
+    ...newest.slice(dropped),
+  ]);
+  const kept = eligible.filter((message) => keptSet.has(message));
   return {
     messages: kept.map((message): OrchestrationV2ImportedHistoryMessage => ({
       role: message.role,
@@ -112,6 +126,20 @@ export function selectTranscriptForTransfer(messages: ReadonlyArray<Transferable
 }
 
 /**
+ * The repository key of a remote. The identity resolved SSH host aliases for the remotes it
+ * names, so its keys win for those; other remotes are keyed from their URL, as it keys them.
+ */
+const remoteRepositoryKey = (
+  identity: Project["repositoryIdentity"],
+  remote: { readonly name: string; readonly url: string },
+) =>
+  identity?.locator.remoteName === remote.name
+    ? identity.canonicalKey
+    : remote.name === ORIGIN && identity?.origin !== undefined
+      ? identity.origin.canonicalKey
+      : sourceControlDefinitions.repositoryKeyFromRemote(remote.url);
+
+/**
  * Moves a thread to a linked environment. `send` runs on the machine the thread is on: it pushes
  * the thread's branch and asks the other machine to `receive` it, which finds or clones the
  * project and starts a thread on the same branch with the transcript so far.
@@ -119,8 +147,10 @@ export function selectTranscriptForTransfer(messages: ReadonlyArray<Transferable
 export class ThreadContinuation extends Context.Service<
   ThreadContinuation,
   {
+    /** Without `agent`, the user asked: the move gets the link's Full access. */
     readonly send: (
       input: ThreadContinueOnEnvironmentInput,
+      agent?: ThreadContinuationAgent,
     ) => Effect.Effect<
       ThreadContinueOnEnvironmentResult,
       | ThreadContinuationError
@@ -149,7 +179,8 @@ const make = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const random = yield* SecureRandom.SecureRandom;
-  const path = yield* Path.Path;
+  const crypto = yield* Digest.Digest;
+  const fileSystem = yield* FileSystem.FileSystem;
   const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
   );
@@ -158,6 +189,15 @@ const make = Effect.gen(function* () {
     Effect.map((uuid) => CommandId.make(`thread-continuation:${uuid}`)),
     Effect.orDie,
   );
+
+  /** Every retry of one send has the same id: the thread, at its newest message. */
+  const sendRequestId = (threadId: ThreadId, newestMessageId: MessageId | undefined) =>
+    crypto
+      .digest(Digest.sha256, textEncoder.encode(`${hereId}\n${threadId}\n${newestMessageId ?? ""}`))
+      .pipe(
+        Effect.map((digest) => `continue:${Hex.encode(digest)}`),
+        Effect.orDie,
+      );
 
   /** A Full access link that has not expired, checked before any Git or network work. */
   const fullAccessLink = Effect.fn("ThreadContinuation.fullAccessLink")(function* (
@@ -256,14 +296,16 @@ const make = Effect.gen(function* () {
   });
 
   const send: ThreadContinuation["Service"]["send"] = Effect.fn("ThreadContinuation.send")(
-    function* (input) {
+    function* (input, agent) {
       const link = yield* fullAccessLink(input);
       const { thread, runs, messages } = yield* threads.getThreadRecords(
         input.threadId,
         ["runs", "messages"],
         { runStatuses: ThreadManagement.ACTIVE_RUN_STATUSES, messageRoles: ["user", "assistant"] },
       );
-      if (runs.length > 0) {
+      // The agent of the thread may move it: the run that is working is the agent's own.
+      const movesItself = agent?.threadId === thread.id;
+      if (runs.length > 0 && !movesItself) {
         return yield* new ThreadContinuationError({
           reason: "thread_running",
           message: "The thread is still working. Stop it or wait until it is done.",
@@ -286,9 +328,14 @@ const make = Effect.gen(function* () {
       }
       const pushed = yield* pushedBranch(input, { cwd, projectId: thread.projectId });
       const transcript = selectTranscriptForTransfer(messages);
+      const pushRemote = { name: pushed.remoteName, url: pushed.remoteUrl };
       const receiveInput: ThreadReceiveInput = {
-        repository: { remoteUrl: pushed.remoteUrl, canonicalKey: identity.canonicalKey },
+        repository: {
+          remoteUrl: pushed.remoteUrl,
+          canonicalKey: remoteRepositoryKey(identity, pushRemote),
+        },
         remoteName: pushed.remoteName,
+        requestId: yield* sendRequestId(thread.id, messages.at(-1)?.id),
         branch: pushed.branch,
         title: thread.title,
         modelSelection: thread.modelSelection,
@@ -303,7 +350,7 @@ const make = Effect.gen(function* () {
           environmentId: input.targetEnvironmentId,
           tool: RECEIVE_TOOL,
           arguments: receiveInput,
-          limits: RECEIVE_LIMITS,
+          limits: agent?.limits ?? USER_LIMITS,
           success: ThreadReceiveResult,
         })
         .pipe(Effect.mapError(receiveFailed));
@@ -336,7 +383,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** This environment's projects with the repository, in creation order. */
+  /** This environment's projects with the repository, as upstream or as origin fork. */
   const projectsWithRepository = Effect.fn("ThreadContinuation.projectsWithRepository")(function* (
     canonicalKey: string,
   ) {
@@ -347,7 +394,9 @@ const make = Effect.gen(function* () {
         yield* projects.listPage({ cursor, limit: 100 }).pipe(Effect.mapError(receiveFailed));
       matches.push(
         ...page.projects.filter(
-          (project) => project.repositoryIdentity?.canonicalKey === canonicalKey,
+          ({ repositoryIdentity: identity }) =>
+            identity?.canonicalKey === canonicalKey ||
+            identity?.origin?.canonicalKey === canonicalKey,
         ),
       );
       cursor = page.nextCursor;
@@ -355,20 +404,47 @@ const make = Effect.gen(function* () {
     return matches;
   });
 
-  /** Clones the repository into the named projects folder and registers it. */
+  /** The project's remote for the repository; the sender's name for it can differ. */
+  const remoteForRepository = Effect.fn("ThreadContinuation.remoteForRepository")(function* (
+    project: Project,
+    canonicalKey: string,
+  ) {
+    const root = project.workspaceRoot;
+    const listed = yield* git
+      .execute({ operation: "ThreadContinuation.receive.remotes", cwd: root, args: ["remote"] })
+      .pipe(Effect.mapError(receiveFailed));
+    const names = listed.stdout.split(/\r?\n/u).filter((name) => name.length > 0);
+    for (const name of names) {
+      const url = yield* git
+        .readConfigValue(root, `remote.${name}.url`)
+        .pipe(Effect.mapError(receiveFailed));
+      const pointsAtRepository =
+        url !== null &&
+        remoteRepositoryKey(project.repositoryIdentity, { name, url }) === canonicalKey;
+      if (pointsAtRepository) return name;
+    }
+    return yield* new ThreadContinuationError({
+      reason: "receive_failed",
+      message: `No remote of ${project.title} here points at ${canonicalKey}. Add one, then try again.`,
+    });
+  });
+
+  /** Clones the repository into a free folder for named projects and registers it. */
   const cloneProject = Effect.fn("ThreadContinuation.cloneProject")(function* (
     input: ThreadReceiveInput,
   ) {
     const name = input.repository.canonicalKey.split("/").at(-1) ?? input.repository.canonicalKey;
+    const folder = yield* folders.claimNamedFolder(name).pipe(Effect.mapError(receiveFailed));
     const cloned = yield* repositories
       .cloneRepository(
-        {
-          remoteUrl: input.repository.remoteUrl,
-          destinationPath: path.join(folders.namedProjectsRoot, newProjectFolderName(name)),
-        },
+        { remoteUrl: input.repository.remoteUrl, destinationPath: folder },
         { timeoutMs: null },
       )
-      .pipe(Effect.mapError((error) => receiveFailed({ message: error.detail })));
+      .pipe(
+        // The folder was claimed empty, so all it holds is from the failed clone.
+        Effect.tapError(() => fileSystem.remove(folder, { recursive: true }).pipe(Effect.ignore)),
+        Effect.mapError((error) => receiveFailed({ message: error.detail })),
+      );
     const commandId = yield* newCommandId;
     return yield* projects
       .create({
@@ -383,30 +459,31 @@ const make = Effect.gen(function* () {
       );
   });
 
-  /** The project with the repository here, cloned when there is none, and its remote's name. */
-  const receivingProject = Effect.fn("ThreadContinuation.receivingProject")(function* (
-    input: ThreadReceiveInput,
+  /** The one project here with the repository, or null when it must be cloned. */
+  const existingProject = Effect.fn("ThreadContinuation.existingProject")(function* (
+    canonicalKey: string,
   ) {
-    const matches = yield* projectsWithRepository(input.repository.canonicalKey);
+    const matches = yield* projectsWithRepository(canonicalKey);
     if (matches.length > 1) {
       return yield* new ThreadContinuationError({
         reason: "project_ambiguous",
         message: `Several projects here have this repository: ${matches.map((project) => project.title).join(", ")}. Remove all but one, then try again.`,
       });
     }
-    const [match] = matches;
-    if (match !== undefined) return { project: match, remoteName: input.remoteName };
-    return { project: yield* cloneProject(input), remoteName: CLONE_REMOTE_NAME };
+    return matches[0] ?? null;
   });
 
-  /** The sender's model when this environment has that provider, else the project's default. */
+  /**
+   * The sender's model when this environment has that provider, else the project's default, or
+   * the environment's default for a project that is not cloned yet.
+   */
   const receivingModes = Effect.fn("ThreadContinuation.receivingModes")(function* (
     input: ThreadReceiveInput,
-    project: Project,
+    project: Project | null,
   ) {
     const settings = resolveProjectSettings(
       yield* serverSettings.getSettings.pipe(Effect.mapError(receiveFailed)),
-      project.id,
+      project?.id ?? null,
       project,
     ).settings;
     const providers = yield* providerRegistry.getProviders;
@@ -424,7 +501,7 @@ const make = Effect.gen(function* () {
           fallbackSelection: settings.fallbackModelSelection,
           providers,
           settings,
-          projectId: project.id,
+          projectId: project?.id ?? null,
           now: DateTime.toEpochMillis(yield* DateTime.now),
         }).selection;
     if (modelSelection === null) {
@@ -581,10 +658,40 @@ const make = Effect.gen(function* () {
     return newWorktree;
   });
 
+  /** The thread an earlier try of this send made here, if one did. */
+  const alreadyReceived = Effect.fn("ThreadContinuation.alreadyReceived")(function* (
+    threadId: ThreadId,
+  ) {
+    const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(receiveFailed));
+    if (shell === null) return null;
+    if (shell.deletedAt !== null) {
+      return yield* new ThreadContinuationError({
+        reason: "receive_failed",
+        message: "This thread was received here before, and that thread was deleted.",
+      });
+    }
+    return { threadId: shell.id, projectId: shell.projectId, title: shell.title };
+  });
+
   const receive: ThreadContinuation["Service"]["receive"] = Effect.fn("ThreadContinuation.receive")(
     function* (input) {
-      const { project, remoteName } = yield* receivingProject(input);
-      const { modelSelection, runtimeMode } = yield* receivingModes(input, project);
+      // Every try of one send gets the same ids, so a retry finds the thread the first one made.
+      const retryIds =
+        input.requestId === undefined
+          ? null
+          : {
+              commandId: CommandId.make(`thread-continuation:${input.requestId}`),
+              threadId: ThreadId.make(`thread-continuation:${input.requestId}`),
+            };
+      const earlier = retryIds === null ? null : yield* alreadyReceived(retryIds.threadId);
+      if (earlier !== null) return earlier;
+      const canonicalKey = input.repository.canonicalKey;
+      const existing = yield* existingProject(canonicalKey);
+      // Before any clone, so a send that cannot start here leaves nothing behind.
+      const { modelSelection, runtimeMode } = yield* receivingModes(input, existing);
+      const project = existing ?? (yield* cloneProject(input));
+      const remoteName =
+        existing === null ? ORIGIN : yield* remoteForRepository(existing, canonicalKey);
       const workspace = yield* receivingWorkspace(input, project, remoteName);
       if (workspace.type === "worktree") {
         // Launch accepts worktree failures and reports them inside the thread; check first so
@@ -594,10 +701,11 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(receiveFailed));
       }
       const deferWorktree = input.message !== undefined && workspace.type === "worktree";
-      const commandId = yield* newCommandId;
+      const commandId = retryIds?.commandId ?? (yield* newCommandId);
       const launched = yield* launches
         .launch({
           commandId,
+          ...(retryIds === null ? {} : { threadId: retryIds.threadId }),
           projectId: project.id,
           title: input.title,
           titleRenamed: true,

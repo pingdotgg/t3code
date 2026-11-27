@@ -187,15 +187,19 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       McpToolAccess.writesOwnerWork("continue a thread in another environment", (input) =>
         Effect.gen(function* () {
           const targetEnvironmentId = yield* required(input.toEnvironmentId, "toEnvironmentId");
-          const { scope, projection } = yield* readThread(input.threadId);
+          const { scope, projection, limits } = yield* readThread(input.threadId);
           const continuation = yield* ThreadContinuation.ThreadContinuation;
+          const agentThreadId = scope.thread?.threadId;
           const continued = yield* continuation
-            .send({
-              threadId: projection.thread.id,
-              targetEnvironmentId,
-              commitAndPush: input.commitAndPush ?? false,
-              ...(input.message === undefined ? {} : { message: input.message }),
-            })
+            .send(
+              {
+                threadId: projection.thread.id,
+                targetEnvironmentId,
+                commitAndPush: input.commitAndPush ?? false,
+                ...(input.message === undefined ? {} : { message: input.message }),
+              },
+              { limits, threadId: agentThreadId },
+            )
             .pipe(
               Effect.mapError((error) =>
                 error._tag === "ThreadContinuationError"
@@ -212,6 +216,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               continued.targetThreadId,
               continued.title,
             ),
+            ...(agentThreadId === projection.thread.id
+              ? { note: "This thread moved there. End your turn now." }
+              : {}),
           };
         }),
       ),
@@ -259,6 +266,13 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   t3_thread_receive: McpToolAccess.writesEnvironment(
     (input) =>
       Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        if (scope.client?.linked !== true) {
+          return yield* new OrchestratorMcpFailure({
+            code: "capability_denied",
+            message: "Only a linked environment can send a thread here.",
+          });
+        }
         const continuation = yield* ThreadContinuation.ThreadContinuation;
         return yield* continuation.receive(input).pipe(Effect.mapError(continuationFailure));
       }),

@@ -175,7 +175,7 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 const ThreadTransferTool = Tool.make("t3_thread_transfer", {
   ...commandTool,
   description:
-    "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers. continue_on: when idle, send it to linked environment `toEnvironmentId` (Full access link) and mark it moved; pushes its branch only with `commitAndPush`; `message` starts a turn there.",
+    "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers. continue_on: when idle or this thread, send it to linked environment `toEnvironmentId` (Full access link) and mark it moved; pushes its branch only with `commitAndPush`; `message` starts a turn there.",
   parameters: Schema.Struct({
     action: Schema.Literals(["fork", "merge_back", "status", "continue_on"]),
     environmentId: OrchestratorMcpEnvironmentTarget,
@@ -199,7 +199,11 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
         }),
       ),
     }),
-    Schema.Struct({ ...ThreadContinueOnEnvironmentResult.fields, link: Schema.String }),
+    Schema.Struct({
+      ...ThreadContinueOnEnvironmentResult.fields,
+      link: Schema.String,
+      note: Schema.optional(Schema.String),
+    }),
   ]),
   dependencies: [...commandTool.dependencies, ThreadContinuation.ThreadContinuation],
 }).annotate(Tool.Destructive, true);
@@ -214,7 +218,7 @@ const ThreadReceiveTool = Tool.make("t3_thread_receive", {
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true)
-  // Only a linked environment's continue_on calls it.
+  // Only a linked environment's continue_on calls it; the handler refuses other clients.
   .annotate(
     McpSchema.EnabledWhen,
     () => McpInvocationContext.hiddenFromThreads() && McpInvocationContext.hiddenWhileLinksOff(),

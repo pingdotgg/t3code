@@ -19,7 +19,6 @@ import {
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
-  type ThreadContinueOnEnvironmentInput,
   type ThreadReceiveInput,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ProjectedTurnItem,
@@ -1827,27 +1826,26 @@ const continuationToolkit = (
     Layer.provide(NodeCrypto.layer),
     Layer.provide(
       Layer.mock(ThreadManagement.ThreadManagementService)({
-        getThreadShell: (id) =>
-          Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { activeRunId: null })),
+        // The calling thread's turn is live, as it is while its agent calls a tool.
+        getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
         getProjectThreadRecords: ({ threadId: id }) =>
           Effect.succeed(
-            McpToolAccessTestkit.idleThreadProjection(
-              McpToolAccessTestkit.liveThreadShell(id, { activeRunId: null }),
-            ),
+            McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
           ),
       }),
     ),
   );
 
+const linkedClientScope: McpInvocationContext.McpInvocationScope = {
+  ...clientScope("full-access"),
+  client: { sessionId: "link-1", label: "Laptop", access: "full-access", linked: true },
+};
+
 it.effect(
   "t3_thread_receive is offered to outside clients while links are on, never to threads",
   () =>
     Effect.gen(function* () {
-      const received = yield* callThreadTool(
-        "t3_thread_receive",
-        receiveInput,
-        clientScope("full-access"),
-      );
+      const received = yield* callThreadTool("t3_thread_receive", receiveInput, linkedClientScope);
       expect(received.isError).toBe(false);
       expect(received.structuredContent).toEqual({
         threadId: "box-thread",
@@ -1861,7 +1859,7 @@ it.effect(
       expect(fromThread.message).toContain("Tool 't3_thread_receive' not found");
 
       const linksOff = yield* callThreadTool("t3_thread_receive", receiveInput, {
-        ...clientScope("full-access"),
+        ...linkedClientScope,
         linkedEnvironments: false,
       }).pipe(Effect.flip);
       expect(linksOff.message).toContain("Tool 't3_thread_receive' not found");
@@ -1879,6 +1877,33 @@ it.effect(
     ),
 );
 
+it.effect("t3_thread_receive refuses a full-access client that is not a linked environment", () => {
+  const received: Array<ThreadReceiveInput> = [];
+  return Effect.gen(function* () {
+    const result = yield* callThreadTool(
+      "t3_thread_receive",
+      receiveInput,
+      clientScope("full-access"),
+    );
+    expect(declaredFailure(result)).toMatchObject({ code: "capability_denied" });
+    expect(received).toEqual([]);
+  }).pipe(
+    Effect.provide(
+      continuationToolkit({
+        receive: (input) =>
+          Effect.sync(() => {
+            received.push(input);
+            return {
+              threadId: ThreadId.make("box-thread"),
+              projectId: ProjectId.make("box-project"),
+              title: input.title,
+            };
+          }),
+      }),
+    ),
+  );
+});
+
 it.effect("continue_on needs toEnvironmentId", () =>
   Effect.gen(function* () {
     const result = yield* callThreadTool(
@@ -1893,8 +1918,24 @@ it.effect("continue_on needs toEnvironmentId", () =>
   }).pipe(Effect.provide(continuationToolkit({}))),
 );
 
+type SentContinuation = Parameters<ThreadContinuation.ThreadContinuation["Service"]["send"]>;
+
+/** A continuation that records each send and answers with the thread it became on the box. */
+const recordingContinuation = (sent: Array<SentContinuation>) =>
+  continuationToolkit({
+    send: (...args) =>
+      Effect.sync(() => {
+        sent.push(args);
+        return {
+          targetEnvironmentId: args[0].targetEnvironmentId,
+          targetThreadId: ThreadId.make("box-thread"),
+          title: "Fix login",
+        };
+      }),
+  });
+
 it.effect("continue_on sends the thread and links the thread it became there", () => {
-  const sent: Array<ThreadContinueOnEnvironmentInput> = [];
+  const sent: Array<SentContinuation> = [];
   return Effect.gen(function* () {
     const result = yield* callThreadTool(
       "t3_thread_transfer",
@@ -1909,21 +1950,33 @@ it.effect("continue_on sends the thread and links the thread it became there", (
       link: "[Fix login](t3-thread://v2/environment-box/box-thread)",
     });
     expect(sent).toEqual([
-      { threadId: "laptop-thread", targetEnvironmentId: "environment-box", commitAndPush: false },
+      [
+        { threadId: "laptop-thread", targetEnvironmentId: "environment-box", commitAndPush: false },
+        {
+          limits: { runtimeMode: "full-access", interactionMode: "default" },
+          threadId: undefined,
+        },
+      ],
     ]);
-  }).pipe(
-    Effect.provide(
-      continuationToolkit({
-        send: (input) =>
-          Effect.sync(() => {
-            sent.push(input);
-            return {
-              targetEnvironmentId: input.targetEnvironmentId,
-              targetThreadId: ThreadId.make("box-thread"),
-              title: "Fix login",
-            };
-          }),
-      }),
-    ),
-  );
+  }).pipe(Effect.provide(recordingContinuation(sent)));
+});
+
+it.effect("continue_on from the thread itself moves it and tells its agent to end the turn", () => {
+  const sent: Array<SentContinuation> = [];
+  return Effect.gen(function* () {
+    const result = yield* callThreadTool(
+      "t3_thread_transfer",
+      { action: "continue_on", toEnvironmentId: box },
+      scope,
+    );
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toMatchObject({
+      targetThreadId: "box-thread",
+      note: "This thread moved there. End your turn now.",
+    });
+    expect(sent[0]?.[1]).toEqual({
+      limits: { runtimeMode: "full-access", interactionMode: "default" },
+      threadId,
+    });
+  }).pipe(Effect.provide(recordingContinuation(sent)));
 });

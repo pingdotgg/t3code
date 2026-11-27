@@ -5735,5 +5735,6 @@
   "4bc174490c794628": "Não foi possível continuar trabalhando aqui",
   "10af830a8050bba0": "Abre a thread nessa máquina",
   "89e899ed840385f7": "Movida para {label}",
-  "5863e5a932c8cc75": "Continuar trabalhando aqui"
+  "5863e5a932c8cc75": "Continuar trabalhando aqui",
+  "896c0087ed1e3b4d": "Primeiro faça commit e push deste branch você mesmo."
 }

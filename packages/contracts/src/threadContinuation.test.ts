@@ -2,11 +2,15 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "./auth.ts";
+import { clientRpcRequiredScopes } from "./clientRpcPermissions.ts";
 import {
   OrchestrationV2AppThreadJson,
+  OrchestrationV2Command,
   OrchestrationV2ImportedHistory,
   type OrchestrationV2ImportedHistoryMessage,
 } from "./orchestrationV2.ts";
+import { WS_METHODS } from "./rpc.ts";
 import { ThreadContinueOnEnvironmentInput, ThreadReceiveInput } from "./threadContinuation.ts";
 
 const message = (text: string): OrchestrationV2ImportedHistoryMessage => ({
@@ -55,6 +59,37 @@ describe("thread continuation inputs", () => {
       },
     };
     expect(roundTrip(ThreadReceiveInput, input)).toEqual(input);
+  });
+
+  it("decodes a newer sender's request id, and an input without the remote name", () => {
+    const input = {
+      repository: { remoteUrl: "git@github.com:me/app.git", canonicalKey: "github.com/me/app" },
+      branch: "feat/login",
+      title: "Fix login",
+      importedHistory: history([message("Why does login fail?")]),
+      requestId: "continue:0a1b",
+    };
+    expect(roundTrip(ThreadReceiveInput, input)).toEqual(input);
+  });
+});
+
+describe("continue on another environment permissions", () => {
+  const continueInput = (commitAndPush: boolean) => ({
+    threadId: "thread-src",
+    targetEnvironmentId: "env-mac",
+    commitAndPush,
+  });
+
+  it("needs source control write to commit and push first", () => {
+    expect(
+      clientRpcRequiredScopes(WS_METHODS.threadsContinueOnEnvironment, continueInput(true)),
+    ).toEqual([AuthOrchestrationOperateScope, AuthSourceControlWriteScope]);
+  });
+
+  it("needs only orchestration operate to move pushed work", () => {
+    expect(
+      clientRpcRequiredScopes(WS_METHODS.threadsContinueOnEnvironment, continueInput(false)),
+    ).toEqual([AuthOrchestrationOperateScope]);
   });
 });
 
@@ -111,5 +146,35 @@ describe("thread moved marker", () => {
     const decoded = decodeThread({ ...storedThread, movedTo }).movedTo;
     expect(decoded?.label).toBe("Mac");
     expect(decoded && DateTime.formatIso(decoded.movedAt)).toBe("2026-11-27T10:00:00.000Z");
+  });
+});
+
+describe("thread.moved commands", () => {
+  const decodeClientCommand = Schema.decodeUnknownExit(OrchestrationV2Command);
+  const movedTo = {
+    environmentId: "env-mac",
+    threadId: "thread-dst",
+    title: "Fix login",
+    label: "Mac",
+    movedAt: DateTime.makeUnsafe("2026-11-27T10:00:00.000Z"),
+  };
+
+  it("does not let a client set the marker", () => {
+    const exit = decodeClientCommand({
+      type: "thread.moved.set",
+      commandId: "command-1",
+      threadId: "thread-src",
+      movedTo,
+    });
+    expect(exit._tag).toBe("Failure");
+  });
+
+  it("lets a client clear the marker", () => {
+    const exit = decodeClientCommand({
+      type: "thread.moved.clear",
+      commandId: "command-2",
+      threadId: "thread-src",
+    });
+    expect(exit._tag).toBe("Success");
   });
 });

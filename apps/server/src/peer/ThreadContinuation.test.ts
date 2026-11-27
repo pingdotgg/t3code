@@ -5,11 +5,13 @@ import {
   type AuthMcpClientAccess,
   CommandId,
   EnvironmentId,
+  MessageId,
   type OrchestrationV2ImportedHistory,
   type Project,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type RepositoryIdentity,
   ThreadId,
   type ThreadReceiveInput,
   type VcsStatusLocalResult,
@@ -50,6 +52,8 @@ const codex = ProviderInstanceId.make("codex");
 const appProjectId = ProjectId.make("project-app");
 const canonicalKey = "github.com/acme/app";
 const remoteUrl = "https://github.com/acme/app.git";
+const forkKey = "github.com/me/app";
+const forkUrl = "https://github.com/me/app.git";
 const branch = "feat/login";
 const mainCheckout = "/work/project-app";
 const remoteCommit = "abc123";
@@ -81,18 +85,29 @@ const sourceHistory: OrchestrationV2ImportedHistory = {
   source: { environmentId: laptop, threadId: ThreadId.make("older-thread"), title: "Fix login" },
 };
 
-function projectWith(id: string, title: string, key: string | null): Project {
+const identityOf = (key: string): RepositoryIdentity => ({
+  canonicalKey: key,
+  locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+});
+
+/** Upstream is the main repository and origin the user's fork, as a forked checkout has them. */
+const forkedIdentity: RepositoryIdentity = {
+  canonicalKey,
+  locator: { source: "git-remote", remoteName: "upstream", remoteUrl },
+  origin: { canonicalKey: forkKey, remoteUrl: forkUrl },
+};
+const forkedRemotes = { upstream: remoteUrl, origin: forkUrl };
+
+function projectWith(
+  id: string,
+  title: string,
+  identity: RepositoryIdentity | null = identityOf(canonicalKey),
+): Project {
   return {
     id: ProjectId.make(id),
     title,
     workspaceRoot: `/work/${id}`,
-    repositoryIdentity:
-      key === null
-        ? null
-        : {
-            canonicalKey: key,
-            locator: { source: "git-remote", remoteName: "origin", remoteUrl },
-          },
+    repositoryIdentity: identity,
     defaultModelSelection: null,
     scripts: [],
     createdAt: "2026-11-01T00:00:00.000Z",
@@ -139,7 +154,19 @@ interface Scenario {
   readonly projects: ReadonlyArray<Project>;
   /** What the peer's `t3_thread_receive` answers. */
   readonly peerReply: unknown;
-  readonly peerCalls: Array<{ readonly tool: string; readonly arguments: unknown }>;
+  readonly peerCalls: Array<{
+    readonly tool: string;
+    readonly arguments: unknown;
+    readonly limits: PeerMcpClient.PeerCallLimits;
+  }>;
+  /** The repository identity here, which prefers `upstream`. */
+  readonly identity: RepositoryIdentity;
+  /** The remotes of every checkout here, by name. */
+  readonly remotes: Readonly<Record<string, string>>;
+  /** The remote the sent branch is pushed to. */
+  readonly pushRemote: string;
+  readonly hasDefaultModel: boolean;
+  readonly clones: Array<{ readonly remoteUrl: string | undefined; readonly destination: string }>;
   readonly launches: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly gitActions: Array<string>;
   readonly fetchedBases: Array<string>;
@@ -162,6 +189,10 @@ function scenario(
       | "access"
       | "hasWorkingTreeChanges"
       | "projects"
+      | "identity"
+      | "remotes"
+      | "pushRemote"
+      | "hasDefaultModel"
       | "localBranches"
       | "worktrees"
       | "refreshOnTarget"
@@ -172,9 +203,14 @@ function scenario(
   return {
     access: "full-access",
     hasWorkingTreeChanges: false,
-    projects: [projectWith("project-app", "app", canonicalKey)],
+    projects: [projectWith("project-app", "app")],
     peerReply: { threadId: "box-thread", projectId: "box-project", title: "Fix login" },
     peerCalls: [],
+    identity: identityOf(canonicalKey),
+    remotes: { origin: remoteUrl },
+    pushRemote: "origin",
+    hasDefaultModel: true,
+    clones: [],
     launches: [],
     gitActions: [],
     fetchedBases: [],
@@ -215,7 +251,11 @@ const layerFakes = (world: Scenario) =>
         }),
         Layer.mock(PeerMcpClient.PeerMcpClient)({
           call: (input) => {
-            world.peerCalls.push({ tool: input.tool, arguments: input.arguments });
+            world.peerCalls.push({
+              tool: input.tool,
+              arguments: input.arguments,
+              limits: input.limits,
+            });
             const success = input.success;
             return Schema.decodeUnknownEffect(success)(world.peerReply).pipe(Effect.orDie);
           },
@@ -224,13 +264,14 @@ const layerFakes = (world: Scenario) =>
           dispatch: orchestrator.dispatch,
           getThreadRecords: orchestrator.getThreadRecords,
           getThreadProjection: orchestrator.getThreadProjection,
+          getThreadShell: orchestrator.getThreadShell,
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
           checkWorktreeBase: () => Effect.void,
           launch: (input) =>
             Effect.gen(function* () {
               world.launches.push(input);
-              const threadId = ThreadId.make("received-thread");
+              const threadId = input.threadId ?? ThreadId.make("received-thread");
               yield* orchestrator.dispatch({
                 type: "thread.create",
                 commandId: input.commandId,
@@ -262,13 +303,14 @@ const layerFakes = (world: Scenario) =>
               projects: world.projects.slice(cursor, cursor + limit),
               nextCursor: cursor + limit < world.projects.length ? cursor + limit : null,
             }),
+          create: (input) =>
+            Effect.succeed({
+              ...projectWith(input.projectId, input.title, identityOf(canonicalKey)),
+              workspaceRoot: input.workspaceRoot,
+            }),
         }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
-          resolve: () =>
-            Effect.succeed({
-              canonicalKey,
-              locator: { source: "git-remote", remoteName: "origin", remoteUrl },
-            }),
+          resolve: () => Effect.succeed(world.identity),
         }),
         Layer.mock(GitWorkflow.GitWorkflowService)({
           localStatus: () => Effect.succeed(localStatus(world.hasWorkingTreeChanges)),
@@ -300,35 +342,54 @@ const layerFakes = (world: Scenario) =>
             return Effect.void;
           },
           resolveCommit: () => Effect.succeed({ commitSha: "local-commit" }),
-          execute: (input) =>
-            input.args[0] === "merge-base"
-              ? Effect.succeed({
-                  exitCode: ChildProcessSpawner.ExitCode(world.localIsAncestor ? 0 : 1),
-                  stdout: "",
-                  stderr: "",
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                })
-              : Effect.die(`Unexpected git ${input.args.join(" ")}`),
+          execute: (input) => {
+            const [command] = input.args;
+            if (command !== "merge-base" && command !== "remote") {
+              return Effect.die(`Unexpected git ${input.args.join(" ")}`);
+            }
+            return Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(
+                command === "remote" || world.localIsAncestor ? 0 : 1,
+              ),
+              stdout: command === "remote" ? Object.keys(world.remotes).join("\n") : "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          },
           deleteLocalBranch: (input) => {
             world.deletedBranches.push(input.refName);
             return Effect.void;
           },
-          readConfigValue: (_cwd, key) =>
-            Effect.succeed(
-              key === `branch.${branch}.remote`
-                ? "origin"
-                : key === "remote.origin.url"
-                  ? remoteUrl
-                  : null,
-            ),
+          readConfigValue: (_cwd, key) => {
+            if (key === `branch.${branch}.remote`) return Effect.succeed(world.pushRemote);
+            const remoteName = /^remote\.(.+)\.url$/u.exec(key)?.[1];
+            return Effect.succeed(
+              remoteName === undefined ? null : (world.remotes[remoteName] ?? null),
+            );
+          },
         }),
-        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
-        Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          // The folder named after the repository is taken here.
+          claimNamedFolder: (name) => Effect.succeed(`/projects/${name}-2`),
+        }),
+        Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
+          cloneRepository: (input) => {
+            world.clones.push({ remoteUrl: input.remoteUrl, destination: input.destinationPath });
+            return Effect.succeed({
+              cwd: input.destinationPath,
+              remoteUrl: input.remoteUrl ?? "",
+              repository: null,
+            });
+          },
+        }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-        ServerSettings.layerTest({
-          defaultModelSelection: { instanceId: codex, model: "test-model" },
-        }),
+        ServerSettings.layerTest(
+          world.hasDefaultModel
+            ? { defaultModelSelection: { instanceId: codex, model: "test-model" } }
+            : {},
+        ),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
           getEnvironmentId: Effect.succeed(laptop),
         }),
@@ -371,12 +432,30 @@ const createSourceThread = Effect.fn("test.createSourceThread")(function* () {
   return threadId;
 });
 
-const sendFrom = (threadId: ThreadId, commitAndPush = false) =>
+/** A turn the laptop thread has started and not finished. */
+const startTurn = Effect.fn("test.startTurn")(function* (threadId: ThreadId) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  yield* orchestrator.dispatch({
+    type: "message.dispatch",
+    commandId: CommandId.make("laptop-thread:turn"),
+    threadId,
+    messageId: MessageId.make("laptop-thread:turn"),
+    text: "Keep going.",
+    attachments: [],
+    dispatchMode: { type: "defer_start", workspaceStrategy: { type: "root" } },
+    createdBy: "user",
+    creationSource: "web",
+  });
+});
+
+const sendFrom = (threadId: ThreadId, agent?: ThreadContinuation.ThreadContinuationAgent) =>
   ThreadContinuation.ThreadContinuation.pipe(
     Effect.flatMap((continuation) =>
-      continuation.send({ threadId, targetEnvironmentId: box, commitAndPush }),
+      continuation.send({ threadId, targetEnvironmentId: box, commitAndPush: false }, agent),
     ),
   );
+
+const agentLimits = { runtimeMode: "auto", interactionMode: "default" } as const;
 
 const isContinuationError = Schema.is(ThreadContinuation.ThreadContinuationError);
 
@@ -398,6 +477,7 @@ const receiveInput: ThreadReceiveInput = {
 
 /** The part of the peer call this test reads back. */
 const ThreadContinuationArguments = Schema.Struct({
+  requestId: Schema.String,
   importedHistory: Schema.Struct({
     messages: Schema.Array(Schema.Struct({ role: Schema.String, text: Schema.String })),
     source: Schema.Struct({
@@ -442,6 +522,21 @@ it("keeps the first user message and the newest messages up to the message cap",
     ["m2", "m3"],
   );
   assert.strictEqual(selected.messages.at(-1)?.text, "m200");
+});
+
+it("keeps the messages in the order the thread has them when the first user message is not first", () => {
+  const messages = [
+    { role: "assistant" as const, text: "A0", createdAt: at(0) },
+    { role: "user" as const, text: "U1", createdAt: at(1) },
+    { role: "assistant" as const, text: "A1", createdAt: at(2) },
+  ];
+
+  const selected = ThreadContinuation.selectTranscriptForTransfer(messages);
+
+  assert.deepEqual(
+    selected.messages.map((message) => message.text),
+    ["A0", "U1", "A1"],
+  );
 });
 
 it("drops the oldest messages after the first user message until the text fits the byte cap", () => {
@@ -526,16 +621,79 @@ it.effect(
         label: "Box",
         movedAt: DateTime.makeUnsafe(0),
       });
+      assert.deepEqual(call?.limits, { runtimeMode: "full-access", interactionMode: "default" });
     }).pipe(Effect.provide(layerFor(world)));
   },
 );
 
+it.effect("send names the repository of the remote the branch is pushed to, a fork here", () => {
+  const world = scenario({ identity: forkedIdentity, remotes: forkedRemotes });
+  return Effect.gen(function* () {
+    const threadId = yield* createSourceThread();
+
+    yield* sendFrom(threadId);
+
+    assert.deepInclude(world.peerCalls[0]?.arguments, {
+      repository: { remoteUrl: forkUrl, canonicalKey: forkKey },
+    });
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
+it.effect("send gives a retry of the same send the same request id", () => {
+  const world = scenario();
+  return Effect.gen(function* () {
+    const threadId = yield* createSourceThread();
+
+    yield* sendFrom(threadId);
+    yield* sendFrom(threadId);
+
+    const [first, retry] = yield* Effect.forEach(world.peerCalls, (call) =>
+      decodeSentArguments(call.arguments),
+    );
+    assert.isNotEmpty(first?.requestId);
+    assert.strictEqual(retry?.requestId, first?.requestId);
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
+it.effect("send passes an agent's own limits on to the box", () => {
+  const world = scenario();
+  return Effect.gen(function* () {
+    const threadId = yield* createSourceThread();
+
+    yield* sendFrom(threadId, { limits: agentLimits, threadId: undefined });
+
+    assert.deepEqual(world.peerCalls[0]?.limits, agentLimits);
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
+it.effect("send refuses a working thread for the user and for another thread's agent", () => {
+  const world = scenario();
+  return Effect.gen(function* () {
+    const threadId = yield* createSourceThread();
+    yield* startTurn(threadId);
+
+    assert.strictEqual(yield* failureReason(sendFrom(threadId)), "thread_running");
+    const otherAgent = { limits: agentLimits, threadId: ThreadId.make("other-thread") };
+    assert.strictEqual(yield* failureReason(sendFrom(threadId, otherAgent)), "thread_running");
+    assert.deepEqual(world.peerCalls, []);
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
+it.effect("send lets the agent of a working thread move that thread itself", () => {
+  const world = scenario();
+  return Effect.gen(function* () {
+    const threadId = yield* createSourceThread();
+    yield* startTurn(threadId);
+
+    const result = yield* sendFrom(threadId, { limits: agentLimits, threadId });
+
+    assert.strictEqual(result.targetThreadId, ThreadId.make("box-thread"));
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
 it.effect("receive refuses a repository two projects here share, and creates nothing", () => {
   const world = scenario({
-    projects: [
-      projectWith("project-app", "app", canonicalKey),
-      projectWith("project-app-copy", "app copy", canonicalKey),
-    ],
+    projects: [projectWith("project-app", "app"), projectWith("project-app-copy", "app copy")],
   });
   return Effect.gen(function* () {
     assert.strictEqual(yield* failureReason(receive(receiveInput)), "project_ambiguous");
@@ -548,8 +706,8 @@ it.effect(
   () => {
     const world = scenario({
       projects: [
-        projectWith("project-other", "other", "github.com/acme/other"),
-        projectWith("project-app", "app", canonicalKey),
+        projectWith("project-other", "other", identityOf("github.com/acme/other")),
+        projectWith("project-app", "app"),
       ],
     });
     return Effect.gen(function* () {
@@ -577,6 +735,73 @@ it.effect(
     }).pipe(Effect.provide(layerFor(world)));
   },
 );
+
+it.effect(
+  "receive finds the project whose origin is the sent fork, and fetches from its own remote for it",
+  () => {
+    const world = scenario({
+      projects: [projectWith("project-app", "app", forkedIdentity)],
+      remotes: forkedRemotes,
+    });
+    return Effect.gen(function* () {
+      const result = yield* receive({
+        ...receiveInput,
+        repository: { remoteUrl: forkUrl, canonicalKey: forkKey },
+        // The sender's name for the fork; here the fork is `origin`.
+        remoteName: "fork",
+      });
+
+      assert.strictEqual(result.projectId, appProjectId);
+      assert.deepEqual(world.fetchedBases, ["origin/feat/login"]);
+      assert.deepEqual(world.clones, []);
+    }).pipe(Effect.provide(layerFor(world)));
+  },
+);
+
+it.effect(
+  "receive refuses a project with the repository when no remote here points at it, and creates nothing",
+  () => {
+    const world = scenario({ remotes: { upstream: "https://github.com/other/thing.git" } });
+    return Effect.gen(function* () {
+      assert.strictEqual(yield* failureReason(receive(receiveInput)), "receive_failed");
+      assert.deepEqual(world.fetchedBases, []);
+      assert.deepEqual(world.launches, []);
+    }).pipe(Effect.provide(layerFor(world)));
+  },
+);
+
+it.effect("receive clones a repository it lacks into a folder that is free", () => {
+  const world = scenario({ projects: [] });
+  return Effect.gen(function* () {
+    const result = yield* receive(receiveInput);
+
+    assert.deepEqual(world.clones, [{ remoteUrl, destination: "/projects/app-2" }]);
+    assert.deepEqual(world.fetchedBases, ["origin/feat/login"]);
+    assert.strictEqual(world.launches[0]?.projectId, result.projectId);
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
+it.effect("receive with no model here fails before it clones anything", () => {
+  const world = scenario({ projects: [], hasDefaultModel: false });
+  return Effect.gen(function* () {
+    assert.strictEqual(yield* failureReason(receive(receiveInput)), "receive_failed");
+    assert.deepEqual(world.clones, []);
+    assert.deepEqual(world.launches, []);
+  }).pipe(Effect.provide(layerFor(world)));
+});
+
+it.effect("a retried receive returns the thread the first one made, and makes no other", () => {
+  const world = scenario();
+  return Effect.gen(function* () {
+    const input = { ...receiveInput, requestId: "continue:retry-1" };
+
+    const first = yield* receive(input);
+    const retry = yield* receive(input);
+
+    assert.deepEqual(retry, first);
+    assert.strictEqual(world.launches.length, 1);
+  }).pipe(Effect.provide(layerFor(world)));
+});
 
 it.effect(
   "receive reuses the main checkout that has the branch, and points it at the sender's remote",
