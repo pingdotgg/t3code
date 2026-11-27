@@ -109,9 +109,15 @@ export const EMPTY_PROJECT_SCRIPT_INPUT: NewProjectScriptInput = {
   autoOpenPreview: false,
 };
 
+export interface ProjectScriptCreation {
+  readonly id: string;
+  readonly acknowledgedTargets?: ReadonlySet<string>;
+}
+
 export interface ProjectScriptEditorRequest {
   scriptId: string | null;
   initial: NewProjectScriptInput;
+  creation?: ProjectScriptCreation;
   error?: string;
 }
 
@@ -152,8 +158,8 @@ export function ProjectScriptEditorDialog({
   onSubmit: (
     scriptId: string | null,
     input: NewProjectScriptInput,
-    onActionCreated: (scriptId: string) => void,
-    retryingCreation: boolean,
+    onActionCreated: (creation: ProjectScriptCreation) => void,
+    creation?: ProjectScriptCreation,
   ) => Promise<ProjectScriptActionResult>;
   onDelete: (scriptId: string) => void;
   onClose: () => void;
@@ -277,8 +283,8 @@ function ProjectScriptEditorForm({
   onSubmit: (
     scriptId: string | null,
     input: NewProjectScriptInput,
-    onActionCreated: (scriptId: string) => void,
-    retryingCreation: boolean,
+    onActionCreated: (creation: ProjectScriptCreation) => void,
+    creation?: ProjectScriptCreation,
   ) => Promise<ProjectScriptActionResult>;
   onRequestDelete: (name: string) => void;
   onClose: () => void;
@@ -302,7 +308,7 @@ function ProjectScriptEditorForm({
   const [previewUrl, setPreviewUrl] = useState(request.initial.previewUrl ?? "");
   const [autoOpenPreview, setAutoOpenPreview] = useState(request.initial.autoOpenPreview);
   const [isSaving, setIsSaving] = useState(false);
-  const createdScriptIdRef = useRef<string | null>(null);
+  const creationRef = useRef(request.creation);
   const pendingSubmissionRef = useRef<object | null>(null);
   // A save that settles after this form is replaced must not close or error
   // the request that replaced it.
@@ -375,7 +381,8 @@ function ProjectScriptEditorForm({
     }
 
     setValidationError(null);
-    const scriptId = request.scriptId ?? createdScriptIdRef.current;
+    const creation = creationRef.current;
+    const scriptId = request.scriptId ?? creation?.id ?? null;
     let payload: NewProjectScriptInput;
     try {
       const scriptIdForValidation =
@@ -416,12 +423,12 @@ function ProjectScriptEditorForm({
       const result = await onSubmit(
         scriptId,
         payload,
-        (createdId) => {
+        (acknowledged) => {
           if (pendingSubmissionRef.current === submission) {
-            createdScriptIdRef.current = createdId;
+            creationRef.current = acknowledged;
           }
         },
-        request.scriptId === null && scriptId !== null,
+        creation,
       );
       if (pendingSubmissionRef.current === submission) {
         if (result._tag === "Failure") {

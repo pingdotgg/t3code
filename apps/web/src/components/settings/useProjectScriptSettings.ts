@@ -34,7 +34,7 @@ import {
 import { useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import type { NewProjectScriptInput } from "../projectScriptEditor";
+import type { NewProjectScriptInput, ProjectScriptCreation } from "../projectScriptEditor";
 import { m } from "../../i18n/messages";
 import { toastManager } from "../ui/toast";
 
@@ -53,14 +53,28 @@ function reportScriptFailure(result: AtomCommandResult<unknown, unknown>) {
   return mapAtomCommandResult(result, () => undefined);
 }
 
-export function useProjectScriptSettings(
-  targets: readonly {
-    environmentId: EnvironmentId;
-    settings: ServerSettings;
-    keybindings: ResolvedKeybindingsConfig;
-    project?: { id: ProjectId; scripts: readonly ProjectScript[] };
-  }[],
-) {
+interface ProjectScriptSettingsTarget {
+  environmentId: EnvironmentId;
+  settings: ServerSettings;
+  keybindings: ResolvedKeybindingsConfig;
+  project?: { id: ProjectId; scripts: readonly ProjectScript[] };
+}
+
+function targetKey({ environmentId, project }: ProjectScriptSettingsTarget): string {
+  return JSON.stringify([environmentId, project?.id]);
+}
+
+function targetScripts({ settings, project }: ProjectScriptSettingsTarget) {
+  return project ? resolveProjectScripts(settings, project) : settings.defaultProjectScripts;
+}
+
+interface SettingsCreation {
+  id: string;
+  acknowledgedTargets: Set<string>;
+  onActionCreated?: (creation: ProjectScriptCreation) => void;
+}
+
+export function useProjectScriptSettings(targets: readonly ProjectScriptSettingsTarget[]) {
   const projects = useProjects();
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
@@ -78,7 +92,7 @@ export function useProjectScriptSettings(
     transform: (current: readonly ProjectScript[]) => readonly ProjectScript[] | null,
     scriptId?: string,
     keybinding?: string | null,
-    onSettingsSaved?: () => void,
+    creation?: SettingsCreation,
   ): Promise<AtomCommandResult<void, unknown>> {
     if (savingRef.current || targets.length === 0) {
       const message = m(msg("No available machine, or another action change is saving."));
@@ -107,7 +121,7 @@ export function useProjectScriptSettings(
     }
     savingRef.current = true;
     setSaving(true);
-    return writeTargets(transform, scriptId, keybinding, onSettingsSaved).finally(() => {
+    return writeTargets(transform, scriptId, keybinding, creation).finally(() => {
       savingRef.current = false;
       setSaving(false);
     });
@@ -117,12 +131,28 @@ export function useProjectScriptSettings(
     transform: (current: readonly ProjectScript[]) => readonly ProjectScript[] | null,
     scriptId: string | undefined,
     keybinding: string | null | undefined,
-    onSettingsSaved: (() => void) | undefined,
+    creation: SettingsCreation | undefined,
   ): Promise<AtomCommandResult<void, unknown>> {
-    for (const { environmentId, settings, keybindings, project } of targets) {
-      const current = project
-        ? resolveProjectScripts(settings, project)
-        : settings.defaultProjectScripts;
+    if (
+      creation &&
+      targets.some(
+        (target) =>
+          !creation.acknowledgedTargets.has(targetKey(target)) &&
+          targetScripts(target).some((script) => script.id === creation.id),
+      )
+    ) {
+      return reportScriptFailure(
+        AsyncResult.failure(
+          Cause.fail(
+            new Error(m(msg("Another action already uses this ID in a selected checkout."))),
+          ),
+        ),
+      );
+    }
+
+    for (const target of targets) {
+      const { environmentId, settings, keybindings, project } = target;
+      const current = targetScripts(target);
       const nextScripts = transform(current);
       const effectiveScripts = nextScripts ?? settings.defaultProjectScripts;
       const result = await updateSettings({
@@ -146,7 +176,13 @@ export function useProjectScriptSettings(
         },
       });
       if (result._tag === "Failure") return reportScriptFailure(result);
-      onSettingsSaved?.();
+      if (creation) {
+        creation.acknowledgedTargets.add(targetKey(target));
+        creation.onActionCreated?.({
+          id: creation.id,
+          acknowledgedTargets: new Set(creation.acknowledgedTargets),
+        });
+      }
       const changedIds = scriptId
         ? [scriptId]
         : current
@@ -195,8 +231,8 @@ export function useProjectScriptSettings(
   function submit(
     scriptId: string | null,
     input: NewProjectScriptInput,
-    onActionCreated?: (scriptId: string) => void,
-    retryingCreation = false,
+    onActionCreated?: (creation: ProjectScriptCreation) => void,
+    previousCreation?: ProjectScriptCreation,
   ) {
     const existingIds = [
       ...projects.flatMap((project) => project.scripts.map((script) => script.id)),
@@ -212,7 +248,7 @@ export function useProjectScriptSettings(
     ];
     const id = scriptId ?? nextProjectScriptId(input.name, existingIds);
     const next = buildProjectScript(id, input);
-    const creating = scriptId === null || retryingCreation;
+    const creating = scriptId === null || previousCreation !== undefined;
     return persist(
       (current) => {
         const updated = current.map((script) =>
@@ -224,7 +260,13 @@ export function useProjectScriptSettings(
       },
       id,
       input.keybinding,
-      scriptId === null ? () => onActionCreated?.(id) : undefined,
+      creating
+        ? {
+            id,
+            acknowledgedTargets: new Set(previousCreation?.acknowledgedTargets),
+            ...(onActionCreated ? { onActionCreated } : {}),
+          }
+        : undefined,
     );
   }
 

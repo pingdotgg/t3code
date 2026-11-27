@@ -29,6 +29,7 @@ import {
   ScriptIcon,
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
+  type ProjectScriptCreation,
   type ProjectScriptEditorRequest,
 } from "./projectScriptEditor";
 import { Button } from "./ui/button";
@@ -148,12 +149,12 @@ export default function ProjectScriptsControl({
   const submitScript = (
     scriptId: string | null,
     input: NewProjectScriptInput,
-    onActionCreated: (scriptId: string) => void,
-    retryingCreation: boolean,
+    onActionCreated: (creation: ProjectScriptCreation) => void,
+    creation?: ProjectScriptCreation,
   ) =>
     scriptId === null
-      ? onAddScript(input, onActionCreated)
-      : onUpdateScript(scriptId, input, retryingCreation);
+      ? onAddScript(input, (id) => onActionCreated({ id }))
+      : onUpdateScript(scriptId, input, creation !== undefined);
 
   const importFileScript = async (fileScript: T3ProjectFileScript) => {
     const requestId = ++editorRequestIdRef.current;

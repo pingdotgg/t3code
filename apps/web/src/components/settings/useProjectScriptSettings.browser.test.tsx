@@ -10,7 +10,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import type { NewProjectScriptInput } from "../projectScriptEditor";
+import type { NewProjectScriptInput, ProjectScriptCreation } from "../projectScriptEditor";
 
 const commands = vi.hoisted(() => ({
   updateSettings: vi.fn(),
@@ -135,64 +135,89 @@ function setup() {
 }
 
 describe("useProjectScriptSettings", () => {
-  it("retries a partially saved action with the same ID on every checkout", async () => {
-    setup();
-    commands.upsertKeybinding.mockResolvedValueOnce(
-      AsyncResult.failure(Cause.fail(new Error("Temporary shortcut failure"))),
-    );
-    const projects = [ProjectId.make("first"), ProjectId.make("second")];
-    let settings: ProjectScriptSettings | undefined;
-    const renderTargets = (firstScripts: readonly ProjectScript[]) => (
-      <Probe
-        targets={projects.map((id, index) => ({
-          environmentId,
-          settings: DEFAULT_SERVER_SETTINGS,
-          keybindings: [],
-          project: { id, scripts: index === 0 ? firstScripts : [] },
-        }))}
-        onResult={(next) => (settings = next)}
-      />
-    );
-    await using screen = await render(renderTargets([]));
-    const draft = { ...input, keybinding: "mod+shift+k" };
-    const onActionCreated = vi.fn<(scriptId: string) => void>();
-
-    await act(async () => {
-      expect((await settings!.submit(null, draft, onActionCreated))._tag).toBe("Failure");
-    });
-    expect(onActionCreated).toHaveBeenCalledExactlyOnceWith(lint.id);
-    expect(commands.updateSettings).toHaveBeenCalledTimes(1);
-
-    await screen.rerender(renderTargets([lint]));
-    const editedDraft = { ...draft, name: "Lint and fix" };
-    await act(async () => {
-      expect((await settings!.submit(lint.id, editedDraft, onActionCreated, true))._tag).toBe(
-        "Success",
+  it.each(["shortcut", "import", "collision"] as const)(
+    "retries a partial %s save without overwriting another checkout's action",
+    async (failure) => {
+      setup();
+      const failureResult = AsyncResult.failure(Cause.fail(new Error("Temporary save failure")));
+      if (failure === "import") {
+        commands.updateSettings
+          .mockResolvedValueOnce(AsyncResult.success(undefined))
+          .mockResolvedValueOnce(failureResult);
+      } else {
+        commands.upsertKeybinding.mockResolvedValueOnce(failureResult);
+      }
+      const projects = [ProjectId.make("first"), ProjectId.make("second")];
+      let settings: ProjectScriptSettings | undefined;
+      const renderTargets = (firstScripts: readonly ProjectScript[]) => (
+        <Probe
+          targets={projects.map((id, index) => ({
+            environmentId,
+            settings: DEFAULT_SERVER_SETTINGS,
+            keybindings: [],
+            project: {
+              id,
+              scripts:
+                index === 0
+                  ? firstScripts
+                  : firstScripts.length && failure === "collision"
+                    ? [{ ...lint, command: "another command" }]
+                    : [],
+            },
+          }))}
+          onResult={(next) => (settings = next)}
+        />
       );
-    });
+      await using screen = await render(renderTargets([]));
+      const draft = { ...input, keybinding: failure === "import" ? null : "mod+shift+k" };
+      const onActionCreated = vi.fn<(creation: ProjectScriptCreation) => void>();
 
-    expect(commands.updateSettings).toHaveBeenCalledTimes(3);
-    for (const [index, id] of projects.entries()) {
-      expect(commands.updateSettings).toHaveBeenNthCalledWith(index + 2, {
-        environmentId,
-        input: {
-          patch: {
-            projectSettingsOverrides: {
-              [id]: {
-                defaultProjectScripts: [
-                  expect.objectContaining({ id: lint.id, name: editedDraft.name }),
-                ],
+      await act(async () => {
+        expect((await settings!.submit(null, draft, onActionCreated))._tag).toBe("Failure");
+      });
+      expect(onActionCreated).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ id: lint.id }),
+      );
+      const [creation] = onActionCreated.mock.calls[0]!;
+      expect(commands.updateSettings).toHaveBeenCalledTimes(failure === "import" ? 2 : 1);
+
+      await screen.rerender(renderTargets([lint]));
+      const editedDraft = { ...draft, name: "Lint and fix" };
+      await act(async () => {
+        expect(
+          (await settings!.submit(creation.id, editedDraft, onActionCreated, creation))._tag,
+        ).toBe(failure === "collision" ? "Failure" : "Success");
+      });
+      if (failure === "collision") {
+        expect(commands.updateSettings).toHaveBeenCalledTimes(1);
+        expect(commands.upsertKeybinding).toHaveBeenCalledTimes(1);
+        return;
+      }
+
+      const initialWrites = failure === "import" ? 2 : 1;
+      expect(commands.updateSettings).toHaveBeenCalledTimes(initialWrites + 2);
+      for (const [index, id] of projects.entries()) {
+        expect(commands.updateSettings).toHaveBeenNthCalledWith(initialWrites + index + 1, {
+          environmentId,
+          input: {
+            patch: {
+              projectSettingsOverrides: {
+                [id]: {
+                  defaultProjectScripts: [
+                    expect.objectContaining({ id: lint.id, name: editedDraft.name }),
+                  ],
+                },
               },
             },
           },
-        },
-      });
-    }
-    expect(commands.upsertKeybinding).toHaveBeenCalledTimes(3);
-    for (const [request] of commands.upsertKeybinding.mock.calls) {
-      expect(request).toMatchObject({ environmentId, input: { command: "script.lint.run" } });
-    }
-  });
+        });
+      }
+      expect(commands.upsertKeybinding).toHaveBeenCalledTimes(failure === "import" ? 0 : 3);
+      for (const [request] of commands.upsertKeybinding.mock.calls) {
+        expect(request).toMatchObject({ environmentId, input: { command: "script.lint.run" } });
+      }
+    },
+  );
 
   it.each(["project", "environment"] as const)(
     "preserves the shortcut for %s action name and command edits",

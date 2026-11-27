@@ -20,6 +20,7 @@ import {
   ScriptIcon,
   type NewProjectScriptInput,
   type ProjectScriptEditorRequest,
+  type ProjectScriptCreation,
 } from "../projectScriptEditor";
 import { Button } from "../ui/button";
 import {
@@ -100,12 +101,16 @@ export function ProjectActionsSettings() {
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
     };
-    const result = await submit(null, payload);
+    let creation: ProjectScriptCreation | undefined;
+    const result = await submit(null, payload, (acknowledged) => {
+      creation = acknowledged;
+    });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       setRequest({
         scriptId: null,
         initial: payload,
+        ...(creation ? { creation } : {}),
         error:
           error instanceof Error
             ? (thrownErrorMessage(error, m) ?? error.message)
