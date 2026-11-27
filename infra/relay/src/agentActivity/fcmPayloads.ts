@@ -1,6 +1,7 @@
+import { sha256 } from "@noble/hashes/sha2";
 import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
-import { hashTelemetryId } from "@t3tools/shared/telemetryId";
+import * as Hex from "effect/encoding/Hex";
 import {
   activityPhasePriority,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
@@ -18,7 +19,7 @@ export function androidRecipientData(userId: string, deviceId: string, appVersio
     compareSemverVersions(appVersion, "2.4.0") >= 0;
   return {
     device_id: deviceId,
-    user_hash: hashTelemetryId(`${userId}:${deviceId}`),
+    user_hash: Hex.encode(sha256(new TextEncoder().encode(`${userId}:${deviceId}`))),
     ...(readsHash ? {} : { user_id: userId }),
   };
 }

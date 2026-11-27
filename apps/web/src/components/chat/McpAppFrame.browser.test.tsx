@@ -179,7 +179,7 @@ describe("McpAppFrame", () => {
     await expect
       .element(
         screen.getByText(
-          "The Demo app needs a newer T3 Code server on this environment. Update the server to use it.",
+          "The Demo app needs a newer PseudoCode server on this environment. Update the server to use it.",
         ),
       )
       .toBeInTheDocument();

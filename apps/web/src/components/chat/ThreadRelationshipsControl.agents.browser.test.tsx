@@ -90,6 +90,7 @@ vi.mock(import("../../state/orchestration"), async (original) => {
 vi.mock(import("../ui/tooltip"), async () => {
   const { cloneElement } = await import("react");
   return {
+    useTooltipScrollTracker: () => null,
     Tooltip: (({ children }: { children: ReactNode }) => children) as never,
     TooltipTrigger: (({ render, children }: { render: ReactElement; children: ReactNode }) =>
       cloneElement(render, {}, children)) as never,
