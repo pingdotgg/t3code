@@ -11282,6 +11282,25 @@
   "2e487089c231536b": "Servicio",
   "c732b08a5fa8c3d7": "URL base",
   "3953d1cccd71ab7e": "Nombre (opcional)",
+  "b63146c5b314d4a0": "Tiempo máximo de la solicitud (segundos)",
+  "74e3a5e66acb02a9": "Cuánto puede tardar una generación antes de cancelarse. Aumenta el valor para un modelo lento, como uno que se ejecute en tu propio equipo.",
+  "7e1e7e99d7bd9156": [
+    "Introduce un número entero entre",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " y",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "."
+  ],
   "304d6712ac5d3a89": [
     {
       "i": 1,

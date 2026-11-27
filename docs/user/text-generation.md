@@ -12,7 +12,7 @@ Open **Settings → Providers → Text generators → Add generator** (stored pe
 - **OpenRouter**: Enter an OpenRouter API key to use any model it serves.
 - **Custom (OpenAI-compatible)**: Enter a base URL (e.g. Ollama at `http://localhost:11434/v1` or LM Studio—`localhost` resolves on the environment's server).
 
-Click **Test** beside a model picker to verify the key works, or **Show models** to refresh the catalog. Disabling or removing a generator falls back to the environment's default text generation model.
+Click **Test** beside a model picker to verify the key works, or **Show models** to refresh the catalog. A request is given up on after two minutes by default; raise the generator's **Request timeout** when a model you run yourself needs longer to answer. Disabling or removing a generator falls back to the environment's default text generation model.
 
 ## Limitations
 

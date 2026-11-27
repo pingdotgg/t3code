@@ -980,6 +980,10 @@ export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 export const TextGeneratorKind = Schema.Literals(["openaiCompatible", "anthropic"]);
 export type TextGeneratorKind = typeof TextGeneratorKind.Type;
 
+/** A slow endpoint, such as a local model, needs a longer window than a hosted API. */
+export const TEXT_GENERATOR_TIMEOUT_SECONDS_BOUNDS = { minimum: 5, maximum: 3600 } as const;
+export const TEXT_GENERATOR_DEFAULT_TIMEOUT_SECONDS = 120;
+
 const TextGeneratorBaseUrl = TrimmedNonEmptyString.check(
   Schema.isMaxLength(2048),
   Schema.makeFilter((value) => {
@@ -1005,6 +1009,10 @@ export const TextGeneratorConfig = Schema.Struct({
   baseUrl: TextGeneratorBaseUrl,
   apiKey: SettingsSecretValue.pipe(Schema.withDecodingDefault(Effect.succeed("")), secretSetting),
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** How long one generate call may take, in seconds; the driver's default when unset. */
+  timeoutSeconds: Schema.optional(
+    Schema.Int.check(Schema.isBetween(TEXT_GENERATOR_TIMEOUT_SECONDS_BOUNDS)),
+  ),
 });
 export type TextGeneratorConfig = typeof TextGeneratorConfig.Type;
 
