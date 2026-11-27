@@ -1197,6 +1197,7 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
 it.effect("creating a project through MCP refuses a model default instead of dropping it", () =>
   Effect.gen(function* () {
     const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const named: Array<{ readonly scripts?: readonly unknown[] }> = [];
     const dependencies = Layer.merge(
       harness.dependencies,
       Layer.mergeAll(
@@ -1206,11 +1207,13 @@ it.effect("creating a project through MCP refuses a model default instead of dro
         }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: "/projects",
-          createNamedProject: () =>
-            Effect.succeed({
-              projectId: harness.projectId,
-              workspaceRoot: "/projects/client-target",
-            }),
+          createNamedProject: (input) =>
+            Effect.sync(() => named.push(input)).pipe(
+              Effect.as({
+                projectId: harness.projectId,
+                workspaceRoot: "/projects/client-target",
+              }),
+            ),
         }),
       ),
     );
@@ -1244,13 +1247,14 @@ it.effect("creating a project through MCP refuses a model default instead of dro
       defaultModelSelection: null,
     });
 
-    // Empty lists set nothing, so creation drops nothing.
+    // An empty scripts list is an override (no scripts), not a request for the defaults.
     for (const empty of [{ scripts: [] }, { trackedFolders: [] }]) {
       const created = yield* toolkit
         .handle("t3_project_create", { title: "client-target", ...empty })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
       expect(created.at(-1)?.result).toMatchObject({ id: harness.projectId });
     }
+    expect(named.slice(-2).map((input) => input.scripts)).toEqual([[], undefined]);
   }),
 );
 

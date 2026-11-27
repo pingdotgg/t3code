@@ -578,15 +578,20 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with t3_project_update.",
             });
           const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
-          const created = yield* folders.createNamedProject({ name: input.title }).pipe(
-            Effect.mapError(
-              (error) =>
-                new OrchestratorMcpFailure({
-                  code: "orchestration_error",
-                  message: error.message,
-                }),
-            ),
-          );
+          const created = yield* folders
+            .createNamedProject({
+              name: input.title,
+              ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+            })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new OrchestratorMcpFailure({
+                    code: "orchestration_error",
+                    message: error.message,
+                  }),
+              ),
+            );
           const project = yield* projects
             .getById(created.projectId)
             .pipe(
