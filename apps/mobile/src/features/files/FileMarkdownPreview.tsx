@@ -17,7 +17,6 @@ import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 
 import { tryOpenWebLink } from "../../lib/openExternalUrl";
-import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { resolveNativeMarkdownTypography } from "../../lib/appearancePreferences";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import {
@@ -49,7 +48,7 @@ interface MarkdownPreviewStyles {
 }
 
 export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
-  const { appearance } = useAppearancePreferences();
+  const { appearance, fontFamilies, monoFontFamily } = useAppearancePreferences();
   const nativeMarkdownTypography = resolveNativeMarkdownTypography(appearance.baseFontSize);
   const theme = useUniwindTheme();
   const body = theme["--color-md-body"];
@@ -59,8 +58,8 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
   const codeBackground = theme["--color-md-code-bg"];
   const codeText = theme["--color-md-code-text"];
   const horizontalRule = theme["--color-md-hr"];
-  const regularFontFamily = FONT_FAMILIES.regular;
-  const boldFontFamily = FONT_FAMILIES.bold;
+  const regularFontFamily = fontFamilies.regular;
+  const boldFontFamily = fontFamilies.bold;
 
   return {
     nativeTextStyle: {
@@ -81,6 +80,7 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
       fontFamily: regularFontFamily,
       headingFontFamily: boldFontFamily,
       boldFontFamily,
+      monoFontFamily,
     },
   };
 }

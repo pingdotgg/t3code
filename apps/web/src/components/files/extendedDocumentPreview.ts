@@ -1,10 +1,6 @@
 import { pipe } from "effect/Function";
-import {
-  IMAGE_DIMENSIONS_HEADER_BYTES,
-  readImageDimensions,
-} from "@t3tools/shared/imageDimensions";
-import { XMLParser, XMLValidator } from "fast-xml-parser";
-import { decodeHTMLAttribute, decodeHTMLStrict as decodeEntities } from "entities";
+import { IMAGE_DIMENSIONS_HEADER_BYTES } from "@t3tools/shared/imageDimensions";
+import { decodeHTMLAttribute } from "entities";
 import type JSZip from "jszip";
 import {
   terminalOutputCollapseRedraws,
@@ -13,154 +9,21 @@ import {
 
 import { type OfficeWorkerResult, type NotebookCell } from "./officePreviewProtocol";
 import { PreviewError } from "./previewFailure";
+import { officeXmlDecoder } from "./officeArchive";
+import {
+  archivePath,
+  escape,
+  find,
+  imageFits,
+  parseXml,
+  repeat,
+  text,
+  type XmlNode,
+} from "./documentPreviewXml";
 
 const TABLE_PREVIEW_MAX_ROWS = 500;
 const TABLE_PREVIEW_MAX_COLUMNS = 50;
 
-// `text` and `attrs` hold decoded values: escaped text is decoded once, CDATA stays literal.
-type XmlNode = { name: string; attrs: Record<string, string>; children: XmlNode[]; text: string };
-type OrderedXml = { [key: string]: OrderedXml[] | Record<string, string> | string };
-const escape = (value: string) =>
-  value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-
-const namespacePrefixes: Record<string, string> = {
-  "urn:oasis:names:tc:opendocument:xmlns:office:1.0": "office",
-  "urn:oasis:names:tc:opendocument:xmlns:table:1.0": "table",
-  "urn:oasis:names:tc:opendocument:xmlns:text:1.0": "text",
-  "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0": "draw",
-  "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0": "svg",
-  "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0": "presentation",
-  "http://www.w3.org/1999/xlink": "xlink",
-  "http://www.w3.org/1999/xhtml": "",
-  "http://www.idpf.org/2007/opf": "",
-  "urn:oasis:names:tc:opendocument:xmlns:container": "",
-};
-function parseXml(source: string): XmlNode {
-  // EPUB XHTML commonly declares an external DTD: discard it without resolving it. Any other
-  // declaration is rejected; CDATA, comments and processing instructions pass through untouched.
-  let declares = false;
-  source = source.replaceAll(
-    /<\?[\s\S]*?(?:\?>|$)|<!\[CDATA\[[\s\S]*?(?:]]>|$)|<!--[\s\S]*?(?:-->|$)|(<!DOCTYPE\s+[^<>[\]]*>)|(<!\s*(?:DOCTYPE|ENTITY))/gi,
-    (markup, externalDoctype?: string, declaration?: string) => {
-      if (declaration) declares = true;
-      return externalDoctype ? " " : markup;
-    },
-  );
-  if (source.length > 8 * 1024 * 1024 || declares || XMLValidator.validate(source) !== true)
-    throw new PreviewError({ code: "xml-invalid" });
-  const parser = new XMLParser({
-    preserveOrder: true,
-    ignoreAttributes: false,
-    attributeNamePrefix: "",
-    processEntities: false,
-    trimValues: false,
-    parseTagValue: false,
-    cdataPropName: "#cdata",
-  });
-  const ordered = parser.parse(source) as OrderedXml[];
-  let count = 0;
-  function convert(
-    items: OrderedXml[],
-    depth: number,
-    inherited: Record<string, string>,
-  ): XmlNode[] {
-    if (depth > 100) throw new PreviewError({ code: "xml-too-deep" });
-    return items.map((item) => {
-      if (++count > 100_000) throw new PreviewError({ code: "xml-too-much-content" });
-      const name = Object.keys(item).find((key) => key !== ":@") ?? "#text";
-      const value = item[name];
-      if (name === "#cdata") {
-        const literal = Array.isArray(value)
-          ? value.map((part) => part["#text"] ?? "").join("")
-          : "";
-        return { name: "#text", attrs: {}, children: [], text: literal };
-      }
-      const attrs = Object.fromEntries(
-        Object.entries((item[":@"] ?? {}) as Record<string, string>).map(([key, value]) => {
-          // fast-xml-parser accepts raw '<' in element attributes, which can mask declarations
-          // above. Processing instructions end at their first '?>', so their data may hold '<'.
-          if (!name.startsWith("?") && value.includes("<"))
-            throw new PreviewError({ code: "xml-invalid" });
-          return [key, decodeEntities(value)];
-        }),
-      );
-      const namespaces = Object.create(inherited) as Record<string, string>;
-      for (const [key, value] of Object.entries(attrs)) {
-        if (key === "xmlns") namespaces[""] = value;
-        else if (key.startsWith("xmlns:")) namespaces[key.slice(6)] = value;
-      }
-      const expanded = (name: string, attribute = false) => {
-        if (name.startsWith("#")) return name;
-        const colon = name.indexOf(":");
-        if (colon < 0 && attribute) return name;
-        const uri = namespaces[colon < 0 ? "" : name.slice(0, colon)];
-        if (!uri) return name;
-        const prefix = Object.hasOwn(namespacePrefixes, uri) ? namespacePrefixes[uri] : undefined;
-        const local = name.slice(colon + 1);
-        return prefix === undefined
-          ? "{" + uri + "}" + local
-          : prefix
-            ? prefix + ":" + local
-            : local;
-      };
-      return {
-        name: expanded(name),
-        attrs: Object.fromEntries(
-          Object.entries(attrs).map(([key, value]) => [expanded(key, true), value]),
-        ),
-        children: Array.isArray(value) ? convert(value, depth + 1, namespaces) : [],
-        text: typeof value === "string" ? decodeEntities(value) : "",
-      };
-    });
-  }
-  return {
-    name: "root",
-    attrs: {},
-    children: convert(ordered, 0, Object.create(null) as Record<string, string>),
-    text: "",
-  };
-}
-function find(node: XmlNode, name: string, skip?: string): XmlNode[] {
-  return node.children.flatMap((child) =>
-    child.name === skip
-      ? []
-      : child.name === name || (!name.includes(":") && child.name.endsWith(`:${name}`))
-        ? [child]
-        : find(child, name, skip),
-  );
-}
-function text(node: XmlNode): string {
-  if (node.name === "office:annotation") return "";
-  if (node.name === "text:s") return " ".repeat(repeat(node.attrs["text:c"], 100));
-  if (node.name === "text:tab") return "\t";
-  if (node.name === "text:line-break") return "\n";
-  return node.name === "#text" ? node.text : node.children.map(text).join("");
-}
-function archivePath(base: string, href: string): string | null {
-  if (/^(?:[a-z][a-z\d+.-]*:|\/|\\)/i.test(href)) return null;
-  const parts = base.split("/").slice(0, -1);
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(href.split(/[?#]/, 1)[0] ?? "");
-  } catch {
-    return null;
-  }
-  for (const part of decoded.split("/")) {
-    if (part === "..") {
-      if (!parts.length) return null;
-      parts.pop();
-    } else if (part && part !== ".") parts.push(part);
-  }
-  return parts.join("/");
-}
-function imageFits(bytes: Uint8Array) {
-  const size = readImageDimensions(bytes.subarray(0, IMAGE_DIMENSIONS_HEADER_BYTES));
-  return size !== null && size.width <= 16_777_216 / size.height;
-}
 function base64ImageFits(base64: string) {
   return (
     /^[a-z\d+/]*={0,2}$/i.test(base64) &&
@@ -202,73 +65,6 @@ function reserveMarkup(size: number) {
 function boundedMarkup(value: string): string {
   reserveMarkup(value.length);
   return value;
-}
-const HTML_TAGS = new Set([
-  "p",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "div",
-  "span",
-  "strong",
-  "b",
-  "em",
-  "i",
-  "u",
-  "s",
-  "ul",
-  "ol",
-  "li",
-  "blockquote",
-  "pre",
-  "code",
-  "table",
-  "thead",
-  "tbody",
-  "tr",
-  "th",
-  "td",
-  "caption",
-  "figure",
-  "figcaption",
-  "br",
-  "hr",
-  "sub",
-  "sup",
-  "dl",
-  "dt",
-  "dd",
-]);
-async function epubHtml(node: XmlNode, archive: JSZip, base: string): Promise<string> {
-  if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
-  const tag =
-    node.name
-      .replace(/^\{[^}]*\}/, "")
-      .split(":")
-      .at(-1) ?? "";
-  if (["head", "script", "style", "iframe", "object", "embed", "svg", "math", "form"].includes(tag))
-    return "";
-  if (tag === "br" || tag === "hr") return boundedMarkup(`<${tag}>`);
-  if (tag === "img") {
-    const src = await imageData(archive, archivePath(base, node.attrs.src ?? ""));
-    return src ? `<img src="${src}" alt="${boundedMarkup(escape(node.attrs.alt ?? ""))}">` : "";
-  }
-  let children = "";
-  for (const child of node.children) children += await epubHtml(child, archive, base);
-  if (!HTML_TAGS.has(tag)) return children;
-  const spans =
-    tag === "td" || tag === "th"
-      ? ["colspan", "rowspan"]
-          .map((name) =>
-            /^\d{1,4}$/.test(node.attrs[name] ?? "") ? ` ${name}="${node.attrs[name]}"` : "",
-          )
-          .join("")
-      : "";
-  reserveMarkup(tag.length * 2 + spans.length + 5);
-  return `<${tag}${spans}>${children}</${tag}>`;
 }
 async function odfHtml(
   node: XmlNode,
@@ -358,20 +154,14 @@ async function odfHtml(
   reserveMarkup(count * markup.length - children.length);
   return markup.repeat(count);
 }
-function repeat(value: string | undefined, max: number) {
-  const count = Number(value ?? 1);
-  if (!Number.isSafeInteger(count) || count < 1)
-    throw new PreviewError({ code: "repeated-content-invalid" });
-  return Math.min(count, max);
-}
 export async function openDocument(
   archive: JSZip,
   kind: "odt" | "ods" | "odp",
 ): Promise<OfficeWorkerResult> {
   markupBytes = 0;
-  const source = await archive.file("content.xml")?.async("string");
-  if (!source) throw new PreviewError({ code: "odf-no-content" });
-  const root = parseXml(source);
+  const content = await archive.file("content.xml")?.async("uint8array");
+  if (!content?.length) throw new PreviewError({ code: "odf-no-content" });
+  const root = parseXml(officeXmlDecoder(content).decode(content));
   if (kind === "ods") {
     const tables = find(root, "table:table");
     if (!tables.length || tables.length > 100) throw new PreviewError({ code: "ods-sheet-count" });
@@ -447,34 +237,6 @@ export async function openDocument(
   }
   return { type: "document", navigation: kind === "odp" ? "slide" : "page", pages: rendered };
 }
-export async function openEpub(archive: JSZip): Promise<OfficeWorkerResult> {
-  markupBytes = 0;
-  const container = parseXml((await archive.file("META-INF/container.xml")?.async("string")) ?? "");
-  const fullPath = find(container, "rootfile")[0]?.attrs["full-path"] ?? "";
-  const rootfile = [archivePath("", fullPath), fullPath].find((path) => path && archive.file(path));
-  if (!rootfile) throw new PreviewError({ code: "epub-no-package" });
-  const packageRoot = parseXml(await archive.file(rootfile)!.async("string"));
-  const manifest = new Map(find(packageRoot, "item").map((item) => [item.attrs.id, item]));
-  const spine = find(packageRoot, "itemref");
-  if (!spine.length || spine.length > 500) throw new PreviewError({ code: "epub-chapter-count" });
-  const pages = [];
-  for (const itemref of spine) {
-    const item = manifest.get(itemref.attrs.idref);
-    if (!item || item.attrs["media-type"] !== "application/xhtml+xml") continue;
-    const path = archivePath(rootfile, item.attrs.href ?? "");
-    const entry = path ? archive.file(path) : null;
-    if (!entry || !path) continue;
-    const chapter = parseXml(await entry.async("string"));
-    const title = text(find(chapter, "title")[0] ?? find(chapter, "h1")[0] ?? chapter).trim();
-    const last = title.charCodeAt(119);
-    pages.push({
-      title: title.slice(0, last >= 0xd800 && last <= 0xdbff ? 119 : 120) || undefined,
-      html: await epubHtml(chapter, archive, path),
-    });
-  }
-  if (!pages.length) throw new PreviewError({ code: "epub-no-chapters" });
-  return { type: "document", navigation: "chapter", pages };
-}
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -530,7 +292,12 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
           const html = notebookText(data["text/html"]);
           if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
           const plain = terminalOutputPlainText(
-            notebookText(output.text ?? data["text/plain"] ?? tracebackLines(output.traceback)),
+            notebookText(
+              output.text ??
+                data["text/plain"] ??
+                data["text/markdown"] ??
+                tracebackLines(output.traceback),
+            ),
           );
           const text =
             output.output_type === "stream" ? terminalOutputCollapseRedraws(plain) : plain;

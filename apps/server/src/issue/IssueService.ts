@@ -1,8 +1,13 @@
 // A project bound to a standalone tracker (Linear) in settings lists it beside its git host's.
 // References outside the project's own repositories (upstream and fork) may be read on the host,
 // but every write must pass through requireWritable.
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
+import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import {
@@ -18,6 +23,7 @@ import {
   type IssueCreateInput,
   type IssueCreateResult,
   type IssueDetail,
+  type IssueDetailInput,
   type IssueError,
   type IssueListEntry,
   type IssueListInput,
@@ -56,6 +62,32 @@ import * as IssueTrackerRegistry from "./IssueTrackerRegistry.ts";
 
 const DEFAULT_LIST_LIMIT = 50;
 const SCOPE_CONCURRENCY = 4;
+// Every client polls linked issues; one shared read per window keeps them off the tracker's quota.
+const DETAIL_CACHE_TTL = Duration.seconds(30);
+const DETAIL_CACHE_CAPACITY = 512;
+
+/** Equal by `key` alone, so the cache can run the read it carries on a miss. */
+class DetailRead implements Equal.Equal {
+  readonly key: string;
+  readonly lookup: Effect.Effect<TrackerIssueDetail, IssueError>;
+  constructor(key: string, lookup: Effect.Effect<TrackerIssueDetail, IssueError>) {
+    this.key = key;
+    this.lookup = lookup;
+  }
+  [Equal.symbol](that: unknown): boolean {
+    return that instanceof DetailRead && that.key === this.key;
+  }
+  [Hash.symbol](): number {
+    return Hash.string(this.key);
+  }
+}
+
+/** One issue as one tracker account sees it; the host's credential is the server's own. */
+function detailCacheKey(project: ProjectTrackerBinding, key: string): string {
+  return [project.tracker, project.host, project.accountId ?? "", project.scope, key]
+    .map((part) => part.toLowerCase())
+    .join(" ");
+}
 
 const interactive =
   <I, A>(call: (input: I) => Effect.Effect<A, IssueError>) =>
@@ -164,7 +196,7 @@ export class IssueService extends Context.Service<
   IssueService,
   {
     readonly list: (input: IssueListInput) => Effect.Effect<IssueListResult, IssueError>;
-    readonly detail: (input: IssueRef) => Effect.Effect<IssueDetail, IssueError>;
+    readonly detail: (input: IssueDetailInput) => Effect.Effect<IssueDetail, IssueError>;
     readonly linkMetadata: (input: IssueRef) => Effect.Effect<TrackerIssueLink, IssueError>;
     readonly comments: (
       input: IssueCommentsPageInput,
@@ -208,6 +240,13 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const bindings = yield* IssueTrackerBindings.IssueTrackerBindingsRepository;
+  const details = yield* Cache.makeWith((read: DetailRead) => read.lookup, {
+    capacity: DETAIL_CACHE_CAPACITY,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? DETAIL_CACHE_TTL : Duration.zero),
+  });
+  /** After a write, the next read must see it. */
+  const invalidateDetail = (project: ProjectTrackerBinding, key: string) =>
+    Cache.invalidate(details, new DetailRead(detailCacheKey(project, key), Effect.never));
 
   const resolveStandaloneBindings = (
     binding: IssueTrackerProjectBinding | undefined,
@@ -552,18 +591,24 @@ const make = Effect.gen(function* () {
 
   const detail: IssueService["Service"]["detail"] = (input) =>
     requireProject(input).pipe(
+      Effect.tap((project) =>
+        input.refresh === true ? invalidateDetail(project, input.key) : Effect.void,
+      ),
       Effect.flatMap((project) =>
-        project.api
-          .getIssue({
-            cwd: project.project.workspaceRoot,
-            host: project.host,
-            scope: project.scope,
-            key: input.key,
-          })
-          .pipe(
-            Effect.mapError(toIssueError("detail")),
-            Effect.map((issue) => toDetail(project, issue)),
+        Cache.get(
+          details,
+          new DetailRead(
+            detailCacheKey(project, input.key),
+            project.api
+              .getIssue({
+                cwd: project.project.workspaceRoot,
+                host: project.host,
+                scope: project.scope,
+                key: input.key,
+              })
+              .pipe(Effect.mapError(toIssueError("detail"))),
           ),
+        ).pipe(Effect.map((issue) => toDetail(project, issue))),
       ),
     );
 
@@ -666,7 +711,10 @@ const make = Effect.gen(function* () {
                 key: input.key,
                 body: input.body,
               })
-              .pipe(Effect.mapError(toIssueError("comment")));
+              .pipe(
+                Effect.mapError(toIssueError("comment")),
+                Effect.ensuring(invalidateDetail(project, input.key)),
+              );
       }),
     );
 
@@ -698,7 +746,10 @@ const make = Effect.gen(function* () {
             labels: input.labels,
             assignees: input.assignees,
           })
-          .pipe(Effect.mapError(toIssueError("update")));
+          .pipe(
+            Effect.mapError(toIssueError("update")),
+            Effect.ensuring(invalidateDetail(project, input.key)),
+          );
       }),
     );
 
@@ -715,7 +766,10 @@ const make = Effect.gen(function* () {
             key: input.key,
             state: input.state,
           })
-          .pipe(Effect.mapError(toIssueError("setState")));
+          .pipe(
+            Effect.mapError(toIssueError("setState")),
+            Effect.ensuring(invalidateDetail(project, input.key)),
+          );
       }),
     );
 
@@ -734,7 +788,10 @@ const make = Effect.gen(function* () {
                 content: input.content,
                 reacted: input.reacted,
               })
-              .pipe(Effect.mapError(toIssueError("react"))),
+              .pipe(
+                Effect.mapError(toIssueError("react")),
+                Effect.ensuring(invalidateDetail(project, input.key)),
+              ),
       ),
     );
 

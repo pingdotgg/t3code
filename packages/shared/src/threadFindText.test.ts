@@ -239,6 +239,10 @@ it("indexes insight bodies without hidden fences and keeps user and plan text li
   expect(assistantSegments(`\`\`\`text\n${text}\n\`\`\``)?.join("\n")).toContain("★ Insight");
 });
 
+it("does not index the hidden marker of an alert written with CR-only line endings", () => {
+  expect(assistantSegments("> [!NOTE]\r> hi")).toEqual(["hi"]);
+});
+
 it("keeps insight line breaks for backticked openers on their own line, not in prose", () => {
   expect(assistantSegments("`★ Insight ─────`\nfirst line\nsecond line\n`─────`")).toEqual([
     "first line",
@@ -259,4 +263,17 @@ it("indexes image destinations rendered as file chips", () => {
       "/workspace/repo",
     ),
   ).toEqual(["notes.ts · L42–64 "]);
+});
+
+it.each(["\n", "\r\n", "\r"])(
+  "does not search across a standalone image with %j line endings",
+  (ending) => {
+    const text = ["Caption", "![pic](https://x.test/pic.png)", "After"].join(ending);
+    expect(assistantSegments(text)).toEqual(["Caption", " After"]);
+  },
+);
+
+it("projects carriage-return soft line breaks to a space outside code blocks", () => {
+  expect(assistantSegments("First\rsecond")).toEqual(["First second"]);
+  expect(assistantSegments("```text\nFirst\rsecond\n```")).toEqual(["First\rsecond\n"]);
 });
