@@ -145,7 +145,7 @@ export function HostedBrowserWebview(props: {
   const [recoverySrc, setRecoverySrc] = useState(initialSrc);
   const active = presentation.visible && presentation.rect !== null;
   const shown = active || pictureInPicture;
-  const reportedShown = useEffectEvent(() => serverDriven && shown);
+  const reportedShown = useEffectEvent(() => shown);
   const remountCrashedWebview = useEffectEvent(() => {
     setRecoverySrc(initialUrl ?? initialSrc);
     setWebviewGeneration((generation) => generation + 1);
