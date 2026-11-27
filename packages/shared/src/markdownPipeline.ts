@@ -25,7 +25,7 @@ import {
   remarkKeepLeadingWhitespace,
 } from "./markdownLeadingWhitespace.ts";
 import { remarkCodexDirectives } from "./codexMarkdownDirectives.ts";
-import { absoluteFilePathMatches } from "./markdownLinks.ts";
+import { absoluteFilePathMatches, SCRIPT_PUNCTUATION } from "./markdownLinks.ts";
 import { isWindowsAbsolutePath } from "./path.ts";
 import {
   CHAT_MARKDOWN_SANITIZE_SCHEMA,
@@ -362,10 +362,6 @@ function remarkKeepAutolinkSuffixes(): Transformer<Root> {
     visit(tree);
   };
 }
-
-// Punctuation and symbols from CJK Symbols and Punctuation and from Halfwidth and Fullwidth Forms,
-// plus the Arabic-script comma, semicolon, question mark, and full stop.
-const SCRIPT_PUNCTUATION = /(?=[　-〿＀-￯،؛؟۔])[\p{P}\p{S}]/u;
 
 /**
  * GFM runs a bare URL on until whitespace, so Chinese, Japanese, and Arabic punctuation joins it,
