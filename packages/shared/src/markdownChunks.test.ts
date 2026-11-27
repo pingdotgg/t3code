@@ -609,13 +609,33 @@ describe("chunked Markdown footnotes", () => {
     const filler = Array.from({ length: 40 }, (_, i) => `Section ${i} ${"x".repeat(120)}`).join(
       "\n\n",
     );
-    const text = ["    indented()", "", "Ref[^1].", "", filler, "", "[^1]: Footnote body."].join(
-      "\n",
-    );
+    const text = [
+      "    indented()",
+      "",
+      "Ref[^1].",
+      "",
+      filler,
+      "",
+      "    code[^a]",
+      "",
+      "- item",
+      "",
+      "    item text[^2]",
+      "",
+      "[^1]: Footnote body.",
+      "",
+      "[^a]: Literal in code.",
+      "",
+      "[^2]: In a list item.",
+    ].join("\n");
 
     const { chunks, definitions, footnotes } = splitMarkdown(text);
     const prepared = prepareMarkdownChunk(chunks[0]!.text, 0, definitions, footnotes);
     expect(prepared.footnotesMode).toBe("omit");
     expect(prepared.text).toContain("<!-- -->\n\n    indented()");
+    expect(footnotes?.chunkRefs.flat()).toEqual(["1", "2"]);
+    // The unreferenced `[^a]` definition is dropped when the section renders.
+    const section = buildMarkdownFootnotesSection(definitions, footnotes)!.text;
+    expect(section.startsWith("[^1] [^2]\n\n")).toBe(true);
   });
 });

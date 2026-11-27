@@ -110,6 +110,7 @@ const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
 const SHARED_FOOTNOTES_MAX_CHARS = 64 * 1024;
 const FOOTNOTE_DEFINITION_START = /^ {0,3}\[\^([^\s[\]]+)\]:/;
 const FOOTNOTE_CONTINUATION_INDENT = /^(?: {4}|\t)/;
+const LIST_ITEM_START = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|\r?$)/;
 const FOOTNOTE_BLOCK_INTERRUPT = /^ {0,3}(?:>|[-*+](?:[ \t]|\r?$)|\d{1,9}[.)](?:[ \t]|\r?$))/;
 const definitionParser = unified().use(remarkParse);
 
@@ -419,6 +420,9 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let definitionEnd = -1;
   let pendingDefinitions: ReturnType<typeof readLinkDefinitions> | undefined;
   let afterHeading = false;
+  // Indented code holds literal `[^x]`; an indented line under a list item continues the item.
+  let inIndentedCode = false;
+  let inList = false;
   let openedFence = false;
   let definitionChars = 0;
   let footnoteChars = 0;
@@ -506,6 +510,15 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         if (cutPoint && openWrappers === 0) flush(lineIndex);
         else if (cutPoint) heldCut = lines.length;
 
+        if (isBodyLine !== null && !BLANK_LINE.test(line)) {
+          if (!FOOTNOTE_CONTINUATION_INDENT.test(line)) {
+            inIndentedCode = false;
+            inList = LIST_ITEM_START.test(line) || (inList && !afterBlankLine);
+          } else if (!inList && (first || afterBlankLine || afterHeading)) {
+            inIndentedCode = true;
+          }
+        }
+
         const fnMatch =
           mayHaveFootnotes && line.includes("[^") ? FOOTNOTE_DEFINITION_START.exec(line) : null;
         if (fnMatch) {
@@ -566,6 +579,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           if (
             isBodyLine !== null &&
             closes === null &&
+            !inIndentedCode &&
             !isDefinition &&
             !BLANK_LINE.test(line) &&
             !isSpanningBlockOpen(line)
