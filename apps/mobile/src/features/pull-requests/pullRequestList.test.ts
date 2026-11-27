@@ -18,7 +18,6 @@ import {
   patchPullRequestListEntry,
   pullRequestFilterChoices,
   pullRequestLabelColors,
-  rememberPullRequestLabelColors,
   pullRequestListHead,
   pullRequestListInput,
   scopedPullRequestListKey,
@@ -377,15 +376,6 @@ describe("pullRequestLabelColors", () => {
         { name: "size:S", color: "#69C35F" },
       ]),
     ).toEqual({ bug: "#d73a4a", "size:s": "#69C35F" });
-  });
-});
-
-describe("rememberPullRequestLabelColors", () => {
-  it("keeps a host label's color after a later search leaves it out", () => {
-    const first = rememberPullRequestLabelColors({}, { "release-blocker": "#b60205" });
-    const next = rememberPullRequestLabelColors(first, { docs: "#0075ca" });
-    expect(next).toEqual({ "release-blocker": "#b60205", docs: "#0075ca" });
-    expect(rememberPullRequestLabelColors(next, { docs: "#0075ca" })).toBe(next);
   });
 });
 

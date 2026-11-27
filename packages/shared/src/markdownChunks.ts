@@ -95,12 +95,22 @@ function blockCloser(line: string): ((line: string) => boolean) | null | undefin
 export interface MarkdownChunk {
   readonly text: string;
   readonly lines: number;
+  readonly separator?: "\n" | "\r";
 }
 
 const FRONTMATTER_OPEN = /^\uFEFF?---[ \t]*\r?$/;
 const FRONTMATTER_CLOSE = /^(?:---|\.\.\.)[ \t]*\r?$/;
 // Cap the lookahead for a frontmatter closer; a leading rule with none is a thematic break.
 const FRONTMATTER_MAX_LINES = 1000;
+
+// A bare CR ends a line too; CRLF lines keep their `\r`, which the patterns here allow.
+function nextLineBreak(text: string, from: number): number {
+  for (let i = from; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 10 || (code === 13 && text.charCodeAt(i + 1) !== 10)) return i;
+  }
+  return text.length;
+}
 
 const hasFrontmatterClose = (lines: readonly string[]) =>
   lines.slice(1, FRONTMATTER_MAX_LINES + 1).some((line) => FRONTMATTER_CLOSE.test(line));
@@ -233,9 +243,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   const chunks: MarkdownChunk[] = [];
   const definitions: string[] = [];
   const omittedDefinitions = new Set<string>();
-  let lines: string[] = [];
   let first = true;
-  let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
   let ambiguousHtml = false;
   let afterBlankLine = false;
@@ -245,14 +253,26 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let openedFence = false;
   let definitionChars = 0;
   let openWrappers = 0;
+  const sourceLines: string[] = [];
+  const lineStarts: number[] = [];
+  for (let start = 0; start <= text.length;) {
+    const end = nextLineBreak(text, start);
+    sourceLines.push(text.slice(start, end));
+    lineStarts.push(start);
+    start = end + 1;
+  }
+  let chunkStart = 0;
   let heldCut = 0;
-  const flush = () => {
-    chunks.push({ text: lines.join("\n"), lines: lines.length });
-    lines = [];
-    chars = 0;
+  // Slices the source so each piece keeps its own line endings and the break after it.
+  const flush = (end: number) => {
+    const from = lineStarts[chunkStart]!;
+    const to = end < sourceLines.length ? lineStarts[end]! - 1 : text.length;
+    const separator = text[to];
+    const chunk = { text: text.slice(from, to), lines: end - chunkStart };
+    chunks.push(separator === "\n" || separator === "\r" ? { ...chunk, separator } : chunk);
+    chunkStart = end;
     heldCut = 0;
   };
-  const sourceLines = text.split("\n");
   let flowStart = 0;
   let parsedThrough = 0;
   let htmlStarts: Set<number> | undefined;
@@ -263,6 +283,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     htmlStarts = undefined;
   };
   for (const [lineIndex, line] of sourceLines.entries()) {
+    const chars = lineStarts[lineIndex]! - lineStarts[chunkStart]!;
     if (closes !== null) {
       if (closes(line)) {
         closes = null;
@@ -280,8 +301,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         chars >= targetChars &&
         ((line.startsWith("#") && ATX_HEADING.test(line)) ||
           (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
-      if (cutPoint && openWrappers === 0) flush();
-      else if (cutPoint) heldCut = lines.length;
+      if (cutPoint && openWrappers === 0) flush(lineIndex);
+      else if (cutPoint) heldCut = lineIndex;
       const closer = blockCloser(line);
       closes = closer ?? null;
       if (closer === null || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line)) {
@@ -359,14 +380,13 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     if (closes === closesAtBlankLine)
       openWrappers = Math.max(0, openWrappers + openedWrappers(line));
     first = false;
-    lines.push(line);
-    chars += line.length + 1;
     // A piece too large to render goes back to the last cut a wrapper held.
-    if (heldCut > 0 && chars - 1 > LARGE_MARKDOWN_CHUNK_MAX_CHARS) {
-      const rest = lines.splice(heldCut);
-      flush();
-      lines = rest;
-      chars = rest.reduce((sum, kept) => sum + kept.length + 1, 0);
+    if (
+      heldCut > chunkStart &&
+      lineStarts[lineIndex]! + line.length - lineStarts[chunkStart]! >
+        LARGE_MARKDOWN_CHUNK_MAX_CHARS
+    ) {
+      flush(heldCut);
       openWrappers = 0;
     }
     afterBlankLine = BLANK_LINE.test(line);
@@ -377,8 +397,16 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     afterHeading =
       closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
-  flush();
+  flush(sourceLines.length);
   return { chunks, definitions: definitions.join("\n") };
+}
+
+export function joinMarkdownChunks(chunks: readonly MarkdownChunk[]): string {
+  return chunks
+    .map((chunk, index) =>
+      index + 1 < chunks.length ? `${chunk.text}${chunk.separator ?? "\n"}` : chunk.text,
+    )
+    .join("");
 }
 
 /** Prepends shared definitions in document order; source offsets shift by the prefix length. */
