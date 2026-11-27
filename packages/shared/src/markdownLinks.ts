@@ -838,17 +838,19 @@ export function isWindowsDrivePathHref(href: string): boolean {
 // plus the Arabic-script comma, semicolon, question mark, and full stop.
 export const SCRIPT_PUNCTUATION = /(?=[　-〿＀-￯،؛؟۔])[\p{P}\p{S}]/u;
 
+/** Where ASCII text runs into such a mark, or -1. Unicode before it may make the mark part of the text. */
+export function scriptPunctuationAfterAscii(text: string): number {
+  const index = text.search(/[^!-~]/u);
+  return index > 0 && SCRIPT_PUNCTUATION.test(text.charAt(index)) ? index : -1;
+}
+
 // Bare prose paths need a filesystem root or a position, so `/api/users.json` stays a route,
 // and a file-shaped last segment.
 export function absoluteFilePathMatches(text: string): Array<{ index: number; path: string }> {
   const paths: Array<{ index: number; path: string }> = [];
   for (const match of text.matchAll(/(^|[\s(["'])(\/[^\s<>"'`]+)/g)) {
-    let source = match[2]!;
-    // As with bare URLs, an ASCII path ends at the first Chinese, Japanese, or Arabic punctuation.
-    const firstNonAscii = source.search(/[^!-~]/u);
-    if (firstNonAscii > 0 && SCRIPT_PUNCTUATION.test(source.charAt(firstNonAscii))) {
-      source = source.slice(0, firstNonAscii);
-    }
+    const cut = scriptPunctuationAfterAscii(match[2]!);
+    const source = cut > 0 ? match[2]!.slice(0, cut) : match[2]!;
     let parentheses = 0;
     let brackets = 0;
     for (const character of source) {

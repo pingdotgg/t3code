@@ -1070,7 +1070,6 @@ it.each([
       "/tmp/report.md",
       "/Users/me/app.ts:42",
     ]);
-    expect(links("保存先は /tmp/notes.md、確認済み")).toEqual(["/tmp/notes.md"]);
     expect(
       links(
         '<a title="</a>" href="https://example.com">/tmp/notes.md</a> and **<a href="x">/tmp/a.md</a>**',

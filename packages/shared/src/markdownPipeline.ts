@@ -25,7 +25,11 @@ import {
   remarkKeepLeadingWhitespace,
 } from "./markdownLeadingWhitespace.ts";
 import { remarkCodexDirectives } from "./codexMarkdownDirectives.ts";
-import { absoluteFilePathMatches, SCRIPT_PUNCTUATION } from "./markdownLinks.ts";
+import {
+  absoluteFilePathMatches,
+  SCRIPT_PUNCTUATION,
+  scriptPunctuationAfterAscii,
+} from "./markdownLinks.ts";
 import { isWindowsAbsolutePath } from "./path.ts";
 import {
   CHAT_MARKDOWN_SANITIZE_SCHEMA,
@@ -372,8 +376,7 @@ function scriptPunctuationIndex(link: Link): number {
   const label = link.children.length === 1 ? link.children[0] : undefined;
   if (label?.type !== "text" || !/^https?:\/\//i.test(link.url)) return -1;
   if (link.url !== label.value && link.url !== `http://${label.value}`) return -1;
-  const index = label.value.search(/[^!-~]/u);
-  return index > 0 && SCRIPT_PUNCTUATION.test(label.value.charAt(index)) ? index : -1;
+  return scriptPunctuationAfterAscii(label.value);
 }
 
 /** GFM's text pass links bare URLs without positions; its tokenizer's links span their URL. */
