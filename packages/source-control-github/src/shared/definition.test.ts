@@ -1,4 +1,7 @@
-import { recognizeRemoteWith } from "@t3tools/source-control-core/shared/definition";
+import {
+  parseGitRemoteHost,
+  recognizeRemoteWith,
+} from "@t3tools/source-control-core/shared/definition";
 import { describe, expect, it } from "vite-plus/test";
 
 import { definition } from "./definition.ts";
@@ -136,6 +139,35 @@ describe("GitHub remotes", () => {
   it("does not claim ghe.com itself or a label that only contains github", () => {
     expect(recognize("https://ghe.com/owner/repo.git")).toBeNull();
     expect(recognize("https://notgithub.example.com/owner/repo.git")).toBeNull();
+  });
+
+  it("reads the host ssh connects to for SCP logins, but not Git's bracketed forms", () => {
+    for (const url of [
+      "alice+ci@github.com:owner/repo.git",
+      "alice@corp.example@github.com:owner/repo.git",
+      "alice@corp[dev]@github.com:owner/repo.git",
+      "alice@[work@github.com:owner/repo.git",
+    ]) {
+      expect(recognize(url), url).toEqual({
+        kind: "github",
+        name: "GitHub",
+        baseUrl: "https://github.com",
+      });
+    }
+    for (const url of [
+      "@github.com:owner/repo.git",
+      "alice@[work]@github.com:owner/repo.git",
+      "[git@git.internal]@github.com:owner/repo.git",
+      "[git@git.internal]@github.com:repo@[x",
+      "alice+ci@github.com:work@[git.internal]:Team/Repo.git",
+      "-oProxyCommand=x@github.com:owner/repo.git",
+      "git@github.com:-x",
+    ]) {
+      expect(recognize(url), url).toBeNull();
+    }
+    expect(parseGitRemoteHost("alice+ci@[2001:db8::1]:team/repo.git")).toBeNull();
+    expect(parseGitRemoteHost("git@work[blue]:team/repo.git")?.host).toBe("work[blue]");
+    expect(parseGitRemoteHost("[alice]@[work@github.com:o/r")?.host).toBe("github.com");
   });
 });
 
