@@ -1,5 +1,6 @@
 import type { OpenCodeClient } from "@opencode/client/effect";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import { openCodePrice, type OpenCode2Model } from "./status.ts";
@@ -21,14 +22,29 @@ const readCatalog = <E>(
   directory: string | undefined,
   providers: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly name: string }>, E>,
 ): Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError> =>
-  Effect.all(
-    {
-      // Callers bound the read: a busy host can hold it past OpenCode's own activation wait.
-      models: client.model.list(locationOf(directory)).pipe(Effect.map((list) => list.data)),
-      providers,
-    },
-    { concurrency: "unbounded" },
-  ).pipe(
+  client.plugin.list(locationOf(directory)).pipe(
+    Effect.repeat({
+      until: (plugins) => plugins.data.length > 0,
+      schedule: Schedule.spaced("250 millis"),
+    }),
+    Effect.mapError(
+      (cause) =>
+        new OpenCodeRuntime.OpenCodeRuntimeError({
+          operation: "plugin.list",
+          detail: "The OpenCode server could not report plugin readiness.",
+          cause,
+        }),
+    ),
+    Effect.andThen(
+      Effect.all(
+        {
+          // Callers bound the read: a busy host can hold it past OpenCode's own activation wait.
+          models: client.model.list(locationOf(directory)).pipe(Effect.map((list) => list.data)),
+          providers,
+        },
+        { concurrency: "unbounded" },
+      ),
+    ),
     Effect.map(({ models, providers }) => {
       const providerNames = new Map(providers.map((provider) => [provider.id, provider.name]));
       return models.map((model) => {
@@ -47,13 +63,14 @@ const readCatalog = <E>(
         };
       });
     }),
-    Effect.mapError(
-      (cause) =>
-        new OpenCodeRuntime.OpenCodeRuntimeError({
-          operation: "model.list",
-          detail: "The OpenCode server could not list its models.",
-          cause,
-        }),
+    Effect.mapError((cause) =>
+      OpenCodeRuntime.isOpenCodeRuntimeError(cause)
+        ? cause
+        : new OpenCodeRuntime.OpenCodeRuntimeError({
+            operation: "model.list",
+            detail: "The OpenCode server could not list its models.",
+            cause,
+          }),
     ),
   );
 

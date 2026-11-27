@@ -18,6 +18,10 @@ const PROVIDERS_BODY = `{"location":{"directory":"/project"},"data":[{"id":"open
 const PLUGINS_ACTIVATING_BODY =
   '{"_tag":"ServiceUnavailableError","message":"Location plugins did not finish activating","service":"plugin"}';
 
+const ACTIVE_PLUGINS = [
+  { id: "paid", source: { type: "builtin" }, features: {}, state: { status: "active" } },
+];
+
 type Reply = string | { readonly status: number; readonly body: string };
 
 const layerServerReplying = (
@@ -32,7 +36,11 @@ const layerServerReplying = (
         if (hanging.includes(path)) {
           return yield* Effect.never;
         }
-        const recorded = bodies[path];
+        const recorded =
+          bodies[path] ??
+          (path === "/api/plugin"
+            ? JSON.stringify({ location: { directory: "/project" }, data: ACTIVE_PLUGINS })
+            : undefined);
         const reply = Effect.isEffect(recorded) ? yield* recorded : recorded;
         const { status, body } =
           reply === undefined
@@ -64,6 +72,33 @@ const readCatalog = (
   );
 
 describe("loadOpenCode2Catalog", () => {
+  it.effect("includes plugin models on the first cold catalog read", () =>
+    Effect.gen(function* () {
+      const readyAt = (yield* Clock.currentTimeMillis) + 1_000;
+      const fiber = yield* Effect.forkChild(
+        readCatalog({
+          "/api/plugin": Clock.currentTimeMillis.pipe(
+            Effect.map((now) =>
+              JSON.stringify({
+                location: { directory: "/project" },
+                data: now < readyAt ? [] : ACTIVE_PLUGINS,
+              }),
+            ),
+          ),
+          "/api/model": Clock.currentTimeMillis.pipe(
+            Effect.map((now) => {
+              const response = JSON.parse(MODELS_BODY);
+              if (now < readyAt) response.data = response.data.slice(1);
+              return JSON.stringify(response);
+            }),
+          ),
+        }),
+      );
+      yield* TestClock.adjust("2 seconds");
+      assert.ok((yield* Fiber.join(fiber)).some((model) => model.providerID === "opencode-go"));
+    }),
+  );
+
   it.effect("names the provider each listed model came from", () =>
     Effect.gen(function* () {
       const models = yield* readCatalog({

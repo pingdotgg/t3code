@@ -210,6 +210,8 @@ const makeIdlingOpenCode2Instance = Effect.gen(function* () {
             ),
           ),
         );
+      case "/api/plugin":
+        return json(JSON.parse(OPENCODE_2_RESPONSES["/api/plugin"].body));
       case "/api/model":
       case "/api/provider":
         return json({
@@ -538,6 +540,13 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
               }),
             ),
           );
+        if (path === "/api/plugin")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(JSON.parse(OPENCODE_2_RESPONSES[path].body)),
+            ),
+          );
         if (path === "/api/model")
           return Effect.succeed(
             HttpClientResponse.fromWeb(
@@ -605,6 +614,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     (stalled) =>
       Effect.gen(function* () {
         const answers: Record<string, string> = {
+          "/api/plugin": OPENCODE_2_RESPONSES["/api/plugin"].body,
           "/api/info": OPENCODE_2_RESPONSES["/api/info"].body,
           "/api/debug/location": "[]",
           "/api/model": '{"location":{"directory":"/work"},"data":[]}',
@@ -661,6 +671,8 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         const afterScan = (body: string) =>
           Deferred.await(scanEnded).pipe(Effect.andThen(json(body)));
         switch (path) {
+          case "/api/plugin":
+            return json(OPENCODE_2_RESPONSES[path].body);
           case "/api/info":
             return json(
               JSON.stringify({
@@ -754,6 +766,8 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
             ),
           );
         case "/api/debug/location":
+        case "/api/plugin":
+          return json(JSON.parse(OPENCODE_2_RESPONSES["/api/plugin"].body));
           return json([]);
         case "/api/provider":
         case "/api/model":
@@ -1300,6 +1314,13 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
             HttpClientResponse.fromWeb(request, new Response(null, { status: 404 })),
           );
         if (path === "/api/model") modelReads += 1;
+        if (path === "/api/plugin")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(JSON.parse(OPENCODE_2_RESPONSES[path].body)),
+            ),
+          );
         const body =
           path === "/api/info"
             ? JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body)
@@ -1455,6 +1476,13 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           );
           return Deferred.succeed(usageStarted, undefined).pipe(Effect.as(response));
         }
+        if (path === "/api/plugin")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(JSON.parse(OPENCODE_2_RESPONSES[path].body)),
+            ),
+          );
         const body =
           path === "/api/info"
             ? JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body)
