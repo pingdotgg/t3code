@@ -1222,6 +1222,7 @@ describe("pools", () => {
             environments: [],
             sourceLabel: null,
             redeem: null,
+            cooldowns: [],
             limits: { checkedAt, windows: [{ ...window, usedPercent, resetsAt: order[index] }] },
           })),
           now,
