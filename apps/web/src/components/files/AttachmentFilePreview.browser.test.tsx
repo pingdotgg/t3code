@@ -2436,6 +2436,77 @@ it("renders EPUB publisher styles and follows an anchored link to a fixed-layout
   await vi.waitFor(() => expect(frame()?.contentDocument?.querySelector("#opening")).toBeTruthy());
 });
 
+it("highlights EPUB narration cues during playback and pauses on chapter change", async () => {
+  const sampleRate = 8_000;
+  const pcm = new Uint8Array(44 + sampleRate * 2 * 8);
+  const header = new DataView(pcm.buffer);
+  const encoder = new TextEncoder();
+  pcm.set(encoder.encode("RIFF"), 0);
+  pcm.set(encoder.encode("WAVEfmt "), 8);
+  pcm.set(encoder.encode("data"), 36);
+  header.setUint32(4, pcm.length - 8, true);
+  header.setUint32(16, 16, true);
+  header.setUint16(20, 1, true);
+  header.setUint16(22, 1, true);
+  header.setUint32(24, sampleRate, true);
+  header.setUint32(28, sampleRate * 2, true);
+  header.setUint16(32, 2, true);
+  header.setUint16(34, 16, true);
+  header.setUint32(40, pcm.length - 44, true);
+  const { default: JSZip } = await import("jszip");
+  const file = await new JSZip()
+    .file(
+      "META-INF/container.xml",
+      '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+    )
+    .file(
+      "book.opf",
+      `<package><manifest>
+      <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml" media-overlay="read"/>
+      <item id="end" href="end.xhtml" media-type="application/xhtml+xml"/>
+      <item id="read" href="read.smil" media-type="application/smil+xml"/>
+    </manifest><spine><itemref idref="chapter"/><itemref idref="end"/></spine></package>`,
+    )
+    .file(
+      "chapter.xhtml",
+      '<html><body><p id="first">First phrase</p><p id="second">Second phrase</p></body></html>',
+    )
+    .file("end.xhtml", "<html><body><p>End</p></body></html>")
+    .file(
+      "read.smil",
+      `<smil xmlns="http://www.w3.org/ns/SMIL"><body>
+      <par><text src="chapter.xhtml#first"/><audio src="audio.wav" clipEnd="4s"/></par>
+      <par><text src="chapter.xhtml#second"/><audio src="audio.wav" clipBegin="4s" clipEnd="8s"/></par>
+    </body></smil>`,
+    )
+    .file("audio.wav", pcm)
+    .generateAsync({ type: "blob" });
+  await using screen = await render(
+    <div style={{ display: "flex", height: 480, width: 360 }}>
+      <AttachmentFilePreview
+        name="read-along.epub"
+        mimeType="application/epub+zip"
+        sizeBytes={file.size}
+        file={file}
+      />
+    </div>,
+  );
+  const read = screen.getByRole("button", { name: "Read aloud" });
+  await expect.element(read).toBeVisible();
+  const player = screen.container.querySelector("audio")!;
+  player.muted = true;
+  const activePhrase = () =>
+    screen.container
+      .querySelector("iframe")
+      ?.contentDocument?.querySelector(".t3-epub-narration-active")?.id;
+  await read.click();
+  await vi.waitFor(() => expect(activePhrase()).toBe("first"));
+  player.currentTime = 4.1;
+  await vi.waitFor(() => expect(activePhrase()).toBe("second"));
+  await screen.getByRole("button", { name: "Next chapter" }).click();
+  await vi.waitFor(() => expect(player.paused).toBe(true));
+});
+
 it.each(["epub", "odt", "ipynb", "html", "encoded-html"] as const)(
   "bounds %s image pixels before returning browser markup",
   async (kind) => {
