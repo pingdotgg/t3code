@@ -36,6 +36,7 @@ import * as OpenRouterSignIn from "./OpenRouterSignIn.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
 import * as SpeechService from "./SpeechService.ts";
+import * as MathSpeech from "./MathSpeech.ts";
 import * as SpeechSynthesisStreams from "./synthesisStreams.ts";
 
 const MAX_TRANSCRIBE_BODY_BYTES = SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4;
@@ -145,6 +146,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       return wordTimingModel ? { ...catalog, wordTimingModel } : catalog;
     });
     const synthesisStreams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
+    const mathSpeech = yield* MathSpeech.MathSpeech;
     const mapInstallError = <A, R>(
       effect: Effect.Effect<A, LocalSpeechSynthesis.LocalSynthesisInstallError, R>,
     ) =>
@@ -221,6 +223,15 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
             args.payload.after,
             args.payload.levelsAfter,
           );
+        }),
+      )
+      .handle(
+        "speakMath",
+        Effect.fn("environment.voice.speakMath")(function* (args) {
+          yield* guard(args.endpoint.name);
+          return {
+            words: yield* mathSpeech.speak(args.payload.formulas, args.payload.language),
+          };
         }),
       )
       .handle(

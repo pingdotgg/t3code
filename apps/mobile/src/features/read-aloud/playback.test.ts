@@ -37,6 +37,7 @@ vi.mock("../../state/atom-registry", async () => {
   const Option = await import("effect/Option");
   return { appAtomRegistry: { get: () => Option.some({ environmentId: "host" }) } };
 });
+vi.mock("../../state/preferences", () => ({ mobilePreferencesAtom: {} }));
 vi.mock("../../state/session", () => ({
   environmentSession: { preparedConnectionValueAtom: () => null },
 }));

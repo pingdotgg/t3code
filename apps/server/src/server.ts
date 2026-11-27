@@ -55,6 +55,7 @@ import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as SpeechModelStore from "./speech/SpeechModelStore.ts";
 import * as LocalSpeechSynthesis from "./speech/LocalSpeechSynthesis.ts";
+import * as MathSpeech from "./speech/MathSpeech.ts";
 import * as SpeechAligner from "./speech/SpeechAligner.ts";
 import * as SpeechService from "./speech/SpeechService.ts";
 import * as CloudSpeech from "./speech/CloudSpeech.ts";
@@ -973,6 +974,7 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.mergeAll(
       SpeechService.layer.pipe(Layer.provide(layerServerSettings)),
       SpeechAligner.layer.pipe(Layer.provideMerge(LocalSpeechSynthesis.layer)),
+      MathSpeech.layer,
     ).pipe(Layer.provide(SpeechModelStore.layer)),
   ),
   Layer.provide(OpenRouterSignIn.layer),

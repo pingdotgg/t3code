@@ -15,6 +15,11 @@ const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "@koromix/",
   // The local speech worker imports it from disk to encode MP3 off the server's thread.
   "@breezystack/lamejs",
+  // Speech Rule Engine reads its rule files from beside its module, and requires these.
+  "speech-rule-engine",
+  "@xmldom/xmldom",
+  "commander",
+  "wicked-good-xpath",
   "@napi-rs/keyring",
   "@clerk/electron-passkeys",
   "node-gyp-build",

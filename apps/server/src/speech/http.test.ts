@@ -41,6 +41,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { speechHttpApiLayer } from "./http.ts";
+import * as MathSpeech from "./MathSpeech.ts";
 import * as OpenRouterSignIn from "./OpenRouterSignIn.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
@@ -95,6 +96,7 @@ effectIt.effect.each([false, true])(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
           Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
+          Layer.provide(Layer.mock(MathSpeech.MathSpeech)({})),
           Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
           Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)(local)),
           Layer.provide(
@@ -194,6 +196,7 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
     ).pipe(
       Layer.provide(speechHttpApiLayer),
       Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
+      Layer.provide(Layer.mock(MathSpeech.MathSpeech)({})),
       Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
       Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)({})),
       Layer.provide(principal(AuthOrchestrationOperateScope)),
@@ -330,6 +333,7 @@ effectIt.effect(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
           Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
+          Layer.provide(Layer.mock(MathSpeech.MathSpeech)({})),
           Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
           Layer.provide(local),
           Layer.provide(principalWith(scopes)),
@@ -516,6 +520,7 @@ effectIt.effect.each([
         HttpApiBuilder.layer(api).pipe(
           Layer.provide(speechHttpApiLayer),
           Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
+          Layer.provide(Layer.mock(MathSpeech.MathSpeech)({})),
           Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
           Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)({})),
           Layer.provide(principal(AuthOrchestrationOperateScope)),
@@ -587,6 +592,7 @@ effectIt.effect("tells the client why transcript cleanup failed", () =>
       HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
         Layer.provide(speechHttpApiLayer),
         Layer.provide(Layer.mock(OpenRouterSignIn.OpenRouterSignIn)({})),
+        Layer.provide(Layer.mock(MathSpeech.MathSpeech)({})),
         Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironment)({})),
         Layer.provide(principal(AuthOrchestrationOperateScope)),
         Layer.provide(Layer.mock(SpeechService.SpeechService)({})),

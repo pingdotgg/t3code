@@ -51,6 +51,7 @@ export {
   downloadSpeechSynthesisModel,
   getSpeechSynthesisModels,
   getSpeechSynthesisTimings,
+  speakSpeechMath,
   linkSpeechSynthesisModels,
   prepareSpeechSynthesis,
   removeSpeechSynthesisModel,

@@ -1,4 +1,4 @@
-import { m } from "../../i18n/messages";
+import { getActiveLocale, m } from "../../i18n/messages";
 import {
   createReadAloudController,
   createReadAloudWarmup,
@@ -10,9 +10,12 @@ import {
   getSpeechSynthesisModels,
   getSpeechSynthesisTimings,
   prepareSpeechSynthesis,
+  speakSpeechMath,
   startSpeechSynthesis,
 } from "@t3tools/client-runtime/voice-input";
-import { spokenWordAt } from "@t3tools/shared/read-aloud";
+import { markdownMathRanges } from "@t3tools/shared/markdownMath";
+import { spokenWordAt, type SpeakMath } from "@t3tools/shared/read-aloud";
+import { AsyncResult } from "effect/reactivity";
 import { createAudioPlayer } from "expo-audio";
 import * as Speech from "expo-speech";
 import * as Option from "effect/Option";
@@ -23,6 +26,7 @@ import {
   type SpeechSynthesisCatalog,
 } from "@t3tools/contracts";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { environmentSession } from "../../state/session";
 import { createAudioPlaybackSession, disposeAudioPlayer } from "../../lib/audioSession";
 import { runSpeech } from "../voice-input/voiceDestination";
@@ -129,6 +133,33 @@ export const warmReadAloud = createReadAloudWarmup(async (environmentId, model) 
   if (!prepared) throw new Error("The read-aloud environment is not connected.");
   await runSpeech(prepareSpeechSynthesis(prepared, model));
 });
+
+/**
+ * Words for the reply's formulas when replies render math, as screen readers say them. React Native
+ * cannot run Speech Rule Engine, so the read-aloud environment reads them; without math rendering,
+ * or without an environment, the reply's TeX is what is read.
+ */
+function prepareReadAloudMath(markdown: string): Promise<SpeakMath> | undefined {
+  const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+  if (!AsyncResult.isSuccess(preferences) || !preferences.value.mathRenderingEnabled)
+    return undefined;
+  const environmentId = preferences.value.readAloud?.environmentId;
+  const prepared = environmentId
+    ? Option.getOrNull(
+        appAtomRegistry.get(environmentSession.preparedConnectionValueAtom(environmentId)),
+      )
+    : null;
+  const formulas = markdownMathRanges(markdown);
+  if (!prepared || formulas.length === 0) return undefined;
+  return runSpeech(speakSpeechMath(prepared, formulas, getActiveLocale())).then(
+    ({ words }) => {
+      const spoken = new Map(formulas.map((formula, index) => [formula.tex, words[index]]));
+      return (tex: string) => spoken.get(tex) ?? undefined;
+    },
+    // An environment without formula speech reads the TeX, as the reply would without rendering.
+    () => () => undefined,
+  );
+}
 
 export const readAloudController = createReadAloudController(
   async (text, settings, signal, from) => {
@@ -269,4 +300,5 @@ export const readAloudController = createReadAloudController(
     };
   },
   m,
+  prepareReadAloudMath,
 );

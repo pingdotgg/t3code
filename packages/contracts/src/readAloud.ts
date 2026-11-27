@@ -121,6 +121,20 @@ export const SpeechSynthesisTimings = Schema.Struct({
   durationSeconds: Schema.optionalKey(Schema.Finite),
 });
 export type SpeechSynthesisTimings = typeof SpeechSynthesisTimings.Type;
+/** A reply's formulas as TeX, each set as a block (`display`) or inline, to be read as words. */
+export const SpeechMathRequest = Schema.Struct({
+  formulas: Schema.Array(
+    Schema.Struct({
+      tex: Schema.String.check(Schema.isMaxLength(SPEECH_SYNTHESIS_MAX_TEXT)),
+      display: Schema.Boolean,
+    }),
+  ).check(Schema.isMaxLength(1_000)),
+  /** The app's language; formulas are read in English where the environment has no rules for it. */
+  language: Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(16)),
+});
+/** The words for each formula, in order, as screen readers say them; null for one read as its TeX. */
+export const SpeechMath = Schema.Struct({ words: Schema.Array(Schema.NullOr(Schema.String)) });
+export type SpeechMath = typeof SpeechMath.Type;
 export const SpeechSynthesisModelInstall = Schema.Struct({
   state: Schema.Literals(["downloadable", "downloading", "verifying", "installed"]),
   /** Bytes to download, including the speech runtime when this environment lacks it. */

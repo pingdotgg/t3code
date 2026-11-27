@@ -447,6 +447,24 @@ export const getSpeechSynthesisTimings = (
   });
 };
 
+/** Words for formulas, read by the environment for clients that cannot run Speech Rule Engine. */
+export const speakSpeechMath = (
+  prepared: PreparedConnection,
+  formulas: ReadonlyArray<{ readonly tex: string; readonly display: boolean }>,
+  language: string,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.speakMath(),
+    run: ({ client, headers }) =>
+      client.speakMath({
+        headers,
+        payload: { formulas: formulas.map(({ tex, display }) => ({ tex, display })), language },
+      }),
+  });
+
 /** Loads the environment's local model ahead of playback; an empty model is its default. */
 export const prepareSpeechSynthesis = (prepared: PreparedConnection, model: string) =>
   request({
