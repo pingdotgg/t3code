@@ -545,7 +545,7 @@ export default function DiffPanel({
   const commitLinkIdentity = gitRepository === null ? activeProject?.repositoryIdentity : null;
   const selectedCommitUrl =
     headerCommitSha !== null ? projectCommitUrl(commitLinkIdentity, headerCommitSha) : null;
-  const openLink = useOpenLink(routeThreadRef);
+  const openLink = useOpenLink(panelThreadRef);
   // A SHA link goes to the code host; it must not route back into this pane's commit selection.
   const openCommitUrl = (event: MouseEvent<HTMLElement>, url: string) => {
     event.stopPropagation();
