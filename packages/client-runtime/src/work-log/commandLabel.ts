@@ -20,14 +20,34 @@ const TIMEOUT_OPTION =
 const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
 const SHELL_PRECOMMAND_MODIFIERS = new Set(["nocorrect", "noglob", "time"]);
 const POWERSHELL_SETUP_PROGRAMS = new Set(["pop-location", "push-location", "set-location"]);
-const POWERSHELL_FLAGS = new Set(["-mta", "-nologo", "-noninteractive", "-noprofile", "-sta"]);
+const POWERSHELL_FLAGS = new Set([
+  "-mta",
+  "-nol",
+  "-nologo",
+  "-noni",
+  "-noninteractive",
+  "-nop",
+  "-noprofile",
+  "-sta",
+]);
 const POWERSHELL_OPTIONS_WITH_VALUE = new Set([
+  "-config",
   "-configurationname",
+  "-ep",
+  "-ex",
   "-executionpolicy",
+  "-if",
+  "-inp",
   "-inputformat",
+  "-o",
+  "-of",
   "-outputformat",
+  "-v",
   "-version",
+  "-w",
+  "-wd",
   "-windowstyle",
+  "-wo",
   "-workingdirectory",
 ]);
 const START_PROCESS_FLAGS = new Set([
