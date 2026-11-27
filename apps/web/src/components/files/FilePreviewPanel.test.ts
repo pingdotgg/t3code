@@ -490,6 +490,16 @@ Third}`;
       const blank = { nbformat: 4, metadata: { language_info: { name } }, cells: [] };
       expect(openNotebook(bytes(JSON.stringify(blank)))).toMatchObject({ language: "text" });
     }
+    const kernelspec = { name: "python3", display_name: "Python 3", language: "python" };
+    for (const [metadata, language] of [
+      [{ kernelspec }, "python"],
+      [{ language_info: { name: "" }, kernelspec }, "python"],
+      [{ language_info: { name: "python" }, kernelspec: { language: "r" } }, "python"],
+    ] as const) {
+      expect(
+        openNotebook(bytes(JSON.stringify({ nbformat: 4, metadata, cells: [] }))),
+      ).toMatchObject({ language });
+    }
     // IPython traceback frames can omit trailing newlines or place ANSI resets after them.
     const failed = openNotebook(
       bytes(

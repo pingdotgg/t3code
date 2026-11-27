@@ -304,8 +304,9 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   const notebook = record(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
   if (notebook.nbformat !== 4 || !Array.isArray(notebook.cells) || notebook.cells.length > 500)
     throw new PreviewError({ code: "notebook-unsupported" });
+  const metadata = record(notebook.metadata);
   const language =
-    String(record(record(notebook.metadata).language_info).name ?? "")
+    String(record(metadata.language_info).name || record(metadata.kernelspec).language || "")
       .replaceAll(/[^a-z\d+#-]/gi, "")
       .slice(0, 40) || "text";
   const cells: NotebookCell[] = notebook.cells.map((value) => {
