@@ -58,6 +58,7 @@ import {
 } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
+  Component,
   lazy,
   Suspense,
   useEffect,
@@ -68,6 +69,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
+import { useLayoutStore } from "~/layout/layoutStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -690,12 +693,47 @@ interface FileRevealState {
   /** The path's code view offset when it last unmounted, restored when it is shown again. */
   scrollTop: number;
   scrollContainer: HTMLElement | null;
+  detachScrollListener: (() => void) | null;
   restoreFrameId: number | null;
 }
 
 // A file pane tab unmounts while another tab of its pane shows, so its offset outlives the panel.
 const savedFileScrollTops = new Map<string, number>();
 const SAVED_FILE_SCROLL_TOPS_LIMIT = 200;
+
+// Snapshot connected file scrollers before tab switches mutate the DOM so unmount never forces layout.
+const activeFileScrollSnapshots = new Set<() => void>();
+let fileScrollStoreSubscribed = false;
+
+function ensureFileScrollStoreSubscriptions() {
+  if (fileScrollStoreSubscribed) return;
+  fileScrollStoreSubscribed = true;
+  const snapshotAll = () => {
+    for (const snapshot of activeFileScrollSnapshots) snapshot();
+  };
+  useLayoutStore.subscribe((state, previous) => {
+    if (state.layout !== previous.layout) snapshotAll();
+  });
+  useRightPanelStore.subscribe((state, previous) => {
+    if (state.byThreadKey !== previous.byThreadKey) snapshotAll();
+  });
+}
+
+class FileScrollSnapshot extends Component<{
+  relativePath: string | null;
+  snapshot: () => void;
+}> {
+  override getSnapshotBeforeUpdate(previous: Readonly<{ relativePath: string | null }>) {
+    if (previous.relativePath !== this.props.relativePath) this.props.snapshot();
+    return null;
+  }
+
+  override componentDidUpdate() {}
+
+  override render() {
+    return null;
+  }
+}
 
 function saveFileScrollTop(key: string, scrollTop: number) {
   savedFileScrollTops.delete(key);
@@ -711,10 +749,18 @@ function useFileLineReveal(
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
-): FilePostRender {
+): { onPostRender: FilePostRender; snapshotScroll: () => void } {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
 
-  return (fileContainer, instance, phase) => {
+  const snapshotScroll = () => {
+    for (const state of revealStatesByPath.values()) {
+      if (state.scrollContainer?.isConnected && state.restoreFrameId === null) {
+        state.scrollTop = state.scrollContainer.scrollTop;
+      }
+    }
+  };
+
+  const onPostRender: FilePostRender = (fileContainer, instance, phase) => {
     if (relativePath === null) return;
 
     const scrollKey = `${scrollScope}\u0000${relativePath}`;
@@ -726,6 +772,7 @@ function useFileLineReveal(
       latestRequestId: null,
       scrollTop: savedFileScrollTops.get(scrollKey) ?? 0,
       scrollContainer: null,
+      detachScrollListener: null,
       restoreFrameId: null,
     };
     if (!existingState) revealStatesByPath.set(relativePath, state);
@@ -745,10 +792,9 @@ function useFileLineReveal(
     const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
 
     if (phase === "unmount") {
-      // A view torn down before its restore ran never showed the saved offset, so keep it.
-      const restorePending = state.restoreFrameId !== null;
       cancelPendingReveal();
-      if (scrollContainer && !restorePending) state.scrollTop = scrollContainer.scrollTop;
+      state.detachScrollListener?.();
+      state.detachScrollListener = null;
       saveFileScrollTop(scrollKey, state.scrollTop);
       state.scrollContainer = null;
       return;
@@ -768,7 +814,20 @@ function useFileLineReveal(
     }
 
     if (scrollContainer && state.scrollContainer !== scrollContainer) {
+      state.detachScrollListener?.();
       state.scrollContainer = scrollContainer;
+      ensureFileScrollStoreSubscriptions();
+      const syncScrollTop = () => {
+        if (state.restoreFrameId === null && scrollContainer.isConnected) {
+          state.scrollTop = scrollContainer.scrollTop;
+        }
+      };
+      scrollContainer.addEventListener("scroll", syncScrollTop, { passive: true });
+      activeFileScrollSnapshots.add(syncScrollTop);
+      state.detachScrollListener = () => {
+        scrollContainer.removeEventListener("scroll", syncScrollTop);
+        activeFileScrollSnapshots.delete(syncScrollTop);
+      };
       const savedScrollTop = state.scrollTop;
       // A pending line reveal owns the scroll position.
       if (
@@ -778,7 +837,11 @@ function useFileLineReveal(
         const restoreScroll = (attempt: number) => {
           state.restoreFrameId = requestAnimationFrame(() => {
             state.restoreFrameId = null;
-            if (!scrollContainer.isConnected || scrollContainer.scrollTop !== 0) return;
+            if (!scrollContainer.isConnected) return;
+            if (scrollContainer.scrollTop !== 0) {
+              state.scrollTop = scrollContainer.scrollTop;
+              return;
+            }
             // Wait for the virtualizer to size the file so the offset is not clamped.
             const fits =
               scrollContainer.scrollHeight - scrollContainer.clientHeight >= savedScrollTop;
@@ -908,6 +971,8 @@ function useFileLineReveal(
 
     scheduleReveal(0);
   };
+
+  return { onPostRender, snapshotScroll };
 }
 
 const EMPTY_REVIEW_COMMENTS: ReadonlyArray<ReviewCommentContext> = [];
@@ -1615,7 +1680,7 @@ export default function FilePreviewPanel({
   // Mentions resolve against the workspace, so only workspace files can be added.
   const canAddToChat =
     previewPath !== null && relativePath !== null && !isHostFile && composerRef !== null;
-  const onFilePostRender = useFileLineReveal(
+  const { onPostRender: onFilePostRender, snapshotScroll: snapshotFileScroll } = useFileLineReveal(
     `${environmentId}\u0000${cwd}`,
     relativePath,
     revealLine,
@@ -1898,6 +1963,7 @@ export default function FilePreviewPanel({
       ref={setSurfaceElement}
       className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
     >
+      <FileScrollSnapshot relativePath={relativePath} snapshot={snapshotFileScroll} />
       {fileHeader ? (
         <div className={FILE_SURFACE_SUBHEADER_CLASS} data-surface-subheader>
           {fileHeader.crumbs}
