@@ -724,21 +724,23 @@ export function UsageLimitsPooled({
       </Popover>
       {quotaSources.map((source) => (
         <section key={source.key} className="space-y-3 rounded-xl border p-4">
-          <h2 className="text-sm font-medium">{source.label}</h2>
+          <h2 className="text-label text-foreground">{source.label}</h2>
           {source.quotaAccounts?.map((account) => (
             <div key={account.id} className="space-y-1">
-              <h3 className="text-sm font-medium">{account.label}</h3>
+              <h3 className="text-label text-foreground">{account.label}</h3>
               {account.windows.map((window) => {
                 const reset = formatResetsIn(window, now, m);
                 return (
                   <div
                     key={window.id}
-                    className="flex justify-between gap-3 text-sm text-muted-foreground"
+                    className="flex justify-between gap-3 text-body text-muted-foreground"
                   >
                     <span>{window.label}</span>
-                    <span>
-                      {gt("{remaining}% left", { remaining: remainingPercent(window) })}
-                      {reset ? ` · ${reset}` : ""}
+                    <span className="inline-flex items-baseline gap-2">
+                      <span>
+                        {gt("{remaining}% left", { remaining: remainingPercent(window) })}
+                      </span>
+                      {reset ? <span>{reset}</span> : null}
                     </span>
                   </div>
                 );
