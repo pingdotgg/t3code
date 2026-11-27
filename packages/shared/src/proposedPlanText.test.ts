@@ -79,7 +79,7 @@ it("strips the summary after a title that follows a code example", () => {
   const code = "```sh\nnode x\n```";
   const markdown = `${code}\n\n# Release plan\n\n## Summary\n\nBody`;
   const body = unified().use(remarkParse).parse(stripDisplayedPlanMarkdown(markdown));
-  expect(body.children.filter((node) => node.type !== "html")).toMatchObject([
+  expect(body.children.filter((node) => node.type !== "definition")).toMatchObject([
     { type: "code", lang: "sh", value: "node x" },
     { type: "paragraph", children: [{ type: "text", value: "Body" }] },
   ]);

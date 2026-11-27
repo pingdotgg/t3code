@@ -66,8 +66,13 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
       .slice(firstPreambleBlock?.start ?? contentStart, title.index)
       .join("\n")
       .trimEnd();
-    // A blank line alone would merge some adjacent blocks, including ordered lists.
-    return body ? `${before}\n\n<!-- -->\n\n${body}` : before;
+    if (!body) return before;
+    // A link definition keeps adjacent lists separate even when mobile strips HTML comments.
+    // Use a label absent from the plan so the definition cannot resolve an authored reference.
+    const usedLabels = new Set(`${before}\n${body}`.match(/\d+/g));
+    let label = 0;
+    while (usedLabels.has(String(label))) label += 1;
+    return `${before}\n\n[${label}]: <>\n\n${body}`;
   }
   if (!firstPreambleBlock) return body;
   const preamble = preambleBlocks
