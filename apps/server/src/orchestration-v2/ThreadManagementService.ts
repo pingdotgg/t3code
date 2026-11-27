@@ -51,6 +51,7 @@ import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentPro
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -127,6 +128,8 @@ function existingThreadIdsForCommand(
     // while a thread is open, so keeping them off the import path matters.
     case "thread.visit":
     case "thread.mark-unread":
+    // Tag renames never touch messages either.
+    case "thread.tag.rename":
       return [];
     case "thread.fork":
       return [command.sourceThreadId];
@@ -543,7 +546,7 @@ export interface ThreadManagementServiceShape {
   readonly forceStopThread: (
     input: OrchestrationV2ForceStopThreadInput,
   ) => Effect.Effect<OrchestrationV2ForceStopThreadResult, OrchestrationV2ForceStopThreadError>;
-  /** One `thread.tag.rename` per thread carrying the tag, keyed off the input command id. */
+  /** One `thread.tag.rename` over every thread carrying the tag, so the rename lands whole. */
   readonly renameThreadTag: (
     input: OrchestrationV2RenameThreadTagInput,
   ) => Effect.Effect<OrchestrationV2RenameThreadTagResult, OrchestrationV2RenameThreadTagError>;
@@ -1631,21 +1634,18 @@ const make = Effect.gen(function* () {
   )(
     function* ({ commandId, from, to }) {
       const threadIds = yield* orchestrator.listThreadIdsWithTag(from);
-      if (to !== from) {
-        yield* Effect.forEach(
-          threadIds,
-          (threadId) =>
-            orchestrator.dispatch({
-              type: "thread.tag.rename",
-              commandId: CommandId.make(`${commandId}:${threadId}`),
-              threadId,
-              from,
-              to,
-            }),
-          { discard: true },
-        );
-      }
-      return { threadCount: threadIds.length };
+      if (to === from || !Arr.isReadonlyArrayNonEmpty(threadIds)) return { threadCount: 0 };
+      const { storedEvents } = yield* orchestrator.dispatch({
+        type: "thread.tag.rename",
+        commandId,
+        threadIds,
+        from,
+        to,
+      });
+      return {
+        threadCount: storedEvents.filter(({ event }) => event.type === "thread.tags-updated")
+          .length,
+      };
     },
     (effect, input) =>
       effect.pipe(

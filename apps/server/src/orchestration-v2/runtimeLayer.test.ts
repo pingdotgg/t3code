@@ -4078,23 +4078,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       };
       assert.deepEqual(yield* tagsOf(), renamed);
 
-      // A retried rename finds nothing left to move, and a replayed thread command is a no-op.
+      // A retried rename finds nothing left to move.
       assert.deepEqual(yield* threadManagement.renameThreadTag(rename), { threadCount: 0 });
-      const replayed = yield* orchestrator.dispatch({
-        type: "thread.tag.rename",
-        commandId: CommandId.make(`${rename.commandId}:${threadId("plain")}`),
-        threadId: threadId("plain"),
-        from: "folder",
-        to: "renamed",
-      });
-      assert.isTrue(replayed.replayed);
-      yield* orchestrator.dispatch({
+      const stale = yield* orchestrator.dispatch({
         type: "thread.tag.rename",
         commandId: CommandId.make("runtime-layer-tag-rename-stale"),
-        threadId: threadId("plain"),
+        threadIds: [threadId("plain")],
         from: "folder",
         to: "other",
       });
+      assert.deepEqual(stale.storedEvents, []);
       assert.deepEqual(yield* tagsOf(), renamed);
 
       assert.deepEqual(
@@ -4114,6 +4107,86 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         untagged: [],
       });
     }),
+  );
+
+  it.effect(
+    "a tag rename skips deleted and missing threads and replays from a deleted first thread's receipt",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const projectId = ProjectId.make("runtime-layer-tag-batch-project");
+        yield* seedProject({
+          projectId,
+          title: "Tag batch project",
+          workspaceRoot: "/workspace/tag-batch",
+          defaultModelSelection: null,
+          createdAt: "2026-09-07T00:00:00.000Z",
+        });
+        const threadId = (name: string) => ThreadId.make(`runtime-layer-tag-batch-${name}`);
+        const seedThread = Effect.fn(function* (name: string, tags: ReadonlyArray<string>) {
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`runtime-layer-tag-batch-create-${name}`),
+            threadId: threadId(name),
+            projectId,
+            title: name,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          for (const tag of tags) {
+            yield* orchestrator.dispatch({
+              type: "thread.tag.set",
+              commandId: CommandId.make(`runtime-layer-tag-batch-tag-${name}-${tag}`),
+              threadId: threadId(name),
+              tag,
+              tagged: true,
+            });
+          }
+        });
+        yield* seedThread("first", ["folder"]);
+        yield* seedThread("deleted", ["folder"]);
+        yield* seedThread("second", ["folder"]);
+        yield* orchestrator.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("runtime-layer-tag-batch-delete"),
+          threadId: threadId("deleted"),
+        });
+
+        const rename = {
+          type: "thread.tag.rename",
+          commandId: CommandId.make("runtime-layer-tag-batch-rename"),
+          threadIds: [
+            threadId("deleted"),
+            threadId("first"),
+            threadId("never-existed"),
+            threadId("second"),
+          ],
+          from: "folder",
+          to: "renamed",
+        } as const;
+        const result = yield* orchestrator.dispatch(rename);
+        assert.deepEqual(
+          result.storedEvents.map(({ event }) => [event.type, event.threadId]),
+          [
+            ["thread.tags-updated", threadId("first")],
+            ["thread.tags-updated", threadId("second")],
+          ],
+        );
+        const tagsOf = (name: string) =>
+          orchestrator
+            .getThreadProjection(threadId(name))
+            .pipe(Effect.map((projection) => projection.thread.tags ?? []));
+        assert.deepEqual(yield* tagsOf("first"), ["renamed"]);
+        assert.deepEqual(yield* tagsOf("second"), ["renamed"]);
+        const replayed = yield* orchestrator.dispatch(rename);
+        assert.isTrue(replayed.replayed);
+        assert.deepEqual(replayed.storedEvents, result.storedEvents);
+      }),
   );
 
   it.effect("keeps the branch pull request when linking another pull request", () =>

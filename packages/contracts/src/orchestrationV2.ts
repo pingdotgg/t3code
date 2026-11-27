@@ -3851,11 +3851,11 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
-  // One thread's share of `orchestration.renameThreadTag`; a null `to` removes the tag.
+  // `orchestration.renameThreadTag` over the threads that carried `from`; a null `to` removes the tag.
   Schema.Struct({
     type: Schema.Literal("thread.tag.rename"),
     commandId: CommandId,
-    threadId: ThreadId,
+    threadIds: Schema.NonEmptyArray(ThreadId),
     from: ThreadTag,
     to: Schema.NullOr(ThreadTag),
   }),
@@ -4579,7 +4579,7 @@ export const OrchestrationV2RenameThreadTagInput = Schema.Struct({
 export type OrchestrationV2RenameThreadTagInput = typeof OrchestrationV2RenameThreadTagInput.Type;
 
 export const OrchestrationV2RenameThreadTagResult = Schema.Struct({
-  /** Threads that carried `from` when the server read them. */
+  /** Threads whose tags the rename changed. */
   threadCount: NonNegativeInt,
 });
 export type OrchestrationV2RenameThreadTagResult = typeof OrchestrationV2RenameThreadTagResult.Type;
