@@ -2226,6 +2226,147 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  // regression: #44241 a subagent resumed with write_agent gets no new subagent.started.
+  it.effect("routes a resumed Copilot subagent's output to its task without waking the root", () =>
+    Effect.gen(function* () {
+      const sessionId = "copilot-session";
+      const sessionEvent = (type: string, data: object = {}, agentId?: string) => ({
+        type: "emit_inbound",
+        frame: {
+          kind: "notification",
+          method: "github.com/copilot/sessionEvent",
+          params: { sessionId, type, data, ...(agentId ? { agentId } : {}) },
+        },
+      });
+      const update = (sessionUpdate: Record<string, unknown>) =>
+        claudeFrames.update(sessionId, sessionUpdate);
+      const agentMeta = { "github.com/copilot": { agentId: "agent-1" } };
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "Copilot", version: "1.0.116" },
+                agentCapabilities: { loadSession: true },
+                authMethods: [],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/new", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: { kind: "response", method: "session/new", result: { sessionId } },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          sessionEvent("assistant.turn_start"),
+          update({
+            sessionUpdate: "tool_call",
+            toolCallId: "task-1",
+            title: "Review",
+            kind: "other",
+            status: "pending",
+            rawInput: {
+              description: "Review",
+              prompt: "Review the change.",
+              agent_type: "general-purpose",
+              mode: "background",
+            },
+          }),
+          sessionEvent("subagent.started", { toolCallId: "task-1" }, "agent-1"),
+          update({
+            sessionUpdate: "tool_call_update",
+            toolCallId: "task-1",
+            status: "completed",
+            rawOutput: { content: "Agent started in background with agent_id: agent-1." },
+          }),
+          sessionEvent("subagent.completed", { toolCallId: "task-1" }, "agent-1"),
+          update({
+            sessionUpdate: "tool_call",
+            toolCallId: "write-agent-1",
+            title: "write_agent",
+            kind: "other",
+            status: "completed",
+            rawInput: { agent_id: "agent-1", message: "Check again." },
+          }),
+          update({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Asked the reviewer again." },
+          }),
+          sessionEvent("assistant.idle"),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          update({ sessionUpdate: "session_info_update", title: "after foreground idle" }),
+          // The resumed subagent's turn: agentId and the original task id, no subagent.started.
+          sessionEvent("assistant.turn_start", { parentToolCallId: "task-1" }, "agent-1"),
+          update({
+            sessionUpdate: "tool_call",
+            toolCallId: "view-1",
+            title: "Viewing a.txt",
+            kind: "read",
+            status: "completed",
+            rawInput: { path: "a.txt" },
+            _meta: agentMeta,
+          }),
+          sessionEvent("assistant.message_delta", { deltaContent: "Still looks good." }, "agent-1"),
+          update({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Still looks good." },
+            _meta: agentMeta,
+          }),
+          sessionEvent("assistant.idle", {}, "agent-1"),
+          update({ sessionUpdate: "session_info_update", title: "after resumed output" }),
+        ],
+        undefined,
+        true,
+        "github-copilot-cli",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const foreground = yield* session.throughMarker("after foreground idle");
+      assert.isDefined(foreground.find((event) => event.type === "turn.terminal"));
+      const resumed = yield* session.throughMarker("after resumed output");
+      assert.lengthOf(session.offers, 0, "subagent output must not wake the parent");
+      const parentThreadId = session.turnInput(1).threadId;
+      assert.isFalse(
+        resumed.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId === parentThreadId &&
+            JSON.stringify(event.turnItem).includes("Still looks good."),
+        ),
+        "the resumed subagent's reply must not land in the parent thread",
+      );
+      assert.isTrue(
+        resumed.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId !== parentThreadId &&
+            JSON.stringify(event.turnItem).includes("Still looks good."),
+        ),
+        "the resumed subagent's reply reaches its subagent thread",
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   // regression: #38599 Hermes replies on its own when a background process it started exits
   it.effect.each([
     { launch: "hermes acp", commandPath: "hermes", commandArgs: ["acp"] },
