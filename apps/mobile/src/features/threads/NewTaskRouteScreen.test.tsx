@@ -214,7 +214,9 @@ it("cancels the No project draft retarget when another project is picked", async
   await act(async () => screen.opening.resolve({ _tag: "Success", value: scratch }));
   const scratchSignal = vi
     .mocked(retargetSavedNewTaskDraft)
-    .mock.calls.find(([, target]) => target.projectId === scratch.id)?.[2];
+    .mock.calls.find(([, target]) => target.projectId === scratch.id)?.[2] as
+    | AbortSignal
+    | undefined;
   expect(scratchSignal?.aborted).toBe(false);
   await act(async () => screen.row("app").click());
   expect(scratchSignal?.aborted).toBe(true);

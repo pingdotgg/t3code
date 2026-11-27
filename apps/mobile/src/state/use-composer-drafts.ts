@@ -2087,11 +2087,12 @@ export function retargetNewTaskDraft(
 export async function retargetSavedNewTaskDraft(
   draftKey: string,
   project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
-  signal?: AbortSignal,
+  /** Checked right before the write, after every await. */
+  cancelled?: AbortSignal | (() => boolean),
 ): Promise<boolean> {
   await waitForComposerDraftsLoaded();
-  if (signal?.aborted || appAtomRegistry.get(composerDraftsAtom)[draftKey] === undefined)
-    return false;
+  const isCancelled = typeof cancelled === "function" ? cancelled() : cancelled?.aborted;
+  if (isCancelled || appAtomRegistry.get(composerDraftsAtom)[draftKey] === undefined) return false;
   retargetNewTaskDraft(draftKey, project);
   return true;
 }

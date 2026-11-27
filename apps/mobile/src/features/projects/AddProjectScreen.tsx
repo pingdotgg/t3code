@@ -800,10 +800,11 @@ function useOpenNewTaskDraft() {
         : null;
     const carried =
       chooserDraft !== null &&
-      (await retargetSavedNewTaskDraft(chooserDraft, {
-        environmentId: params.environmentId,
-        projectId: params.projectId,
-      }).catch(() => false));
+      (await retargetSavedNewTaskDraft(
+        chooserDraft,
+        { environmentId: params.environmentId, projectId: params.projectId },
+        () => !isActiveRoute(navigation, originRoute),
+      ).catch(() => false));
     if (!isActiveRoute(navigation, originRoute)) return;
     selectDetail({
       name: "Thread",
@@ -826,14 +827,18 @@ async function carryDraftTo(
 ): Promise<{ readonly draftId?: string } | null> {
   try {
     await waitForComposerDraftsLoaded();
-    // Checked once drafts are loaded, right before either write.
-    if (!isOriginActive()) return null;
+    // The origin route is checked at each write point, after every await.
     if (
       carried.draftId &&
-      (await retargetSavedNewTaskDraft(carried.draftId, { environmentId, projectId }))
+      (await retargetSavedNewTaskDraft(
+        carried.draftId,
+        { environmentId, projectId },
+        () => !isOriginActive(),
+      ))
     ) {
       return { draftId: carried.draftId };
     }
+    if (!isOriginActive()) return null;
     if (!carried.prompt) return {};
     const draftId = createNewTaskDraft({ environmentId, projectId });
     setComposerDraftText(draftId, carried.prompt);
