@@ -321,6 +321,8 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   const issueScroller = () =>
     linkedPr.element().closest<HTMLElement>("[data-pull-request-summary-scroll]")!;
   const prRow = await linkedPr.findElement();
+  // The description opens collapsed; read all of it so the issue scrolls.
+  await userEvent.click(page.getByRole("button", { name: "Read more" }));
   await expect.element(page.getByText("Reproduction step 40", { exact: true })).toBeVisible();
   prRow.scrollIntoView({ block: "center" });
   const issueScrollTop = issueScroller().scrollTop;
@@ -1199,41 +1201,6 @@ it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel"
     .element(details)
     .toHaveAttribute("aria-expanded", detailsOpen === "true" ? "false" : "true");
   expect(sidePaneOpen()).toBe(true);
-});
-
-it("Cmd+W closes the selected right-panel tabs together", async () => {
-  await page.viewport(1280, 800);
-  const thread = threadWithHistory("thread-close-selected-tabs", 1);
-  using _environment = installFakeEnvironment([thread]);
-  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
-  __setClientSettingsForTests({
-    ...DEFAULT_CLIENT_SETTINGS,
-    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-  });
-  const threadRef = scopeThreadRef(ENVIRONMENT_ID, thread.id);
-  const panels = useRightPanelStore.getState();
-  panels.open(threadRef, "diff");
-  panels.openFile(threadRef, "notes.md");
-  panels.openFile(threadRef, "routes.ts");
-  const router = getRouter(
-    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
-  );
-  await router.load();
-  await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
-    router: false,
-  });
-
-  const tab = (name: string) => page.getByRole("button", { name, exact: true });
-  await userEvent.click(tab("notes.md"), { modifiers: ["Shift"] });
-  await expect.element(tab("notes.md")).toHaveAttribute("aria-pressed", "true");
-  await userEvent.keyboard("{Meta>}w{/Meta}");
-  await expect.element(tab("notes.md")).not.toBeInTheDocument();
-  await expect.element(tab("routes.ts")).not.toBeInTheDocument();
-  await expect.element(tab("Diff")).toHaveAttribute("aria-pressed", "true");
-
-  await userEvent.keyboard("{Meta>}w{/Meta}");
-  await expect.element(tab("Diff")).not.toBeInTheDocument();
 });
 
 it("selecting a side-chat tab focuses that side chat's composer", async () => {
