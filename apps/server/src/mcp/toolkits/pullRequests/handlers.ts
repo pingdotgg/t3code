@@ -266,6 +266,20 @@ function projectForPullRequest(
   return projects.find(matches);
 }
 
+/** The project whose own repositories, on any of their hosts, include `repository`. */
+function projectHoldingRepository(
+  projects: ReadonlyArray<OrchestrationProjectShell>,
+  repository: string,
+  preferred: OrchestrationProjectShell,
+): OrchestrationProjectShell | undefined {
+  const holds = (project: OrchestrationProjectShell) =>
+    ownPullRequestRepositories(project.repositoryIdentity).some(({ key }) =>
+      projectForPullRequest([project], { host: key.host, repository }, undefined),
+    );
+  if (holds(preferred)) return preferred;
+  return projects.find(holds);
+}
+
 const isPushHooksUnapproved = Schema.is(GitManager.GitPushHooksUnapprovedError);
 
 const PUSH_HOOKS_DECLINED =
@@ -601,6 +615,17 @@ const make = Effect.gen(function* () {
     if (project === undefined) {
       return yield* new PullRequestProjectNotFoundError({ repository: input.repository ?? "" });
     }
+    // A repository another registered project holds is on that project's host and forge.
+    const holder =
+      input.number === undefined || input.repository === undefined
+        ? project
+        : (projectHoldingRepository(
+            yield* projects
+              .listShells()
+              .pipe(Effect.mapError((cause) => new PullRequestForgeError({ cause }))),
+            input.repository,
+            project,
+          ) ?? project);
     // Status sync sets branchPullRequest later, so a PR this thread just opened counts too,
     // unless it is another branch's.
     const opened =
@@ -623,9 +648,9 @@ const make = Effect.gen(function* () {
           ? null
           : { number: branchPullRequest.number, repository: branchPullRequest.repository };
     if (named === null) return yield* new PullRequestBranchHasNoneError();
-    const target = yield* resolveTarget(named, project);
+    const target = yield* resolveTarget(named, holder);
     const ref: PullRequestRef = {
-      projectId: project.id,
+      projectId: holder.id,
       host: target.host,
       repository: target.repository,
       number: target.number,
