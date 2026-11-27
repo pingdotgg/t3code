@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   formatChatTimestampTooltip,
+  formatDateTimeTimestamp,
   formatDayAwareTimestamp,
   formatUpcomingTimestamp,
 } from "./timestampFormat";
@@ -85,6 +86,22 @@ describe("timestamps after the system time zone changes", () => {
       timeIn(sameDay, "Asia/Bangkok"),
       `${dayIn(earlierInWeek, "Asia/Bangkok")} ${timeIn(earlierInWeek, "Asia/Bangkok")}`,
     ]);
+  });
+
+  it("renders date and time labels in the new zone", () => {
+    const iso = "2026-11-07T04:45:00.000Z";
+    const dateTimeIn = (timeZone: string) =>
+      new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+        hour12: true,
+        timeZone,
+      }).format(new Date(iso));
+    using _zone = useTimeZone("America/New_York");
+    expect(formatDateTimeTimestamp(iso, "12-hour")).toBe(dateTimeIn("America/New_York"));
+
+    process.env.TZ = "Asia/Bangkok";
+    expect(formatDateTimeTimestamp(iso, "12-hour")).toBe(dateTimeIn("Asia/Bangkok"));
   });
 
   it("renders the tooltip in the new zone", () => {
