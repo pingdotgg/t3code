@@ -5078,11 +5078,13 @@ describe("OrchestratorMcpService provider resolution", () => {
   it.effect("a task may pick the agent's own mode only from a full-access parent", () =>
     Effect.gen(function* () {
       const agentId = ProviderInstanceId.make("acp-agent");
-      const mode = [{ id: "_t3/session-mode", value: "yolo" }] as const;
+      const modeFor = (id: string) => [{ id, value: "yolo" }] as const;
       const delegateFrom = (
         runtimeMode: "approval-required" | "full-access",
         held: ReadonlyArray<{ readonly id: string; readonly value: unknown }> | undefined,
+        optionId: string,
       ) => {
+        const mode = modeFor(optionId);
         const commands: Array<unknown> = [];
         const task = {
           id: taskId,
@@ -5137,7 +5139,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   capabilities: {
                     optionDescriptors: [
                       {
-                        id: "_t3/session-mode",
+                        id: optionId,
                         label: "Mode",
                         type: "select",
                         agentMode: true,
@@ -5172,20 +5174,22 @@ describe("OrchestratorMcpService provider resolution", () => {
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
       };
 
-      const refused = yield* delegateFrom("approval-required", undefined);
-      assert.isTrue(Exit.isFailure(refused.outcome));
-      assert.include(JSON.stringify(refused.outcome), "runtime_mode_escalation_denied");
-      assert.lengthOf(refused.commands, 0);
+      for (const optionId of ["_t3/session-mode", "permission_mode"]) {
+        const refused = yield* delegateFrom("approval-required", undefined, optionId);
+        assert.isTrue(Exit.isFailure(refused.outcome));
+        assert.include(JSON.stringify(refused.outcome), "runtime_mode_escalation_denied");
+        assert.lengthOf(refused.commands, 0);
+      }
 
       // A parent already running in that mode hands it on; a full-access parent may pick it.
       for (const allowed of [
-        yield* delegateFrom("approval-required", mode),
-        yield* delegateFrom("full-access", undefined),
+        yield* delegateFrom("approval-required", modeFor("_t3/session-mode"), "_t3/session-mode"),
+        yield* delegateFrom("full-access", undefined, "_t3/session-mode"),
       ]) {
         assert.isTrue(Exit.isSuccess(allowed.outcome), JSON.stringify(allowed.outcome));
         assert.deepEqual(
           (allowed.commands[0] as { modelSelection: { options: unknown } }).modelSelection.options,
-          mode,
+          modeFor("_t3/session-mode"),
         );
       }
     }),
