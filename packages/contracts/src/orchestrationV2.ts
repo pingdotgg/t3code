@@ -150,6 +150,68 @@ export const OrchestrationV2DelegatedFrom = Schema.Struct({
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
 
+/** The most messages one imported history can carry. */
+export const ORCHESTRATION_V2_IMPORTED_HISTORY_MAX_MESSAGES = 200;
+/** The most UTF-8 bytes of message text one imported history can carry. */
+export const ORCHESTRATION_V2_IMPORTED_HISTORY_MAX_TEXT_BYTES = 2_000_000;
+
+/** One user or assistant text message from a thread in another environment. */
+export const OrchestrationV2ImportedHistoryMessage = Schema.Struct({
+  role: Schema.Literals(["user", "assistant"]),
+  text: Schema.String,
+  createdAt: IsoDateTime,
+});
+export type OrchestrationV2ImportedHistoryMessage =
+  typeof OrchestrationV2ImportedHistoryMessage.Type;
+
+const importedHistoryTextEncoder = new TextEncoder();
+
+const isWithinImportedHistoryTextBytes = Schema.makeFilter(
+  (messages: ReadonlyArray<OrchestrationV2ImportedHistoryMessage>) => {
+    let bytes = 0;
+    for (const message of messages) {
+      bytes += importedHistoryTextEncoder.encode(message.text).byteLength;
+    }
+    return (
+      bytes <= ORCHESTRATION_V2_IMPORTED_HISTORY_MAX_TEXT_BYTES ||
+      `Imported message text must be at most ${ORCHESTRATION_V2_IMPORTED_HISTORY_MAX_TEXT_BYTES} bytes.`
+    );
+  },
+);
+
+/**
+ * The transcript a thread brings when it continues from another environment.
+ * `omittedCount` counts the older messages left out to stay inside the caps,
+ * and `source` names the thread it came from.
+ */
+export const OrchestrationV2ImportedHistory = Schema.Struct({
+  messages: Schema.Array(OrchestrationV2ImportedHistoryMessage).check(
+    Schema.isMaxLength(ORCHESTRATION_V2_IMPORTED_HISTORY_MAX_MESSAGES),
+    isWithinImportedHistoryTextBytes,
+  ),
+  omittedCount: NonNegativeInt,
+  source: Schema.Struct({
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    title: Schema.String,
+  }),
+});
+export type OrchestrationV2ImportedHistory = typeof OrchestrationV2ImportedHistory.Type;
+
+/**
+ * The thread in a linked environment this thread continued on, and that
+ * environment's label, for a client that cannot reach it. Cleared when work
+ * goes on here.
+ */
+export const OrchestrationV2ThreadMovedTo = Schema.Struct({
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  title: Schema.String,
+  label: Schema.String,
+  movedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2ThreadMovedTo = typeof OrchestrationV2ThreadMovedTo.Type;
+
 /**
  * The thread in a linked environment whose agent sent this message here, and its title
  * then, for a client that cannot reach that environment. `senderThreadId` names only a
@@ -546,6 +608,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
+  /** Absent on threads written before threads could move; read as not moved. */
+  movedTo: Schema.optional(Schema.NullOr(OrchestrationV2ThreadMovedTo)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -2226,6 +2290,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.model-selection-updated",
       "thread.provider-switched",
       "thread.guest-share-updated",
+      "thread.moved",
     ]),
     payload: OrchestrationV2AppThread,
   }),
@@ -2482,6 +2547,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
+  /** Absent from older servers; read as not moved. */
+  movedTo: Schema.optional(Schema.NullOr(OrchestrationV2ThreadMovedTo)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -2643,8 +2710,17 @@ export const OrchestrationV2StoredEvent = Schema.Struct({
 });
 export type OrchestrationV2StoredEvent = typeof OrchestrationV2StoredEvent.Type;
 
+export const OrchestrationV2ThreadMovedToJson = OrchestrationV2ThreadMovedTo.mapFields(
+  (fields) => ({
+    ...fields,
+    movedAt: Schema.DateTimeUtcFromString,
+  }),
+);
+export type OrchestrationV2ThreadMovedToJson = typeof OrchestrationV2ThreadMovedToJson.Type;
+
 export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((fields) => ({
   ...fields,
+  movedTo: Schema.optional(Schema.NullOr(OrchestrationV2ThreadMovedToJson)),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -3103,6 +3179,7 @@ export type OrchestrationV2LatestVisibleMessageSummaryJson =
 
 export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFields((fields) => ({
   ...fields,
+  movedTo: Schema.optional(Schema.NullOr(OrchestrationV2ThreadMovedToJson)),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
@@ -3187,6 +3264,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.model-selection-updated",
       "thread.provider-switched",
       "thread.guest-share-updated",
+      "thread.moved",
     ]),
     payload: OrchestrationV2AppThreadJson,
   }),
@@ -3354,6 +3432,11 @@ export const OrchestrationV2Command = Schema.Union([
         metadata: Schema.optional(OrchestrationV2ProviderThreadNativeMetadata),
       }),
     ),
+    /**
+     * Only the server sets this, for a thread continued from another environment. Never sent
+     * with `importedNativeThread` or `initialMessage`.
+     */
+    importedHistory: Schema.optional(OrchestrationV2ImportedHistory),
     /**
      * Only the server sets this. The thread and its first run commit together, so no client sees
      * the thread idle before its run exists. The run waits for `workspaceStrategy` when given one.
@@ -3783,6 +3866,17 @@ export const OrchestrationV2Command = Schema.Union([
     title: Schema.optional(TrimmedNonEmptyString),
     sideChat: Schema.optional(Schema.Boolean),
     createdAt: Schema.optional(Schema.DateTimeUtc),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.moved.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    movedTo: OrchestrationV2ThreadMovedTo,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.moved.clear"),
+    commandId: CommandId,
+    threadId: ThreadId,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.merge_back"),

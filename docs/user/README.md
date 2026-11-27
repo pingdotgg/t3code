@@ -93,6 +93,7 @@ T3 Code is an open-source control plane for coding agents. It gives the coding a
 ### Remote, mobile & integrations
 
 - [Remote access](./remote-access.md) — T3 Connect, LAN/Tailscale pairing, desktop SSH, multi-route failover, load balancing, and linked environments.
+- [Continue on another machine](./continue-on-another-machine.md): Sending a thread with its branch and history to a linked machine.
 - [T3 Connect troubleshooting](./t3-connect-troubleshooting.md) — Diagnosing tunnel, port 7844, DNS, clock, and account errors.
 - [Mobile notifications](./mobile-notifications.md) — Push alerts, iOS Live Activities/widgets, and Android Live Updates.
 - [Guest links](./guest-links.md) — Sharing a live thread with a teammate in their browser (no account needed).

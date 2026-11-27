@@ -489,6 +489,10 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  ThreadContinueOnEnvironmentInput,
+  ThreadContinueOnEnvironmentResult,
+} from "./threadContinuation.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
@@ -501,6 +505,8 @@ export const WS_METHODS = {
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
   projectsCreateFromThread: "projects.createFromThread",
+
+  threadsContinueOnEnvironment: "threads.continueOnEnvironment",
 
   shellOpenInEditor: "shell.openInEditor",
 
@@ -1703,6 +1709,12 @@ const WsProjectsCreateFromThreadRpc = Rpc.make(WS_METHODS.projectsCreateFromThre
   error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsThreadsContinueOnEnvironmentRpc = Rpc.make(WS_METHODS.threadsContinueOnEnvironment, {
+  payload: ThreadContinueOnEnvironmentInput,
+  success: ThreadContinueOnEnvironmentResult,
+  error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+});
+
 const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
@@ -2658,6 +2670,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsEnsureScratchRpc,
   WsProjectsCreateNewRpc,
   WsProjectsCreateFromThreadRpc,
+  WsThreadsContinueOnEnvironmentRpc,
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,

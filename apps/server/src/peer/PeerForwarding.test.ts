@@ -39,6 +39,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
+import * as ThreadContinuation from "./ThreadContinuation.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
@@ -268,7 +269,12 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
       Layer.provide(ServerSettings.layerTest()),
       Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
-      Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ThreadContinuation.ThreadContinuation)({}),
+        ),
+      ),
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
       Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
     ),
@@ -353,6 +359,7 @@ const makeLaptop = Effect.gen(function* () {
           followUp: (_scope, _environmentId, _request, sent) => Effect.succeed(sent),
         }),
         Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+        Layer.mock(ThreadContinuation.ThreadContinuation)({}),
       ),
     ),
     Layer.fresh,

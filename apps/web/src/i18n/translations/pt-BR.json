@@ -13036,5 +13036,38 @@
   "717c1c47a852a1a5": "Pausar narração",
   "0eceb5780908eb6c": "Ler em voz alta",
   "3ee98da81538c6de": "Não foi possível reproduzir a narração.",
-  "95435f0b59cb2193": "Prévia de áudio"
+  "95435f0b59cb2193": "Prévia de áudio",
+  "bf1d7ee7d6d7cea7": "Continuar em outra máquina",
+  "375e333dccae6b9b": "Requer um vínculo com Acesso total",
+  "97e91e046221389d": "Vínculo expirado",
+  "0ac84db1196d5552": "Inacessível",
+  "009c4c13e6e3e680": "O agente está trabalhando. Aguarde o turno terminar ou pare-o.",
+  "27f7c08a42931f1b": "Marque \"Fazer commit e push das minhas alterações primeiro\" ou faça push das alterações você mesmo.",
+  "db439e4831d64950": "Não foi possível continuar na outra máquina.",
+  "09857a02d23dda50": "Continuado em {machine}",
+  "87e9b39cf2b0d624": "{count, plural, one {{count} arquivo sem commit} other {{count} arquivos sem commit}}",
+  "da46a132665c321a": "{count, plural, one {{count} commit sem push} other {{count} commits sem push}}",
+  "dc4844238e301ad6": "Um branch sem push",
+  "5320624bf8aacdd6": "Continuando…",
+  "c7b1d45e9b8a9bc3": "Continuar lá",
+  "5c22704c8f35eb62": "Continuar em outra máquina",
+  "e2568d675230ec95": [
+    "O agente na outra máquina recebe a conversa e o branch de",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "a4f2183033cb4786": "Carregando ambientes vinculados…",
+  "6e382b879a94de45": "Nenhum ambiente vinculado. Primeiro vincule outra máquina com Acesso total.",
+  "ac7c436e7466e0ea": "A outra máquina recebe apenas os commits com push. Esta máquina ainda tem:",
+  "6572aeb77d8a2e30": "Fazer commit e push das minhas alterações primeiro",
+  "8aa786a6d587e744": "Mensagem para o agente de lá",
+  "7a8df2c358b21507": "Opcional. Sem uma mensagem, a nova thread aguarda você.",
+  "6ba4cfbd0c498161": "Movida para {machine}",
+  "b3a063307e54fd0c": "Não foi possível remover o aviso \"Movida\"",
+  "5863e5a932c8cc75": "Continuar trabalhando aqui"
 }

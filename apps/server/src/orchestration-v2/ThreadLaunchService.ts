@@ -10,6 +10,7 @@ import {
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
   type OrchestrationV2DelegatedFrom,
+  type OrchestrationV2ImportedHistory,
   type OrchestrationV2WorkflowOrigin,
   type OrchestrationV2LinkOrigin,
   type OrchestrationV2ProviderThreadNativeMetadata,
@@ -123,6 +124,8 @@ export interface ThreadLaunchInput {
     };
     readonly metadata?: OrchestrationV2ProviderThreadNativeMetadata;
   };
+  /** The transcript of a thread continued from another environment. */
+  readonly importedHistory?: OrchestrationV2ImportedHistory;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
   /** The linked environment this launch is for, if one asked for it. */
@@ -1581,6 +1584,9 @@ const make = Effect.gen(function* () {
                 ...(input.importedNativeThread === undefined
                   ? {}
                   : { importedNativeThread: input.importedNativeThread }),
+                ...(input.importedHistory === undefined
+                  ? {}
+                  : { importedHistory: input.importedHistory }),
                 ...(input.linkOrigin === undefined ? {} : { linkOrigin: input.linkOrigin }),
                 ...(input.delegatedFrom === undefined
                   ? {}

@@ -79,6 +79,7 @@ Link two T3 Code machines (beta) so agents on one can launch, message, delegate 
 
 - **Access boundary**: Agents never get more permissions on the target than the link's access level or their own thread mode. Below Full access, linked agents can only modify threads they started and skip project setup scripts.
 - **Delegation**: Agents can target a linked machine with `delegate_task`, or ask you to link an unlinked machine via an in-thread approval card.
+- **Move a thread**: Send a thread with its branch and history to a machine you linked with Full access. See [Continue on another machine](./continue-on-another-machine.md).
 
 ### Read a linked machine's threads
 

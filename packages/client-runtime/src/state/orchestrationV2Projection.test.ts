@@ -6,6 +6,8 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  EnvironmentId,
+  EventId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -187,6 +189,43 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     const next = applyOrchestrationV2ProjectionEvent(emptyProjection, event);
     expect(next?.thread.archivedAt).toEqual(archivedAt);
     expect(next?.updatedAt).toEqual(archivedAt);
+  });
+
+  it("shows where a thread moved, then shows it back here once the move is cleared", () => {
+    const movedAt = DateTime.makeUnsafe("2026-06-20T02:00:00.000Z");
+    const clearedAt = DateTime.makeUnsafe("2026-06-20T03:00:00.000Z");
+    const movedTo = {
+      environmentId: EnvironmentId.make("environment-laptop"),
+      threadId: ThreadId.make("thread-on-laptop"),
+      title: "Reducer",
+      label: "Laptop",
+      movedAt,
+    };
+    const threadMoved = (occurredAt: DateTime.Utc, moved: typeof movedTo | null) =>
+      ({
+        id: EventId.make(`event-moved-${DateTime.formatIso(occurredAt)}`),
+        type: "thread.moved",
+        threadId,
+        occurredAt,
+        payload: { ...emptyProjection.thread, movedTo: moved, updatedAt: occurredAt },
+      }) satisfies OrchestrationV2DomainEvent;
+
+    const moved = applyOrchestrationV2ProjectionEvent(
+      emptyProjection,
+      threadMoved(movedAt, movedTo),
+    );
+    expect(moved?.thread.movedTo).toEqual({
+      environmentId: "environment-laptop",
+      threadId: "thread-on-laptop",
+      title: "Reducer",
+      label: "Laptop",
+      movedAt: DateTime.makeUnsafe("2026-06-20T02:00:00.000Z"),
+    });
+    expect(moved?.updatedAt).toEqual(movedAt);
+
+    const cleared = applyOrchestrationV2ProjectionEvent(moved, threadMoved(clearedAt, null));
+    expect(cleared?.thread.movedTo).toBeNull();
+    expect(cleared?.updatedAt).toEqual(clearedAt);
   });
 
   it("preserves visible row identity when run updates do not change membership", () => {

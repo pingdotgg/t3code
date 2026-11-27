@@ -74,6 +74,10 @@ import { useSwipeRowDormant } from "../home/swipe-row-activation";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import { canTurnThreadIntoProject, turnThreadIntoProject } from "./turnThreadIntoProject";
+import { continueOnMachineAvailability } from "./continueOnMachine";
+import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
+import { environmentProjects } from "../../state/projects";
+import { environmentServerConfigsAtom } from "../../state/server";
 import { threadCanArchive } from "../home/threadArchive";
 import { useCanShareWithGuest } from "./useCanShareWithGuest";
 import {
@@ -1065,6 +1069,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [gt, props.autoSettleOptOutSupported, thread.autoSettleDisabledAt],
   );
   const canTurnIntoProject = canTurnThreadIntoProject(thread);
+  const continueOnMachine = continueOnMachineAvailability({
+    project: appAtomRegistry.get(
+      environmentProjects.projectAtom({
+        environmentId: thread.environmentId,
+        projectId: thread.projectId,
+      }),
+    ),
+    linkedEnvironmentsOffered: offersLinkedEnvironments(
+      appAtomRegistry.get(environmentServerConfigsAtom).get(thread.environmentId),
+    ),
+    runtime: thread.runtime,
+  });
   const titleMenuItems = useMemo<MenuAction[]>(
     () => [
       {
@@ -1121,6 +1137,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ...(canShareWithGuest
         ? [{ id: "share-guest", title: gt("Share with guest"), image: "person.badge.plus" }]
         : []),
+      ...(continueOnMachine === "hidden"
+        ? []
+        : [
+            {
+              id: "continue-on-machine",
+              title: gt("Continue on another machine"),
+              image: "laptopcomputer",
+              attributes: { disabled: continueOnMachine === "busy" },
+            } satisfies MenuAction,
+          ]),
     ];
     if (snoozedRow) {
       return layoutThreadListV2RowMenuActions(
@@ -1202,6 +1228,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     autoSettleMenuItems,
     canShareWithGuest,
     canUnsettle,
+    continueOnMachine,
     pinMenuItems,
     props.settlementSupported,
     reorderMenuItems,
@@ -1252,6 +1279,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       }
       if (nativeEvent.event === "share-guest") {
         navigation.navigate("ThreadGuestShare", {
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+        });
+      }
+      if (nativeEvent.event === "continue-on-machine") {
+        navigation.navigate("ThreadContinueOnMachine", {
           environmentId: thread.environmentId,
           threadId: thread.id,
         });

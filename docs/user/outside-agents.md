@@ -38,6 +38,7 @@ Tools that act as a running T3 thread (`delegate_task`, `create_threads`, `reque
 
 - Use `t3_thread_launch` + `t3_thread_wait` / `t3_thread_read` to run and follow work.
 - Pass `projectId` or `threadId` explicitly (or `allProjects: true` on `t3_thread_list`).
+- Use `t3_thread_transfer` with the action `continue_on` to send a thread to a linked machine ([Continue on another machine](./continue-on-another-machine.md)).
 - **MCP Events (`io.modelcontextprotocol/events`)**: Bots can poll, stream, or subscribe via HTTPS webhooks (up to 1-hour leases; latest 1,000 milestones buffered in memory) for turn, approval, guest, PR watch, and workflow events. For local webhook testing, set `T3CODE_MCP_WEBHOOK_ALLOWED_HOSTS=localhost,127.0.0.1` on the server.
 
 ## Host scripts (`t3 thread`)

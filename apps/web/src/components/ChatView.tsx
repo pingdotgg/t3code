@@ -63,6 +63,7 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { freshSessionBannerItem } from "./chat/ComposerFreshSession";
+import { threadMovedBannerItem } from "./chat/ThreadMovedBanner";
 import { heldComposerSendBannerItem } from "./chat/ComposerHeldSendBanner";
 import { armFreshSession, disarmFreshSession, useFreshSessionArmed } from "./chat/freshSessionArms";
 import { cancelHeldComposerSend, useComposerSendHeld } from "./chat/preparingComposerImages";
@@ -2834,6 +2835,19 @@ export default function ChatView(props: ChatViewProps) {
     const extensionStatusItems = extensionStatusBanner === null ? [] : [extensionStatusBanner];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
+    const movedTo = activeThreadShell?.movedTo ?? null;
+    const threadMovedItems =
+      activeThreadShell && movedTo
+        ? [
+            threadMovedBannerItem(
+              {
+                threadRef: scopeThreadRef(activeThreadShell.environmentId, activeThreadShell.id),
+                movedTo,
+              },
+              messages,
+            ),
+          ]
+        : [];
     // An approval's feedback goes to that approval; the armed session waits for the next message.
     const freshSessionItems =
       freshSessionPending && activePendingApproval === null
@@ -2854,6 +2868,7 @@ export default function ChatView(props: ChatViewProps) {
         ...limitRecoveryItems,
         ...extensionStatusItems,
         ...usageLimitsItems,
+        ...threadMovedItems,
         ...projectCloneItems,
         ...freshSessionItems,
         ...heldSendItems,
@@ -2866,6 +2881,7 @@ export default function ChatView(props: ChatViewProps) {
       ...limitRecoveryItems,
       ...extensionStatusItems,
       ...usageLimitsItems,
+      ...threadMovedItems,
       ...projectCloneItems,
       ...freshSessionItems,
       ...heldSendItems,

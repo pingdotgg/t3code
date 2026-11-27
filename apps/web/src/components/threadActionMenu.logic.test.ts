@@ -89,3 +89,31 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual(["rename"]);
   });
 });
+
+describe("continue on another machine", () => {
+  function continueItem(overrides: Partial<ThreadActionMenuState>) {
+    return buildThreadActionMenuItems({ ...baseState, ...overrides }).find(
+      (item) => item.id === "continue-on-machine",
+    );
+  }
+
+  it("is offered for a thread that can continue on a linked machine", () => {
+    expect(continueItem({ canContinueOnMachine: true })).toEqual({
+      id: "continue-on-machine",
+      label: "Continue on another machine",
+      icon: "git-branch",
+      disabled: false,
+    });
+  });
+
+  it("is hidden for a thread without a git remote or linked environments", () => {
+    expect(continueItem({ canContinueOnMachine: false })).toBeUndefined();
+  });
+
+  it.each([
+    ["while the thread is running", { isRunning: true }],
+    ["without permission to change threads", { canOperate: false }],
+  ])("is disabled %s", (_, overrides) => {
+    expect(continueItem({ canContinueOnMachine: true, ...overrides })?.disabled).toBe(true);
+  });
+});

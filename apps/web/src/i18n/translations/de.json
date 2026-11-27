@@ -13036,5 +13036,38 @@
   "717c1c47a852a1a5": "Vorlesen pausieren",
   "0eceb5780908eb6c": "Vorlesen",
   "3ee98da81538c6de": "Die Vertonung konnte nicht abgespielt werden.",
-  "95435f0b59cb2193": "Audiovorschau"
+  "95435f0b59cb2193": "Audiovorschau",
+  "bf1d7ee7d6d7cea7": "Auf einem anderen Rechner fortsetzen",
+  "375e333dccae6b9b": "Erfordert eine Verknüpfung mit Vollzugriff",
+  "97e91e046221389d": "Verknüpfung abgelaufen",
+  "0ac84db1196d5552": "Nicht erreichbar",
+  "009c4c13e6e3e680": "Der Agent arbeitet. Warte, bis die Runde endet, oder stoppe ihn.",
+  "27f7c08a42931f1b": "Aktiviere „Zuerst meine Änderungen committen und pushen“ oder pushe die Änderungen selbst.",
+  "db439e4831d64950": "Auf dem anderen Rechner konnte nicht fortgesetzt werden.",
+  "09857a02d23dda50": "Auf {machine} fortgesetzt",
+  "87e9b39cf2b0d624": "{count, plural, one {{count} nicht committete Datei} other {{count} nicht committete Dateien}}",
+  "da46a132665c321a": "{count, plural, one {{count} nicht gepushter Commit} other {{count} nicht gepushte Commits}}",
+  "dc4844238e301ad6": "Einen nicht gepushten Branch",
+  "5320624bf8aacdd6": "Wird fortgesetzt…",
+  "c7b1d45e9b8a9bc3": "Dort fortsetzen",
+  "5c22704c8f35eb62": "Auf einem anderen Rechner fortsetzen",
+  "e2568d675230ec95": [
+    "Der Agent auf dem anderen Rechner erhält die Unterhaltung und den Branch von",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "a4f2183033cb4786": "Verknüpfte Umgebungen werden geladen…",
+  "6e382b879a94de45": "Keine verknüpften Umgebungen. Verknüpfe zuerst einen anderen Rechner mit Vollzugriff.",
+  "ac7c436e7466e0ea": "Der andere Rechner erhält nur gepushte Commits. Dieser Rechner hat noch:",
+  "6572aeb77d8a2e30": "Zuerst meine Änderungen committen und pushen",
+  "8aa786a6d587e744": "Nachricht für den Agenten dort",
+  "7a8df2c358b21507": "Optional. Ohne Nachricht wartet der neue Thread auf dich.",
+  "6ba4cfbd0c498161": "Auf {machine} verschoben",
+  "b3a063307e54fd0c": "Der Hinweis „Verschoben“ konnte nicht entfernt werden",
+  "5863e5a932c8cc75": "Hier weiterarbeiten"
 }

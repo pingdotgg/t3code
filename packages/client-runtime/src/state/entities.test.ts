@@ -7,6 +7,7 @@ import {
   ProviderThreadId,
   RunId,
   RuntimeRequestId,
+  ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -109,6 +110,25 @@ describe("V2 client presentation", () => {
       pendingBackgroundTasks: [],
     });
     expect(isThreadWorking(imported)).toBe(false);
+  });
+
+  it("presents where a thread moved, and an older server's shell as not moved", () => {
+    const movedTo = {
+      environmentId: EnvironmentId.make("environment-laptop"),
+      threadId: ThreadId.make("thread-on-laptop"),
+      title: "Continued thread",
+      label: "Laptop",
+      movedAt: DateTime.makeUnsafe("2026-06-20T02:00:00.000Z"),
+    };
+
+    expect(presentThreadShell(environmentId, { ...v2ThreadShell, movedTo }).movedTo).toEqual({
+      environmentId: "environment-laptop",
+      threadId: "thread-on-laptop",
+      title: "Continued thread",
+      label: "Laptop",
+      movedAt: DateTime.makeUnsafe("2026-06-20T02:00:00.000Z"),
+    });
+    expect(presentThreadShell(environmentId, v2ThreadShell).movedTo).toBeNull();
   });
 
   it.each([

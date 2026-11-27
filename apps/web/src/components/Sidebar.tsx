@@ -126,6 +126,7 @@ import {
   useThreadSelectionStore,
 } from "../threadSelectionStore";
 import {
+  canContinueThreadOnMachine,
   canTurnThreadIntoProject,
   useAcknowledgeThreadWoke,
   useThreadActions,
@@ -166,6 +167,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { openContinueOnMachineDialog } from "./chat/ContinueOnMachineDialog";
 import {
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
@@ -2758,6 +2760,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              canContinueOnMachine: canContinueThreadOnMachine(threadRef),
               canRename: !fromSearch,
               supports: {
                 settlement: configLoaded,
@@ -2887,6 +2890,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "share-guest":
             openGuestShareDialog(threadRef);
+            return;
+          case "continue-on-machine":
+            openContinueOnMachineDialog(threadRef);
             return;
           case "regenerate-title": {
             if (isRegeneratingTitle) return;

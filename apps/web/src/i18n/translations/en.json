@@ -13044,5 +13044,38 @@
   "717c1c47a852a1a5": "Pause narration",
   "0eceb5780908eb6c": "Read aloud",
   "3ee98da81538c6de": "Could not play narration.",
-  "95435f0b59cb2193": "Audio preview"
+  "95435f0b59cb2193": "Audio preview",
+  "bf1d7ee7d6d7cea7": "Continue on another machine",
+  "375e333dccae6b9b": "Needs a Full access link",
+  "97e91e046221389d": "Link expired",
+  "0ac84db1196d5552": "Not reachable",
+  "009c4c13e6e3e680": "The agent is working. Wait for the turn to end, or stop it.",
+  "27f7c08a42931f1b": "Tick Commit and push my changes first, or push the changes yourself.",
+  "db439e4831d64950": "Could not continue on the other machine.",
+  "09857a02d23dda50": "Continued on {machine}",
+  "87e9b39cf2b0d624": "{count, plural, one {{count} uncommitted file} other {{count} uncommitted files}}",
+  "da46a132665c321a": "{count, plural, one {{count} unpushed commit} other {{count} unpushed commits}}",
+  "dc4844238e301ad6": "A branch that is not pushed",
+  "5320624bf8aacdd6": "Continuing…",
+  "c7b1d45e9b8a9bc3": "Continue there",
+  "5c22704c8f35eb62": "Continue on another machine",
+  "e2568d675230ec95": [
+    "The agent on the other machine gets the conversation and the branch of",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "a4f2183033cb4786": "Loading linked environments…",
+  "6e382b879a94de45": "No linked environments. Link another machine with Full access first.",
+  "ac7c436e7466e0ea": "The other machine gets only pushed commits. This machine still has:",
+  "6572aeb77d8a2e30": "Commit and push my changes first",
+  "8aa786a6d587e744": "Message for the agent there",
+  "7a8df2c358b21507": "Optional. Without a message, the new thread waits for you.",
+  "6ba4cfbd0c498161": "Moved to {machine}",
+  "b3a063307e54fd0c": "Could not remove the Moved note",
+  "5863e5a932c8cc75": "Keep working here"
 }

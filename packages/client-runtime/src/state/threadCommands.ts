@@ -27,6 +27,7 @@ import {
   type InterruptThreadTurnInput,
   type UpdateThreadMetadataInput,
   archiveThread,
+  clearThreadMoved,
   closeGuestShare,
   resolveGuestMessage,
   cancelQueuedRun,
@@ -279,6 +280,18 @@ export function createThreadEnvironmentAtoms<R, E>(
     settle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:settle",
       execute: settleThread,
+      scheduler,
+      concurrency,
+    }),
+    clearMoved: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:clear-moved",
+      execute: clearThreadMoved,
+      scheduler,
+      concurrency,
+    }),
+    continueOnEnvironment: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:continue-on-environment",
+      tag: WS_METHODS.threadsContinueOnEnvironment,
       scheduler,
       concurrency,
     }),
@@ -638,6 +651,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       })),
       "snooze",
     ),
+    clearMoved: optimistic.wrap(commands.clearMoved, (thread) => ({ ...thread, movedTo: null })),
     setAutoSettle: optimistic.wrap(commands.setAutoSettle, (thread, input, now) => ({
       ...thread,
       autoSettleDisabledAt: input.enabled ? null : (thread.autoSettleDisabledAt ?? now),

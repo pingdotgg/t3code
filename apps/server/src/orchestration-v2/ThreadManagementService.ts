@@ -92,12 +92,15 @@ export function withCreationProvenance(
 ): OrchestrationV2Command {
   switch (command.type) {
     case "thread.create": {
-      // Only the server stamps a link's origin or folds in a first message, so a client cannot.
+      // Only the server stamps a link's origin, folds in a first message, or imports history,
+      // so a client cannot.
       const {
         linkOrigin: _linkOrigin,
         delegatedFrom: _delegatedFrom,
         initialMessage: _initialMessage,
         workflowRun: _workflowRun,
+        importedHistory: _importedHistory,
+        importedNativeThread: _importedNativeThread,
         ...rest
       } = command;
       return { ...rest, ...provenance };

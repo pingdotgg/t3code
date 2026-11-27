@@ -524,7 +524,8 @@ function simpleThreadCommand(
     | "thread.settle"
     | "thread.pin"
     | "thread.unpin"
-    | "thread.guest-share.close",
+    | "thread.guest-share.close"
+    | "thread.moved.clear",
   input: ThreadCommandInput,
 ) {
   return allocateCommandId(input).pipe(
@@ -598,6 +599,13 @@ export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(functi
   input: SettleThreadInput,
 ) {
   return yield* simpleThreadCommand("thread.settle", input);
+});
+
+export type ClearThreadMovedInput = ThreadCommandInput;
+export const clearThreadMoved = Effect.fn("EnvironmentCommands.clearThreadMoved")(function* (
+  input: ClearThreadMovedInput,
+) {
+  return yield* simpleThreadCommand("thread.moved.clear", input);
 });
 
 export const pinThread = Effect.fn("EnvironmentCommands.pinThread")(function* (

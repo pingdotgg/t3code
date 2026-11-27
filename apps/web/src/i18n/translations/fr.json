@@ -13036,5 +13036,38 @@
   "717c1c47a852a1a5": "Mettre la narration en pause",
   "0eceb5780908eb6c": "Lire à voix haute",
   "3ee98da81538c6de": "Impossible de lire la narration.",
-  "95435f0b59cb2193": "Aperçu audio"
+  "95435f0b59cb2193": "Aperçu audio",
+  "bf1d7ee7d6d7cea7": "Continuer sur une autre machine",
+  "375e333dccae6b9b": "Nécessite une association avec Accès complet",
+  "97e91e046221389d": "Association expirée",
+  "0ac84db1196d5552": "Injoignable",
+  "009c4c13e6e3e680": "L’agent est en train de travailler. Attendez la fin du tour ou arrêtez-le.",
+  "27f7c08a42931f1b": "Cochez « Commiter et pousser d’abord mes modifications » ou poussez vous-même les modifications.",
+  "db439e4831d64950": "Impossible de continuer sur l’autre machine.",
+  "09857a02d23dda50": "Poursuivi sur {machine}",
+  "87e9b39cf2b0d624": "{count, plural, one {{count} fichier non commité} other {{count} fichiers non commités}}",
+  "da46a132665c321a": "{count, plural, one {{count} commit non poussé} other {{count} commits non poussés}}",
+  "dc4844238e301ad6": "Une branche non poussée",
+  "5320624bf8aacdd6": "Poursuite en cours…",
+  "c7b1d45e9b8a9bc3": "Continuer là-bas",
+  "5c22704c8f35eb62": "Continuer sur une autre machine",
+  "e2568d675230ec95": [
+    "L’agent de l’autre machine reçoit la conversation et la branche de",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "a4f2183033cb4786": "Chargement des environnements associés…",
+  "6e382b879a94de45": "Aucun environnement associé. Associez d’abord une autre machine avec Accès complet.",
+  "ac7c436e7466e0ea": "L’autre machine ne reçoit que les commits poussés. Cette machine a encore :",
+  "6572aeb77d8a2e30": "Commiter et pousser d’abord mes modifications",
+  "8aa786a6d587e744": "Message pour l’agent là-bas",
+  "7a8df2c358b21507": "Facultatif. Sans message, le nouveau fil vous attend.",
+  "6ba4cfbd0c498161": "Déplacé vers {machine}",
+  "b3a063307e54fd0c": "Impossible de supprimer la note « Déplacé »",
+  "5863e5a932c8cc75": "Continuer à travailler ici"
 }

@@ -163,6 +163,7 @@ import {
   isUndeliveredMailboxSteer,
 } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
+import { importedHistoryTruncatedEvent, importedMessageEvents } from "./importedHistoryEvents.ts";
 import {
   decideGuestMessageSend,
   guestShareAfterCancelledSend,
@@ -654,6 +655,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.guest-share.close":
     case "thread.guest-message.submit":
     case "thread.guest-message.dismiss":
+    case "thread.moved.set":
+    case "thread.moved.clear":
     case "thread.settle":
     case "thread.auto-settle":
     case "thread.unsettle":
@@ -790,6 +793,7 @@ function delegatedTasksStopEffect(command: {
 }
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
+const THREAD_TRANSFER_IMPORT_EVENT_PREFIX = "thread-transfer-import:v1";
 /** How long automatic settlement waits for a queued turn to start. */
 export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 const RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE =
@@ -4137,6 +4141,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.driver": command.modelSelection.instanceId,
     });
 
+    const importedHistory = command.importedHistory;
+    const hasConflictingImport =
+      importedHistory !== undefined &&
+      (command.importedNativeThread !== undefined || command.initialMessage !== undefined);
+    if (hasConflictingImport) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Imported history cannot come with a native thread or a first message.",
+      });
+    }
+
     // Tombstones reserve their ids too; recreating one would overwrite its history.
     const existing = yield* findThread(command.threadId);
     if (existing !== null) {
@@ -4162,6 +4178,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       branch: command.branch,
       worktreePath: command.worktreePath,
       activeProviderThreadId: null,
+      // The first turn hands imported history to the provider like a V1 import.
+      ...(importedHistory === undefined ? {} : { historyOrigin: "v1_import" }),
       pullRequests: [],
       ...(command.linkOrigin === undefined ? {} : { linkOrigin: command.linkOrigin }),
       // Only stamped work names a remote parent, so a client cannot claim one.
@@ -4194,6 +4212,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: thread,
     });
+    if (importedHistory !== undefined) {
+      const importedEvents = [
+        ...(importedHistory.omittedCount > 0
+          ? [
+              importedHistoryTruncatedEvent({
+                threadId: command.threadId,
+                at: now,
+                omittedMessageCount: importedHistory.omittedCount,
+                eventPrefix: THREAD_TRANSFER_IMPORT_EVENT_PREFIX,
+              }),
+            ]
+          : []),
+        ...importedHistory.messages.flatMap((message, index) =>
+          importedMessageEvents({
+            threadId: command.threadId,
+            index,
+            message,
+            eventPrefix: THREAD_TRANSFER_IMPORT_EVENT_PREFIX,
+          }),
+        ),
+      ];
+      yield* Effect.forEach(importedEvents, (event) => emitEvent(event), { discard: true });
+    }
     if (command.importedNativeThread !== undefined) {
       yield* emitEvent({
         type: "provider-thread.updated",
@@ -4448,6 +4489,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: decided.success,
     });
     yield* releaseGuestAttachments(command, thread.guestShare, decided.success.guestShare, effects);
+  });
+
+  const dispatchThreadMoved = Effect.fn("orchestrationV2.dispatch.threadMoved")(function* (
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "thread.moved.set" | "thread.moved.clear" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is deleted.`,
+      });
+    }
+    const movedTo = command.type === "thread.moved.set" ? command.movedTo : null;
+    if (movedTo === null && thread.movedTo == null) return;
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.moved",
+      threadId: command.threadId,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: { ...thread, movedTo, updatedAt: now },
+    });
   });
 
   // Emitted before the message so the send and the status change commit together, and so
@@ -7590,6 +7667,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: thread.providerInstanceId,
         occurredAt: now,
         payload: thread,
+      });
+      projection = applyToProjection(projection, event);
+    }
+    // Same rule as the snooze: a message someone sent here means work goes on here.
+    if (projection.thread.movedTo != null && !automaticWake) {
+      const now = yield* DateTime.now;
+      const event = yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.moved",
+        threadId: command.threadId,
+        providerInstanceId: projection.thread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...projection.thread, movedTo: null, updatedAt: now },
       });
       projection = applyToProjection(projection, event);
     }
@@ -16306,6 +16398,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.guest-message.dismiss":
         yield* dispatchGuestShare(command, events, effects);
         break;
+      case "thread.moved.set":
+      case "thread.moved.clear":
+        yield* dispatchThreadMoved(command, events);
+        break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
@@ -16681,6 +16777,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
+          // Keeping work here again after the marker cleared is not an error.
+          command.type === "thread.moved.clear" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),
         (_planned) =>
           new OrchestratorDispatchError({

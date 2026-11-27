@@ -41,6 +41,10 @@ side lists and revokes it in Sharing & access like any other session, and owns i
   [`TaskFolders`](../../apps/server/src/workspace/TaskFolders.ts) at every run.
 - **Namespace idempotency keys.** All callers on the linking side share one session on the receiving
   side, so idempotency keys must be hashed with the caller's namespace before forwarding.
+- **The receiver owns a moved thread's checkout.** For "Continue on another machine" the sender
+  makes one `t3_thread_receive` call. The receiving environment then finds or clones the repository,
+  adds the project, and makes the worktree. Only the receiver knows its own folders. The history
+  arrives as imported history, so the first turn there uses the portable handoff.
 - **Clients read linked threads as standard thread streams.**
   [`PeerThreadRelay`](../../apps/server/src/peer/PeerThreadRelay.ts) proxies the same stream format
   read-only so there is no second transcript schema to maintain.

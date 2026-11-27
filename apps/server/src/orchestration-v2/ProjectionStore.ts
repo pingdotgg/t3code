@@ -1079,6 +1079,7 @@ export function applyToProjection(
     case "thread.model-selection-updated":
     case "thread.provider-switched":
     case "thread.guest-share-updated":
+    case "thread.moved":
       return {
         ...base,
         thread: event.payload,
@@ -1985,6 +1986,7 @@ export function threadShellFromProjection(
     ...(projection.thread.delegatedFrom === undefined
       ? {}
       : { delegatedFrom: projection.thread.delegatedFrom }),
+    ...(projection.thread.movedTo == null ? {} : { movedTo: projection.thread.movedTo }),
     ...(projection.thread.workflowRun === undefined
       ? {}
       : { workflowRun: projection.thread.workflowRun }),
@@ -2306,6 +2308,7 @@ function shellFromState(input: {
     ...(input.state.thread.delegatedFrom === undefined
       ? {}
       : { delegatedFrom: input.state.thread.delegatedFrom }),
+    ...(input.state.thread.movedTo == null ? {} : { movedTo: input.state.thread.movedTo }),
     ...(input.state.thread.workflowRun === undefined
       ? {}
       : { workflowRun: input.state.thread.workflowRun }),
@@ -2562,7 +2565,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "thread.interaction-mode-updated":
             case "thread.model-selection-updated":
             case "thread.provider-switched":
-            case "thread.guest-share-updated": {
+            case "thread.guest-share-updated":
+            case "thread.moved": {
               const payloadJson = yield* encodeThreadPayload(event.payload);
               const payload = parseEncodedPayload(payloadJson);
               yield* sql`
@@ -3438,7 +3442,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.interaction-mode-updated" &&
             event.type !== "thread.model-selection-updated" &&
             event.type !== "thread.provider-switched" &&
-            event.type !== "thread.guest-share-updated"
+            event.type !== "thread.guest-share-updated" &&
+            event.type !== "thread.moved"
           ) {
             const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
             if (batch !== undefined) batch.threadTouches.set(event.threadId, updatedAt);

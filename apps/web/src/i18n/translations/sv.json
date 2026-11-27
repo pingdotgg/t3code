@@ -13043,5 +13043,38 @@
   "717c1c47a852a1a5": "Pausa uppläsningen",
   "0eceb5780908eb6c": "Läs upp",
   "3ee98da81538c6de": "Det gick inte att spela upp uppläsningen.",
-  "95435f0b59cb2193": "Ljudförhandsvisning"
+  "95435f0b59cb2193": "Ljudförhandsvisning",
+  "bf1d7ee7d6d7cea7": "Fortsätt på en annan dator",
+  "375e333dccae6b9b": "Kräver en länk med Full åtkomst",
+  "97e91e046221389d": "Länken har gått ut",
+  "0ac84db1196d5552": "Inte nåbar",
+  "009c4c13e6e3e680": "Agenten arbetar. Vänta tills omgången är slut, eller stoppa den.",
+  "27f7c08a42931f1b": "Markera ”Committa och pusha mina ändringar först” eller pusha ändringarna själv.",
+  "db439e4831d64950": "Kunde inte fortsätta på den andra datorn.",
+  "09857a02d23dda50": "Fortsatt på {machine}",
+  "87e9b39cf2b0d624": "{count, plural, one {{count} ej committad fil} other {{count} ej committade filer}}",
+  "da46a132665c321a": "{count, plural, one {{count} opushad commit} other {{count} opushade commits}}",
+  "dc4844238e301ad6": "En gren som inte är pushad",
+  "5320624bf8aacdd6": "Fortsätter…",
+  "c7b1d45e9b8a9bc3": "Fortsätt där",
+  "5c22704c8f35eb62": "Fortsätt på en annan dator",
+  "e2568d675230ec95": [
+    "Agenten på den andra datorn får konversationen och grenen för",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "a4f2183033cb4786": "Läser in länkade miljöer…",
+  "6e382b879a94de45": "Inga länkade miljöer. Länka först en annan dator med Full åtkomst.",
+  "ac7c436e7466e0ea": "Den andra datorn får bara pushade commits. Den här datorn har fortfarande:",
+  "6572aeb77d8a2e30": "Committa och pusha mina ändringar först",
+  "8aa786a6d587e744": "Meddelande till agenten där",
+  "7a8df2c358b21507": "Valfritt. Utan ett meddelande väntar den nya tråden på dig.",
+  "6ba4cfbd0c498161": "Flyttad till {machine}",
+  "b3a063307e54fd0c": "Kunde inte ta bort ”Flyttad”-notisen",
+  "5863e5a932c8cc75": "Fortsätt arbeta här"
 }

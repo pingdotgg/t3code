@@ -1,4 +1,5 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
 import {
   parseScopedThreadKey,
   scopeProjectRef,
@@ -285,6 +286,18 @@ export function canTurnThreadIntoProject(threadRef: ScopedThreadRef): boolean {
     projectId: thread.projectId,
   });
   return project !== null && isScratchProject(project, config.scratchWorkspaceRoot);
+}
+
+/** A thread in a project with a git remote, on a server whose Linked environments beta is on. */
+export function canContinueThreadOnMachine(threadRef: ScopedThreadRef): boolean {
+  const thread = readThreadShell(threadRef);
+  const config = appAtomRegistry.get(environmentServerConfigsAtom).get(threadRef.environmentId);
+  if (!thread || !offersLinkedEnvironments(config)) return false;
+  const project = readProject({
+    environmentId: threadRef.environmentId,
+    projectId: thread.projectId,
+  });
+  return project?.repositoryIdentity != null;
 }
 
 function threadOperationFailure(target: ScopedThreadRef) {

@@ -26,6 +26,7 @@ import type * as ThreadManagement from "../../../orchestration-v2/ThreadManageme
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
+import * as ThreadContinuation from "../../../peer/ThreadContinuation.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { rejectionText } from "../../../orchestration-v2/runOutput.ts";
 import { ThreadToolkit } from "./tools.ts";
@@ -106,6 +107,8 @@ const required = <A>(value: A | undefined, name: string) =>
         }),
       )
     : Effect.succeed(value);
+const continuationFailure = (error: ThreadContinuation.ThreadContinuationError) =>
+  new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message });
 const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
@@ -178,45 +181,89 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         };
       }),
     ),
-    McpToolAccess.writesThreads(
-      (input) => [input.threadId, input.targetThreadId],
-      (input) =>
+    McpToolAccess.either(
+      (input) => input.action === "continue_on",
+      // The thread there starts in its own default modes, and the branch may be committed and pushed.
+      McpToolAccess.writesOwnerWork("continue a thread in another environment", (input) =>
         Effect.gen(function* () {
-          const sourcePoint = input.sourcePoint ?? { type: "latest_stable" as const };
-          const { threads, projection } = yield* readThread(input.threadId);
-          const commandId = yield* newCommandId();
-          if (input.action === "merge_back") {
-            const targetThreadId = yield* required(input.targetThreadId, "targetThreadId");
-            yield* readThread(targetThreadId);
+          const targetEnvironmentId = yield* required(input.toEnvironmentId, "toEnvironmentId");
+          const { scope, projection } = yield* readThread(input.threadId);
+          const continuation = yield* ThreadContinuation.ThreadContinuation;
+          const continued = yield* continuation
+            .send({
+              threadId: projection.thread.id,
+              targetEnvironmentId,
+              commitAndPush: input.commitAndPush ?? false,
+              ...(input.message === undefined ? {} : { message: input.message }),
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                error._tag === "ThreadContinuationError"
+                  ? continuationFailure(error)
+                  : error._tag === "ProjectOperationError"
+                    ? unavailable()
+                    : dispatchFailure(error),
+              ),
+            );
+          return {
+            ...continued,
+            link: McpInvocationContext.threadLinkFor(
+              { environmentId: continued.targetEnvironmentId, client: scope.client },
+              continued.targetThreadId,
+              continued.title,
+            ),
+          };
+        }),
+      ),
+      McpToolAccess.writesThreads(
+        (input) => [input.threadId, input.targetThreadId],
+        (input) =>
+          Effect.gen(function* () {
+            const sourcePoint = input.sourcePoint ?? { type: "latest_stable" as const };
+            const { threads, projection } = yield* readThread(input.threadId);
+            const commandId = yield* newCommandId();
+            if (input.action === "merge_back") {
+              const targetThreadId = yield* required(input.targetThreadId, "targetThreadId");
+              yield* readThread(targetThreadId);
+              const result = yield* threads
+                .dispatch({
+                  type: "thread.merge_back",
+                  commandId,
+                  sourceThreadId: projection.thread.id,
+                  targetThreadId,
+                  sourcePoint,
+                  createdBy: "agent",
+                  creationSource: "mcp",
+                })
+                .pipe(Effect.mapError(dispatchFailure));
+              return { sequence: result.sequence, targetThreadId };
+            }
+            const targetThreadId = ThreadId.make(`${commandId}:fork`);
             const result = yield* threads
               .dispatch({
-                type: "thread.merge_back",
+                type: "thread.fork",
                 commandId,
                 sourceThreadId: projection.thread.id,
                 targetThreadId,
                 sourcePoint,
+                ...(input.title === undefined ? {} : { title: input.title }),
                 createdBy: "agent",
                 creationSource: "mcp",
               })
               .pipe(Effect.mapError(dispatchFailure));
             return { sequence: result.sequence, targetThreadId };
-          }
-          const targetThreadId = ThreadId.make(`${commandId}:fork`);
-          const result = yield* threads
-            .dispatch({
-              type: "thread.fork",
-              commandId,
-              sourceThreadId: projection.thread.id,
-              targetThreadId,
-              sourcePoint,
-              ...(input.title === undefined ? {} : { title: input.title }),
-              createdBy: "agent",
-              creationSource: "mcp",
-            })
-            .pipe(Effect.mapError(dispatchFailure));
-          return { sequence: result.sequence, targetThreadId };
-        }),
+          }),
+      ),
     ),
+  ),
+  t3_thread_receive: McpToolAccess.writesEnvironment(
+    (input) =>
+      Effect.gen(function* () {
+        const continuation = yield* ThreadContinuation.ThreadContinuation;
+        return yield* continuation.receive(input).pipe(Effect.mapError(continuationFailure));
+      }),
+    // A Full access link brings the thread; it may clone and add a project here.
+    { linkedCallers: "allowed" },
   ),
   t3_thread_configure: McpToolAccess.either(
     (input) => input.modelSelection === undefined,

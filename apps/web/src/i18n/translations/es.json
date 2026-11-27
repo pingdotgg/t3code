@@ -13031,5 +13031,38 @@
   "717c1c47a852a1a5": "Pausar narración",
   "0eceb5780908eb6c": "Leer en voz alta",
   "3ee98da81538c6de": "No se pudo reproducir la narración.",
-  "95435f0b59cb2193": "Vista previa de audio"
+  "95435f0b59cb2193": "Vista previa de audio",
+  "bf1d7ee7d6d7cea7": "Continuar en otra máquina",
+  "375e333dccae6b9b": "Requiere un vínculo con Acceso completo",
+  "97e91e046221389d": "Vínculo caducado",
+  "0ac84db1196d5552": "Inaccesible",
+  "009c4c13e6e3e680": "El agente está trabajando. Espera a que termine el turno o detenlo.",
+  "27f7c08a42931f1b": "Marca \"Hacer primero commit y push de mis cambios\" o haz push de los cambios tú mismo.",
+  "db439e4831d64950": "No se pudo continuar en la otra máquina.",
+  "09857a02d23dda50": "Continuado en {machine}",
+  "87e9b39cf2b0d624": "{count, plural, one {{count} archivo sin commit} other {{count} archivos sin commit}}",
+  "da46a132665c321a": "{count, plural, one {{count} commit sin push} other {{count} commits sin push}}",
+  "dc4844238e301ad6": "Una rama sin push",
+  "5320624bf8aacdd6": "Continuando…",
+  "c7b1d45e9b8a9bc3": "Continuar allí",
+  "5c22704c8f35eb62": "Continuar en otra máquina",
+  "e2568d675230ec95": [
+    "El agente de la otra máquina recibe la conversación y la rama de",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
+  "a4f2183033cb4786": "Cargando entornos vinculados…",
+  "6e382b879a94de45": "No hay entornos vinculados. Primero vincula otra máquina con Acceso completo.",
+  "ac7c436e7466e0ea": "La otra máquina solo recibe los commits con push. Esta máquina todavía tiene:",
+  "6572aeb77d8a2e30": "Hacer primero commit y push de mis cambios",
+  "8aa786a6d587e744": "Mensaje para el agente de allí",
+  "7a8df2c358b21507": "Opcional. Sin un mensaje, el nuevo hilo te espera.",
+  "6ba4cfbd0c498161": "Movido a {machine}",
+  "b3a063307e54fd0c": "No se pudo quitar el aviso \"Movido\"",
+  "5863e5a932c8cc75": "Seguir trabajando aquí"
 }

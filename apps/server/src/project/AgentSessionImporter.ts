@@ -9,18 +9,13 @@ import {
   AgentSessionScanError,
   AgentSessionSource,
   EventId,
-  MessageId,
   ProjectId,
   ProviderDriverKind,
   ThreadId,
-  TurnItemId,
   type AgentSessionImportInput,
   type AgentSessionImportResult,
   type OrchestrationV2AppThread,
-  type OrchestrationV2ConversationMessage,
-  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
-  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -33,6 +28,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
+import {
+  importedHistoryTruncatedEvent,
+  importedMessageEvents,
+} from "../orchestration-v2/importedHistoryEvents.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -108,123 +107,6 @@ function dateTime(value: string): DateTime.Utc {
 type HistoryMessage = Omit<AgentSessionScanner.AgentSessionThreadMessage, "role"> & {
   readonly role: AgentSessionScanner.AgentSessionThreadMessage["role"] | "reasoning";
 };
-
-function messageEvents(input: {
-  readonly threadId: ThreadId;
-  readonly index: number;
-  readonly message: HistoryMessage;
-}): ReadonlyArray<OrchestrationV2DomainEvent> {
-  const ordinal = input.index + 1;
-  const suffix = String(input.index).padStart(6, "0");
-  const messageId = MessageId.make(`${input.threadId}:${suffix}`);
-  const turnItemId = TurnItemId.make(
-    `${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:${suffix}`,
-  );
-  const at = dateTime(input.message.createdAt);
-  const common = {
-    id: turnItemId,
-    threadId: input.threadId,
-    runId: null,
-    nodeId: null,
-    providerThreadId: null,
-    providerTurnId: null,
-    nativeItemRef: null,
-    parentItemId: null,
-    ordinal,
-    status: "completed" as const,
-    title: null,
-    startedAt: at,
-    completedAt: at,
-    updatedAt: at,
-  };
-  const turnItemEvent = (payload: OrchestrationV2TurnItem): OrchestrationV2DomainEvent => ({
-    id: EventId.make(turnItemId),
-    type: "turn-item.updated",
-    threadId: input.threadId,
-    occurredAt: at,
-    payload,
-  });
-  if (input.message.role === "reasoning") {
-    return [
-      turnItemEvent({ ...common, type: "reasoning", text: input.message.text, streaming: false }),
-    ];
-  }
-  const message: OrchestrationV2ConversationMessage = {
-    createdBy: input.message.role === "user" ? "user" : "agent",
-    creationSource: "server",
-    id: messageId,
-    threadId: input.threadId,
-    runId: null,
-    nodeId: null,
-    role: input.message.role,
-    text: input.message.text,
-    attachments: [],
-    streaming: false,
-    createdAt: at,
-    updatedAt: at,
-  };
-  const turnItem: OrchestrationV2TurnItem =
-    input.message.role === "user"
-      ? {
-          ...common,
-          createdBy: "user",
-          creationSource: "server",
-          type: "user_message",
-          messageId,
-          inputIntent: "turn_start",
-          text: input.message.text,
-          attachments: [],
-        }
-      : {
-          ...common,
-          type: "assistant_message",
-          messageId,
-          text: input.message.text,
-          streaming: false,
-        };
-  return [
-    {
-      id: EventId.make(`${IMPORT_EVENT_PREFIX}:message:${input.threadId}:${suffix}`),
-      type: "message.updated",
-      threadId: input.threadId,
-      occurredAt: at,
-      payload: message,
-    },
-    turnItemEvent(turnItem),
-  ];
-}
-
-function historyTruncatedEvent(input: {
-  readonly threadId: ThreadId;
-  readonly at: DateTime.Utc;
-  readonly omittedMessageCount: number;
-}): OrchestrationV2DomainEvent {
-  const { threadId, at, omittedMessageCount } = input;
-  return {
-    id: EventId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
-    type: "turn-item.updated",
-    threadId,
-    occurredAt: at,
-    payload: {
-      id: TurnItemId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
-      threadId,
-      runId: null,
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 0,
-      status: "completed",
-      title: null,
-      startedAt: at,
-      completedAt: at,
-      updatedAt: at,
-      type: "system_notice",
-      message: `${omittedMessageCount} earlier ${omittedMessageCount === 1 ? "message was" : "messages were"} not imported. This thread keeps the first user message and the most recent history. The original session transcript is unchanged.`,
-    },
-  };
-}
 
 const make = Effect.gen(function* () {
   const scanner = yield* AgentSessionScanner.AgentSessionScanner;
@@ -377,17 +259,23 @@ const make = Effect.gen(function* () {
                 const changed = thread.messages.flatMap((message, index) =>
                   stored[index]?.role === message.role && stored[index]?.text === message.text
                     ? []
-                    : messageEvents({ threadId, index, message }),
+                    : importedMessageEvents({
+                        threadId,
+                        index,
+                        message,
+                        eventPrefix: IMPORT_EVENT_PREFIX,
+                      }),
                 );
                 if (changed.length === 0 && stored.length === thread.messages.length) return true;
                 if (runs.length > 0 || stored.length > thread.messages.length) return false;
                 const events = [
                   ...(thread.omittedMessageCount > 0
                     ? [
-                        historyTruncatedEvent({
+                        importedHistoryTruncatedEvent({
                           threadId,
                           at: existing.value.thread.createdAt,
                           omittedMessageCount: thread.omittedMessageCount,
+                          eventPrefix: IMPORT_EVENT_PREFIX,
                         }),
                       ]
                     : []),
@@ -492,15 +380,21 @@ const make = Effect.gen(function* () {
               },
               ...(thread.omittedMessageCount > 0
                 ? [
-                    historyTruncatedEvent({
+                    importedHistoryTruncatedEvent({
                       threadId,
                       at: createdAt,
                       omittedMessageCount: thread.omittedMessageCount,
+                      eventPrefix: IMPORT_EVENT_PREFIX,
                     }),
                   ]
                 : []),
               ...thread.messages.flatMap((message, index) =>
-                messageEvents({ threadId, index, message }),
+                importedMessageEvents({
+                  threadId,
+                  index,
+                  message,
+                  eventPrefix: IMPORT_EVENT_PREFIX,
+                }),
               ),
               {
                 id: EventId.make(`${IMPORT_EVENT_PREFIX}:provider-thread:${providerThreadId}`),
@@ -569,7 +463,12 @@ const make = Effect.gen(function* () {
           yield* eventSink.write({
             events: [
               ...messages.flatMap((message, index) =>
-                messageEvents({ threadId: input.threadId, index, message }),
+                importedMessageEvents({
+                  threadId: input.threadId,
+                  index,
+                  message,
+                  eventPrefix: IMPORT_EVENT_PREFIX,
+                }),
               ),
               {
                 id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${input.threadId}:native-history`),

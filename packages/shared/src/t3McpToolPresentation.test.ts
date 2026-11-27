@@ -53,6 +53,26 @@ describe("resolveT3McpToolDefinition", () => {
       "Used",
     );
   });
+
+  it("labels a thread transfer continue_on call as continuing on another machine", () => {
+    expect(
+      resolveT3McpToolDefinition("mcp__t3-code__t3_thread_transfer", { action: "continue_on" }),
+    ).toEqual({
+      displayName: "Continue on another machine",
+      labels: ["Continue", "Continuing", "Continued", "on another machine"],
+      icon: "t3-code",
+      summaryAction: "thread-create",
+    });
+  });
+
+  it("labels a received thread", () => {
+    expect(resolveT3McpToolDefinition("mcp__t3-code__t3_thread_receive")).toEqual({
+      displayName: "Receive a thread from another machine",
+      labels: ["Receive", "Receiving", "Received", "a thread from another machine"],
+      icon: "t3-code",
+      summaryAction: "thread-create",
+    });
+  });
 });
 
 describe("resolveT3McpSummaryAction", () => {
@@ -63,6 +83,9 @@ describe("resolveT3McpSummaryAction", () => {
     expect(resolveT3McpSummaryAction("t3_queue", { action: "edit" })).toBe("queue-edit");
     expect(resolveT3McpSummaryAction("t3_thread_transfer", { action: "status" })).toBe(
       "thread-transfers",
+    );
+    expect(resolveT3McpSummaryAction("t3_thread_transfer", { action: "continue_on" })).toBe(
+      "thread-create",
     );
     expect(resolveT3McpSummaryAction("t3_thread_configure", {})).toBe("thread-configuration");
     expect(resolveT3McpSummaryAction("schedule_task", { scheduledTaskId: "task-1" })).toBe(

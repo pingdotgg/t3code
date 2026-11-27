@@ -19,6 +19,11 @@ import {
   RunId,
   NonNegativeInt,
   ProjectId,
+  EnvironmentId,
+  ThreadContinueOnEnvironmentInput,
+  ThreadContinueOnEnvironmentResult,
+  ThreadReceiveInput,
+  ThreadReceiveResult,
   clampedPositiveInt,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -26,6 +31,7 @@ import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ThreadContinuation from "../../../peer/ThreadContinuation.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -169,14 +175,17 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 const ThreadTransferTool = Tool.make("t3_thread_transfer", {
   ...commandTool,
   description:
-    "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
+    "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers. continue_on: when idle, send it to linked environment `toEnvironmentId` (Full access link) and mark it moved; pushes its branch only with `commitAndPush`; `message` starts a turn there.",
   parameters: Schema.Struct({
-    action: Schema.Literals(["fork", "merge_back", "status"]),
+    action: Schema.Literals(["fork", "merge_back", "status", "continue_on"]),
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     sourcePoint: Schema.optional(OrchestrationV2ThreadForkSourcePoint),
     targetThreadId: Schema.optional(ThreadId),
     title: Schema.optional(TrimmedNonEmptyString),
+    toEnvironmentId: Schema.optional(EnvironmentId),
+    commitAndPush: Schema.optional(Schema.Boolean),
+    message: ThreadContinueOnEnvironmentInput.fields.message,
   }),
   success: Schema.Union([
     Schema.Struct({ sequence: NonNegativeInt, targetThreadId: ThreadId }),
@@ -190,8 +199,26 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
         }),
       ),
     }),
+    Schema.Struct({ ...ThreadContinueOnEnvironmentResult.fields, link: Schema.String }),
   ]),
+  dependencies: [...commandTool.dependencies, ThreadContinuation.ThreadContinuation],
 }).annotate(Tool.Destructive, true);
+
+const ThreadReceiveTool = Tool.make("t3_thread_receive", {
+  ...commandTool,
+  description:
+    "Receive a thread sent from a linked environment: finds or clones its repository, makes a worktree on its branch, and creates the thread with its history.",
+  parameters: ThreadReceiveInput,
+  success: ThreadReceiveResult,
+  dependencies: [...commandTool.dependencies, ThreadContinuation.ThreadContinuation],
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true)
+  // Only a linked environment's continue_on calls it.
+  .annotate(
+    McpSchema.EnabledWhen,
+    () => McpInvocationContext.hiddenFromThreads() && McpInvocationContext.hiddenWhileLinksOff(),
+  );
 
 const ThreadSearchTool = Tool.make("t3_thread_search", {
   ...commandTool,
@@ -261,6 +288,7 @@ export const ThreadToolkit = Toolkit.make(
   ThreadSearchTool,
   ThreadConfigureTool,
   ThreadTransferTool,
+  ThreadReceiveTool,
   ThreadOrganizeTool,
   PendingRequestTool,
   QueueTool,

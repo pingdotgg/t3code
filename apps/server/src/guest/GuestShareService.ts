@@ -208,6 +208,7 @@ interface SentReply {
 const threadOf = (event: OrchestrationV2DomainEvent): OrchestrationV2AppThread | null => {
   switch (event.type) {
     case "thread.guest-share-updated":
+    case "thread.moved":
     case "thread.metadata-updated":
     case "thread.model-selection-updated":
     case "thread.provider-switched":

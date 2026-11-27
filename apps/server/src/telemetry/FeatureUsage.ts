@@ -46,6 +46,7 @@ const COMMAND_FEATURES: {
   "queued-run.edit": () => ({ feature: "queue.edit" }),
   "thread.guest-share.close": () => ({ feature: "guest_share.close" }),
   "thread.guest-message.dismiss": () => ({ feature: "guest_message.dismiss" }),
+  "thread.moved.clear": () => ({ feature: "thread.keep_working_here" }),
 };
 
 /**
