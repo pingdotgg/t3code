@@ -220,6 +220,19 @@ describe("thread links", () => {
   });
 
   it.each([
+    ["a paragraph code span", "Intro\n    ```\n    <t3-thread://v2/local/code>\n    ```"],
+    [
+      "a fence with over-indented markers",
+      "~~~\n    ~~~\n    ~~~\n<t3-thread://v2/local/code>\n~~~",
+    ],
+  ])("keeps links literal inside %s and rewrites the link after it", (_name, code) => {
+    const prose = `${code}\n\nSee `;
+    expect(replaceThreadLinks(`${prose}<t3-thread://v2/local/prose>`, () => "linked")).toBe(
+      `${prose}linked`,
+    );
+  });
+
+  it.each([
     ["4 spaces", "    ```md\n    <t3-thread://v1/abc>\n    ```", ""],
     ["tab", "\t```md\n\t<t3-thread://v1/abc>\n\t```", ""],
     ["list + 5 spaces", "-     ```md\n      <t3-thread://v1/abc>\n      ```", ""],
