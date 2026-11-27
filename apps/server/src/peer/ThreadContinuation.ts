@@ -482,11 +482,17 @@ const make = Effect.gen(function* () {
     function* (input) {
       const { project, remoteName } = yield* receivingProject(input);
       const { modelSelection, runtimeMode } = yield* receivingModes(input, project);
+      const baseRef = `${remoteName}/${input.branch}`;
+      // A branch started from the remote-tracking ref tracks it, so the thread can move on again
+      // without a push. Starting from origin would start it from the fetched commit instead.
+      yield* git
+        .fetchWorktreeBaseCommit({ cwd: project.workspaceRoot, refName: baseRef })
+        .pipe(Effect.mapError(receiveFailed));
       const worktree: ThreadLaunch.ThreadLaunchWorkspaceStrategy = {
         type: "worktree",
-        baseRef: `${remoteName}/${input.branch}`,
+        baseRef,
         branch: input.branch,
-        startFromOrigin: true,
+        startFromOrigin: false,
       };
       // Launch accepts worktree failures and reports them inside the thread; check first so they
       // come back to the sender and no thread is left behind.

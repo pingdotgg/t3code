@@ -133,6 +133,7 @@ interface Scenario {
   readonly peerCalls: Array<{ readonly tool: string; readonly arguments: unknown }>;
   readonly launches: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly gitActions: Array<string>;
+  readonly fetchedBases: Array<string>;
 }
 
 function scenario(
@@ -146,6 +147,7 @@ function scenario(
     peerCalls: [],
     launches: [],
     gitActions: [],
+    fetchedBases: [],
     ...overrides,
   };
 }
@@ -234,6 +236,10 @@ const layerFakes = (world: Scenario) =>
           },
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({
+          fetchWorktreeBaseCommit: (input) => {
+            world.fetchedBases.push(input.refName);
+            return Effect.succeed({ commitSha: "abc123", remoteRefName: input.refName });
+          },
           readConfigValue: (_cwd, key) =>
             Effect.succeed(
               key === `branch.${branch}.remote`
@@ -486,8 +492,9 @@ it.effect(
         type: "worktree",
         baseRef: "origin/feat/login",
         branch,
-        startFromOrigin: true,
+        startFromOrigin: false,
       });
+      assert.deepEqual(world.fetchedBases, ["origin/feat/login"]);
       assert.deepEqual(launch?.modelSelection, { instanceId: codex, model: "test-model" });
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const received = yield* orchestrator.getThreadProjection(result.threadId);
