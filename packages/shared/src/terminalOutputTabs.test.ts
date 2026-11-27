@@ -12,7 +12,7 @@ describe("tab stops in retained command output", () => {
     ["abcdefghijklmno", "\tZ", 8, "jklmno Z"],
     ["界abcdefghijklm", "\tZ", 8, "hijklm Z"],
     ["abcdefghijklmno\r", "\tZ", 8, "hZjklmno"],
-    ["abcde\nabc\u001b[A", "\u001b[B\tZ", 6, "     Z"],
+    ["abcde\nabcdEF\u001b[A", "\u001b[B\u001b[4G\tZ", 8, "dEF  Z"],
   ])("preserves the tab stop after trimming %j", (prefix, chunk, maxChars, expected) => {
     const source = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, prefix, maxChars);
     const resumed = appendTerminalOutput(
