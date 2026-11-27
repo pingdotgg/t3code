@@ -43,6 +43,19 @@ export default function NotebookPreview(props: {
   const [saved] = useState(() => savedPositions.get(positionKey));
   const [visible, setVisible] = useState(saved?.visible ?? 20);
   const scroll = useRef<HTMLDivElement>(null);
+  const savePosition = (root: HTMLElement, expanded: number) => {
+    const top = root.getBoundingClientRect().top;
+    const cells = Array.from(cellsOf(root));
+    const cell = Math.max(
+      0,
+      cells.findIndex((node) => node.getBoundingClientRect().bottom > top),
+    );
+    savedPositions.set(positionKey, {
+      visible: expanded,
+      cell,
+      offset: top - (cells[cell]?.getBoundingClientRect().top ?? top),
+    });
+  };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Return a reopened notebook to its saved cell once the cells have laid out.
   useLayoutEffect(() => {
     const root = scroll.current;
@@ -123,18 +136,7 @@ export default function NotebookPreview(props: {
       <div
         ref={scroll}
         className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto"
-        onScroll={(event) => {
-          const root = event.currentTarget;
-          const top = root.getBoundingClientRect().top;
-          const cells = Array.from(cellsOf(root));
-          const cell = cells.findIndex((node) => node.getBoundingClientRect().bottom > top);
-          if (cell === -1) return;
-          savedPositions.set(positionKey, {
-            visible,
-            cell,
-            offset: top - cells[cell]!.getBoundingClientRect().top,
-          });
-        }}
+        onScroll={(event) => savePosition(event.currentTarget, visible)}
       >
         <div className="mx-auto max-w-4xl space-y-5 px-5 py-6">
           {props.notebook.cells.slice(0, visible).map((cell, index) => (
@@ -205,7 +207,14 @@ export default function NotebookPreview(props: {
             </p>
           ) : null}
           {visible < props.notebook.cells.length ? (
-            <Button variant="outline" size="sm" onClick={() => setVisible((count) => count + 20)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (scroll.current) savePosition(scroll.current, visible + 20);
+                setVisible(visible + 20);
+              }}
+            >
               {gt(
                 "{count, plural, one {Show more cells ({count} remaining)} other {Show more cells ({count} remaining)}}",
                 { count: props.notebook.cells.length - visible },

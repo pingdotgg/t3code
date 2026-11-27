@@ -1211,6 +1211,17 @@ describe("notebook scroll position", () => {
     return { cell, offset: Math.round(top - cells[cell]!.getBoundingClientRect().top) };
   };
 
+  it("keeps cells shown with Show more when the notebook closes without another scroll", async () => {
+    using _style = withPreviewAppCss();
+    {
+      await using screen = await render(opened("expanded.ipynb", notebook));
+      await screen.getByRole("button", { name: /Show more cells/ }).click();
+      await vi.waitFor(() => expect(scroller().querySelectorAll("section")).toHaveLength(40));
+    }
+    await using _screen = await render(opened("expanded.ipynb", notebook));
+    await vi.waitFor(() => expect(scroller().querySelectorAll("section")).toHaveLength(40));
+  });
+
   it("returns a reopened notebook to its cell, including cells shown with Show more", async () => {
     using _style = withPreviewAppCss();
     let saved: ReturnType<typeof readingPosition>;
