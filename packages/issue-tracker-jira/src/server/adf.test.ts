@@ -10,7 +10,7 @@ const MARKDOWN = [
   "> quoted",
   "- [x] shipped\n- [ ] review",
   "## Release \\#",
-  "Line one\\\nline two, [go](https://a.test/a\\)b) and [docs](<https://a.test/a b>)",
+  "Line one\\\nline two, [go](https://a.test/a\\)b) and [docs](<https://a.test/a\\\\) b>)",
   "- first\n\n  second\n\n  2. third",
   "| a | b |\n| --- | --- |\n| 1 | 2 |",
   "---",
@@ -118,6 +118,8 @@ describe("adf", () => {
       content: [{ type: "listItem", content: [paragraph("a")] }],
     };
     expect(hasUnwritableContent(table(cell(bullets)))).toBe(true);
+    const broken = { type: "paragraph", content: [text("a"), { type: "hardBreak" }, text("b")] };
+    expect(hasUnwritableContent(table(cell(broken)))).toBe(true);
   });
 
   it("writes a reference link as the inline link its first definition names", () => {

@@ -58,7 +58,7 @@ function linked(text: string, marks: NonNullable<AdfNode["marks"]>): string {
   const href = marks.find((mark) => mark.type === "link")?.attrs?.["href"];
   if (typeof href !== "string") return text;
   const escaped = href.replace(/[\\()]/g, "\\$&");
-  return `[${text}](${/\s/u.test(href) ? `<${href.replace(/[<>]/g, "\\$&")}>` : escaped})`;
+  return `[${text}](${/\s/u.test(href) ? `<${href.replace(/[\\<>]/g, "\\$&")}>` : escaped})`;
 }
 
 function inline(node: AdfNode): string {
@@ -249,7 +249,11 @@ export function hasUnwritableContent(document: unknown): boolean {
     // A table cell is written back as one paragraph.
     ((document.type === "tableCell" || document.type === "tableHeader") &&
       (children(document).length > 1 ||
-        children(document).some((child) => child.type !== "paragraph"))) ||
+        children(document).some((child) => child.type !== "paragraph") ||
+        // A line break in a cell is written back as a space.
+        children(document).some((child) =>
+          children(child).some((leaf) => leaf.type === "hardBreak"),
+        ))) ||
     // A checklist is written back flat, so one nested in another would be lost.
     (document.type === "taskList" &&
       children(document).some((child) => child.type === "taskList")) ||
