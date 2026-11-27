@@ -1,4 +1,5 @@
 import {
+  NonNegativeInt,
   OrchestratorMcpFailure,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
@@ -34,6 +35,7 @@ import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts
 import { expandHomePath } from "../os-jank.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
+import { unsetInheritedRepositoryEnv } from "../vcs/VcsProcess.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 /**
@@ -327,9 +329,15 @@ const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools
 /** The checkouts of the git repository at `directory`, or none outside a repository. */
 const listGitCheckouts = Effect.fn("cli.thread.listGitCheckouts")(function* (directory: string) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const env = unsetInheritedRepositoryEnv(process.env, yield* HostProcess.Platform);
   const list = (args: ReadonlyArray<string>) =>
     processRunner
-      .run({ command: "git", args: ["worktree", "list", "--porcelain", ...args], cwd: directory })
+      .run({
+        command: "git",
+        args: ["worktree", "list", "--porcelain", ...args],
+        cwd: directory,
+        env,
+      })
       .pipe(
         Effect.option,
         Effect.map((result) =>
@@ -365,9 +373,11 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   // through a symlink (macOS /tmp), so both sides compare as real paths.
   const realPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
-  const target = yield* realPath(
-    path.resolve(yield* HostProcess.WorkingDirectory, yield* expandHomePath(identifier)),
+  const requestedPath = path.resolve(
+    yield* HostProcess.WorkingDirectory,
+    yield* expandHomePath(identifier),
   );
+  const target = yield* realPath(requestedPath);
   const roots = yield* Effect.forEach(projects, (project) =>
     Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
   );
@@ -378,12 +388,21 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
       (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
     );
   };
-  const deepestContaining = (candidate: string) =>
-    roots
+  const deepestContaining = (candidate: string, originalPath?: string) => {
+    // Projects can register the same directory through separate symlinks.
+    const matchingPathLength = (root: string) =>
+      originalPath !== undefined && contains(root, originalPath) ? root.length : 0;
+    return roots
       .filter(({ root }) => contains(root, candidate))
-      .toSorted((left, right) => right.root.length - left.root.length)[0]?.project;
+      .toSorted(
+        (left, right) =>
+          right.root.length - left.root.length ||
+          matchingPathLength(right.project.workspaceRoot) -
+            matchingPathLength(left.project.workspaceRoot),
+      )[0]?.project;
+  };
 
-  const containing = deepestContaining(target);
+  const containing = deepestContaining(target, requestedPath);
   if (containing !== undefined) return containing;
   const targetInfo = yield* fileSystem.stat(target).pipe(Effect.option);
   const gitDirectory =
@@ -760,7 +779,11 @@ const finishRun = Effect.fn("cli.thread.finishRun")(function* (
 });
 
 export const titleFromMessage = (message: string) => {
-  const firstLine = message.trim().split("\n")[0]?.trim() ?? "";
+  const firstLine =
+    message
+      .trim()
+      .split(/[\r\n\u2028\u2029]/, 1)[0]
+      ?.trim() ?? "";
   if (firstLine.length <= TITLE_MAX_CHARS) return firstLine;
   let end = TITLE_MAX_CHARS - 1;
   const previous = firstLine.charCodeAt(end - 1);
@@ -1042,6 +1065,7 @@ const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
   thread: threadArgument,
   messages: Flag.Int("messages").pipe(
+    Flag.withSchema(NonNegativeInt),
     Flag.withDescription("How many of the latest messages to print."),
     Flag.withDefault(10),
   ),

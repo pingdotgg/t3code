@@ -819,23 +819,46 @@ export interface OpenCode2Workspace {
 }
 
 /**
- * Reading a location the server has not loaded boots its scan, and only reads after the scan's
- * `command.updated` plus `skill.updated` are complete; `scanned` must listen before `read`. A
- * loaded location listing no commands is still scanning. A location another caller booted
- * moments earlier lists as loaded with only built-ins, so `settled` waits out its scan first.
+ * Runs `onScanned` for each location whose scan ends, which OpenCode announces once, after loading
+ * the location, as `command.updated` plus `skill.updated`.
+ */
+export const followOpenCode2Scans = <E>(
+  events: Stream.Stream<
+    { readonly type: string; readonly location?: { readonly directory?: string } | undefined },
+    E
+  >,
+  onScanned: (directory: string) => Effect.Effect<void>,
+) => {
+  const pending = new Map<string, Set<string>>();
+  return events.pipe(
+    Stream.runForEach((event) => {
+      const directory = event.location?.directory;
+      if (directory === undefined) return Effect.void;
+      if (event.type !== "command.updated" && event.type !== "skill.updated") return Effect.void;
+      const seen = pending.get(directory) ?? new Set<string>();
+      pending.set(directory, seen.add(event.type));
+      if (seen.size < 2) return Effect.void;
+      pending.delete(directory);
+      return onScanned(directory);
+    }),
+    Effect.ignore,
+  );
+};
+
+/**
+ * Until its scan ends a location lists only built-ins, even once the server lists it as loaded,
+ * and nothing but the scan's end tells the two apart. Unless the caller saw that scan end, read to
+ * boot the location, wait for its scan (`scanned` must listen before `read`), and read again.
  */
 export const loadOpenCode2Workspace = Effect.fn("OpencodeProviderStatus.loadOpenCode2Workspace")(
   function* <E>(
     read: Effect.Effect<OpenCode2Workspace, E>,
     scanned: Effect.Effect<void>,
-    loaded: Effect.Effect<boolean>,
-    settled: Effect.Effect<void> = Effect.void,
+    sawScan: boolean,
     environment?: NodeJS.ProcessEnv,
   ) {
-    const wasLoaded = yield* loaded;
-    yield* settled;
     const first = yield* read;
-    if (wasLoaded && first.commands.length > 0) return first;
+    if (sawScan) return first;
     yield* scanned.pipe(
       Effect.timeoutOption(resolveProviderProbeTimeoutMs("opencode", 10_000, environment)),
     );

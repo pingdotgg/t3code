@@ -48,10 +48,14 @@ function ExpandableSearch({
       <div
         ref={containerRef}
         className="w-56 min-w-24 shrink"
-        onFocus={() => onFocusWithin?.(true)}
+        onFocus={() => {
+          onFocusWithin?.(true);
+          // Open while focused, so Escape clearing the query does not unmount the field.
+          onOpenChange(true);
+        }}
         onBlur={() => {
           onFocusWithin?.(false);
-          if (searchValue.length === 0) onOpenChange(false);
+          onOpenChange(false);
         }}
       >
         {searchInput}

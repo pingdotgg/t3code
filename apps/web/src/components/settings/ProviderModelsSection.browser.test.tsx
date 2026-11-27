@@ -179,3 +179,46 @@ it("cancels adding or editing a custom model on Escape without closing Settings"
   await userEvent.keyboard("{Escape}");
   await expect.element(settings).not.toBeInTheDocument();
 });
+
+it("clears the model filter on Escape without closing Settings", async () => {
+  const manyModels = Array.from({ length: 9 }, (_, index) => ({
+    slug: `gpt-${index}`,
+    name: `GPT ${index}`,
+    isCustom: false,
+    capabilities: null,
+  }));
+  await using _screen = await render(
+    <AppRouteModal label="Settings">{section({ models: manyModels })}</AppRouteModal>,
+    { router: "/settings/providers" },
+  );
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  const filter = page.getByRole("textbox", { name: "Filter models" });
+  await userEvent.type(filter, "gpt 1");
+  for (const composition of [
+    { key: "Escape", isComposing: true, keyCode: 27 },
+    { key: "Escape", isComposing: false, keyCode: 229 },
+  ]) {
+    // Safari ends the composition just before the Escape keydown.
+    await act(() => {
+      filter.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      filter
+        .element()
+        .dispatchEvent(new KeyboardEvent("keydown", { ...composition, bubbles: true }));
+    });
+    await expect.element(filter).toHaveValue("gpt 1");
+  }
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(filter).toHaveValue("");
+  await expect.element(filter).toHaveFocus();
+  // Holding Escape repeats the keydown, which must not also close Settings.
+  await act(() => {
+    filter
+      .element()
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", repeat: true, bubbles: true }));
+  });
+  await expect.element(settings).toHaveAttribute("data-open");
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(settings).not.toBeInTheDocument();
+});
