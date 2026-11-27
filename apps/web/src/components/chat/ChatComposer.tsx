@@ -741,13 +741,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     routeThreadRef,
   ]);
   const attachmentTargetKey = composerTargetKey(attachmentDraftTarget);
-  // Reject async imports, confirmations, and focus restores after a draft switch or response start.
+  // Reject async imports after a draft switch.
   const attachmentTargetKeyRef = useRef(attachmentTargetKey);
-  const activePendingIsRespondingRef = useRef(activePendingIsResponding);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed attachment target and question responding state to refs read by async handlers
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed attachment target key to a ref so async imports reject after a draft switch
   useLayoutEffect(() => {
     attachmentTargetKeyRef.current = attachmentTargetKey;
-    activePendingIsRespondingRef.current = activePendingIsResponding;
   });
   const composerMountedRef = useRef(true);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks unmount so an awaited folder conversion cannot write into ChatView's reused promptRef
@@ -1420,12 +1418,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     imageId: string,
     options?: { readonly recordHistory?: boolean; readonly stripReferences?: boolean },
   ) => {
-    if (
-      questionAttachmentTarget &&
-      (activePendingIsResponding || activePendingIsRespondingRef.current)
-    ) {
-      return;
-    }
+    if (questionAttachmentTarget && activePendingIsResponding) return;
     const editorOwnsTarget = attachmentTargetKeyRef.current === attachmentTargetKey;
     const currentImages =
       getComposerDraft(attachmentDraftTarget)?.images ?? composerImagesRef.current;
@@ -1453,10 +1446,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
     if (shouldFocusEditor) {
       window.requestAnimationFrame(() => {
-        if (
-          attachmentTargetKeyRef.current === attachmentTargetKey &&
-          !(questionAttachmentTarget && activePendingIsRespondingRef.current)
-        ) {
+        if (attachmentTargetKeyRef.current === attachmentTargetKey) {
           composerEditorRef.current?.focus();
         }
       });

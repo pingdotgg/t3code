@@ -1,4 +1,3 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
@@ -10,9 +9,8 @@ import {
   ThreadId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useImperativeHandle, useLayoutEffect, useRef, type RefObject } from "react";
+import { useImperativeHandle, type RefObject } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { ChatComposerHandle } from "./ChatComposer";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   threadContextRecord,
@@ -135,34 +133,18 @@ function Harness(props: {
   readonly runStatus: string;
   readonly hookRef: RefObject<HookResult | null>;
   readonly messages: ReadonlyArray<unknown>;
-  readonly promptRef?: { current: string };
-  readonly composerRef?: RefObject<Pick<
-    ChatComposerHandle,
-    "focusAtEnd" | "resetCursorState"
-  > | null>;
 }) {
-  const routeThreadKey = scopedThreadKey(props.threadRef);
-  const currentRouteThreadKeyRef = useRef<string | null>(routeThreadKey);
-  useLayoutEffect(() => {
-    currentRouteThreadKeyRef.current = routeThreadKey;
-  }, [routeThreadKey]);
-  const defaultPromptRef = useRef("");
-  const defaultComposerRef = useRef<Pick<
-    ChatComposerHandle,
-    "focusAtEnd" | "resetCursorState"
-  > | null>(null);
   const result = useQueuedRunEdit({
     environmentId: ENV,
     routeThreadRef: props.threadRef,
-    currentRouteThreadKeyRef,
     threadDraftTarget: props.threadRef,
     activeThreadId: props.threadRef.threadId,
     serverProjection: projection(
       [{ id: RUN, status: props.runStatus, modelSelection: savedContent("").modelSelection }],
       props.messages,
     ),
-    promptRef: props.promptRef ?? defaultPromptRef,
-    composerRef: props.composerRef ?? defaultComposerRef,
+    promptRef: { current: "" },
+    composerRef: { current: null },
   });
   useImperativeHandle(props.hookRef, () => result);
   const draft = useComposerThreadDraft(result.draftTarget);
@@ -670,62 +652,6 @@ describe("useQueuedRunEdit", () => {
     expect(
       useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget)?.prompt,
     ).toBe("newer");
-  });
-
-  it("does not reset another thread's composer history when a queued-edit save finishes after switching threads", async () => {
-    const { hook } = setup();
-    let finishSave!: (result: { _tag: "Success" }) => void;
-    mocks.editQueuedRun.mockReturnValue(
-      new Promise<{ _tag: "Success" }>((resolve) => {
-        finishSave = resolve;
-      }),
-    );
-    const resetCursorState = vi.fn();
-    const focusAtEnd = vi.fn();
-    const promptRef = { current: "thread B prompt" };
-    const composerRef: RefObject<Pick<
-      ChatComposerHandle,
-      "focusAtEnd" | "resetCursorState"
-    > | null> = {
-      current: { resetCursorState, focusAtEnd },
-    };
-
-    await using screen = await render(
-      <AppAtomRegistryProvider>
-        <Harness
-          threadRef={THREAD_A}
-          runStatus="queued"
-          hookRef={hook}
-          messages={[]}
-          promptRef={promptRef}
-          composerRef={composerRef}
-        />
-      </AppAtomRegistryProvider>,
-    );
-    await beginChangedEdit(hook);
-    await vi.waitFor(() => expect(focusAtEnd).toHaveBeenCalledOnce());
-    focusAtEnd.mockClear();
-    const saved = requireHook(hook).saveEdit(savedContent("changed"), () => {});
-
-    await screen.rerender(
-      <AppAtomRegistryProvider>
-        <Harness
-          threadRef={THREAD_B}
-          runStatus="queued"
-          hookRef={hook}
-          messages={[]}
-          promptRef={promptRef}
-          composerRef={composerRef}
-        />
-      </AppAtomRegistryProvider>,
-    );
-
-    finishSave({ _tag: "Success" });
-    await act(() => saved);
-
-    expect(resetCursorState).not.toHaveBeenCalled();
-    expect(focusAtEnd).not.toHaveBeenCalled();
-    expect(promptRef.current).toBe("thread B prompt");
   });
 });
 
