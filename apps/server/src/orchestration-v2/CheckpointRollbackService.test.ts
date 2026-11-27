@@ -1221,27 +1221,29 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           });
           assert.isTrue(earlierAttemptResult.needsTargetProviderRollback);
 
-          // When two retained aliases share a native conversation and the lower app-ordinal run
-          // actually started later in native history, pick the later-started alias as the cutoff.
+          // When retained runs on the same alias or across aliases execute out of app order
+          // (A3 started first, B2 second, A1 third, discarded A5 fourth), carry A1 as the cutoff.
+          const midStartedAt = DateTime.add(now, { seconds: 5 });
           const laterStartedAt = DateTime.add(now, { seconds: 10 });
           const nativeOrderResult = ProjectionStore.classifyRollbackProviderThreads({
             targetProviderThread: targetThread,
             activeProviderThreadId: grokAlias2Id,
-            targetOrdinal: 3,
+            targetOrdinal: 4,
             rootProviderThreads: [grokAlias1, grokAlias2, targetThread],
             runsToRollback: [
               makeRun(
-                4,
+                5,
                 grokAlias2Id,
                 "completed",
                 DateTime.add(now, { seconds: 20 }),
-                RunAttemptId.make("att:4"),
+                RunAttemptId.make("att:5"),
               ),
             ],
             retainedRuns: [
               makeRun(1, grokAlias1Id, "completed", laterStartedAt, RunAttemptId.make("att:1")),
-              makeRun(2, grokAlias2Id, "completed", now, RunAttemptId.make("att:2")),
-              makeRun(3, targetThreadId, "completed", now, RunAttemptId.make("att:3")),
+              makeRun(2, grokAlias2Id, "completed", midStartedAt, RunAttemptId.make("att:2")),
+              makeRun(3, grokAlias1Id, "completed", now, RunAttemptId.make("att:3")),
+              makeRun(4, targetThreadId, "completed", now, RunAttemptId.make("att:4")),
             ],
             sessions: [],
             providerTurns: [
@@ -1253,6 +1255,11 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
               {
                 id: ProviderTurnId.make("turn:2"),
                 runAttemptId: RunAttemptId.make("att:2"),
+                startedAt: midStartedAt,
+              },
+              {
+                id: ProviderTurnId.make("turn:3"),
+                runAttemptId: RunAttemptId.make("att:3"),
                 startedAt: now,
               },
             ],
@@ -1262,6 +1269,7 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
             (entry) => entry.needsRollback,
           );
           assert.equal(rollbackSpanning?.providerThread.id, grokAlias1Id);
+          assert.equal(rollbackSpanning?.targetRun.ordinal, 1);
         }),
     );
 

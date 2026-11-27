@@ -441,7 +441,7 @@ export function classifyRollbackProviderThreads(input: {
     string,
     {
       readonly threadId: ProviderThreadId;
-      readonly ordinal: number;
+      readonly run: OrchestrationV2Run;
       readonly nativeStartMs: number | null;
     }
   >();
@@ -459,19 +459,19 @@ export function classifyRollbackProviderThreads(input: {
     const convKey = convKeyByThreadId.get(run.providerThreadId) ?? run.providerThreadId;
     const prevConv = latestRetainedByConvKey.get(convKey);
     const nativeStartMs = nativeStartMillisForRun(run);
-    // Prefer native start order across aliases so a spanning rewind never truncates a retained turn
-    // that executed later than another retained alias in native history.
+    // Prefer native start order so a spanning rewind never truncates a retained turn
+    // that executed later in native history than another retained run.
     const isLaterInNativeOrder =
       prevConv === undefined ||
       (nativeStartMs !== null &&
       prevConv.nativeStartMs !== null &&
       nativeStartMs !== prevConv.nativeStartMs
         ? nativeStartMs > prevConv.nativeStartMs
-        : run.ordinal > prevConv.ordinal);
+        : run.ordinal > prevConv.run.ordinal);
     if (isLaterInNativeOrder) {
       latestRetainedByConvKey.set(convKey, {
         threadId: run.providerThreadId,
-        ordinal: run.ordinal,
+        run,
         nativeStartMs,
       });
     }
@@ -490,12 +490,8 @@ export function classifyRollbackProviderThreads(input: {
     const latest = latestRetainedByConvKey.get(convKey);
     if (latest === undefined) return false;
     const latestThread = rootThreadsById.get(latest.threadId);
-    const latestRun = retainedRunByThreadId.get(latest.threadId);
-    if (
-      latestThread === undefined ||
-      isRetiredProviderThread(latestThread) ||
-      latestRun === undefined
-    ) {
+    const latestRun = latest.run;
+    if (latestThread === undefined || isRetiredProviderThread(latestThread)) {
       return false;
     }
     const latestAttempt = input.attemptByOrdinal?.get(latestRun.ordinal);
@@ -536,11 +532,15 @@ export function classifyRollbackProviderThreads(input: {
       abandonedProviderThreads.push(candidate);
       continue;
     }
-    const isLatestRetainedInConversation =
-      latestRetainedByConvKey.get(convKey)?.threadId === candidate.id;
+    const latestInConversation = latestRetainedByConvKey.get(convKey);
+    const isLatestRetainedInConversation = latestInConversation?.threadId === candidate.id;
     const needsNativeRollback =
       !sharesTargetConversation && hasDiscardedDeliveredRun && isLatestRetainedInConversation;
-    const targetAttempt = input.attemptByOrdinal?.get(retainedRun.ordinal);
+    const rollbackTargetRun =
+      needsNativeRollback && latestInConversation !== undefined
+        ? latestInConversation.run
+        : retainedRun;
+    const targetAttempt = input.attemptByOrdinal?.get(rollbackTargetRun.ordinal);
 
     spanningProviderThreads.push({
       providerThread: candidate,
@@ -548,9 +548,9 @@ export function classifyRollbackProviderThreads(input: {
         candidate.providerSessionId === null
           ? undefined
           : sessionsById.get(candidate.providerSessionId),
-      targetRun: retainedRun,
+      targetRun: rollbackTargetRun,
       targetAttempt,
-      targetCheckpointId: retainedRun.checkpointId,
+      targetCheckpointId: rollbackTargetRun.checkpointId,
       conversationThreadIds: threadIdsByConvKey.get(convKey) ?? [candidate.id],
       needsRollback: needsNativeRollback,
     });
