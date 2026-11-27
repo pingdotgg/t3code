@@ -17,12 +17,14 @@ import {
   type DesktopPreviewOverlay,
   reconcilePreviewServerSessions,
   resetPreviewStateForTests,
+  type ThreadPreviewState,
 } from "../../previewStateStore";
 import { useRightPanelStore } from "../../rightPanelStore";
 import {
   applyDeviceSnapshot,
   floatBrowserSurface,
   floatDeviceSurface,
+  floatPanelSurfaceOnClose,
   followPreviewSessions,
   resetDeviceSessionBaselinesForTests,
   revealServerTabs,
@@ -231,6 +233,65 @@ describe("floatBrowserSurface", () => {
     setup();
     floatBrowserSurface(ref, "tab_a", state(tab({ _tag: "Idle" }), loading));
     expect(miniPlayerSource()).toEqual(browserMiniPlayerSource("tab_a"));
+  });
+});
+
+describe("floatPanelSurfaceOnClose", () => {
+  const browser = browserMiniPlayerSource("tab_panel");
+  const pixel = {
+    kind: "device",
+    hostId: "local",
+    deviceId: "pixel",
+    platform: "android",
+    name: "Pixel 8",
+  } as const;
+  const previewState = {
+    ...previewStateTesting.EMPTY_THREAD_PREVIEW_STATE,
+    sessions: {
+      tab_panel: {
+        threadId: "thread-1",
+        tabId: "tab_panel",
+        navStatus: { _tag: "Loading", url: "http://localhost:5173/", title: "" },
+        canGoBack: false,
+        canGoForward: false,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    },
+  } satisfies ThreadPreviewState;
+
+  it.each([
+    { name: "floats a browser", source: browser, autoShow: true, before: null, after: browser },
+    { name: "floats a device", source: pixel, autoShow: true, before: null, after: pixel },
+    {
+      name: "floats no browser with Auto-show off",
+      source: browser,
+      autoShow: false,
+      before: null,
+      after: undefined,
+    },
+    {
+      name: "floats no device with Auto-show off",
+      source: pixel,
+      autoShow: false,
+      before: null,
+      after: undefined,
+    },
+    {
+      name: "keeps a float the user opened with Auto-show off",
+      source: browser,
+      autoShow: false,
+      before: browser,
+      after: browser,
+    },
+  ])("$name", ({ source, autoShow, before, after }) => {
+    setup();
+    if (before) usePreviewMiniPlayerStore.getState().open(ref, before);
+    floatPanelSurfaceOnClose(ref, source, {
+      autoShowFloatingPreview: autoShow,
+      previewState,
+      deviceState: deviceState({ sessions: [session] }),
+    });
+    expect(miniPlayerSource()).toEqual(after);
   });
 });
 
