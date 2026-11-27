@@ -232,6 +232,10 @@ const layerFileSystem = FileSystem.layerNoop({
     }),
 });
 
+const attachPasskeyGuest = vi.fn(
+  (_guest: Electron.WebContents, _isShown: () => boolean) => () => {},
+);
+
 const managerLayer = (platform: NodeJS.Platform = "darwin") =>
   PreviewManager.layer.pipe(
     Layer.provideMerge(
@@ -246,8 +250,9 @@ const managerLayer = (platform: NodeJS.Platform = "darwin") =>
     Layer.provideMerge(
       Layer.mock(PreviewPasskeys.PreviewPasskeys)({
         bridgeEnabled: false,
+        gateEnabled: false,
         installSessionHandlers: () => {},
-        attachGuest: () => () => {},
+        attachGuest: attachPasskeyGuest,
       }),
     ),
     Layer.provideMerge(layerEnvironment),
@@ -692,6 +697,7 @@ describe("PreviewManager", () => {
               }),
               Layer.mock(PreviewPasskeys.PreviewPasskeys)({
                 bridgeEnabled: false,
+                gateEnabled: false,
                 installSessionHandlers: () => {},
                 attachGuest: () => () => {},
               }),
@@ -878,6 +884,29 @@ describe("PreviewManager", () => {
         yield* Fiber.join(leaving);
 
         expect(navigatedAfterStop).toEqual([true]);
+      }),
+    ),
+  );
+
+  effectIt.effect("offers passkeys only to a tab the renderer reports shown", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_passkey");
+        yield* manager.registerWebview("tab_passkey", 42);
+        const isShown = attachPasskeyGuest.mock.calls.at(-1)?.[1];
+        expect(isShown, "guest was not attached to passkeys").toBeDefined();
+
+        expect(isShown!()).toBe(false);
+        yield* manager.setShown("tab_passkey", true);
+        expect(isShown!()).toBe(true);
+        // Switching threads hides the tab but keeps its guest alive.
+        yield* manager.setShown("tab_passkey", false);
+        expect(isShown!()).toBe(false);
+        yield* manager.setShown("tab_passkey", true);
+        yield* manager.closeTab("tab_passkey");
+        expect(isShown!()).toBe(false);
       }),
     ),
   );
