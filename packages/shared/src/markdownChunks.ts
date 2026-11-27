@@ -267,6 +267,8 @@ function extractFootnoteRefs(text: string, definedKeys: ReadonlySet<string>): st
   // Scans that found no close mark where later ones would fail too, so no text is rescanned.
   let mathUnclosedUntil = -1;
   let commentUnclosed = false;
+  // Unmatched `[`; a `](` without one is literal text, not the start of a destination.
+  let openBrackets = 0;
   // The current line's leading `>` markers and indentation, tracked forward.
   let scanned = 0;
   let prefixEnd = 0;
@@ -346,8 +348,10 @@ function extractFootnoteRefs(text: string, definedKeys: ReadonlySet<string>): st
       }
       commentUnclosed = true;
     }
-    if (ch === "]" && text[i + 1] === "(") {
-      const end = linkDestinationEnd(text, i + 2);
+    if (ch === "[" && text[i + 1] !== "^") openBrackets++;
+    if (ch === "]" && openBrackets > 0) {
+      openBrackets--;
+      const end = text[i + 1] === "(" ? linkDestinationEnd(text, i + 2) : -1;
       if (end !== -1) {
         i = end;
         continue;

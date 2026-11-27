@@ -583,6 +583,8 @@ describe("chunked Markdown footnotes", () => {
       "",
       `[^c] ${"<!-- ](<".repeat(20000)}`,
       "",
+      "Literal ](see[^b]) but [link](x[^a]) is a destination.",
+      "",
       filler,
       "",
       "[^a]: First note.",
@@ -592,7 +594,7 @@ describe("chunked Markdown footnotes", () => {
 
     const { chunks, footnotes } = splitMarkdown(text);
     expect(chunks.length).toBeGreaterThan(1);
-    expect(footnotes?.chunkRefs.flat()).toEqual(["a", "b", "c", "b", "c", "a", "c"]);
+    expect(footnotes?.chunkRefs.flat()).toEqual(["a", "b", "c", "b", "c", "a", "c", "b"]);
   });
 
   it("falls back when footnote definitions exceed the shared cap", () => {
