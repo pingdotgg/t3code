@@ -2605,6 +2605,8 @@
   "4af8c6ef39e00592": "Estrechar panel",
   "54940a3e03ca7fc7": "{width} puntos de ancho",
   "b1043ff2793170eb": "El proyecto ya existe",
+  "b648147321230e61": "Borrador no movido",
+  "af9567f0bfc0d4b1": "No se pudo mover tu borrador a {title}. Sigue donde lo dejaste. Inténtalo de nuevo.",
   "34d24b23043908f5": "{title} sigue archivado. Inténtalo más tarde.",
   "cc5e0eb3b8d438e5": "No se añadió el proyecto",
   "b96db7780fceca0d": "Esta conexión no puede añadir proyectos ahora mismo. Los archivos existentes siguen en {path}.",

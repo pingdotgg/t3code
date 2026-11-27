@@ -210,10 +210,14 @@ export function gitRemotesShareServerPort(left: string, right: string): boolean 
       return null;
     }
   };
+  // WHATWG URL drops only special-scheme default ports, so `ssh://h:22` keeps its port.
+  const port = (value: URL) => value.port || (GIT_DEFAULT_PORTS[value.protocol] ?? "");
   const a = url(left);
   const b = url(right);
-  return a === null || b === null || a.protocol !== b.protocol || a.port === b.port;
+  return a === null || b === null || a.protocol !== b.protocol || port(a) === port(b);
 }
+
+const GIT_DEFAULT_PORTS: Partial<Record<string, string>> = { "ssh:": "22", "git:": "9418" };
 
 /**
  * `host/path` for a remote that names a host, otherwise the remote itself, lower case. A host that

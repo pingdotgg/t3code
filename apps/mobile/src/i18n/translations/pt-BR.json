@@ -2605,6 +2605,8 @@
   "4af8c6ef39e00592": "Estreitar painel",
   "54940a3e03ca7fc7": "{width} pontos de largura",
   "b1043ff2793170eb": "O projeto já existe",
+  "b648147321230e61": "Rascunho não movido",
+  "af9567f0bfc0d4b1": "Não foi possível mover seu rascunho para {title}. Ele continua onde você o deixou. Tente novamente.",
   "34d24b23043908f5": "{title} ainda está arquivado. Tente novamente mais tarde.",
   "cc5e0eb3b8d438e5": "Projeto não adicionado",
   "b96db7780fceca0d": "Esta conexão não pode adicionar projetos agora. Os arquivos existentes continuam em {path}.",

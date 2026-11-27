@@ -165,7 +165,15 @@ export const make = Effect.gen(function* () {
   let sequence = 0;
   for (const entry of entries) {
     const { destinationPath } = entry.snapshot;
-    const project = yield* projects.findActiveByWorkspaceRoot(destinationPath);
+    const project = yield* projects.findActiveByWorkspaceRoot(destinationPath).pipe(
+      Effect.catch((cause) =>
+        Effect.logError("A pending clone's project could not be looked up.", cause).pipe(
+          // Kept as stored so the next journal write does not drop it before a later restart.
+          Effect.andThen(Effect.sync(() => journal.set(destinationPath, entry))),
+          Effect.as(Option.none()),
+        ),
+      ),
+    );
     if (Option.isNone(project)) continue;
     const { projectId } = project.value;
     const snapshot: ProjectCloneSnapshot = {
@@ -339,7 +347,14 @@ export const make = Effect.gen(function* () {
         protocol: existing.protocol,
       }).pipe(Effect.ignore({ log: true }));
     }
-    yield* modify(projectId, (tracked) => ({ ...tracked, fiber: null, snapshot }));
+    // A clone refused before git ran never owned the destination; the next retry must not delete it.
+    const ownsNothing = error === SourceControlRepositoryService.DESTINATION_NOT_EMPTY;
+    yield* modify(projectId, (tracked) => ({
+      ...tracked,
+      fiber: null,
+      snapshot,
+      ...(ownsNothing ? { recovered: true } : {}),
+    }));
     if (phase === "done") yield* scheduleRemoval(projectId);
   });
 
@@ -582,7 +597,7 @@ export const make = Effect.gen(function* () {
           )
           .pipe(
             Effect.mapError((error) =>
-              error.detail === "Destination path already exists and is not empty."
+              error.detail === SourceControlRepositoryService.DESTINATION_NOT_EMPTY
                 ? new SourceControlRepositoryError({
                     operation: error.operation,
                     provider: error.provider,

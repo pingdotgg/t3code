@@ -2609,6 +2609,8 @@
   "4af8c6ef39e00592": "Gör panelen smalare",
   "54940a3e03ca7fc7": "{width} punkter bred",
   "b1043ff2793170eb": "Projektet finns redan",
+  "b648147321230e61": "Utkastet flyttades inte",
+  "af9567f0bfc0d4b1": "Ditt utkast kunde inte flyttas till {title}. Det finns kvar där du lämnade det. Försök igen.",
   "34d24b23043908f5": "{title} är fortfarande arkiverat. Försök igen senare.",
   "cc5e0eb3b8d438e5": "Projektet lades inte till",
   "b96db7780fceca0d": "Den här anslutningen kan inte lägga till projekt just nu. Befintliga filer finns kvar på {path}.",

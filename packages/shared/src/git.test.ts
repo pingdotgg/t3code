@@ -485,5 +485,20 @@ describe("gitRemotesShareServerPort", () => {
     expect(
       gitRemotesShareServerPort("git@example.com:a/b.git", "https://example.com:8443/a/b"),
     ).toBe(true);
+    expect(
+      gitRemotesShareServerPort("git://git.example.com/a/b", "git://git.example.com:9418/a/b"),
+    ).toBe(true);
+    expect(
+      gitRemotesShareServerPort(
+        "ssh://git@git.example.com/a/b",
+        "ssh://git@git.example.com:22/a/b",
+      ),
+    ).toBe(true);
+    expect(
+      gitRemotesShareServerPort(
+        "ssh://git@git.example.com/a/b",
+        "ssh://git@git.example.com:2222/a/b",
+      ),
+    ).toBe(false);
   });
 });

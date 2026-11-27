@@ -74,6 +74,9 @@ export interface SourceControlPreparedClone {
   readonly existingCheckout?: boolean;
 }
 
+/** A clone refused with this never touched the destination, so its files are not the clone's. */
+export const DESTINATION_NOT_EMPTY = "Destination path already exists and is not empty.";
+
 export interface SourceControlPrepareCloneOptions {
   /** Accept a destination that already holds a checkout of the same repository. */
   readonly reuseCheckout?: boolean;
@@ -345,7 +348,7 @@ export const make = Effect.gen(function* () {
           return yield* new SourceControlRepositoryError({
             operation: "cloneRepository",
             provider: SourceControlProviderKind.make("unknown"),
-            detail: "Destination path already exists and is not empty.",
+            detail: DESTINATION_NOT_EMPTY,
           });
         }
       } else {

@@ -2605,6 +2605,8 @@
   "4af8c6ef39e00592": "Rétrécir le volet",
   "54940a3e03ca7fc7": "{width} points de large",
   "b1043ff2793170eb": "Le projet existe déjà",
+  "b648147321230e61": "Brouillon non déplacé",
+  "af9567f0bfc0d4b1": "Votre brouillon n'a pas pu être déplacé vers {title}. Il est toujours là où vous l'avez laissé. Réessayez.",
   "34d24b23043908f5": "{title} est toujours archivé. Réessayez plus tard.",
   "cc5e0eb3b8d438e5": "Projet non ajouté",
   "b96db7780fceca0d": "Cette connexion ne peut pas ajouter de projets pour le moment. Les fichiers existants restent dans {path}.",

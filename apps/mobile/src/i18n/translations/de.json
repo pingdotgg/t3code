@@ -2609,6 +2609,8 @@
   "4af8c6ef39e00592": "Bereich verschmälern",
   "54940a3e03ca7fc7": "{width} Punkte breit",
   "b1043ff2793170eb": "Projekt existiert bereits",
+  "b648147321230e61": "Entwurf nicht verschoben",
+  "af9567f0bfc0d4b1": "Dein Entwurf konnte nicht nach {title} verschoben werden. Er ist noch dort, wo du ihn gelassen hast. Versuche es erneut.",
   "34d24b23043908f5": "{title} ist noch archiviert. Versuch es später erneut.",
   "cc5e0eb3b8d438e5": "Projekt nicht hinzugefügt",
   "b96db7780fceca0d": "Diese Verbindung kann gerade keine Projekte hinzufügen. Vorhandene Dateien bleiben unter {path}.",

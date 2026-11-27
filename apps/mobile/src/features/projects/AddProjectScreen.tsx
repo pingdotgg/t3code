@@ -817,14 +817,15 @@ type CarriedDraft = { readonly prompt: string | null; readonly draftId: string |
 
 /**
  * Moves the draft being added from onto the project, or starts one with the prompt. Null when the
- * person left the screen meanwhile: their draft stays where it was.
+ * person left the screen meanwhile, "failed" when the drafts store failed: either way the draft
+ * stays where it was.
  */
 async function carryDraftTo(
   environmentId: EnvironmentId,
   projectId: ProjectId,
   carried: CarriedDraft,
   isOriginActive: () => boolean,
-): Promise<{ readonly draftId?: string } | null> {
+): Promise<{ readonly draftId?: string } | null | "failed"> {
   try {
     await waitForComposerDraftsLoaded();
     // The origin route is checked at each write point, after every await.
@@ -843,10 +844,18 @@ async function carryDraftTo(
     const draftId = createNewTaskDraft({ environmentId, projectId });
     setComposerDraftText(draftId, carried.prompt);
     return { draftId };
-  } catch {
-    return {};
+  } catch (error) {
+    console.warn("[add-project] the draft could not be moved", error);
+    return "failed";
   }
 }
+
+const draftNotMovedMessage = (title: string) =>
+  m(
+    msg("Your draft could not be moved to {title}. It is still where you left it. Try again.", {
+      title,
+    }),
+  );
 
 function useOpenExistingProject(environment: EnvironmentOption | null) {
   const navigation = useNavigation();
@@ -899,6 +908,11 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
         )
       : {};
     if (draft === null) return true;
+    // Adding the project again reaches this path and retries the move.
+    if (draft === "failed") {
+      Dialog.alert(m(msg("Draft not moved")), draftNotMovedMessage(existing.title));
+      return true;
+    }
     void openNewTaskDraft(
       {
         environmentId: existing.environmentId,
@@ -1720,7 +1734,9 @@ export function AddProjectDestinationScreen(props: {
         const draft = await carryDraftTo(environment.environmentId, projectId, carried, () =>
           isActiveRoute(navigation, originRoute),
         );
-        if (draft !== null) {
+        // Cloning again finds the new project and retries the move.
+        if (draft === "failed") setError(draftNotMovedMessage(title));
+        else if (draft !== null) {
           void openNewTaskDraft(
             {
               environmentId: environment.environmentId,
