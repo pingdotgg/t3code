@@ -8,6 +8,7 @@ import {
   type ModelSelection,
   type ProjectId,
   ProviderDriverKind,
+  type ProviderInstanceId,
   type ScopedThreadRef,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -19,6 +20,8 @@ import {
 import { type UnifiedSettings } from "@t3tools/contracts/settings";
 import { getComposerPromptInjectionState, getComposerProviderState } from "./composerProviderState";
 import { resolveComposerProviderSelection } from "../ChatView.logic";
+import { composerOrchestrator, useOrchestrationNow } from "../../customOrchestration";
+import { useMessages } from "gt-react";
 
 const NO_PROVIDER_MODELS: ServerProvider["models"] = [];
 
@@ -37,6 +40,7 @@ export function useComposerProviderModel(
     readonly projectModelSelection: ModelSelection | null | undefined;
     readonly promptInjectionState: ReturnType<typeof getComposerPromptInjectionState>;
     readonly threadStarted: boolean;
+    readonly modelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
   },
 ) {
   const {
@@ -51,24 +55,55 @@ export function useComposerProviderModel(
     lockedProvider,
     lockedInstanceId,
     threadStarted,
+    modelDisabledReason,
   } = input;
   const draftModelState = useComposerDraftModelState(threadRef);
+  const now = useOrchestrationNow(settings.customOrchestration.orchestrator !== null);
+  const resolveMessage = useMessages();
   const providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry> = providerInstanceEntriesFor(
     providerStatuses,
     settings,
     activeProjectId,
   );
-  const selection = resolveComposerProviderSelection({
+  const draftProvider = draftModelSelectionApplies(draftModelState, threadStarted)
+    ? draftModelState.activeProvider
+    : null;
+  const pickedSelection =
+    (draftProvider ? draftModelState.modelSelectionByProvider[draftProvider] : undefined) ??
+    threadModelSelection ??
+    projectModelSelection;
+  const customOrchestration = pickedSelection?.orchestration === "custom";
+  const resolvedSelection = resolveComposerProviderSelection({
     entries: providerInstanceEntries,
-    candidateInstanceIds: [
-      draftModelSelectionApplies(draftModelState, threadStarted)
-        ? draftModelState.activeProvider
-        : null,
-      ...candidateInstanceIds,
-    ],
+    candidateInstanceIds: [draftProvider, ...candidateInstanceIds],
     lockedProvider,
     lockedInstanceId,
   });
+  const orchestration = composerOrchestrator({
+    settings,
+    entries: providerInstanceEntries,
+    projectId: activeProjectId,
+    now,
+    lockedProvider,
+    lockedContinuationGroupKey: resolvedSelection.lockedContinuationGroupKey,
+    modelDisabledReason,
+    resolve: resolveMessage,
+  });
+  // A Custom Orchestration thread shows what its next send runs on, not the model last used.
+  // An instance that is gone keeps the normal fallback, so the picker stays usable.
+  const orchestrator = customOrchestration ? orchestration.selection : null;
+  const orchestratorEntry = providerInstanceEntries.find(
+    (entry) =>
+      entry.instanceId === orchestrator?.instanceId &&
+      (lockedProvider === null || entry.driverKind === lockedProvider),
+  );
+  const selection = orchestratorEntry
+    ? {
+        ...resolvedSelection,
+        selectedProviderEntry: orchestratorEntry,
+        unavailableProviderInstanceId: undefined,
+      }
+    : resolvedSelection;
   const selectedInstanceId =
     selection.selectedProviderEntry?.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId;
   const selectedProvider: ProviderDriverKind =
@@ -85,12 +120,18 @@ export function useComposerProviderModel(
     settings,
   });
   const selectedProviderModels = selection.selectedProviderEntry?.models ?? NO_PROVIDER_MODELS;
+  const selectedModel =
+    orchestratorEntry && orchestrator ? orchestrator.model : modelState.selectedModel;
+  const composerModelOptions =
+    orchestratorEntry && orchestrator
+      ? { ...modelState.modelOptions, [selectedInstanceId]: orchestrator.options ?? [] }
+      : modelState.modelOptions;
   const composerProviderState = getComposerProviderState({
     provider: selectedProvider,
-    model: modelState.selectedModel,
+    model: selectedModel,
     models: selectedProviderModels,
     promptInjectionState,
-    modelOptions: modelState.modelOptions?.[selectedInstanceId],
+    modelOptions: composerModelOptions?.[selectedInstanceId],
   });
   return {
     providerInstanceEntries,
@@ -98,8 +139,10 @@ export function useComposerProviderModel(
     selectedInstanceId,
     selectedProvider,
     selectedProviderModels,
-    composerModelOptions: modelState.modelOptions,
-    selectedModel: modelState.selectedModel,
+    composerModelOptions,
+    selectedModel,
     composerProviderState,
+    customOrchestration,
+    orchestration,
   };
 }

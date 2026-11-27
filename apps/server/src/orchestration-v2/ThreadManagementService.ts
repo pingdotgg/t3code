@@ -45,6 +45,8 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
+import { resolveCustomOrchestrationModel } from "@t3tools/shared/customOrchestration";
+import { customOrchestrationSelection } from "@t3tools/shared/model";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -75,6 +77,11 @@ import { cancelledBeforeStart } from "./RestartBackgroundNote.ts";
 import { contextBoundaryOrdinal } from "./contextBoundary.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import {
+  customOrchestrationAvailability,
+  describeCustomOrchestrationProblem,
+} from "./customOrchestrationModels.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import { checkOutput, outputRequestProblem } from "./runOutput.ts";
 import { routineSpan } from "@t3tools/shared/observability";
@@ -649,6 +656,7 @@ const make = Effect.gen(function* () {
   const agentScope = yield* AgentScope;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const worktreeRestore = yield* ThreadWorktreeRestore;
 
@@ -846,10 +854,70 @@ const make = Effect.gen(function* () {
     }
   };
 
+  /**
+   * A Custom Orchestration selection means "the orchestrator in settings, or its first fallback
+   * that can run", whatever the client last saw. A replayed command keeps its receipt's outcome,
+   * and one without a selection keeps the thread's.
+   */
+  const resolveCustomOrchestration = Effect.fn(
+    "ThreadManagementService.resolveCustomOrchestration",
+  )(function* (command: OrchestrationV2ServerCommand) {
+    if (!("modelSelection" in command) || command.modelSelection?.orchestration !== "custom") {
+      return command;
+    }
+    if (yield* hasReceipt(command.commandId)) return command;
+    const reject = (cause: string) =>
+      new Orchestrator.OrchestratorCommandRejectedError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause,
+      });
+    const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+    const configured = settings.customOrchestration.orchestrator;
+    if (configured === null) {
+      return yield* reject(
+        "Custom Orchestration has no orchestrator model. Choose one in Settings → Orchestration.",
+      );
+    }
+    let projectId: ProjectId | null = null;
+    if ("projectId" in command && command.projectId !== undefined) {
+      projectId = command.projectId;
+    } else if ("threadId" in command) {
+      const steeredRunId =
+        command.type === "message.dispatch" && command.dispatchMode.type === "steer_active"
+          ? command.dispatchMode.targetRunId
+          : undefined;
+      const projection = yield* orchestrator.getThreadRecords(
+        command.threadId,
+        steeredRunId === undefined ? [] : ["runs"],
+        steeredRunId === undefined ? undefined : { runIds: [steeredRunId] },
+      );
+      // A steer joins the running turn, so it stays on that turn's model.
+      const steered = projection.runs?.find((run) => run.id === steeredRunId)?.modelSelection;
+      if (steered?.orchestration === "custom") return { ...command, modelSelection: steered };
+      projectId = projection.thread.projectId;
+    }
+    const problemOf = yield* customOrchestrationAvailability(providerRegistry, settings, projectId);
+    const { selection, skipped } = resolveCustomOrchestrationModel(configured, problemOf);
+    if (selection === null) {
+      return yield* reject(
+        `No Custom Orchestration orchestrator model can run: ${skipped
+          .map(
+            (item) =>
+              `${item.selection.model} (${describeCustomOrchestrationProblem(item.problem)})`,
+          )
+          .join(", ")}. Check Settings → Orchestration.`,
+      );
+    }
+    return { ...command, modelSelection: customOrchestrationSelection(selection) };
+  });
+
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
     ensureCommandTranscripts(command).pipe(
-      Effect.andThen(assertDispatchTargetEnabled(command)),
-      Effect.andThen(orchestrator.dispatch(command)),
+      Effect.andThen(resolveCustomOrchestration(command)),
+      Effect.flatMap((resolved) =>
+        assertDispatchTargetEnabled(resolved).pipe(Effect.andThen(orchestrator.dispatch(resolved))),
+      ),
     );
 
   const getProjectThreadRecords: ThreadManagementServiceShape["getProjectThreadRecords"] = (

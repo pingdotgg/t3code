@@ -3092,6 +3092,7 @@ export default function ChatView(props: ChatViewProps) {
     handleRuntimeModeChangeStable,
     onEnvModeChangeStable,
     onProviderModelSelectStable,
+    onCustomOrchestrationSelectStable,
     onStartFromOriginChange,
     openProviderSetupStable,
   } = useComposerSelection({
@@ -4001,6 +4002,7 @@ export default function ChatView(props: ChatViewProps) {
                                   onChangeActivePendingUserInputCustomAnswer
                                 }
                                 onProviderModelSelect={onProviderModelSelectStable}
+                                onCustomOrchestrationSelect={onCustomOrchestrationSelectStable}
                                 onOpenProviderSetup={openProviderSetupStable}
                                 getModelDisabledReason={getModelDisabledReason}
                                 handleRuntimeModeChange={handleRuntimeModeChangeStable}

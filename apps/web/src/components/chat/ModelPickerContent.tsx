@@ -369,6 +369,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   onFocusEffort?: () => void;
   /** Closes the list column, inside the popup's fixed height. */
   listFooter?: ReactNode;
+  /** A mode outside the list is chosen, so no row shows as selected. */
+  hideSelectedModel?: boolean;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -459,7 +461,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           )
         );
       });
-      return hasPickableFavorite ? "favorites" : props.activeInstanceId;
+      if (hasPickableFavorite) return "favorites";
+      // An outside mode can name a provider with nothing to list, so open one that can leave it.
+      const emptyTab =
+        props.hideSelectedModel &&
+        activeEntry !== undefined &&
+        !isProviderInstancePickerReady(activeEntry);
+      return (
+        (emptyTab ? instanceEntries.find(isProviderInstancePickerReady)?.instanceId : undefined) ??
+        props.activeInstanceId
+      );
     },
   );
   const { scanning: workspaceModelsScanning } = useProviderWorkspaceSnapshotRefresh({
@@ -1226,7 +1237,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     isSelected={
                       selectedModelKeys !== undefined
                         ? selectedModelKeySet.has(modelKey)
-                        : modelKey === activeModelKey
+                        : !props.hideSelectedModel && modelKey === activeModelKey
                     }
                     favoriteStarOnHover={selectedInstanceId === "favorites" && !isSearching}
                     showInstanceBadge={badgedInstanceIds.has(model.instanceId)}

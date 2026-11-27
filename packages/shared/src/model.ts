@@ -117,6 +117,26 @@ export function modelSelectionsEqual(left: ModelSelection, right: ModelSelection
 }
 
 /**
+ * Whether saving `right` over `left` changes nothing. `modelSelectionsEqual` asks the narrower
+ * question of whether a provider would run them the same way, which ignores Custom Orchestration.
+ */
+export function storedModelSelectionsEqual(left: ModelSelection, right: ModelSelection): boolean {
+  return left.orchestration === right.orchestration && modelSelectionsEqual(left, right);
+}
+
+/** The same model as a plain pick, outside Custom Orchestration. */
+function withoutOrchestration(selection: ModelSelection): ModelSelection {
+  if (selection.orchestration === undefined) return selection;
+  const { orchestration: _, ...plain } = selection;
+  return plain;
+}
+
+/** The selection a thread uses in Custom Orchestration: the orchestrator, marked as such. */
+export function customOrchestrationSelection(orchestrator: ModelSelection): ModelSelection {
+  return { ...orchestrator, orchestration: "custom" };
+}
+
+/**
  * Whether a composer's draft model pick is what the thread already runs. Web sends
  * `fastMode: false` for models with a fast toggle while mobile omits it, so off counts as unset.
  */
@@ -127,7 +147,10 @@ export function draftModelPickMatchesThread(pick: ModelSelection, thread: ModelS
       selection.model,
       selection.options?.filter((option) => option.id !== "fastMode" || option.value !== false),
     );
-  return modelSelectionsEqual(withoutFastModeOff(pick), withoutFastModeOff(thread));
+  return (
+    pick.orchestration === thread.orchestration &&
+    modelSelectionsEqual(withoutFastModeOff(pick), withoutFastModeOff(thread))
+  );
 }
 
 /** Cursor ACP can default Fast to true; T3 requires a user selection. */
@@ -558,7 +581,7 @@ export function pickModelSelection(
   model: string,
 ): ModelSelection {
   return current?.instanceId === instanceId && current.model === model
-    ? current
+    ? withoutOrchestration(current)
     : createModelSelection(instanceId, model);
 }
 

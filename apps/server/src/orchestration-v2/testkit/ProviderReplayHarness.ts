@@ -504,6 +504,7 @@ export function layerWithRegistry<Error>(
         McpAppModelContext.layerEmpty,
         layerStores,
         layerProviderSessionManagerProvided,
+        layerServerSettings,
       ),
     ),
   );

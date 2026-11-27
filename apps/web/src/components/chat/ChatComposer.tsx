@@ -257,7 +257,7 @@ import { observeResize } from "~/lib/observeResize";
 const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
 import { toastManager } from "../ui/toast";
 import { m as resolveMessage } from "../../i18n/messages";
-import { BuildingIcon, PlayIcon, ReplyIcon } from "lucide-react";
+import { BuildingIcon, PlayIcon, ReplyIcon, WorkflowIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
 import { assistantCitationNavigation } from "../../lib/assistantCitationNavigation";
@@ -300,6 +300,11 @@ import {
   useProviderRuntimeModeLimits,
 } from "../../state/runtimeModeLimits";
 import { useComposerProviderModel } from "./useComposerProviderModel";
+import {
+  orchestrationModelName,
+  orchestrationProblemText,
+  withCustomOrchestrationCommands,
+} from "../../customOrchestration";
 import { useComposerImageGroups } from "./useComposerImageGroups";
 import { useComposerStash } from "./useComposerStash";
 import { useComposerContextImport } from "./useComposerContextImport";
@@ -522,6 +527,7 @@ export interface ChatComposerProps {
     model: string,
     options?: { focusComposer?: boolean },
   ) => void;
+  onCustomOrchestrationSelect: (orchestrator: ModelSelection) => void;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
@@ -614,6 +620,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPreviousActivePendingUserInputQuestion,
     onChangeActivePendingUserInputCustomAnswer,
     onProviderModelSelect,
+    onCustomOrchestrationSelect,
     onOpenProviderSetup,
     getModelDisabledReason,
     handleRuntimeModeChange,
@@ -983,7 +990,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerModelOptions,
     selectedModel,
     composerProviderState,
+    customOrchestration,
+    orchestration,
   } = useComposerProviderModel({
+    modelDisabledReason: getModelDisabledReason,
     providerStatuses,
     settings,
     activeProjectId,
@@ -1056,15 +1066,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? attachmentBlockReason
       : (attachmentBlockReason ??
         runtimeModeCeilingDenial ??
-        (multipleModelSelections === null ? providerSendBlockReason : null)));
+        (multipleModelSelections === null
+          ? ((customOrchestration ? orchestration.blockReason : null) ?? providerSendBlockReason)
+          : null)));
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = selectedProviderEntry?.snapshot ?? null;
   const selectedProviderSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SKILLS;
-  const selectedProviderSlashCommands = selectedProviderStatus
+  const providerSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SLASH_COMMANDS;
+  const selectedProviderSlashCommands = customOrchestration
+    ? withCustomOrchestrationCommands(providerSlashCommands, settings.customOrchestration, m)
+    : providerSlashCommands;
   const { refresh: refreshWorkspaceSnapshotOnTyping, scanning: workspaceSkillsScanning } =
     useProviderWorkspaceSnapshotRefresh({
       environmentId,
@@ -1074,11 +1089,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
-  const selectedModelSelection: ModelSelection = createModelSelection(
+  const resolvedModelSelection = createModelSelection(
     selectedInstanceId,
     selectedModel,
     selectedModelOptionsForDispatch,
   );
+  const selectedModelSelection: ModelSelection = customOrchestration
+    ? { ...resolvedModelSelection, orchestration: "custom" }
+    : resolvedModelSelection;
   const selectedModelForPicker = selectedModel;
   const modelOptionsByInstance = new Map<ProviderInstanceId, ReadonlyArray<AppModelOption>>();
   for (const entry of providerInstanceEntries) {
@@ -2759,6 +2777,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onModelPickerOpenChange={setIsComposerModelPickerOpen}
         modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
         getModelDisabledReason={getModelDisabledReason}
+        customOrchestration={customOrchestration}
+        orchestrator={orchestration.selection}
+        orchestrationBlockReason={orchestration.blockReason}
+        onCustomOrchestrationSelect={onCustomOrchestrationSelect}
       />
     </RuntimeModeLimitsTargetContext>
   );
@@ -2811,12 +2833,60 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         },
       ]
     : [];
+  const { standingIn } = orchestration;
+  // A disabled send button gives a touch screen no way to read why.
+  const orchestrationBlockedBannerItems: readonly ComposerBannerStackItem[] =
+    customOrchestration &&
+    !activePendingProgress &&
+    orchestration.blockReason !== null &&
+    providerInstanceEntries.length > 0
+      ? [
+          {
+            id: "orchestration-blocked",
+            variant: "warning",
+            icon: <WorkflowIcon />,
+            title: orchestration.blockReason,
+            actions: (
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => void navigate({ to: "/settings/orchestration" })}
+              >
+                <T>Edit settings</T>
+              </Button>
+            ),
+          },
+        ]
+      : [];
+  const orchestrationBannerItems: readonly ComposerBannerStackItem[] =
+    customOrchestration && standingIn !== null && orchestration.selection !== null
+      ? [
+          {
+            id: "orchestration-fallback",
+            variant: "info",
+            icon: <WorkflowIcon />,
+            title: gt("Using {model} as orchestrator", {
+              model: orchestrationModelName(providerInstanceEntries, orchestration.selection),
+            }),
+            description: orchestrationProblemText(
+              standingIn.problem,
+              orchestrationModelName(providerInstanceEntries, standingIn.primary),
+              m,
+            ),
+          },
+        ]
+      : [];
+  const composerBannerItems = [
+    ...props.bannerItems,
+    ...replyBannerItems,
+    ...orchestrationBlockedBannerItems,
+    ...orchestrationBannerItems,
+  ];
   const bannerItems: readonly ComposerBannerStackItem[] =
     runtimeModeCeilingDenial === undefined || activePendingProgress
-      ? [...props.bannerItems, ...replyBannerItems]
+      ? composerBannerItems
       : [
-          ...props.bannerItems,
-          ...replyBannerItems,
+          ...composerBannerItems,
           {
             id: "managed-runtime-mode",
             variant: "warning",
@@ -3392,6 +3462,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (noProviderAvailable || pendingUserInputs.length > 0 || isEditingQueuedMessage) {
           return;
         }
+        // The orchestrator's effort is set in Settings → Orchestration.
+        if (customOrchestration) return;
         const change = getComposerReasoningStep({
           provider: selectedProvider,
           instanceId: selectedInstanceId,
@@ -3565,6 +3637,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
     }),
     [
+      customOrchestration,
       activeThread,
       addComposerAttachments,
       addComposerFoldersStable,

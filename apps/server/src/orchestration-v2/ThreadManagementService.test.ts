@@ -8,6 +8,7 @@ import {
   type OrchestrationV2ProviderThread,
   ProviderThreadId,
   ProviderDriverKind,
+  type ServerProvider,
   ProviderSessionId,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
@@ -31,6 +32,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -218,6 +220,139 @@ it.effect(
     }).pipe(Effect.provide(layerTest));
   },
 );
+
+it.effect.each([
+  { label: "the configured orchestrator", configured: true, expected: "configured-model" },
+  { label: "a refusal when none is configured", configured: false, expected: null },
+  {
+    label: "its fallback while it is at its usage limit",
+    configured: true,
+    limited: ["configured-model"],
+    expected: "fallback-model",
+  },
+  {
+    label: "the configured model when every model is at its limit",
+    configured: true,
+    limited: ["configured-model", "fallback-model"],
+    expected: "configured-model",
+  },
+  {
+    label: "a refusal when no configured model can run",
+    configured: true,
+    missing: true,
+    expected: null,
+  },
+])("a Custom Orchestration send reaches the orchestrator as $label", (row) => {
+  const orchestrator = {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "configured-model",
+    options: [{ id: "effort", value: "high" }],
+  };
+  const fallback = { instanceId: ProviderInstanceId.make("codex"), model: "fallback-model" };
+  const provider = (instanceId: ProviderInstanceId, model: string): ServerProvider => ({
+    instanceId,
+    driver: ProviderDriverKind.make(instanceId),
+    enabled: true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: row.missing
+      ? [{ slug: "other", name: "Other", isCustom: false, capabilities: null }]
+      : [],
+    slashCommands: [],
+    skills: [],
+    usageLimits: {
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      windows: [
+        {
+          id: "session",
+          label: "Session",
+          kind: "session",
+          usedPercent: row.limited?.includes(model) ? 100 : 10,
+        },
+      ],
+    },
+  });
+  const received: Array<unknown> = [];
+  const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: {
+              id: ThreadId.make("thread:custom-orchestration"),
+              projectId: ProjectId.make("project:custom-orchestration"),
+              deletedAt: null,
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "stale" },
+            },
+          } as unknown as OrchestrationV2ThreadProjection),
+        dispatch: (command) =>
+          Effect.sync(() => {
+            received.push("modelSelection" in command ? command.modelSelection : undefined);
+            return { sequence: 1, storedEvents: [] } as never;
+          }),
+      }),
+    ),
+    Layer.provide(
+      ServerSettings.layerTest(
+        row.configured
+          ? {
+              customOrchestration: {
+                orchestrator: { modelSelection: orchestrator, fallbacks: [fallback] },
+              },
+            }
+          : { customOrchestration: {} },
+      ),
+    ),
+    Layer.provide(
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([
+          provider(orchestrator.instanceId, orchestrator.model),
+          provider(fallback.instanceId, fallback.model),
+        ]),
+      }),
+    ),
+    Layer.provideMerge(layerReceiptsTest),
+  );
+
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const sent = yield* Effect.exit(
+      threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("command:custom-orchestration"),
+        threadId: ThreadId.make("thread:custom-orchestration"),
+        messageId: MessageId.make("message:custom-orchestration"),
+        text: "Think hard",
+        attachments: [],
+        // What the client last saw, since replaced in settings.
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "stale",
+          orchestration: "custom",
+        },
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      }),
+    );
+
+    expect(sent._tag).toBe(row.expected === null ? "Failure" : "Success");
+    expect(received).toEqual(
+      row.expected === null
+        ? []
+        : [
+            {
+              ...(row.expected === fallback.model ? fallback : orchestrator),
+              orchestration: "custom",
+            },
+          ],
+    );
+  }).pipe(Effect.provide(layerTest));
+});
 
 it.effect.each([
   { label: "fails a send that starts a turn", running: false },

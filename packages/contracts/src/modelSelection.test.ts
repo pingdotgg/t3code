@@ -84,3 +84,30 @@ it.effect(
       assert.deepStrictEqual(encoded.options, decoded.options);
     }),
 );
+
+it.effect("ModelSelection keeps the Custom Orchestration marker through decode and encode", () =>
+  Effect.gen(function* () {
+    const decoded = yield* decodeModelSelection({
+      instanceId: "codex",
+      model: "gpt-5",
+      orchestration: "custom",
+    });
+    assert.strictEqual(decoded.orchestration, "custom");
+    const encoded = yield* encodeModelSelection(decoded);
+    assert.strictEqual(encoded.orchestration, "custom");
+  }),
+);
+
+it.effect("ModelSelection drops an orchestration mode it does not know", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeModelSelection({
+      instanceId: "codex",
+      model: "gpt-5",
+      orchestration: "bogus",
+    });
+    assert.deepStrictEqual(parsed, {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5",
+    });
+  }),
+);

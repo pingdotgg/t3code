@@ -1611,6 +1611,29 @@ describe("composerDraftStore modelSelection", () => {
     resetComposerDraftStore();
   });
 
+  it("keeps the Custom Orchestration mark until a plain model pick leaves the mode", () => {
+    const store = useComposerDraftStore.getState();
+    const orchestrator = modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "high" });
+    const plain = modelSelection(CODEX_DRIVER, "gpt-5.4");
+    const flagged = { ...orchestrator, orchestration: "custom" as const };
+
+    store.setModelSelection(threadRef, flagged, { explicit: true });
+    store.setStickyModelSelection(flagged);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider).toEqual({
+      [CODEX_INSTANCE]: flagged,
+    });
+
+    // Re-picking the orchestrator's own model leaves the mode without taking its effort along.
+    store.setModelSelection(threadRef, plain, { explicit: true });
+    store.setStickyModelSelection(plain);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider).toStrictEqual({
+      [CODEX_INSTANCE]: plain,
+    });
+    expect(
+      useComposerDraftStore.getState().stickyModelSelectionByProvider[CODEX_INSTANCE],
+    ).toStrictEqual(plain);
+  });
+
   it("retains a pick matching cached state until the live shell confirms it", () => {
     const h = modelReconciliationHarness(TEST_ENVIRONMENT_ID, threadId, "cached");
     const pick = h.model();

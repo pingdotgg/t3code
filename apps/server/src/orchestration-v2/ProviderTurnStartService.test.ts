@@ -104,11 +104,14 @@ const normalize = (target: string) => {
   }
   return `/${parts.join("/")}`;
 };
-const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
+const layerWorktreeLocation = (
+  worktreesDir = managedWorktreesDir,
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+) =>
   Layer.mergeAll(
     Path.layer,
     Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
-    ServerSettings.layerTest(),
+    ServerSettings.layerTest(settings),
   );
 
 function startWithMissingWorktree(
@@ -494,6 +497,8 @@ function makeLocalCommandHarness(input: {
   readonly previousMessages?: ReadonlyArray<string>;
   readonly createdBy?: "agent" | "system";
   readonly scheduledTaskId?: ScheduledTaskId;
+  /** The run uses Custom Orchestration, with an `/extreme-review` command in settings. */
+  readonly customOrchestration?: boolean;
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
   readonly ensureThreadFailure?: unknown;
@@ -552,7 +557,11 @@ function makeLocalCommandHarness(input: {
     threadId,
     ordinal: 2,
     providerInstanceId: newInstanceId,
-    modelSelection: { instanceId: newInstanceId, model: "gpt-5.4" },
+    modelSelection: {
+      instanceId: newInstanceId,
+      model: "gpt-5.4",
+      ...(input.customOrchestration ? { orchestration: "custom" as const } : {}),
+    },
     providerThreadId,
     userMessageId: messageId,
     rootNodeId,
@@ -1389,7 +1398,19 @@ function makeLocalCommandHarness(input: {
               };
             }),
         }),
-        layerWorktreeLocation(input.worktreesDir),
+        layerWorktreeLocation(input.worktreesDir, {
+          customOrchestration: {
+            commands: [
+              {
+                name: "extreme-review",
+                instructions: "",
+                reviewers: [
+                  { modelSelection: { instanceId: newInstanceId, model: "reviewer-model" } },
+                ],
+              },
+            ],
+          },
+        }),
         layerNoTaskFolders,
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
@@ -2482,6 +2503,31 @@ effectIt.effect("sends new steering text when restarting a manual continuation",
     expect(harness.startTurn.mock.calls[0]?.[0].message.text).toBe("New steering instruction");
     expect(harness.startRootRun.mock.calls[0]?.[0].resume).toBe(false);
   }),
+);
+
+effectIt.effect.each([
+  { text: "Think hard", customOrchestration: true, routed: true, expanded: false },
+  { text: "/extreme-review", customOrchestration: true, routed: true, expanded: true },
+  // The harness's own commands must stay the whole prompt.
+  { text: "/code-review", customOrchestration: true, routed: false, expanded: false },
+  { text: "Think hard", customOrchestration: false, routed: false, expanded: false },
+  { text: "/extreme-review", customOrchestration: false, routed: false, expanded: false },
+])(
+  "a Custom Orchestration turn carries the user's settings: %j",
+  ({ text, customOrchestration, routed, expanded }) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text,
+        customOrchestration,
+        sideChat: { contextRun: "delivered" },
+      });
+      harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
+      yield* harness.start;
+      const sent = harness.startTurn.mock.calls[0]![0].message.text;
+      expect(sent === text).toBe(!routed);
+      expect(sent.includes("<t3_code_custom_orchestration>")).toBe(routed);
+      expect(sent.includes('"model":"reviewer-model"')).toBe(expanded);
+    }),
 );
 
 effectIt.effect("refuses unsupported resume instead of manufacturing a user prompt", () =>

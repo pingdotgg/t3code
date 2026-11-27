@@ -20,6 +20,10 @@ import * as Stream from "effect/Stream";
 
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { customOrchestrationTurn } from "./customOrchestrationModels.ts";
+import { expandCustomOrchestrationCommand } from "./customOrchestrationPrompt.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -118,6 +122,7 @@ export const layer: Layer.Layer<
   | McpAppModelContext.McpAppModelContext
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
+  | ServerSettings.ServerSettingsService
 > = Layer.effect(
   ProviderTurnControlServiceV2,
   Effect.gen(function* () {
@@ -125,6 +130,8 @@ export const layer: Layer.Layer<
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
 
     const load = Effect.fn("ProviderTurnControlService.load")(function* (input: {
       readonly threadId: ThreadId;
@@ -452,6 +459,24 @@ export const layer: Layer.Layer<
             mcpAppModelContext,
             input.threadId,
           );
+          const running = input.modelSelection ?? run.modelSelection;
+          const orchestration =
+            running.orchestration === "custom"
+              ? yield* customOrchestrationTurn(
+                  providerRegistry,
+                  yield* serverSettings.getSettings.pipe(Effect.orDie),
+                  (yield* projections.getThread(input.threadId)).projectId,
+                  running,
+                )
+              : undefined;
+          const customCommandText =
+            orchestration === undefined
+              ? undefined
+              : expandCustomOrchestrationCommand(
+                  message.text,
+                  orchestration.settings,
+                  orchestration.turn,
+                );
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -467,7 +492,7 @@ export const layer: Layer.Layer<
                 text: withMessageSenderNote(
                   message,
                   projectComposerContextForProvider({
-                    text: message.text,
+                    text: customCommandText ?? message.text,
                     records: message.context?.records ?? [],
                   }),
                 ),

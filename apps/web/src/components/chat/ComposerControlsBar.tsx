@@ -1,6 +1,13 @@
 import type { ChatComposerProps } from "./ChatComposer";
 import type { PromptUltrathink } from "./TraitsPicker";
 import type { ProviderInstanceEntry } from "../../providerInstances";
+import { useNavigate } from "@tanstack/react-router";
+import { useAtomValue } from "@effect/atom-react";
+import { serverEnvironment } from "../../state/server";
+import {
+  ComposerCustomOrchestrationColumn,
+  ComposerCustomOrchestrationRow,
+} from "./ComposerCustomOrchestration";
 import { type AppModelOption } from "../../modelSelection";
 import { useGT, useMessages } from "gt-react";
 import { CircleAlertIcon } from "lucide-react";
@@ -87,6 +94,11 @@ export function ComposerControlsBar(props: {
   onModelPickerOpenChange: (open: boolean) => void;
   modelPickerIconClassName: string | undefined;
   getModelDisabledReason: ChatComposerProps["getModelDisabledReason"];
+  customOrchestration: boolean;
+  /** The configured orchestrator, which the mode runs. */
+  orchestrator: ModelSelection | null;
+  orchestrationBlockReason: string | null;
+  onCustomOrchestrationSelect: ChatComposerProps["onCustomOrchestrationSelect"];
 }) {
   const {
     environmentId,
@@ -131,6 +143,10 @@ export function ComposerControlsBar(props: {
     onModelPickerOpenChange,
     modelPickerIconClassName,
     getModelDisabledReason,
+    customOrchestration,
+    orchestrator,
+    orchestrationBlockReason,
+    onCustomOrchestrationSelect,
   } = props;
   const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
   const {
@@ -165,6 +181,19 @@ export function ComposerControlsBar(props: {
     onPromptEdit,
   });
   const effort = describeComposerEffort(traitsInput, props.effortDisplay, controlSize, m);
+  const navigate = useNavigate();
+  const orchestrationSupported =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.customOrchestration === true;
+  const orchestratorName =
+    orchestrator === null
+      ? null
+      : (modelOptionsByInstance
+          .get(orchestrator.instanceId)
+          ?.find((option) => option.slug === orchestrator.model)?.name ?? orchestrator.model);
+  const openOrchestrationSettings = () => {
+    onModelPickerOpenChange(false);
+    void navigate({ to: "/settings/orchestration", search: { machine: environmentId } });
+  };
   const restingBlockDefs = showModeBlock
     ? [
         {
@@ -219,19 +248,53 @@ export function ComposerControlsBar(props: {
         MODEL_TRIGGER_STATES,
         composerControlsCollapsed ? "min-w-13 shrink text-xs!" : "min-w-13",
       )}
-      triggerSuffix={effort.suffix}
-      triggerDetail={effort.detail}
+      {...(customOrchestration
+        ? {
+            triggerLabel: gt("Custom Orchestration"),
+            triggerDetail: [orchestratorName, effort.detail].filter(Boolean).join(" · "),
+            hideSelectedModel: true,
+          }
+        : { triggerSuffix: effort.suffix, triggerDetail: effort.detail })}
       triggerShortcuts={
         pickerOwnsModeShortcut ? "composer.effort composer.mode" : "composer.effort"
       }
-      effortColumn={<ComposerEffortColumn traits={traitsInput} />}
+      effortColumn={
+        customOrchestration ? (
+          <ComposerCustomOrchestrationColumn
+            orchestratorName={orchestratorName}
+            effort={effort.detail}
+            blockReason={orchestrationBlockReason}
+            onEditSettings={openOrchestrationSettings}
+          />
+        ) : (
+          <ComposerEffortColumn traits={traitsInput} />
+        )
+      }
       footer={
-        <ComposerPickerFooter
-          traits={traitsInput}
-          runtimeMode={compatibleRuntimeMode}
-          runtimeModeOptions={compatibleRuntimeModeOptions}
-          onRuntimeModeChange={handleRuntimeModeChange}
-        />
+        <>
+          {orchestrationSupported ? (
+            <ComposerCustomOrchestrationRow
+              selected={customOrchestration}
+              orchestratorName={orchestratorName}
+              blockReason={orchestrationBlockReason}
+              onPick={() => {
+                if (orchestrator === null) {
+                  openOrchestrationSettings();
+                  return;
+                }
+                onMultipleModelSelectionsChange(null);
+                onCustomOrchestrationSelect(orchestrator);
+              }}
+            />
+          ) : null}
+          <ComposerPickerFooter
+            // Speed and Ultracode belong to the orchestrator's settings in this mode.
+            traits={customOrchestration ? null : traitsInput}
+            runtimeMode={compatibleRuntimeMode}
+            runtimeModeOptions={compatibleRuntimeModeOptions}
+            onRuntimeModeChange={handleRuntimeModeChange}
+          />
+        </>
       }
       terminalOpen={terminalOpen}
       open={modelPickerOpen}

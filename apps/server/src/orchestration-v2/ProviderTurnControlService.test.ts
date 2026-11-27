@@ -31,6 +31,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -128,6 +129,8 @@ function makeProjection(input: {
 
 function layerProjectionStore(
   getProviderControlContext: ProjectionStore.ProjectionStoreV2["Service"]["getProviderControlContext"],
+  getThread: ProjectionStore.ProjectionStoreV2["Service"]["getThread"] = () =>
+    Effect.die("unused getThread"),
 ) {
   return Layer.succeed(
     ProjectionStore.ProjectionStoreV2,
@@ -149,7 +152,7 @@ function layerProjectionStore(
       getThreadTitles: () => Effect.die("unused getThreadTitles"),
       getThreadLinkMetadata: () => Effect.die("unused getThreadLinkMetadata"),
       findGuestShareThreadId: () => Effect.die("unused findGuestShareThreadId"),
-      getThread: () => Effect.die("unused getThread"),
+      getThread,
       findThread: () => Effect.die("unused findThread"),
       getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
       getThreadsWithPullRequests: () => Effect.die("unused getThreadsWithPullRequests"),
@@ -330,6 +333,7 @@ it.effect(
             layerSessionManager,
             Layer.mock(EventSink.EventSinkV2)({}),
             McpAppModelContext.layerEmpty,
+            ServerSettings.layerTest(),
           ),
         ),
       );
@@ -425,11 +429,13 @@ it.effect("steers a running turn with its sender and the thread's MCP app model 
                 id: RunId.make("run:steer-app-context"),
                 status: "running",
                 activeAttemptId: attemptId,
+                modelSelection: { instanceId: providerInstanceId, model: "test-model" },
               } as OrchestrationV2Run,
             }),
           ),
           layerSessions(sessionId, runtime),
           Layer.mock(EventSink.EventSinkV2)({}),
+          ServerSettings.layerTest(),
           Layer.mock(McpAppModelContext.McpAppModelContext)({
             forThread: () =>
               Effect.succeed([
@@ -469,5 +475,98 @@ it.effect("steers a running turn with its sender and the thread's MCP app model 
         updatedAt: "2026-11-23T14:02:17.000Z",
       },
     ]);
+  }),
+);
+
+it.effect.each([
+  { mode: "custom" as const, expands: true },
+  { mode: undefined, expands: false },
+])("steers a typed custom command, expanded only in Custom Orchestration ($mode)", (row) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:steer-command");
+    const sessionId = ProviderSessionId.make("provider-session:steer-command");
+    const providerTurnId = ProviderTurnId.make("provider-turn:steer-command");
+    const attemptId = RunAttemptId.make("run-attempt:steer-command");
+    const providerThread = {
+      id: ProviderThreadId.make("provider-thread:steer-command"),
+      driver,
+      providerInstanceId,
+      providerSessionId: sessionId,
+    } as OrchestrationV2ProviderThread;
+    const projection = makeProjection({ now, threadId, providerThread, providerTurnId, attemptId });
+    const steered: Array<ProviderAdapter.ProviderAdapterV2SteerInput> = [];
+    const runtime = {
+      instanceId: providerInstanceId,
+      driver,
+      providerSessionId: sessionId,
+      steerTurn: (input: ProviderAdapter.ProviderAdapterV2SteerInput) =>
+        Effect.sync(() => void steered.push(input)),
+    } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+    const layerControl = ProviderTurnControlService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerProjectionStore(
+            () =>
+              Effect.succeed({
+                providerThread,
+                providerTurn: projection.providerTurns[0],
+                attempt: projection.attempts[0],
+                message: {
+                  id: MessageId.make("message:steer-command"),
+                  text: "/extreme-review the diff",
+                  attachments: [],
+                  createdBy: "user",
+                  creationSource: "web",
+                } as unknown as NonNullable<
+                  ProjectionStore.ProjectionProviderControlContext["message"]
+                >,
+                run: {
+                  id: RunId.make("run:steer-command"),
+                  status: "running",
+                  activeAttemptId: attemptId,
+                  modelSelection: {
+                    instanceId: providerInstanceId,
+                    model: "test-model",
+                    ...(row.mode === undefined ? {} : { orchestration: row.mode }),
+                  },
+                } as OrchestrationV2Run,
+              }),
+            () => Effect.succeed(projection.thread),
+          ),
+          layerSessions(sessionId, runtime),
+          Layer.mock(EventSink.EventSinkV2)({}),
+          McpAppModelContext.layerEmpty,
+          ServerSettings.layerTest({
+            customOrchestration: {
+              commands: [
+                {
+                  name: "extreme-review",
+                  instructions: "",
+                  reviewers: [
+                    { modelSelection: { instanceId: providerInstanceId, model: "reviewer-model" } },
+                  ],
+                },
+              ],
+            },
+          }),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+      yield* control.steer({
+        threadId,
+        providerSessionId: sessionId,
+        providerThreadId: providerThread.id,
+        providerTurnId,
+        messageId: MessageId.make("message:steer-command"),
+      });
+    }).pipe(Effect.provide(layerControl));
+
+    const text = steered[0]!.message.text;
+    assert.equal(text === "/extreme-review the diff", !row.expands);
+    assert.equal(text.includes('"model":"reviewer-model"'), row.expands);
   }),
 );

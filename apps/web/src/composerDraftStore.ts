@@ -1163,9 +1163,12 @@ function normalizeModelSelection(
   if (!model) {
     return null;
   }
+  // The Custom Orchestration marker has to survive every rebuild of a selection.
+  const mode =
+    candidate?.orchestration === "custom" ? { orchestration: "custom" as const } : undefined;
   if (Array.isArray(candidate?.options)) {
     const selections = coerceProviderOptionSelections(candidate.options);
-    return createModelSelection(instanceId, model, selections) as NormalizedModelSelection;
+    return { ...createModelSelection(instanceId, model, selections), ...mode };
   }
   const kindForLegacyOptions = normalizeProviderDriverKind(instanceId);
   const modelOptions = kindForLegacyOptions
@@ -1176,7 +1179,7 @@ function normalizeModelSelection(
       )
     : null;
   const options = kindForLegacyOptions ? modelOptions?.[kindForLegacyOptions] : undefined;
-  return createModelSelection(instanceId, model, options) as NormalizedModelSelection;
+  return { ...createModelSelection(instanceId, model, options), ...mode };
 }
 
 type NormalizedModelSelection = Omit<ModelSelection, "instanceId"> & {
@@ -3278,9 +3281,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const current = state.stickyModelSelectionByProvider[normalized.instanceId];
             // Model-only updates omit options; preserve sticky traits across model switches and new chats.
             const nextSelection =
-              normalized.options !== undefined
+              normalized.options !== undefined || normalized.orchestration !== undefined
                 ? normalized
-                : createModelSelection(normalized.instanceId, normalized.model, current?.options);
+                : createModelSelection(
+                    normalized.instanceId,
+                    normalized.model,
+                    // Custom Orchestration's options come from settings, not from the user's pick.
+                    current?.orchestration === undefined ? current?.options : undefined,
+                  );
             const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {
               ...state.stickyModelSelectionByProvider,
               [normalized.instanceId]: nextSelection,
@@ -3399,13 +3407,17 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextMap = { ...base.modelSelectionByProvider };
             if (normalized) {
               const current = nextMap[normalized.instanceId];
-              if (normalized.options !== undefined || opts?.replaceOptions) {
+              if (
+                normalized.options !== undefined ||
+                normalized.orchestration !== undefined ||
+                opts?.replaceOptions
+              ) {
                 nextMap[normalized.instanceId] = normalized as ModelSelection;
               } else {
                 nextMap[normalized.instanceId] = createModelSelection(
                   normalized.instanceId,
                   normalized.model,
-                  current?.options,
+                  current?.orchestration === undefined ? current?.options : undefined,
                 );
               }
             }

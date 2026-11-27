@@ -47,6 +47,12 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { customOrchestrationTurn } from "./customOrchestrationModels.ts";
+import {
+  customOrchestrationInstructions,
+  expandCustomOrchestrationCommand,
+} from "./customOrchestrationPrompt.ts";
 import {
   makeRestoreMissingWorktree,
   ThreadWorktreeRestore,
@@ -404,6 +410,8 @@ export const layer: Layer.Layer<
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const projects = yield* ProjectService.ProjectService;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
     const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -1256,24 +1264,52 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
+      const orchestration =
+        run.modelSelection.orchestration === "custom"
+          ? yield* customOrchestrationTurn(
+              providerRegistry,
+              yield* serverSettings.getSettings.pipe(Effect.orDie),
+              projection.thread.projectId,
+              run.modelSelection,
+            )
+          : undefined;
+      const customCommandText =
+        orchestration === undefined
+          ? undefined
+          : expandCustomOrchestrationCommand(
+              providerMessage.text,
+              orchestration.settings,
+              orchestration.turn,
+            );
       const messageText = withMessageSenderNote(
         providerMessage,
         projectComposerContextForProvider({
-          text: providerMessage.text,
+          text: customCommandText ?? providerMessage.text,
           records: providerMessage.context?.records ?? [],
         }),
       );
-      const slashCommand = isSlashCommandMessage(providerMessage);
+      // An expanded custom command is a prompt, so it takes history like any other message.
+      const slashCommand =
+        customCommandText === undefined && isSlashCommandMessage(providerMessage);
       const goalDriver =
         session.driver === "codex" ||
         session.driver === "claudeAgent" ||
         session.providerSession.capabilities.turns.supportsNativeGoals === true;
       const goalCommand = goalDriver && parseGoalCommand(providerMessage) !== null;
+      // A command must stay the whole prompt, and an expanded one already names its models.
+      const routedText =
+        orchestration === undefined ||
+        customCommandText !== undefined ||
+        slashCommand ||
+        goalCommand ||
+        isProviderCommand(providerMessage)
+          ? messageText
+          : `${messageText}\n\n${customOrchestrationInstructions(orchestration.settings, orchestration.turn)}`;
       // Part of the user text, so every way a turn starts carries it, after the user's own words.
       const userText =
         run.outputSchema === undefined || goalCommand || isProviderCommand(providerMessage)
-          ? messageText
-          : `${messageText}\n\n${outputInstructions(run.outputSchema)}`;
+          ? routedText
+          : `${routedText}\n\n${outputInstructions(run.outputSchema)}`;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
         run,
