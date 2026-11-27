@@ -813,6 +813,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("stacked split side by side unified inline view")],
   },
   {
+    id: "merge-queues",
+    title: msg("Merge queues"),
+    to: "/settings/diffs",
+    searchTerms: [msg("GitHub")],
+  },
+  {
     id: "proactive-panels",
     title: msg("Open pull requests and changes panels proactively"),
     to: "/settings/diffs",

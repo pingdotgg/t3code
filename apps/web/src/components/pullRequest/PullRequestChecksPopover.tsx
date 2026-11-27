@@ -57,10 +57,12 @@ function LazyChecksBody({
   return <ChecksBody checks={detailQuery.data.checks} threadRef={threadRef} />;
 }
 
-function ChecksBody({
+export function ChecksBody({
+  showRequired = false,
   checks,
   threadRef,
 }: {
+  showRequired?: boolean;
   checks: ReadonlyArray<PullRequestCheck>;
   threadRef: ScopedThreadRef | null;
 }) {
@@ -103,6 +105,7 @@ function ChecksBody({
                 />
                 <span className="justify-self-end whitespace-nowrap text-muted-foreground">
                   {pullRequestCheckStatusLabel(check, resolve)}
+                  {showRequired && check.required ? ` · ${gt("Required")}` : ""}
                 </span>
                 {check.url === null ? null : (
                   <button

@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as Stream from "effect/Stream";
 import type {
+  ProjectMergeQueue,
   PullRequestStackMembership,
   PullRequestAction,
   PullRequestStackHead,
@@ -23,6 +24,7 @@ import type {
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
   PullRequestMergeQueueRemoval,
+  PullRequestMergeQueueEntry,
   PullRequestMergeability,
   PullRequestOmittedFileStat,
   PullRequestReaction,
@@ -277,6 +279,8 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly behindBy?: number;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
+  readonly mergeQueueEnabled?: boolean;
+  readonly mergeQueue?: PullRequestMergeQueueEntry;
   readonly workflowApprovalsRequired?: number;
   readonly mergeQueueRemoval?: PullRequestMergeQueueRemoval;
 }
@@ -399,6 +403,9 @@ export interface PullRequestProviderApi {
     readonly host?: string;
   }) => Effect.Effect<string, PullRequestProviderError>;
 
+  readonly listMergeQueues?: (
+    input: ProviderRepositoryRef,
+  ) => Effect.Effect<ReadonlyArray<ProjectMergeQueue>, PullRequestProviderError>;
   readonly listChangeRequests: (
     input: ProviderRepositoryRef & {
       readonly state: PullRequestListState;

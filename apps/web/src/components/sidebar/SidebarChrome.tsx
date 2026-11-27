@@ -1,11 +1,17 @@
-import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ChartNoAxesColumnIcon,
+  ListOrderedIcon,
+  SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useAtomValue } from "@effect/atom-react";
-import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { useClientSettings, useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
   navigateHistory,
@@ -233,6 +239,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
+  const mergeQueuesEnabled = useClientSettings((s) => s.mergeQueuesEnabled);
   const issuesSupported = useIssuesSupported();
   const closeMobileSidebar = () => {
     if (isMobile) {
@@ -290,6 +297,16 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               icon={<PullRequestGlyph.pullRequest />}
               label={gt("Pull requests")}
               onClick={handlePullRequestsClick}
+            />
+          ) : null}
+          {mergeQueuesEnabled && pullRequestsSupported ? (
+            <SidebarUtilityItem
+              icon={<ListOrderedIcon />}
+              label={gt("Merge queues")}
+              onClick={() => {
+                closeMobileSidebar();
+                void navigate({ to: "/merge-queues" });
+              }}
             />
           ) : null}
           {issuesSupported ? (

@@ -67,7 +67,7 @@ const openDetail: Detail = {
   },
 };
 
-function setup() {
+function setup(mergeQueued = false, perform = async (_action: string) => true) {
   mocks.update.mockReset().mockResolvedValue({ _tag: "Success" });
   mocks.notify.mockReset();
   return (detail: Detail = openDetail) => (
@@ -97,8 +97,9 @@ function setup() {
       pickableEnvironments={[]}
       actingEnvironmentId={environmentId}
       onActingEnvironmentChange={() => {}}
-      can={() => false}
-      autoMergeArmed={false}
+      can={(action) => mergeQueued && action === "disable-auto-merge"}
+      autoMergeArmed={mergeQueued}
+      mergeQueued={mergeQueued}
       showsDraftToggle={false}
       showsMergeNow={false}
       showsAutoMerge={false}
@@ -112,7 +113,7 @@ function setup() {
       onMaintainerEditsSaved={() => {}}
       confirmDeleteBranch={async () => {}}
       pendingAction={null}
-      perform={async () => true}
+      perform={perform}
       openOnHostText="Open on GitHub"
       copyReference={() => {}}
     />
@@ -213,4 +214,13 @@ it.each<[string, Detail]>([
   await screen.getByRole("button", { name: "More pull request actions" }).click();
   await expect.element(page.getByRole("menuitem", { name: "Open on GitHub" })).toBeVisible();
   expect(document.querySelector('[role="menuitemcheckbox"]')).toBeNull();
+});
+
+it("removes a queued pull request from the actions menu", async () => {
+  const perform = vi.fn(async (_action: string) => true);
+  const control = setup(true, perform);
+  await using screen = await render(control());
+  await screen.getByRole("button", { name: "More pull request actions" }).click();
+  await page.getByRole("menuitem", { name: "Remove from queue" }).click();
+  expect(perform).toHaveBeenCalledExactlyOnceWith("disable-auto-merge");
 });

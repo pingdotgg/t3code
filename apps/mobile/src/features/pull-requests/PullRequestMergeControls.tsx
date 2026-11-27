@@ -1,3 +1,4 @@
+import { useNavigation } from "@react-navigation/native";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
@@ -43,6 +44,7 @@ export function PullRequestMergeControls(props: {
 }) {
   const { pr, stack } = props;
   const gt = useGT();
+  const navigation = useNavigation();
   const m = useMessages();
   const terminology = sourceControlClients.get(pr.provider).changeRequest;
   const target = pullRequestTarget(props.params);
@@ -91,13 +93,16 @@ export function PullRequestMergeControls(props: {
           : gt("Checking stack membership…")
         : null);
   const canMerge = !busy && method !== undefined && !reason;
+  const queueMerge = pr.mergeQueueEnabled === true && !stack.stack;
   const label = method
     ? scope && scope.layers.length > 1
       ? gt(
           "{kind, select, squash {Squash and merge stack ({count})} merge {Create a merge commit stack ({count})} rebase {Rebase and merge stack ({count})} other {Fast-forward merge stack ({count})}}",
           { kind: mergeMethodKind(method), count: scope.layers.length },
         )
-      : m(MERGE_METHODS[method].title)
+      : queueMerge
+        ? gt("Merge when ready")
+        : m(MERGE_METHODS[method].title)
     : gt("Merge unavailable");
   const nextAction =
     pr.state === "closed" ? "reopen" : pr.state === "open" && pr.isDraft ? "ready" : null;
@@ -137,15 +142,17 @@ export function PullRequestMergeControls(props: {
               ? { label: gt("Resolve conflicts to merge"), icon: PullRequestGlyph.conflicting }
               : pr.autoMergeEnabled
                 ? {
-                    label: pr.autoMergeMethod
-                      ? gt(
-                          "Auto-merge pending ({kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}})",
-                          {
-                            kind: mergeMethodKind(pr.autoMergeMethod),
-                            method: pr.autoMergeMethod,
-                          },
-                        )
-                      : gt("Auto-merge pending"),
+                    label: pr.mergeQueue
+                      ? gt("Queued (#{position})", { position: pr.mergeQueue.position })
+                      : pr.autoMergeMethod
+                        ? gt(
+                            "Auto-merge pending ({kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}})",
+                            {
+                              kind: mergeMethodKind(pr.autoMergeMethod),
+                              method: pr.autoMergeMethod,
+                            },
+                          )
+                        : gt("Auto-merge pending"),
                     icon: "clock",
                   }
                 : checkingStack && !busy
@@ -244,8 +251,10 @@ export function PullRequestMergeControls(props: {
   const confirm = (action: "merge" | "enable-auto-merge" | "disable-auto-merge") => {
     // The overview refreshes on focus, so the alert merges the head it was opened on.
     const shownHeadSha = pr.headSha;
-    const title =
-      action === "merge"
+    const queueRequest = queueMerge && action !== "disable-auto-merge";
+    const title = queueRequest
+      ? gt("Merge when ready?")
+      : action === "merge"
         ? scope && scope.layers.length > 1
           ? gt(
               "{count, plural, one {Merge {count} stack layers?} other {Merge {count} stack layers?}}",
@@ -257,9 +266,14 @@ export function PullRequestMergeControls(props: {
             )
         : action === "enable-auto-merge"
           ? gt("Enable auto-merge?")
-          : gt("Disable auto-merge?");
-    const message =
-      action === "merge" && scope
+          : pr.mergeQueue
+            ? gt("Remove from queue?")
+            : gt("Disable auto-merge?");
+    const message = queueRequest
+      ? gt("GitHub will merge #{number} through the queue once its requirements are met.", {
+          number: pr.number,
+        })
+      : action === "merge" && scope
         ? gt(
             "Merge {layers} into {base} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}}. Layers above #{number} stay open.",
             {
@@ -309,7 +323,9 @@ export function PullRequestMergeControls(props: {
             ? label
             : action === "enable-auto-merge"
               ? gt("Enable auto-merge")
-              : gt("Disable auto-merge"),
+              : pr.mergeQueue
+                ? gt("Remove from queue")
+                : gt("Disable auto-merge"),
         onPress: () => void perform(action, shownHeadSha),
       },
     ]);
@@ -319,7 +335,9 @@ export function PullRequestMergeControls(props: {
       <SplitButton
         label={
           busy || stateAction.busy
-            ? gt("Working…")
+            ? busy && queueMerge && !pr.autoMergeEnabled
+              ? gt("Queueing…")
+              : gt("Working…")
             : !permissions.connected
               ? gt("Reconnect to merge")
               : (status?.label ?? label)
@@ -349,19 +367,21 @@ export function PullRequestMergeControls(props: {
           status?.final
             ? []
             : [
-                ...methods.map((id) => ({
+                ...(queueMerge || pr.mergeQueue ? [] : methods).map((id) => ({
                   id,
                   title: m(MERGE_METHODS[id].title),
                   state: id === method ? ("on" as const) : ("off" as const),
                   attributes: { disabled: !canMerge && !canAutoMerge },
                 })),
-                ...(canAutoMerge
+                ...(canAutoMerge && (!queueMerge || pr.autoMergeEnabled)
                   ? [
                       {
                         id: autoAction,
-                        title: pr.autoMergeEnabled
-                          ? gt("Disable auto-merge")
-                          : gt("Enable auto-merge"),
+                        title: pr.mergeQueue
+                          ? gt("Remove from queue")
+                          : pr.autoMergeEnabled
+                            ? gt("Disable auto-merge")
+                            : gt("Enable auto-merge"),
                         image: "clock",
                       },
                     ]
@@ -376,6 +396,21 @@ export function PullRequestMergeControls(props: {
           } else if (id === autoAction && canAutoMerge) confirm(autoAction);
         }}
       />
+      {pr.mergeQueue && (
+        <Button
+          label={gt("View merge queue")}
+          tone="text"
+          size="compact"
+          onPress={() =>
+            navigation.navigate("MergeQueues", {
+              environmentId: props.params.environmentId,
+              repository: props.params.repository,
+              branch: pr.baseBranch,
+              ...(props.params.host ? { host: props.params.host } : {}),
+            })
+          }
+        />
+      )}
       {permissions.connected && !status && reason ? (
         <Text className="px-1 text-xs text-foreground-muted">{reason}</Text>
       ) : null}

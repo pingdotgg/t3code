@@ -8,6 +8,7 @@ import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChe
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -25,6 +26,7 @@ import {
   resolvePullRequestAuthorFilter,
   PositiveInt,
   TrimmedNonEmptyString,
+  type ProjectMergeQueue,
   type PullRequestAction,
   type PullRequestStackHead,
   type PullRequestActor,
@@ -49,6 +51,7 @@ import {
   type PullRequestPreview,
 } from "@t3tools/contracts";
 
+import { MERGE_QUEUE_STATES } from "./gitHubPullRequestJson.ts";
 import * as GitHubAppAccess from "./GitHubAppAccess.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubPullRequestEvents from "./gitHubPullRequestEvents.ts";
@@ -63,6 +66,9 @@ import {
   PullRequestActionState,
   PullRequestCore,
   PullRequestReadsGraphQLGroup,
+  type BranchMergeQueue,
+  type MergeGroupChecks,
+  type StatusCheckRollupContextConnection,
 } from "./pullRequestReads.graphql.ts";
 import { PullRequestReviewsGraphQLGroup } from "./pullRequestReviews.graphql.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -71,9 +77,11 @@ import {
   buildReviewSubmission,
   buildReviewerRequest,
   decodeCommitFilesJson,
+  toCheckContexts,
   pullRequestChecksFromContexts,
   decodeWorkflowRunsJson,
   decodeUnfinishedWorkflowRunsJson,
+  type GitHubCheckContext,
   type GitHubPullRequestCore,
   type GitHubPullRequestFileStat,
   type GitHubPullRequestWatchFingerprint,
@@ -524,6 +532,11 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly host: string;
     }) => Effect.Effect<string, GitHubPullRequestApiError>;
 
+    readonly listMergeQueues: (input: {
+      cwd: string;
+      host: string;
+      repository: string;
+    }) => Effect.Effect<ReadonlyArray<ProjectMergeQueue>, GitHubPullRequestApiError>;
     readonly listPullRequests: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -863,6 +876,10 @@ export class GitHubPullRequestApi extends Context.Service<
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
   }
 >()("@t3tools/source-control-github/server/GitHubPullRequestApi") {}
+
+const decodeProtectedBranches = Schema.decodeUnknownResult(
+  Schema.fromJsonString(Schema.Array(Schema.Struct({ name: TrimmedNonEmptyString }))),
+);
 
 const CHECK_LOG_MAX_BYTES = 16 * 1024 * 1024;
 const NOT_A_JOB = "This check is not a GitHub Actions job, so GitHub cannot re-run it.";
@@ -1837,10 +1854,6 @@ export const make = Effect.gen(function* () {
       );
 
   const simpleActionMutations = {
-    "disable-auto-merge": (pullRequestId: string) =>
-      client
-        .DisablePullRequestAutoMerge({ pullRequestId })
-        .pipe(Effect.map((result) => result.disablePullRequestAutoMerge?.pullRequest)),
     ready: (pullRequestId: string) =>
       client
         .MarkPullRequestReadyForReview({ pullRequestId })
@@ -1972,12 +1985,112 @@ export const make = Effect.gen(function* () {
     batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(RequestResolver.batchN(FILES_VIEWED_PER_REQUEST));
 
+  const readMergeGroupChecks = Effect.fnUntraced(function* (
+    target: Parameters<typeof graphql>[0],
+    id: string,
+    number: number,
+  ) {
+    const checks: GitHubCheckContext[] = [];
+    let after: string | null = null;
+    do {
+      const page: MergeGroupChecks.Result | undefined = yield* client
+        .MergeGroupChecks({
+          id,
+          number,
+          required: true,
+          after,
+        })
+        .pipe(
+          graphql(target),
+          Effect.orElseSucceed(() => undefined),
+        );
+      if (page?.node?.__typename !== "Commit") return {};
+      const contexts: StatusCheckRollupContextConnection | undefined =
+        page.node.statusCheckRollup?.contexts;
+      if (!contexts) break;
+      if (!contexts.nodes) return {};
+      checks.push(...toCheckContexts(contexts.nodes.filter((node) => node !== null)));
+      if (!contexts.pageInfo.hasNextPage) break;
+      if (!contexts.pageInfo.endCursor || contexts.pageInfo.endCursor === after) return {};
+      after = contexts.pageInfo.endCursor;
+    } while (true);
+    return { checks: pullRequestChecksFromContexts(checks).checks };
+  });
+
   return GitHubPullRequestApi.of({
     withVerifiedCredential,
     revalidateChecks,
     getRoutingIdentity,
     getViewerLogin: Effect.fn("GitHubPullRequestApi.getViewerLogin")(function (input) {
       return getRoutingIdentity(input).pipe(Effect.map((identity) => identity.viewer));
+    }),
+
+    listMergeQueues: Effect.fn("GitHubPullRequestApi.listMergeQueues")(function* (input) {
+      const repo = parseRepositorySelector(input.repository);
+      const target = { ...input, operation: "listMergeQueues" };
+      const incomplete = () => readError(input.cwd, target.operation, "Incomplete queue response");
+      const queues: ProjectMergeQueue[] = [];
+      for (let page = 1; ; page++) {
+        const refs = yield* revalidatedRestRead({
+          ...target,
+          path: `repos/${repo.owner}/${repo.name}/branches?protected=true&per_page=100&page=${page}`,
+          decode: decodeProtectedBranches,
+        });
+        const groups = yield* Effect.forEach(
+          refs,
+          Effect.fnUntraced(function* (ref) {
+            let after: string | null = null;
+            const entries: Array<ProjectMergeQueue["entries"][number]> = [];
+            do {
+              const result: BranchMergeQueue.Result = yield* client
+                .BranchMergeQueue({
+                  ...repo,
+                  branch: ref.name,
+                  cursor: after,
+                })
+                .pipe(graphql(target));
+              if (!result.repository) return yield* incomplete();
+              const queue = result.repository.mergeQueue;
+              if (!queue) return null;
+              const connection = queue.entries;
+              if (!connection?.nodes) return yield* incomplete();
+              const observedAt = yield* Clock.currentTimeMillis;
+              for (const entry of connection.nodes) {
+                if (!entry?.pullRequest) return yield* incomplete();
+                entries.push({
+                  ...entry.pullRequest,
+                  enqueuedAt: entry.enqueuedAt,
+                  ...(entry.estimatedTimeToMerge === null
+                    ? {}
+                    : {
+                        estimatedMergeAt: DateTime.formatIso(
+                          DateTime.makeUnsafe(observedAt + entry.estimatedTimeToMerge * 1000),
+                        ),
+                      }),
+                  ...(entry.headCommit
+                    ? yield* readMergeGroupChecks(
+                        target,
+                        entry.headCommit.id,
+                        entry.pullRequest.number,
+                      )
+                    : {}),
+                  position: entry.position,
+                  state: MERGE_QUEUE_STATES[entry.state],
+                });
+              }
+              if (!connection.pageInfo.hasNextPage) break;
+              if (!connection.pageInfo.endCursor || connection.pageInfo.endCursor === after)
+                return yield* incomplete();
+              after = connection.pageInfo.endCursor;
+            } while (true);
+            return { branch: ref.name, entries: entries.sort((a, b) => a.position - b.position) };
+          }),
+          { concurrency: 3 },
+        );
+        for (const group of groups) if (group) queues.push(group);
+        if (refs.length < 100) break;
+      }
+      return queues;
     }),
 
     listPullRequests: Effect.fn("GitHubPullRequestApi.listPullRequests")(function (input) {
@@ -2927,7 +3040,7 @@ export const make = Effect.gen(function* () {
         const { owner, name } = parseRepositorySelector(input.repository);
         // Fresh head and merge-queue state determine the mutation's revision and route.
         const target = { ...input, operation: "runPullRequestAction" };
-        const state = yield* client
+        const actionState = yield* client
           .PullRequestActionState({
             owner,
             name,
@@ -2937,9 +3050,32 @@ export const make = Effect.gen(function* () {
           .pipe(
             toleratingMissingPullRef(decodePullRequestActionState),
             graphql({ ...target, allowReserve: true }),
-            Effect.map((result) => result.repository?.pullRequest ?? null),
+            Effect.map((result) =>
+              result.repository?.pullRequest == null
+                ? null
+                : {
+                    autoMergeAllowed: result.repository.autoMergeAllowed,
+                    pullRequest: result.repository.pullRequest,
+                  },
+            ),
             Effect.flatMap(found(target)),
           );
+        const state = actionState.pullRequest;
+        // A pull request enqueued without auto-merge (`gh pr merge`, GitHub's button) has nothing
+        // to disable; it leaves the queue only by being dequeued.
+        if (action === "disable-auto-merge") {
+          return yield* actionSummary(
+            state.isInMergeQueue
+              ? client
+                  .DequeuePullRequest({ pullRequestId: state.id })
+                  .pipe(
+                    Effect.map((result) => result.dequeuePullRequest?.mergeQueueEntry?.pullRequest),
+                  )
+              : client
+                  .DisablePullRequestAutoMerge({ pullRequestId: state.id })
+                  .pipe(Effect.map((result) => result.disablePullRequestAutoMerge?.pullRequest)),
+          ).pipe(graphql(target));
+        }
         if (action === "update-branch") {
           if (state.baseRef?.compare?.behindBy === 0) return;
           return yield* client
@@ -2978,18 +3114,36 @@ export const make = Effect.gen(function* () {
             }
           }
         }
-        // Merge queues always use auto-merge. A PR that became ready since detail loaded
-        // merges directly, matching `gh pr merge --auto`.
+        const readyNow = IMMEDIATELY_MERGEABLE.has(state.mergeStateStatus?.toUpperCase() ?? "");
+        const expectedHeadOid = input.expectedHeadSha ?? expectedHead;
+        // Merge queues accept `enqueuePullRequest` directly even when repository auto-merge is
+        // disabled. When auto-merge is allowed, `enablePullRequestAutoMerge` also handles PRs that
+        // are still waiting on checks or reviews.
+        if (
+          state.isMergeQueueEnabled === true &&
+          actionState.autoMergeAllowed === false &&
+          (action === "merge" || readyNow)
+        ) {
+          return yield* actionSummary(
+            client
+              .EnqueuePullRequest({
+                input: {
+                  pullRequestId: state.id,
+                  ...(expectedHeadOid === undefined ? {} : { expectedHeadOid }),
+                },
+              })
+              .pipe(
+                Effect.map((result) => result.enqueuePullRequest?.mergeQueueEntry?.pullRequest),
+              ),
+          ).pipe(graphql(target));
+        }
+        // A PR that became ready since detail loaded merges directly, matching `gh pr merge --auto`.
         const auto =
-          state.isMergeQueueEnabled === true ||
-          (action === "enable-auto-merge" &&
-            !IMMEDIATELY_MERGEABLE.has(state.mergeStateStatus?.toUpperCase() ?? ""));
+          state.isMergeQueueEnabled === true || (action === "enable-auto-merge" && !readyNow);
         const merge = {
           pullRequestId: state.id,
           mergeMethod: GRAPHQL_MERGE_METHODS[input.mergeMethod ?? "merge"] ?? "MERGE",
-          ...((input.expectedHeadSha ?? expectedHead) === undefined
-            ? {}
-            : { expectedHeadOid: input.expectedHeadSha ?? expectedHead }),
+          ...(expectedHeadOid === undefined ? {} : { expectedHeadOid }),
           ...(body === undefined ? {} : { commitBody: body }),
         };
         return yield* actionSummary(

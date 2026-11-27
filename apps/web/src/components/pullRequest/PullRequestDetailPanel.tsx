@@ -146,6 +146,7 @@ import {
   pullRequestFindingKey,
   pullRequestHandoffLabels,
   PULL_REQUEST_MERGE_METHOD_LABELS,
+  MERGE_QUEUE_STATE_LABELS,
   checkoutFailureDescription,
   mergeHeadPin,
   seenPullRequestHead,
@@ -965,6 +966,16 @@ export function PullRequestDetailPanel({
     updateMethod?: PullRequestUpdateMethod,
   ) => {
     if (!canWriteSourceControl || pendingAction !== null) return false;
+    if (action === "disable-auto-merge" && detail?.mergeQueueEnabled) {
+      const confirmed = await readLocalApi()?.dialogs.confirm(
+        gt("Remove {repository} #{number} from the merge queue?", {
+          repository: reference.repository,
+          number: reference.number,
+        }),
+        { variant: "destructive" },
+      );
+      if (!confirmed) return false;
+    }
     setPendingAction(action);
     return finishAction(action, method, updateMethod);
   };
@@ -1407,14 +1418,22 @@ export function PullRequestDetailPanel({
     projectDefaultMergeMethod,
     lastSelectedMergeMethod,
   );
-  const selectedMergeMethodLabel = resolve(PULL_REQUEST_MERGE_METHOD_LABELS[selectedMergeMethod]);
-  const pendingAutoMergeLabel = resolve(AUTO_MERGE_LABELS[selectedMergeMethod]);
+  const selectedMergeMethodLabel = detail?.mergeQueueEnabled
+    ? gt("Merge when ready")
+    : resolve(PULL_REQUEST_MERGE_METHOD_LABELS[selectedMergeMethod]);
+  const pendingAutoMergeLabel = gt("Merge when ready");
   const conflicting = isPullRequestConflicting(detail);
   const autoMergeArmed = detail?.state === "open" && detail.autoMergeEnabled === true;
   const armedMergeMethod = detail?.autoMergeMethod;
-  const armedAutoMergeLabel = armedMergeMethod
-    ? resolve(AUTO_MERGE_LABELS[armedMergeMethod])
-    : gt("Auto-merge");
+  const mergeQueue = autoMergeArmed ? detail.mergeQueue : undefined;
+  const armedAutoMergeLabel = mergeQueue
+    ? gt("Queued (#{position}, {state})", {
+        position: mergeQueue.position,
+        state: resolve(MERGE_QUEUE_STATE_LABELS[mergeQueue.state]),
+      })
+    : armedMergeMethod
+      ? resolve(AUTO_MERGE_LABELS[armedMergeMethod])
+      : gt("Auto-merge");
   const workflowApprovalsRequired =
     detail?.state === "open" ? (detail.workflowApprovalsRequired ?? 0) : 0;
   const freshness = detail === null ? null : resolveBaseFreshness(detail);
@@ -1463,6 +1482,7 @@ export function PullRequestDetailPanel({
         can("enable-auto-merge") &&
         allowedMergeMethods.length > 0));
   const showsMergeNow =
+    !mergeQueue &&
     canMergeSinglePullRequest &&
     detail?.state === "open" &&
     (primaryAction === "enable-auto-merge" || primaryAction === "auto-merge-armed") &&
@@ -1471,6 +1491,7 @@ export function PullRequestDetailPanel({
     !conflicting &&
     allowedMergeMethods.length > 0;
   const showsMergeMethods =
+    !mergeQueue &&
     detail?.state === "open" &&
     can("merge") &&
     !detail.isDraft &&
@@ -1651,6 +1672,8 @@ export function PullRequestDetailPanel({
                 />
               ) : null}
               <PullRequestPrimaryAction
+                mergeQueueEnabled={detail.mergeQueueEnabled === true}
+                canRemoveFromQueue={can("disable-auto-merge")}
                 mergeBlockedReason={mergeBlockedReason}
                 pullRequestKey={pullRequestKey}
                 primaryAction={primaryAction}
@@ -1696,6 +1719,7 @@ export function PullRequestDetailPanel({
                 onActingEnvironmentChange={selectActingEnvironment}
                 can={can}
                 autoMergeArmed={autoMergeArmed}
+                mergeQueued={mergeQueue !== undefined}
                 showsDraftToggle={showsDraftToggle}
                 showsMergeNow={showsMergeNow}
                 showsAutoMerge={showsAutoMerge}

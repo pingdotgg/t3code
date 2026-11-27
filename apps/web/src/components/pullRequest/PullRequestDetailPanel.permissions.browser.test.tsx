@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
+import { ConfirmDialogHost } from "../ConfirmDialogHost";
 import appCss from "~/index.css?inline";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { act, fakeTimers, render } from "../../../test/render";
@@ -296,4 +297,39 @@ it("keeps a screen reader's place when scrolling the description condenses the h
   await act(() => vi.advanceTimersToNextFrame());
   // A programmatic focus() pulls the screen reader's browse cursor back to the header.
   expect(moves).not.toHaveBeenCalled();
+});
+
+it("sends a dequeue only after the viewer confirms removal", async () => {
+  setup();
+  const style = document.createElement("style");
+  style.textContent = appCss;
+  document.head.append(style);
+  using _style = { [Symbol.dispose]: () => style.remove() };
+  command.mockResolvedValue({ _tag: "Success", value: undefined });
+  shown.detail = {
+    ...detail,
+    mergeQueueEnabled: true,
+    autoMergeEnabled: true,
+    mergeQueue: { position: 2, state: "awaiting-checks" },
+    capabilities: { ...detail.capabilities, actions: ["disable-auto-merge"] },
+    viewerPermissions: { ...detail.viewerPermissions, actions: ["disable-auto-merge"] },
+  };
+  await using screen = await render(
+    <>
+      {panel()}
+      <ConfirmDialogHost />
+    </>,
+  );
+  const remove = screen.getByRole("button", { name: "Remove from queue" });
+  const dialog = page.getByRole("alertdialog", {
+    name: "Remove owner/repo #1 from the merge queue?",
+  });
+  const removals = () =>
+    command.mock.calls.filter(([call]) => call?.input?.action === "disable-auto-merge");
+  await remove.click();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  expect(removals()).toHaveLength(0);
+  await remove.click();
+  await dialog.getByRole("button", { name: "Confirm" }).click();
+  await vi.waitFor(() => expect(removals()).toHaveLength(1));
 });

@@ -89,6 +89,8 @@ it.each(["merge", "enable-auto-merge"] as const)(
         pullRequestKey="owner/repo/7"
         primaryAction={primaryAction}
         mergeBlockedReason={mergeBlockedReason}
+        mergeQueueEnabled={false}
+        canRemoveFromQueue={false}
         autoMergeArmed={false}
         armedAutoMergeLabel="Auto-merge enabled"
         pendingAutoMergeLabel="Auto-merge (squash)"
@@ -115,3 +117,32 @@ it.each(["merge", "enable-auto-merge"] as const)(
     expect(perform).toHaveBeenCalledExactlyOnceWith(primaryAction, "squash");
   },
 );
+
+it("shows queue submission progress and lets the viewer cancel the accepted request", async () => {
+  const perform = vi.fn(async () => true);
+  const { PullRequestPrimaryAction } = await import("./PullRequestDetailActions");
+  const control = (accepted: boolean) => (
+    <PullRequestPrimaryAction
+      pullRequestKey="owner/repo/7"
+      primaryAction={accepted ? "auto-merge-armed" : "merge"}
+      mergeBlockedReason={null}
+      mergeQueueEnabled
+      canRemoveFromQueue
+      autoMergeArmed={accepted}
+      armedAutoMergeLabel="Queued (#2, awaiting checks)"
+      pendingAutoMergeLabel="Merge when ready"
+      selectedMergeMethod="squash"
+      selectedMergeMethodLabel="Merge when ready"
+      statePresentation={null}
+      pendingAction={accepted ? null : "merge"}
+      perform={perform}
+      resolveConflicts={null}
+    />
+  );
+  await using screen = await render(control(false));
+  await expect.element(screen.getByRole("button", { name: "Queueing…" })).toBeDisabled();
+  await screen.rerender(control(true));
+  await expect.element(screen.getByText("Queued (#2, awaiting checks)")).toBeVisible();
+  await screen.getByRole("button", { name: "Remove from queue" }).click();
+  expect(perform).toHaveBeenCalledExactlyOnceWith("disable-auto-merge");
+});
