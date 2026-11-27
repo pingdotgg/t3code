@@ -193,16 +193,12 @@ function SortableRouteRow({
           ) : null}
         </p>
         {address !== null ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={<p tabIndex={0} className="truncate text-meta text-muted-foreground" />}
-            >
-              {address}
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {isLearned(route) ? gt("Found automatically") : address}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={<p tabIndex={0} className="truncate text-meta text-muted-foreground" />}
+            label={isLearned(route) ? gt("Found automatically") : address}
+          >
+            {address}
+          </SharedTooltipTrigger>
         ) : null}
         {refused && address !== null ? (
           <p className="text-meta text-muted-foreground">
