@@ -9795,7 +9795,7 @@
   "8ee326cccca4ffe0": "{percent} % téléchargé",
   "f36b40c99b8c221f": "Annuler le téléchargement de {name}",
   "72aa884cd8e51f5b": "Synchronisation des mots",
-  "045d18ba39ac5f5c": "Suit exactement chaque mot prononcé et commence la lecture pile au mot choisi. Sans elle, la surbrillance est estimée.",
+  "84433b8978234a38": "Suit exactement chaque mot prononcé et commence la lecture pile au mot choisi. Sans elle, la surbrillance est estimée. Le modèle est réservé à un usage non commercial.",
   "cbd443f1d643e8aa": "Annuler le téléchargement de la synchronisation des mots",
   "1af8926a836618b5": "Supprimer le modèle de synchronisation des mots",
   "13c003115954b94c": "Télécharger {size}",

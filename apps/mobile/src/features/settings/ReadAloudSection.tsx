@@ -322,7 +322,7 @@ export function ReadAloudSection() {
         <ListSection
           title={gt("Word timing")}
           footer={gt(
-            "Follows each spoken word exactly and starts reading right at the word you pick. Without it, the highlight is estimated.",
+            "Follows each spoken word exactly and starts reading right at the word you pick. Without it, the highlight is estimated. The model is for non-commercial use only.",
           )}
         >
           {timingDownloading ? (

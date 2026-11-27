@@ -3432,7 +3432,7 @@
   "f84879ada73428c9": "Installed",
   "c0e2a25e01e3236f": "Download {name}",
   "72aa884cd8e51f5b": "Word timing",
-  "045d18ba39ac5f5c": "Follows each spoken word exactly and starts reading right at the word you pick. Without it, the highlight is estimated.",
+  "84433b8978234a38": "Follows each spoken word exactly and starts reading right at the word you pick. Without it, the highlight is estimated. The model is for non-commercial use only.",
   "cbd443f1d643e8aa": "Cancel word timing download",
   "1af8926a836618b5": "Delete the word timing model",
   "8a12531bc7b6eecc": "Download the word timing model",

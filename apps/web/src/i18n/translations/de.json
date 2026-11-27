@@ -9795,7 +9795,7 @@
   "8ee326cccca4ffe0": "{percent} % heruntergeladen",
   "f36b40c99b8c221f": "Download von {name} abbrechen",
   "72aa884cd8e51f5b": "Wort-Timing",
-  "045d18ba39ac5f5c": "Folgt jedem gesprochenen Wort genau und beginnt das Vorlesen direkt bei dem Wort, das du auswählst. Ohne Wort-Timing wird die Hervorhebung geschätzt.",
+  "84433b8978234a38": "Folgt jedem gesprochenen Wort genau und beginnt das Vorlesen direkt bei dem Wort, das du auswählst. Ohne Wort-Timing wird die Hervorhebung geschätzt. Das Modell ist nur für die nicht-kommerzielle Nutzung bestimmt.",
   "cbd443f1d643e8aa": "Download des Wort-Timings abbrechen",
   "1af8926a836618b5": "Wort-Timing-Modell löschen",
   "13c003115954b94c": "{size} herunterladen",

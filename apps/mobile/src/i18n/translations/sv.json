@@ -3431,7 +3431,7 @@
   "f84879ada73428c9": "Installerad",
   "c0e2a25e01e3236f": "Ladda ned {name}",
   "72aa884cd8e51f5b": "Ordsynkronisering",
-  "045d18ba39ac5f5c": "Följer varje uppläst ord exakt och börjar läsa precis vid ordet du väljer. Utan den är markeringen uppskattad.",
+  "84433b8978234a38": "Följer varje uppläst ord exakt och börjar läsa precis vid ordet du väljer. Utan den är markeringen uppskattad. Modellen får endast användas icke-kommersiellt.",
   "cbd443f1d643e8aa": "Avbryt nedladdningen av ordsynkronisering",
   "1af8926a836618b5": "Ta bort modellen för ordsynkronisering",
   "8a12531bc7b6eecc": "Ladda ned modellen för ordsynkronisering",
