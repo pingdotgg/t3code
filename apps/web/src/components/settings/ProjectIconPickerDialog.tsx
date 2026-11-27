@@ -191,31 +191,36 @@ function ProjectIconPickerBody({
                 setQuery("");
               }}
             />
-            <ScrollArea scrollFade className="max-h-64">
-              <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">
-                {icons.map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    aria-label={iconLabel(name)}
-                    aria-pressed={iconName === name}
-                    className={cn(
-                      "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                      iconName === name && "border-border bg-accent",
-                      selectedColorClassName,
-                    )}
-                    onClick={() => setIconName(name)}
-                  >
-                    <PickerIcon name={name} />
-                  </button>
-                ))}
-              </div>
-            </ScrollArea>
-            {icons.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                <T>No icons found.</T>
-              </p>
-            ) : null}
+            {/* A fixed height keeps the centered dialog still as results change; the wrapper
+                sizes it because ScrollArea's own `size-full` beats a height class. */}
+            <div className="h-64">
+              <ScrollArea scrollFade>
+                {icons.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    <T>No icons found.</T>
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">
+                    {icons.map((name) => (
+                      <button
+                        key={name}
+                        type="button"
+                        aria-label={iconLabel(name)}
+                        aria-pressed={iconName === name}
+                        className={cn(
+                          "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                          iconName === name && "border-border bg-accent",
+                          selectedColorClassName,
+                        )}
+                        onClick={() => setIconName(name)}
+                      >
+                        <PickerIcon name={name} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </ScrollArea>
+            </div>
           </>
         ) : mode === "monogram" ? (
           <div className="flex items-center gap-4 py-2">

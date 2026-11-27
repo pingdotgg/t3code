@@ -294,13 +294,15 @@ export function markdownReferenceDefinitions(markdown: string): string[] {
   if (!markdown.includes("]:")) return [];
   // Flattened as the renderer does it: a raw HTML block hides the definitions inside it.
   const flattened = markdownWithHtml(markdown);
+  // remark-parse omits one initial BOM from its source offsets.
+  const source = flattened.replace(/^\uFEFF/, "");
   const definitions: string[] = [];
   const visit = (node: MarkdownNode, quotes: number) => {
     if (node.type === "definition") {
       // A wrapped definition drops its indent and the enclosing quotes' markers, not a literal ">".
       const wrap = new RegExp(`(?:\\r\\n|\\r|\\n)(?:[ \\t]*>){0,${quotes}}[ \\t]*`, "g");
       definitions.push(
-        flattened.slice(node.position?.start.offset, node.position?.end.offset).replace(wrap, " "),
+        source.slice(node.position?.start.offset, node.position?.end.offset).replace(wrap, " "),
       );
     }
     if (!("children" in node)) return;
@@ -655,7 +657,13 @@ function firstLeafOffset(node: MarkdownNode): number | undefined {
  * paragraph whose first letter disagrees gets a direction mark that the renderer reads first.
  */
 export function markdownWithTextDirection(markdown: string): string {
-  if (!hasRightToLeftLetter(markdown)) return markdown;
+  // The parser decodes numeric character references, which can spell right-to-left letters.
+  if (
+    !hasRightToLeftLetter(markdown) &&
+    !(markdown.includes("&#") && hasRightToLeftLetter(decodeHtmlEntities(markdown)))
+  ) {
+    return markdown;
+  }
   const edits: MarkdownEdit[] = [];
   for (const block of parser.parse(markdown).children) {
     if (block.type === "code" || block.type === "html") continue;

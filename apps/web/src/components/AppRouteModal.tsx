@@ -18,7 +18,7 @@ import { useCloseAppModal } from "./sidebar/mainAppLocation";
 import { GlobalVoiceInputIndicator } from "./chat/GlobalVoiceInputIndicator";
 import { Button } from "./ui/button";
 import { DialogBackdrop } from "./ui/dialog";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 /**
  * Large modal for the Settings and Usage routes. Esc, the close button, or a press on the
@@ -160,20 +160,21 @@ function blurFocusedWithin(container: HTMLElement | null) {
 export function AppRouteModalClose() {
   const gt = useGT();
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <DialogPrimitive.Close
-            aria-label={gt("Close")}
-            render={<Button size="icon-sm" variant="ghost" />}
-          />
-        }
-      >
-        <XIcon />
-      </TooltipTrigger>
-      <TooltipPopup side="bottom">
-        <T>Close (Esc)</T>
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <DialogPrimitive.Close
+          aria-label={gt("Close")}
+          render={<Button size="icon-sm" variant="ghost" />}
+        />
+      }
+      label={
+        <>
+          <T>Close (Esc)</T>
+        </>
+      }
+      side="bottom"
+    >
+      <XIcon />
+    </SharedTooltipTrigger>
   );
 }

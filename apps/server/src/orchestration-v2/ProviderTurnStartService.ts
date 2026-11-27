@@ -101,6 +101,7 @@ import * as TeamService from "../team/TeamService.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
+  cohortWasStopped,
   pendingStoppedDelegatedTasks,
   restartCancelledBackgroundWorkNote,
   stoppedDelegatedTasksNote,
@@ -163,6 +164,51 @@ export function abandonedProviderTurns(
       ? [{ turn, run: previous }]
       : [];
   });
+}
+
+const CUT_TURN_SETTLED = "cut-turn-settled";
+
+/**
+ * The previous run's cancelled or interrupted turn when no adapter said whether it kept the
+ * request. A Stop settles a cancelled turn as it ends; a restart cancels the turn with no adapter
+ * left to tell, and an interrupted turn the adapter only remembered in memory is lost with its session.
+ */
+function unsettledStoppedProviderTurn(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns">,
+  run: Pick<OrchestrationV2Run, "ordinal">,
+  providerThread: Pick<OrchestrationV2ProviderThread, "id" | "nativeThreadRef">,
+) {
+  const previous = projection.runs.reduce<OrchestrationV2Run | undefined>(
+    (latest, candidate) =>
+      candidate.ordinal < run.ordinal &&
+      candidate.providerThreadId === providerThread.id &&
+      candidate.startedAt !== null &&
+      (latest === undefined || candidate.ordinal > latest.ordinal)
+        ? candidate
+        : latest,
+    undefined,
+  );
+  if (
+    (previous?.status !== "cancelled" && previous?.status !== "interrupted") ||
+    previous.activeAttemptId === null
+  )
+    return undefined;
+  const turn = projection.providerTurns.findLast(
+    (candidate) =>
+      candidate.runAttemptId === previous.activeAttemptId &&
+      candidate.providerThreadId === providerThread.id,
+  );
+  const nativeTurnId = turn?.nativeTurnRef?.nativeId;
+  if (
+    turn === undefined ||
+    nativeTurnId == null ||
+    (turn.status !== "cancelled" && turn.status !== "interrupted") ||
+    turn.promptDropped === true ||
+    (turn.nativeThreadRef !== undefined &&
+      turn.nativeThreadRef.nativeId !== providerThread.nativeThreadRef?.nativeId)
+  )
+    return undefined;
+  return { run: previous, turn, nativeTurnId };
 }
 
 export const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
@@ -1082,6 +1128,7 @@ export const layer: Layer.Layer<
       // restart superseded, and the session cannot be reused until those turns stop.
       const abandonedTurns = abandonedProviderTurns(projection, run, providerThread.id);
       const abandonedTurn = abandonedTurns.at(-1)?.turn;
+      let providerTurns = projection.providerTurns;
       if (abandonedTurn !== undefined) {
         const liveSession = yield* providerSessions.get(providerSessionId, projection.thread.id);
         if (Option.isSome(liveSession)) {
@@ -1106,27 +1153,32 @@ export const layer: Layer.Layer<
           }
         }
         const completedAt = yield* DateTime.now;
+        const repairEvents = yield* Effect.forEach(abandonedTurns, ({ turn, run: abandonedRun }) =>
+          Effect.gen(function* () {
+            return {
+              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+              type: "provider-turn.updated" as const,
+              threadId: projection.thread.id,
+              runId: abandonedRun.id,
+              nodeId: turn.nodeId,
+              providerInstanceId: abandonedRun.providerInstanceId,
+              occurredAt: completedAt,
+              payload: { ...turn, status: "interrupted" as const, completedAt },
+            };
+          }),
+        );
         const repaired = yield* eventSink.writeIfRunCurrent({
           threadId: projection.thread.id,
           runId: run.id,
           activeAttemptId: attempt.id,
           expectedStatus: "starting",
-          events: yield* Effect.forEach(abandonedTurns, ({ turn, run: abandonedRun }) =>
-            Effect.gen(function* () {
-              return {
-                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-                type: "provider-turn.updated" as const,
-                threadId: projection.thread.id,
-                runId: abandonedRun.id,
-                nodeId: turn.nodeId,
-                providerInstanceId: abandonedRun.providerInstanceId,
-                occurredAt: completedAt,
-                payload: { ...turn, status: "interrupted" as const, completedAt },
-              };
-            }),
-          ),
+          events: repairEvents,
         });
         if (!repaired.committed) return;
+        const repairedTurns = new Map(
+          repairEvents.map((event) => [event.payload.id, event.payload]),
+        );
+        providerTurns = providerTurns.map((turn) => repairedTurns.get(turn.id) ?? turn);
       }
       // Opening a session does not prompt the provider, so the workspace is still unchanged.
       const baseline = yield* runExecution.forkBaseline({
@@ -1516,6 +1568,74 @@ export const layer: Layer.Layer<
       const session = sessionResult.success;
       const activeProviderSessionId = session.providerSessionId ?? providerSessionId;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
+      const cutTurn = unsettledStoppedProviderTurn(
+        { runs: projection.runs, providerTurns },
+        run,
+        providerThread,
+      );
+      if (
+        cutTurn !== undefined &&
+        session.nativeTurnKept !== undefined &&
+        !(yield* (
+          session
+            .nativeTurnKept({ providerThread, nativeTurnId: cutTurn.nativeTurnId })
+            // As when the turn ends: an unknown answer resends the request rather than losing it.
+            .pipe(Effect.orElseSucceed(() => false))
+        ))
+      ) {
+        // Settle it as a Stop would: mark the request dropped and take back its inline context, so
+        // this turn resends both. Starting again reads the settled state.
+        const occurredAt = yield* DateTime.now;
+        const allocateEventId = () =>
+          idAllocator.allocate.event({ threadId: projection.thread.id });
+        // Its attempt starts before it delivers anything, so later inline deliveries are its own,
+        // including handoffs carried from an earlier run that they still target.
+        const cutStartedAt =
+          projection.attempts.find((candidate) => candidate.id === cutTurn.run.activeAttemptId)
+            ?.startedAt ?? cutTurn.run.startedAt;
+        const settled = yield* eventSink.writeIfRunCurrent({
+          threadId: projection.thread.id,
+          runId: run.id,
+          activeAttemptId: attempt.id,
+          expectedStatus: "starting",
+          events: [
+            {
+              id: yield* allocateEventId(),
+              type: "provider-turn.updated" as const,
+              threadId: projection.thread.id,
+              runId: cutTurn.run.id,
+              nodeId: cutTurn.turn.nodeId,
+              providerInstanceId: cutTurn.run.providerInstanceId,
+              occurredAt,
+              payload: { ...cutTurn.turn, promptDropped: true as const },
+            },
+            ...(yield* Effect.forEach(
+              projection.contextHandoffs.filter(
+                (handoff) =>
+                  handoff.delivery?.status === "inline" &&
+                  handoff.delivery.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
+                  (handoff.targetRunId === cutTurn.run.id ||
+                    (cutStartedAt !== null &&
+                      DateTime.isGreaterThanOrEqualTo(handoff.updatedAt, cutStartedAt))),
+              ),
+              ({ delivery: _delivery, ...handoff }) =>
+                Effect.map(allocateEventId(), (id) => ({
+                  id,
+                  type: "context-handoff.updated" as const,
+                  threadId: projection.thread.id,
+                  runId: cutTurn.run.id,
+                  providerInstanceId: cutTurn.run.providerInstanceId,
+                  occurredAt,
+                  payload: { ...handoff, updatedAt: occurredAt },
+                })),
+            )),
+          ],
+        });
+        if (!settled.committed) return;
+        // The restarted start captures the same baseline; never let the two write at once.
+        yield* baseline;
+        return CUT_TURN_SETTLED;
+      }
       const loadFromProvider = Effect.fn("ProviderTurnStartService.loadFromProvider")(function* (
         load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapter.ProviderAdapterV2Error>,
       ) {
@@ -1574,9 +1694,7 @@ export const layer: Layer.Layer<
       // A failed read fails the start: a turn that ran without the note would count as telling it.
       const stoppedRunIds = projection.runs
         .filter(
-          (source) =>
-            source.providerThreadId === run.providerThreadId &&
-            source.delegatedCompletion?.disposition === "stopped",
+          (source) => source.providerThreadId === run.providerThreadId && cohortWasStopped(source),
         )
         .map((source) => source.id);
       const stoppedTasks =
@@ -2931,6 +3049,13 @@ export const layer: Layer.Layer<
         const setPendingRemoteLease = (lease: PendingRemoteLeaseCleanup | null) => {
           pendingRemoteLease = lease;
         };
+        const releasePendingRemoteLease = Effect.suspend(() => {
+          const unactivated = pendingRemoteLease;
+          pendingRemoteLease = null;
+          return unactivated !== null && Option.isSome(teamGitHubBrokerOption)
+            ? teamGitHubBrokerOption.value.revokeIssuedRemoteLease(unactivated)
+            : Effect.void;
+        });
         return yield* Effect.gen(function* () {
           // Storage cleanup removes worktrees under the same lease. Only startup
           // holds it; the provider turn runs after it is released.
@@ -2940,18 +3065,26 @@ export const layer: Layer.Layer<
             (yield* projects
               .getById(thread.projectId, { includeDeleted: true })
               .pipe(Effect.map((project) => Option.getOrUndefined(project)?.workspaceRoot)));
+          // Settling a turn a restart cut off changes what a start reads, so it starts once more.
+          const startSettled = start(input, captureStartingRun, setPendingRemoteLease).pipe(
+            Effect.filterOrElse(
+              (started) => started !== CUT_TURN_SETTLED,
+              () =>
+                releasePendingRemoteLease.pipe(
+                  Effect.andThen(start(input, captureStartingRun, setPendingRemoteLease)),
+                ),
+            ),
+            Effect.map((started) => (started === CUT_TURN_SETTLED ? undefined : started)),
+          );
           const providerTurn = yield* cwd === undefined
-            ? start(input, captureStartingRun, setPendingRemoteLease)
+            ? startSettled
             : withTurnStartReservation(
                 fileSystem,
                 path,
                 path.resolve(cwd),
                 thread.worktreePath === null
-                  ? start(input, captureStartingRun, setPendingRemoteLease)
-                  : withWorkspaceLease(
-                      path.resolve(thread.worktreePath),
-                      start(input, captureStartingRun, setPendingRemoteLease),
-                    ),
+                  ? startSettled
+                  : withWorkspaceLease(path.resolve(thread.worktreePath), startSettled),
               );
           if (providerTurn !== undefined && "worktreeSetup" in providerTurn) {
             yield* providerTurn.worktreeSetup;
@@ -2971,15 +3104,7 @@ export const layer: Layer.Layer<
             );
           }
         }).pipe(
-          Effect.ensuring(
-            Effect.suspend(() => {
-              const unactivated = pendingRemoteLease;
-              pendingRemoteLease = null;
-              return unactivated !== null && Option.isSome(teamGitHubBrokerOption)
-                ? teamGitHubBrokerOption.value.revokeIssuedRemoteLease(unactivated)
-                : Effect.void;
-            }),
-          ),
+          Effect.ensuring(releasePendingRemoteLease),
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
             (cause) =>

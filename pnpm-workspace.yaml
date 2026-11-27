@@ -23,7 +23,7 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
-  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.19-a01cbf49.tgz": true
+  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.19-3757a449.tgz": true
   sharp: true
   utf-8-validate: false
   workerd: false
@@ -104,6 +104,7 @@ overrides:
   # Pin every patched package, including transitive dependencies, so lockfile-free
   # release installs cannot drift past the patch. Update these with patchedDependencies.
   react-native-image-viewing: 0.2.2
+  "@exodus/bytes": 1.15.1
   mdast-util-math: 3.0.0
   micromark-extension-llm-math: 3.1.0
   micromark: 4.0.2
@@ -229,6 +230,9 @@ packageExtensions:
       vite-plus: "catalog:"
 
 patchedDependencies:
+  # Mobile's GB18030 TextDecoder polyfill imports these typings; their unused Node reference would
+  # give the React Native program Node's globals.
+  "@exodus/bytes@1.15.1": patches/@exodus__bytes@1.15.1.patch
   react-native-image-viewing@0.2.2: patches/react-native-image-viewing@0.2.2.patch
   mdast-util-math@3.0.0: patches/mdast-util-math@3.0.0.patch
   micromark-extension-llm-math@3.1.0: patches/micromark-extension-llm-math@3.1.0.patch

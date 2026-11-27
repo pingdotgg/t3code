@@ -3023,6 +3023,12 @@ export const layerWsRpc = (
                 workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
               ),
             ),
+        [WS_METHODS.workflowsAbout]: (input) =>
+          teamService
+            .assertCanUseWorkflows(currentSessionId)
+            .pipe(
+              Effect.andThen(workflows.about(input).pipe(Effect.mapError(toWorkflowRequestError))),
+            ),
         [WS_METHODS.workflowsAnswer]: (input) =>
           teamService.assertCanUseWorkflows(currentSessionId).pipe(
             Effect.andThen(
@@ -3511,6 +3517,14 @@ export const layerWsRpc = (
                 }),
             };
           }),
+        [WS_METHODS.serverGetProviderRuntimeModeLimits]: Effect.fnUntraced(function* (input) {
+          return {
+            limits: yield* providerRegistry.runtimeModeLimits({
+              instanceId: input.instanceId,
+              scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
+            }),
+          };
+        }),
         [WS_METHODS.mcpAppsCallTool]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
