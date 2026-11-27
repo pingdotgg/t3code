@@ -306,7 +306,9 @@ export const make = Effect.gen(function* () {
 
       return {
         parentPath,
-        entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
+        entries: entries.toSorted((left, right) =>
+          left.name.localeCompare(right.name, undefined, { numeric: true }),
+        ),
       };
     },
   );
