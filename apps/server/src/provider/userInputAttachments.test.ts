@@ -1732,6 +1732,21 @@ describe("question answer paths", () => {
           ],
         },
         {
+          ext: "odt",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:other="urn:example:other">' +
+              "<office:body><office:text><text:p>Inspection route</text:p>" +
+              '<text:p><draw:frame text:anchor-type="as-char"><draw:text-box><text:p>North loading dock</text:p><text:p>South loading dock</text:p></draw:text-box></draw:frame></text:p>' +
+              '<text:p>Meeting point: <draw:frame text:anchor-type="as-char"><draw:text-box><text:p>Gate 4</text:p></draw:text-box></draw:frame> at noon</text:p>' +
+              "<text:p>End <other:text-box>of <text:span>route</text:span>.</other:text-box></text:p>" +
+              "</office:text></office:body></office:document-content>",
+          },
+          expected: [
+            "Inspection route\nNorth loading dock\nSouth loading dock\nMeeting point: Gate 4 at noon\nEnd of route.",
+          ],
+        },
+        {
           ext: "ods",
           parts: {
             "content.xml":
