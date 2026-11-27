@@ -308,6 +308,16 @@ describe("question answer paths", () => {
     ],
     ["hyphen symbol fallback", String.raw`{\rtf1\ansi\uc3\u945\~\_\-Z}`, "αZ"],
     ["control word", String.raw`{\rtf1\ansi A\u9\tab X}`, "A\tX"],
+    [
+      "Unicode alternate destination",
+      String.raw`{\rtf1\ansi\uc1 Price: {\upr{\{??\}\bin2 {}}{\*\ud{\u20320?{\upr{?}{\*\ud{\u22909?}}}}}} confirmed.{\*\ud Hidden}{\*\unknown{\upr{Hidden}{\*\ud Also hidden}}}}`,
+      "Price: 你好 confirmed.",
+    ],
+    [
+      "ANSI alternate with a truncated Unicode destination",
+      String.raw`{\rtf1\ansi Price: {\upr{fallback}{\*\ud{\u20320?}`,
+      "Price: fallback",
+    ],
     ["line break paragraphs", "{\\rtf1\\ansi First\\\nSecond\\\r\nThird}", "First\nSecond\nThird"],
     [
       "tracked deletion",
