@@ -617,6 +617,39 @@ it.effect("does not record a changed transcript as imported without its new mess
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
+it.effect("re-import brings a continued transcript into an import thread with no runs", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const first = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "7a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "claudeAgent",
+    );
+    const threadId = importId(first);
+    yield* (yield* makeImporter([first])).run;
+    expect((yield* projections.getThreadRecords(threadId, ["runs"])).runs).toEqual([]);
+
+    const continued = candidate(
+      CLAUDE_MODEL_SELECTION,
+      first.source.providerSessionId,
+      "claudeAgent",
+    );
+    continued.source.size = 200;
+    continued.source.mtimeMs = 3;
+    continued.thread.messages.push(
+      { role: "user", text: "Continue in the terminal", createdAt: timestamp },
+      { role: "assistant", text: "Continued in the terminal", createdAt: timestamp },
+    );
+
+    expect(yield* (yield* makeImporter([continued])).run).toMatchObject({ skippedCount: 0 });
+    expect(
+      (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
+        (message) => message.text,
+      ),
+    ).toEqual(["Fix it", "Fixed", "Continue in the terminal", "Continued in the terminal"]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
 it.effect(
   "copies native session history into the imported thread once, retrying a failed read",
   () =>
