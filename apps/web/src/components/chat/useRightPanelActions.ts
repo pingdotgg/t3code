@@ -24,6 +24,8 @@ import {
 import { useDiffPanelStore } from "../../diffPanelStore";
 import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
+  selectActiveRightPanel,
+  selectActiveRightPanelSurface,
   selectThreadPanelOpen,
   type RightPanelSurface,
   useRightPanelStore,
@@ -103,7 +105,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const onToggleDiff = () => {
     if (!isServerThread || !activeThreadRef) return;
     toggleThreadSurfaceTab(activeThreadRef, "diff", () => {
-      if (!diffOpen) onDiffPanelOpen?.();
+      const isDiffOpen =
+        diffOpen ||
+        selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) ===
+          "diff";
+      if (!isDiffOpen) onDiffPanelOpen?.();
       useRightPanelStore.getState().toggle(activeThreadRef, "diff");
     });
   };
@@ -168,14 +174,17 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   };
   const closePreviewPanel = () => {
     if (activeThreadRef) {
-      if (activeRightPanelSurface?.kind === "preview" && activeRightPanelSurface.resourceId) {
+      const surface =
+        activeRightPanelSurface ??
+        selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, activeThreadRef);
+      if (surface?.kind === "preview" && surface.resourceId) {
         usePreviewMiniPlayerStore
           .getState()
-          .open(activeThreadRef, browserMiniPlayerSource(activeRightPanelSurface.resourceId));
-      } else if (activeRightPanelSurface?.kind === "device" && activeRightPanelSurface.target) {
+          .open(activeThreadRef, browserMiniPlayerSource(surface.resourceId));
+      } else if (surface?.kind === "device" && surface.target) {
         floatDeviceSurface(
           activeThreadRef,
-          { kind: "device", ...activeRightPanelSurface.target },
+          { kind: "device", ...surface.target },
           deviceStateLoaded ? deviceState : null,
         );
       }
@@ -184,7 +193,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   };
   const togglePreviewPanel = () => {
     if (!activeThreadRef || !browserAvailable) return;
-    if (previewPanelOpen) {
+    const isPreviewOpen =
+      previewPanelOpen ||
+      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) ===
+        "preview";
+    if (isPreviewOpen) {
       closePreviewPanel();
       return;
     }

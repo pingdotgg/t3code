@@ -1212,37 +1212,44 @@ export default function ChatView(props: ChatViewProps) {
   if (anchorRunSettled) {
     setTimelineAnchor({ threadKey: activeThreadKey, messageId: null });
   }
+  // In companion-pane mode the chat does not render the right panel, so avoid
+  // subscribing to activeSurfaceId (which changes on every companion tab click).
   const activeRightPanelKind = useRightPanelStore((state) =>
-    selectActiveRightPanel(state.byThreadKey, activeThreadRef),
+    companionPanes ? null : selectActiveRightPanel(state.byThreadKey, activeThreadRef),
   );
   const diffOpen = activeRightPanelKind === "diff";
-  const rightPanelState = useRightPanelStore((state) =>
-    selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
+  const rightPanelOpen = useRightPanelStore(
+    (state) => selectThreadRightPanelState(state.byThreadKey, activeThreadRef).isOpen,
+  );
+  const rightPanelSurfaces = useRightPanelStore(
+    (state) => selectThreadRightPanelState(state.byThreadKey, activeThreadRef).surfaces,
+  );
+  const rightPanelMaximized = useRightPanelStore((state) =>
+    companionPanes
+      ? false
+      : selectThreadRightPanelState(state.byThreadKey, activeThreadRef).maximized === true,
   );
   const shouldUsePlanSidebarSheet =
-    !companionPanes &&
-    (prefersPlanSidebarSheet || layoutPane.narrow) &&
-    rightPanelState.maximized !== true;
+    !companionPanes && (prefersPlanSidebarSheet || layoutPane.narrow) && !rightPanelMaximized;
   const activeRightPanelSurface = useRightPanelStore((state) =>
-    selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
+    companionPanes ? null : selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
   const activePreviewState = useThreadPreviewState(activeThreadRef);
   const activePreviewMiniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef),
   );
   const panelTerminalIds = new Set(
-    rightPanelState.surfaces.flatMap((surface) =>
+    rightPanelSurfaces.flatMap((surface) =>
       surface.kind === "terminal" ? surface.terminalIds : [],
     ),
   );
   const canReuseTerminal = activeThreadKnownSessionsRaw !== null;
   const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
-  const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const rightPanelPresenceValue = {
     activeSurface: activeRightPanelSurface,
-    surfaces: rightPanelState.surfaces,
+    surfaces: rightPanelSurfaces,
   };
   const rightPanelPresence = usePanelPresence(
     rightPanelOpen && activeThreadRef !== null,
@@ -1260,7 +1267,7 @@ export default function ChatView(props: ChatViewProps) {
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   // In a layout pane every shown surface is a tab of its own, not only the active one.
   const previewMiniPlayerVisible = companionPanes
-    ? (rightPanelOpen ? rightPanelState.surfaces : [null]).every((surface) =>
+    ? (rightPanelOpen ? rightPanelSurfaces : [null]).every((surface) =>
         shouldRenderPreviewMiniPlayer(activePreviewMiniPlayer?.source ?? null, surface),
       )
     : shouldRenderPreviewMiniPlayer(
@@ -3066,7 +3073,11 @@ export default function ChatView(props: ChatViewProps) {
     // A thread's own toggles answer from its diff, files and pull request tabs; only a
     // browser keeps the keys it shares with them (mod+l).
     previewFocus: isBrowserFocused(),
-    previewOpen: previewPanelOpen,
+    previewOpen: companionPanes
+      ? browserAvailable &&
+        selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) ===
+          "preview"
+      : previewPanelOpen,
     rightPanelOpen,
     editableFocus: isEditableFocused(eventTarget),
     modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,

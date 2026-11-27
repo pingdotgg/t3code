@@ -22,7 +22,11 @@ import ProjectScriptsControl, {
 import { T, useGT } from "gt-react";
 import { useImperativeHandle, useRef, useState, type ComponentProps, type Ref } from "react";
 import { flushSync } from "react-dom";
-import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
+import {
+  selectActiveRightPanelSurface,
+  selectThreadPanelOpen,
+  useRightPanelStore,
+} from "../../rightPanelStore";
 import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
@@ -106,6 +110,15 @@ interface ThreadDetailsPanelProps extends Pick<
 
 export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
   const visible = useClientSettings(resolveThreadDetailsVisibility);
+  const companionFileActive = useRightPanelStore((state) => {
+    if (!props.openInShortcutEnabled) return false;
+    const surface = selectActiveRightPanelSurface(state.byThreadKey, {
+      environmentId: props.environmentId,
+      threadId: props.threadId,
+    });
+    return surface?.kind === "file" && surface.attachment === undefined;
+  });
+  const openInShortcutEnabled = props.openInShortcutEnabled && !companionFileActive;
   const gt = useGT();
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
   const focusBranchOnOpen = useRef(false);
@@ -267,7 +280,7 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                                   environmentId={props.environmentId}
                                   availableEditors={props.availableEditors}
                                   openInCwd={props.gitCwd}
-                                  enableShortcut={props.openInShortcutEnabled}
+                                  enableShortcut={openInShortcutEnabled}
                                   presentation="menu"
                                 />
                               ) : undefined
@@ -284,7 +297,7 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                         environmentId={props.environmentId}
                         availableEditors={props.availableEditors}
                         openInCwd={props.gitCwd}
-                        enableShortcut={props.openInShortcutEnabled}
+                        enableShortcut={openInShortcutEnabled}
                         displayMode="panel"
                       />
                     ) : null}
