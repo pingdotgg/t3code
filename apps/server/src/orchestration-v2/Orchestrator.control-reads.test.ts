@@ -3284,3 +3284,144 @@ it.each([
     assert.isAtMost(reads.count, 2 * (size + size));
   },
 );
+
+it.effect(
+  "binding a worktree while a run is active does not detach the run's provider session",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("thread:bind-active");
+      const now = yield* DateTime.now;
+      const sessionId = ProviderSessionId.make("session:bind-active");
+      const providerThreadId = ProviderThreadId.make("provider-thread:bind-active");
+      const runId = RunId.make("run:bind-active");
+      const nodeId = NodeId.make("node:bind-active");
+      const attemptId = RunAttemptId.make("attempt:bind-active");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-bind-active"),
+        threadId,
+        projectId: ProjectId.make("project:bind-active"),
+        title: "Bind active",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      yield* projections.apply({
+        id: EventId.make("bind-active:session"),
+        type: "provider-session.attached",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: sessionId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: "/repo",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("bind-active:provider-thread"),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          providerSessionId: sessionId,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          nativeThreadRef: {
+            driver: adapter.driver,
+            nativeId: "native:bind-active",
+            strength: "strong",
+          },
+          nativeConversationHeadRef: null,
+          status: "active",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("bind-active:run"),
+        type: "run.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          modelSelection,
+          providerThreadId,
+          userMessageId: MessageId.make("message:bind-active"),
+          rootNodeId: nodeId,
+          activeAttemptId: attemptId,
+          status: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("bind-active:turn"),
+        type: "provider-turn.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make("provider-turn:bind-active"),
+          providerThreadId,
+          nodeId,
+          runAttemptId: attemptId,
+          nativeTurnRef: { driver: adapter.driver, nativeId: "native:turn", strength: "strong" },
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+
+      // Launch-time worktree preparation binds the worktree after a message already started run 1.
+      const commandId = CommandId.make("bind-active:workspace");
+      yield* orchestrator
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId,
+          threadId,
+          worktreePath: "/repo-worktrees/t3-bind-active",
+        })
+        .pipe(Effect.result);
+
+      const detaches = (yield* outbox.listByCommandId(commandId)).filter(
+        (effect) => effect.request.type === "provider-session.detach",
+      );
+      assert.deepEqual(
+        detaches.map((effect) => effect.request),
+        [],
+        "the running turn's session must not be unloaded mid-turn; its completion would never arrive",
+      );
+      const run = (yield* projections.getThreadProjection(threadId)).runs.find(
+        (candidate) => candidate.id === runId,
+      );
+      assert.equal(run?.status, "running");
+    }).pipe(Effect.provide(layerTest)),
+);
