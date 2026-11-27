@@ -131,7 +131,7 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
       action: "commit",
       featureBranch,
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
+      ...(excludedFiles.size > 0 ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
       onProgress: (event) => {
         if (event.kind === "action_failed") checkedOutBranch = event.createdBranch;
       },

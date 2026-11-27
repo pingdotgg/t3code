@@ -317,7 +317,9 @@ it("treats remaining files as all selected when an excluded file disappears", as
     state.files = initialFiles.slice(0, 1);
     sheet.refresh();
     await sheet.commit();
-    expect(state.ran).toEqual([{ action: "commit", featureBranch: false }]);
+    expect(state.ran).toEqual([
+      { action: "commit", featureBranch: false, filePaths: ["include.ts"] },
+    ]);
   } finally {
     state.files = initialFiles;
   }
