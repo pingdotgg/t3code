@@ -19,6 +19,7 @@ describe("compactDynamicToolOutput", () => {
       { ...metadata, response: "Private response body" },
       { structuredContent: JSON.parse(json), content: "Ignored alternative body" },
       [{ type: "text", text: json }],
+      [{ type: "content", content: { type: "text", text: json } }],
       { content: [{ text: { text: json } }], isError: false },
       json,
     ]) {
@@ -94,6 +95,19 @@ describe("compactDynamicToolOutput", () => {
       compactDynamicToolOutput([
         { text: JSON.stringify({ threadId: "first" }) },
         { text: JSON.stringify({ threadId: "second", isError: true, error: "Private error" }) },
+      ]),
+    ).toEqual({ threadId: "first", isError: true });
+    expect(
+      compactDynamicToolOutput([
+        { type: "content", content: { type: "image", data: "ignored" } },
+        { type: "content", content: { type: "text", text: JSON.stringify({ threadId: "first" }) } },
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: JSON.stringify({ threadId: "second", isError: true, error: "Private error" }),
+          },
+        },
       ]),
     ).toEqual({ threadId: "first", isError: true });
     expect(

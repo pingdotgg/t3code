@@ -1745,6 +1745,9 @@ describe("extractMcpToolCallIdentity", () => {
       "Running delegate_task",
       "Run mcp_t3-code_delegate_task",
       "Run mcp_t3-code_delegate_task?",
+      // Devin: "Calling <tool> from <server>" / "Called <tool> from <server>".
+      "Calling delegate_task from t3-code",
+      "Called delegate_task from t3-code",
     ]) {
       const toolCall = toolCallFromUpdate({
         sessionUpdate: "tool_call",
@@ -1860,14 +1863,20 @@ describe("extractMcpToolCallIdentity", () => {
   });
 
   it("does not claim an agent's own tool that shares a T3 tool name", () => {
-    const toolCall = toolCallFromUpdate({
-      sessionUpdate: "tool_call",
-      toolCallId: "own-delegate-1",
-      kind: "execute",
-      title: "delegate_task: 1 tasks: Run the terminal command 'echo child-result-42'",
-      status: "pending",
-    });
-    expect(extractMcpToolCallIdentity(toolCall)).toBeUndefined();
+    for (const title of [
+      "delegate_task: 1 tasks: Run the terminal command 'echo child-result-42'",
+      "Called html_render from linear",
+      "Called unknown_tool from t3-code",
+    ]) {
+      const toolCall = toolCallFromUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "own-delegate-1",
+        kind: "execute",
+        title,
+        status: "pending",
+      });
+      expect(extractMcpToolCallIdentity(toolCall), title).toBeUndefined();
+    }
   });
 
   it("recovers T3 identity from goose _meta despite LLM-rewritten titles", () => {
