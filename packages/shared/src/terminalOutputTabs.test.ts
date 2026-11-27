@@ -50,3 +50,9 @@ it("ignores a snapshot tab offset in raw command output", () => {
   const raw = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, "a\u001b[>7 t\tZ");
   expect(raw.text).toBe("a       Z");
 });
+
+it.each(["K", "J"])("resets tab stops when erase-start %s clears the last wide glyph", (final) => {
+  const source = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, "𐐀".repeat(8) + "界", 16);
+  const output = appendTerminalOutput(source, `\u001b[8G\u001b[1${final}\r\tZ`, 16);
+  expect(output.text).toBe("        Z");
+});
