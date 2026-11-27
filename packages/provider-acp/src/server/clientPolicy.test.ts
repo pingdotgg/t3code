@@ -636,16 +636,22 @@ describe("acpReadTargetsInRoot", () => {
         const cwd = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
         const root = NodePath.join(cwd, "attachments");
         const file = NodePath.join(root, "a.txt");
-        yield* fileSystem.makeDirectory(root);
+        const sub = NodePath.join(root, "sub");
+        yield* fileSystem.makeDirectory(sub, { recursive: true });
         yield* fileSystem.writeFileString(file, "secret");
+        yield* fileSystem.writeFileString(NodePath.join(cwd, "a.txt"), "decoy");
         yield* fileSystem.symlink(root, NodePath.join(cwd, "linked"));
+        yield* fileSystem.symlink(sub, NodePath.join(cwd, "sub-link"));
 
         const extraPathKeys = ["AbsolutePath", "SearchPath", "TargetFile", "TargetDirectory"];
         const targets = (toolCall: Parameters<typeof acpReadTargetsInRoot>[0]["toolCall"]) =>
-          acpReadTargetsInRoot({ cwd, root, extraPathKeys, toolCall });
+          acpReadTargetsInRoot({ cwd, root, homeDir: cwd, extraPathKeys, toolCall });
 
         assert.deepEqual(targets({ rawInput: { AbsolutePath: file } }), [file]);
         assert.deepEqual(targets({ locations: [{ path: "linked/a.txt" }] }), [file]);
+        assert.deepEqual(targets({ rawInput: { path: "~/attachments/a.txt" } }), [file]);
+        assert.deepEqual(targets({ rawInput: { path: "~/sub-link/../a.txt" } }), [file]);
+        assert.deepEqual(targets({ rawInput: { SearchPath: "~" } }), [null]);
         assert.deepEqual(targets({ kind: "search", rawInput: { query: "effect ts" } }), []);
         assert.deepEqual(
           acpReadTargetsInRoot({

@@ -792,7 +792,7 @@ export interface AcpAdapterV2Flavor {
   readonly enablePostSettleContinuation?: AcpNegotiatedFlag;
   /** A native request after prompt settlement starts a continuation before it is handled. */
   readonly wakeOnDetachedRequest?: boolean;
-  /** Child sessions the agent has not reported yet read attachments as the active thread. */
+  /** Child sessions the agent has not reported yet read attachments as the active turn's thread. */
   readonly fallbackUnregisteredSubagentAttachments?: boolean;
   /** Additional flavor-specific rawInput keys whose values name read permission file targets. */
   readonly readPermissionPathKeys?: ReadonlyArray<string>;
@@ -2668,7 +2668,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         let latestRuntimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy =
           input.runtimePolicy;
         const sessionPolicies = new Map<string, ProviderAdapter.ProviderAdapterV2RuntimePolicy>();
-        const subagentParentThreads = new Map<string, ThreadId>();
+        const subagentParents = new Map<
+          string,
+          { readonly parentSessionId: string; readonly parentThreadId: ThreadId }
+        >();
         let initialSessionId: string | null = null;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
@@ -4827,8 +4830,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               now,
             });
             subagent.task = { ...subagent.task, providerThreadId: providerThread.id };
-            subagentParentThreads.set(childSessionId, context.input.threadId);
-            sessionPolicies.set(childSessionId, context.input.runtimePolicy);
+            subagentParents.set(childSessionId, {
+              parentSessionId: context.nativeThreadId,
+              parentThreadId: context.input.threadId,
+            });
             yield* Ref.update(providerThreadByNativeSessionId, (current) =>
               new Map(current).set(childSessionId, providerThread),
             );
@@ -5085,7 +5090,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 subagent,
               );
               context.subagentsBySessionId.set(sessionId, subagent);
-              sessionPolicies.set(sessionId, context.input.runtimePolicy);
+              subagentParents.set(sessionId, {
+                parentSessionId: context.nativeThreadId,
+                parentThreadId: context.input.threadId,
+              });
               yield* publishNativeChildStatus(child, "running");
               for (const [key, tool] of subagent.toolState.tools) {
                 const toolSessionId = subagent.toolSessionIds.get(key);
@@ -8114,10 +8122,48 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           policy: context?.input.runtimePolicy ?? latestRuntimePolicy,
           turnKey: context === null ? null : String(context.providerTurnId),
         }));
+        const bindSession = Effect.fnUntraced(function* (
+          sessionId: string,
+          providerThread: OrchestrationV2ProviderThread,
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+        ) {
+          latestRuntimePolicy = runtimePolicy;
+          sessionPolicies.set(sessionId, runtimePolicy);
+          yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+            new Map(current).set(sessionId, providerThread),
+          );
+        });
+        const beginSessionBinding = Effect.fnUntraced(function* (
+          sessionId: string,
+          providerThread: OrchestrationV2ProviderThread,
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+        ) {
+          const previousRuntimePolicy = latestRuntimePolicy;
+          const previousSessionPolicy = sessionPolicies.get(sessionId);
+          const previousProviderThread = (yield* Ref.get(providerThreadByNativeSessionId)).get(
+            sessionId,
+          );
+          const previousItemIdentityVersion = itemIdentityVersion;
+          useProviderThreadIdentity(providerThread);
+          yield* bindSession(sessionId, providerThread, runtimePolicy);
+          return Effect.gen(function* () {
+            itemIdentityVersion = previousItemIdentityVersion;
+            latestRuntimePolicy = previousRuntimePolicy;
+            if (previousSessionPolicy === undefined) sessionPolicies.delete(sessionId);
+            else sessionPolicies.set(sessionId, previousSessionPolicy);
+            yield* Ref.update(providerThreadByNativeSessionId, (current) => {
+              const next = new Map(current);
+              if (previousProviderThread === undefined) next.delete(sessionId);
+              else next.set(sessionId, previousProviderThread);
+              return next;
+            });
+          });
+        });
         const sessionPolicyFor = Effect.fnUntraced(function* (sessionId: string) {
           const turn = yield* Ref.get(activeTurn);
-          if (turn?.nativeThreadId === sessionId) return turn.input.runtimePolicy;
-          return sessionPolicies.get(sessionId) ?? latestRuntimePolicy;
+          const effectiveSessionId = subagentParents.get(sessionId)?.parentSessionId ?? sessionId;
+          if (turn?.nativeThreadId === effectiveSessionId) return turn.input.runtimePolicy;
+          return sessionPolicies.get(effectiveSessionId) ?? latestRuntimePolicy;
         });
         const canSessionReadAttachment = Effect.fnUntraced(function* (
           sessionId: string,
@@ -8132,7 +8178,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               (yield* host.canReadThreadAttachment(known.appThreadId, canonicalPath))
             )
               return true;
-            const parent = subagentParentThreads.get(sessionId);
+            const parent = subagentParents.get(sessionId)?.parentThreadId;
             return (
               parent !== undefined && (yield* host.canReadThreadAttachment(parent, canonicalPath))
             );
@@ -8145,14 +8191,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (!flavor.fallbackUnregisteredSubagentAttachments) return false;
           const turn = yield* Ref.get(activeTurn);
-          const active = yield* Ref.get(activeSessionId);
-          const fallbackThreadId =
-            turn?.input.threadId ??
-            (active === null ? undefined : bySession.get(active)?.appThreadId) ??
-            input.threadId;
           return (
-            fallbackThreadId !== null &&
-            (yield* host.canReadThreadAttachment(fallbackThreadId, canonicalPath))
+            turn !== null &&
+            (yield* host.canReadThreadAttachment(turn.input.threadId, canonicalPath))
           );
         });
         const clientFileSystemContextFor = Effect.fnUntraced(function* (sessionId: string) {
@@ -10570,18 +10611,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 reason: "previous_turn_active",
               });
             }
-            useProviderThreadIdentity(turnInput.providerThread);
-            // load/resume can invoke client methods; install the incoming policy before activation.
-            latestRuntimePolicy = turnInput.runtimePolicy;
+            // load/resume can invoke client methods; bind policy and owner before activation.
             const requestedSessionId = yield* nativeThreadId(driver, turnInput.providerThread);
-            sessionPolicies.set(requestedSessionId, turnInput.runtimePolicy);
+            const restorePreviousTurnBinding = yield* beginSessionBinding(
+              requestedSessionId,
+              turnInput.providerThread,
+              turnInput.runtimePolicy,
+            );
             const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
               turnInput.threadId,
-            );
+            ).pipe(Effect.tapError(() => restorePreviousTurnBinding));
             const needsSessionActivation =
               (yield* Ref.get(activeSessionId)) !== requestedSessionId || restartAfterInterrupt;
             if (needsSessionActivation) {
-              const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
+              const activated = yield* activateSession(requestedSessionId, turnInput.threadId).pipe(
+                Effect.tapError(() => restorePreviousTurnBinding),
+              );
+              yield* bindSession(
+                activated.sessionId,
+                turnInput.providerThread,
+                turnInput.runtimePolicy,
+              );
               yield* Ref.set(activeSessionId, activated.sessionId);
               yield* Ref.set(loadingSessionId, null);
               yield* setActiveSessionSetup(activated);
@@ -11365,30 +11415,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     threadInput.runtimePolicy ??
                     sessionPolicies.get(sessionId) ??
                     input.runtimePolicy;
-                  const previousRuntimePolicy = latestRuntimePolicy;
-                  const previousSessionPolicy = sessionPolicies.get(sessionId);
-                  const previousProviderThread = (yield* Ref.get(
-                    providerThreadByNativeSessionId,
-                  )).get(sessionId);
-                  latestRuntimePolicy = nextRuntimePolicy;
-                  sessionPolicies.set(sessionId, nextRuntimePolicy);
-                  yield* Ref.update(providerThreadByNativeSessionId, (current) =>
-                    new Map(current).set(sessionId, threadInput.providerThread),
+                  const restorePreviousResumeState = yield* beginSessionBinding(
+                    sessionId,
+                    threadInput.providerThread,
+                    nextRuntimePolicy,
                   );
-                  const previousItemIdentityVersion = itemIdentityVersion;
-                  useProviderThreadIdentity(threadInput.providerThread);
-                  const restorePreviousResumeState = Effect.gen(function* () {
-                    itemIdentityVersion = previousItemIdentityVersion;
-                    latestRuntimePolicy = previousRuntimePolicy;
-                    if (previousSessionPolicy === undefined) sessionPolicies.delete(sessionId);
-                    else sessionPolicies.set(sessionId, previousSessionPolicy);
-                    yield* Ref.update(providerThreadByNativeSessionId, (current) => {
-                      const next = new Map(current);
-                      if (previousProviderThread === undefined) next.delete(sessionId);
-                      else next.set(sessionId, previousProviderThread);
-                      return next;
-                    });
-                  });
                   const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
                     threadInput.providerThread.appThreadId,
                   ).pipe(Effect.tapError(() => restorePreviousResumeState));
@@ -11400,9 +11431,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       threadInput.providerThread.appThreadId,
                     ).pipe(Effect.tapError(() => restorePreviousResumeState));
                     finalSessionId = activated.sessionId;
-                    sessionPolicies.set(activated.sessionId, nextRuntimePolicy);
-                    yield* Ref.update(providerThreadByNativeSessionId, (current) =>
-                      new Map(current).set(activated.sessionId, threadInput.providerThread),
+                    yield* bindSession(
+                      activated.sessionId,
+                      threadInput.providerThread,
+                      nextRuntimePolicy,
                     );
                     yield* Ref.set(activeSessionId, activated.sessionId);
                     yield* Ref.set(loadingSessionId, null);
@@ -11996,6 +12028,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       activated.sessionId,
                       yield* readMcpContext(snapshotInput.providerThread.appThreadId),
                     );
+                    yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+                      new Map(current).set(activated.sessionId, snapshotInput.providerThread),
+                    );
                     yield* Ref.set(activeSessionId, activated.sessionId);
                     yield* Ref.set(loadingSessionId, null);
                     yield* setActiveSessionSetup(activated);
@@ -12065,8 +12100,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const rollbackPolicy =
                     (original != null ? sessionPolicies.get(original) : undefined) ??
                     input.runtimePolicy;
-                  latestRuntimePolicy = rollbackPolicy;
-                  sessionPolicies.set(replacement.sessionId, rollbackPolicy);
                   const providerThread = {
                     ...rollbackInput.providerThread,
                     nativeThreadRef: {
@@ -12082,9 +12115,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     status: "idle" as const,
                     updatedAt: now,
                   };
-                  yield* Ref.update(providerThreadByNativeSessionId, (current) =>
-                    new Map(current).set(replacement.sessionId, providerThread),
-                  );
+                  yield* bindSession(replacement.sessionId, providerThread, rollbackPolicy);
                   return {
                     providerThread,
                     messages: [],
@@ -12165,11 +12196,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     },
                     now,
                   });
-                  latestRuntimePolicy = forkedPolicy;
-                  sessionPolicies.set(forked.sessionId, forkedPolicy);
-                  yield* Ref.update(providerThreadByNativeSessionId, (current) =>
-                    new Map(current).set(forked.sessionId, providerThread),
-                  );
+                  yield* bindSession(forked.sessionId, providerThread, forkedPolicy);
                   rememberTerminalEnvironment(
                     forked.sessionId,
                     yield* readMcpContext(forkInput.targetThreadId),

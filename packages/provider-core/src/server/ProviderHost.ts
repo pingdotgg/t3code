@@ -50,6 +50,7 @@ export class ProviderHost extends Context.Service<
     readonly awaitServerReady?: Effect.Effect<void>;
     /** Absolute attachment path, or null if the ID does not resolve inside attachmentsDir. */
     readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
+    /** Canonical absolute attachment path (symlink-first resolved). */
     readonly canReadThreadAttachment?: (
       threadId: ThreadId,
       attachmentPath: string,

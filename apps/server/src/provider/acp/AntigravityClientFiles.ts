@@ -34,12 +34,35 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
     readonly requestPath: string;
   }) {
     const { path } = input;
-    const resolved = path.resolve(input.requestPath);
+    const raw = input.requestPath;
     const outside = EffectAcpErrors.AcpRequestError.invalidParams(
-      `Path '${input.requestPath}' is outside the session workspace.`,
+      `Path '${raw}' is outside the session workspace.`,
     );
+    if (raw.trim().length === 0 || raw.includes("\0")) {
+      return yield* outside;
+    }
+    const cwd = process.cwd();
+    const initial = path.isAbsolute(raw)
+      ? raw
+      : `${cwd}${cwd.endsWith(path.sep) ? "" : path.sep}${raw}`;
+    // Node's JS `fs.realpath` (used by Effect FileSystem) folds `..` lexically before following
+    // symlinks; resolve the prefix at each `..` segment first so symlink-first semantics hold.
+    const rootPrefix = path.parse(initial).root;
+    const splitPattern = path.sep === "\\" ? /[\\/]+/ : /\/+/;
+    let candidate = rootPrefix;
+    for (const segment of initial.slice(rootPrefix.length).split(splitPattern)) {
+      if (segment === "" || segment === ".") continue;
+      if (segment === "..") {
+        const canonical = yield* input.fileSystem.realPath(candidate).pipe(Effect.option);
+        if (Option.isNone(canonical)) return yield* outside;
+        const info = yield* input.fileSystem.stat(canonical.value).pipe(Effect.option);
+        if (Option.isNone(info) || info.value.type !== "Directory") return yield* outside;
+        candidate = path.dirname(canonical.value);
+        continue;
+      }
+      candidate = path.join(candidate, segment);
+    }
     // Canonicalize the deepest existing ancestor, so a link above missing directories cannot escape.
-    let candidate = resolved;
     const missingSuffix: Array<string> = [];
     let real: string;
     while (true) {
@@ -60,14 +83,16 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
       candidate = parent;
     }
     if (input.attachmentsDir !== undefined) {
-      const attachmentsDir = input.attachmentsDir;
       const attachmentsRoot = yield* input.fileSystem
-        .realPath(attachmentsDir)
-        .pipe(Effect.orElseSucceed(() => path.resolve(attachmentsDir)));
-      if (isInsideRoot(path, attachmentsRoot, real)) {
+        .realPath(input.attachmentsDir)
+        .pipe(Effect.option);
+      if (Option.isNone(attachmentsRoot)) {
+        return yield* outside;
+      }
+      if (isInsideRoot(path, attachmentsRoot.value, real)) {
         const allowed =
           input.isAllowedAttachment !== undefined &&
-          normalizeForCompare(path.dirname(real)) === normalizeForCompare(attachmentsRoot) &&
+          normalizeForCompare(path.dirname(real)) === normalizeForCompare(attachmentsRoot.value) &&
           (yield* input.isAllowedAttachment(real));
         return allowed ? real : yield* outside;
       }

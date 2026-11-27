@@ -2400,17 +2400,41 @@ export const threadOwnsAttachmentSql = Effect.fn("ProjectionStore.threadOwnsAtta
   const seen = new Set<string>([threadId]);
   let currentThreadId: string = threadId;
   let allowedRunIds: Set<string> | null = null;
+  let boundaryRunId: string | null = null;
   let sourceHistoryOrigin: string | null = null;
   while (true) {
     const runless = allowedRunIds === null || sourceHistoryOrigin === "v1_import";
     const included =
       allowedRunIds === null
         ? sql`r.status <> 'rolled_back'`
-        : allowedRunIds.size > 0
-          ? // Forks do not inherit undelivered queued input.
-            sql`r.run_id IN ${sql.in([...allowedRunIds])} AND NOT (
-              r.status IN ('queued', 'cancelled') AND json_extract(r.payload_json, '$.startedAt') IS NULL
-            )`
+        : allowedRunIds.size > 0 && boundaryRunId !== null
+          ? // Match inherited timeline visibility: stay at/before the boundary and hide undelivered queued input.
+            sql`r.run_id IN ${sql.in([...allowedRunIds])}
+              AND r.ordinal <= (
+                SELECT boundary.ordinal
+                FROM orchestration_v2_projection_runs AS boundary
+                WHERE boundary.thread_id = ${currentThreadId}
+                  AND boundary.run_id = ${boundaryRunId}
+                LIMIT 1
+              )
+              AND NOT (
+                r.status = 'queued'
+                OR (
+                  (
+                    r.status = 'cancelled'
+                    OR (
+                      r.status = 'rolled_back'
+                      AND EXISTS (
+                        SELECT 1
+                        FROM orchestration_v2_projection_run_attempts AS attempt
+                        WHERE attempt.run_id = r.run_id
+                          AND attempt.status = 'cancelled'
+                      )
+                    )
+                  )
+                  AND json_extract(r.payload_json, '$.startedAt') IS NULL
+                )
+              )`
           : sql`0`;
     const visible = sql`((item.run_id IS NULL AND ${runless ? 1 : 0}) OR EXISTS (
       SELECT 1 FROM orchestration_v2_projection_runs AS r
@@ -2445,10 +2469,12 @@ export const threadOwnsAttachmentSql = Effect.fn("ProjectionStore.threadOwnsAtta
     }
     const [fork] = yield* sql<{
       source_thread_id: string | null;
+      boundary_run_id: string | null;
       source_history_origin: string | null;
       run_ids: string;
     }>`
       SELECT json_extract(fork.payload_json, '$.forkedFrom.threadId') AS source_thread_id,
+        json_extract(fork.payload_json, '$.forkedFrom.runId') AS boundary_run_id,
         json_extract(source.payload_json, '$.historyOrigin') AS source_history_origin,
         ${forkSourceRunIdsSql(sql)} AS run_ids
       FROM orchestration_v2_projection_threads AS fork
@@ -2460,11 +2486,14 @@ export const threadOwnsAttachmentSql = Effect.fn("ProjectionStore.threadOwnsAtta
     if (
       typeof fork?.source_thread_id !== "string" ||
       !fork.source_thread_id ||
+      typeof fork.boundary_run_id !== "string" ||
+      !fork.boundary_run_id ||
       seen.has(fork.source_thread_id)
     ) {
       return false;
     }
     currentThreadId = fork.source_thread_id;
+    boundaryRunId = fork.boundary_run_id;
     sourceHistoryOrigin = fork.source_history_origin;
     seen.add(currentThreadId);
     allowedRunIds = new Set(yield* decodeForkRunIds(fork.run_ids));

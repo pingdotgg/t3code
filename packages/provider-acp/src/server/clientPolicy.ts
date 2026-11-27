@@ -211,6 +211,7 @@ export function acpReadRequiresApprovalForUnownedAttachment(policy: AcpRuntimePo
 export function acpReadTargetsInRoot(input: {
   readonly cwd: string | null;
   readonly root: string;
+  readonly homeDir?: string | undefined;
   readonly extraPathKeys?: ReadonlyArray<string> | undefined;
   readonly toolCall: {
     readonly kind?: string | null | undefined;
@@ -263,11 +264,14 @@ export function acpReadTargetsInRoot(input: {
     }
   }
   if (paths.size > MAX_ACP_CHANGED_PATHS) return "unknown";
+  const homeDir = input.homeDir ?? NodeOS.homedir();
   const targets: Array<string | null> = [];
   for (const raw of paths) {
     // Substitute home without normalizing: `..` must resolve after symlinks, not before.
     const expanded = raw.startsWith("~")
-      ? `${NodeOS.homedir()}${raw.length > 1 ? NodePath.sep : ""}${raw.slice(2)}`
+      ? raw.length === 1
+        ? homeDir
+        : `${homeDir}${homeDir.endsWith(NodePath.sep) ? "" : NodePath.sep}${raw.slice(2)}`
       : raw;
     const resolved = resolveAcpPermissionPath(expanded, input.cwd);
     if (resolved === undefined) return "unknown";

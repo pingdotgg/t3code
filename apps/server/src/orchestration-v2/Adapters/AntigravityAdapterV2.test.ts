@@ -3733,6 +3733,12 @@ describe("AntigravityAdapterV2 update_steps checklist", () => {
 describe("Antigravity attachment permissions", () => {
   const openAttachmentSession = Effect.fn("openAttachmentSession")(function* (
     runtimeMode: "approval-required" | "auto-accept-edits" | "auto" | "full-access",
+    options?: {
+      readonly holdFork?: {
+        readonly entered: Deferred.Deferred<void>;
+        readonly release: Deferred.Deferred<void>;
+      };
+    },
   ) {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const path = yield* Path.Path;
@@ -3744,6 +3750,7 @@ describe("Antigravity attachment permissions", () => {
     const updates = yield* Deferred.make<Parameters<Runtime["handleSessionUpdate"]>[0]>();
     const permissions = yield* Deferred.make<Parameters<Runtime["handleRequestPermission"]>[0]>();
     const prompted = yield* Deferred.make<void>();
+    const releasePrompt = yield* Deferred.make<void>();
     let reader: Parameters<Runtime["handleReadTextFile"]>[0] | undefined;
     const instanceId = ProviderInstanceId.make("antigravity-attachment-test");
     const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -3789,10 +3796,24 @@ describe("Antigravity attachment permissions", () => {
               Deferred.succeed(permissions, handler).pipe(
                 Effect.andThen(runtime.handleRequestPermission(handler)),
               ),
-            prompt: (payload, options) =>
+            prompt: (payload, promptOptions) =>
               Deferred.succeed(prompted, undefined).pipe(
-                Effect.andThen(runtime.prompt(payload, options)),
+                Effect.andThen(
+                  Effect.raceFirst(
+                    runtime.prompt(payload, promptOptions),
+                    Deferred.await(releasePrompt).pipe(
+                      Effect.as({ stopReason: "end_turn" as const }),
+                    ),
+                  ),
+                ),
               ),
+            forkSession: (sessionId, activationOptions, meta) =>
+              options?.holdFork === undefined
+                ? runtime.forkSession(sessionId, activationOptions, meta)
+                : Deferred.succeed(options.holdFork.entered, undefined).pipe(
+                    Effect.andThen(Deferred.await(options.holdFork.release)),
+                    Effect.andThen(runtime.forkSession(sessionId, activationOptions, meta)),
+                  ),
           })),
         ),
       withProcess: (_stop, task) => task,
@@ -3821,6 +3842,7 @@ describe("Antigravity attachment permissions", () => {
       update: yield* Deferred.await(updates),
       requestPermission: yield* Deferred.await(permissions),
       prompted: Deferred.await(prompted),
+      finishPrompt: Deferred.succeed(releasePrompt, undefined),
     };
   });
 
@@ -3849,7 +3871,9 @@ describe("Antigravity attachment permissions", () => {
         for (const [kind, rawInput, asks] of [
           ["read", { AbsolutePath: own }, runtimeMode === "auto"],
           ["read", { AbsolutePath: foreign }, runtimeMode !== "full-access"],
+          ["read", { Path: foreign }, runtimeMode !== "full-access"],
           ["search", { SearchPath: foreign }, runtimeMode !== "full-access"],
+          ["search", { SearchDirectory: host.paths.attachmentsDir }, runtimeMode !== "full-access"],
           ["search", { query: "effect docs" }, runtimeMode === "auto"],
         ] as const) {
           const outcome = yield* Effect.raceFirst(
@@ -3881,7 +3905,11 @@ describe("Antigravity attachment permissions", () => {
 
   it.effect("isolates attachments across subagents, fork, resume, and rollback", () =>
     Effect.gen(function* () {
-      const opened = yield* openAttachmentSession("approval-required");
+      const holdFork = {
+        entered: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      const opened = yield* openAttachmentSession("approval-required", { holdFork });
       const { host, session, providerThread, read } = opened;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -3889,38 +3917,72 @@ describe("Antigravity attachment permissions", () => {
       const child = ThreadId.make("child");
       const docId = createAttachmentId("source", "docx")!;
       const doc = path.join(host.paths.attachmentsDir, `${docId}.docx.txt`);
+      const postForkSourceId = createAttachmentId("source", "txt")!;
+      const postForkSource = path.join(host.paths.attachmentsDir, `${postForkSourceId}.txt`);
       const forkOnlyId = createAttachmentId("child", "txt")!;
       const forkOnly = path.join(host.paths.attachmentsDir, `${forkOnlyId}.txt`);
       yield* fileSystem.writeFileString(doc, "source document");
+      yield* fileSystem.writeFileString(postForkSource, "post-fork source attachment");
       yield* fileSystem.writeFileString(forkOnly, "fork attachment");
 
       yield* sql`INSERT INTO orchestration_v2_projection_runs
         (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
         VALUES ('boundary', 'source', 1, 'test', 'completed', '2025-01-01', '{}')`;
+      yield* sql`INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+        VALUES ('after-boundary', 'source', 2, 'test', 'completed', '2025-01-03', '{}')`;
       yield* sql`INSERT INTO orchestration_v2_projection_threads
         (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json, fork_run_ids_json)
         VALUES ('child', 'p', 'child', 'test', 'auto', 'default', '2025-01-02', '2025-01-02',
           '{"forkedFrom":{"type":"run","threadId":"source","runId":"boundary"}}', '["boundary"]')`;
       yield* attachToThread("source", docId, "boundary");
+      yield* attachToThread("source", postForkSourceId, "after-boundary");
       yield* attachToThread(child, forkOnlyId);
 
       const parentSession = providerThread.nativeThreadRef?.nativeId;
       assert.ok(parentSession);
       assert.equal((yield* read(doc, parentSession)).content, "source document");
       assert.propertyVal(yield* read(forkOnly, parentSession).pipe(Effect.flip), "code", -32602);
+      // Unregistered sessions are denied outside an active turn.
+      assert.propertyVal(
+        yield* read(doc, "subagent-conversation").pipe(Effect.flip),
+        "code",
+        -32602,
+      );
 
       const forkRoot = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
       const forkWorkspaceFile = path.join(forkRoot, "fork.txt");
       yield* fileSystem.writeFileString(forkWorkspaceFile, "workspace");
-      const fork = yield* session.forkThread({
-        sourceProviderThread: providerThread,
-        targetThreadId: child,
-        runtimePolicy: { ...opened.runtimePolicy, runtimeMode: "full-access", cwd: forkRoot },
-      });
+      const forkFiber = yield* session
+        .forkThread({
+          sourceProviderThread: providerThread,
+          targetThreadId: child,
+          runtimePolicy: { ...opened.runtimePolicy, runtimeMode: "full-access", cwd: forkRoot },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(holdFork.entered);
+      // While session/fork is in flight, an unregistered session cannot fall back to source attachments.
+      assert.propertyVal(
+        yield* read(postForkSource, "in-flight-fork-session").pipe(Effect.flip),
+        "code",
+        -32602,
+      );
+      yield* Deferred.succeed(holdFork.release, undefined);
+      const fork = yield* Fiber.join(forkFiber);
       const childSession = fork.nativeThreadRef?.nativeId;
       assert.ok(childSession);
       assert.equal((yield* read(doc, childSession)).content, "source document");
       assert.equal((yield* read(forkOnly, childSession)).content, "fork attachment");
+      assert.propertyVal(
+        yield* read(postForkSource, childSession).pipe(Effect.flip),
+        "code",
+        -32602,
+      );
+      assert.propertyVal(
+        yield* read(forkOnly, "subagent-conversation").pipe(Effect.flip),
+        "code",
+        -32602,
+      );
       assert.equal((yield* read(forkWorkspaceFile, childSession)).content, "workspace");
       assert.propertyVal(yield* read(forkOnly, parentSession).pipe(Effect.flip), "code", -32602);
       assert.propertyVal(
@@ -3953,7 +4015,7 @@ describe("Antigravity attachment permissions", () => {
         runtimePolicy: opened.runtimePolicy,
       });
 
-      yield* session
+      const turnFiber = yield* session
         .startTurn(makeTurnInput({ ...opened, now: yield* DateTime.now }))
         .pipe(Effect.forkScoped);
       yield* opened.prompted;
@@ -3987,6 +4049,40 @@ describe("Antigravity attachment permissions", () => {
         "code",
         -32602,
       );
+
+      // Settling the turn disables unregistered fallback and lets registered subagents pick up live parent policy updates.
+      const settled = yield* session.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status !== "running",
+        ),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      yield* opened.finishPrompt;
+      yield* Fiber.await(turnFiber);
+      yield* Fiber.join(settled);
+      assert.propertyVal(
+        yield* read(doc, "subagent-conversation").pipe(Effect.flip),
+        "code",
+        -32602,
+      );
+      yield* session.ensureThread({
+        threadId: opened.threadId,
+        modelSelection: opened.modelSelection,
+        runtimePolicy: { ...opened.runtimePolicy, cwd: ensuredRoot },
+      });
+      assert.equal((yield* read(ensuredFile, "registered-child")).content, "ensured");
+      assert.propertyVal(
+        yield* read(path.join(process.cwd(), "package.json"), "registered-child").pipe(Effect.flip),
+        "code",
+        -32602,
+      );
+      yield* session.ensureThread({
+        threadId: opened.threadId,
+        modelSelection: opened.modelSelection,
+        runtimePolicy: opened.runtimePolicy,
+      });
 
       const coldThreadId = ThreadId.make("cold-resumed");
       const coldSessionId = "cold-resume-session";

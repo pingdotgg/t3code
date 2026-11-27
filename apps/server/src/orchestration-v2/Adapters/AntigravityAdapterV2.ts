@@ -30,6 +30,7 @@ import {
   type AntigravityAcpRuntimeInput,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
 import {
+  ANTIGRAVITY_READ_PERMISSION_PATH_KEYS,
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
@@ -290,13 +291,7 @@ export function makeAntigravityAcpAdapterFlavor(
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
     // agy subagents can request client reads before start_subagent registers their session ID.
     fallbackUnregisteredSubagentAttachments: true,
-    readPermissionPathKeys: [
-      "AbsolutePath",
-      "SearchPath",
-      "DirectoryPath",
-      "TargetFile",
-      "TargetDirectory",
-    ],
+    readPermissionPathKeys: ANTIGRAVITY_READ_PERMISSION_PATH_KEYS,
     clientFileSystem: {
       readTextFile: (request, context) =>
         readAntigravityClientTextFile({
