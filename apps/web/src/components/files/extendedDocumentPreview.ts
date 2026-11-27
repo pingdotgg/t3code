@@ -611,7 +611,6 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     if (fallback > 0) fallback--;
     else if (!hidden()) encoded[encodedLength++] = value;
   };
-  const nestedTablePropertiesStart = /[\r\n]*\\nesttableprops\b/y;
   for (let i = 0; i < source.length;) {
     const char = source[i++];
     if (char === "{") {
@@ -619,7 +618,6 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       fallback = 0;
       if (stack.length > 100) throw new PreviewError({ code: "rtf-too-deep" });
       stack.push({ ...state });
-      state.nestedTableProperties = false;
     } else if (char === "}") {
       flush();
       fallback = 0;
@@ -644,9 +642,6 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         continue;
       }
       if (next === "*") {
-        // Skip the properties themselves but keep the row terminator in this destination.
-        nestedTablePropertiesStart.lastIndex = i + 1;
-        state.nestedTableProperties = !state.skip && nestedTablePropertiesStart.test(source);
         // Shape instructions are an optional destination, but a text box keeps its text there.
         if (!/^\*[\r\n]*\\shpinst(?![a-z])/i.test(source.slice(i, i + 16))) state.skip = true;
         i++;
@@ -705,6 +700,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         )[arg];
         if (label) fonts.set(state.font, new TextDecoder(label));
       } else if (word === "fontfile") state.fontFile = true;
+      // Skipped like any \* destination, but its \nestrow still ends a visible row.
+      else if (word === "nesttableprops") state.nestedTableProperties = !stack.at(-1)?.skip;
       else if (word === "cpg" && state.fontTable && !state.fontFile) {
         try {
           fonts.set(state.font, new TextDecoder(rtfCodePageLabel(arg)));
