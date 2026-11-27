@@ -2329,7 +2329,7 @@
     }
   ],
   "17d363d5ff1f038f": "{seconds, plural, other {약 {seconds}초 남음}}",
-  "bc86d0e75a37411b": "{minutes, plural, other {약 {minutes}분 남음}}",
+  "5286056f1e375e8c": "{minutes, plural, other {약 {minutes}분 남음}}",
   "89555f39918ea6cc": "스레드 검색",
   "889266d70ae46113": "스레드 메시지를 검색하는 중…",
   "35727ced1d37da7f": "메시지에서 \"{query}\" 찾는 중.",

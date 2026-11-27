@@ -468,6 +468,11 @@ describe("provider projection", () => {
     expect(projected).not.toContain("boom");
   });
 
+  it("sends a BOM-prefixed fenced context link example as written", () => {
+    const text = "\uFEFF```md\n[example](t3-context://v1/file/demo)\n```";
+    expect(projectComposerContextForProvider({ text, records: [] })).toBe(text);
+  });
+
   it("keeps fenced context link examples literal while projecting prose references", () => {
     const link = "[example](t3-context://v1/file/demo)";
     const fenced = `\`\`\`md\n${link}\n\`\`\``;
