@@ -29,6 +29,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
 import * as PullRequestReviewGuideService from "./PullRequestReviewGuideService.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 
@@ -363,6 +364,39 @@ const startSingleBranchRun = (input: {
       settled: runs.settled(service, guideReference),
     };
   });
+
+it.each([
+  { prefixLength: 198, ending: "🚀…" },
+  { prefixLength: 199, ending: "…" },
+])(
+  "truncates a resolved remark with an emoji after $prefixLength characters",
+  ({ prefixLength, ending }) => {
+    const prefix = "a".repeat(prefixLength);
+    const thread: PullRequestActivity["reviewThreads"][number] = {
+      id: "thread-1",
+      path: "file.ts",
+      line: 1,
+      side: "right",
+      isResolved: true,
+      isOutdated: false,
+      comments: [
+        {
+          id: "comment-1",
+          author: null,
+          body: `${prefix}🚀 more`,
+          createdAt: "2026-01-01T00:00:00Z",
+          url: null,
+        },
+      ],
+    };
+    const input = reviewGuideInputFromPullRequest(
+      detail("/work/app", "abc123"),
+      { ...activity, reviewThreads: [thread] },
+      "abc123",
+    );
+    assert.strictEqual(input.settledReview, `- file.ts (resolved, ghost): ${prefix}${ending}`);
+  },
+);
 
 it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideService", (it) => {
   it.effect.each([
