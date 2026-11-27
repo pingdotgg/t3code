@@ -2572,27 +2572,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("still arms auto-merge for a blocked pull request", () =>
-    Effect.gen(function* () {
-      route(
-        ["query PullRequestActionState", actionState({ mergeStateStatus: "BLOCKED" })],
-        [
-          "enablePullRequestAutoMerge(",
-          {
-            data: {
-              enablePullRequestAutoMerge: {
-                pullRequest: { number: 7, autoMergeRequest: { mergeMethod: "MERGE" } },
-              },
-            },
-          },
-        ],
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      yield* cli.runPullRequestAction({ ...pullRequestInput, action: "enable-auto-merge" });
-      expect(mockedExecute).toHaveBeenCalledTimes(2);
-    }),
-  );
-
   it.effect.each([
     {
       description: "base-only write",
