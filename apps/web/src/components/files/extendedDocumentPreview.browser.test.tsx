@@ -42,13 +42,11 @@ it.each([
     if (!(frame instanceof HTMLIFrameElement)) throw new Error("Expected a preview iframe");
     // The sandbox makes the iframe's document inaccessible to the parent.
     const document = new DOMParser().parseFromString(frame.srcdoc, "text/html");
-    const list = [...document.querySelectorAll("ol")].find(
-      (list) => list.firstElementChild?.textContent === "Review the draft",
+    const firstItem = [...document.querySelectorAll("ol > li:first-child")].find(
+      (item) => item.textContent === "Review the draft",
     );
-    expect(list).toBeDefined();
-    expect(list?.getAttribute("start")).toBe(expectedStart);
-    expect(list?.querySelector(":scope > li:first-child")?.getAttribute("value")).toBe(
-      expectedValue,
-    );
+    expect(firstItem?.textContent).toBe("Review the draft");
+    expect(firstItem?.parentElement?.getAttribute("start")).toBe(expectedStart);
+    expect(firstItem?.getAttribute("value")).toBe(expectedValue);
   },
 );
