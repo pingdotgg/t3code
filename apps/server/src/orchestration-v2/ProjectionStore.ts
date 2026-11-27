@@ -387,6 +387,7 @@ export interface ProjectionRecordFilter {
   readonly providerTurnIds?: ReadonlyArray<ProviderTurnId>;
   readonly providerTurnAttemptIds?: ReadonlyArray<RunAttemptId>;
   readonly attemptIds?: ReadonlyArray<RunAttemptId>;
+  readonly checkpointIds?: ReadonlyArray<CheckpointId>;
   readonly messageRoles?: ReadonlyArray<OrchestrationV2ConversationMessage["role"]>;
   readonly monitorNotificationsOnly?: boolean;
   /** User messages that are monitor notifications or delegated-completion wakes, through their partial index. */
@@ -3832,8 +3833,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
         ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
         ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}
-        ${filter?.turnItemRunIds === undefined ? sql`` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`}
+        ${filter?.turnItemRunIds === undefined ? sql`` : turnItemRunIdsMatch(threadId, filter.turnItemRunIds)}
     `;
+
+    // SQLite seeks no OR of `run_id IN (...)` and `run_id IS NULL` on the run index and walks the
+    // whole thread instead, so a mixed list seeks each part on its own.
+    const turnItemRunIdsMatch = (threadId: ThreadId, runIds: ReadonlyArray<RunId | null>) => {
+      const ids = runIds.filter((id): id is RunId => id !== null);
+      const inRuns = sql`run_id IN (SELECT value FROM json_each(${encodeIdList(ids)}))`;
+      if (!runIds.includes(null)) return sql`AND ${inRuns}`;
+      if (ids.length === 0) return sql`AND run_id IS NULL`;
+      return sql`AND rowid IN (
+        SELECT rowid FROM orchestration_v2_projection_turn_items
+        WHERE thread_id = ${threadId} AND ${inRuns}
+        UNION ALL
+        SELECT rowid FROM orchestration_v2_projection_turn_items
+        WHERE thread_id = ${threadId} AND run_id IS NULL
+      )`;
+    };
 
     // An id filter reads by primary key. `+` keeps SQLite off the thread index, which walks
     // every row of the thread to find the few ids.
@@ -3999,9 +4016,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
                 ${
-                  filter?.turnItemTypes === undefined && filter?.turnItemStatuses === undefined
+                  filter?.turnItemTypes === undefined &&
+                  filter?.turnItemStatuses === undefined &&
+                  filter?.turnItemRunId === undefined &&
+                  filter?.turnItemRunIds === undefined
                     ? sql`WHERE ${turnItemMatch(threadId, filter)}`
-                    : // Matches on the type/status index and fetches only those payloads. Sorted, SQLite would walk the thread by ordinal instead.
+                    : // Matches on the type/status or run index and fetches only those payloads. Sorted, SQLite would walk the thread by ordinal instead.
                       sql`WHERE rowid IN (
                     SELECT rowid FROM orchestration_v2_projection_turn_items
                     WHERE ${turnItemMatch(threadId, filter)}
@@ -4631,13 +4651,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 OR kind = 'manual')
             ORDER BY ordinal_within_parent ASC, scope_id ASC
           `,
-          fields !== undefined && !fields.includes("checkpoints")
+          (fields !== undefined && !fields.includes("checkpoints")) ||
+          (window === undefined && matchesNothing(filter?.checkpointIds))
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_checkpoints
-            WHERE thread_id = ${threadId}
+            WHERE ${threadColumn(filter?.checkpointIds)} = ${threadId}
+              ${filter?.checkpointIds === undefined ? sql`` : sql`AND checkpoint_id IN (SELECT value FROM json_each(${encodeIdList(filter.checkpointIds)}))`}
             ORDER BY scope_id ASC, ordinal_within_scope ASC
           `
               : sql<PayloadRow>`

@@ -102,14 +102,60 @@ const decodeCodeWorkspace = Schema.decodeUnknownEffect(
   ),
 );
 
+const GIT_CONFIG_ESCAPES: Record<string, string> = { n: "\n", t: "\t", b: "\b" };
+const GIT_CONFIG_SECTION = /^\s*\[((?:"(?:\\.|[^"\\])*"|[^\]"])*)\]/s;
+const GIT_SUBMODULE_SECTION = /^submodule(?:\.([a-z0-9.-]*))?(?:\s+"((?:\\.|[^"\\])*)")?$/is;
+
 /** Submodule paths a `.gitmodules` file declares, relative to its folder with `/` separators. */
-export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> =>
-  text.split(/\r?\n/).flatMap((line) => {
-    const value = /^\s*path\s*=\s*(.*?)\s*$/i.exec(line)?.[1];
-    if (value === undefined) return [];
-    const normalized = value.replaceAll('"', "").replaceAll("\\", "/").replace(/\/+$/, "");
-    return normalized === "" ? [] : [normalized];
-  });
+export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> => {
+  const lines = text.split(/\r?\n/);
+  const paths = new Map<string, string>();
+  let submoduleName: string | undefined;
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    // Git allows a key, or another section, on the same line after a section header.
+    let rest = lines[lineIndex] ?? "";
+    let header = GIT_CONFIG_SECTION.exec(rest);
+    while (header !== null) {
+      const [, dottedName, quotedName] = GIT_SUBMODULE_SECTION.exec(header[1] ?? "") ?? [];
+      const dotted = dottedName?.toLowerCase();
+      const quoted = quotedName?.replace(/\\(.)/gs, "$1");
+      submoduleName =
+        dotted !== undefined && quoted !== undefined ? `${dotted}.${quoted}` : (dotted ?? quoted);
+      rest = rest.slice(header[0].length);
+      header = GIT_CONFIG_SECTION.exec(rest);
+    }
+    const entry = /^\s*([a-z][a-z0-9-]*)\s*=(.*)$/is.exec(rest);
+    if (entry === null) continue;
+    // Git's value syntax: unquoted whitespace at either end is dropped, `#` or `;` outside quotes
+    // starts a comment, and a backslash escapes a character or continues onto the next line,
+    // so every key's value is read even though only `path` is kept.
+    let raw = entry[2] ?? "";
+    let value = "";
+    let blank = "";
+    let quoted = false;
+    for (let index = 0; index < raw.length; index++) {
+      const char = raw[index] ?? "";
+      if (!quoted && " \t\r".includes(char)) {
+        if (value !== "") blank += char;
+        continue;
+      }
+      if (!quoted && (char === "#" || char === ";")) break;
+      value += blank;
+      blank = "";
+      if (char === '"') quoted = !quoted;
+      else if (char !== "\\") value += char;
+      else if (index === raw.length - 1) raw += lines[++lineIndex] ?? "";
+      else {
+        const next = raw[++index] ?? "";
+        value += GIT_CONFIG_ESCAPES[next] ?? next;
+      }
+    }
+    if (submoduleName !== undefined && entry[1]?.toLowerCase() === "path") {
+      paths.set(submoduleName, value.replace(/\/+$/, ""));
+    }
+  }
+  return [...paths.values()].filter((path) => path !== "");
+};
 
 // Built once per operation: the probes share the caller's file system and path services.
 const folderProbes = Effect.gen(function* () {
@@ -164,9 +210,10 @@ const readCodeWorkspaceFolders = Effect.fn("WorkspaceFolders.readCodeWorkspaceFo
     .pipe(Effect.flatMap(decodeCodeWorkspace), Effect.option);
   if (Option.isNone(document)) return null;
   return (document.value.folders ?? []).flatMap((folder) => {
-    const folderPath = folder.path?.trim();
+    const folderPath = folder.path?.trimEnd();
     if (folderPath === undefined || folderPath === "") return [];
     const resolved = path.resolve(root, folderPath);
+    if (resolved !== resolved.trim()) return [];
     return [
       {
         path: resolved,

@@ -15,6 +15,7 @@ import {
   filterPullRequestsByInvolvement,
   findProjectForRepository,
   findScopedProject,
+  matchesPullRequestFilters,
   mergePullRequestLists,
   pullRequestEntryKey,
   pullRequestListAnsweredEmpty,
@@ -29,6 +30,8 @@ import {
   selectedPullRequestAuthor,
   selectedPullRequestLabels,
   pullRequestLabelChoices,
+  rememberPullRequestAuthors,
+  rememberPullRequestLabels,
   rankPullRequestMatches,
   rankPullRequestsBlockedOnAuthor,
   rankPullRequestsByMergeReadiness,
@@ -178,6 +181,23 @@ describe("pull request involvement filtering", () => {
     expect(
       filterPullRequestsByInvolvement(mixed, VIEWERS, "authored").map((item) => item.number),
     ).toEqual([1]);
+  });
+});
+
+describe("matchesPullRequestFilters", () => {
+  it.each([
+    ["passing", [1, 4]],
+    ["failing", [2, 4]],
+  ] as const)("narrows rows by checks:%s and keeps unknown check state", (checks, kept) => {
+    const rows = [
+      entry({ number: 1, checksState: "passing" }),
+      entry({ number: 2, checksState: "failing" }),
+      entry({ number: 3, checksState: "pending" }),
+      entry({ number: 4 }),
+    ];
+    expect(
+      rows.filter((row) => matchesPullRequestFilters(row, { checks })).map((row) => row.number),
+    ).toEqual(kept);
   });
 });
 
@@ -1017,5 +1037,30 @@ describe("filter picker choices", () => {
       { name: "size:XL", color: "d93f0b", count: 0 },
       { name: "custom", color: null, count: 0 },
     ]);
+  });
+
+  it("keeps a host-only label's color after the host answers a new search without it", () => {
+    const first = rememberPullRequestLabels([], [{ name: "release-blocker", color: "b60205" }]);
+    const next = rememberPullRequestLabels(first, [{ name: "docs", color: "0075ca" }]);
+
+    expect(selectedPullRequestLabels([], next, ["release-blocker"])).toEqual([
+      { name: "release-blocker", color: "b60205", count: 0 },
+    ]);
+    expect(rememberPullRequestLabels(next, [{ name: "docs", color: "0075ca" }])).toBe(next);
+  });
+
+  it("keeps a host-only author's avatar after the host answers a new search without them", () => {
+    const juliana = { login: "Juliana", name: "Juliana", avatarUrl: "https://host/juliana.png" };
+    const first = rememberPullRequestAuthors([], [juliana]);
+    const next = rememberPullRequestAuthors(first, [actor("theo")]);
+
+    expect(selectedPullRequestAuthor([], next, "juliana")?.actor).toEqual(juliana);
+    expect(rememberPullRequestAuthors(next, [actor("theo")])).toBe(next);
+    expect(rememberPullRequestAuthors(next, [])).toBe(next);
+
+    const moved = { ...juliana, avatarUrl: "https://host/juliana-new.png" };
+    expect(
+      selectedPullRequestAuthor([], rememberPullRequestAuthors(first, [moved]), "juliana")?.actor,
+    ).toEqual(moved);
   });
 });

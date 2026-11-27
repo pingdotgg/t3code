@@ -1,7 +1,9 @@
 import { EnvironmentId, ProjectId, type PullRequestReviewThread } from "@t3tools/contracts";
+import { getTranslationsSnapshot, GTProvider } from "gt-react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import { initializeI18n } from "~/i18n/initializeI18n";
 import { registerCommands } from "~/shortcuts/dispatcher";
 import { act, render } from "../../../test/render";
 import { RightPanelSheet } from "../RightPanelSheet";
@@ -125,4 +127,37 @@ it("Escape cancels a review reply without closing the right panel sheet", async 
 
   await userEvent.keyboard("{Escape}");
   expect(onCloseSheet).toHaveBeenCalledOnce();
+});
+
+it("renders the outdated label in the UI language", async () => {
+  const translations = await getTranslationsSnapshot("de");
+  using _locale = {
+    [Symbol.dispose]() {
+      // GTProvider leaves its locale in a cookie; this sets it back to English.
+      initializeI18n(() => {});
+    },
+  };
+  await using screen = await render(
+    <GTProvider locale="de" translations={translations}>
+      <ReviewThreadCard
+        thread={{ ...thread, isOutdated: true }}
+        workspaceRoot="/workspace"
+        canReply
+        canResolve={false}
+        canReact={false}
+        environmentId={EnvironmentId.make("environment")}
+        reference={{ projectId: ProjectId.make("project"), repository: "owner/repo", number: 1 }}
+        completionScope={null}
+        pending={false}
+        onReply={async () => true}
+        onLoadMore={async () => null}
+        canEditComment={() => false}
+        onEditComment={async () => false}
+        onToggleResolved={() => {}}
+        onReacted={() => {}}
+      />
+    </GTProvider>,
+  );
+
+  await expect.element(screen.getByText("Veraltet", { exact: true })).toBeVisible();
 });

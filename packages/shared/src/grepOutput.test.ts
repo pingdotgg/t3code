@@ -26,6 +26,9 @@ describe("parseGrepOutput", () => {
         preview: "(Results are truncated. Consider using a more specific path or pattern.)",
       },
     ]);
+    expect(
+      parseGrepOutput("Found 1 matches\n/tmp/a:12:b.txt:\n  Line 2: needle second\n", "/tmp"),
+    ).toEqual([{ fileName: "/tmp/a:12:b.txt", line: 2, preview: "needle second" }]);
   });
 
   it("reads ripgrep's inline and heading forms", () => {
@@ -33,9 +36,25 @@ describe("parseGrepOutput", () => {
       { fileName: "src/a.ts", line: 4, preview: "const a = 1;" },
       { fileName: "C:\\w\\b.ts", line: 9, preview: "b: 2" },
     ]);
+    expect(parseGrepOutput("/tmp/a:12:b.txt:", "/tmp")).toEqual([
+      { fileName: "/tmp/a", line: 12, preview: "b.txt:" },
+    ]);
+    expect(parseGrepOutput("a.ts:1:needle:\nLine 2:3:needle", ".")).toEqual([
+      { fileName: "a.ts", line: 1, preview: "needle:" },
+      { fileName: "Line 2", line: 3, preview: "needle" },
+    ]);
     expect(parseGrepOutput("src/a.ts\n4:  const a = 1;\n7:a();", ".")).toEqual([
       { fileName: "src/a.ts", line: 4, preview: "  const a = 1;" },
       { fileName: "src/a.ts", line: 7, preview: "a();" },
+    ]);
+    expect(
+      parseGrepOutput(
+        "docs/Release notes.md \n2:match\n\ndocs/Release notes.md\n6:another match",
+        ".",
+      ),
+    ).toEqual([
+      { fileName: "docs/Release notes.md ", line: 2, preview: "match" },
+      { fileName: "docs/Release notes.md", line: 6, preview: "another match" },
     ]);
   });
 
@@ -59,6 +78,7 @@ describe("parseGrepOutput", () => {
   it.each([
     ["a directory listing", "Contents of /repo:\n  [DIR] .git\n  [FILE] README.md"],
     ["an error", "ripgrep failed: invalid regex"],
+    ["prose before a tool-specific numbered line", "Text output\n  Line 2: not a grep match"],
     ["a file list", "/repo/a.ts\n/repo/b.ts"],
     ["no matches", "No files found"],
     ["ripgrep context lines", "a.ts\n1-before\n2:needle"],
