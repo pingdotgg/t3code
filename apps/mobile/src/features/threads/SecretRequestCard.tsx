@@ -1,6 +1,8 @@
 import {
+  EMPTY_SECRET_REQUEST_DRAFT,
   secretRequestAnswerInput,
   secretRequestDisplay,
+  secretRequestDraftAtom,
   secretRequestFailureMessage,
   secretRequestInputs,
   secretRequestLink,
@@ -22,9 +24,9 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type SecretProviderId,
 } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useGT, useMessages } from "gt-react-native";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { View, type ColorValue } from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
@@ -49,8 +51,15 @@ export function SecretRequestCard(props: {
 }) {
   const m = useMessages();
   const { item, visibility } = props.projectedItem;
-  if (item.type !== "secret_request") return null;
-  const display = secretRequestDisplay(item, visibility, m);
+  const display = item.type === "secret_request" ? secretRequestDisplay(item, visibility, m) : null;
+  // Not on "pending-elsewhere": a fork's inherited row shares the original's draft.
+  const resolved = display?.kind === "answered";
+  const setDraft = useAtomSet(secretRequestDraftAtom(props.environmentId, item));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drop the typed values once the server resolves the request, wherever it was answered
+  useEffect(() => {
+    if (resolved) setDraft(EMPTY_SECRET_REQUEST_DRAFT);
+  }, [resolved, setDraft]);
+  if (item.type !== "secret_request" || display === null) return null;
   if (display.kind === "pending") {
     return (
       <PendingSecretRequestForm
@@ -100,10 +109,22 @@ function PendingSecretRequestForm(props: {
     multiple || !canUseReferences
       ? NO_SOURCES
       : secretRequestSources(config, config?.settings.secretProviders ?? {}, m);
-  const [sourceId, setSourceId] = useState<SecretProviderId | null>(null);
+  const [{ sourceId, values, reference }, setDraft] = useAtom(
+    secretRequestDraftAtom(props.environmentId, item),
+  );
   const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
-  const [values, setValues] = useState<Readonly<Record<string, string>>>({});
-  const [reference, setReference] = useState("");
+  const setSourceId = (next: SecretProviderId | null) =>
+    setDraft((current) => ({ ...current, sourceId: next }));
+  const setValues = (
+    next:
+      | Readonly<Record<string, string>>
+      | ((current: Readonly<Record<string, string>>) => Readonly<Record<string, string>>),
+  ) =>
+    setDraft((current) => ({
+      ...current,
+      values: typeof next === "function" ? next(current.values) : next,
+    }));
+  const setReference = (next: string) => setDraft((current) => ({ ...current, reference: next }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Submit then a tap can both run before a re-render; this guard is synchronous.
@@ -125,7 +146,7 @@ function PendingSecretRequestForm(props: {
       setSubmitting(false);
     });
     if (result._tag === "Success") {
-      setReference("");
+      setDraft(EMPTY_SECRET_REQUEST_DRAFT);
       return;
     }
     setValues(typed);

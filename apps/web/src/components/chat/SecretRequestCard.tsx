@@ -1,7 +1,9 @@
 import { pipe } from "effect/Function";
 import {
+  EMPTY_SECRET_REQUEST_DRAFT,
   secretRequestAnswerInput,
   secretRequestDisplay,
+  secretRequestDraftAtom,
   secretRequestFailureMessage,
   secretRequestInputs,
   secretRequestLink,
@@ -22,9 +24,8 @@ import {
   AuthProvidersManageScope,
   type EnvironmentId,
   type OrchestrationV2ProjectedTurnItem,
-  type SecretProviderId,
 } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
 import { T, useGT, useMessages, Var } from "gt-react";
 import {
@@ -38,7 +39,6 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
-import { create } from "zustand";
 
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
@@ -59,11 +59,11 @@ export function SecretRequestCard(props: {
   const display = secretRequestDisplay(item, props.visibility, messages);
   // Not on "pending-elsewhere": a fork's inherited row shares the original's key.
   const resolved = display.kind === "answered";
-  const draftKey = secretRequestDraftKey(props.environmentId, item);
+  const setDraft = useAtomSet(secretRequestDraftAtom(props.environmentId, item));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drop the typed values once the server resolves the request, wherever it was answered
   useEffect(() => {
-    if (resolved) clearSecretRequestDraft(draftKey);
-  }, [resolved, draftKey]);
+    if (resolved) setDraft(EMPTY_SECRET_REQUEST_DRAFT);
+  }, [resolved, setDraft]);
   if (display.kind === "answered" || display.kind === "pending-elsewhere") {
     const Icon =
       display.kind === "pending-elsewhere"
@@ -87,37 +87,6 @@ export function SecretRequestCard(props: {
 }
 
 const NO_SOURCES: ReadonlyArray<SecretRequestSource> = [];
-
-interface SecretRequestDraft {
-  readonly sourceId: SecretProviderId | null;
-  readonly values: Readonly<Record<string, string>>;
-  readonly reference: string;
-}
-
-const EMPTY_DRAFT: SecretRequestDraft = { sourceId: null, values: {}, reference: "" };
-
-/** What a pending card holds, so it survives a thread switch; memory only, never persisted. */
-const useSecretRequestDrafts = create<Readonly<Record<string, SecretRequestDraft>>>(() => ({}));
-
-const secretRequestDraftKey = (
-  environmentId: EnvironmentId,
-  item: Pick<SecretRequestItem, "threadId" | "id">,
-) => JSON.stringify([environmentId, item.threadId, item.id]);
-
-function clearSecretRequestDraft(key: string) {
-  if (!(key in useSecretRequestDrafts.getState())) return;
-  useSecretRequestDrafts.setState(({ [key]: _, ...rest }) => rest, true);
-}
-
-function useSecretRequestDraft(key: string) {
-  const draft = useSecretRequestDrafts((drafts) => drafts[key]) ?? EMPTY_DRAFT;
-  const update = (change: (current: SecretRequestDraft) => Partial<SecretRequestDraft>) =>
-    useSecretRequestDrafts.setState((drafts) => {
-      const current = drafts[key] ?? EMPTY_DRAFT;
-      return { [key]: { ...current, ...change(current) } };
-    });
-  return [draft, update] as const;
-}
 
 function useSecretRequestSources(environmentId: EnvironmentId) {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
@@ -148,11 +117,12 @@ function PendingSecretRequestForm(props: {
   // A reference answers one value, so a card with fields is always typed.
   const configuredSources = useSecretRequestSources(props.environmentId);
   const sources = multiple ? NO_SOURCES : configuredSources;
-  const draftKey = secretRequestDraftKey(props.environmentId, item);
-  const [{ sourceId, values, reference }, updateDraft] = useSecretRequestDraft(draftKey);
+  const [{ sourceId, values, reference }, setDraft] = useAtom(
+    secretRequestDraftAtom(props.environmentId, item),
+  );
   const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
   const setValues = (next: Readonly<Record<string, string>>) =>
-    updateDraft(() => ({ values: next }));
+    setDraft((current) => ({ ...current, values: next }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Enter and click can both submit before a render.
@@ -180,7 +150,7 @@ function PendingSecretRequestForm(props: {
       setSubmitting(false);
     });
     if (result._tag === "Success") {
-      clearSecretRequestDraft(draftKey);
+      setDraft(EMPTY_SECRET_REQUEST_DRAFT);
       return;
     }
     setValues(typed);
@@ -217,7 +187,7 @@ function PendingSecretRequestForm(props: {
       invalid={error !== null}
       describedBy={describedBy}
       onChange={(value) =>
-        updateDraft((current) => ({ values: { ...current.values, [input.key]: value } }))
+        setDraft((current) => ({ ...current, values: { ...current.values, [input.key]: value } }))
       }
     />
   );
@@ -285,7 +255,7 @@ function PendingSecretRequestForm(props: {
               label={item.label}
               disabled={submitting}
               onValueChange={(next) => {
-                updateDraft(() => ({ sourceId: next }));
+                setDraft((current) => ({ ...current, sourceId: next }));
                 setError(null);
               }}
             />
@@ -307,7 +277,8 @@ function PendingSecretRequestForm(props: {
                 aria-invalid={error !== null || undefined}
                 aria-describedby={describedBy}
                 onChange={(event) => {
-                  updateDraft(() => ({ reference: event.currentTarget.value }));
+                  const reference = event.currentTarget.value;
+                  setDraft((current) => ({ ...current, reference }));
                   setError(null);
                 }}
               />
