@@ -1070,6 +1070,45 @@ describe("MessagesTimeline messages", () => {
     await vi.waitFor(() => expect(viewport.scrollHeight).toBe(withLine - 24));
   });
 
+  it("keeps the rest of the held space when a row fills only part of it", async () => {
+    setup();
+    const props = { ...baseProps(), liveFollowEnabled: false };
+    const entries = Array.from({ length: 12 }, (_, index) =>
+      message(`Turn ${index}:\n\n${"x ".repeat(200)}`, {}, `turn-${index}`),
+    );
+    const next = [...entries, message("Done.", { role: "assistant" }, "done")];
+    await using screen = await renderTimeline(next, props);
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const doneRow = () =>
+      screen.getByText("Done.").element().closest<HTMLElement>(".messages-timeline-row-frame")!;
+    await vi.waitFor(() => expect(doneRow().offsetHeight).toBeGreaterThan(0));
+    // More than the row, less than twice it: the row fills over half the held space.
+    const lineHeight = Math.round(doneRow().offsetHeight * 1.5);
+    const statusLine = <div style={{ height: lineHeight }}>Waiting · Child task</div>;
+    await screen.rerender(
+      <MessagesTimeline {...props} timelineEntries={entries} footer={statusLine} />,
+    );
+    await vi.waitFor(() => expect(screen.text()).not.toContain("Done."));
+    viewport.scrollTop = viewport.scrollHeight;
+    await vi.waitFor(() =>
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2),
+    );
+    const readingAt = viewport.scrollTop;
+
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries} footer={null} />);
+    await vi.waitFor(() => expect(screen.text()).not.toContain("Waiting · Child task"));
+    expect(viewport.scrollTop).toBe(readingAt);
+    const heldHeight = viewport.scrollHeight;
+
+    // The row takes part of the held space, and the rest stays under the reader.
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={next} footer={null} />);
+    await vi.waitFor(() => {
+      expect(screen.text()).toContain("Done.");
+      expect(viewport.scrollHeight).toBe(heldHeight);
+    });
+    expect(viewport.scrollTop).toBe(readingAt);
+  });
+
   it("puts rows back in item order soon after a continuous scroll stops", async () => {
     setup();
     const props = baseProps();

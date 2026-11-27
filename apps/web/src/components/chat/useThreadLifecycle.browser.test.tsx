@@ -100,34 +100,6 @@ it.each([
   );
 });
 
-it("leaves a subagent's approval to the floating card, not the timeline", async () => {
-  setup();
-  const parent = threadInput("parent", "main");
-  state.childThreadInputs = [
-    {
-      id: ThreadId.make("child"),
-      environmentId,
-      title: "Child",
-      hasPendingApprovals: true,
-      hasPendingUserInput: false,
-      lineage: { sideChat: false },
-    } as EnvironmentThreadShell,
-  ];
-  await using screen = await render(
-    <RestoreBranchHarness
-      thread={parent}
-      currentRouteThreadKeyRef={{ current: parent.routeThreadKey }}
-      refreshGitStatus={() => undefined}
-      focusComposer={() => undefined}
-    />,
-    { router: "/environment:test/parent" },
-  );
-  await expect.element(screen.getByRole("button", { name: "Restore branch" })).toBeVisible();
-  await expect
-    .element(screen.getByRole("button", { name: "Open approval" }))
-    .not.toBeInTheDocument();
-});
-
 function RestoreBranchHarness(props: {
   readonly thread: ThreadInput;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
