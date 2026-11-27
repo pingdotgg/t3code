@@ -1,6 +1,9 @@
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type { Nodes } from "mdast";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
 
@@ -27,12 +30,6 @@ const threadLinkSource = (markdown: string) =>
 // Quote markers are compared from the first `>`, so lines may indent them differently.
 // Space after the markers is matched only after a `>`: two adjacent `[ \t]*` backtrack quadratically.
 const AFTER_QUOTE = String.raw`(?:(?<=>)[ \t]*)?`;
-const TOP_LEVEL_ATX_HEADING = String.raw`#{1,6}(?:[ \t][^\r\n]*)?`;
-const HEADING_LINE = new RegExp(`^${TOP_LEVEL_ATX_HEADING}$`);
-// Four columns at document start or after a top-level heading start indented code.
-const AFTER_HEADING = String.raw`(?<=(?<![^\r\n])${TOP_LEVEL_ATX_HEADING}(?:\r\n?|\n))`;
-const CODE_INDENT = String.raw`(?: {0,3}\t| {4})`;
-const NOT_INDENTED_CODE = String.raw`(?!(?=${CODE_INDENT})(?:(?<![\s\S])|${AFTER_HEADING}[ \t]*(?:\`{3,}|~{3,})))`;
 const OPENER_LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]{1,4}(?![ \t]))*`;
 // Fence-looking lines declined by `fencedCode` may still open an indented code block.
 const INDENTED_FENCE = String.raw`(?<![^\r\n])(?<indentedFence>[ \t>*+\-\d.)]*?(?:\`{3,}[^\`\r\n]*|~{3,}[^\r\n]*))(?=[\r\n]|(?![\s\S]))`;
@@ -40,7 +37,7 @@ const fencedCode = (char: "`" | "~", name: string) => {
   const bq = `${name}Bq`;
   const info = char === "`" ? "[^`\\r\\n]*" : "[^\\r\\n]*";
   const closer = String.raw`[ \t]*\k<${bq}>${AFTER_QUOTE}\k<${name}>${char}*(?!${char})[ \t]*\r?$`;
-  return String.raw`^${NOT_INDENTED_CODE}[ \t]*${OPENER_LIST_MARKERS}(?<${bq}>(?:>(?:[ \t]*>)*)?)(?:(?<=>)[ \t]{0,4}(?![ \t])${OPENER_LIST_MARKERS})?(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:(?:\r\n?|\n)(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:(?:\r\n?|\n)${closer})?`;
+  return String.raw`^[ \t]*${OPENER_LIST_MARKERS}(?<${bq}>(?:>(?:[ \t]*>)*)?)(?:(?<=>)[ \t]{0,4}(?![ \t])${OPENER_LIST_MARKERS})?(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:(?:\r\n?|\n)(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:(?:\r\n?|\n)${closer})?`;
 };
 // A code span may wrap lines until its paragraph ends: a blank line, heading, list item, fence, rule,
 // setext underline, or deeper blockquote.
@@ -296,79 +293,34 @@ export function threadLinkRefs(
   return [...refs.values()];
 }
 
-const NEXT_LINE = /(?:\r\n?|\n)([^\r\n]*)/y;
-const LIST_MARKER_AT = /([-*+]|\d{1,9}[.)])(?=[ \t])/y;
+const markdownParser = unified().use(remarkParse);
+const FENCE_LIKE_LINE = /^[ \t>*+\-\d.)]*(?:`{3}|~{3})/m;
 
-function walkContainer(line: string, allowList: boolean) {
-  let i = 0;
-  let col = 0;
-  let contentCol = 0;
-  let quoteCol = 0;
-  let quotes = 0;
-  let list = 0;
-  let quoteAfterList = false;
-  while (i < line.length) {
-    while (line[i] === " " || line[i] === "\t") col += line[i++] === "\t" ? 4 - (col % 4) : 1;
-    if (i >= line.length || col - contentCol > 3) break;
-    if (line[i] === ">") {
-      quoteAfterList ||= list !== 0;
-      quotes++;
-      quoteCol = contentCol = ++col + (line[++i] === " " || line[i] === "\t" ? 1 : 0);
-      if (contentCol > col) col += line[i++] === "\t" ? 4 - (col % 4) : 1;
-      continue;
+function indentedFenceRanges(markdown: string) {
+  const ranges: Array<{ start: number; end: number }> = [];
+  // Parse only when a fence-looking line could be indented code in its container.
+  const candidates = new RegExp(FENCE_LIKE_LINE, "gm");
+  let candidate = candidates.exec(markdown);
+  while (candidate && !/ {4}|\t/.test(candidate[0])) candidate = candidates.exec(markdown);
+  if (!candidate) return ranges;
+
+  const visit = (node: Nodes) => {
+    if (node.type === "code") {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      // Remark starts fenced code at its marker and indented code at its code indent.
+      if (start === undefined || end === undefined) return;
+      if (markdown[start] !== " " && markdown[start] !== "\t") return;
+      if (!FENCE_LIKE_LINE.test(node.value)) return;
+      let lineStart = start;
+      while (lineStart > 0 && !/[\r\n]/.test(markdown[lineStart - 1]!)) lineStart--;
+      ranges.push({ start: lineStart, end });
+    } else if ("children" in node) {
+      for (const child of node.children) visit(child);
     }
-    if (!allowList) break;
-    LIST_MARKER_AT.lastIndex = i;
-    const marker = LIST_MARKER_AT.exec(line)?.[1];
-    if (marker === undefined) break;
-    i += marker.length;
-    const afterMarker = (col += marker.length);
-    while (line[i] === " " || line[i] === "\t") col += line[i++] === "\t" ? 4 - (col % 4) : 1;
-    list = list < 0 || !/^(?:[-*+]|1[.)])$/.test(marker) ? -1 : 1;
-    contentCol = col - afterMarker >= 5 ? afterMarker + 1 : col;
-  }
-  return {
-    rest: line.slice(i),
-    quotes,
-    quoteIndent: col - quoteCol,
-    base: contentCol - quoteCol + 4,
-    list,
-    quoteAfterList,
-    blank: !list && i === line.length,
   };
-}
-
-function findIndentedCodeEnd(markdown: string, openIndex: number, openerLength: number): number {
-  const opener = walkContainer(markdown.slice(openIndex, openIndex + openerLength), true);
-  if (
-    opener.quoteAfterList ||
-    opener.quoteIndent < opener.base ||
-    !/^(?:`{3,}|~{3,})/.test(opener.rest)
-  )
-    return -1;
-  if (openIndex > 0 && opener.list <= 0) {
-    const prevEnd =
-      openIndex - (markdown[openIndex - 1] === "\n" && markdown[openIndex - 2] === "\r" ? 2 : 1);
-    let prevStart = prevEnd;
-    while (prevStart > 0 && !/[\r\n]/.test(markdown[prevStart - 1]!)) prevStart--;
-    const previousLine = markdown.slice(prevStart, prevEnd);
-    const prev = walkContainer(previousLine, true);
-    if (
-      opener.list
-        ? !prev.blank
-        : prev.quotes > 0 ||
-          (!prev.blank && prevStart > 0 && (opener.quotes > 0 || !HEADING_LINE.test(previousLine)))
-    )
-      return -1;
-  }
-  let blockEnd = openIndex + openerLength;
-  NEXT_LINE.lastIndex = blockEnd;
-  for (let next = NEXT_LINE.exec(markdown); next !== null; next = NEXT_LINE.exec(markdown)) {
-    const cont = walkContainer(next[1]!, false);
-    if (cont.quotes !== opener.quotes || (cont.rest && cont.quoteIndent < opener.base)) break;
-    blockEnd = NEXT_LINE.lastIndex;
-  }
-  return blockEnd;
+  visit(markdownParser.parse(markdown));
+  return ranges;
 }
 
 /** Rewrites each link outside code `replace` answers for. `label` is a Markdown link's own text. */
@@ -387,11 +339,19 @@ export function replaceThreadLinks(
   let cursor = 0;
   let lines: ReturnType<typeof codeSpanLines> | undefined;
   let lineIndex = 0;
+  const indentedRanges = indentedFenceRanges(markdown);
+  let rangeIndex = 0;
   for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
-    const indentedFence = match.groups?.indentedFence;
-    if (indentedFence !== undefined) {
-      const codeEnd = findIndentedCodeEnd(markdown, match.index, indentedFence.length);
-      pattern.lastIndex = codeEnd === -1 ? match.index + 1 : codeEnd;
+    while (indentedRanges[rangeIndex] && indentedRanges[rangeIndex]!.end <= match.index) {
+      rangeIndex++;
+    }
+    const range = indentedRanges[rangeIndex];
+    if (range && range.start <= match.index) {
+      pattern.lastIndex = range.end;
+      continue;
+    }
+    if (match.groups?.indentedFence !== undefined) {
+      pattern.lastIndex = match.index + 1;
       continue;
     }
     const spanTicks = match.groups?.spanTicks;
