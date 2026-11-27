@@ -178,7 +178,22 @@ interface OdfTextStyle {
   resolved?: boolean | undefined;
 }
 
-function odfTextStyleHidden(styles: Map<string, OdfTextStyle>, name: string) {
+// ODF 1.3 Part 3 §19.510: parent-style-name names a common style, never an automatic one.
+interface OdfTextStyles {
+  common: Map<string, OdfTextStyle>;
+  automatic: Map<string, OdfTextStyle>;
+}
+
+function odfTextStyleHidden(styles: OdfTextStyles, name: string) {
+  const automatic = styles.automatic.get(name);
+  if (!automatic) return odfCommonTextStyleHidden(styles.common, name);
+  if (automatic.hidden !== undefined) return automatic.hidden;
+  return automatic.parent === undefined
+    ? undefined
+    : odfCommonTextStyleHidden(styles.common, automatic.parent);
+}
+
+function odfCommonTextStyleHidden(styles: Map<string, OdfTextStyle>, name: string) {
   let style = styles.get(name);
   if (!style || "resolved" in style) return style?.resolved;
   const visited = new Set<OdfTextStyle>();
@@ -267,7 +282,7 @@ function xml(
   source: string,
   extension: string,
   wordStyleRunHidden?: WordStyleRunHidden,
-  odfTextStyles?: Map<string, OdfTextStyle>,
+  odfTextStyles?: OdfTextStyles,
 ): XmlNode {
   const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
@@ -306,7 +321,7 @@ function xml(
       if (parent.odfSpanHidden) node.odfSpanHidden = true;
       if (
         node.name === "span" &&
-        odfTextStyles.size > 0 &&
+        odfTextStyles.common.size + odfTextStyles.automatic.size > 0 &&
         namespaceOf(tag.name, stack) === ODF_TEXT_NS
       ) {
         const style = odfAttribute(tag.attributes, "style-name", stack);
@@ -370,7 +385,7 @@ function xml(
       ) {
         const name = odfAttribute(tag.attributes, "name", scope, ODF_STYLE_NS);
         if (name !== undefined) {
-          odfTextStyles.set(name, {
+          odfTextStyles[parent.name === "styles" ? "common" : "automatic"].set(name, {
             parent: odfAttribute(tag.attributes, "parent-style-name", scope, ODF_STYLE_NS),
             hidden: node.odfStyleHidden,
           });
@@ -1461,7 +1476,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
     const read = (
       name: string,
       wordStyleRunHidden?: WordStyleRunHidden,
-      odfTextStyles?: Map<string, OdfTextStyle>,
+      odfTextStyles?: OdfTextStyles,
     ): XmlNode => {
       try {
         const data = files.get(part(name));
@@ -1537,7 +1552,8 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       }
       yield* paragraphs(doc);
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
-      const odfTextStyles = extension === ".odt" ? new Map<string, OdfTextStyle>() : undefined;
+      const odfTextStyles: OdfTextStyles | undefined =
+        extension === ".odt" ? { common: new Map(), automatic: new Map() } : undefined;
       if (odfTextStyles) {
         const namedStyles = files.get(part("styles.xml"));
         if (namedStyles !== undefined) {
@@ -1545,7 +1561,8 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             xml(namedStyles, extension, undefined, odfTextStyles);
           } catch {
             // A partial or oversized optional styles part must not hide otherwise readable text.
-            odfTextStyles.clear();
+            odfTextStyles.common.clear();
+            odfTextStyles.automatic.clear();
           }
         }
       }
