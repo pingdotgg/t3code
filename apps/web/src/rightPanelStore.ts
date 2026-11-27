@@ -1029,8 +1029,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const surface = fileSurface(
               relativePath,
               normalizeRevealLine(line),
-              (lastFileRevealRequestId =
-                Math.max(lastFileRevealRequestId, existing?.revealRequestId ?? 0) + 1),
+              ++lastFileRevealRequestId,
             );
             return {
               ...current,
@@ -1438,6 +1437,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       }),
       migrate: migratePersistedRightPanelState,
+      onRehydrateStorage: () => (state) => {
+        // A restored tab can disappear before the next citation opens it again.
+        for (const thread of Object.values(state?.byThreadKey ?? {})) {
+          for (const surface of thread?.surfaces ?? []) {
+            if (surface.kind === "file" && Number.isSafeInteger(surface.revealRequestId)) {
+              lastFileRevealRequestId = Math.max(lastFileRevealRequestId, surface.revealRequestId);
+            }
+          }
+        }
+      },
     },
   ),
 );

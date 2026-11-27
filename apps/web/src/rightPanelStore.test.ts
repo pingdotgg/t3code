@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -1022,23 +1022,47 @@ describe("rightPanelStore", () => {
     ).toEqual(["file:attachment:shared-id", "attachment:shared-id"]);
   });
 
-  it("assigns a fresh line request after closing a file tab", () => {
-    const store = useRightPanelStore.getState();
-    const requestId = () => {
-      const surface = selectActiveRightPanelSurface(
-        useRightPanelStore.getState().byThreadKey,
-        refA,
-      );
-      if (surface?.kind !== "file") return expect.unreachable();
-      return surface.revealRequestId;
-    };
-    store.openFile(refA, "app.log", 42);
-    const first = requestId();
-    store.closeSurface(refA, "file:app.log");
+  it.each([false, true])(
+    "assigns a fresh line request after closing a file tab (hydrated: %s)",
+    async (hydrated) => {
+      const store = useRightPanelStore.getState();
+      const requestId = () => {
+        const surface = selectActiveRightPanelSurface(
+          useRightPanelStore.getState().byThreadKey,
+          refA,
+        );
+        if (surface?.kind !== "file") return expect.unreachable();
+        return surface.revealRequestId;
+      };
+      if (hydrated) {
+        useRightPanelStore.setState({
+          byThreadKey: {
+            [scopedThreadKey(refA)]: {
+              isOpen: true,
+              activeSurfaceId: "file:app.log",
+              surfaces: [
+                {
+                  id: "file:app.log",
+                  kind: "file",
+                  relativePath: "app.log",
+                  revealLine: 42,
+                  revealRequestId: 10_000,
+                },
+              ],
+            },
+          },
+        });
+        await reloadRightPanelStore();
+      } else {
+        store.openFile(refA, "app.log", 42);
+      }
+      const first = requestId();
+      store.closeSurface(refA, "file:app.log");
 
-    store.openFile(refA, "app.log", 42);
-    expect(requestId()).toBeGreaterThan(first);
-  });
+      store.openFile(refA, "app.log", 42);
+      expect(requestId()).toBeGreaterThan(first);
+    },
+  );
 
   it("updates line reveal requests when reopening a file surface", () => {
     useRightPanelStore.getState().openFile(refA, "src/index.ts", 42);
