@@ -373,9 +373,11 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   // through a symlink (macOS /tmp), so both sides compare as real paths.
   const realPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
-  const target = yield* realPath(
-    path.resolve(yield* HostProcess.WorkingDirectory, yield* expandHomePath(identifier)),
+  const requestedPath = path.resolve(
+    yield* HostProcess.WorkingDirectory,
+    yield* expandHomePath(identifier),
   );
+  const target = yield* realPath(requestedPath);
   const roots = yield* Effect.forEach(projects, (project) =>
     Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
   );
@@ -386,12 +388,21 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
       (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
     );
   };
-  const deepestContaining = (candidate: string) =>
-    roots
+  const containingRoots = (candidate: string, originalPath?: string) => {
+    // Projects can register the same directory through separate symlinks.
+    const matchingPathLength = (root: string) =>
+      originalPath !== undefined && contains(root, originalPath) ? root.length : 0;
+    return roots
       .filter(({ root }) => contains(root, candidate))
-      .toSorted((left, right) => right.root.length - left.root.length)[0]?.project;
+      .toSorted(
+        (left, right) =>
+          right.root.length - left.root.length ||
+          matchingPathLength(right.project.workspaceRoot) -
+            matchingPathLength(left.project.workspaceRoot),
+      );
+  };
 
-  const containing = deepestContaining(target);
+  const containing = containingRoots(target, requestedPath)[0]?.project;
   if (containing !== undefined) return containing;
   const targetInfo = yield* fileSystem.stat(target).pipe(Effect.option);
   const gitDirectory =
@@ -410,8 +421,12 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   const matches = new Map<ProjectId, (typeof projects)[number]>();
   for (const checkout of listed) {
     if (checkout === ownCheckout) continue;
-    const project = deepestContaining(path.join(checkout, relative));
-    if (project !== undefined) matches.set(project.id, project);
+    const checkoutMatches = containingRoots(path.join(checkout, relative));
+    const deepestLength = checkoutMatches[0]?.root.length;
+    for (const { project, root } of checkoutMatches) {
+      if (root.length !== deepestLength) break;
+      matches.set(project.id, project);
+    }
   }
   const [match, ...others] = matches.values();
   if (match === undefined) {

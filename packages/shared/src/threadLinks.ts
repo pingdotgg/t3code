@@ -31,6 +31,8 @@ const AFTER_QUOTE = String.raw`(?:(?<=>)[ \t]*)?`;
 // start of the text, after a list marker, or after a quote's optional space.
 const NOT_INDENTED_CODE = String.raw`(?!(?<![\s\S])(?: {0,3}\t| {4}))`;
 const OPENER_LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]{1,4}(?![ \t]))*`;
+// Fence-looking lines declined by `fencedCode` may still open an indented code block.
+const INDENTED_FENCE = String.raw`(?<![^\r\n])(?<indentedFence>[ \t>*+\-\d.)]*?(?:\`{3,}[^\`\r\n]*|~{3,}[^\r\n]*))(?=[\r\n]|(?![\s\S]))`;
 const fencedCode = (char: "`" | "~", name: string) => {
   const bq = `${name}Bq`;
   const info = char === "`" ? "[^`\\r\\n]*" : "[^\\r\\n]*";
@@ -51,6 +53,7 @@ const THREAD_LINK_OUTSIDE_CODE = new RegExp(
     String.raw`\\[!-/:-@[-\`{-~]`,
     fencedCode("`", "bt"),
     fencedCode("~", "tl"),
+    INDENTED_FENCE,
     String.raw`(?<spanTicks>\`+)`,
     // A labeled link's destination may be angle-bracketed, as CommonMark allows: [label](<href>).
     String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>|(?<href>${THREAD_HREF}[^\s>)]+|${HOSTED_LINK}))\)`,
@@ -290,6 +293,74 @@ export function threadLinkRefs(
   return [...refs.values()];
 }
 
+const NEXT_LINE = /(?:\r\n?|\n)([^\r\n]*)/y;
+const LIST_MARKER_AT = /([-*+]|\d{1,9}[.)])(?=[ \t])/y;
+
+function walkContainer(line: string, allowList: boolean) {
+  let i = 0;
+  let col = 0;
+  let contentCol = 0;
+  let quoteCol = 0;
+  let quotes = 0;
+  let list = 0;
+  let quoteAfterList = false;
+  while (i < line.length) {
+    while (line[i] === " " || line[i] === "\t") col += line[i++] === "\t" ? 4 - (col % 4) : 1;
+    if (i >= line.length || col - contentCol > 3) break;
+    if (line[i] === ">") {
+      quoteAfterList ||= list !== 0;
+      quotes++;
+      quoteCol = contentCol = ++col + (line[++i] === " " || line[i] === "\t" ? 1 : 0);
+      if (contentCol > col) col += line[i++] === "\t" ? 4 - (col % 4) : 1;
+      continue;
+    }
+    if (!allowList) break;
+    LIST_MARKER_AT.lastIndex = i;
+    const marker = LIST_MARKER_AT.exec(line)?.[1];
+    if (marker === undefined) break;
+    i += marker.length;
+    const afterMarker = (col += marker.length);
+    while (line[i] === " " || line[i] === "\t") col += line[i++] === "\t" ? 4 - (col % 4) : 1;
+    list = list < 0 || !/^(?:[-*+]|1[.)])$/.test(marker) ? -1 : 1;
+    contentCol = col - afterMarker >= 5 ? afterMarker + 1 : col;
+  }
+  return {
+    rest: line.slice(i),
+    quotes,
+    quoteIndent: col - quoteCol,
+    base: contentCol - quoteCol + 4,
+    list,
+    quoteAfterList,
+    blank: !list && i === line.length,
+  };
+}
+
+function findIndentedCodeEnd(markdown: string, openIndex: number, openerLength: number): number {
+  const opener = walkContainer(markdown.slice(openIndex, openIndex + openerLength), true);
+  if (
+    opener.quoteAfterList ||
+    opener.quoteIndent < opener.base ||
+    !/^(?:`{3,}|~{3,})/.test(opener.rest)
+  )
+    return -1;
+  if (openIndex > 0 && opener.list <= 0) {
+    const prevEnd =
+      openIndex - (markdown[openIndex - 1] === "\n" && markdown[openIndex - 2] === "\r" ? 2 : 1);
+    let prevStart = prevEnd;
+    while (prevStart > 0 && !/[\r\n]/.test(markdown[prevStart - 1]!)) prevStart--;
+    const prev = walkContainer(markdown.slice(prevStart, prevEnd), true);
+    if (opener.list ? !prev.blank : prev.quotes > 0 || (!prev.blank && prevStart > 0)) return -1;
+  }
+  let blockEnd = openIndex + openerLength;
+  NEXT_LINE.lastIndex = blockEnd;
+  for (let next = NEXT_LINE.exec(markdown); next !== null; next = NEXT_LINE.exec(markdown)) {
+    const cont = walkContainer(next[1]!, false);
+    if (cont.quotes !== opener.quotes || (cont.rest && cont.quoteIndent < opener.base)) break;
+    blockEnd = NEXT_LINE.lastIndex;
+  }
+  return blockEnd;
+}
+
 /** Rewrites each link outside code `replace` answers for. `label` is a Markdown link's own text. */
 export function replaceThreadLinks(
   markdown: string,
@@ -307,6 +378,12 @@ export function replaceThreadLinks(
   let lines: ReturnType<typeof codeSpanLines> | undefined;
   let lineIndex = 0;
   for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
+    const indentedFence = match.groups?.indentedFence;
+    if (indentedFence !== undefined) {
+      const codeEnd = findIndentedCodeEnd(markdown, match.index, indentedFence.length);
+      pattern.lastIndex = codeEnd === -1 ? match.index + 1 : codeEnd;
+      continue;
+    }
     const spanTicks = match.groups?.spanTicks;
     if (spanTicks !== undefined) {
       lines ??= codeSpanLines(markdown);

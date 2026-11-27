@@ -985,10 +985,16 @@ export function terminalOutputPlainText(text: string): string {
 // tqdm redraws a progress bar after a carriage return; JupyterLab shows only what the last
 // redraws leave on the line. Walking the frames from the last keeps this linear.
 function lastFrame(line: string): string {
-  let row = "";
-  for (const frame of line.split("\r").reverse())
-    // A cut through a surrogate pair blanks the glyph's other half, as a terminal does.
-    if (frame.length > row.length) row += frame.slice(row.length).replace(/^[\udc00-\udfff]/u, " ");
+  const frames = line.split("\r");
+  let row = frames.pop()!;
+  if (frames.length === 0) return row;
+  let width = textWidth(row);
+  for (const frame of frames.reverse()) {
+    const frameWidth = textWidth(frame);
+    if (frameWidth <= width) continue;
+    row += sliceLine([{ pen: "", text: frame }], width, frameWidth)[0]?.text ?? "";
+    width = frameWidth;
+  }
   return row;
 }
 

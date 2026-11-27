@@ -758,9 +758,11 @@
   "8360d689ebc7f829": "Pousser et créer {shortLabel} depuis la branche par défaut ?",
   "daa408bb99d21d18": "{kind, select, pr {Cette action va pousser les commits locaux et créer une PR sur « {branch} ». Vous pouvez continuer sur cette branche ou créer une branche de fonctionnalité et y lancer la même action.} mr {Cette action va pousser les commits locaux et créer une MR sur « {branch} ». Vous pouvez continuer sur cette branche ou créer une branche de fonctionnalité et y lancer la même action.} generic {Cette action va pousser les commits locaux et créer une demande de modification sur « {branch} ». Vous pouvez continuer sur cette branche ou créer une branche de fonctionnalité et y lancer la même action.} other {Cette action va pousser les commits locaux et créer {changeRequest} sur « {branch} ». Vous pouvez continuer sur cette branche ou créer une branche de fonctionnalité et y lancer la même action.}}",
   "8471c4c5a50ffde3": "Les tickets de cet hôte ne peuvent pas encore être consultés.",
-  "2f4a47129f89fe22": "Non connecté. Ajoutez une clé d’API personnelle pour lister ses tickets.",
+  "4a727b074bbbc5b2": "Non connecté. Ajoutez votre clé d’API personnelle pour lister ses tickets.",
+  "b40c70c4488dcebe": "Non connecté. Ajoutez votre jeton d’API pour lister ses tickets.",
   "024baab60525a419": "L’identifiant enregistré a été refusé.",
-  "2613c232516f3c72": "Connecté en tant que {account} · aucun projet associé pour l’instant. Choisissez une équipe pour un projet afin de lister ses tickets.",
+  "1e89798e3a9050c6": "Connecté en tant que {account} · aucun projet associé pour l’instant. Associez-en un à une équipe Linear pour lister ses tickets.",
+  "c3ab6f9e8b29fbf1": "Connecté en tant que {account} · aucun projet associé pour l’instant. Associez-en un à un projet Jira pour lister ses tickets.",
   "77d07bfe2f8ee19d": "{count, plural, one {Connecté en tant que {account} · {count} projet associé} other {Connecté en tant que {account} · {count} projets associés}}",
   "3eb9a01099aaf799": "{count} s",
   "3618302947c280f0": "{count} min",
@@ -1576,6 +1578,8 @@
   "737d3c6bec93f9e6": "Choisir des fichiers pour la page",
   "e6a3fa7cfc14f86a": "Boîte de dialogue du navigateur",
   "61a552a67e9e3eac": "Réponse à la boîte de dialogue",
+  "cb5c27218e96e407": "Nom d’utilisateur",
+  "182a659d70f8ea72": "Mot de passe",
   "3d000b56e95f3150": "Rendre le contrôle",
   "0633c3bcdcb95b2f": "Prendre le contrôle",
   "b8ba763621bcdd70": "Le navigateur du serveur a chargé cette page mais ne l'affiche pas. Essayez de la recharger ou ouvrez la page dans un navigateur sur cet ordinateur.",
@@ -13036,5 +13040,8 @@
   "717c1c47a852a1a5": "Mettre la narration en pause",
   "0eceb5780908eb6c": "Lire à voix haute",
   "3ee98da81538c6de": "Impossible de lire la narration.",
-  "95435f0b59cb2193": "Aperçu audio"
+  "95435f0b59cb2193": "Aperçu audio",
+  "4a12506938295127": "Saisissez d’abord {field}.",
+  "5807c08e225c6b3d": "Télécharger",
+  "0d50b5bfe7151ece": "Impossible de télécharger le fichier"
 }

@@ -15,6 +15,7 @@ import {
   filterPullRequestsByInvolvement,
   findProjectForRepository,
   findScopedProject,
+  matchesPullRequestFilters,
   mergePullRequestLists,
   pullRequestEntryKey,
   pullRequestListAnsweredEmpty,
@@ -180,6 +181,23 @@ describe("pull request involvement filtering", () => {
     expect(
       filterPullRequestsByInvolvement(mixed, VIEWERS, "authored").map((item) => item.number),
     ).toEqual([1]);
+  });
+});
+
+describe("matchesPullRequestFilters", () => {
+  it.each([
+    ["passing", [1, 4]],
+    ["failing", [2, 4]],
+  ] as const)("narrows rows by checks:%s and keeps unknown check state", (checks, kept) => {
+    const rows = [
+      entry({ number: 1, checksState: "passing" }),
+      entry({ number: 2, checksState: "failing" }),
+      entry({ number: 3, checksState: "pending" }),
+      entry({ number: 4 }),
+    ];
+    expect(
+      rows.filter((row) => matchesPullRequestFilters(row, { checks })).map((row) => row.number),
+    ).toEqual(kept);
   });
 });
 
