@@ -995,7 +995,33 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       return main && has(main) ? main : fallback;
     };
     if (extension === ".docx") {
-      yield* paragraphs(read(mainPart("word/document.xml")));
+      const main = mainPart("word/document.xml");
+      const doc = read(main);
+      const rels = partRels(main);
+      const target = has(rels)
+        ? all(read(rels), "Relationship").find(
+            (rel) => rel.attrs.Type?.endsWith("/styles") && rel.attrs.TargetMode !== "External",
+          )?.attrs.Target
+        : undefined;
+      const dir = `/${NodePath.posix.dirname(main)}`;
+      const styles = NodePath.posix.resolve(dir, target || "styles.xml").slice(1);
+      if (has(styles)) {
+        // Word localizes style ids while keeping built-in English names.
+        const headings = new Map<string, string>();
+        for (const style of all(read(styles), "style")) {
+          const id = style.attrs.styleId;
+          if ((style.attrs.type ?? "paragraph") !== "paragraph" || !id) continue;
+          const name = children(style).find((c) => c.name === "name")?.attrs.val;
+          const level = name?.match(/^heading ([1-6])$/i)?.[1];
+          if (level && id !== `Heading${level}`) headings.set(id, `Heading${level}`);
+        }
+        if (headings.size)
+          for (const pStyle of all(doc, "pStyle")) {
+            const heading = headings.get(pStyle.attrs.val ?? "");
+            if (heading) pStyle.attrs.val = heading;
+          }
+      }
+      yield* paragraphs(doc);
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
       const content = read("content.xml");
       if (extension === ".odt")
