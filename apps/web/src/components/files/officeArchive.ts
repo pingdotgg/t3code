@@ -1,3 +1,4 @@
+import { boundedZip } from "@t3tools/client-runtime/zip/bounded-zip";
 import JSZip from "jszip";
 import { checkZipDirectory } from "@t3tools/client-runtime/zip/directory";
 import { SaxesParser } from "saxes";
@@ -1145,16 +1146,22 @@ async function wordExpansion(
 
 // Stream each entry before handing it to an engine. A tiny compressed archive
 // must not turn into an unbounded allocation on the UI thread.
-export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type: "open" }>) {
+export async function boundedArchive(
+  input: Extract<OfficeWorkerRequest, { type: "open" }>,
+  password?: string,
+) {
   const { bytes } = input;
   const spreadsheet = input.kind === "xlsx";
+  const openDocument = input.kind === "odt" || input.kind === "ods" || input.kind === "odp";
   if (bytes.byteLength > OFFICE_PREVIEW_MAX_BYTES)
     throw new PreviewError({ code: "file-too-large" });
   const entryLimit = input.kind === "epub" ? 8192 : 2048;
-  checkZipDirectory(bytes, entryLimit);
-  const source = await JSZip.loadAsync(bytes).catch(() => {
-    throw new PreviewError({ code: "office-invalid" });
-  });
+  const { encrypted } = checkZipDirectory(bytes, entryLimit);
+  const source = encrypted
+    ? await readEncryptedOfficeArchive(bytes, entryLimit, password)
+    : await JSZip.loadAsync(bytes).catch(() => {
+        throw new PreviewError({ code: "office-invalid" });
+      });
   const allEntries = Object.values(source.files);
   if (allEntries.length > entryLimit) throw new PreviewError({ code: "office-too-many-entries" });
   const entries = allEntries.filter((entry) => !entry.dir);
@@ -1286,7 +1293,11 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
         continue;
       }
       if (media) mediaSizes.set(entry.name, Math.ceil((content.length * 4) / 3));
-      archive.file(entry.name, /\.(?:xml|rels)$/i.test(entry.name) ? officeXml(content) : content);
+      // OpenDocument can store ciphertext in an XML part, including content.xml.
+      archive.file(
+        entry.name,
+        !openDocument && /\.(?:xml|rels)$/i.test(entry.name) ? officeXml(content) : content,
+      );
     }
   }
   if (word) {
@@ -1334,11 +1345,25 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
   return { archive, word, workbook };
 }
 
+async function readEncryptedOfficeArchive(
+  bytes: ArrayBuffer,
+  maxEntries: number,
+  password?: string,
+) {
+  const archive = new JSZip();
+  const files = await boundedZip(bytes, OFFICE_PREVIEW_MAX_BYTES, { password, maxEntries });
+  for (const [path, file] of files) {
+    if (!file.directory) archive.file(path, file.bytes, { createFolders: false });
+  }
+  return archive;
+}
+
 export async function prepareOffice(
   bytes: ArrayBuffer,
   kind: Extract<OfficeWorkerRequest, { type: "open" }>["kind"],
+  password?: string,
 ) {
-  const result = await boundedArchive({ type: "open", kind, bytes });
+  const result = await boundedArchive({ type: "open", kind, bytes }, password);
   const root =
     kind === "docx"
       ? "word/document.xml"

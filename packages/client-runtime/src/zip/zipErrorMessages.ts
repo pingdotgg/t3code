@@ -11,6 +11,9 @@ export const ZIP_ERROR_MESSAGES: Record<ZipErrorCode, string> = {
   "archive-expanded-too-large": msg(
     "The expanded archive exceeds the preview size or compression ratio limit.",
   ),
+  "password-required": msg("This file requires a password."),
+  "password-incorrect": msg("Incorrect password. Try again."),
+  "encryption-unsupported": msg("This file uses encryption that the preview cannot open."),
   "zip-unreadable": msg("This is not a readable ZIP archive."),
   "zip64-unsupported": msg("Unsupported ZIP64 directory."),
   "zip64-damaged": msg("This ZIP64 directory is too large or damaged."),

@@ -40,3 +40,25 @@ describe("boundedZip", () => {
     ]);
   });
 });
+
+it.each([false, true])("opens a password-protected ZIP (ZipCrypto: %s)", async (zipCrypto) => {
+  const { Uint8ArrayWriter, TextReader, ZipWriter } =
+    await import("@zip.js/zip.js/index-native.js");
+  const writer = new ZipWriter(new Uint8ArrayWriter(), { useWebWorkers: false });
+  await writer.add("public.txt", new TextReader("Public"));
+  await writer.add("secret.txt", new TextReader("Unlocked ZIP".repeat(30)), {
+    password: "open me",
+    zipCrypto,
+  });
+  const bytes = (await writer.close()).buffer;
+  await expect(boundedZip(bytes)).rejects.toMatchObject({ code: "password-required" });
+  await expect(boundedZip(bytes, undefined, { password: "wrong" })).rejects.toMatchObject({
+    code: "password-incorrect",
+  });
+  const files = await boundedZip(bytes, undefined, { password: "open me" });
+  expect(new TextDecoder().decode(files.get("public.txt")?.bytes)).toBe("Public");
+  expect(new TextDecoder().decode(files.get("secret.txt")?.bytes)).toBe("Unlocked ZIP".repeat(30));
+  await expect(boundedZip(bytes, 50, { password: "open me" })).rejects.toMatchObject({
+    code: "archive-expanded-too-large",
+  });
+});
