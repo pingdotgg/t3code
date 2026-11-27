@@ -3,7 +3,7 @@
  *
  * This module exposes the native `BigInt` constructor together with helpers for
  * checking, arithmetic, comparison, range checks, safe parsing and conversions
- * that return `Option`, integer square roots, aggregation, ordering,
+ * that return `Option`, integer square and n-th roots, aggregation, ordering,
  * equivalence, reducers, and combiners.
  *
  * @stability stable
@@ -53,6 +53,7 @@ export const BigInt = globalThis.BigInt
 const bigint0 = BigInt(0)
 const bigint1 = BigInt(1)
 const bigint2 = BigInt(2)
+const MANTISSA_BITS = 53
 
 /**
  * Checks whether a value is a `bigint`.
@@ -696,6 +697,7 @@ export const lcm: {
  * ```
  *
  * @see {@link sqrt} for returning `Option.none` when the input is negative
+ * @see {@link nthRootUnsafe} for roots of any degree
  *
  * @stability stable
  * @category math
@@ -705,14 +707,7 @@ export const sqrtUnsafe = (n: bigint): bigint => {
   if (n < bigint0) {
     throw new RangeError("Cannot take the square root of a negative number")
   }
-  if (n < bigint2) {
-    return n
-  }
-  let x = n / bigint2
-  while (x * x > n) {
-    x = ((n / x) + x) / bigint2
-  }
-  return x
+  return rootFloor(n, 2)
 }
 
 /**
@@ -741,6 +736,7 @@ export const sqrtUnsafe = (n: bigint): bigint => {
  * ```
  *
  * @see {@link sqrtUnsafe} for square root computation that throws on negative input
+ * @see {@link nthRoot} for roots of any degree
  *
  * @stability stable
  * @category math
@@ -748,6 +744,122 @@ export const sqrtUnsafe = (n: bigint): bigint => {
  */
 export const sqrt = (n: bigint): Option.Option<bigint> =>
   isGreaterThanOrEqualTo(n, bigint0) ? Option.some(sqrtUnsafe(n)) : Option.none()
+
+// `self` must be non-negative and `degree` a positive integer. Newton's method on whole numbers, started from a
+// floating-point estimate that is rounded up because a start below the root overshoots it. The first step lands at
+// or above the floor from any positive start, and later steps decrease to the floor (Brent and Zimmermann, Modern
+// Computer Arithmetic, §1.5.2, Algorithm 1.14).
+const rootFloor = (self: bigint, degree: number): bigint => {
+  if (self < bigint2 || degree === 1) {
+    return self
+  }
+  const bits = self.toString(2).length
+  // self < 2 ** bits <= 2 ** degree
+  if (degree >= bits) {
+    return bigint1
+  }
+  const k = BigInt(degree)
+  const k1 = k - bigint1
+  const step = (x: bigint): bigint => (k1 * x + self / x ** k1) / k
+  const shift = Math.max(bits - MANTISSA_BITS, 0)
+  const exponent = (shift + Math.log2(Number(self >> BigInt(shift)))) / degree
+  const scale = Math.max(Math.floor(exponent) - (MANTISSA_BITS - 1), 0)
+  let x = step(BigInt(Math.ceil(2 ** (exponent - scale))) << BigInt(scale))
+  let y = step(x)
+  while (y < x) {
+    x = y
+    y = step(x)
+  }
+  return x
+}
+
+/**
+ * Computes the integer n-th root of a `bigint`, rounding toward zero, returning
+ * `Option.none()` when the root does not exist.
+ *
+ * **Details**
+ *
+ * For a non-negative input, returns the largest `bigint` whose `degree`-th
+ * power is less than or equal to the input. An odd degree also accepts a
+ * negative input and returns the negated root of its absolute value. Returns
+ * `Option.none()` when the degree is even and the input negative.
+ *
+ * **Gotchas**
+ *
+ * The degree must be a positive safe integer. Anything else, including `0`,
+ * `0.5`, `NaN` and `Infinity`, throws a `RangeError` instead of being rounded.
+ *
+ * **Example** (Calculating n-th roots safely)
+ *
+ * ```ts import.meta.vitest
+ * import { BigInt, Option } from "effect"
+ *
+ * BigInt.nthRoot(27n, 3) // => Option.some(3n)
+ * BigInt.nthRoot(30n, 3) // => Option.some(3n)
+ * BigInt.nthRoot(-27n, 3) // => Option.some(-3n)
+ * BigInt.nthRoot(-16n, 4) // => Option.none()
+ * ```
+ *
+ * @see {@link nthRootUnsafe} for throwing when the root does not exist
+ * @see {@link sqrt} for square roots
+ *
+ * @stability unstable
+ * @category math
+ * @since 4.1.5
+ */
+export const nthRoot: {
+  (degree: number): (self: bigint) => Option.Option<bigint>
+  (self: bigint, degree: number): Option.Option<bigint>
+} = dual(2, (self: bigint, degree: number): Option.Option<bigint> => {
+  if (!Number.isSafeInteger(degree) || degree < 1) {
+    throw new RangeError(`Degree must be a positive safe integer, got ${degree}`)
+  }
+  if (self >= bigint0) {
+    return Option.some(rootFloor(self, degree))
+  }
+  return degree % 2 === 0 ? Option.none() : Option.some(-rootFloor(-self, degree))
+})
+
+/**
+ * Computes the integer n-th root of a `bigint`, rounding toward zero.
+ *
+ * **When to use**
+ *
+ * Use when the root is known to exist, because the input is non-negative or
+ * the degree odd.
+ *
+ * **Gotchas**
+ *
+ * Throws a `RangeError` when the degree is even and the input negative, or
+ * when the degree is not a positive safe integer.
+ *
+ * **Example** (Calculating n-th roots unsafely)
+ *
+ * ```ts import.meta.vitest
+ * import { BigInt } from "effect"
+ *
+ * BigInt.nthRootUnsafe(1024n, 10) // => 2n
+ * BigInt.nthRootUnsafe(1023n, 10) // => 1n
+ * ```
+ *
+ * @see {@link nthRoot} for returning `Option.none` when the root does not exist
+ * @see {@link sqrtUnsafe} for square roots
+ *
+ * @stability unstable
+ * @category math
+ * @since 4.1.5
+ */
+export const nthRootUnsafe: {
+  (degree: number): (self: bigint) => bigint
+  (self: bigint, degree: number): bigint
+} = dual(
+  2,
+  (self: bigint, degree: number): bigint =>
+    Option.getOrThrowWith(
+      nthRoot(self, degree),
+      () => new RangeError(`Cannot take an integer root of degree ${degree} of ${self}`)
+    )
+)
 
 /**
  * Takes an `Iterable` of `bigint`s and returns their sum as a single `bigint`. Returns `0n` for an empty iterable.

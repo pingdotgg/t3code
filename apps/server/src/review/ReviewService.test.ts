@@ -22,6 +22,8 @@ function layer(input: {
   readonly worktreesDirectory?: string;
   readonly previousWorktreesDirectories?: ReadonlyArray<string>;
   readonly projectRoots?: ReadonlyArray<string> | "unavailable";
+  /** Tracked by the first project. */
+  readonly trackedFolders?: ReadonlyArray<string>;
   readonly threadWorktrees?: ReadonlyArray<{ worktreePath: string; deleted?: boolean }>;
   readonly gitWorktrees?: ReadonlyArray<string>;
 }) {
@@ -60,6 +62,14 @@ function layer(input: {
                   id: ProjectId.make(`project-${index}`),
                   title: `Project ${index}`,
                   workspaceRoot,
+                  ...(index === 0 && input.trackedFolders !== undefined
+                    ? {
+                        trackedFolders: input.trackedFolders.map((path) => ({
+                          path,
+                          name: path,
+                        })),
+                      }
+                    : {}),
                   defaultModelSelection: null,
                   scripts: [],
                   createdAt: "2026-01-01T00:00:00.000Z",
@@ -183,6 +193,52 @@ describe("ReviewService", () => {
         [projectRoot, "unavailable"],
       ] as const) {
         const error = yield* review(cwd, projectRoots).pipe(Effect.flip);
+        assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("allows a project's tracked folders outside the project folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-project-" });
+      const outside = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-tracked-" });
+      const repository = `${outside}/api`;
+      const nested = `${repository}/src`;
+      const untracked = `${outside}/web`;
+      const linked = `${outside}/api-link`;
+      const missing = `${outside}/gone`;
+      yield* fs.makeDirectory(nested, { recursive: true });
+      yield* fs.makeDirectory(untracked);
+      yield* fs.symlink(repository, linked);
+
+      const review = (
+        cwd: string,
+        trackedFolders: ReadonlyArray<string>,
+        projectRoots: ReadonlyArray<string> = [projectRoot],
+      ) =>
+        Effect.gen(function* () {
+          const service = yield* ReviewService.ReviewService;
+          return yield* service.getDiffPreview({ cwd });
+        }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, projectRoots, trackedFolders })));
+
+      assert.strictEqual((yield* review(repository, [repository])).cwd, repository);
+      assert.strictEqual((yield* review(nested, [repository])).cwd, nested);
+      // Tracked under a symlink's name, reached by the real path, and the reverse.
+      assert.strictEqual((yield* review(repository, [linked])).cwd, repository);
+      assert.strictEqual((yield* review(linked, [repository])).cwd, linked);
+      // A tracked folder that is gone stays known, as a missing project folder does.
+      assert.strictEqual((yield* review(missing, [missing])).cwd, missing);
+      for (const [cwd, trackedFolders, projectRoots] of [
+        [untracked, [repository], [projectRoot]],
+        [outside, [repository], [projectRoot]],
+        [repository, [], [projectRoot]],
+        // A deleted project is no longer listed, and its tracked folders go with it.
+        [repository, [repository], []],
+      ] as const) {
+        const error = yield* review(cwd, trackedFolders, projectRoots).pipe(Effect.flip);
         assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
       }
     }).pipe(Effect.provide(NodeServices.layer)),

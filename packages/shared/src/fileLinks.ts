@@ -74,15 +74,12 @@ export function formatFilePathPosition(position: FilePathPosition): string {
   return `${position.path}:${position.line}${position.column ? `:${position.column}` : ""}`;
 }
 
-function isWindowsPathStyle(value: string): boolean {
-  return isWindowsAbsolutePath(value) || /[A-Za-z]:\\/.test(value);
-}
-
 export function joinPath(base: string, next: string, separator: "/" | "\\"): string {
-  const cleanBase = base.replace(/[\\/]+$/, "");
   if (separator === "\\") {
+    const cleanBase = base.replace(/[\\/]+$/, "");
     return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
   }
+  const cleanBase = base.replace(/\/+$/, "");
   return `${cleanBase}/${next.replace(/^\/+/, "")}`;
 }
 
@@ -110,14 +107,14 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
   const { path } = position;
 
   let resolvedPath = path;
-  if (path.startsWith("~/") || (isWindowsPathStyle(cwd) && path.startsWith("~\\"))) {
+  if (path.startsWith("~/") || (isWindowsAbsolutePath(cwd) && path.startsWith("~\\"))) {
     const home = inferHomeFromCwd(cwd);
     if (home) {
-      const separator: "/" | "\\" = isWindowsPathStyle(home) ? "\\" : "/";
+      const separator: "/" | "\\" = isWindowsAbsolutePath(home) ? "\\" : "/";
       resolvedPath = joinPath(home, path.slice(2), separator);
     }
   } else if (!isAbsolutePath(path)) {
-    const separator: "/" | "\\" = isWindowsPathStyle(cwd) ? "\\" : "/";
+    const separator: "/" | "\\" = isWindowsAbsolutePath(cwd) ? "\\" : "/";
     resolvedPath = joinPath(cwd, path.replace(/^(?:\.\/)+/, ""), separator);
   }
 
@@ -184,13 +181,17 @@ export function fileLinkLabel(
   parentSuffixByPath: ReadonlyMap<string, string>,
 ): string {
   const suffix = parentSuffixByPath.get(file.path.replaceAll("\\", "/"));
-  return [
-    fileBasename(file.path),
-    suffix,
-    file.line
-      ? `L${file.line}${file.endLine ? `–${file.endLine}` : file.column ? `:C${file.column}` : ""}`
-      : undefined,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  return (
+    [
+      fileBasename(file.path),
+      suffix,
+      file.line
+        ? `L${file.line}${file.endLine ? `–${file.endLine}` : file.column ? `:C${file.column}` : ""}`
+        : undefined,
+    ]
+      .filter(Boolean)
+      .join(" · ")
+      // macOS stores many names in NFD; compose them for display only.
+      .normalize("NFC")
+  );
 }

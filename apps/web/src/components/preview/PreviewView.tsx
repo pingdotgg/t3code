@@ -42,6 +42,7 @@ import { readComposerImageBytes } from "../chat/composerAttachmentFiles";
 import { ensureLocalApi } from "~/localApi";
 import { getClientSettings } from "~/hooks/useSettings";
 import {
+  previewNavStatus,
   rememberPreviewUrl,
   updatePreviewServerSnapshot,
   useThreadPreviewState,
@@ -91,7 +92,11 @@ import type { MessageResolver } from "~/i18n/messages";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
-import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
+import {
+  alternatePreviewRuntime,
+  useDesktopLoadsLoopback,
+  useRendersServerTabNatively,
+} from "~/browser/previewRuntime";
 import { ServerBrowserSurface, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
 import { cn } from "~/lib/utils";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
@@ -107,8 +112,8 @@ import {
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -165,7 +170,13 @@ function focusPreviewWebview(runtimeTabId: string) {
 
 function focusPreviewPage(runtimeTabId: string) {
   const active = document.activeElement;
-  if (active && active !== document.body && !active.closest("[data-preview-panel-mode]")) return;
+  if (
+    active &&
+    active !== document.body &&
+    !active.closest("[data-preview-panel-mode], [data-browser-surface-overlay]")
+  ) {
+    return;
+  }
   focusPreviewWebview(runtimeTabId);
 }
 
@@ -205,6 +216,7 @@ export function PreviewView({
   const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? null;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverBrowser = useEnvironmentSupportsServerBrowser(threadRef.environmentId);
+  const desktopLoadsLoopback = useDesktopLoadsLoopback(threadRef.environmentId);
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
 
   usePreviewSession(threadRef);
@@ -246,12 +258,7 @@ export function PreviewView({
   const desktopOverlay =
     tabId && !isServerTab ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
-  // A new Electron tab is Idle until its first URL commits, while the server already has it Loading.
-  const desktopNavStatus =
-    !serverOwnsRendering && desktopOverlay?.navStatus._tag !== "Idle"
-      ? desktopOverlay?.navStatus
-      : undefined;
-  const navStatus = desktopNavStatus ?? snapshot?.navStatus ?? { _tag: "Idle" as const };
+  const navStatus = previewNavStatus(snapshot, desktopOverlay);
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
   const loading = desktopOverlay?.loading ?? navStatus._tag === "Loading";
   const canGoBack = desktopOverlay?.canGoBack ?? snapshot?.canGoBack ?? false;
@@ -463,6 +470,7 @@ export function PreviewView({
     threadRef.environmentId,
     primaryEnvironmentId,
     serverBrowser,
+    desktopLoadsLoopback,
     snapshot,
   );
   const moveLabel =
@@ -984,10 +992,38 @@ export function PreviewView({
     };
   }, [visible]);
 
+  const desktopSlotShown = Boolean(
+    runtimeTabId && snapshot && !isServerTab && !showEmptyState && previewBridge,
+  );
+  const pageOverlays = (
+    <>
+      {runtimeTabId &&
+      desktopOverlay &&
+      !showEmptyState &&
+      !isUnreachable &&
+      !activeRecordingTabIds.has(runtimeTabId) ? (
+        <AgentBrowserCursor
+          tabId={runtimeTabId}
+          zoomFactor={layoutZoomFactor}
+          controller={controller}
+        />
+      ) : null}
+      {find && canFindInPage && find.tabId === runtimeTabId ? (
+        <PreviewFindBar
+          key={find.tabId}
+          tabId={find.tabId}
+          focusRequestId={find.requestId}
+          onClose={closeFind}
+        />
+      ) : null}
+    </>
+  );
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-thread-key={scopedThreadKey(threadRef)}
+      data-preview-view
     >
       {pickActive && runtimeTabId && annotationVoice ? (
         <PreviewAnnotationSpeech
@@ -1032,12 +1068,12 @@ export function PreviewView({
         }
         leadingActions={
           activeProfileId !== browserDefaults.profileId ? (
-            <Tooltip>
-              <TooltipTrigger render={<Badge variant="outline" className="max-w-28 shrink-0" />}>
-                <span className="truncate">{activeProfileName}</span>
-              </TooltipTrigger>
-              <TooltipPopup side="top">{activeProfileName}</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={<Badge variant="outline" className="max-w-28 shrink-0" />}
+              label={activeProfileName}
+            >
+              <span className="truncate">{activeProfileName}</span>
+            </SharedTooltipTrigger>
           ) : null
         }
         trailingActions={
@@ -1128,7 +1164,9 @@ export function PreviewView({
               tabId={runtimeTabId}
               visible={visible && !isUnreachable}
               className="absolute inset-0 h-full w-full"
-            />
+            >
+              {pageOverlays}
+            </BrowserSurfaceSlot>
           ) : (
             <div className="flex h-full items-center justify-center p-8 text-center">
               <p className="max-w-sm text-sm text-muted-foreground">
@@ -1150,25 +1188,7 @@ export function PreviewView({
         {snapshot && desktopOverlay ? (
           <ZoomIndicator zoomFactor={desktopOverlay.zoomFactor} />
         ) : null}
-        {runtimeTabId &&
-        desktopOverlay &&
-        !showEmptyState &&
-        !isUnreachable &&
-        !activeRecordingTabIds.has(runtimeTabId) ? (
-          <AgentBrowserCursor
-            tabId={runtimeTabId}
-            zoomFactor={layoutZoomFactor}
-            controller={controller}
-          />
-        ) : null}
-        {find && canFindInPage && find.tabId === runtimeTabId ? (
-          <PreviewFindBar
-            key={find.tabId}
-            tabId={find.tabId}
-            focusRequestId={find.requestId}
-            onClose={closeFind}
-          />
-        ) : null}
+        {desktopSlotShown ? null : pageOverlays}
         {navStatus._tag === "LoadFailed" && navStatus.download ? (
           <div className="absolute inset-0 z-10 bg-background">
             <ServerTabFileNotShown

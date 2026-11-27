@@ -7,4 +7,5 @@ export const PullRequestGlyph = {
   merged: "arrow.triangle.merge",
   stack: "square.3.layers.3d",
   conflicting: "exclamationmark.triangle",
+  private: { ios: "lock.fill", android: "lock" },
 } as const satisfies Record<string, AppSymbolName>;

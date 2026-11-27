@@ -76,7 +76,7 @@ export const ptBR: Messages = {
     browseSource: "Ver o código",
     ctaTitle: "Seus agentes merecem mais do que um terminal.",
     ctaSub:
-      "O T3 Code é gratuito, open source e rápido. Instale, conecte o provedor que você já paga para usar e deixe seus agentes trabalharem.",
+      "O T3 Code é gratuito, open source e rápido. Instale, conecte o provedor que você já paga para usar e coloque seus agentes para trabalhar.",
     otherPlatforms: "Outras plataformas",
   },
   download: {

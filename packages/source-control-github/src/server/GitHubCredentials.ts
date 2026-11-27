@@ -23,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubClient from "../shared/definition.ts";
+import { makeGhProcess } from "./gitHubCliProcess.ts";
 
 /**
  * Every gh run on the server shares this. A burst of them (a status poll across many checkouts)
@@ -149,7 +150,7 @@ export function environmentToken(
 /** @public */
 export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
-  const process = sourceControlHost.process;
+  const process = yield* makeGhProcess;
   const crypto = yield* Digest.Digest;
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
@@ -173,8 +174,14 @@ export const make = Effect.gen(function* () {
           ...(account === undefined ? [] : ["--user", account]),
         ],
         cwd: workingDirectory,
-        // Never let gh print the token into a debug log.
-        env: { GH_DEBUG: "", GH_PROMPT_DISABLED: "1" },
+        // Never let gh print the token into a debug log. gh answers any host but github.com with
+        // the enterprise variables, which would undo the GH_HOST restriction above.
+        env: {
+          GH_DEBUG: "",
+          GH_PROMPT_DISABLED: "1",
+          GH_ENTERPRISE_TOKEN: "",
+          GITHUB_ENTERPRISE_TOKEN: "",
+        },
         timeoutMs: 10_000,
         concurrency: GH_PROCESS_CONCURRENCY,
       })

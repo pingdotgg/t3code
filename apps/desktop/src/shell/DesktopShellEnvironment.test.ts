@@ -615,7 +615,7 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on macOS", () =>
+  it.effect("hydrates PATH, SSH_AUTH_SOCK, and DO_NOT_TRACK from the login shell on macOS", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
@@ -632,6 +632,7 @@ describe("DesktopShellEnvironment", () => {
             PATH: "/opt/homebrew/bin:/usr/bin:/opt/bin ",
             SSH_AUTH_SOCK: "/tmp/secretive.sock",
             HOMEBREW_PREFIX: "/opt/homebrew",
+            DO_NOT_TRACK: "1",
           });
         },
       });
@@ -641,6 +642,7 @@ describe("DesktopShellEnvironment", () => {
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/opt/bin : /Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
+      assert.equal(env.DO_NOT_TRACK, "1");
       assert.isTrue(prepared);
     }),
   );
@@ -983,11 +985,13 @@ describe("DesktopShellEnvironment", () => {
         USERPROFILE: "C:\\Users\\testuser",
       };
 
+      const scripts: Array<string> = [];
       const prepared = yield* runShellEnvironment({
         env,
         platform: "win32",
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
+          scripts.push(String(command.args.at(-1)));
           const loadProfile = !command.args.includes("-NoProfile");
           return loadProfile
             ? envOutput({
@@ -1021,6 +1025,13 @@ describe("DesktopShellEnvironment", () => {
         env.FNM_MULTISHELL_PATH,
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
+      assert.isNotEmpty(scripts);
+      for (const script of scripts) {
+        assert.include(
+          script,
+          "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+        );
+      }
     }),
   );
 
@@ -1075,6 +1086,29 @@ describe("DesktopShellEnvironment", () => {
       yield* TestClock.adjust("5 seconds");
       yield* Fiber.join(fiber);
       assert.deepEqual([...new Set(commands)], ["pwsh.exe", "powershell.exe"]);
+    }),
+  );
+
+  it.effect("applies saved Windows user telemetry opt-outs missing from the launcher", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        handler: (command) =>
+          command._tag === "StandardCommand" &&
+          String(command.args.at(-1)).includes("T3CODE_TELEMETRY_ENABLED")
+            ? envOutput({
+                PATH: "C:\\Windows\\System32",
+                T3CODE_TELEMETRY_ENABLED: "false",
+                DO_NOT_TRACK: "1",
+              })
+            : envOutput({ PATH: "C:\\Windows\\System32" }),
+      });
+
+      assert.equal(env.T3CODE_TELEMETRY_ENABLED, "false");
+      assert.equal(env.DO_NOT_TRACK, "1");
     }),
   );
 

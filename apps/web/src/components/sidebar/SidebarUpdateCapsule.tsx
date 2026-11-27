@@ -13,7 +13,9 @@ import {
   describeUpdateCapsule,
   formatUpdateElapsed,
   RUN_STATUS_LABELS,
+  resolveRestoredRetry,
   resolveUpdateRunMachineStatus,
+  type UpdateEverythingMachine,
   type UpdateEverythingRun,
   type UpdateRunLocalState,
   type UpdateRunMachineView,
@@ -34,7 +36,10 @@ function useNow(intervalMs: number | null): number {
   return useSyncExternalStore(subscribe, () => Math.floor(Date.now() / step) * step);
 }
 
-function useUpdateRunMachineViews(run: UpdateEverythingRun): ReadonlyArray<UpdateRunMachineView> {
+function useUpdateRunMachineViews(
+  run: UpdateEverythingRun,
+  current: ReadonlyArray<UpdateEverythingMachine>,
+): ReadonlyArray<UpdateRunMachineView> {
   const updateStates = useAtomValue(
     environmentUpdateStatesAtom(
       environmentIdsKey(run.machines.map(({ environmentId }) => environmentId)),
@@ -43,7 +48,14 @@ function useUpdateRunMachineViews(run: UpdateEverythingRun): ReadonlyArray<Updat
   return run.machines.map((machine, index) => ({
     machine,
     status: resolveUpdateRunMachineStatus(machine, run.phase, updateStates[index]!),
+    restoredRetry: resolveRestoredRetry(machine, current),
   }));
+}
+
+function restartSecondsLeft(run: UpdateEverythingRun, now: number): number | null {
+  return run.phase === "countdown" && run.restartAt !== null
+    ? Math.max(0, Math.ceil((run.restartAt - now) / 1000))
+    : null;
 }
 
 function localStatusLabel(
@@ -52,13 +64,8 @@ function localStatusLabel(
   now: number,
   resolve: MessageResolver,
 ) {
-  if (run.phase === "countdown" && run.restartAt !== null) {
-    return resolve(
-      msg("restarts in {seconds}s", {
-        seconds: Math.max(0, Math.ceil((run.restartAt - now) / 1000)),
-      }),
-    );
-  }
+  const seconds = restartSecondsLeft(run, now);
+  if (seconds !== null) return resolve(msg("restarts in {seconds}s", { seconds }));
   if (run.phase === "installing") return resolve(msg("restarting"));
   if (local?.status === "downloading") {
     return local.percent === null
@@ -70,16 +77,19 @@ function localStatusLabel(
 
 export function SidebarUpdateCapsule({
   run,
+  current,
   local,
   icon,
   onRestart,
 }: {
   readonly run: UpdateEverythingRun;
+  /** Every server as it is now, to rebuild the retry of a row restored after a relaunch. */
+  readonly current: ReadonlyArray<UpdateEverythingMachine>;
   readonly local: UpdateRunLocalState;
   readonly icon: ReactNode;
   readonly onRestart?: () => Promise<void>;
 }) {
-  const machines = useUpdateRunMachineViews(run);
+  const machines = useUpdateRunMachineViews(run, current);
   const hasActiveMachine = machines.some(
     ({ status }) => status !== "done" && status !== "failed" && status !== "waiting",
   );
@@ -90,20 +100,36 @@ export function SidebarUpdateCapsule({
   const updateServer = useServerUpdate();
   const failed = machines.some(({ status }) => status === "failed");
   const settled = !hasActiveMachine && run.localVersion === null;
+  const restartSeconds = restartSecondsLeft(run, now);
+  const expandedControlClassName =
+    restartSeconds === null
+      ? "@min-[5rem]/sidebar-update:block"
+      : "@min-[12rem]/sidebar-update:block";
 
   const actionLabel =
     view.action === "later" ? gt("Later") : view.action === "retry" ? gt("Retry") : gt("Dismiss");
   const runAction = () => {
     if (view.action === "later") postponeUpdateRestart();
-    else if (view.action === "retry") retryFailedUpdateRunServers(updateServer);
-    else dismissSettledUpdateRunMachines();
+    else if (view.action === "retry") {
+      retryFailedUpdateRunServers(
+        updateServer,
+        new Map(
+          machines.flatMap(({ machine, restoredRetry }) =>
+            restoredRetry === null ? [] : [[machine.environmentId, restoredRetry] as const],
+          ),
+        ),
+      );
+    } else dismissSettledUpdateRunMachines();
   };
 
   return (
     <Popover>
       <div
         className={cn(
-          "relative flex h-8 flex-1 items-center rounded-full bg-sidebar-control-surface text-sidebar-foreground",
+          "relative ml-auto flex h-8 w-8 shrink-0 items-center justify-end rounded-full bg-sidebar-control-surface text-sidebar-foreground transition-[width] duration-200 ease-out motion-reduce:transition-none",
+          restartSeconds === null
+            ? "@min-[5rem]/sidebar-update:w-full"
+            : "@min-[12rem]/sidebar-update:w-full",
           view.tone === "slow" && "ring-1 ring-warning/40 ring-inset",
           view.tone === "failed" && "ring-1 ring-destructive/40 ring-inset",
         )}
@@ -119,9 +145,12 @@ export function SidebarUpdateCapsule({
             />
           }
         />
-        {/* w-0 keeps the label out of the capsule's minimum width, so a shared footer row
-            can squeeze the label but never push the action past the sidebar edge. */}
-        <span className="pointer-events-none relative w-0 min-w-0 flex-1 truncate pl-3 text-xs">
+        <span
+          className={cn(
+            "pointer-events-none relative hidden min-w-0 flex-1 truncate pl-3 text-xs transition-opacity duration-200 ease-out starting:opacity-0 motion-reduce:transition-none",
+            expandedControlClassName,
+          )}
+        >
           <span className={cn(view.tone === "failed" && "text-destructive")}>{view.label}</span>
           {view.slow ? (
             <span className="text-warning tabular-nums"> {view.slow.elapsed}</span>
@@ -130,16 +159,28 @@ export function SidebarUpdateCapsule({
         {view.action !== null ? (
           <button
             type="button"
-            className="relative shrink-0 cursor-pointer pr-3 pl-1.5 text-xs underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current"
+            className={cn(
+              "relative hidden shrink-0 cursor-pointer pr-3 pl-1.5 text-xs underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current transition-opacity duration-200 ease-out starting:opacity-0 motion-reduce:transition-none",
+              expandedControlClassName,
+            )}
             onClick={runAction}
           >
             {actionLabel}
           </button>
-        ) : (
-          <span className="pointer-events-none relative grid size-8 shrink-0 place-items-center">
-            {icon}
-          </span>
-        )}
+        ) : null}
+        <span
+          className={cn(
+            "pointer-events-none relative grid size-8 shrink-0 place-items-center",
+            view.action !== null &&
+              (restartSeconds === null
+                ? "@min-[5rem]/sidebar-update:hidden"
+                : "@min-[12rem]/sidebar-update:hidden"),
+            restartSeconds !== null &&
+              "rounded-full text-xs font-medium tabular-nums ring-1 ring-current/22 ring-inset",
+          )}
+        >
+          {restartSeconds !== null ? m(msg("{seconds}s", { seconds: restartSeconds })) : icon}
+        </span>
       </div>
       <PopoverPopup side="top" align="end" padding="compact" width="sm">
         <div className="flex flex-col gap-1 text-xs">
@@ -183,16 +224,16 @@ export function SidebarUpdateCapsule({
               ) : null}
             </div>
           ))}
-          {settled && failed ? (
+          {view.action !== null ? (
             <div className="mt-1 flex justify-end gap-1">
-              {view.action === "retry" ? (
-                <Button size="xs" variant="outline" onClick={runAction}>
-                  <T>Retry</T>
+              <Button size="xs" variant="outline" onClick={runAction}>
+                {actionLabel}
+              </Button>
+              {settled && failed && view.action !== "dismiss" ? (
+                <Button size="xs" variant="ghost" onClick={dismissSettledUpdateRunMachines}>
+                  <T>Dismiss</T>
                 </Button>
               ) : null}
-              <Button size="xs" variant="ghost" onClick={dismissSettledUpdateRunMachines}>
-                <T>Dismiss</T>
-              </Button>
             </div>
           ) : null}
         </div>

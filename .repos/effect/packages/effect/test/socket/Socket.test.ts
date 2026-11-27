@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
 import * as Latch from "effect/Latch"
+import * as Scope from "effect/Scope"
 import * as Socket from "effect/socket/Socket"
 import * as Stream from "effect/Stream"
 
@@ -14,18 +15,11 @@ class TestWebSocket implements Socket.WebSocketLike {
     Set<{ readonly listener: (event: Socket.WebSocketEvent) => void; readonly once: boolean }>
   >()
   readyState = 0
-  pauseCount = 0
-  resumeCount = 0
+  readonly closes: Array<ReadonlyArray<unknown>> = []
+  // Like a global WebSocket, which only accepts 1000 and 3000-4999.
+  rejectsCloseCode = false
 
   constructor(readonly openListenerAttached: Latch.Latch) {}
-
-  pause(): void {
-    this.pauseCount++
-  }
-
-  resume(): void {
-    this.resumeCount++
-  }
 
   addEventListener(
     type: EventType,
@@ -59,8 +53,24 @@ class TestWebSocket implements Socket.WebSocketLike {
     return this.listeners.get(type)?.size ?? 0
   }
 
-  close(): void {}
+  close(...args: ReadonlyArray<unknown>): void {
+    if (args.length > 0 && this.rejectsCloseCode) throw new Error("InvalidAccessError")
+    this.closes.push(args)
+  }
   send(): void {}
+}
+
+class PausableTestWebSocket extends TestWebSocket {
+  pauseCount = 0
+  resumeCount = 0
+
+  pause(): void {
+    this.pauseCount++
+  }
+
+  resume(): void {
+    this.resumeCount++
+  }
 }
 
 const stubSocket = (pull: Socket.Reader["pull"]) => {
@@ -147,6 +157,22 @@ describe("Socket", () => {
   })
 
   describe("fromWebSocket", () => {
+    it.effect("fails writes on a terminal non-reconnectable socket", () =>
+      Effect.gen(function*() {
+        const ws = new TestWebSocket(Latch.makeUnsafe(false))
+        ws.readyState = 1
+        const scope = yield* Scope.make()
+        const socket = yield* Socket.fromWebSocket(Scope.close(scope, Exit.void).pipe(Effect.as(ws)), {
+          disableReconnects: true
+        })
+        const writer = yield* socket.writer
+
+        const write = yield* Effect.flip(writer.write("later")).pipe(Effect.forkChild({ startImmediately: true }))
+        const error = yield* Effect.flip(Scope.provide(socket.reader, scope))
+        assert.isTrue(Socket.isSocketError(error))
+        assert.strictEqual(yield* Fiber.join(write), error)
+      }))
+
     it.effect("removes the open listener when the socket closes while connecting", () =>
       Effect.gen(function*() {
         const openListenerAttached = Latch.makeUnsafe(false)
@@ -166,7 +192,7 @@ describe("Socket", () => {
 
     it.effect("pauses at the highWaterMark and resumes after draining", () =>
       Effect.gen(function*() {
-        const ws = new TestWebSocket(Latch.makeUnsafe(false))
+        const ws = new PausableTestWebSocket(Latch.makeUnsafe(false))
         ws.readyState = 1
         const socket = yield* Socket.fromWebSocket(Effect.succeed(ws), { highWaterMark: 10 })
         const { pull } = yield* socket.reader
@@ -186,7 +212,7 @@ describe("Socket", () => {
 
     it.effect("counts text frames toward the highWaterMark by UTF-8 byte length", () =>
       Effect.gen(function*() {
-        const ws = new TestWebSocket(Latch.makeUnsafe(false))
+        const ws = new PausableTestWebSocket(Latch.makeUnsafe(false))
         ws.readyState = 1
         const socket = yield* Socket.fromWebSocket(Effect.succeed(ws), { highWaterMark: 3 })
         const { pull } = yield* socket.reader
@@ -199,7 +225,7 @@ describe("Socket", () => {
 
     it.effect("uses the default highWaterMark for pausable sockets", () =>
       Effect.gen(function*() {
-        const ws = new TestWebSocket(Latch.makeUnsafe(false))
+        const ws = new PausableTestWebSocket(Latch.makeUnsafe(false))
         ws.readyState = 1
         const socket = yield* Socket.fromWebSocket(Effect.succeed(ws))
         const { pull } = yield* socket.reader
@@ -210,6 +236,62 @@ describe("Socket", () => {
         assert.deepStrictEqual(yield* pull, [payload])
         assert.strictEqual(ws.resumeCount, 1)
       }))
+
+    it.effect("counts empty frames toward the highWaterMark and never fails a pausable socket", () =>
+      Effect.gen(function*() {
+        const ws = new PausableTestWebSocket(Latch.makeUnsafe(false))
+        ws.readyState = 1
+        const socket = yield* Socket.fromWebSocket(Effect.succeed(ws), { highWaterMark: 2 })
+        const { pull } = yield* socket.reader
+
+        ws.dispatch("message", { data: "" })
+        ws.dispatch("message", { data: "" })
+        assert.strictEqual(ws.pauseCount, 1)
+        // frames already in flight when the transport paused
+        ws.dispatch("message", { data: "abc" })
+
+        assert.deepStrictEqual(yield* pull, ["", "", "abc"])
+        assert.strictEqual(ws.resumeCount, 1)
+        assert.deepStrictEqual(ws.closes, [])
+      }))
+
+    for (
+      const { closes, frames, highWaterMark, name, rejectsCloseCode, retained } of [
+        { name: "byte frames", highWaterMark: 2, frames: ["a", "b", "c", "d"], retained: 3 },
+        { name: "empty frames", highWaterMark: 2, frames: ["", "", "", ""], retained: 3 },
+        // "€" is 3 bytes, so it is the frame that takes the queue above the mark
+        { name: "a multibyte frame crossing the mark", highWaterMark: 3, frames: ["a", "€", "b", "c"], retained: 2 },
+        { name: "a single frame larger than the mark", highWaterMark: 2, frames: ["abc", "d"], retained: 1 },
+        {
+          name: "a transport rejecting close code 1008",
+          highWaterMark: 2,
+          frames: ["a", "b", "c", "d"],
+          retained: 3,
+          rejectsCloseCode: true,
+          closes: [[]]
+        }
+      ]
+    ) {
+      it.effect(`fails a socket without pause once the highWaterMark is exceeded: ${name}`, () =>
+        Effect.gen(function*() {
+          const ws = new TestWebSocket(Latch.makeUnsafe(false))
+          ws.readyState = 1
+          ws.rejectsCloseCode = rejectsCloseCode === true
+          const socket = yield* Socket.fromWebSocket(Effect.succeed(ws), { highWaterMark })
+          const { pull } = yield* socket.reader
+
+          for (const data of frames) ws.dispatch("message", { data })
+
+          assert.deepStrictEqual([...(yield* pull)], frames.slice(0, retained))
+          const error = yield* Effect.flip(pull)
+          assert(error.reason._tag === "SocketReadError")
+          assert.strictEqual(
+            String(error.reason.cause),
+            `Error: Socket highWaterMark of ${highWaterMark} bytes exceeded`
+          )
+          assert.deepStrictEqual(ws.closes, closes ?? [[1008, "Inbound message buffer limit exceeded"]])
+        }))
+    }
   })
 
   describe("toChannel", () => {

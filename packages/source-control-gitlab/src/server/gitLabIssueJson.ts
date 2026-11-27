@@ -250,6 +250,41 @@ function toSystemEvent(
   return null;
 }
 
+// The path class excludes the sigil, so matching is linear on any input.
+const MENTION = /^(?:merge request ([\w.\-/]*)!|issue ([\w.\-/]*)#)([1-9]\d*)$/;
+
+/**
+ * Where a "mentioned in merge request !12" note came from, addressed from the issue's own web URL
+ * so a self-managed host under a subpath resolves. A commit, epic or snippet mention gets none.
+ */
+export function withMentionReference(
+  event: IssueEvent,
+  issueUrl: string,
+  scope: string,
+): IssueEvent {
+  const match = event.kind === "referenced" ? MENTION.exec(event.detail ?? "") : null;
+  const projectUrl = issueUrl.split("/-/")[0]!;
+  if (match === null || !projectUrl.toLowerCase().endsWith(`/${scope.toLowerCase()}`)) {
+    return event;
+  }
+  const [, mergeRequestPath, issuePath, digits] = match;
+  const isMergeRequest = mergeRequestPath !== undefined;
+  const path = mergeRequestPath ?? issuePath ?? "";
+  // A project in the same namespace is named by its path alone.
+  const repository =
+    path === "" ? scope : path.includes("/") ? path : `${scope.replace(/[^/]*$/, "")}${path}`;
+  const base = projectUrl.slice(0, projectUrl.length - scope.length);
+  return {
+    ...event,
+    reference: {
+      repository,
+      number: Number(digits),
+      kind: isMergeRequest ? "pull-request" : "issue",
+      url: `${base}${repository}/-/${isMergeRequest ? "merge_requests" : "issues"}/${digits}`,
+    },
+  };
+}
+
 interface GitLabIssueNotes {
   readonly comments: ReadonlyArray<IssueComment>;
   readonly events: ReadonlyArray<IssueEvent>;
