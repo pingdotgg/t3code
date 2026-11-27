@@ -1267,8 +1267,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const isShim =
         decoder.decode(contents).replaceAll("\r\n", "\n").trim() === SHIM_FOR_SCRIPT_ABOVE;
       const runnerFile = path.join(hooksDir, "h");
-      // As the runner names it: the path Git gave less its last part, `..` and all.
-      const scriptFile = path.resolve(cwd, path.dirname(answer), name);
+      const scriptFile = path.join(path.dirname(hooksDir), name);
       const runner = isShim ? yield* read(runnerFile, false) : null;
       const script = isShim ? yield* read(scriptFile, false) : null;
       // Git starts the shim and nothing comes of it: not a hook to ask a person about.

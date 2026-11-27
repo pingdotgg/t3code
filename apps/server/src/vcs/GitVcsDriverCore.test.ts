@@ -11741,16 +11741,17 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           NodePath.join(hooks, "pre-push"),
         ]);
 
-        // The runner drops the path's last part as written: here the script is in `_/up`.
-        NodeFS.rmSync(NodePath.join(hooks, "pre-push"));
+        // Through `_/up/..` Git starts `_/pre-push`, whose runner runs `.vite-hooks/pre-push`:
+        // editing that script, not `_/up/pre-push`, is what changes the approved push.
         NodeFS.mkdirSync(NodePath.join(hooks, "_", "up"));
         NodeFS.writeFileSync(NodePath.join(hooks, "_", "up", "pre-push"), "vp check\n");
         yield* git(repo.cwd, ["config", "core.hooksPath", ".vite-hooks/_/up/.."]);
-        assert.deepEqual((yield* repo.driver.pushHooks(repo.cwd))?.files, [
-          NodePath.join(hooks, "_", "pre-push"),
-          runner,
-          NodePath.join(hooks, "_", "up", "pre-push"),
-        ]);
+        yield* git(repo.cwd, ["commit", "--allow-empty", "--no-verify", "-m", "More"]);
+        const approved = yield* repo.driver.pushHooks(repo.cwd);
+        NodeFS.writeFileSync(NodePath.join(hooks, "pre-push"), `echo edited >> '${repo.ran}'\n`);
+        const refused = yield* repo.push(approved!.digest).pipe(Effect.flip);
+        assert.instanceOf(refused.cause, GitVcsDriver.PushHooksUnapprovedError);
+        assert.equal(repo.hooksRun(), "");
       }),
     );
 
