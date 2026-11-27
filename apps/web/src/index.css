@@ -1651,6 +1651,11 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
     color-mix(in srgb, var(--input) var(--appearance-contrast-base), transparent),
     var(--foreground) var(--appearance-contrast-border-boost)
   );
+  --contrast-accent: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--accent) var(--appearance-contrast-base), transparent),
+    var(--foreground) var(--appearance-contrast-border-boost)
+  );
   --contrast-border: color-mix(
     in srgb,
     color-mix(in srgb, var(--border) var(--appearance-contrast-base), transparent),
@@ -2268,6 +2273,20 @@ code {
   }
 }
 
+/* Markdown fences hold sentences, not code: each line takes the direction of its
+   own words. Coding-font ligatures assume left-to-right and would overprint RTL letters.
+   Text and unlabeled fences stay LTR: they often hold trees and tables, whose lines must align. */
+.chat-markdown
+  .chat-markdown-codeblock:is(
+    [data-language="md" i],
+    [data-language="markdown" i],
+    [data-language="mdx" i]
+  )
+  pre {
+  unicode-bidi: plaintext;
+  font-variant-ligatures: none;
+}
+
 /* Sent messages color prose with the message foreground, which is not chosen
    for the code surface, so their plain-text fences keep the global foreground. */
 .chat-markdown.user-message-markdown
@@ -2282,9 +2301,10 @@ code {
 
 /* Paragraphs and code blocks arrive in chunks while a response streams. Fade
    each new block in so the chunk does not pop. @starting-style only applies
-   when an element is first inserted, and the rule is gated on data-streaming,
-   so opening a finished thread never replays the fade. Opacity only, one
-   shot, no layout change. */
+   when an element is first inserted, and ChatMarkdown leaves data-streaming off
+   a reply it already showed until new text arrives, so remounting it (thread
+   switch, virtualized scroll) never replays the fade. Opacity only, one shot,
+   no layout change. */
 @media (prefers-reduced-motion: no-preference) {
   .chat-markdown[data-streaming] > *,
   .chat-markdown[data-streaming] .chat-markdown-shiki,
@@ -2418,14 +2438,22 @@ code {
   color: var(--code-foreground);
 }
 
-/* Pierre's find panel is a sibling of the diff containers, so it misses their theme tokens.
-   The top inset clears the 32px sticky file header and its line counts. */
+/* Pierre's find panel is a sibling of the diff containers, so it misses their theme tokens. */
 .diff-render-surface > [data-search-panel] {
   --diffs-search-panel-bg: var(--popover);
   --diffs-search-panel-fg: var(--popover-foreground);
   --diffs-search-panel-modified: var(--primary);
   --diffs-header-font-fallback: var(--font-sans);
+}
+
+/* The top inset clears the 32px sticky file header and its line counts. */
+.diff-render-surface:not(.file-preview-virtualizer) > [data-search-panel] {
   --diffs-search-panel-inset-top: 40px;
+}
+
+/* A headerless file preview stays on the code surface, as the editable file view does. */
+.diff-render-surface.file-preview-virtualizer {
+  --code-background: inherit;
 }
 
 /* Pierre's file renderer owns its own surface tokens. Keep the root of a file

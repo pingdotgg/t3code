@@ -502,6 +502,7 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
     readonly userId: string;
     readonly environmentId: string;
     readonly managedEndpointNamespace?: string | undefined;
+    readonly forceDisconnect?: boolean;
   }) {
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
@@ -541,16 +542,22 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
       );
     }
     // Deprovision after revocation commits; retry even if already revoked to finish failed Cloudflare cleanup.
+    const forceDisconnect = input.forceDisconnect === true;
     const deprovisioned = yield* managedEndpointProvider.deprovision({
       userId: input.userId,
       environmentId: input.environmentId,
       target: deprovisionTarget,
+      forceDisconnect,
     });
     if (!deprovisioned) {
       const key = { userId: input.userId, environmentId: input.environmentId };
       const retryTarget = yield* managedEndpointProvider.prepareDeprovision(key);
       if (retryTarget !== null && (yield* links.getForUser(key)) === null) {
-        yield* managedEndpointProvider.deprovision({ ...key, target: retryTarget });
+        yield* managedEndpointProvider.deprovision({
+          ...key,
+          target: retryTarget,
+          forceDisconnect,
+        });
       }
     }
     return unlinked;

@@ -34,11 +34,26 @@ import {
   deriveMessagesTimelineRowsWithState,
   isTimelineMinimapTurnVisible,
   resolveAssistantMessageCopyState,
+  resolveTimelineMinimapHitStrip,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
   workEntryReadOutput,
 } from "./MessagesTimeline.logic";
 import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
+
+describe("resolveTimelineMinimapHitStrip", () => {
+  it.each([
+    { gutter: 256, left: 32, width: 40 },
+    { gutter: 48, left: 32, width: 16 },
+    { gutter: 32, left: 0, width: 8 },
+    { gutter: 24, left: 0, width: 8 },
+    { gutter: 6, left: 0, width: 6 },
+    { gutter: 0, left: 0, width: 0 },
+    { gutter: -4, left: 0, width: 0 },
+  ])("keeps the minimap inside a $gutter px gutter", ({ gutter, left, width }) => {
+    expect(resolveTimelineMinimapHitStrip(gutter)).toEqual({ left, width });
+  });
+});
 
 describe("resolveAssistantMessageCopyState", () => {
   it("copies the rendered representation of Codex directives", () => {
@@ -2442,7 +2457,9 @@ describe("deriveMessagesTimelineRows", () => {
         supportsConversationRollback: false,
       });
       return rows.flatMap((row, index) =>
-        row.kind === "viewed-images" ? [{ after: rows[index - 1]?.kind, paths: row.paths }] : [],
+        row.kind === "viewed-images"
+          ? [{ after: rows[index - 1]?.kind, paths: row.images.map(({ path }) => path) }]
+          : [],
       );
     };
     const paths = ["/repo/docs/sidebar.png", "/repo/docs/topbar.png"];
@@ -5243,4 +5260,43 @@ describe("workEntryReadOutput", () => {
       ),
     ).toBe("/workspace/t3code/src/app.ts\n~/.claude/CLAUDE.md\n~/.gitconfig");
   });
+});
+
+it("updates cached rows whose spacing or setup handoff changed without new content", () => {
+  const working: MessagesTimelineRow = {
+    kind: "working",
+    id: "working",
+    createdAt: "2026-01-01T00:00:00Z",
+    continuesWorkLog: true,
+  };
+  const snapshot: WorktreeSetupSnapshot = {
+    threadId: ThreadId.make("thread-setup"),
+    phase: "failed",
+    startedAt: "2026-01-01T00:00:00Z",
+    endedAt: "2026-01-01T00:01:00Z",
+    branch: "feature",
+    baseRef: "main",
+    worktreePath: null,
+    setupScript: null,
+    stages: [],
+    error: null,
+    sequence: 3,
+  };
+  const setup: MessagesTimelineRow = {
+    kind: "worktree-setup",
+    id: "setup",
+    createdAt: snapshot.startedAt,
+    snapshot,
+    embedded: false,
+  };
+  const cached = computeStableMessagesTimelineRows([setup, working], {
+    result: [],
+    byId: new Map(),
+  });
+  const { continuesWorkLog: _continued, ...settledWorking } = working;
+  const next = computeStableMessagesTimelineRows(
+    [{ ...setup, embedded: true }, settledWorking],
+    cached,
+  );
+  expect(next.result).toEqual([{ ...setup, embedded: true }, settledWorking]);
 });

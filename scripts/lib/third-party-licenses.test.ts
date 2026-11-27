@@ -313,6 +313,12 @@ describe("third-party license generation", () => {
       recursive: true,
     });
     await NodeFSP.mkdir(NodePath.join(fixture.dependencyRoot, "lib"), { recursive: true });
+    await NodeFSP.mkdir(NodePath.join(fixture.dependencyRoot, "LICENSES"));
+    await NodeFSP.writeFile(
+      NodePath.join(fixture.dependencyRoot, "LICENSES", "OFL-Carlito.txt"),
+      "Font license\n",
+      "utf8",
+    );
     await NodeFSP.writeFile(
       NodePath.join(fixture.dependencyRoot, "dist", "third-party", "NOTICE.txt"),
       "Nested notice\n",
@@ -330,7 +336,11 @@ describe("third-party license generation", () => {
     });
 
     expect(manifest.entries.find((entry) => entry.name === "demo-dependency")?.noticeText).toBe(
-      "dist/third-party/NOTICE.txt\n\nNested notice\n\n---\n\nLICENSE\n\nDemo MIT license text",
+      [
+        "dist/third-party/NOTICE.txt\n\nNested notice",
+        "LICENSE\n\nDemo MIT license text",
+        "LICENSES/OFL-Carlito.txt\n\nFont license",
+      ].join("\n\n---\n\n"),
     );
   });
 

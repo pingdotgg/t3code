@@ -159,6 +159,8 @@ const make = Effect.gen(function* () {
           userId,
           environmentId,
           managedEndpointNamespace: config.managedEndpointNamespace,
+          // The account is gone, so its hosts' connectors are dropped rather than waited out.
+          forceDisconnect: true,
         }).pipe(Effect.provideContext(unlinkContext)),
       { discard: true },
     ).pipe(Effect.mapError(fail("deprovision")));
@@ -268,14 +270,16 @@ const make = Effect.gen(function* () {
     const settledBefore = DateTime.formatIso(
       DateTime.subtractDuration(yield* DateTime.now, DELETION_SETTLE),
     );
-    const pending = yield* db
-      .select()
-      .from(relayAccountDeletions)
-      .where(isNull(relayAccountDeletions.completedAt))
-      // Fewest failures first, so deletions that keep failing cannot starve newer ones.
-      .orderBy(asc(relayAccountDeletions.attempts), asc(relayAccountDeletions.requestedAt))
-      .limit(PENDING_BATCH_SIZE)
-      .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
+    const pending = yield* (
+      db
+        .select()
+        .from(relayAccountDeletions)
+        .where(isNull(relayAccountDeletions.completedAt))
+        // Fewest failures first, so deletions that keep failing cannot starve newer ones.
+        .orderBy(asc(relayAccountDeletions.attempts), asc(relayAccountDeletions.requestedAt))
+        .limit(PENDING_BATCH_SIZE)
+        .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })))
+    );
     let completed = 0;
     let failed = 0;
     for (const row of pending) {

@@ -35,7 +35,10 @@ side lists and revokes it in Sharing & access like any other session, and owns i
   scheduled tasks, or further links, and skips project setup scripts and worktree layout commands
   (in a project that declares a layout, a worktree launch or handoff for such a thread fails;
   restoring a missing folder brings back plain checkouts). Full-access links are not fenced because
-  their agents already run as the receiving OS user.
+  their agents already run as the receiving OS user. Being unfenced only answers who asked: a
+  layout command still runs only with a person's approval of its text, and for an agent only from
+  a thread in Full access, both checked in
+  [`TaskFolders`](../../apps/server/src/workspace/TaskFolders.ts) at every run.
 - **Namespace idempotency keys.** All callers on the linking side share one session on the receiving
   side, so idempotency keys must be hashed with the caller's namespace before forwarding.
 - **Clients read linked threads as standard thread streams.**

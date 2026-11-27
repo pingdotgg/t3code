@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { commitNumberFieldOnEnter } from "./commitNumberFieldOnEnter";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -67,17 +68,7 @@ export function IntervalSecondsField({
     >
       <NumberFieldGroup>
         <NumberFieldDecrement aria-label={labels.decrease} />
-        <NumberFieldInput
-          aria-label={labels.input}
-          // Base UI commits on blur but not on Enter; refocus so keyboard users stay put.
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229)
-              return;
-            const input = event.currentTarget;
-            input.blur();
-            input.focus();
-          }}
-        />
+        <NumberFieldInput aria-label={labels.input} onKeyDown={commitNumberFieldOnEnter} />
         <NumberFieldIncrement aria-label={labels.increase} />
       </NumberFieldGroup>
     </NumberField>

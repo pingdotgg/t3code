@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { FileFinder } from "@ff-labs/fff-node";
 import { it, afterEach, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -743,7 +744,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 
         for (let run = 0; run < 3; run++) {
           yield* TestClock.adjust("6 minutes");
-          yield* workspaceEntries.refresh(cwd);
+          yield* workspaceEntries.refresh(cwd, "passive");
+          yield* workspaceEntries.refresh(cwd, "passive");
         }
 
         expect({ rescans, destroyed }).toEqual({ rescans: 2, destroyed: 1 });
@@ -1003,6 +1005,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-refresh-" });
         yield* writeTextFile(cwd, "src/notes.ts", "const needle = 1;\n");
         let scansOutlastWait = false;
+        const waiting = Promise.withResolvers<void>();
+        const finishWait = Promise.withResolvers<void>();
         let finders = 0;
         let rescans = 0;
         const createFinder = FileFinder.create.bind(FileFinder);
@@ -1024,10 +1028,25 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
               return scanFilesAsync();
             };
             const waitForIndexReady = finder.waitForIndexReady.bind(finder);
-            finder.waitForIndexReady = (timeoutMs) =>
+            finder.waitForIndexReady = async (timeoutMs) => {
+              if (!scansOutlastWait) return waitForIndexReady(timeoutMs);
+              waiting.resolve();
+              await finishWait.promise;
+              return { ok: true, value: false };
+            };
+            const getScanProgressAsync = finder.getScanProgressAsync.bind(finder);
+            finder.getScanProgressAsync = () =>
               scansOutlastWait
-                ? Promise.resolve({ ok: true, value: false })
-                : waitForIndexReady(timeoutMs);
+                ? Promise.resolve({
+                    ok: true,
+                    value: {
+                      isScanning: true,
+                      scannedFilesCount: 0,
+                      isWatcherReady: false,
+                      isWarmupComplete: false,
+                    },
+                  })
+                : getScanProgressAsync();
           }
           return created;
         });
@@ -1043,13 +1062,20 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* searchNeedle;
 
         scansOutlastWait = true;
-        yield* workspaceEntries.refresh(cwd);
+        const refresh = yield* workspaceEntries.refresh(cwd).pipe(Effect.forkChild);
+        yield* Effect.promise(() => waiting.promise);
+        yield* workspaceEntries.refresh(cwd, "passive");
+        finishWait.resolve();
+        yield* Fiber.join(refresh);
+        yield* TestClock.adjust("2 minutes");
+        yield* workspaceEntries.refresh(cwd, "passive");
+        scansOutlastWait = false;
         const result = yield* searchNeedle;
 
         expect(result.matches.map((match) => match.path)).toEqual(["src/notes.ts"]);
         // The second search ran on the rescanned live finder, not a rebuild.
         expect({ finders, rescans }).toEqual({ finders: 1, rescans: 1 });
-      }),
+      }).pipe(Effect.provide(TestClock.layer())),
     );
 
     it.effect("serves content search once a first scan that outlasted the wait finishes", () =>
