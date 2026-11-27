@@ -20,7 +20,7 @@ New to Hyakki? Start with the **[User Guide & Index](./user/README.md)** for how
 
 ### Remote, security & operations
 
-- [Remote access](./user/remote-access.md) · [Hyakki Connect troubleshooting](./user/t3-connect-troubleshooting.md) · [Mobile notifications](./user/mobile-notifications.md) · [Guest links](./user/guest-links.md)
+- [Remote access](./user/remote-access.md) · [Mobile notifications](./user/mobile-notifications.md) · [Guest links](./user/guest-links.md)
 - [Outside agents (MCP)](./user/outside-agents.md) · [Secrets](./user/secrets.md) ([1Password service account](./user/secrets-1password-service-account.md) · [1Password Connect](./user/secrets-1password-connect.md))
 - [Background service](./user/background-service.md) · [Updating Hyakki](./user/updating.md) · [Usage and limits](./user/usage.md) · [Maintenance & diagnostics](./user/diagnostics.md)
 - [CLI reference (`t3`)](./user/cli.md) · [Usage data](./user/telemetry.md) · [Managed policy](./user/managed-policy.md) · [Triage an issue](./user/triage.md) · [V1 migration](./user/thread-migration.md) · [Portable handoffs](./user/portable-handoffs.md) · [Question attachments](./user/question-attachments.md) · [Open source licenses](./user/open-source-licenses.md)
@@ -49,7 +49,6 @@ anything.
 - [03 · Providers](./internals/03_providers.md)
 - [04 · Environment auth](./internals/04_environment-auth.md)
 - [05 · Remote environments](./internals/05_remote.md)
-- [06 · Hyakki Connect](./internals/06_t3-connect.md)
 - [07 · Server updates](./internals/07_server-updates.md)
 - [08 · No product analytics](./internals/08_product-analytics.md)
 - [09 · Connection runtime](./internals/09_connection-runtime.md)
@@ -66,7 +65,5 @@ anything.
 
 - [00 · Development and local builds](./operations/00_development.md)
 - [01 · Dev container](./operations/01_devcontainer.md)
-- [02 · Hyakki Connect setup](./operations/02_connect-setup.md)
 - [03 · Release](./operations/03_release.md)
 - [04 · Observability](./operations/04_observability.md)
-- [05 · Relay observability](./operations/05_relay-observability.md)

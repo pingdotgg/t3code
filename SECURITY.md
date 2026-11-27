@@ -7,8 +7,7 @@ Report vulnerabilities through a
 The rest of this file is for agents and maintainers auditing Hyakki or triaging
 reports. It defines who is trusted with what, which boundaries a real finding
 crosses, and what is intended. The reasoning behind each boundary lives in
-[environment auth](docs/internals/04_environment-auth.md),
-[Hyakki Connect](docs/internals/06_t3-connect.md), and
+[environment auth](docs/internals/04_environment-auth.md) and
 [remote environments](docs/internals/05_remote.md); read those before reporting
 in their area.
 
@@ -133,7 +132,6 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
 - Guest links: [`guest/GuestShareService.ts`](apps/server/src/guest/GuestShareService.ts)
 - Files and assets: [`workspace/WorkspaceFileSystem.ts`](apps/server/src/workspace/WorkspaceFileSystem.ts), [`assets/AssetAccess.ts`](apps/server/src/assets/AssetAccess.ts)
 - Managed policy: [`apps/server/src/policy`](apps/server/src/policy)
-- Hyakki Connect: [`cloud/CloudLink.ts`](apps/server/src/cloud/CloudLink.ts), [`EnvironmentConnector.ts`](infra/relay/src/environments/EnvironmentConnector.ts)
 - Desktop preview isolation: [`preview/WebviewPreferences.ts`](apps/desktop/src/preview/WebviewPreferences.ts)
 
 ## How to audit and triage

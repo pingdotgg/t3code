@@ -19,15 +19,11 @@ Yes.
 
 ## How much does Hyakki cost?
 
-Nothing. You pay your own model/agent providers. Hyakki Connect is free for up to 3 connected host machines per account (phones and browsers don't count). You can also self-host or use LAN/Tailscale.
+Nothing. You pay your own model and agent providers.
 
 ## Can I fork or redistribute Hyakki?
 
 Yes. The source code is MIT licensed. Hyakki is itself an unofficial fork of T3 Code; see [NOTICE](../../NOTICE).
-
-## Can I connect more than 3 machines with Hyakki Connect?
-
-Yes. Link a paid T3 Chat account from your account menu → **T3 Chat → Link T3 Chat**: T3 Chat Pro raises the limit to 10 machines, and Premier raises it to 100. See [More machines with T3 Chat](./remote-access.md#more-machines-with-t3-chat).
 
 ## Why is my Claude 5-hour limit draining so fast?
 
@@ -35,15 +31,11 @@ Since v0.1.7, Claude in Hyakki drains your 5-hour limit at the same rate as Clau
 
 ## How do I use Hyakki remotely?
 
-Your agents run wherever the Hyakki server runs (desktop, server, or VPS). Run `t3 up` on that machine and connect via Hyakki Connect, LAN, Tailscale, or [hyakki.ryoku.dev](https://hyakki.ryoku.dev). See [Remote access](./remote-access.md).
+Your agents run wherever the Hyakki server runs (desktop, server, or VPS). Run `t3 up` on that machine and connect over your LAN, Tailscale, a VPN or SSH. See [Remote access](./remote-access.md).
 
 ## How do I use Hyakki on my phone?
 
-Install the [iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or [Android](https://play.google.com/store/apps/details?id=dev.ryoku.hyakki) app and connect it to your computer with Hyakki Connect or a pairing link. The phone is a remote control—your host computer runs the agents and must stay on. See [Mobile app](./install.md#mobile-app) and [Remote access](./remote-access.md).
-
-## Why does Hyakki Connect keep disconnecting?
-
-Open **Settings → Environments**, select the machine, and choose **Details**—the first failed check identifies the cause. See [Hyakki Connect troubleshooting](./t3-connect-troubleshooting.md). Tailscale also works great as a direct fallback.
+There is no Hyakki phone app yet. Open the host's web address in your phone's browser over Tailscale or your LAN and pair with a link from **Settings → Sharing & access**. Your host computer runs the agents and must stay on. See [Remote access](./remote-access.md).
 
 ## Will I get banned for using my subscription?
 
@@ -63,7 +55,7 @@ No. Hyakki focuses on frontier coding agents.
 
 ## Does my code go to Hyakki servers?
 
-No. Code and prompts go directly from your machine to your chosen provider. With Hyakki Connect, traffic travels over a Cloudflare tunnel (`cloudflared` on your machine); Hyakki's relay coordinates the link without proxying your HTTP/WebSocket sessions.
+No. Code and prompts go directly from your machine to your chosen provider.
 
 Hyakki also collects no usage data. See [Usage data](./telemetry.md).
 

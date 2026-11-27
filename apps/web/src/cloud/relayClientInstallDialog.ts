@@ -50,17 +50,6 @@ function publish(next: RelayClientInstallDialogState) {
   }
 }
 
-export function readRelayClientInstallDialogState(): RelayClientInstallDialogState {
-  return state;
-}
-
-export function subscribeRelayClientInstallDialog(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
 export function requestRelayClientInstallConfirmation(version: string): Promise<boolean> {
   if (state.status !== "idle") {
     const activeInstall = state.status === "closing" ? state.view : state;
@@ -109,12 +98,6 @@ export function finishRelayClientInstall(): void {
   resolveConfirmation = null;
   if (state.status === "confirming" || state.status === "installing") {
     publish({ status: "closing", view: state });
-  }
-}
-
-export function completeRelayClientInstallDialogClose(): void {
-  if (state.status === "closing") {
-    publish(idleState);
   }
 }
 

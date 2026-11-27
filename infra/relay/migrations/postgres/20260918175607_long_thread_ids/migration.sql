@@ -1,2 +1,0 @@
-ALTER TABLE "relay_agent_activity_rows" ALTER COLUMN "thread_id" SET DATA TYPE varchar(512) USING "thread_id"::varchar(512);--> statement-breakpoint
-ALTER TABLE "relay_delivery_attempts" ALTER COLUMN "thread_id" SET DATA TYPE varchar(512) USING "thread_id"::varchar(512);

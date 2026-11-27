@@ -42,8 +42,6 @@ T3CODE_HOST=127.0.0.1
 - **macOS**: Starts at login, stops at logout. Keep the Mac logged in and awake for unattended access. If agents can't read Desktop/Documents/Downloads, grant Full Disk Access to the `t3` path in `~/Library/LaunchAgents/dev.ryoku.hyakki.service.plist`.
 - **Windows**: Runs windowless via Task Scheduler (`t3code-<domain>-<user>`) while signed in and auto-restarts on exit. Lock the screen instead of signing out for unattended access.
 
-> Note: Signing out of Hyakki Connect does not stop or uninstall the background service.
-
 ## Keep the server responsive under memory pressure (Linux)
 
 On Linux, agents run at lower priority than the server, but heavy memory use can still trigger the OOM killer. Run as your normal user:
@@ -65,8 +63,6 @@ Run `t3 service status` on the host to see the log path and health checks:
 | `user-manager-unavailable`             | Run `systemctl --user status` in a login session to verify systemd user support.                                                               |
 | `service-disabled` / `service-stopped` | Check the log and `systemctl --user status t3code.service`, then run `t3 service install`.                                                     |
 | `restart-pending`                      | Run `t3 service restart` to switch to the newly installed version.                                                                             |
-
-For Hyakki Connect issues, see [Hyakki Connect troubleshooting](./t3-connect-troubleshooting.md).
 
 ## Reclaim database space
 

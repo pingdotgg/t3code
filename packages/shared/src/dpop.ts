@@ -16,7 +16,7 @@ const DPOP_ALG = "ES256";
  * How far a proof's `iat` may sit from the verifier's clock, in either direction.
  * Proofs carry the client's clock, so this also bounds tolerated clock skew.
  */
-export const DPOP_MAX_CLOCK_SKEW_SECONDS = 300;
+const DPOP_MAX_CLOCK_SKEW_SECONDS = 300;
 
 export const DpopPublicJwk = DpopPublicJwkSchema;
 export type DpopPublicJwk = DpopPublicJwkType;

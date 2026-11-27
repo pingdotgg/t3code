@@ -28,7 +28,7 @@ Hyakki is an open-source control plane for coding agents. It gives the coding ag
 1. **Install Hyakki** on the machine where your agents will run ([Install Hyakki](./install.md)).
 2. **Set up at least one agent** via the [Welcome page](./welcome-page.md) or **Settings → Providers** (for example, `claude auth login` or `codex login`).
 3. **Open or clone a project** and start a thread ([Working with threads](./thread-sidebar.md)).
-4. **Optional — connect your phone or another computer**: Run `t3 up` on the host or enable **Hyakki Connect** in **Settings → Sharing & access** ([Remote access](./remote-access.md)).
+4. **Optional — connect your phone or another computer**: Run `t3 up` on the host or turn on **Network access** in **Settings → Sharing & access** ([Remote access](./remote-access.md)).
 
 ---
 
@@ -92,8 +92,7 @@ Hyakki is an open-source control plane for coding agents. It gives the coding ag
 
 ### Remote, mobile & integrations
 
-- [Remote access](./remote-access.md) — Hyakki Connect, LAN/Tailscale pairing, desktop SSH, multi-route failover, load balancing, and linked environments.
-- [Hyakki Connect troubleshooting](./t3-connect-troubleshooting.md) — Diagnosing tunnel, port 7844, DNS, clock, and account errors.
+- [Remote access](./remote-access.md) — LAN/Tailscale pairing, desktop SSH, multi-route failover, load balancing, and linked environments.
 - [Mobile notifications](./mobile-notifications.md) — Push alerts, iOS Live Activities/widgets, and Android Live Updates.
 - [Guest links](./guest-links.md) — Sharing a live thread with a teammate in their browser (no account needed).
 - [Outside agents](./outside-agents.md) — Connecting Claude Code, Codex, ChatGPT, or bots to Hyakki over MCP, plus `t3 thread` host scripting.

@@ -1,33 +1,17 @@
 # Remote access
 
-Drive Hyakki from your phone, browser (`hyakki.ryoku.dev`), or another desktop app while your agents run on a host computer or server. The host must stay awake and running while you work.
-
-## Hyakki Connect (recommended)
-
-Hyakki Connect links your host to your other devices without router port-forwarding.
-
-- **Desktop host**: Open **Settings → Sharing & access**, sign in, and turn on **Hyakki Connect** (note: closing the desktop app's last window stops its local server—use the [background service](./background-service.md) for unattended access).
-- **CLI / headless host**: Run `t3 up` (or `t3 connect` / `t3 up --connect --lan --yes` for non-interactive scripts) and complete the printed sign-in link on any device. Check status with `t3 status [--json]`.
-- **Other devices**: Sign in to the same Hyakki Connect account and pick the environment.
-
-### Approve new devices
-
-By default, any device signed into your Hyakki Connect account can connect. Turn on **Require approval for new devices** in **Settings → Sharing & access** on the host so new devices must present a short code (valid 10 minutes) that you approve from an existing device or via `t3 auth connect-device approve <code>`. Revoke devices anytime in **Settings → Sharing & access** or `t3 auth connect-device revoke <code>`.
-
-### More machines with T3 Chat
-
-Free Hyakki Connect accounts can link up to **3 host machines** (phones and browsers don't count). Link a paid T3 Chat account from your account menu → **T3 Chat → Link T3 Chat** to raise the limit to **10** (Pro) or **100** (Premier).
+Drive Hyakki from your phone, a browser, or another desktop app while your agents run on a host computer or server. Hyakki has no hosted relay: you reach the host over your LAN, Tailscale, a VPN or SSH. The host must stay awake and running while you work.
 
 ## Pair over a LAN or private network
 
 - **Desktop host**: Enable **Settings → Sharing & access → Network access** (restarts desktop) and create a one-time pairing link.
 - **CLI host**: Run `t3 up --lan` (background service) or `t3 serve --lan` (foreground), then run `t3 pair` to generate a QR code / pairing URL (`t3code://pair` opens directly in the desktop app).
-- **Hosted web app (`hyakki.ryoku.dev`)**: Requires an HTTPS endpoint (Hyakki Connect or Tailscale HTTPS). For plain HTTP on a LAN, open the direct pairing URL in a local browser or pair from the desktop/mobile app. For custom CAs on Android, install the CA certificate in Android security settings.
+- **Browser on another device**: Needs an HTTPS endpoint such as Tailscale HTTPS. For plain HTTP on a LAN, open the direct pairing URL in a local browser or pair from the desktop/mobile app. For custom CAs on Android, install the CA certificate in Android security settings.
 - **Session lifetime**: Paired devices stay signed in while active; sessions unused for 30 days must re-pair.
 
 ### Reach one machine several ways
 
-A host can have multiple routes (LAN, Tailscale, VPN, public URL, SSH, Hyakki Connect). Hyakki automatically learns LAN and Tailscale routes when network access is enabled, connects over the fastest working route, and switches back to higher-priority routes when you return home. Reorder or add routes in **Settings → Environments** (**Add route**).
+A host can have multiple routes (LAN, Tailscale, VPN, public URL, SSH). Hyakki automatically learns LAN and Tailscale routes when network access is enabled, connects over the fastest working route, and switches back to higher-priority routes when you return home. Reorder or add routes in **Settings → Environments** (**Add route**).
 
 ### Tailscale HTTPS
 
@@ -89,7 +73,6 @@ Open a delegated task or thread link on a linked machine to follow it live (read
 Manage pairing links and active client sessions in **Settings → Sharing & access** or via `t3 auth --help`.
 
 - **Scoped tokens**: Pass `--scope <scope>` (repeatable) to `t3 pair`, `t3 auth pairing create`, or `t3 auth session issue` to restrict permissions (e.g. `orchestration:read`, `source-control:write`, `filesystem:read`, `filesystem:write`, `terminal:operate`, `relay:configure`). Re-pair with a fresh link to change an existing client's scopes.
-- **Deregister from Hyakki Connect**: Open your account menu → **Hyakki Connect → Deregister** (or `t3 connect unlink` / `t3 connect logout` on CLI hosts). Idle tunnels are automatically cleaned up after 5–10 minutes offline and recreated on reconnect (hosts on older versions offline for 7+ days need an update first).
 - Treat pairing URLs and codes as passwords—never paste them into logs or screenshots.
 
 ## Desktop app as a remote only
@@ -98,4 +81,4 @@ Switch off **Settings → Environments → Local environment** in the desktop ap
 
 ## Troubleshooting
 
-See [Hyakki Connect troubleshooting](./t3-connect-troubleshooting.md) for step-by-step connection diagnostics, and [Outside agents](./outside-agents.md) for MCP connections.
+Open **Settings → Environments**, select the machine and choose **Details**: the first failed check names the cause. See [Outside agents](./outside-agents.md) for MCP connections.

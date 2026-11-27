@@ -6,15 +6,14 @@ See [Install Hyakki](./install.md#command-line) for installation (`curl -fsSL ht
 
 ## Running and connecting
 
-| Command                  | Description                                                                                                                          |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `t3 [path]` / `t3 start` | Start a foreground server and open the web app (optionally in a project directory).                                                  |
-| `t3 serve`               | Start the server without opening a browser (`--lan`, `--tailscale-serve`, `--host`, `--port`, `--base-dir`).                         |
-| `t3 app [path]`          | Open a directory as a project/thread in the running desktop app.                                                                     |
-| `t3 up`                  | Interactive setup for remote access (Hyakki Connect and/or LAN) plus background service (`--connect`, `--lan`, `--no-lan`, `--yes`). |
-| `t3 connect`             | Manage Hyakki Connect (`t3 connect`, `status`, `login`, `logout`, `link`, `unlink`).                                                 |
-| `t3 status`              | Show how other devices can reach this host (`--json`).                                                                               |
-| `t3 pair`                | Generate a one-time pairing URL / QR code (`--tailscale`, `--scope <scope>`).                                                        |
+| Command                  | Description                                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `t3 [path]` / `t3 start` | Start a foreground server and open the web app (optionally in a project directory).                          |
+| `t3 serve`               | Start the server without opening a browser (`--lan`, `--tailscale-serve`, `--host`, `--port`, `--base-dir`). |
+| `t3 app [path]`          | Open a directory as a project/thread in the running desktop app.                                             |
+| `t3 up`                  | Interactive setup for LAN remote access plus the background service (`--lan`, `--no-lan`, `--yes`).          |
+| `t3 status`              | Show how other devices can reach this host (`--json`).                                                       |
+| `t3 pair`                | Generate a one-time pairing URL / QR code (`--tailscale`, `--scope <scope>`).                                |
 
 ## Background service and updates
 
@@ -34,12 +33,12 @@ See [Install Hyakki](./install.md#command-line) for installation (`curl -fsSL ht
 
 ## Environments, auth, themes, and policy
 
-| Command          | Description                                                                                                                                                |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `t3 environment` | Link or manage peer environments (`t3 environment link <addr> --pairing-code <code> --access <mode>`, `--from <file>`).                                    |
-| `t3 auth`        | Manage pairing codes, sessions, and Hyakki Connect device approvals (`pairing create`, `session list/revoke/issue`, `connect-device list/approve/revoke`). |
-| `t3 theme`       | Manage server-published themes (`set <id>`, `clear`, `show`). See [Appearance](./appearance.md#environment-themes).                                        |
-| `t3 policy`      | Validate, inspect, and generate MDM/GPO templates for [managed policies](./managed-policy.md) (`check`, `show`, `settings`, `templates`).                  |
+| Command          | Description                                                                                                                               |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `t3 environment` | Link or manage peer environments (`t3 environment link <addr> --pairing-code <code> --access <mode>`, `--from <file>`).                   |
+| `t3 auth`        | Manage pairing codes and sessions (`pairing create`, `session list/revoke/issue`).                                                        |
+| `t3 theme`       | Manage server-published themes (`set <id>`, `clear`, `show`). See [Appearance](./appearance.md#environment-themes).                       |
+| `t3 policy`      | Validate, inspect, and generate MDM/GPO templates for [managed policies](./managed-policy.md) (`check`, `show`, `settings`, `templates`). |
 
 ## Diagnostics and maintenance
 
