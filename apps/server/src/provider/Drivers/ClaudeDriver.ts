@@ -27,6 +27,7 @@ import {
 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { claudeUsageReader } from "./claudeUsage.ts";
+import { applyClaudeGatewayModels, discoverClaudeGatewayModels } from "./ClaudeGatewayModels.ts";
 import { makeClaudeScopedLimitNames } from "../claudeUsageLimits.ts";
 import * as ClaudeResetCredits from "../claudeResetCredits.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
@@ -235,7 +236,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               Effect.andThen(modelRoutes.record(capabilities.models ?? [])),
             ),
           ),
-          Effect.ensuring(modelRoutes.settle),
           Effect.catch((error) =>
             Ref.getAndSet(lastGoodCapabilities, undefined).pipe(
               Effect.flatMap((capabilities) =>
@@ -294,6 +294,25 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
                 ),
+            ).pipe(
+              Effect.flatMap((provider) =>
+                Effect.gen(function* () {
+                  if (!provider.enabled || !provider.installed) return provider;
+                  const models = yield* discoverClaudeGatewayModels(
+                    effectiveConfig,
+                    processEnv,
+                    stateDir,
+                  ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+                  if (models === undefined) return provider;
+                  yield* modelRoutes.recordGateway(models.map((model) => model.id));
+                  return applyClaudeGatewayModels(
+                    provider,
+                    models,
+                    catalog,
+                    effectiveConfig.customModels,
+                  );
+                }),
+              ),
             ),
           ),
           Effect.tap((provider) =>
@@ -304,7 +323,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.map(stampIdentity),
         ),
       ),
-      // Disabled, failed version checks and interruption never reach the probe.
+      // Release waiting turns even if the check cannot discover routes.
       Effect.ensuring(modelRoutes.settle),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),

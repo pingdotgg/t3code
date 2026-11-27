@@ -74,8 +74,8 @@ export const resolveClaudeModelSettingsKey = Effect.fn("resolveClaudeModelSettin
 type ReportedModel = Pick<ClaudeModelInfo, "value" | "resolvedModel">;
 
 /**
- * Claude Code's reported model ids, applied to a turn only where its cwd resolves model settings
- * as the probe's cwd did. `settle` releases turns waiting for the first probe, whatever its outcome.
+ * Model ids from Claude Code and the gateway apply where the model settings match the probe's.
+ * `settle` releases turns waiting for the first provider check.
  */
 export const makeClaudeCodeModelRoutes = Effect.fn("makeClaudeCodeModelRoutes")(function* (
   settingsKey: (cwd: string | null) => Effect.Effect<string | undefined>,
@@ -86,11 +86,20 @@ export const makeClaudeCodeModelRoutes = Effect.fn("makeClaudeCodeModelRoutes")(
     readonly models: ReadonlyArray<ReportedModel>;
     readonly settingsKey: string | undefined;
   }>({ models: [], settingsKey: undefined });
+  const gateway = yield* Ref.make<{
+    readonly ids: ReadonlySet<string>;
+    readonly settingsKey: string | undefined;
+  }>({ ids: new Set(), settingsKey: undefined });
   return {
     record: Effect.fn("ClaudeCodeModelRoutes.record")(function* (
       models: ReadonlyArray<ReportedModel>,
     ) {
       yield* Ref.set(reported, { models, settingsKey: yield* settingsKey(probeCwd) });
+    }),
+    recordGateway: Effect.fn("ClaudeCodeModelRoutes.recordGateway")(function* (
+      ids: ReadonlyArray<string>,
+    ) {
+      yield* Ref.set(gateway, { ids: new Set(ids), settingsKey: yield* settingsKey(probeCwd) });
     }),
     settle: Deferred.succeed(firstProbeSettled, undefined).pipe(Effect.asVoid),
     route: Effect.fn("ClaudeCodeModelRoutes.route")(function* (
@@ -106,11 +115,16 @@ export const makeClaudeCodeModelRoutes = Effect.fn("makeClaudeCodeModelRoutes")(
       );
       if (claudeModelSettingsKey(launchSettings ?? {}) !== NO_MODEL_SETTINGS_KEY) return base;
       const { models, settingsKey: probeKey } = yield* Ref.get(reported);
-      const routed = withClaudeCodeModelRoutes(base, models);
+      const { ids, settingsKey: gatewayKey } = yield* Ref.get(gateway);
+      const routed = probeKey === undefined ? base : withClaudeCodeModelRoutes(base, models);
+      if (routed === base && (ids.size === 0 || gatewayKey === undefined)) return base;
       // Project settings can point an alias at another model, so routes hold only where the
       // cwd resolves the same model settings as the probe's.
-      if (routed === base || probeKey === undefined) return base;
-      return (yield* settingsKey(cwd)) === probeKey ? routed : base;
+      const cwdKey = yield* settingsKey(cwd);
+      const catalog = cwdKey === probeKey ? routed : base;
+      return ids.size > 0 && gatewayKey !== undefined && cwdKey === gatewayKey
+        ? { ...catalog, gatewayModelIds: ids }
+        : catalog;
     }),
   };
 });

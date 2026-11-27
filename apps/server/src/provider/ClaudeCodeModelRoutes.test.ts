@@ -20,8 +20,9 @@ describe("Claude Code model routes", () => {
           instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-haiku-4-5",
         } satisfies ModelSelection;
+        const gatewayFable = { ...haiku, model: "fable-5.1" };
         const routes = yield* makeClaudeCodeModelRoutes(
-          () => Effect.succeed("same settings"),
+          (cwd) => Effect.succeed(cwd === "/other" ? "other settings" : "same settings"),
           "/state",
         );
         const early = yield* routes
@@ -30,10 +31,28 @@ describe("Claude Code model routes", () => {
         yield* routes.record([
           { value: "haiku", resolvedModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0" },
         ]);
+        yield* routes.recordGateway(["fable-5.1"]);
         yield* routes.settle;
+        const catalog = yield* Fiber.join(early);
+        assert.strictEqual(resolveClaudeCatalogApiModelId(catalog, haiku), "haiku");
+        assert.strictEqual(resolveClaudeCatalogApiModelId(catalog, gatewayFable), "fable-5.1");
         assert.strictEqual(
-          resolveClaudeCatalogApiModelId(yield* Fiber.join(early), haiku),
-          "haiku",
+          yield* routes.route(BUNDLED_CLAUDE_MODEL_CATALOG, "/other"),
+          BUNDLED_CLAUDE_MODEL_CATALOG,
+        );
+        assert.strictEqual(
+          yield* routes.route(BUNDLED_CLAUDE_MODEL_CATALOG, "/project", {
+            availableModels: ["claude-fable-5-1"],
+          }),
+          BUNDLED_CLAUDE_MODEL_CATALOG,
+        );
+        yield* routes.recordGateway([]);
+        assert.strictEqual(
+          resolveClaudeCatalogApiModelId(
+            yield* routes.route(BUNDLED_CLAUDE_MODEL_CATALOG, "/project"),
+            gatewayFable,
+          ),
+          "claude-fable-5-1",
         );
 
         // A first check that never reaches the probe still releases waiting turns.

@@ -52,4 +52,6 @@ Create a separate Claude instance with its own config directory (e.g. `~/.claude
 | `ANTHROPIC_AUTH_TOKEN` | Your OpenRouter API key (mark Sensitive) |
 | `ANTHROPIC_API_KEY`    | Explicitly empty                         |
 
+A custom `ANTHROPIC_BASE_URL` supplies the model list through `/v1/models`. T3 refreshes it using Claude Code's configured credentials and keeps its built-in catalog if the gateway cannot provide a list. Custom models stay listed when the gateway omits them.
+
 Add unlisted OpenRouter models via **Add custom model** in the instance settings. See the [OpenRouter Claude Code guide](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration) or [Claude Code Router](https://github.com/musistudio/claude-code-router) for local router setup.

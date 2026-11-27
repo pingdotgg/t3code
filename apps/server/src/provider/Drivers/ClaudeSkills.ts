@@ -751,18 +751,27 @@ const SettingsEnv = Schema.Struct({
 const decodeSettingsEnv = Schema.decodeUnknownEffect(
   fromLenientJson(Schema.Struct({ env: Schema.optional(SettingsEnv) })),
 );
+const ConnectionSettings = fromLenientJson(
+  Schema.Struct({
+    env: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    apiKeyHelper: Schema.optional(Schema.Unknown),
+  }),
+);
+const decodeConnectionSettings = Schema.decodeUnknownEffect(ConnectionSettings);
 
-/** The `env` values T3 Code reads from Claude's user and managed settings; later files win. */
-export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function* (
+/** Claude Code applies settings `env` over its inherited process environment. */
+export const readClaudeConnectionSettings = Effect.fn("readClaudeConnectionSettings")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   cwd: string | undefined,
   environment: NodeJS.ProcessEnv,
-): Effect.fn.Return<typeof SettingsEnv.Type, never, FileSystem.FileSystem | Path.Path> {
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
+  const env: Record<string, string> = {};
   const settingsEnv: typeof SettingsEnv.Type = {};
+  let apiKeyHelper: string | undefined;
   for (const settingsPath of claudeSettingsPaths(
     path,
     configDirPath,
@@ -774,10 +783,30 @@ export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function
       .readFileString(settingsPath)
       .pipe(Effect.orElseSucceed(() => undefined));
     if (contents === undefined) continue;
-    const parsed = yield* decodeSettingsEnv(contents).pipe(Effect.orElseSucceed(() => undefined));
-    Object.assign(settingsEnv, parsed?.env);
+    const parsed = yield* decodeConnectionSettings(contents).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    Object.assign(
+      settingsEnv,
+      yield* decodeSettingsEnv(contents).pipe(
+        Effect.orElseSucceed(() => undefined),
+        Effect.map((settings) => settings?.env),
+      ),
+    );
+    for (const [name, value] of Object.entries(parsed?.env ?? {})) {
+      env[name] = String(value);
+    }
+    if (typeof parsed?.apiKeyHelper === "string") apiKeyHelper = parsed.apiKeyHelper;
   }
-  return settingsEnv;
+  return { env, apiKeyHelper, settingsEnv };
+});
+
+export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  cwd: string | undefined,
+  environment: NodeJS.ProcessEnv,
+) {
+  return (yield* readClaudeConnectionSettings(config, cwd, environment)).settingsEnv;
 });
 
 const decodeSettingsRecord = Schema.decodeUnknownEffect(
