@@ -39,14 +39,14 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
   let start = 0;
   let commentStart = -1;
   let preambleStart = -1;
-  let preambleEnd = 0;
+  const preambleBlocks: string[] = [];
   for (const line of lines) {
     if (commentStart < 0 && /^ {0,3}<!--/.test(line)) commentStart = start;
     if (commentStart < 0 && line.trim().length > 0 && headingText(line) !== "") break;
     const end = commentStart >= 0 ? line.indexOf("-->") : -1;
     if (end >= 0) {
       if (preambleStart < 0 && line.slice(end + 3).trim()) preambleStart = commentStart;
-      if (preambleStart >= 0) preambleEnd = start + 1;
+      if (preambleStart >= 0) preambleBlocks.push(lines.slice(commentStart, start + 1).join("\n"));
       commentStart = -1;
     }
     start += 1;
@@ -67,6 +67,6 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
   }
   const body = lines.slice(start).join("\n");
   if (preambleStart < 0) return body;
-  const preamble = lines.slice(preambleStart, preambleEnd).join("\n");
+  const preamble = preambleBlocks.join("\n");
   return body ? `${preamble}\n\n${body}` : preamble;
 }
