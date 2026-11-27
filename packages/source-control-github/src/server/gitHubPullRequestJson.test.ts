@@ -1823,6 +1823,18 @@ describe("decodePullRequestFilesJson", () => {
     expect(result.truncated).toBe(true);
     expect(result.omittedFileStats).toEqual([{ path: "example.ts", additions: 0, deletions: 0 }]);
   });
+
+  it("treats an added file sent with no patch and zero counts as withheld", () => {
+    // The same larger pages drop a new file's patch and report it as 0/0 too.
+    const result = expectSuccess(
+      decodePullRequestFilesJson(
+        JSON.stringify([{ filename: "example.ts", status: "added", additions: 0, deletions: 0 }]),
+      ),
+    );
+
+    expect(result.truncated).toBe(true);
+    expect(result.omittedFileStats).toEqual([{ path: "example.ts", additions: 0, deletions: 0 }]);
+  });
 });
 
 describe("decodePullRequestFilesViewedJson", () => {
