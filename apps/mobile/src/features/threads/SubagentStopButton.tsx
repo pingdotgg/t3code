@@ -52,6 +52,7 @@ export function SubagentStopButton(props: {
       <IconButton
         icon="stop.fill"
         variant="danger"
+        size="compact"
         accessibilityLabel={
           workflow
             ? stopping
