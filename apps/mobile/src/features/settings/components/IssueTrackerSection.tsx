@@ -165,7 +165,7 @@ export function IssueTrackerCredentialForm(props: {
   );
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const complete = fields.every((field) => drafts[field.key]?.trim());
+  const complete = fields.every((field) => field.optional === true || drafts[field.key]?.trim());
   const submit = async (token: string | null) => {
     if (token !== null && !complete) return;
     setBusy(true);
@@ -180,7 +180,10 @@ export function IssueTrackerCredentialForm(props: {
           ? {}
           : {
               fields: Object.fromEntries(
-                fields.map((field) => [field.key, drafts[field.key]!.trim()]),
+                fields.flatMap((field) => {
+                  const value = drafts[field.key]?.trim();
+                  return value ? [[field.key, value] as const] : [];
+                }),
               ),
             }),
       },

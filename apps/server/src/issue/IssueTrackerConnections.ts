@@ -251,7 +251,9 @@ const make = Effect.gen(function* () {
       );
     }
     const wanted = api.standalone.credential.fields ?? [];
-    const missing = wanted.find((field) => input.fields?.[field.key] === undefined);
+    const missing = wanted.find(
+      (field) => field.optional !== true && input.fields?.[field.key] === undefined,
+    );
     if (missing !== undefined) {
       return yield* new IssueTrackerConnectionError({
         tracker: input.tracker,
@@ -261,7 +263,12 @@ const make = Effect.gen(function* () {
     }
     const credential: IssueTrackerCredential = {
       token,
-      fields: Object.fromEntries(wanted.map((field) => [field.key, input.fields![field.key]!])),
+      fields: Object.fromEntries(
+        wanted.flatMap((field) => {
+          const value = input.fields?.[field.key];
+          return value === undefined ? [] : [[field.key, value] as const];
+        }),
+      ),
     };
     // The tracker is asked before the lock, so a slow probe never holds up other settings.
     const probed = yield* api.probeCredential(credential).pipe(
