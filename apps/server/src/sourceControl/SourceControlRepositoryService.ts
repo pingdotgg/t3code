@@ -37,7 +37,7 @@ import * as SourceControlProvider from "@t3tools/source-control-core/server/Sour
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { cloneUrlForProtocol, cloneUrlProtocol } from "@t3tools/shared/cloneUrl";
-import { parseGitRemoteRepository } from "@t3tools/shared/git";
+import { gitRemotesShareServerPort, parseGitRemoteRepository } from "@t3tools/shared/git";
 import { sourceControlDefinitions } from "./sourceControlDefinitions.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
@@ -51,7 +51,7 @@ export class SourceControlRepositoryService extends Context.Service<
     ) => Effect.Effect<SourceControlRepositoryInfo, SourceControlRepositoryError>;
     readonly prepareClone: (
       input: SourceControlCloneRepositoryInput,
-      options?: { readonly reuseCheckout?: boolean },
+      options?: SourceControlPrepareCloneOptions,
     ) => Effect.Effect<SourceControlPreparedClone, SourceControlRepositoryError>;
     readonly cloneRepository: (
       input: SourceControlCloneRepositoryInput,
@@ -72,6 +72,17 @@ export interface SourceControlPreparedClone {
   readonly cloneUrl: string;
   readonly repository: SourceControlRepositoryInfo | null;
   readonly existingCheckout?: boolean;
+}
+
+export interface SourceControlPrepareCloneOptions {
+  /** Accept a destination that already holds a checkout of the same repository. */
+  readonly reuseCheckout?: boolean;
+  /**
+   * Also require proof that the checkout finished. Git sets `HEAD` before it writes the working
+   * tree and creates the index only once checkout completes, so a clone stopped between the two
+   * has the right commit but no index.
+   */
+  readonly requireCompleteCheckout?: boolean;
 }
 
 export interface SourceControlCloneOptions {
@@ -121,24 +132,6 @@ function toRepositoryInfo(
 }
 
 // Redact credentials from client clone snapshots; git still receives the credentials.
-/**
- * Repository keys drop the port so SSH and HTTPS spellings match, but two URLs with the same
- * scheme and different ports reach different servers.
- */
-function sameServerPort(left: string, right: string): boolean {
-  const url = (value: string) => {
-    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value.trim())) return null;
-    try {
-      return new URL(value.trim());
-    } catch {
-      return null;
-    }
-  };
-  const a = url(left);
-  const b = url(right);
-  return a === null || b === null || a.protocol !== b.protocol || a.port === b.port;
-}
-
 function redactRemoteUrl(remoteUrl: string): string {
   try {
     const url = new URL(remoteUrl);
@@ -280,7 +273,7 @@ export const make = Effect.gen(function* () {
   );
 
   const isMatchingCheckout = Effect.fn("SourceControlRepositoryService.isMatchingCheckout")(
-    function* (cwd: string, remoteUrl: string) {
+    function* (cwd: string, remoteUrl: string, requireComplete: boolean) {
       const root = yield* git.execute({
         operation: "SourceControlRepositoryService.isMatchingCheckout",
         cwd,
@@ -299,20 +292,31 @@ export const make = Effect.gen(function* () {
           parseGitRemoteRepository(remoteUrl) !== null &&
           sourceControlDefinitions.repositoryKeyFromRemote(existingUrl) ===
             sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl) &&
-          sameServerPort(existingUrl, remoteUrl));
+          gitRemotesShareServerPort(existingUrl, remoteUrl));
       if (!matching) return false;
       yield* git.execute({
         operation: "SourceControlRepositoryService.isMatchingCheckout",
         cwd,
         args: ["rev-parse", "--verify", "HEAD^{commit}"],
       });
+      if (requireComplete) {
+        const index = yield* git.execute({
+          operation: "SourceControlRepositoryService.isMatchingCheckout",
+          cwd,
+          args: ["rev-parse", "--git-path", "index"],
+        });
+        return yield* fileSystem.exists(path.resolve(cwd, index.stdout.trim()));
+      }
       return true;
     },
     Effect.orElseSucceed(() => false),
   );
 
   const prepareDestination = Effect.fn("SourceControlRepositoryService.prepareDestination")(
-    function* (normalizedDestination: string, reuseRemoteUrl?: string) {
+    function* (
+      normalizedDestination: string,
+      reuse?: { readonly remoteUrl: string; readonly requireComplete: boolean },
+    ) {
       if (yield* fileSystem.exists(normalizedDestination)) {
         const entries = yield* fileSystem
           .readDirectory(normalizedDestination, { recursive: false })
@@ -329,8 +333,12 @@ export const make = Effect.gen(function* () {
           );
         if (entries.length > 0) {
           if (
-            reuseRemoteUrl &&
-            (yield* isMatchingCheckout(normalizedDestination, reuseRemoteUrl))
+            reuse &&
+            (yield* isMatchingCheckout(
+              normalizedDestination,
+              reuse.remoteUrl,
+              reuse.requireComplete,
+            ))
           ) {
             return true;
           }
@@ -354,7 +362,7 @@ export const make = Effect.gen(function* () {
 
   const prepareClone = Effect.fn("SourceControlRepositoryService.prepareClone")(function* (
     input: SourceControlCloneRepositoryInput,
-    options?: { readonly reuseCheckout?: boolean },
+    options?: SourceControlPrepareCloneOptions,
   ) {
     const destinationPath = yield* normalizeDestinationPath(input.destinationPath);
     const reuseCheckout = options?.reuseCheckout && !(input.provider && input.repository);
@@ -384,7 +392,10 @@ export const make = Effect.gen(function* () {
 
     const redactedRemoteUrl = redactRemoteUrl(remoteUrl);
     const existingCheckout = reuseCheckout
-      ? yield* prepareDestination(destinationPath, redactedRemoteUrl)
+      ? yield* prepareDestination(destinationPath, {
+          remoteUrl: redactedRemoteUrl,
+          requireComplete: options?.requireCompleteCheckout === true,
+        })
       : false;
     return {
       destinationPath,

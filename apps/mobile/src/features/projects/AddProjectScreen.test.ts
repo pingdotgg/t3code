@@ -26,7 +26,7 @@ const state = vi.hoisted(() => ({
     id: string;
     title: string;
     workspaceRoot: string;
-    repositoryIdentity?: { canonicalKey: string };
+    repositoryIdentity?: { canonicalKey: string; locator: { remoteUrl: string } };
   }[],
   cloneDestinations: [] as string[],
   createResult: null as Promise<unknown> | null,
@@ -404,10 +404,22 @@ describe("clone project permissions", () => {
     [
       "opens the existing project of that repository instead of cloning into its folder",
       "example.com/owner/repo",
+      "git@example.com:owner/repo.git",
       false,
     ],
-    ["leaves a folder holding another repository to the clone", "example.com/owner/other", true],
-  ])("%s", async (_name, canonicalKey, clones) => {
+    [
+      "leaves a folder holding another repository to the clone",
+      "example.com/owner/other",
+      "https://example.com/owner/other.git",
+      true,
+    ],
+    [
+      "leaves a checkout from the same path on another port to the clone",
+      "example.com/owner/repo",
+      "https://example.com:8443/owner/repo.git",
+      true,
+    ],
+  ])("%s", async (_name, canonicalKey, remoteUrl, clones) => {
     state.scopes.add(AuthOrchestrationOperateScope);
     state.cloneDestinations = [];
     state.startCloneResult = Promise.resolve(
@@ -419,7 +431,7 @@ describe("clone project permissions", () => {
         id: "existing",
         title: "repo",
         workspaceRoot: NodePath.join(state.baseDirectory, "repo"),
-        repositoryIdentity: { canonicalKey },
+        repositoryIdentity: { canonicalKey, locator: { remoteUrl } },
       },
     ];
     try {
@@ -441,7 +453,10 @@ describe("clone project permissions", () => {
         id: "existing",
         title: "repo",
         workspaceRoot: NodePath.join(state.baseDirectory, "repo"),
-        repositoryIdentity: { canonicalKey: "example.com/owner/repo" },
+        repositoryIdentity: {
+          canonicalKey: "example.com/owner/repo",
+          locator: { remoteUrl: "https://example.com/owner/repo.git" },
+        },
       },
     ];
     try {
@@ -466,11 +481,16 @@ describe("clone project permissions", () => {
         id: "existing",
         title: "repo",
         workspaceRoot: NodePath.join(state.baseDirectory, "repo"),
-        repositoryIdentity: { canonicalKey: "example.com/owner/repo" },
+        repositoryIdentity: {
+          canonicalKey: "example.com/owner/repo",
+          locator: { remoteUrl: "https://example.com/owner/repo.git" },
+        },
       },
     ];
     // Back lands while the saved drafts are still loading.
+    let wentBack = false;
     state.draftsLoaded = async () => {
+      wentBack = true;
       state.navigationState = {
         index: 1,
         routes: [
@@ -482,6 +502,9 @@ describe("clone project permissions", () => {
     try {
       await cloneAction({ draftId: "new-task:source" })();
 
+      // Submit got as far as waiting on drafts, and Back moved the active route meanwhile.
+      expect(wentBack).toBe(true);
+      expect(state.navigationState?.routes.at(-1)?.key).toBe("draft");
       expect(state.retargetSavedNewTaskDraft).not.toHaveBeenCalled();
       expect(state.dispatch).not.toHaveBeenCalled();
     } finally {

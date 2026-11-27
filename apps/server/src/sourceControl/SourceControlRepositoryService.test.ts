@@ -778,6 +778,53 @@ it.effect("reuses a checkout from another port only over another scheme", () =>
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("a restored retry reuses a checkout only once git has written its index", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-control-index-" });
+    const destinationPath = path.join(parent, "repo");
+    yield* fs.makeDirectory(path.join(destinationPath, ".git"), { recursive: true });
+    yield* fs.writeFileString(path.join(destinationPath, "notes.txt"), "keep my edits");
+    const input = { remoteUrl: CLONE_URLS.url, destinationPath };
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const complete = { reuseCheckout: true, requireCompleteCheckout: true } as const;
+      // Git stopped after setting HEAD but before checking out the working tree.
+      const interrupted = yield* Effect.flip(service.prepareClone(input, complete));
+      assert.include(interrupted.detail, "not empty");
+      // Ordinary reuse still accepts it: an existing checkout is the user's to judge.
+      assert.isTrue((yield* service.prepareClone(input, { reuseCheckout: true })).existingCheckout);
+
+      yield* fs.writeFileString(path.join(destinationPath, ".git", "index"), "");
+      assert.isTrue((yield* service.prepareClone(input, complete)).existingCheckout);
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            execute: ({ args }) =>
+              Effect.succeed({
+                ...processOutput(),
+                stdout: args.includes("--show-toplevel")
+                  ? destinationPath
+                  : args.includes("--git-path")
+                    ? ".git/index"
+                    : "",
+              }),
+            resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+            readConfigValue: () => Effect.succeed(CLONE_URLS.url),
+          },
+        }),
+      ),
+    );
+    assert.equal(
+      yield* fs.readFileString(path.join(destinationPath, "notes.txt")),
+      "keep my edits",
+    );
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("discards only a directory git wrote to", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

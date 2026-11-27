@@ -47,6 +47,47 @@ function clonePersistence() {
   );
 }
 
+/** Secret storage whose reads and writes a test can break and inspect by name. */
+function faultyPersistence(options: {
+  readonly journal?: Uint8Array;
+  readonly failRead?: boolean;
+}) {
+  const stored = new Map<string, Uint8Array>();
+  if (options.journal) stored.set("pending-project-clones", options.journal);
+  const control = { failWrites: false, writes: 0, stored };
+  const persistence = Layer.mergeAll(
+    Layer.mock(ServerSecretStore.ServerSecretStore)({
+      get: (name) =>
+        options.failRead
+          ? Effect.fail(
+              new ServerSecretStore.SecretStoreReadError({
+                resource: name,
+                cause: new Error("EIO"),
+              }),
+            )
+          : Effect.sync(() => Option.fromUndefinedOr(stored.get(name))),
+      set: (name, value) =>
+        Effect.suspend(() => {
+          control.writes += 1;
+          if (control.failWrites) {
+            return Effect.fail(
+              new ServerSecretStore.SecretStorePersistError({
+                resource: name,
+                cause: new Error("ENOSPC"),
+              }),
+            );
+          }
+          stored.set(name, value);
+          return Effect.void;
+        }),
+    }),
+    Layer.mock(ProjectStore.ProjectStoreV2)({
+      findActiveByWorkspaceRoot: () => Effect.succeedSome({ projectId } as ProjectStore.ProjectRow),
+    }),
+  );
+  return { persistence, control };
+}
+
 function makeHarness(options?: {
   readonly clone?: SourceControlRepositoryService.SourceControlRepositoryService["Service"]["cloneRepository"];
   readonly prepare?: SourceControlRepositoryService.SourceControlRepositoryService["Service"]["prepareClone"];
@@ -146,7 +187,7 @@ describe("ProjectCloneTracker", () => {
 
   it.effect.each([
     { name: "finishes a clone whose checkout completed", leftovers: false },
-    { name: "keeps leftover files and says to remove them", leftovers: true },
+    { name: "keeps files it cannot prove complete and asks to inspect them", leftovers: true },
   ])("a retry after a restart $name", ({ leftovers }) => {
     let attempts = 0;
     let restarted = false;
@@ -159,8 +200,11 @@ describe("ProjectCloneTracker", () => {
         }),
       prepare: (input, options) =>
         Effect.suspend(() => {
-          if (restarted && options?.reuseCheckout !== true)
-            return Effect.die("A restored retry must allow reusing the checkout");
+          if (
+            restarted &&
+            (options?.reuseCheckout !== true || options.requireCompleteCheckout !== true)
+          )
+            return Effect.die("A restored retry must reuse only a complete checkout");
           if (restarted && leftovers)
             return Effect.fail(
               new SourceControlRepositoryError({
@@ -188,14 +232,18 @@ describe("ProjectCloneTracker", () => {
 
       yield* Effect.gen(function* () {
         const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+        const hookRan = yield* Deferred.make<void>();
+        const onCloned: ProjectCloneTracker.ProjectCloneHooks["onCloned"] = (input) =>
+          harness.hooks.onCloned(input).pipe(Effect.andThen(Deferred.succeed(hookRan, undefined)));
         if (leftovers) {
-          const refused = yield* Effect.flip(tracker.retry(projectId, harness.hooks.onCloned));
-          expect(refused.detail).toContain("Remove the folder, then retry.");
+          const refused = yield* Effect.flip(tracker.retry(projectId, onCloned));
+          expect(refused.detail).toContain("Inspect or move the folder, then retry.");
+          expect(refused.detail).not.toContain("Remove");
           expect(yield* tracker.get(projectId)).toMatchObject({ phase: "failed" });
         } else {
-          expect(yield* tracker.retry(projectId, harness.hooks.onCloned)).toBe(true);
+          expect(yield* tracker.retry(projectId, onCloned)).toBe(true);
           expect(yield* tracker.get(projectId)).toMatchObject({ phase: "done" });
-          yield* Effect.yieldNow;
+          yield* Deferred.await(hookRan);
           expect(harness.cloned).toEqual([projectId]);
         }
         // Nothing is deleted, and the clone isn't started again.
@@ -515,6 +563,72 @@ describe("ProjectCloneTracker", () => {
       expect((yield* tracker.get(projectId))?.phase).toBe("done");
       expect(yield* tracker.get(second)).toBeNull();
       expect(harness.cloned).toEqual([projectId]);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("a start whose journal write fails keeps the failed clone it would replace", () => {
+    const { persistence, control } = faultyPersistence({});
+    let attempts = 0;
+    const harness = makeHarness({
+      persistence,
+      clone: () =>
+        Effect.suspend(() =>
+          ++attempts === 1
+            ? Effect.fail(
+                new SourceControlRepositoryError({
+                  operation: "cloneRepository",
+                  provider: SourceControlProviderKind.make("unknown"),
+                  detail: "fatal: repository not found",
+                }),
+              )
+            : Effect.never,
+        ),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+      expect((yield* tracker.get(projectId))?.phase).toBe("failed");
+
+      control.failWrites = true;
+      const second = ProjectId.make("project-2");
+      yield* Effect.flip(tracker.start({ ...startInput, projectId: second }, harness.hooks));
+      expect(yield* tracker.get(second)).toBeNull();
+      expect(yield* tracker.get(projectId)).toMatchObject({
+        phase: "failed",
+        error: "fatal: repository not found",
+      });
+
+      control.failWrites = false;
+      expect(yield* tracker.retry(projectId, harness.hooks.onCloned)).toBe(true);
+      expect((yield* tracker.get(projectId))?.phase).toBe("running");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("an undecodable clone journal is set aside instead of stopping the server", () => {
+    const garbage = new TextEncoder().encode("{not json");
+    const { persistence, control } = faultyPersistence({ journal: garbage });
+    const harness = makeHarness({ persistence });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      expect(yield* tracker.get(projectId)).toBeNull();
+      expect(control.stored.get("pending-project-clones-unreadable")).toEqual(garbage);
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+      expect((yield* tracker.get(projectId))?.phase).toBe("done");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("an unreadable clone journal is never overwritten", () => {
+    const { persistence, control } = faultyPersistence({ failRead: true });
+    const harness = makeHarness({ persistence });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      expect(yield* tracker.get(projectId)).toBeNull();
+      const refused = yield* Effect.flip(tracker.start(startInput, harness.hooks));
+      expect(refused.message).toContain("could not be saved");
+      expect(yield* tracker.get(projectId)).toBeNull();
+      expect(control.writes).toBe(0);
     }).pipe(Effect.provide(harness.layer));
   });
 

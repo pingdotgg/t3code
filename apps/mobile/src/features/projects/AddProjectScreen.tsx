@@ -93,6 +93,7 @@ import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSym
 import { ErrorBanner } from "../../components/ui/ErrorBanner";
 import { SourceControlIcon } from "./SourceControlIcon";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { gitRemotesShareServerPort } from "@t3tools/shared/git";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { uuidv4 } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -862,11 +863,13 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
       path,
     });
     if (!existing) return false;
-    // A folder holding another repository is not this clone; let the clone report it occupied.
+    // A folder holding another repository, or the same path on a server reached at another port,
+    // is not this clone; let the clone report it occupied. The server applies the same rule.
     if (
       clone &&
-      existing.repositoryIdentity?.canonicalKey !==
-        sourceControlClients.repositoryKeyFromRemote(clone.remoteUrl)
+      (existing.repositoryIdentity?.canonicalKey !==
+        sourceControlClients.repositoryKeyFromRemote(clone.remoteUrl) ||
+        !gitRemotesShareServerPort(existing.repositoryIdentity.locator.remoteUrl, clone.remoteUrl))
     ) {
       return false;
     }

@@ -87,6 +87,8 @@ function clampText(text: string, maxLength: number): string {
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 const CLONE_JOURNAL = "pending-project-clones";
+/** Holds a journal that could not be decoded, so a fresh journal never overwrites its entries. */
+const UNREADABLE_CLONE_JOURNAL = "pending-project-clones-unreadable";
 const CloneJournal = Schema.fromJsonString(
   Schema.Array(
     Schema.Struct({
@@ -114,10 +116,49 @@ export const make = Effect.gen(function* () {
   const repositories = yield* SourceControlRepositoryService.SourceControlRepositoryService;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const projects = yield* ProjectStore.ProjectStoreV2;
-  const stored = yield* secrets.get(CLONE_JOURNAL);
-  const entries = Option.isSome(stored)
-    ? yield* decodeCloneJournal(new TextDecoder().decode(stored.value))
-    : [];
+  // A journal that cannot be loaded must not stop the server from opening existing projects.
+  // An unreadable store keeps the journal untouched and refuses new clone state until restart; an
+  // undecodable journal is set aside before a fresh one replaces it.
+  let journalUnavailable = false;
+  const entries: ReadonlyArray<CloneJournalEntry> = yield* secrets.get(CLONE_JOURNAL).pipe(
+    Effect.matchEffect({
+      onFailure: (cause) =>
+        Effect.logError("The pending clone journal could not be read.", cause).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              journalUnavailable = true;
+              return [];
+            }),
+          ),
+        ),
+      onSuccess: (stored) =>
+        Option.isNone(stored)
+          ? Effect.succeed([])
+          : decodeCloneJournal(new TextDecoder().decode(stored.value)).pipe(
+              Effect.catch((cause) =>
+                Effect.logError(
+                  `The pending clone journal could not be decoded; it was kept as ${UNREADABLE_CLONE_JOURNAL}.`,
+                  cause,
+                ).pipe(
+                  Effect.andThen(secrets.set(UNREADABLE_CLONE_JOURNAL, stored.value)),
+                  Effect.catch((saveCause) =>
+                    Effect.logError(
+                      "The undecodable clone journal could not be kept.",
+                      saveCause,
+                    ).pipe(
+                      Effect.andThen(
+                        Effect.sync(() => {
+                          journalUnavailable = true;
+                        }),
+                      ),
+                    ),
+                  ),
+                  Effect.as([]),
+                ),
+              ),
+            ),
+    }),
+  );
   const journal = new Map<string, CloneJournalEntry>();
   const restored = new Map<ProjectId, TrackedClone>();
   const stoppedAt = yield* nowIso;
@@ -160,6 +201,9 @@ export const make = Effect.gen(function* () {
       .withPermits(1)(
         Effect.gen(function* () {
           if (entry === null && !journal.has(destination)) return;
+          if (journalUnavailable) {
+            return yield* Effect.fail("The clone journal could not be loaded at startup.");
+          }
           const next = new Map(journal);
           if (entry === null) next.delete(destination);
           else next.set(destination, entry);
@@ -406,7 +450,7 @@ export const make = Effect.gen(function* () {
           cloneUrl: prepared.cloneUrl,
           protocol: input.protocol ?? "auto",
         });
-        return [overlapping.map((stale) => stale.snapshot.projectId), next] as const;
+        return [overlapping, next] as const;
       });
       const alreadyInProgress = new SourceControlRepositoryError({
         operation: "cloneRepository",
@@ -415,7 +459,18 @@ export const make = Effect.gen(function* () {
       });
       if (claim === null) return yield* alreadyInProgress;
       // A superseded done entry's pending removal would otherwise delete the new claim.
-      yield* Effect.forEach(claim, clearRetention, { discard: true });
+      yield* Effect.forEach(claim, (stale) => clearRetention(stale.snapshot.projectId), {
+        discard: true,
+      });
+      // A refused start drops only its own claim; the entries it displaced stay retryable.
+      const releaseClaim = Ref.update(clones, (current) => {
+        const next = new Map(current);
+        next.delete(input.projectId);
+        for (const stale of claim) {
+          if (!next.has(stale.snapshot.projectId)) next.set(stale.snapshot.projectId, stale);
+        }
+        return next;
+      }).pipe(Effect.andThen(publish));
       // Finish or release the claim despite disconnects; a claim without a fiber cannot be cancelled or retried.
       const projectId = yield* Effect.uninterruptible(
         Effect.gen(function* () {
@@ -465,7 +520,7 @@ export const make = Effect.gen(function* () {
             yield* launch(projectId);
           }
           return projectId;
-        }).pipe(Effect.tapError(() => remove(input.projectId))),
+        }).pipe(Effect.tapError(() => releaseClaim)),
       );
       return {
         projectId,
@@ -521,25 +576,24 @@ export const make = Effect.gen(function* () {
         // After a restart we cannot know which files the interrupted clone created, so none are
         // deleted. A complete checkout of this repository finishes the clone as `start` would.
         const prepared = yield* repositories
-          .prepareClone({ remoteUrl: tracked.cloneUrl, destinationPath }, { reuseCheckout: true })
+          .prepareClone(
+            { remoteUrl: tracked.cloneUrl, destinationPath },
+            { reuseCheckout: true, requireCompleteCheckout: true },
+          )
           .pipe(
             Effect.mapError((error) =>
               error.detail === "Destination path already exists and is not empty."
                 ? new SourceControlRepositoryError({
                     operation: error.operation,
                     provider: error.provider,
-                    detail: `${destinationPath} still holds files from the interrupted clone. Remove the folder, then retry.`,
+                    detail: `${destinationPath} is not empty. Inspect or move the folder, then retry.`,
                   })
                 : error,
             ),
           );
         if (prepared.existingCheckout) {
           const hook = onCloned ?? tracked.onCloned;
-          yield* modify(projectId, (entry) => ({
-            ...entry,
-            recovered: false,
-            ...(onCloned ? { onCloned } : {}),
-          }));
+          // `recovered` stays set until `done` commits: an interrupted retry must still keep files.
           yield* finish(projectId, "done", null);
           if (hook) {
             yield* hook({ projectId, workspaceRoot: destinationPath }).pipe(
