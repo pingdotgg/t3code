@@ -617,6 +617,14 @@ describe("threadLinkContextReferences", () => {
   const reference = (environmentId: string, threadId: string, label: string) =>
     `[${label}](t3-context://v1/thread/${threadContextRecord(thread(environmentId, threadId), label).contextId})`;
 
+  it("chips a pasted link in prose after fence-looking indented code", () => {
+    const example = "Intro\n# Example\n    ~~~\n    <t3-thread://v2/env-9/t9>\n\n";
+    const text = `${example}See <t3-thread://v2/env-9/release>`;
+    expect(threadLinkContextReferences(text, [], () => "Release notes").text).toBe(
+      `${example}See ${reference("env-9", "release", "Release notes")}`,
+    );
+  });
+
   it("makes a chip of a copied link, a v2 link, and a labeled link, titled here", () => {
     const pasted = threadLinkContextReferences(
       [
