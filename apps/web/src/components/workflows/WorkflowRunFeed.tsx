@@ -13,7 +13,7 @@ import {
   type WorkflowRunReference,
 } from "@t3tools/contracts";
 import { formatModelSlugName } from "@t3tools/shared/model";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import {
   ArrowLeftIcon,
@@ -190,9 +190,10 @@ export function WorkflowStateWord({ node }: { readonly node: WorkflowRunNode }) 
 
 const nthTry = (count: number, resolve: MessageResolver) =>
   resolve(
-    msg("{count, plural, =1 {1st try} =2 {2nd try} =3 {3rd try} other {{count}th try}}", {
-      count,
-    }),
+    msg(
+      "{count, selectordinal, one {{count}st try} two {{count}nd try} few {{count}rd try} other {{count}th try}}",
+      { count },
+    ),
   );
 
 const queuedText = (beat: WorkflowBeat, resolve: MessageResolver) =>
@@ -231,6 +232,7 @@ export function WorkflowRunFeed({
 }) {
   const { run } = node;
   const gt = useGT();
+  const m = useMessages();
   const clockMs = useRunNowMs(node.run.endedAt === null);
   // An ended run's last step can still read as running for a moment; it ran until the run ended.
   const nowMs = node.run.endedAt === null ? clockMs : Date.parse(node.run.endedAt);
@@ -512,8 +514,8 @@ export function WorkflowRunFeed({
                 <span aria-hidden>·</span>
                 <span>
                   {ended
-                    ? gt("took {duration}", { duration: formatDuration(ranMs) })
-                    : gt("{duration} so far", { duration: formatDuration(ranMs) })}
+                    ? gt("took {duration}", { duration: formatDuration(ranMs, m) })
+                    : gt("{duration} so far", { duration: formatDuration(ranMs, m) })}
                 </span>
               </>
             )}
@@ -963,6 +965,7 @@ function WorkflowTimeline({
   readonly current: string | null;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const completed = node.run.status === "completed";
   const ask = (asked: WorkflowQuestion) => (
     <div className="ms-8 mt-1 mb-2">
@@ -1016,7 +1019,7 @@ function WorkflowTimeline({
                     count: names.length - 2,
                   })
             }
-            duration={workflowStepTime(Math.max(0, row.endMs - row.startMs))}
+            duration={workflowStepTime(Math.max(0, row.endMs - row.startMs), m)}
             selected={focus === key}
             current={current === key}
             onPick={() => onPick(key)}
@@ -1077,7 +1080,7 @@ function WorkflowTimeline({
                 </span>
               ) : null}
               <span className="min-w-12 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
-                {workflowStepTime(running > 0 ? wholeSeconds(endMs - startMs) : endMs - startMs)}
+                {workflowStepTime(running > 0 ? wholeSeconds(endMs - startMs) : endMs - startMs, m)}
               </span>
               <span aria-hidden className="hidden w-3 shrink-0 @2xl/feed:block" />
             </div>
@@ -1277,7 +1280,7 @@ function WorkflowBeatRow({
           : null;
       case "sleep":
         return Number.isFinite(wakes) && wakes > nowMs
-          ? gt("wakes in {duration}", { duration: formatDuration(wholeSeconds(wakes - nowMs)) })
+          ? gt("wakes in {duration}", { duration: formatDuration(wholeSeconds(wakes - nowMs), m) })
           : gt("about to wake");
       case "wait":
         return gt("waiting");
@@ -1360,7 +1363,7 @@ function WorkflowBeatRow({
       }
       aside={aside}
       {...(failed ? { asideTone: "failed" as const } : {})}
-      duration={workflowStepTime(elapsedOf(beat))}
+      duration={workflowStepTime(elapsedOf(beat), m)}
       selected={selected}
       current={current}
       onPick={onPick}
@@ -1522,7 +1525,7 @@ function WorkflowBeatCard({
   const m = useMessages();
   const sessionId = useEnvironmentSessionId(environmentId);
   const under = beat.status === "running";
-  const length = formatDuration(elapsedOf(beat));
+  const length = formatDuration(elapsedOf(beat), m);
   const tries = beat.attempts > 1 ? ` · ${nthTry(beat.attempts, m)}` : "";
   switch (beat.kind) {
     case "agent":
@@ -1619,7 +1622,7 @@ function WorkflowBeatCard({
             sub={
               Number.isFinite(wakes) && wakes > nowMs
                 ? gt("wakes in {duration}", {
-                    duration: formatDuration(wholeSeconds(wakes - nowMs)),
+                    duration: formatDuration(wholeSeconds(wakes - nowMs), m),
                   })
                 : gt("about to wake")
             }
@@ -1729,7 +1732,7 @@ function WorkflowAgentCard({
     .get(threadEnvironmentId)
     ?.find((candidate) => candidate.instanceId === shell?.modelSelection.instanceId);
   const under = beat.status === "running";
-  const length = formatDuration(elapsedOf(beat));
+  const length = formatDuration(elapsedOf(beat), m);
   const summary = workflowAgentSummary(beat);
   const start = summary.said === null ? null : workflowSaidStart(summary.said, SAID_SHOWN);
   const liveWord = !under
@@ -1854,7 +1857,9 @@ function WorkflowPauseCard({
     : !Number.isFinite(resumes)
       ? gt("waits for you to resume it")
       : resumes > nowMs
-        ? gt("tries again by itself in {duration}", { duration: formatDuration(resumes - nowMs) })
+        ? gt("tries again by itself in {duration}", {
+            duration: formatDuration(resumes - nowMs, m),
+          })
         : gt("about to try again by itself");
   return (
     <FeedCard tone="failed" label={gt("Why it paused")} reveal>

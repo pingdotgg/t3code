@@ -435,6 +435,46 @@ describe("IssueService", () => {
     }),
   );
 
+  it.effect("shares one tracker read of an issue until a write or an explicit refresh", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "web", repository: "acme/web" }),
+          project({ id: "worktree", repository: "acme/web" }),
+        ],
+        trackers: [
+          fakeTracker({
+            getIssue: (input) => Effect.sync(() => (reads++, issue(input.key))),
+          }),
+        ],
+      });
+      const ref = { projectId: "web" as ProjectId, tracker: GITHUB, scope: "acme/web", key: "42" };
+      // Every client and project polling one issue costs the tracker one read.
+      yield* Effect.all(
+        [
+          service.detail(ref),
+          service.detail(ref),
+          service.detail({ ...ref, projectId: "worktree" as ProjectId }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      expect((yield* service.detail(ref)).projectId).toBe("web");
+      expect(reads).toBe(1);
+      yield* service.detail({ ...ref, key: "43" });
+      expect(reads).toBe(2);
+
+      yield* service.comment({ ...ref, body: "Repro attached." });
+      yield* service.detail(ref);
+      expect(reads).toBe(3);
+
+      // An explicit refresh sees what changed on the tracker itself.
+      yield* service.detail({ ...ref, refresh: true });
+      yield* service.detail(ref);
+      expect(reads).toBe(4);
+    }),
+  );
+
   it.effect("refuses what the tracker did not declare before calling it", () =>
     Effect.gen(function* () {
       let calls = 0;
@@ -745,10 +785,13 @@ describe("IssueService with a standalone tracker", () => {
       expect(
         yield* service.resolveUrl("https://linear.app/acme/issue/ENG-1/old-title"),
       ).toMatchObject({ key: "ENG-1", writable: true });
-      const refused = yield* service
-        .resolveUrl("https://linear.app/other-workspace/issue/ENG-1/old-title")
-        .pipe(Effect.result);
-      expect(refused).toMatchObject({
+      const otherWorkspace = "https://linear.app/other-workspace/issue/ENG-1/old-title";
+      // Bound or not, the link must name the workspace the environment's credential reaches.
+      const unbound = yield* makeService({
+        projects: [project({ id: "notes" })],
+        trackers: [fakeStandaloneTracker()],
+      });
+      const refusal = {
         _tag: "Failure",
         failure: {
           _tag: "IssueOperationError",
@@ -756,7 +799,11 @@ describe("IssueService with a standalone tracker", () => {
           reason: "not-found",
           detail: "This issue URL does not belong to the connected workspace.",
         },
-      });
+      };
+      expect(yield* service.resolveUrl(otherWorkspace).pipe(Effect.result)).toMatchObject(refusal);
+      expect(
+        yield* unbound.resolveUrl(otherWorkspace, "notes" as ProjectId).pipe(Effect.result),
+      ).toMatchObject(refusal);
     }),
   );
 
@@ -873,17 +920,30 @@ describe("IssueService with a standalone tracker", () => {
         },
       });
 
-      // Unbound, the standalone scope is gone and its references are unsupported.
+      // Unbound, the standalone scope leaves the listing, but the environment's credential still
+      // serves references, from a project with no repository (No project) too.
       listed.length = 0;
       const unbound = yield* makeService({ projects, trackers });
       const after = yield* unbound.list({ state: "open" });
       expect(listed).toEqual(["github github.com acme/web"]);
       expect(after.trackers.map((tracker) => tracker.tracker)).toEqual(["github"]);
-      const refused = yield* Effect.flip(unbound.detail(linearRef));
-      expect(refused).toMatchObject({
-        _tag: "IssueUnavailableError",
-        reason: "tracker-unsupported",
+      const noProjectRef = { ...linearRef, projectId: "notes" as ProjectId };
+      expect(yield* unbound.detail(noProjectRef)).toMatchObject({
+        projectId: "notes",
+        host: "linear.app",
+        writable: true,
       });
+      yield* unbound.comment({ ...noProjectRef, body: "Follow-up" });
+      yield* unbound.setState({ ...noProjectRef, state: "Done" });
+      expect(
+        yield* unbound.resolveUrl(
+          "https://linear.app/acme/issue/ENG-1/issue-title",
+          "notes" as ProjectId,
+        ),
+      ).toMatchObject({ projectId: "notes", host: "linear.app", key: "ENG-1", writable: true });
+      expect(
+        yield* Effect.flip(unbound.detail({ ...noProjectRef, host: "linear.example" })),
+      ).toMatchObject({ _tag: "IssueUnavailableError", reason: "tracker-unsupported" });
 
       // A project with no remote at all can still be bound, and then has only the standalone one.
       const standaloneOnly = yield* makeService({

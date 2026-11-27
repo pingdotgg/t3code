@@ -7,7 +7,17 @@ import {
   decodeSpeechPcmRequest,
   encodeSpeechPcmRequest,
   resolveSpeechVocabulary,
+  speechModelDownloadPercent,
 } from "./speech.ts";
+
+describe("speechModelDownloadPercent", () => {
+  it.each([
+    { downloaded: 995, percent: 99 },
+    { downloaded: 1_000, percent: 99 },
+  ])("reads $downloaded of 1000 bytes as $percent", ({ downloaded, percent }) => {
+    expect(speechModelDownloadPercent(downloaded, 1_000)).toBe(percent);
+  });
+});
 
 describe("speech PCM request framing", () => {
   it("round-trips options and unaligned PCM without changing audio bytes", () => {
