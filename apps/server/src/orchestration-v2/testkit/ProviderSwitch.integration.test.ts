@@ -1035,7 +1035,11 @@ describe("orchestration v2 provider switching", () => {
           }
           return;
         }
-        assert.equal(projection.runs.at(-1)?.status, "completed");
+        // A session that cannot take injected history has nothing native to compact yet.
+        assert.equal(
+          projection.runs.at(-1)?.status,
+          scenario === "compact-legacy" ? "failed" : "completed",
+        );
         if (exhaustedTarget) {
           assert.equal(yield* Ref.get(generation), 2);
           const turns = (yield* Ref.get(capturedTurns)).filter(
