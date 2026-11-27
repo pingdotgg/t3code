@@ -373,7 +373,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     );
     if (probed === undefined) return false;
     const failed = probed.unavailable?.reason === "probeFailed";
-    yield* Ref.set(lastUsageReadFailed, failed);
+    const failedBefore = yield* Ref.getAndSet(lastUsageReadFailed, failed);
     const next = yield* Ref.modify(snapshotStateRef, (state) => {
       if (!state.snapshot.enabled || state.snapshot.auth.status === "unauthenticated") {
         return [null, state] as const;
@@ -438,7 +438,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     if (next !== null) {
       yield* PubSub.publish(changesPubSub, next);
     }
-    return failed;
+    return failed && !failedBefore;
   });
 
   const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* () {
@@ -499,12 +499,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       }
       return;
     }
-    const failedBefore = yield* Ref.get(lastUsageReadFailed);
-    const failed = yield* applyUsageLimitsProbe(input.checkUsageLimits);
+    const startedFailing = yield* applyUsageLimitsProbe(input.checkUsageLimits);
     // A failed read can mean the stored session expired or was revoked, which only the full
     // check can renew or detect. Run it when reads start failing, not on every interval. The
     // recheck a deferred failure scheduled (deferFailure is false then) always runs it.
-    if (input.pollUsageLimits === true && (!deferFailure || (failed && !failedBefore))) {
+    if (input.pollUsageLimits === true && (!deferFailure || startedFailing)) {
       yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true, deferFailure });
     }
   });
@@ -560,7 +559,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   ).pipe(Effect.forkScoped);
 
   yield* Effect.forever(
-    Effect.all([getRefreshInterval, Ref.getAndSet(recheckPendingRef, false)]).pipe(
+    Effect.all([getRefreshInterval, Ref.get(recheckPendingRef)]).pipe(
       Effect.flatMap(([configuredInterval, recheckPending]) => {
         const refreshInterval = recheckPending ? FAILED_CHECK_RECHECK_DELAY : configuredInterval;
         // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races the interval against a settings-change signal, not a timeout
@@ -577,7 +576,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
               ? shouldRefreshOnInterval.pipe(
                   Effect.flatMap((shouldRefresh) =>
                     shouldRefresh
-                      ? refreshSemaphore.withPermits(1)(refreshOnInterval(!recheckPending))
+                      ? // A pending recheck survives a tick skipped for lack of demand.
+                        Ref.getAndSet(recheckPendingRef, false).pipe(
+                          Effect.flatMap((pending) =>
+                            refreshSemaphore.withPermits(1)(refreshOnInterval(!pending)),
+                          ),
+                        )
                       : Effect.void,
                   ),
                 )
