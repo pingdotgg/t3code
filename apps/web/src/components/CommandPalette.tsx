@@ -2956,10 +2956,10 @@ function OpenCommandPaletteDialog(props: {
         );
       }
     } catch {
-      return;
-    } finally {
       setIsPickingProjectFolder(false);
+      return;
     }
+    setIsPickingProjectFolder(false);
     if (!pickedPath || cloneSelectionIsStale()) {
       return;
     }
