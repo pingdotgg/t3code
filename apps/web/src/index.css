@@ -7429,12 +7429,14 @@ body {
       );
     }
 
+    /* Only a strip that overflows can scroll. A scroll timeline on every header
+       kept the compositor producing and dropping frames at rest. */
     @supports (timeline-scope: --pane-strip-scroll) {
-      & [data-pane-notch=""] {
+      & [data-tab-row-overflow] [data-pane-notch=""] {
         timeline-scope: --pane-strip-scroll;
       }
 
-      & [data-pane-notch=""] [data-layout-tab-strip] {
+      & [data-tab-row-overflow] [data-pane-notch=""] [data-layout-tab-strip] {
         scroll-timeline: --pane-strip-scroll inline;
       }
     }
@@ -7460,10 +7462,12 @@ body {
          Keep the base translate at -scrollLeft so the first frame after moving
          into a new header (before its timeline attaches) never jumps to 0. */
       @supports (timeline-scope: --pane-strip-scroll) {
-        inset-inline-start: calc(var(--pane-join-lead-x, 0px) * -1);
-        translate: calc(var(--pane-join-lead-x, 0px) - var(--pane-join-scroll, 0px)) 0;
-        animation: pane-join-scroll linear both;
-        animation-timeline: --pane-strip-scroll;
+        [data-tab-row-overflow] & {
+          inset-inline-start: calc(var(--pane-join-lead-x, 0px) * -1);
+          translate: calc(var(--pane-join-lead-x, 0px) - var(--pane-join-scroll, 0px)) 0;
+          animation: pane-join-scroll linear both;
+          animation-timeline: --pane-strip-scroll;
+        }
       }
 
       &[hidden] {
