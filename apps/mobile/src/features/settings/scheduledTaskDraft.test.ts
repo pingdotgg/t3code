@@ -9,6 +9,7 @@ import {
   type ScheduledTask,
 } from "@t3tools/contracts";
 import {
+  changeDraftProject,
   createDraft,
   editDraft,
   hasScheduledTaskDraftChanges,
@@ -260,5 +261,28 @@ describe("scheduled task worktree base", () => {
     expect(reordered.fallbackModelSelections).toEqual([astra, opus]);
     expect(hasScheduledTaskDraftChanges(initial, reordered)).toBe(true);
     expect(pruneFallbackMatchingPrimary(reordered.fallbackModelSelections, astra)).toEqual([opus]);
+  });
+
+  it("clears the old project's base branch and checkout when the project changes", () => {
+    const other = ProjectId.make("other");
+    const worktree = editDraft({
+      ...rootTask,
+      workspaceStrategy: { type: "worktree", baseRef: "release", startFromOrigin: false },
+    });
+    expect(changeDraftProject(worktree, rootTask.projectId)).toBe(worktree);
+    expect(changeDraftProject(worktree, other)).toMatchObject({
+      projectId: other,
+      workspace: "worktree",
+      baseRef: "",
+      startFromOrigin: false,
+    });
+    const checkout = editDraft({
+      ...rootTask,
+      workspaceStrategy: { type: "existing_worktree", worktreePath: "/work/project-a" },
+    });
+    expect(changeDraftProject(checkout, other)).toMatchObject({
+      workspace: "existing_worktree",
+      checkoutPath: "",
+    });
   });
 });

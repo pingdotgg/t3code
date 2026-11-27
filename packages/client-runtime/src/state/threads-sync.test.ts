@@ -5,10 +5,13 @@ import {
   MessageId,
   NodeId,
   ORCHESTRATION_V2_WS_METHODS,
+  ProviderDriverKind,
+  ProviderInstanceId,
   RuntimeRequestId,
   RunId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadDetailSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
@@ -970,6 +973,53 @@ describe("EnvironmentThreads", () => {
       expect(live.sequence).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+    }),
+  );
+
+  it.effect("opens a cached live subagent with a snapshot instead of resuming (#44183)", () =>
+    Effect.gen(function* () {
+      const at = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+      const waiting: OrchestrationV2Subagent = {
+        id: NodeId.make("subagent"),
+        threadId: THREAD_ID,
+        runId: null,
+        parentNodeId: NodeId.make("parent-node"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("opencode"),
+        providerInstanceId: ProviderInstanceId.make("opencode"),
+        providerThreadId: null,
+        childThreadId: ThreadId.make("thread:child"),
+        nativeTaskRef: null,
+        prompt: "Reply pong",
+        title: "Pong response",
+        model: null,
+        status: "waiting",
+        result: null,
+        startedAt: at,
+        completedAt: null,
+        updatedAt: at,
+      };
+      const completed = { ...waiting, status: "completed" as const, completedAt: at };
+      const harness = yield* makeHarness({
+        cached: { ...BASE_PROJECTION, subagents: [waiting] },
+        completionMarker: true,
+      });
+
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({ ...BASE_PROJECTION, subagents: [completed] }, CACHED_SNAPSHOT_SEQUENCE),
+      );
+      yield* Queue.offer(harness.inputs, synchronized());
+      const live = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
+      expect(Option.getOrThrow(live.data).subagents.map((subagent) => subagent.status)).toEqual([
+        "completed",
+      ]);
     }),
   );
 

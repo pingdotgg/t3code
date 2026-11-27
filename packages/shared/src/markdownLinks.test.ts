@@ -27,6 +27,9 @@ describe("isMarkdownFileLinkLabel", () => {
     ["src/main.ts:10#L20", "/repo/src/main.ts:10", false],
     ["C#/Program.cs#L10", "./C%23/Program.cs#L10", true],
     ["src/main.ts#L10", "./src/main.ts%23L10", true],
+    ["draft.md ", "/tmp/draft.md%20", true],
+    [" draft.md  ", "./%20draft.md%20%20", true],
+    [" draft.md ", "/tmp/draft.md", true],
   ])("classifies %s for %s", (label, href, expected) => {
     expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
   });

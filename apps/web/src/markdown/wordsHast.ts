@@ -12,6 +12,7 @@ import { resolveCodexFileCitationLink } from "@t3tools/shared/codexFileCitations
 import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
 import { expandGithubEmojiAliases } from "@t3tools/client-runtime/pull-request-markdown";
 import { resolveChangeRequestMediaUrl } from "@t3tools/client-runtime/pull-request-references";
+import { expandIndentedCodeTabs } from "@t3tools/shared/markdownListIndentation";
 import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 import { absoluteFilePathMatches } from "@t3tools/shared/markdownLinks";
 import {
@@ -44,6 +45,13 @@ export interface MarkdownExtensions {
   };
   /** Expand GitHub `:alias:` emoji shortcodes in prose outside code. */
   readonly githubEmoji?: boolean;
+  /**
+   * Chunked Markdown footnote rendering mode:
+   * - `"omit"` hides the per-chunk `<section data-footnotes>`.
+   * - `"omit-seeded"` also strips the synthetic leading `<p>` used to seed prior footnote numbers.
+   * - `"only"` keeps only the `<section data-footnotes>` element.
+   */
+  readonly footnotes?: "omit" | "omit-seeded" | "only";
 }
 
 export interface WordsHastOptions {
@@ -389,6 +397,8 @@ function sanitizeMath(node: Element): Element | null {
 interface Walk {
   /** Words' hast for more Markdown, rendered with the same options; `indent` as leadingWhitespace's. */
   readonly render: (markdown: string, indent: number) => Root;
+  /** Reference definitions for re-rendering `markdown`; its own come first, as the first one wins. */
+  readonly definitions: (markdown: string) => string;
   readonly source: string;
   readonly options: WordsHastOptions;
   readonly math: Map<string, Element>;
@@ -480,7 +490,7 @@ function codexDirective(node: Element, walk: Walk, inLink: boolean): ElementCont
   };
 }
 
-const INLINE_PREFIX = "t3-markdown-inline-prefix:";
+const INLINE_PREFIX = "t3-markdown-inline-prefix ";
 
 function stripPositions(node: ElementContent) {
   delete node.position;
@@ -503,18 +513,19 @@ function recoverIndentedCode(
   const start = code?.position?.start.offset;
   const itemStart = item.position?.start.offset;
   if (!isElement(code, "pre") || start === undefined || itemStart === undefined) return false;
-  const value = textOf(code);
+  let value = textOf(code);
   if (!/^[\t ]/.test(value)) return false;
   if (walk.source.slice(itemStart, start).includes("\n") || /[`~]/.test(walk.source[start]!)) {
     return false;
   }
+  value = expandIndentedCodeTabs(value, walk.source, itemStart);
   // The trimmed first line sets where the item's content starts.
   const indent = [.../^[\t ]*/.exec(value)![0]].reduce(
     (column, character) => (character === "\t" ? (Math.floor(column / 4) + 1) * 4 : column + 1),
     0,
   );
   // The prefix keeps block syntax at the start, such as `#`, from opening a block.
-  const source = `${INLINE_PREFIX}${value.trim()}`;
+  const source = `${walk.definitions(value)}${INLINE_PREFIX}${value.trim()}`;
   const recovered = walk.render(source, indent);
   const paragraph = recovered.children.find((child) => child.type === "element");
   const first = isElement(paragraph, "p") ? paragraph.children[0] : undefined;
@@ -1166,6 +1177,62 @@ function makeInert(node: Root | Element) {
   }
 }
 
+function isFootnotesSection(node: Root["children"][number]): boolean {
+  return (
+    node.type === "element" &&
+    node.tagName === "section" &&
+    node.properties.dataFootnotes !== undefined
+  );
+}
+
+function isFootnoteSeedParagraph(node: Root["children"][number]): boolean {
+  if (node.type !== "element" || node.tagName !== "p") return false;
+  let hasRef = false;
+  for (const child of node.children) {
+    if (child.type === "text") {
+      if (child.value.trim() !== "") return false;
+      continue;
+    }
+    if (
+      child.type === "element" &&
+      child.tagName === "sup" &&
+      child.children.length === 1 &&
+      child.children[0]?.type === "element" &&
+      child.children[0].tagName === "a" &&
+      child.children[0].properties.dataFootnoteRef !== undefined
+    ) {
+      hasRef = true;
+      continue;
+    }
+    return false;
+  }
+  return hasRef;
+}
+
+function applyFootnoteMode(hast: Root, mode: NonNullable<MarkdownExtensions["footnotes"]>) {
+  if (mode === "only") {
+    hast.children = hast.children.filter(isFootnotesSection);
+    return;
+  }
+  let droppedSeed = mode !== "omit-seeded";
+  const kept: Root["children"] = [];
+  for (const child of hast.children) {
+    if (isFootnotesSection(child)) continue;
+    if (!droppedSeed && isFootnoteSeedParagraph(child)) {
+      droppedSeed = true;
+      continue;
+    }
+    if (kept.length === 0 && child.type === "text" && child.value.trim() === "") continue;
+    kept.push(child);
+  }
+  while (kept.length > 0) {
+    const tail = kept.at(-1);
+    if (tail?.type === "text" && tail.value.trim() === "") kept.pop();
+    else break;
+  }
+  hast.children = kept;
+}
+
 /** ChatMarkdown's sanitized hast for `text`, rendered by Words. */
 export function wordsHast(text: string, options: WordsHastOptions): Root {
   const { extensions } = options;
@@ -1187,7 +1254,15 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   const insights = options.insights ? insightSource(text, renderOptions) : null;
   const source = insights?.source ?? text;
   const tree = insights?.tree ?? parse(source, renderOptions);
+  let documentDefinitions: string[] | undefined;
   const walk: Walk = {
+    definitions: (markdown) =>
+      [
+        ...markdownReferenceDefinitions(markdown),
+        ...(documentDefinitions ??= markdownReferenceDefinitions(source)),
+      ]
+        .map((definition) => `${definition}\n\n`)
+        .join(""),
     render: (markdown, indent) =>
       parse(markdown, {
         ...renderOptions,
@@ -1205,6 +1280,7 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   const hast = sanitizeChatHast(tree);
   if (walk.math.size > 0) restoreMath(hast, walk.math);
   if (insights) restorePositions(hast, insights.toOriginal);
+  if (extensions.footnotes) applyFootnoteMode(hast, extensions.footnotes);
   if (extensions.inert) makeInert(hast);
   if (extensions.preview) return flattenPreview(hast, extensions.preview);
   addHeadingIds(hast);
