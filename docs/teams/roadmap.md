@@ -296,5 +296,8 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 > **Follow-up items (post-M8):**
 >
 > - **`modo` `Interrupt` + queued-message notification to creator/active-turn author:** Extend `canMemberInterruptTeamTurn` & UI explicit `Interrupt` controls so `modo` can also interrupt active turns on **unlocked** threads they can read (including colleagues' turns and unlocked team scheduled-task runs, immediately revoking active GitHub leases), and emit a server + client notification to the **thread creator** and **active turn author** whenever another member queues a message during an active turn so the creator can inspect it and click **`Send now`** if acceptable.
+
+- **Per-team notification sounds (distinct from personal):** Store `teamNotificationSounds: Record<TeamId, TeamNotificationSoundPreset>` in `ClientSettings` so personal threads keep upstream's `classic` MP3 alerts while team threads (remote Team Server and local team-project threads) default to a distinct Web Audio `chime` preset (`chime`, `bell`, `marimba`, `pulse`, `classic`, `off`), with inline Preview in **Settings → Notifications** and **Settings → Teams**.
+
 > - Milestone 7 Phase 7b: GitHub OAuth / GitHub App user-to-server token flow (M7 shipped fine-grained PATs with an extensible `authMethod` schema).
 > - Release packaging dry-run (`teams-release.yml`) for cutting the first tagged Teams release (`v0.1.12-teams.1`).
