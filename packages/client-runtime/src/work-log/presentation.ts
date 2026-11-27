@@ -21,7 +21,7 @@ import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
-import { classifyToolActivity } from "@t3tools/shared/toolActivity";
+import { classifyToolActivity, collectToolFilePaths } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
@@ -573,14 +573,20 @@ function toolGroupActionCount(
   action: ToolGroupAction,
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): number {
-  if (action !== "edit") return entries.length;
+  if (action !== "edit" && action !== "read") return entries.length;
   const changedFiles = new Set<string>();
   let editsWithoutFileDetails = 0;
   for (const entry of entries) {
-    if (!entry.changedFiles || entry.changedFiles.length === 0) {
+    const files =
+      action === "edit" || entry.changedFiles?.length
+        ? (entry.changedFiles ?? [])
+        : entry.structuredPayload?.type === "dynamic_tool"
+          ? collectToolFilePaths({ input: entry.structuredPayload.input })
+          : collectToolFilePaths(asRecord(entry.toolData));
+    if (files.length === 0) {
       editsWithoutFileDetails += 1;
     } else {
-      for (const file of entry.changedFiles) changedFiles.add(file);
+      for (const file of files) changedFiles.add(file);
     }
   }
   return changedFiles.size + editsWithoutFileDetails;
