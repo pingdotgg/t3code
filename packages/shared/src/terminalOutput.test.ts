@@ -32,6 +32,11 @@ describe("terminalOutputCollapseRedraws", () => {
 });
 
 describe("appendTerminalOutput", () => {
+  it("applies a carriage return interleaved with a color sequence", () => {
+    const output = feed(["abc\u001b[", "\r31mX"]).text;
+    expect(terminalOutputPlainText(output)).toBe("Xbc");
+  });
+
   it("keeps only the latest frame of a carriage-return progress bar", () => {
     expect(feed(["[1/3]", "\r[2/3]", "\r[3/3] done\nnext"]).text).toBe("[3/3] done\nnext");
   });
