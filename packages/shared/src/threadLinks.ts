@@ -2,6 +2,7 @@ import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contract
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { Nodes } from "mdast";
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
@@ -295,7 +296,8 @@ export function threadLinkRefs(
   return [...refs.values()];
 }
 
-const markdownParser = unified().use(remarkParse);
+// GFM like the chat renderer, so footnotes and other GFM containers hold prose, not code.
+const markdownParser = unified().use(remarkParse).use(remarkGfm);
 const FENCE_LIKE_LINE = /^[ \t>*+\-\d.)]*(?:`{3}|~{3})/m;
 
 function parsedCodeRanges(markdown: string) {

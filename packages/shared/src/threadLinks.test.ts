@@ -213,11 +213,22 @@ describe("thread links", () => {
     );
   });
 
+  it("rewrites a link in footnote prose before an indented fence", () => {
+    const footnote = "Note[^n].\n\n[^n]: note\n\n    See ";
+    expect(
+      replaceThreadLinks(`${footnote}<t3-thread://v2/local/prose>\n\n    ~~~`, () => "linked"),
+    ).toBe(`${footnote}linked\n\n    ~~~`);
+  });
+
   it.each([
     ["a paragraph code span", "Intro\n    ```\n    <t3-thread://v2/local/code>\n    ```"],
     [
       "a fence with over-indented markers",
       "~~~\n    ~~~\n    ~~~\n<t3-thread://v2/local/code>\n~~~",
+    ],
+    [
+      "a fence in a footnote",
+      "Note[^n].\n\n[^n]: note\n\n    ~~~\n    <t3-thread://v2/local/code>\n    ~~~",
     ],
   ])("keeps links literal inside %s and rewrites the link after it", (_name, code) => {
     const prose = `${code}\n\nSee `;
