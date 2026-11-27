@@ -144,71 +144,44 @@ it.effect("fails instead of reverting when the kept turn is not in the thread", 
   ),
 );
 
-it.effect(
-  "rewinds from the oldest known turn across pages and preserves older turns on retry",
-  () =>
-    Effect.gen(function* () {
-      const client = yield* CodexClient.CodexAppServerClient;
-      const rewind = revertCodexThreadFromKnownTurns(client, "thread", ["first-t3", "second-t3"]);
-
-      yield* rewind;
-      yield* rewind;
-    }).pipe(
-      Effect.provide(
-        CodexReplay.layerReplay({
-          provider: "codex",
-          protocol: "codex.app-server",
-          version: "test",
-          scenario: "revert-known-turns-pages",
-          entries: [
-            ...page(1, null, 100, ["second-t3"], "first"),
-            ...page(2, "first", 100, ["first-t3"], "prefix"),
-            ...threadResult(3, "thread/revert", { threadId: "thread", beforeTurnId: "first-t3" }),
-            ...page(4, null, 100, ["newer-kept"], "older-kept"),
-            ...page(5, "older-kept", 100, ["older-kept"], null),
-            ...threadResult(6, "thread/read", { threadId: "thread", includeTurns: false }),
-          ],
-        }),
-      ),
-    ),
-);
-
-function threadResult(
-  id: number,
-  method: "thread/read" | "thread/revert",
-  params: object,
-): CodexReplay.CodexAppServerReplayEntry[] {
-  return [
-    { type: "expect_outbound", frame: { id, method, params } },
-    {
-      type: "emit_inbound",
-      frame: {
-        id,
-        result: {
-          thread: {
-            id: "thread",
-            sessionId: "thread",
-            projectId: null,
-            forkedFromId: null,
-            preview: "",
-            ephemeral: false,
-            modelProvider: "openai",
-            createdAt: 1782622440,
-            updatedAt: 1782622440,
-            status: { type: "idle" },
-            path: null,
-            cwd: "/workspace",
-            cliVersion: "0.156.0",
-            source: "vscode",
-            threadSource: null,
-            agentNickname: null,
-            agentRole: null,
-            gitInfo: null,
-            name: null,
-            turns: [],
+it.effect("rewinds from the oldest known turn across pages and keeps older turns on retry", () =>
+  Effect.gen(function* () {
+    const client = yield* CodexClient.CodexAppServerClient;
+    const rewind = revertCodexThreadFromKnownTurns(client, "thread", ["first-t3", "second-t3"]);
+    assert.equal((yield* rewind.pipe(Effect.flip)).message, "reverted");
+    assert.equal((yield* rewind.pipe(Effect.flip)).message, "read only");
+  }).pipe(
+    Effect.provide(
+      CodexReplay.layerReplay({
+        provider: "codex",
+        protocol: "codex.app-server",
+        version: "test",
+        scenario: "revert-known-turns-pages",
+        entries: [
+          ...page(1, null, 100, ["second-t3"], "first"),
+          ...page(2, "first", 100, ["first-t3"], "prefix"),
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 3,
+              method: "thread/revert",
+              params: { threadId: "thread", beforeTurnId: "first-t3" },
+            },
           },
-        },
-      },
-    },
-  ];
-}
+          { type: "emit_inbound", frame: { id: 3, error: { code: -32603, message: "reverted" } } },
+          ...page(4, null, 100, ["newer-kept"], "older-kept"),
+          ...page(5, "older-kept", 100, ["older-kept"], null),
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 6,
+              method: "thread/read",
+              params: { threadId: "thread", includeTurns: false },
+            },
+          },
+          { type: "emit_inbound", frame: { id: 6, error: { code: -32603, message: "read only" } } },
+        ],
+      }),
+    ),
+  ),
+);
