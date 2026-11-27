@@ -135,6 +135,7 @@ const serverConfig = {
   shellRevealInFileManager: true,
   shellRevealInFileManagerKind: "xdg-open",
   environment: { platform: { os: "linux" }, capabilities: {} },
+  settings: { enablePreviewTunnel: true },
 };
 
 function setup() {
@@ -364,4 +365,34 @@ it("opens an editor link over the desktop bridge on a click and on a middle-clic
     expect(state.openExternal).toHaveBeenLastCalledWith(href);
   }
   expect(state.openExternal).toHaveBeenCalledTimes(2);
+});
+
+it("opens another environment's localhost link in the system browser through a port forward", async () => {
+  using _setup = setup();
+  const forwardPort = vi.fn(async (environmentId: EnvironmentId, remotePort: number) => ({
+    environmentId,
+    remotePort,
+    localPort: 61234,
+  }));
+  vi.stubGlobal("desktopBridge", {
+    ...window.desktopBridge,
+    preview: {
+      ...window.desktopBridge?.preview,
+      forwardPort,
+      sharesLoopback: async () => false,
+      listPortForwards: async () => [],
+      onPortForwards: () => () => {},
+    },
+  });
+  using _bridge = { [Symbol.dispose]: () => void vi.unstubAllGlobals() };
+  await using screen = await renderMarkdown("[Open app](http://localhost:4599/hello?x=1#top)");
+  const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+  await act(async () => screen.anchor().dispatchEvent(event));
+  // The remote environment's loopback is not this machine's; the native href would open the wrong server.
+  expect(event.defaultPrevented).toBe(true);
+  await vi.waitFor(() =>
+    expect(state.openExternal).toHaveBeenCalledWith("http://localhost:61234/hello?x=1#top"),
+  );
+  expect(forwardPort).toHaveBeenCalledWith(threadRef.environmentId, 4599);
+  expect(state.openExternal).not.toHaveBeenCalledWith("http://localhost:4599/hello?x=1#top");
 });
