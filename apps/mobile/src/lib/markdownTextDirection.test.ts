@@ -31,8 +31,9 @@ describe("markdownWithTextDirection", () => {
   });
 
   it("marks a byte order mark paragraph whose Hebrew is written as character references", () => {
-    const markdown = "\uFEFFAPI &#x5D0; &#x5D1;";
-    expect(markdownWithTextDirection(markdown)).toBe(`${RLM}${markdown}`);
+    expect(markdownWithTextDirection("\uFEFFAPI &#x5D0; &#x5D1;")).toBe(
+      `\uFEFF${RLM}API &#x5D0; &#x5D1;`,
+    );
   });
 
   it("skips code and keeps task list checkboxes intact", () => {
