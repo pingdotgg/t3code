@@ -1,5 +1,6 @@
 import {
   ALL_TEAM_ROLES,
+  DEFAULT_TEAM_NOTIFICATION_SOUND,
   EnvironmentId,
   IsoDateTime,
   NonNegativeInt,
@@ -53,11 +54,14 @@ import {
   isTeamThreadLocked,
   listAccessibleTeamEnvironments,
   listAccessibleTeamViews,
+  listConnectedTeams,
   listRemoteOnlyTeamProviders,
   resolveProjectTeamAssignment,
+  resolveTeamNotificationSoundPreset,
   resolveTeamQueuedRunAuthorPseudo,
   resolveTeamScheduledTaskMeta,
   resolveTeamThreadAcceptedNotes,
+  resolveThreadTeamId,
   resolveTeamThreadCreatorPseudo,
   resolveTeamThreadEnvironmentAccessForClient,
   resolveTeamThreadNotes,
@@ -1740,5 +1744,169 @@ describe("team client-runtime state and presentation", () => {
       payload: { taskId: taskMinId },
     });
     expect(resolveTeamScheduledTaskMeta(state, taskMinId)).toBeNull();
+  });
+
+  it("resolves per-team notification sound presets, local team-project thread teamIds, and connected teams", () => {
+    const teamAId = TeamId.make("team-alpha");
+    const teamBId = TeamId.make("team-beta");
+    const viewAId = TeamViewId.make("view-alpha");
+    const localEnvId = EnvironmentId.make("env-local");
+    const teamAEnvId = EnvironmentId.make("env-team-a");
+    const teamAEnvMirrorId = EnvironmentId.make("env-team-a-mirror");
+    const teamBEnvId = EnvironmentId.make("env-team-b");
+    const now = IsoDateTime.make("2026-11-27T10:00:00.000Z");
+
+    // Preset resolution: personal -> classic, unconfigured team -> chime, custom -> configured, off -> off
+    expect(
+      resolveTeamNotificationSoundPreset({
+        teamId: null,
+        teamNotificationSounds: { [teamAId]: "bell" },
+      }),
+    ).toBe("classic");
+    expect(resolveTeamNotificationSoundPreset({ teamId: undefined })).toBe("classic");
+    expect(
+      resolveTeamNotificationSoundPreset({
+        teamId: teamAId,
+        teamNotificationSounds: {},
+      }),
+    ).toBe(DEFAULT_TEAM_NOTIFICATION_SOUND);
+    expect(
+      resolveTeamNotificationSoundPreset({
+        teamId: teamAId,
+        teamNotificationSounds: { [teamAId]: "marimba", [teamBId]: "off" },
+      }),
+    ).toBe("marimba");
+    expect(
+      resolveTeamNotificationSoundPreset({
+        teamId: teamBId,
+        teamNotificationSounds: { [teamAId]: "marimba", [teamBId]: "off" },
+      }),
+    ).toBe("off");
+    expect(
+      resolveTeamNotificationSoundPreset({
+        teamId: "toString",
+        teamNotificationSounds: {},
+      }),
+    ).toBe("chime");
+
+    // Thread teamId resolution across remote Team Server, local team-assigned project, synced fallback, and personal
+    const repoKey = "github.com/acme/platform";
+    const teamProjectAssignment = {
+      projectId: ProjectId.make("proj-remote"),
+      teamId: teamAId,
+      defaultViewId: viewAId,
+      repoIdentityKey: repoKey,
+      assignedByMemberId: aliceId,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const syncedLocalThreadId = ThreadId.make("thread-local-synced");
+    const teamAState = {
+      ...EMPTY_TEAM_ENVIRONMENT_STATE,
+      team: {
+        id: teamAId,
+        name: "Alpha",
+        displayName: "Alpha",
+        defaultViewId: viewAId,
+        createdAt: now,
+        updatedAt: now,
+      },
+      teamProjects: [teamProjectAssignment],
+      projectAssignmentByProjectId: new Map([
+        [teamProjectAssignment.projectId, teamProjectAssignment],
+      ]),
+      projectAssignmentByRepoKey: new Map([[repoKey, teamProjectAssignment]]),
+      attributionByThreadId: new Map([
+        [
+          syncedLocalThreadId,
+          {
+            threadId: syncedLocalThreadId,
+            teamId: teamAId,
+            creatorMemberId: aliceId,
+            creatorPseudo: "alice" as TeamPseudo,
+            viewId: viewAId,
+            locked: false,
+            lockedByMemberId: null,
+            isLocalSynced: true,
+            createdAt: now,
+          },
+        ],
+      ]),
+    };
+    const teamBState = {
+      ...EMPTY_TEAM_ENVIRONMENT_STATE,
+      team: {
+        id: teamBId,
+        name: "Beta",
+        displayName: "Beta",
+        defaultViewId: TeamViewId.make("view-beta"),
+        createdAt: now,
+        updatedAt: now,
+      },
+    };
+    const teamStates = new Map([
+      [localEnvId, EMPTY_TEAM_ENVIRONMENT_STATE],
+      [teamAEnvId, teamAState],
+      [teamAEnvMirrorId, teamAState],
+      [teamBEnvId, teamBState],
+    ]);
+
+    // 1. Remote Team Server thread -> resolves teamAId
+    expect(
+      resolveThreadTeamId({
+        environmentId: teamAEnvId,
+        threadId: ThreadId.make("thread-remote-1"),
+        teamStates,
+      }),
+    ).toBe(teamAId);
+
+    // 2. Local thread on a project correlated with Team A -> resolves teamAId
+    expect(
+      resolveThreadTeamId({
+        environmentId: localEnvId,
+        threadId: ThreadId.make("thread-local-team-project"),
+        project: {
+          id: ProjectId.make("proj-local-clone"),
+          environmentId: localEnvId,
+          repositoryIdentity: {
+            canonicalKey: "local/platform",
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: "https://github.com/acme/platform.git",
+            },
+            displayName: "platform",
+            origin: { canonicalKey: repoKey, host: "github.com", owner: "acme", repo: "platform" },
+          } as never,
+        },
+        teamStates,
+      }),
+    ).toBe(teamAId);
+
+    // 3. Local-synced thread without repositoryIdentity -> resolves via isLocalSynced attribution fallback
+    expect(
+      resolveThreadTeamId({
+        environmentId: localEnvId,
+        threadId: syncedLocalThreadId,
+        project: { id: ProjectId.make("proj-uncorrelated"), environmentId: localEnvId },
+        teamStates,
+      }),
+    ).toBe(teamAId);
+
+    // 4. Personal local thread -> null
+    expect(
+      resolveThreadTeamId({
+        environmentId: localEnvId,
+        threadId: ThreadId.make("thread-personal-1"),
+        project: { id: ProjectId.make("proj-personal"), environmentId: localEnvId },
+        teamStates,
+      }),
+    ).toBeNull();
+
+    // Connected team list deduplicates by team.id and excludes personal environments
+    expect(listConnectedTeams(teamStates).map((entry) => entry.team.id)).toEqual([
+      teamAId,
+      teamBId,
+    ]);
   });
 });

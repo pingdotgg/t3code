@@ -1,5 +1,8 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { resolveProjectTeamAssignment } from "@t3tools/client-runtime/team";
+import {
+  resolveProjectTeamAssignment,
+  resolveTeamNotificationSoundPreset,
+} from "@t3tools/client-runtime/team";
 import {
   NonNegativeInt,
   type EnvironmentId,
@@ -568,10 +571,27 @@ export function TeamLocalThreadSyncCoordinator() {
             note.originalBody.length > 140
               ? `${note.originalBody.slice(0, 137)}…`
               : note.originalBody;
-          const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
-          if (hasNotificationSound(mode)) {
-            void playNotificationSound("input", () =>
-              hasNotificationSound(getClientSettings().notificationMode),
+          const settings = getClientSettings();
+          const { notificationMode: mode, inAppNotificationsEnabled } = settings;
+          const teamId = state.team.id;
+          const soundPreset = resolveTeamNotificationSoundPreset({
+            teamId,
+            teamNotificationSounds: settings.teamNotificationSounds,
+          });
+          if (hasNotificationSound(mode) && soundPreset !== "off") {
+            void playNotificationSound(
+              "input",
+              () => {
+                const latest = getClientSettings();
+                return (
+                  hasNotificationSound(latest.notificationMode) &&
+                  resolveTeamNotificationSoundPreset({
+                    teamId,
+                    teamNotificationSounds: latest.teamNotificationSounds,
+                  }) !== "off"
+                );
+              },
+              soundPreset,
             );
           }
           if (inAppNotificationsEnabled) {

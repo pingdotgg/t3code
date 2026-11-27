@@ -14,28 +14,64 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const SOUND_SECONDS = 0.6;
 
-const audio = { currentTime: 0, started: 0 };
+interface FakeBuffer {
+  readonly duration: number;
+  readonly sampleRate: number;
+  readonly length: number;
+  readonly data: Float32Array;
+  getChannelData: (channel: number) => Float32Array;
+}
+
+const audio = {
+  currentTime: 0,
+  started: 0,
+  stopped: 0,
+  resumed: 0,
+  createdBuffers: 0,
+  initialState: "running" as AudioContextState,
+  lastPlayedBuffer: null as FakeBuffer | { duration: number } | null,
+};
 
 class FakeAudioContext {
-  state = "running";
+  state: AudioContextState = audio.initialState;
+  sampleRate = 44100;
   destination = {};
   get currentTime() {
     return audio.currentTime;
   }
   resume() {
+    audio.resumed += 1;
+    this.state = "running";
     return Promise.resolve();
   }
   decodeAudioData() {
     return Promise.resolve({ duration: SOUND_SECONDS });
   }
-  createBufferSource() {
+  createBuffer(_channels: number, length: number, sampleRate: number): FakeBuffer {
+    audio.createdBuffers += 1;
+    const data = new Float32Array(length);
     return {
-      buffer: null,
+      duration: length / sampleRate,
+      sampleRate,
+      length,
+      data,
+      getChannelData: () => data,
+    };
+  }
+  createBufferSource() {
+    const source = {
+      buffer: null as FakeBuffer | { duration: number } | null,
+      onended: null as (() => void) | null,
       connect() {},
       start() {
         audio.started += 1;
+        audio.lastPlayedBuffer = source.buffer;
+      },
+      stop() {
+        audio.stopped += 1;
       },
     };
+    return source;
   }
 }
 
@@ -49,6 +85,11 @@ beforeEach(() => {
   vi.resetModules();
   audio.currentTime = 0;
   audio.started = 0;
+  audio.stopped = 0;
+  audio.resumed = 0;
+  audio.createdBuffers = 0;
+  audio.initialState = "running";
+  audio.lastPlayedBuffer = null;
   vi.stubGlobal("AudioContext", FakeAudioContext);
   vi.stubGlobal(
     "fetch",
@@ -112,6 +153,78 @@ describe("playNotificationSound", () => {
     await playNotificationSound("completion", () => true);
 
     expect(audio.started).toBe(1);
+  });
+
+  it("synthesizes, caches, and coalesces Web Audio buffers for all team presets without network fetches", async () => {
+    const { playNotificationSound } = await loadUnlocked();
+    vi.mocked(fetch).mockClear();
+
+    for (const preset of ["chime", "bell", "marimba", "pulse"] as const) {
+      await playNotificationSound("completion", () => true, preset);
+      const completionBuffer = audio.lastPlayedBuffer as FakeBuffer;
+      expect(completionBuffer.duration).toBeGreaterThan(0.3);
+      let completionPeak = 0;
+      for (const sample of completionBuffer.data) {
+        const abs = Math.abs(sample);
+        if (abs > completionPeak) completionPeak = abs;
+      }
+      expect(completionPeak).toBeGreaterThan(0.2);
+      expect(completionPeak).toBeLessThanOrEqual(0.4);
+
+      await playNotificationSound("input", () => true, preset);
+      const inputBuffer = audio.lastPlayedBuffer as FakeBuffer;
+      expect(inputBuffer).not.toBe(completionBuffer);
+    }
+
+    // 4 presets x 2 kinds = 8 synthesized buffers, zero MP3 fetches.
+    expect(audio.createdBuffers).toBe(8);
+    expect(audio.started).toBe(8);
+    expect(fetch).not.toHaveBeenCalled();
+
+    // Burst on same (preset, kind) coalesces; after duration passes it plays from cache without re-synthesizing.
+    await playNotificationSound("completion", () => true, "chime");
+    expect(audio.started).toBe(8);
+
+    audio.currentTime += 2;
+    await playNotificationSound("completion", () => true, "chime");
+    expect(audio.started).toBe(9);
+    expect(audio.createdBuffers).toBe(8);
+  });
+
+  it("skips playback entirely when preset is off", async () => {
+    const { playNotificationSound } = await loadUnlocked();
+    vi.mocked(fetch).mockClear();
+
+    await playNotificationSound("completion", () => true, "off");
+    await playNotificationSound("input", () => true, "off");
+
+    expect(audio.started).toBe(0);
+    expect(audio.createdBuffers).toBe(0);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("unlocks suspended audio and prevents overlap clipping on previewTeamNotificationSound", async () => {
+    audio.initialState = "suspended";
+    const { previewTeamNotificationSound } = await import("./threadNotifications");
+
+    await previewTeamNotificationSound("off");
+    expect(audio.started).toBe(0);
+    expect(audio.resumed).toBe(0);
+
+    await previewTeamNotificationSound("chime");
+    expect(audio.resumed).toBeGreaterThanOrEqual(1);
+    expect(audio.started).toBe(1);
+    expect(audio.stopped).toBe(0);
+
+    // Triggering another preview immediately stops the prior preview source to prevent clipping.
+    await previewTeamNotificationSound("bell");
+    expect(audio.stopped).toBe(1);
+    expect(audio.started).toBe(2);
+
+    // Classic preview uses the bundled MP3 buffer.
+    await previewTeamNotificationSound("classic");
+    expect(audio.stopped).toBe(2);
+    expect(audio.started).toBe(3);
   });
 });
 

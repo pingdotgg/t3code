@@ -1,6 +1,11 @@
 import { msg } from "gt-react";
 import { m } from "../i18n/messages";
 import {
+  resolveTeamNotificationSoundPreset,
+  resolveThreadTeamId,
+  type TeamEnvironmentState,
+} from "@t3tools/client-runtime/team";
+import {
   type EnvironmentThreadShell,
   type PendingSubagentRequest,
   presentThreadShell,
@@ -11,6 +16,7 @@ import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entitie
 import type {
   EnvironmentId,
   OrchestrationV2ThreadShell,
+  TeamId,
   TeamQueuedMessageNotification,
   ThreadId,
 } from "@t3tools/contracts";
@@ -177,6 +183,36 @@ export function startThreadNotifications(
     setNotificationBadge(0);
   };
 
+  const playTeamAwareNotificationSound = (
+    kind: ThreadNotificationKind,
+    mode: ClientSettings["notificationMode"],
+    teamId: TeamId | null,
+    teamNotificationSounds: ClientSettings["teamNotificationSounds"],
+  ) => {
+    const teamSoundPreset =
+      teamId === null
+        ? null
+        : resolveTeamNotificationSoundPreset({
+            teamId,
+            teamNotificationSounds,
+          });
+    if (!hasNotificationSound(mode) || teamSoundPreset === "off") return;
+    const shouldPlay = () => {
+      const latest = getClientSettings();
+      if (!hasNotificationSound(latest.notificationMode)) return false;
+      if (teamId === null) return true;
+      return (
+        resolveTeamNotificationSoundPreset({
+          teamId,
+          teamNotificationSounds: latest.teamNotificationSounds,
+        }) !== "off"
+      );
+    };
+    void (teamSoundPreset === null
+      ? playNotificationSound(kind, shouldPlay)
+      : playNotificationSound(kind, shouldPlay, teamSoundPreset));
+  };
+
   const present = (
     environmentId: EnvironmentId,
     state: NotificationState,
@@ -216,7 +252,38 @@ export function startThreadNotifications(
       teamState,
       threadId: thread.id,
     });
-    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
+    const resolveNotificationTeamId = (): TeamId | null => {
+      if (teamState?.team != null) {
+        return teamState.attributionByThreadId.get(thread.id)?.teamId ?? teamState.team.id;
+      }
+      const teamStates = new Map<EnvironmentId, TeamEnvironmentState>();
+      for (const envId of registry.get(environmentSummaries.environmentIdsAtom)) {
+        const envTeamState = readTeamEnvironmentStateFromRegistry(registry, envId);
+        if (envTeamState?.team != null) teamStates.set(envId, envTeamState);
+      }
+      if (teamStates.size === 0) return null;
+      const shellState = registry.get(environmentShell.stateValueAtom(environmentId));
+      const projects =
+        shellState !== null && Option.isSome(shellState.snapshot)
+          ? (shellState.snapshot.value.projects ?? [])
+          : [];
+      const projectShell = projects.find((candidate) => candidate.id === state.raw.projectId);
+      return resolveThreadTeamId({
+        environmentId,
+        threadId: thread.id,
+        project: projectShell
+          ? {
+              id: projectShell.id,
+              environmentId,
+              repositoryIdentity: projectShell.repositoryIdentity,
+            }
+          : { id: state.raw.projectId, environmentId },
+        teamStates,
+      });
+    };
+    const settings = getClientSettings();
+    const { notificationMode: mode, inAppNotificationsEnabled } = settings;
+    const teamId = resolveNotificationTeamId();
     const active = activeThread();
     const title =
       kind === "completion"
@@ -230,11 +297,7 @@ export function startThreadNotifications(
               : status === "request"
                 ? m(msg("Guest request"))
                 : m(msg("Input needed"));
-    if (hasNotificationSound(mode)) {
-      void playNotificationSound(kind, () =>
-        hasNotificationSound(getClientSettings().notificationMode),
-      );
-    }
+    playTeamAwareNotificationSound(kind, mode, teamId, settings.teamNotificationSounds);
     if (
       inAppNotificationsEnabled &&
       document.visibilityState === "visible" &&
@@ -308,6 +371,7 @@ export function startThreadNotifications(
 
   const presentQueuedMessage = (
     environmentId: EnvironmentId,
+    teamId: TeamId,
     item: TeamQueuedMessageNotification,
     rawThreadTitle: string | null,
   ) => {
@@ -323,13 +387,10 @@ export function startThreadNotifications(
       threadTitle: rawThreadTitle,
       messagePreview: item.messagePreview,
     });
-    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
+    const settings = getClientSettings();
+    const { notificationMode: mode, inAppNotificationsEnabled } = settings;
     const active = activeThread();
-    if (hasNotificationSound(mode)) {
-      void playNotificationSound("input", () =>
-        hasNotificationSound(getClientSettings().notificationMode),
-      );
-    }
+    playTeamAwareNotificationSound("input", mode, teamId, settings.teamNotificationSounds);
     if (
       inAppNotificationsEnabled &&
       document.visibilityState === "visible" &&
@@ -563,7 +624,7 @@ export function startThreadNotifications(
             entry.previous.get(item.threadId)?.thread.title ??
             threads?.find((candidate) => candidate.id === item.threadId)?.title ??
             null;
-          presentQueuedMessage(environmentId, item, rawThreadTitle);
+          presentQueuedMessage(environmentId, teamState.team.id, item, rawThreadTitle);
         }
       }
       for (const [threadId, deferred] of entry.deferred) {
