@@ -61,6 +61,7 @@ const state = vi.hoisted(() => ({
   permitted: true,
   detailError: null as string | null,
   linked: [] as ReadonlyArray<string>,
+  sessionId: null as string | null,
 }));
 const canOperate = Atom.make(true);
 const cannotOperate = Atom.make(false);
@@ -77,6 +78,7 @@ function setup(
   state.permitted = true;
   state.detailError = null;
   state.linked = [];
+  state.sessionId = null;
 }
 
 const environment = { environmentId, label: "Laptop" };
@@ -126,6 +128,10 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
       state.commands.push([options.label, value.input]);
       return Promise.resolve({ _tag: "Success", value: undefined });
     }) as never,
+}));
+vi.mock(import("../../state/session"), async (original) => ({
+  ...(await original()),
+  useEnvironmentSessionId: () => state.sessionId,
 }));
 vi.mock(import("../../state/peerLinks"), async (original) => ({
   ...(await original()),
@@ -243,6 +249,57 @@ describe("WorkflowRunsView", () => {
     );
   });
 
+  it("shows what choices do and the links, and sends a choice that needs a reason only with one", async () => {
+    setup(
+      {
+        runs: [run({ runId: "ship", title: "Release 1.2", status: "waiting", detail: "approve" })],
+        questions: [
+          {
+            ...question,
+            request: {
+              title: "Ship release 1.2?",
+              choices: ["Ship", "Hold", "Close as a duplicate of the earlier request"],
+              choiceDetails: [
+                { value: "Hold", description: "It waits a week", requireReason: true },
+              ],
+              links: [{ label: "The diff", url: "https://example.com/diff" }],
+            },
+          },
+        ],
+      },
+      { ship: [step({ name: "approve", kind: "ask", status: "running", endedAt: null })] },
+    );
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    await expect.element(screen.getByText("It waits a week")).toBeVisible();
+    // A long label keeps a button as wide as itself, as before choices could say more.
+    const long = screen
+      .getByRole("button", { name: "Close as a duplicate of the earlier request" })
+      .element();
+    expect(long.scrollWidth).toBeLessThanOrEqual(long.clientWidth);
+    await expect
+      .element(screen.getByRole("link", { name: "The diff" }))
+      .toHaveAttribute("href", "https://example.com/diff");
+    await screen.getByRole("button", { name: "Hold", exact: true }).click();
+    await expect.element(screen.getByText("Hold needs a reason.")).toBeVisible();
+    expect(state.commands).toEqual([]);
+
+    await userEvent.fill(
+      screen.getByRole("textbox", { name: "Reason for Ship release 1.2?" }),
+      "Not this week",
+    );
+    await screen.getByRole("button", { name: "Hold", exact: true }).click();
+    await vi.waitFor(() =>
+      expect(state.commands).toEqual([
+        [
+          "workflow answer",
+          { runId: "ship", name: "approve", choice: "Hold", reason: "Not this week" },
+        ],
+      ]),
+    );
+  });
+
   it("answers a question whose steps did not load, and says a linked run is not here", async () => {
     setup({
       runs: [run({ runId: "ship", title: "Release 1.2", status: "waiting", detail: "approve" })],
@@ -292,6 +349,58 @@ describe("WorkflowRunsView", () => {
 
     await expect.element(screen.getByRole("button", { name: "Ship", exact: true })).toBeDisabled();
     await expect.element(screen.getByRole("button", { name: "Hold", exact: true })).toBeDisabled();
+  });
+
+  it("shows what a run is about in its row, and opens it from there", async () => {
+    const { steps: _steps, origin: _origin, state: _state, ...subject } = issue101;
+    setup({ runs: [run({ runId: "fix", title: "Fix the minutes", subject })], questions: [] });
+    const reference = vi.fn();
+    await using _desktop = await desktop();
+    await using screen = await render(page(null, { reference }));
+
+    const row = screen
+      .getByRole("navigation", { name: "Workflow runs" })
+      .getByRole("button", { name: "#101 Wrong minutes" });
+    await row.click();
+
+    expect(reference).toHaveBeenCalledWith("fix", subject);
+  });
+
+  it("marks a thread subject as open beside its run, and a subject's state as unknown", async () => {
+    setup({
+      runs: [
+        run({
+          runId: "talk",
+          title: "Talk it through",
+          subject: { kind: "thread", key: "t1", address: { threadId: "t1" }, title: "", url: null },
+        }),
+        run({
+          runId: "land",
+          title: "Land the fix",
+          subject: {
+            kind: "pullRequest",
+            key: "pr7",
+            address: { projectId: "p1", host: "github.com", repository: "acme/app", number: 7 },
+            title: "Fix the minutes",
+            url: "https://github.com/acme/app/pull/7",
+          },
+        }),
+      ],
+      questions: [],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page("talk", {}, { thread: "t1" }));
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect
+      .element(runs.getByRole("button", { name: "thread", exact: true }))
+      .toHaveAttribute("aria-pressed", "true");
+    // A subject does not say where its pull request stands, so it wears no state's ink.
+    const mark = runs
+      .getByRole("button", { name: "#7 Fix the minutes" })
+      .element()
+      .querySelector("svg");
+    expect(mark?.getAttribute("class")).toContain("text-muted-foreground");
   });
 
   it("says why a run paused at the step that failed, and resumes it", async () => {
@@ -432,6 +541,77 @@ describe("WorkflowRunsView", () => {
       .not.toBeInTheDocument();
   });
 
+  it("says You for this client's own answer, and names any other client that answered", async () => {
+    const answered = (name: string, minute: number, result: WorkflowStep["result"]) =>
+      step({ name, kind: "ask", startedAt: at(minute), endedAt: at(minute + 1), result });
+    const chrome = { answeredBy: "Chrome on Linux", answeredAt: at(2) };
+    setup(
+      {
+        runs: [run({ runId: "fix", title: "Fix", status: "completed", endedAt: at(12) })],
+        questions: [],
+      },
+      {
+        fix: [
+          answered("mine", 1, { choice: "Yes", ...chrome, answeredBySession: "this-browser" }),
+          // Another browser the server gives the same name.
+          answered("theirs", 3, { choice: "No", ...chrome, answeredBySession: "other-browser" }),
+          answered("agent", 5, {
+            choice: "Yes",
+            answeredBy: "Fix the login bug",
+            answeredAt: at(6),
+          }),
+          // Kept before answers recorded a session: named, as it was.
+          answered("old", 7, { choice: "Yes", reason: "Fine", ...chrome }),
+        ],
+      },
+    );
+    state.sessionId = "this-browser";
+    await using screen = await render(page("fix"));
+
+    const flow = screen.getByRole("navigation", { name: "Steps so far" });
+    await expect
+      .element(flow)
+      .toMatchTextContent(
+        /mine.*You said Yes.*theirs.*Chrome on Linux said No.*agent.*Fix the login bug said Yes.*old.*Chrome on Linux said Yes/,
+      );
+    const card = async (name: string) => {
+      await flow.getByRole("button", { name: new RegExp(name) }).click();
+      return screen.getByRole("region", { name });
+    };
+    await expect.element(await card("mine")).toMatchTextContent("You said Yes.");
+    await expect.element(await card("theirs")).toMatchTextContent("Chrome on Linux said No.");
+    await expect.element(await card("agent")).toMatchTextContent("Fix the login bug said Yes.");
+    await expect.element(await card("old")).toMatchTextContent("Chrome on Linux said Yes: Fine");
+  });
+
+  it("says who withdrew a question that ended unanswered, and why", async () => {
+    setup(
+      {
+        runs: [run({ runId: "ship", title: "Ship", status: "completed", endedAt: at(2) })],
+        questions: [],
+      },
+      {
+        ship: [
+          step({
+            name: "wanted",
+            kind: "ask",
+            endedAt: at(1),
+            detail: "withdrawn by t3 CLI: settled elsewhere",
+            result: { withdrawn: { by: "t3 CLI", reason: "settled elsewhere" } },
+          }),
+        ],
+      },
+    );
+    await using screen = await render(page("ship"));
+
+    const flow = screen.getByRole("navigation", { name: "Steps so far" });
+    await expect.element(flow).toMatchTextContent(/wanted.*withdrawn by t3 CLI/);
+    await flow.getByRole("button", { name: /wanted/ }).click();
+    await expect
+      .element(screen.getByRole("region", { name: "wanted" }))
+      .toMatchTextContent(/withdrawn · 1m 0s.*Withdrawn by t3 CLI: settled elsewhere/);
+  });
+
   it("opens an agent's thread on an environment this server links to", async () => {
     setup(
       {
@@ -519,6 +699,43 @@ describe("WorkflowRunsView", () => {
     await screen.getByRole("option", { name: "report" }).click();
     await expect.element(screen.getByText("Starts on daily at 09:00")).toBeVisible();
     await expect.element(runs).toMatchTextContent("Has not run yet.");
+  });
+
+  it("counts the skipped runs of the workflow picked, not of every workflow", async () => {
+    setup({
+      workflows: [
+        { name: "release", version: 1, triggers: [] },
+        { name: "report", version: 1, triggers: ["webhook pings"] },
+      ],
+      runs: [
+        run({ runId: "rel", title: "Release 1.3", status: "completed", endedAt: at(3) }),
+        run({
+          runId: "s1",
+          workflow: "report",
+          title: "Ping 1",
+          status: "skipped",
+          endedAt: at(1),
+        }),
+        run({
+          runId: "s2",
+          workflow: "report",
+          title: "Ping 2",
+          status: "skipped",
+          endedAt: at(2),
+        }),
+      ],
+      questions: [],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    await screen.getByRole("button", { name: "All", exact: true }).click();
+    await expect.element(screen.getByRole("button", { name: "Show 2 skipped" })).toBeVisible();
+    await screen.getByRole("combobox", { name: "Workflow" }).click();
+    await screen.getByRole("option", { name: "release" }).click();
+    await expect
+      .element(screen.getByRole("navigation", { name: "Workflow runs" }))
+      .not.toMatchTextContent(/skipped/);
   });
 
   const KIND_KEY = "t3code:workflows:question-kind";

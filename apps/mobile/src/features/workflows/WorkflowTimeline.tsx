@@ -1,6 +1,8 @@
 import {
   workflowAgentSummary,
+  isOwnWorkflowAnswer,
   workflowAnswer,
+  workflowWithdrawal,
   workflowOneLine,
   workflowResultLines,
   workflowRunNow,
@@ -288,6 +290,8 @@ const styles = StyleSheet.create({
 export function WorkflowTimeline(props: {
   readonly rows: ReadonlyArray<WorkflowFeedRow>;
   readonly node: WorkflowRunNode;
+  /** This device's session on the run's environment: an answer it gave reads as yours. */
+  readonly sessionId: string | null;
   /** The question a step waits on a person for. */
   readonly question: (beat: WorkflowBeat) => WorkflowQuestion | null;
   readonly loose: ReadonlyArray<WorkflowQuestion>;
@@ -312,7 +316,7 @@ export function WorkflowTimeline(props: {
       : asks(beat)
         ? "input"
         : beat.status === "running"
-          ? beat.kind === "sleep" || beat.kind === "wait"
+          ? beat.kind === "sleep" || beat.kind === "wait" || beat.kind === "queue"
             ? "quiet"
             : "working"
           : "done";
@@ -329,6 +333,12 @@ export function WorkflowTimeline(props: {
         return gt("sleeping");
       case "wait":
         return gt("waiting");
+      case "queue":
+        return beat.ahead === undefined || beat.ahead === 0
+          ? gt("queued, next in line", { $context: "a workflow step waits for a free place" })
+          : gt("{count, plural, one {queued, {count} ahead} other {queued, {count} ahead}}", {
+              count: beat.ahead,
+            });
       default:
         return gt("under way");
     }
@@ -343,9 +353,16 @@ export function WorkflowTimeline(props: {
       }
       case "ask": {
         const answer = workflowAnswer(beat.result);
-        return answer === null
+        if (answer !== null)
+          return isOwnWorkflowAnswer(answer, props.sessionId)
+            ? gt("You answered {choice}", { choice: answer.choice })
+            : answer.answeredBy === null
+              ? gt("Answered {choice}", { choice: answer.choice })
+              : gt("{who} answered {choice}", { who: answer.answeredBy, choice: answer.choice });
+        const withdrawal = workflowWithdrawal(beat.result);
+        return withdrawal === null
           ? gt("nobody answered")
-          : gt("Answered {choice}", { choice: answer.choice });
+          : gt("withdrawn by {by}", { by: withdrawal.by });
       }
       case "run": {
         const child = node.children.find(
@@ -380,7 +397,11 @@ export function WorkflowTimeline(props: {
       asideFailed={beat.status === "failed"}
       verb={verbOf(beat)}
       verbTone={
-        asks(beat) ? "input" : beat.kind === "sleep" || beat.kind === "wait" ? "quiet" : "working"
+        asks(beat)
+          ? "input"
+          : beat.kind === "sleep" || beat.kind === "wait" || beat.kind === "queue"
+            ? "quiet"
+            : "working"
       }
       time={timeOf(beat)}
       sub={sub}
@@ -435,7 +456,11 @@ export function WorkflowTimeline(props: {
     if (row.kind === "together") {
       const running = row.beats.filter((beat) => beat.status === "running").length;
       const working = row.beats.some(
-        (beat) => beat.status === "running" && beat.kind !== "sleep" && beat.kind !== "wait",
+        (beat) =>
+          beat.status === "running" &&
+          beat.kind !== "sleep" &&
+          beat.kind !== "wait" &&
+          beat.kind !== "queue",
       );
       const startMs = Math.min(...row.beats.map((beat) => beat.startMs));
       const endMs = Math.max(...row.beats.map((beat) => beat.endMs));

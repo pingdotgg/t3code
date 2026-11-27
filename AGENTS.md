@@ -108,6 +108,13 @@ Most code changes do not need an internal documentation change. Agents can read 
 - `docs/user/` helps users accomplish tasks in the shipped product's voice, without implementation details or contributor tooling. Focus on what a feature does, how to start, and anything unintuitive—not descriptions of buttons, layouts, or UI tweaks.
 - `docs/operations/` holds maintainer setup, release, and debugging runbooks. Keep end-user server instructions in `docs/user/`.
 
+## README 更新规则
+
+- 新增或调整用户可见功能（`feat` 类型变更）时，必须自动更新 `README.md` 顶部的「Fork 修改」章节，保持该章节与当前实现一致。
+- 只维护「Fork 修改」章节，不修改 README 原有内容。
+- 条目使用用户可直接感知的能力描述，不写内部实现；相关文档和测试一并补充。
+- `fix`、重构、构建和文档类变更不强制新增条目，仅在行为对用户可见时更新。
+
 ## Plans and work artifacts
 
 - Do not commit implementation plans, research notes, or agent scratch files (keep temporary material outside the worktree).

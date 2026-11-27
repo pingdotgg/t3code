@@ -28,6 +28,18 @@ describe("PR attachments", () => {
     ]);
   });
 
+  it("captions image links with their decoded file name", () => {
+    const media = splitPullRequestBody(
+      "https://drop.example.com/My%20Screenshot.png\n\nhttps://drop.example.com/caf%C3%A9.png\n\nhttps://drop.example.com/100%.png",
+      markdownReferenceDefinitions,
+    );
+    expect(
+      pullRequestDescriptionContent({ type: "root" } as MarkdownNode, media).attachments.map(
+        (attachment) => attachment.caption,
+      ),
+    ).toEqual(["My Screenshot.png", "café.png", "100%.png"]);
+  });
+
   it("collects videos from a before/after table", () => {
     const media = splitPullRequestBody(
       "<table>\n<tr><th>Before</th><th>After</th></tr>\n<tr><td>\n\nhttps://drop.example.com/before.mp4\n\n</td><td>\n\nhttps://drop.example.com/after.mp4\n\n</td></tr>\n</table>",
