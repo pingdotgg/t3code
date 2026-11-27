@@ -48,6 +48,21 @@ func makeEditor(_ value: String, tokensJson: String = "[]") -> T3ComposerEditorV
   return view
 }
 
+// The stack's back gesture waits on drags in the composer, and only while it has focus.
+do {
+  let view = makeEditor("hello")
+  let screen = UIViewController()
+  let navigation = UINavigationController(rootViewController: screen)
+  screen.view.addSubview(view)
+  navigation.view.addSubview(screen.view)
+  let blocker = view.editor.gestureRecognizers?.first { $0 is ComposerBackGestureBlocker }
+  check(blocker != nil, "The composer must install its back-gesture blocker")
+  check(blocker!.shouldBeRequiredToFail(by: navigation.interactivePopGestureRecognizer!),
+        "The edge back gesture must wait for drags in the composer")
+  check(blocker!.delegate?.gestureRecognizerShouldBegin?(blocker!) == false,
+        "An unfocused composer must not hold back the back gesture")
+}
+
 // A send clears the draft after an autocorrection the parent had not received yet.
 do {
   let view = makeEditor("hello wrold")
