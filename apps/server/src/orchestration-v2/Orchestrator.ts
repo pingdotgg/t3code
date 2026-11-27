@@ -12412,13 +12412,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     if (projection.thread.settleWhenDone != null) {
-      const event = yield* emitEvent({
+      const thread = { ...projection.thread, settleWhenDone: null, updatedAt: now };
+      yield* emitEvent({
         type: "thread.metadata-updated",
         threadId: command.threadId,
         occurredAt: now,
-        payload: { ...projection.thread, settleWhenDone: null, updatedAt: now },
+        payload: thread,
       });
-      projection = applyToProjection(projection, event);
+      projection = { ...projection, thread };
     }
     // A scheduled delivery steers on the thread's current pick, so /goal must suit that provider.
     const modelSelection = queuedRunModelSelection(projection, queuedRun);
