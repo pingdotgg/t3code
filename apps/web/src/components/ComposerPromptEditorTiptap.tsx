@@ -785,6 +785,22 @@ function isInCodeBlock(view: EditorView): boolean {
   return view.state.selection.$from.parent.type.spec.code === true;
 }
 
+/** Pasted links stay literal in code, including inline code shown as its Markdown source. */
+function isInCode(view: EditorView): boolean {
+  if (isInCodeBlock(view)) return true;
+  const {
+    selection: { $from },
+    schema,
+  } = view.state;
+  if (schema.marks.code?.isInSet($from.marks())) return true;
+  const node = $from.textOffset > 0 ? $from.parent.child($from.index()) : $from.nodeBefore;
+  return (
+    node?.isText === true &&
+    schema.marks[MARKDOWN_SOURCE_MARK]?.isInSet(node.marks) !== undefined &&
+    /^[*_~]*`/.test(node.text ?? "")
+  );
+}
+
 const ChipSelectionPluginKey = new PluginKey<DecorationSet>("composer-chip-range-selection");
 
 /** Highlights chips inside a text selection; their node views draw no native highlight. */
@@ -1620,8 +1636,7 @@ function ComposerPromptEditorTiptapInner(
           const captured = capturedPastes.current.get(event);
           capturedPastes.current.delete(event);
           const paste =
-            captured ??
-            readPastedComposerClipboard(clipboardData, literalText || isInCodeBlock(view));
+            captured ?? readPastedComposerClipboard(clipboardData, literalText || isInCode(view));
           if (!captured && clipboardData.files.length > 0 && !paste.context?.records.length)
             return false;
           if (!insertClipboardText(view, paste)) return false;
@@ -1657,7 +1672,7 @@ function ComposerPromptEditorTiptapInner(
           view.focus();
           return insertClipboardText(
             view,
-            readPastedComposerClipboard(data, literalText || isInCodeBlock(view)),
+            readPastedComposerClipboard(data, literalText || isInCode(view)),
           );
         },
       },
@@ -1687,7 +1702,7 @@ function ComposerPromptEditorTiptapInner(
     onPaste(event, (plainTextOnly) => {
       const paste = readPastedComposerClipboard(
         event.clipboardData,
-        plainTextOnly || literalText || (editor !== null && isInCodeBlock(editor.view)),
+        plainTextOnly || literalText || (editor !== null && isInCode(editor.view)),
       );
       capturedPastes.current.set(event.nativeEvent, paste);
       return paste;
