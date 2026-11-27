@@ -215,8 +215,6 @@ it.each([
       });
       expect(result.type).toBe("xlsx");
       if (result.type !== "xlsx") throw new Error("Expected bounded workbook");
-      // The engine counts the chart sheet before it.
-      expect(result.view?.hiddenGridlines).toEqual([1]);
       const bounded = await JSZip.loadAsync(result.bytes);
       const sheet = new DOMParser().parseFromString(
         await bounded.file("xl/worksheets/sheet1.xml")!.async("string"),
@@ -233,15 +231,17 @@ it.each([
       }
       expect(sheet.getElementsByTagNameNS(ns, "dimension")).toHaveLength(0);
       expect(sheet.getElementsByTagNameNS(ns, "mergeCell")).toHaveLength(0);
+      const sheetView = sheet.getElementsByTagNameNS(ns, "sheetView")[0]!;
+      expect(sheetView.getAttribute("showGridLines")).toBe("0");
+      const sheetFormat = sheet.getElementsByTagNameNS(ns, "sheetFormatPr")[0]!;
+      expect(sheetFormat.getAttribute("defaultColWidth")).toBe("30");
       const columns = [...sheet.getElementsByTagNameNS(ns, "col")].map((column) =>
         ["min", "max", "width"].map((name) => column.getAttribute(name)),
       );
-      // The engine ignores `defaultColWidth`, so the columns it sizes are spelled out.
       expect(columns).toEqual([
         [String(OFFICE_PREVIEW_MAX_COLUMNS - 1), String(OFFICE_PREVIEW_MAX_COLUMNS), "20"],
         // Hidden columns keep their span past the limit, so they stay hidden.
         [String(OFFICE_PREVIEW_MAX_COLUMNS + 1), String(OFFICE_PREVIEW_MAX_COLUMNS + 30), null],
-        ["1", String(OFFICE_PREVIEW_MAX_COLUMNS - 2), "30"],
       ]);
     } finally {
       worker.terminate();
@@ -948,7 +948,8 @@ it.each(['<u val="double"/>', '<u val="double"></u>'])(
     )
       .file("xl/styles.xml")!
       .async("string");
-    expect(styles).toContain("<font><u/>");
+    expect(styles).toContain(underline);
+    expect(styles).toContain('numFmtId="007"');
     const worker = new Worker(new URL("./office/spreadsheet.worker.ts", import.meta.url), {
       type: "module",
     });
@@ -1037,7 +1038,7 @@ it("keeps spreadsheet dates on their calendar day west of UTC", async () => {
       "open",
       {
         bytes,
-        view: { hiddenGridlines: [], themeFonts: { major: "Calibri Light", minor: "Calibri" } },
+        view: { digitWidth: 7, themeFonts: { major: "Calibri Light", minor: "Calibri" } },
       },
       { transfer: [bytes] },
     );
