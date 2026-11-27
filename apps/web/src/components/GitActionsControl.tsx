@@ -1426,45 +1426,14 @@ function CheckoutGitActionsControl({
 
       {isPanel && showChanges && isRepo && (displayMode === "panel" || !quietEmptyDraft) ? (
         <div className="col-span-2 min-w-0">
-          <Tooltip>
-            <TooltipTrigger
-              render={<ThreadDetailsControl disabled={!onOpenChanges} onClick={onOpenChanges} />}
-            >
-              <FileDiffIcon aria-hidden />
-              <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-                <span className="shrink-0">
-                  <T>Changes</T>
-                </span>
-                {changesBaseLabel ? (
-                  <SharedTooltipTrigger
-                    render={<span className="min-w-0 truncate text-muted-foreground" />}
-                    label={changesBaseLabel}
-                    className="max-w-96 break-words"
-                  >
-                    {changesBaseLabel}
-                  </SharedTooltipTrigger>
-                ) : null}
-                <span className="ms-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
-                  <span
-                    className={
-                      changesTotals?.insertions ? "text-diff-addition" : "text-muted-foreground"
-                    }
-                  >
-                    +{formatDiffCount(changesTotals?.insertions ?? 0)}
-                  </span>
-                  <span
-                    className={
-                      changesTotals?.deletions ? "text-diff-deletion" : "text-muted-foreground"
-                    }
-                  >
-                    -{formatDiffCount(changesTotals?.deletions ?? 0)}
-                  </span>
-                </span>
-              </span>
-            </TooltipTrigger>
-            {changesBreakdown && (changesTotals.insertions > 0 || changesTotals.deletions > 0) ? (
-              // Base UI fixes the popup width on open; remeasure when the breakdown changes.
-              <TooltipPopup key={JSON.stringify(changesBreakdown)} side="bottom">
+          <SharedTooltipTrigger
+            render={<ThreadDetailsControl disabled={!onOpenChanges} onClick={onOpenChanges} />}
+            side="bottom"
+            disabled={
+              !changesBreakdown || (changesTotals.insertions === 0 && changesTotals.deletions === 0)
+            }
+            label={
+              changesBreakdown && (changesTotals.insertions > 0 || changesTotals.deletions > 0) ? (
                 <ChangeBreakdownGrid
                   breakdown={changesBreakdown}
                   total={{
@@ -1472,9 +1441,41 @@ function CheckoutGitActionsControl({
                     deletions: changesTotals.deletions,
                   }}
                 />
-              </TooltipPopup>
-            ) : null}
-          </Tooltip>
+              ) : null
+            }
+          >
+            <FileDiffIcon aria-hidden />
+            <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+              <span className="shrink-0">
+                <T>Changes</T>
+              </span>
+              {changesBaseLabel ? (
+                <SharedTooltipTrigger
+                  render={<span className="min-w-0 truncate text-muted-foreground" />}
+                  label={changesBaseLabel}
+                  className="max-w-96 break-words"
+                >
+                  {changesBaseLabel}
+                </SharedTooltipTrigger>
+              ) : null}
+              <span className="ms-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
+                <span
+                  className={
+                    changesTotals?.insertions ? "text-diff-addition" : "text-muted-foreground"
+                  }
+                >
+                  +{formatDiffCount(changesTotals?.insertions ?? 0)}
+                </span>
+                <span
+                  className={
+                    changesTotals?.deletions ? "text-diff-deletion" : "text-muted-foreground"
+                  }
+                >
+                  -{formatDiffCount(changesTotals?.deletions ?? 0)}
+                </span>
+              </span>
+            </span>
+          </SharedTooltipTrigger>
         </div>
       ) : null}
 

@@ -14,6 +14,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../test/render";
 import { GitActionsControl } from "./GitActionsControl";
 import { PublishRepositoryDialog } from "./PublishRepositoryDialog";
+import { SharedTooltipProvider } from "./ui/shared-tooltip";
 
 const publish = vi.hoisted(() => ({ run: vi.fn() }));
 const commit = vi.hoisted(() => ({
@@ -175,4 +176,75 @@ it("keeps edits to a retry selection when branch status arrives after the failur
   await expect
     .element(page.getByRole("checkbox", { name: "Include also-later.txt" }))
     .not.toBeChecked();
+});
+
+it("shows one tooltip at a time on the panel Changes row across label hover, row hover, and focus", async () => {
+  setup();
+  commit.status = {
+    isRepo: true,
+    hasPrimaryRemote: false,
+    isDefaultRef: true,
+    refName: "main",
+    hasWorkingTreeChanges: true,
+    workingTree: {
+      files: [{ path: "src/app.ts", insertions: 12, deletions: 3 }],
+      insertions: 12,
+      deletions: 3,
+    },
+    hasUpstream: false,
+    aheadCount: 0,
+    behindCount: 0,
+    pr: null,
+  };
+  await using _screen = await render(
+    <SharedTooltipProvider>
+      <div className="p-16">
+        <GitActionsControl
+          threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+          target={{ key: "repo", cwd: "/repo", name: "Repo" }}
+          displayMode="panel"
+          showActions={false}
+          showChanges
+          onOpenChanges={() => {}}
+        />
+        <button type="button">Outside</button>
+      </div>
+    </SharedTooltipProvider>,
+  );
+
+  const label = page.getByText("Uncommitted");
+  const count = page.getByText("+12");
+  const outside = page.getByRole("button", { name: "Outside" });
+
+  await userEvent.hover(label);
+  await vi.waitFor(() => {
+    const popups = [...document.querySelectorAll('[data-slot="tooltip-popup"]')].map((el) =>
+      el.textContent?.trim(),
+    );
+    expect(popups).toEqual(["Uncommitted"]);
+  });
+
+  await userEvent.hover(count);
+  await vi.waitFor(() => {
+    const popups = [...document.querySelectorAll('[data-slot="tooltip-popup"]')].map((el) =>
+      el.textContent?.trim(),
+    );
+    expect(popups).toHaveLength(1);
+    expect(popups[0]).toContain("Code");
+    expect(popups[0]).toContain("Total");
+  });
+
+  await userEvent.hover(outside);
+  await vi.waitFor(() => {
+    expect(document.querySelectorAll('[data-slot="tooltip-popup"]')).toHaveLength(0);
+  });
+
+  await userEvent.keyboard("{Tab}");
+  await vi.waitFor(() => {
+    const popups = [...document.querySelectorAll('[data-slot="tooltip-popup"]')].map((el) =>
+      el.textContent?.trim(),
+    );
+    expect(popups).toHaveLength(1);
+    expect(popups[0]).toContain("Total");
+  });
 });
