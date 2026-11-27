@@ -764,6 +764,24 @@ Third}`;
     );
   });
 
+  it.each([
+    { styleStart: "5", itemStart: undefined, expected: '<ol start="5"><li>' },
+    { styleStart: "0", itemStart: "4", expected: '<ol start="0"><li value="4">' },
+    { styleStart: "7", itemStart: "1.5", expected: '<ol start="7"><li>' },
+  ])(
+    "keeps ODT list numbers for style start $styleStart and item start $itemStart",
+    async ({ styleStart, itemStart, expected }) => {
+      const item = itemStart === undefined ? "" : ` text:start-value="${itemStart}"`;
+      const content =
+        '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">' +
+        `<office:automatic-styles><text:list-style style:name="Steps"><text:list-level-style-number text:level="1" style:num-format="1" text:start-value="${styleStart}"/></text:list-style></office:automatic-styles>` +
+        `<office:body><office:text><text:list text:style-name="Steps"><text:list-item${item}><text:p>Review</text:p></text:list-item><text:list-item><text:p>Send</text:p></text:list-item></text:list></office:text></office:body></office:document-content>`;
+      const result = await openDocument(new JSZip().file("content.xml", content), "odt");
+      if (result.type !== "document") throw new Error("Expected document");
+      expect(result.pages[0]!.html).toBe(`${expected}<p>Review</p></li><li><p>Send</p></li></ol>`);
+    },
+  );
+
   // LibreOffice writes every index as the templates it was built from, then the built index.
   const indexes = [
     "table-of-content",
