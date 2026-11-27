@@ -386,7 +386,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   let completedLength = 0;
   const finishPage = () => {
     if (pages.length >= 500) throw new PreviewError({ code: "rtf-too-many-pages" });
-    pages.push({ title: undefined, html: `<p>${html}</p>` });
+    pages.push({ title: undefined, html: `<p data-rtf-whitespace>${html}</p>` });
     completedLength += html.length;
     html = "";
   };
