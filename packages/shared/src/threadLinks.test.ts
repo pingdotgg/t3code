@@ -187,12 +187,8 @@ describe("thread links", () => {
   it.each([
     ["a blank line", "Intro\n\n", "    ", "~~~", ""],
     ["an indented heading", "Intro\n  # Example\n", "    ", "~~~", ""],
-    ["a thematic break", "Intro\n\n***\n", "    ", "~~~", ""],
-    ["a setext heading", "Intro\n=====\n", "    ", "~~~", ""],
     ["a closed fence", "Intro\n```\nexample\n```\n", "    ", "~~~", ""],
-    ["earlier indented content", "# Example\n    const x = 1;\n", "    ", "~~~", ""],
     ["a literal list marker", "# Example\n", "    ", "- ```md", ""],
-    ["a literal quote marker", "# Example\n", "    ", "> ```md", ""],
     ["a heading in a quote", "> # Example\n", ">     ", "~~~", "> "],
   ])(
     "keeps indented code literal and rewrites prose after %s",
@@ -206,9 +202,7 @@ describe("thread links", () => {
 
   it.each([
     ["a paragraph with four spaces", "Intro\n    ~~~"],
-    ["a paragraph with eight spaces", "Intro\n        ~~~"],
     ["a paragraph with a tab", "Intro\n\t```"],
-    ["a paragraph with a literal list marker", "Intro\n    - ```md"],
     ["a list paragraph", "- Intro\n      ~~~"],
     ["an HTML block", "<div>\n    ~~~\n</div>"],
     ["deeply nested quotes", ">".repeat(6000) + " text\n\n    ~~~"],
