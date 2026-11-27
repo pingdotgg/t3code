@@ -141,7 +141,11 @@ describe("JiraIssueTracker", () => {
         token: "tok_new",
         fields: { site: "https://other.atlassian.net/jira/software", email: "j@acme.test" },
       });
-      expect(probe).toEqual({ account: "Julius", scopes: [{ key: "ENG", name: "Engineering" }] });
+      expect(probe).toEqual({
+        account: "Julius",
+        workspace: "other.atlassian.net",
+        scopes: [{ key: "ENG", name: "Engineering" }],
+      });
       expect(new Set(requests.map((request) => request.url))).toEqual(
         new Set(["https://other.atlassian.net"]),
       );

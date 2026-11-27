@@ -41,6 +41,16 @@ const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
   },
 };
 
+/** `https://<site>.atlassian.net/browse/<PROJECT>-<n>`, keeping the site as the workspace. */
+export function parseJiraIssueUrl(url: URL) {
+  const site = url.hostname.toLowerCase();
+  if (url.protocol !== "https:" || !site.endsWith(`.${DESCRIPTOR.host}`)) return null;
+  const [, resource, key] = url.pathname.split("/");
+  if (resource !== "browse" || key === undefined) return null;
+  const scope = /^([A-Z][A-Z0-9_]*)-[1-9][0-9]*$/.exec(key)?.[1];
+  return scope === undefined ? null : { host: DESCRIPTOR.host, workspace: site, scope, key };
+}
+
 /** No reactions or development panel: Jira Cloud's public API serves neither. */
 const CAPABILITIES: IssueCapabilities = {
   create: true,
@@ -303,6 +313,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
       kind: JiraApi.KIND,
       capabilities: CAPABILITIES,
       standalone: DESCRIPTOR,
+      parseIssueUrl: parseJiraIssueUrl,
 
       probeCredential: (credential) =>
         Effect.all([jira.myself(credential), jira.projects(credential)], {
@@ -310,6 +321,8 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
         }).pipe(
           Effect.map(([me, projects]) => ({
             account: me.displayName?.trim() || me.emailAddress?.trim() || me.accountId,
+            workspace: URL.parse(JiraApi.siteOrigin(credential.fields["site"] ?? "") ?? "")
+              ?.hostname,
             scopes: projects.flatMap((project) =>
               project.key.trim() && project.name.trim()
                 ? [{ key: project.key, name: project.name }]

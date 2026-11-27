@@ -35,6 +35,8 @@ import {
 } from "./IssueTrackerHostLive.ts";
 import * as IssueTrackerRegistry from "./IssueTrackerRegistry.ts";
 
+const decoder = new TextDecoder();
+
 export class IssueTrackerConnections extends Context.Service<
   IssueTrackerConnections,
   {
@@ -292,7 +294,10 @@ const make = Effect.gen(function* () {
           });
         }
         yield* secrets
-          .set(issueTrackerSecretName(api.kind, accountId), encodeIssueTrackerCredential(credential))
+          .set(
+            issueTrackerSecretName(api.kind, accountId),
+            encodeIssueTrackerCredential(credential),
+          )
           .pipe(Effect.mapError(secretFailure(api.kind, "The credential could not be stored.")));
         if (addAccount && accountId !== null) {
           const createdAt = DateTime.formatIso(yield* DateTime.now);

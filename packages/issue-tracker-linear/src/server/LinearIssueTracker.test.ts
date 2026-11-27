@@ -480,7 +480,7 @@ describe("LinearIssueTracker", () => {
       const detail = yield* api.getIssue({ ...target, key: "eng-7" });
       expect(detail.viewer).toBe("julius");
       expect(detail.body).toBe("body");
-      expect((yield* api.probeCredential("token")).workspace).toBe("acme");
+      expect((yield* api.probeCredential({ token: "token", fields: {} })).workspace).toBe("acme");
       // The team's own workflow, in Linear's order, with the category each state falls in.
       expect(detail.states.map((entry) => [entry.name, entry.category])).toEqual([
         ["Todo", "open"],

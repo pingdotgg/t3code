@@ -758,7 +758,8 @@
   "8360d689ebc7f829": "Pushen & {shortLabel} aus dem Standard-Branch erstellen?",
   "daa408bb99d21d18": "{kind, select, pr {Diese Aktion pusht lokale Commits und erstellt einen PR auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.} mr {Diese Aktion pusht lokale Commits und erstellt einen MR auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.} generic {Diese Aktion pusht lokale Commits und erstellt eine Änderungsanfrage auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.} other {Diese Aktion pusht lokale Commits und erstellt {changeRequest} auf „{branch}“. Du kannst auf diesem Branch weitermachen oder einen Feature-Branch erstellen und dieselbe Aktion dort ausführen.}}",
   "8471c4c5a50ffde3": "Issues dieses Hosts können noch nicht angezeigt werden.",
-  "2f4a47129f89fe22": "Nicht verbunden. Füge einen persönlichen API-Schlüssel hinzu, um die Issues aufzulisten.",
+  "4a727b074bbbc5b2": "Nicht verbunden. Füge deinen persönlichen API-Schlüssel hinzu, um die Issues aufzulisten.",
+  "b40c70c4488dcebe": "Nicht verbunden. Füge dein API-Token hinzu, um die Issues aufzulisten.",
   "024baab60525a419": "Die gespeicherten Anmeldedaten wurden abgelehnt.",
   "2613c232516f3c72": "Verbunden als {account} · noch keine Projekte verknüpft. Wähle für ein Projekt ein Team, um seine Issues aufzulisten.",
   "77d07bfe2f8ee19d": "{count, plural, one {Verbunden als {account} · {count} Projekt verknüpft} other {Verbunden als {account} · {count} Projekte verknüpft}}",
@@ -13036,5 +13037,6 @@
   "717c1c47a852a1a5": "Vorlesen pausieren",
   "0eceb5780908eb6c": "Vorlesen",
   "3ee98da81538c6de": "Die Vertonung konnte nicht abgespielt werden.",
-  "95435f0b59cb2193": "Audiovorschau"
+  "95435f0b59cb2193": "Audiovorschau",
+  "4a12506938295127": "Gib zuerst {field} ein."
 }

@@ -145,8 +145,8 @@ function TrackerRow({
   const submit = async (token: string | null, addAccount = false) => {
     const missing = fields.find((field) => !drafts[field.key]?.trim());
     if (token !== null && missing !== undefined) {
-      setFailure(`Enter the ${missing.label.toLowerCase()} first.`);
-      return;
+      setFailure(gt("Enter the {field} first.", { field: missing.label.toLowerCase() }));
+      return false;
     }
     setBusy(true);
     setFailure(null);
