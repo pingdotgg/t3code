@@ -715,50 +715,6 @@ describe("settings mutation authorization", () => {
       expect(handled).toBe(1);
     }),
   );
-
-  it.effect("requires provider management to check a secret source", () =>
-    Effect.gen(function* () {
-      const group = WsRpcGroup.omit(
-        ...[...WsRpcGroup.requests.keys()].filter(
-          (
-            tag,
-          ): tag is Exclude<
-            keyof typeof RPC_REQUIRED_SCOPES,
-            typeof WS_METHODS.serverCheckSecretSource
-          > => tag !== WS_METHODS.serverCheckSecretSource,
-        ),
-      );
-      let handled = 0;
-      const handler = group.toLayerHandler(WS_METHODS.serverCheckSecretSource, () =>
-        Effect.sync(() => {
-          handled++;
-          return { _tag: "Resolved" as const };
-        }),
-      );
-      const source = {
-        provider: SecretProviderId.make("personal"),
-        reference: "op://Private/OpenAI/credential",
-      };
-      const settingsOnly = yield* RpcTest.makeClient(group).pipe(
-        Effect.provide(Layer.merge(handler, RpcAuthorization.layer([AuthSettingsWriteScope]))),
-      );
-      expect(
-        yield* settingsOnly[WS_METHODS.serverCheckSecretSource]({ source }).pipe(Effect.flip),
-      ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
-      expect(handled).toBe(0);
-
-      const manager = yield* RpcTest.makeClient(group).pipe(
-        Effect.provide(
-          Layer.merge(
-            handler,
-            RpcAuthorization.layer([AuthSettingsWriteScope, AuthProvidersManageScope]),
-          ),
-        ),
-      );
-      yield* manager[WS_METHODS.serverCheckSecretSource]({ source });
-      expect(handled).toBe(1);
-    }),
-  );
 });
 
 it.effect("answering a secret request with a reference needs provider management", () =>

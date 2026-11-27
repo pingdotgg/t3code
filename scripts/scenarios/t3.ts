@@ -241,14 +241,10 @@ const sameSite = { lax: "Lax", strict: "Strict", none: "None" } as const;
  * Signs in the way the pairing page does and returns the session cookies. Opening the page
  * instead races its reload after sign-in against the test's next `app.open`.
  */
-export const signIn = Effect.fn("scenario.signIn")(function* (
-  baseUrl: string,
-  pairingCredential?: string,
-) {
+const signIn = Effect.fn("scenario.signIn")(function* (baseUrl: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const credential =
-    pairingCredential ?? (yield* fs.readFileString(path.join(T3_HOME, "browser-dev-token")));
+  const credential = yield* fs.readFileString(path.join(T3_HOME, "browser-dev-token"));
   const client = yield* HttpApiClient.make(EnvironmentHttpApi, { baseUrl });
   // Only the cookies are read: a proof runs this against a base server whose body may differ.
   const response = yield* client.auth
@@ -300,22 +296,9 @@ export const environmentId = (baseUrl: string) =>
     Effect.provide(FetchHttpClient.layer),
   );
 
-/**
- * The typed RPC client of the server on `home` at `origin`, signed in through its own CLI,
- * with the CLI's default scopes unless `scopes` names others.
- */
-export const rpcClient = Effect.fn("scenario.rpcClient")(function* (
-  home: string,
-  origin: string,
-  scopes: ReadonlyArray<string> = [],
-) {
-  const issued = yield* makeState(home).cli([
-    "auth",
-    "session",
-    "issue",
-    "--token-only",
-    ...scopes.flatMap((scope) => ["--scope", scope]),
-  ]);
+/** The typed RPC client of the server on `home` at `origin`, signed in through its own CLI. */
+export const rpcClient = Effect.fn("scenario.rpcClient")(function* (home: string, origin: string) {
+  const issued = yield* makeState(home).cli(["auth", "session", "issue", "--token-only"]);
   const { ticket } = yield* HttpClient.execute(
     HttpClientRequest.post(`${origin}/api/auth/websocket-ticket`).pipe(
       HttpClientRequest.bearerToken(issued.stdout.trim()),
