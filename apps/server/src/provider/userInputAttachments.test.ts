@@ -830,8 +830,18 @@ describe("question answer paths", () => {
             "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
             "book.opf":
               '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
-            "chapter.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Deposit: $100<div>Balance: $500</div></div><div>Purchased in June<section>Delivered in July</section></div><div>Keep <div></div>walking</div><div>Order <span>number</span> 42</div><div>Name<div>\nValue</div></div><div>Note<div>  <em>indented</em></div></div></body></html>',
+            "chapter.xhtml": [
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body>',
+              "<div>Deposit: $100<div>Balance: $500</div></div>",
+              "<div>Purchased in June<section>Delivered in July</section></div>",
+              "<div>Keep <div></div>walking</div>",
+              "<div>Order <span>number</span> 42</div>",
+              "<div>Name<div>\nValue</div></div>",
+              "<div>Note<div>  <em>indented</em></div></div>",
+              "<section>Summary of decisions.<article><strong>Motion 12 carried.</strong></article><article><em>Motion 13 deferred.</em></article>Meeting adjourned.</section>",
+              "<div>Keep <article></article>reading.</div>",
+              "</body></html>",
+            ].join(""),
           },
           expected: [
             "Deposit: $100\nBalance: $500\n",
@@ -840,6 +850,7 @@ describe("question answer paths", () => {
             "Order number 42",
             "Name\nValue",
             "Note\n  indented",
+            "Summary of decisions.\nMotion 12 carried.\nMotion 13 deferred.\nMeeting adjourned.\nKeep reading.",
           ],
         },
         // A prefixed span attribute is foreign markup, not an XHTML span.
