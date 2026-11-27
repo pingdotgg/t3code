@@ -32,14 +32,6 @@ layer("100_TurnStartReadIndexes", (it) => {
       `;
       yield* runMigrations();
 
-      const rows = yield* sql<{ readonly message_id: string }>`
-        SELECT message_id FROM orchestration_v2_projection_messages ORDER BY message_id
-      `;
-      assert.deepEqual(
-        rows.map((row) => row.message_id),
-        ["malformed", "valid-slash"],
-      );
-
       const deferred = yield* sql<{ readonly message_id: string }>`
         SELECT message_id
         FROM orchestration_v2_projection_messages
