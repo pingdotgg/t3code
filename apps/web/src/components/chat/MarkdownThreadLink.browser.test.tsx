@@ -8,6 +8,11 @@ import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
 import { isMacPlatform } from "../../lib/utils";
 import { linkedThreadSurface } from "../../linkedThreadSurface";
+import {
+  serializeTableElementToCsv,
+  serializeTableElementToHtml,
+  serializeTableElementToMarkdown,
+} from "../../markdown-clipboard";
 import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import { MarkdownThreadLink } from "./MarkdownThreadLink";
 
@@ -57,6 +62,7 @@ vi.mock(import("../ProjectFavicon"), () => ({
     </span>
   ),
 }));
+vi.mock(import("../ThreadChipHoverCard"), () => ({ ThreadChipHoverCard: () => <span /> }));
 vi.mock(import("../contextChipParts"), () => ({
   UnresolvedChip: ({ label }: { label: string }) => <span>{label}</span>,
 }));
@@ -264,4 +270,44 @@ it("opens a linked machine's thread directly once this client is connected to it
   );
   await expect.element(screen.getByText("Fix the build")).toBeVisible();
   await expect.element(screen.getByRole("button")).not.toBeInTheDocument();
+});
+
+it("keeps a linked environment thread label when copying a table", async () => {
+  const { registry } = setup();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  state.linked = new Map([["linked-vm", "fs-17"]]);
+  await using screen = await render(
+    <RegistryContext value={registry}>
+      <table>
+        <thead>
+          <tr>
+            <th>Thread</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <MarkdownThreadLink
+                environmentId={EnvironmentId.make("environment")}
+                threadRef={HERE}
+                link={{
+                  environmentId: EnvironmentId.make("linked-vm"),
+                  threadId: ThreadId.make("there"),
+                }}
+                label="Linked thread"
+              />
+            </td>
+            <td>ready</td>
+          </tr>
+        </tbody>
+      </table>
+    </RegistryContext>,
+  );
+  const table = screen.container.querySelector("table")!;
+  expect(serializeTableElementToCsv(table)).toBe("Thread,Status\nLinked thread,ready");
+  expect(serializeTableElementToMarkdown(table)).toBe(
+    "| Thread | Status |\n| --- | --- |\n| [Linked thread](https://app.t3.codes/threads/linked-vm/there) | ready |",
+  );
+  expect(serializeTableElementToHtml(table)).toContain(">Linked thread</td>");
 });

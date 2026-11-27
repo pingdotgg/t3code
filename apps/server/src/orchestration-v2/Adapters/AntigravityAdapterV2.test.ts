@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ChatFileAttachment,
+  EnvironmentId,
   MessageId,
   NodeId,
   ProjectId,
@@ -13,10 +14,17 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
-import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import {
+  compactDynamicToolOutput,
+  htmlRenderFromToolItem,
+  previewRecordingIdFromToolItem,
+  sentMessageFromToolItem,
+  toolOutputImages,
+} from "@t3tools/shared/toolOutput";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -35,6 +43,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { makeAcpAdapterV2 } from "@t3tools/provider-acp/server/adapter";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
@@ -43,6 +52,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
+  type AntigravityAdapterV2Options,
   type AntigravityAdapterV2RuntimeInput,
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
@@ -153,6 +163,43 @@ describe("AntigravityAdapterV2 flavor", () => {
     assert.deepEqual(question?.respond({ interaction_2: "opt-dev" }), {
       outcome: { outcome: "selected", optionId: "opt-dev" },
     });
+  });
+
+  it("shows each ask_question question as the question body, not the generic form message", () => {
+    // agy's ask_question puts each question in its field's title, with no description,
+    // and a generic count in the form message.
+    const choice = (title: string) => ({
+      type: "string",
+      title,
+      oneOf: [
+        { const: "npm", title: "npm" },
+        { const: "pnpm", title: "pnpm" },
+      ],
+    });
+    const form = flavor.extractElicitationForm?.({
+      sessionId: "session-1",
+      mode: "form",
+      message: "The agent has 2 questions.",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          q0: choice("Which package manager should this new TypeScript project use?"),
+          q0_other: { type: "string", title: "Other" },
+          q1: choice("Which package manager should the docs site use?"),
+          q1_other: { type: "string", title: "Other" },
+        },
+      },
+    } as EffectAcpSchema.CreateElicitationRequest);
+    assert.deepEqual(
+      form?.questions.map((question) => question.question),
+      [
+        "Which package manager should this new TypeScript project use?",
+        "Which package manager should the docs site use?",
+      ],
+    );
+    for (const question of form?.questions ?? []) {
+      assert.notStrictEqual(question.header, question.question);
+    }
   });
 });
 
@@ -459,7 +506,7 @@ describe("AntigravityAdapterV2 client file system", () => {
         readTextFile: true,
         writeTextFile: false,
       });
-      assert.equal(initialize?.params?.clientInfo?.name, "zed");
+      assert.equal(initialize?.params?.clientInfo?.name, "t3-code");
       assert.isUndefined(writeTextFile);
       if (readTextFile === undefined) {
         return yield* Effect.die("Antigravity sessions must serve client file reads");
@@ -701,6 +748,15 @@ describe("AntigravityAdapterV2 html_render pages", () => {
       let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
       const instanceId = ProviderInstanceId.make("antigravity-html-render-test");
       const threadId = ThreadId.make("thread-antigravity-html-render");
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("env-antigravity-html-render"),
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-html-render"),
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:3773/mcp",
+        authorizationHeader: "Bearer antigravity-html-render-token",
+        browserToolsAvailable: true,
+      });
       const page = (name: string) => ({
         attachmentId: `${threadId}-${name}-html`,
         title: "Revenue",
@@ -716,11 +772,26 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         title: "Telemetry",
         height: 411,
       };
+      const proxied = {
+        html: "<p>Proxied chart</p>",
+        title: "Proxied",
+        height: 300,
+      };
+      let capturedMcpServers:
+        | {
+            readonly stdio: ReadonlyArray<EffectAcpSchema.McpServer>;
+            readonly http: ReadonlyArray<EffectAcpSchema.McpServer>;
+          }
+        | undefined;
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: (input) =>
-          makeAntigravityAcpRuntime({
+        makeRuntime: (input) => {
+          capturedMcpServers = {
+            stdio: input.mcpServers ?? [],
+            http: input.httpMcpServers ?? [],
+          };
+          return makeAntigravityAcpRuntime({
             ...input,
             childProcessSpawner,
             spawn: {
@@ -847,10 +918,30 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     toolCallId: "agy-1.5.8",
                     status: "completed",
                   });
+                  // Deferred-proxy calls wrap html_render inside `tool_call`.
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "tool-call-proxy",
+                    title: "Run mcp_t3-code_tool_call",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: {
+                      name: "html_render",
+                      arguments: proxied,
+                      toolSummary: "Render proxied",
+                    },
+                  });
+                  yield* mcpSessions.recordHtmlRender(threadId, proxied, page("tool-call-proxy"));
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "tool-call-proxy",
+                    status: "completed",
+                  });
                   return { stopReason: "end_turn" as const };
                 }),
             })),
-          ),
+          );
+        },
         withProcess: (_stop, task) => task,
         defaultModel: Effect.undefined,
       });
@@ -972,7 +1063,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         ),
         [page("report"), page("report"), page("replacement"), page("replacement")],
       );
-      for (const name of ["failed-retry", "error-retry", "agy-1.5.8"]) {
+      for (const name of ["failed-retry", "error-retry", "agy-1.5.8", "tool-call-proxy"]) {
         assert.deepEqual(tool(name), {
           status: "completed",
           toolName: "t3-code.html_render",
@@ -984,7 +1075,392 @@ describe("AntigravityAdapterV2 html_render pages", () => {
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, failed), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, errored), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, telemetry), undefined);
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, proxied), undefined);
+      assert.isDefined(capturedMcpServers);
+      const stdioServer = capturedMcpServers!.stdio[0];
+      const httpServer = capturedMcpServers!.http[0];
+      const stdioEnv =
+        stdioServer !== undefined && !("type" in stdioServer) ? (stdioServer.env ?? []) : [];
+      const httpHeaders =
+        httpServer !== undefined &&
+        "type" in httpServer &&
+        httpServer.type === "http" &&
+        Array.isArray(httpServer.headers)
+          ? httpServer.headers
+          : [];
+      assert.isTrue(
+        stdioEnv.some(
+          (entry) => entry.name === "T3_ACP_MCP_TOOL_EXPOSURE" && entry.value === "deferred-proxy",
+        ),
+      );
+      assert.isTrue(
+        httpHeaders.some(
+          (entry) =>
+            typeof entry === "object" &&
+            entry !== null &&
+            "name" in entry &&
+            entry.name === "t3-tool-exposure" &&
+            "value" in entry &&
+            entry.value === "deferred-proxy",
+        ),
+      );
     }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "recovers T3 MCP tool results across omitted outputs, replays, errors, and turn boundaries",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        let promptIndex = 0;
+        let turn1Epoch = 0;
+        const instanceId = ProviderInstanceId.make("antigravity-mcp-result-test");
+        const threadId = ThreadId.make("thread-antigravity-mcp-result");
+        const statusUpdate = "### Current Status\n\nAll checks are passing.";
+        const inProgressText = "Streamed while running.";
+        const lateText = "Confirmed on a later completion.";
+        const lateErrorText = "Late explicit error.";
+        const unfinishedText = "Still running when turn ended.";
+        const largeShot = "A".repeat(12 * 1024 * 1024);
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: { T3_ACP_ANTIGRAVITY: "1" },
+              },
+            }).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdate = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: () =>
+                  Effect.gen(function* () {
+                    promptIndex += 1;
+                    const send = (update: EffectAcpSchema.SessionUpdate) =>
+                      sessionUpdate === undefined
+                        ? Effect.die("the adapter must handle session updates")
+                        : sessionUpdate(
+                            normalizeAntigravitySessionUpdate({
+                              sessionId: "mock-session-1",
+                              update,
+                            }),
+                          );
+                    const startTool = (
+                      toolCallId: string,
+                      toolName: string,
+                      rawInput: Record<string, unknown>,
+                    ) =>
+                      send({
+                        sessionUpdate: "tool_call",
+                        toolCallId,
+                        title: `Run mcp_t3-code_${toolName}`,
+                        kind: "other",
+                        status: "in_progress",
+                        rawInput,
+                      });
+                    const updateTool = (
+                      toolCallId: string,
+                      status: "in_progress" | "completed" | "failed",
+                      rawOutput?: unknown,
+                    ) =>
+                      send({
+                        sessionUpdate: "tool_call_update",
+                        toolCallId,
+                        status,
+                        ...(rawOutput === undefined ? {} : { rawOutput }),
+                      });
+                    const recordSend = (message: string) =>
+                      mcpSessions.recordToolResult(
+                        threadId,
+                        "send_to_user",
+                        { message },
+                        { sentMessage: message },
+                      );
+
+                    if (promptIndex === 2) {
+                      // A Turn 1 handler finishing after Turn 1 closed must be rejected by epoch.
+                      yield* mcpSessions.recordToolResult(
+                        threadId,
+                        "send_to_user",
+                        { message: unfinishedText },
+                        { sentMessage: unfinishedText },
+                        { epoch: turn1Epoch },
+                      );
+                      yield* startTool("turn2-leaked-check", "send_to_user", {
+                        message: unfinishedText,
+                      });
+                      yield* updateTool("turn2-leaked-check", "completed", "Summary of turn 2");
+                      return { stopReason: "end_turn" as const };
+                    }
+
+                    turn1Epoch = yield* mcpSessions.toolResultEpoch(threadId);
+
+                    // agy 1.5.x adds toolSummary and omits output on completion, then may replay.
+                    yield* startTool("send-empty", "send_to_user", {
+                      message: statusUpdate,
+                      toolSummary: "Send status update",
+                    });
+                    yield* recordSend(statusUpdate);
+                    yield* updateTool("send-empty", "completed");
+                    yield* updateTool("send-empty", "in_progress");
+                    yield* updateTool("send-empty", "completed", "Summary replay");
+
+                    // Streaming output during in_progress still drains on completion.
+                    yield* startTool("send-streaming", "send_to_user", { message: inProgressText });
+                    yield* recordSend(inProgressText);
+                    yield* updateTool("send-streaming", "in_progress", {
+                      sentMessage: inProgressText,
+                    });
+                    yield* updateTool("send-streaming", "completed", {
+                      sentMessage: inProgressText,
+                    });
+                    yield* startTool("send-streaming-unpublished", "send_to_user", {
+                      message: inProgressText,
+                    });
+                    yield* updateTool("send-streaming-unpublished", "completed");
+
+                    // Explicit MCP error preserves diagnostic content across summary replays.
+                    yield* startTool("send-errored", "send_to_user", { message: "Denied" });
+                    yield* updateTool("send-errored", "completed", {
+                      result: {
+                        isError: true,
+                        structuredContent: { sentMessage: "Denied" },
+                        content: [{ type: "text", text: "Denied by policy" }],
+                      },
+                    });
+                    yield* updateTool("send-errored", "completed", "Summary of denied");
+
+                    // Initial miss -> late explicit success or error still drains its new record.
+                    yield* startTool("send-late", "send_to_user", { message: lateText });
+                    yield* updateTool("send-late", "completed");
+                    yield* recordSend(lateText);
+                    yield* updateTool("send-late", "completed", { sentMessage: lateText });
+                    yield* startTool("send-late-unpublished", "send_to_user", {
+                      message: lateText,
+                    });
+                    yield* updateTool("send-late-unpublished", "completed");
+
+                    yield* startTool("send-late-error", "send_to_user", { message: lateErrorText });
+                    yield* updateTool("send-late-error", "completed");
+                    yield* mcpSessions.recordToolResult(
+                      threadId,
+                      "send_to_user",
+                      { message: lateErrorText },
+                      { isError: true },
+                    );
+                    yield* updateTool("send-late-error", "completed", {
+                      result: { isError: true, content: [{ type: "text", text: "Denied late" }] },
+                    });
+                    yield* startTool("send-late-error-sibling", "send_to_user", {
+                      message: lateErrorText,
+                    });
+                    yield* updateTool("send-late-error-sibling", "completed");
+
+                    // Empty-input completion that misses still recovers once a later completion brings arguments,
+                    // and replacing arguments on the same call ID re-matches against the new arguments.
+                    yield* startTool("send-late-args", "send_to_user", {});
+                    yield* recordSend("First args");
+                    yield* updateTool("send-late-args", "completed");
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "send-late-args",
+                      status: "completed",
+                      rawInput: { message: "First args" },
+                    });
+                    yield* recordSend("Second args");
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "send-late-args",
+                      status: "completed",
+                      rawInput: { message: "Second args" },
+                      rawOutput: "Summary of second",
+                    });
+
+                    // Bare failure without reported output must not consume a sibling call's cached result.
+                    yield* startTool("send-bare-fail", "send_to_user", { message: "Shared ready" });
+                    yield* startTool("send-bare-fail-sibling", "send_to_user", {
+                      message: "Shared ready",
+                    });
+                    yield* recordSend("Shared ready");
+                    yield* updateTool("send-bare-fail", "failed");
+                    yield* updateTool("send-bare-fail-sibling", "completed");
+
+                    // preview_recording_stop recovers its recording id.
+                    yield* startTool("recording-stop", "preview_recording_stop", {
+                      toolSummary: "Stop preview recording",
+                    });
+                    yield* mcpSessions.recordToolResult(
+                      threadId,
+                      "preview_recording_stop",
+                      {},
+                      { id: `${threadId}-rec-1` },
+                    );
+                    yield* updateTool("recording-stop", "completed");
+
+                    // The agent offloads a screenshot and completes the call with no result.
+                    yield* startTool("snapshot", "preview_snapshot", { includeImage: true });
+                    yield* mcpSessions.recordToolResult(
+                      threadId,
+                      "preview_snapshot",
+                      { includeImage: true },
+                      { content: [{ type: "image", mimeType: "image/png", data: "AAAA" }] },
+                    );
+                    yield* updateTool("snapshot", "completed");
+
+                    // Recovered screenshots stay with the turn, so their bytes are bounded.
+                    for (const tabId of ["tab-1", "tab-2", "tab-3"]) {
+                      yield* startTool(`large-${tabId}`, "preview_snapshot", { tabId });
+                      yield* mcpSessions.recordToolResult(
+                        threadId,
+                        "preview_snapshot",
+                        { tabId },
+                        { content: [{ type: "image", mimeType: "image/png", data: largeShot }] },
+                      );
+                      yield* updateTool(`large-${tabId}`, "completed");
+                    }
+
+                    // Unfinished call projected at turn end must not claim or leak to Turn 2.
+                    yield* startTool("send-unfinished", "send_to_user", {
+                      message: unfinishedText,
+                    });
+                    yield* recordSend(unfinishedText);
+
+                    return { stopReason: "end_turn" as const };
+                  }),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-mcp-result"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        const runTurn = (ordinal: number) =>
+          Effect.gen(function* () {
+            yield* session.startTurn(
+              makeTurnInput({
+                threadId,
+                providerThread,
+                instanceId,
+                runtimePolicy,
+                now,
+                ordinal,
+                modelSelection,
+              }),
+            );
+            return Array.from(
+              yield* session.events.pipe(
+                Stream.takeUntil((event) => event.type === "turn.terminal"),
+                Stream.runCollect,
+              ),
+            );
+          });
+        const turn1Events = yield* runTurn(1);
+        const turn2Events = yield* runTurn(2);
+        const toolIn = (events: ReadonlyArray<(typeof turn1Events)[number]>, nativeId: string) => {
+          const event = events.findLast(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === nativeId,
+          );
+          return event?.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+            ? event.turnItem
+            : undefined;
+        };
+        const tool = (nativeId: string) => toolIn(turn1Events, nativeId);
+
+        const sendEmptyUpdates = turn1Events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "dynamic_tool" &&
+          event.turnItem.nativeItemRef?.nativeId === "send-empty" &&
+          event.turnItem.status === "completed"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          sendEmptyUpdates.map((update) => sentMessageFromToolItem(update)),
+          [statusUpdate, statusUpdate],
+        );
+        assert.strictEqual(sentMessageFromToolItem(tool("send-streaming")!), inProgressText);
+        assert.strictEqual(sentMessageFromToolItem(tool("send-streaming-unpublished")!), undefined);
+        const erroredUpdates = turn1Events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "dynamic_tool" &&
+          event.turnItem.nativeItemRef?.nativeId === "send-errored" &&
+          event.turnItem.status === "completed"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.strictEqual(erroredUpdates.length, 2);
+        for (const update of erroredUpdates) {
+          assert.strictEqual(compactDynamicToolOutput(update.output)?.isError, true);
+          assert.include(JSON.stringify(update.output), "Denied by policy");
+          assert.strictEqual(sentMessageFromToolItem(update), undefined);
+        }
+        assert.strictEqual(sentMessageFromToolItem(tool("send-late")!), lateText);
+        assert.strictEqual(sentMessageFromToolItem(tool("send-late-unpublished")!), undefined);
+        const lateErrorSibling = tool("send-late-error-sibling");
+        assert.isDefined(lateErrorSibling);
+        assert.strictEqual(lateErrorSibling.status, "completed");
+        assert.strictEqual(lateErrorSibling.output, undefined);
+        assert.strictEqual(sentMessageFromToolItem(tool("send-late-args")!), "Second args");
+        assert.strictEqual(
+          sentMessageFromToolItem(tool("send-bare-fail-sibling")!),
+          "Shared ready",
+        );
+        assert.strictEqual(sentMessageFromToolItem(tool("send-unfinished")!), undefined);
+        assert.strictEqual(
+          sentMessageFromToolItem(toolIn(turn2Events, "turn2-leaked-check")!),
+          undefined,
+        );
+        assert.strictEqual(
+          previewRecordingIdFromToolItem(tool("recording-stop")!),
+          `${threadId}-rec-1`,
+        );
+        assert.deepEqual(toolOutputImages(tool("snapshot")?.output), [
+          { mimeType: "image/png", data: "AAAA" },
+        ]);
+        assert.isTrue(yield* mcpSessions.areToolResultImagesRecovered(instanceId));
+        assert.deepEqual(
+          ["tab-1", "tab-2", "tab-3"].map((tabId) =>
+            toolOutputImages(tool(`large-${tabId}`)?.output).map((image) => image.data?.length),
+          ),
+          [[largeShot.length], [largeShot.length], [undefined]],
+        );
+      }).pipe(Effect.provide(layerSession)),
   );
 });
 
@@ -998,6 +1474,10 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   detachedChildProfile?: string,
   /** agy 1.5.11 answers a steered prompt once the next one arrives, which runs to `releaseSteer`. */
   steering?: { readonly agentVersion: string; readonly holdsFirstPrompt: boolean },
+  options?: {
+    readonly profileDirectory?: string;
+    readonly initialToolCalls?: ReadonlyArray<EffectAcpSchema.SessionUpdate>;
+  },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -1028,11 +1508,14 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   let terminate: AntigravityAdapterV2RuntimeInput["onTermination"];
   const usage = { sessionUpdate: "usage_update", used: 9000, size: 1048576 } as const;
   const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+  const scheduledFinalizes = yield* Queue.unbounded<Duration.Input>();
   const instanceId = ProviderInstanceId.make("antigravity-wake-test");
   const threadId = ThreadId.make("thread-antigravity-wake");
-  const adapter = yield* makeAntigravityAdapterV2({
+  const selfInvocation = yield* resolveSelfInvocation();
+  const profileDirectory = options?.profileDirectory ?? detachedChildProfile;
+  const adapterOptions: AntigravityAdapterV2Options = {
     instanceId,
-    selfInvocation: yield* resolveSelfInvocation(),
+    selfInvocation,
     continuationRequests: { offer: (request) => Effect.sync(() => void offers.push(request)) },
     makeRuntime: (input) => {
       terminate = input.onTermination;
@@ -1074,18 +1557,24 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
                 yield* Deferred.await(releaseSteer);
                 return { stopReason: "end_turn" as const };
               }
-              yield* send(
-                detachedChildProfile === undefined
-                  ? { sessionUpdate: "tool_call", ...command, status: "in_progress" }
-                  : {
-                      sessionUpdate: "tool_call",
-                      toolCallId: "call_research",
-                      kind: "other",
-                      title: "Run invoke_subagent",
-                      status: "completed",
-                      rawInput: { TypeName: "research", Role: "Researcher", Prompt: "Read it" },
-                    },
-              );
+              if (options?.initialToolCalls !== undefined) {
+                for (const toolUpdate of options.initialToolCalls) {
+                  yield* send(toolUpdate);
+                }
+              } else {
+                yield* send(
+                  detachedChildProfile === undefined
+                    ? { sessionUpdate: "tool_call", ...command, status: "in_progress" }
+                    : {
+                        sessionUpdate: "tool_call",
+                        toolCallId: "call_research",
+                        kind: "other",
+                        title: "Run invoke_subagent",
+                        status: "completed",
+                        rawInput: { TypeName: "research", Role: "Researcher", Prompt: "Read it" },
+                      },
+                );
+              }
               yield* send({
                 sessionUpdate: "agent_message_chunk",
                 content: { type: "text", text: "I'll render once the fetch finishes." },
@@ -1099,8 +1588,28 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     },
     withProcess: (_stop, task) => task,
     defaultModel: Effect.undefined,
-    ...(detachedChildProfile === undefined ? {} : { profileDirectory: detachedChildProfile }),
-  });
+    ...(profileDirectory === undefined ? {} : { profileDirectory }),
+  };
+  const adapter =
+    options === undefined
+      ? yield* makeAntigravityAdapterV2(adapterOptions)
+      : yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: makeAntigravityAcpAdapterFlavor({
+            ...adapterOptions,
+            random: crypto,
+            fileSystem: yield* FileSystem.FileSystem,
+            path,
+            host: yield* ProviderHost.ProviderHost,
+          }),
+          selfInvocation,
+          ...(adapterOptions.continuationRequests === undefined
+            ? {}
+            : { continuationRequests: adapterOptions.continuationRequests }),
+          testHooks: {
+            onDeferredFinalizeScheduled: (debounce) => Queue.offer(scheduledFinalizes, debounce),
+          },
+        });
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
     runtimeMode: "full-access",
     interactionMode: "default",
@@ -1183,6 +1692,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     command,
     usage,
     offers,
+    scheduledFinalizes,
     send,
     startTurn,
     until,
@@ -1290,6 +1800,16 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
       yield* startTurn(1, false);
       yield* throughPromptSettled;
+      // Progress keeps a command past the post-settle hold bound, which counts silence only.
+      for (const minute of [10, 20, 30]) {
+        yield* TestClock.adjust("10 minutes");
+        yield* send({
+          sessionUpdate: "tool_call_update",
+          ...command,
+          status: "in_progress",
+          rawOutput: { output: `fetched ${minute} pages` },
+        });
+      }
       yield* TestClock.adjust("10 minutes");
       yield* send({
         sessionUpdate: "tool_call_update",
@@ -1310,6 +1830,419 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       assert.include(JSON.stringify(run), "Here is the chart.", "the reply is part of the run");
       assert.lengthOf(offers, 0, "the open run needs no continuation");
     }).pipe(Effect.provide(layerSession)),
+  );
+
+  // A command whose terminal update never arrives would hold the run in Working forever with
+  // an empty pending list and a finished reply above Stop.
+  it.effect("settles a silent background command after the post-settle hold timeout", () =>
+    Effect.gen(function* () {
+      const { command, offers, startTurn, until, throughPromptSettled } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      const prompt = yield* throughPromptSettled;
+
+      // A running tool keeps the inactivity watchdog re-armed, so 20 silent minutes do not
+      // settle this run on their own.
+      yield* TestClock.adjust("20 minutes");
+      yield* TestClock.adjust("11 minutes");
+      const run = yield* until((event) => event.type === "turn.terminal");
+      const terminal = run.at(-1);
+      assert.equal(
+        terminal?.type === "turn.terminal" && terminal.status,
+        "completed",
+        "the bounded hold finalizes the turn instead of leaving it running forever",
+      );
+      assert.equal(terminal?.type === "turn.terminal" && terminal.failure, null);
+      assert.lengthOf(offers, 0, "a silent command produces no wake on its own");
+      const commandItem = [...prompt, ...run].findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+      );
+      assert.isTrue(
+        commandItem?.type === "turn_item.updated" && commandItem.turnItem.status === "completed",
+        "the silent command is no longer left as live activity on a settled run",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("keeps a silent scheduled wake in its run past the command hold bound", () =>
+    Effect.gen(function* () {
+      const { usage, offers, send, startTurn, until, throughPromptSettled } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: [
+            {
+              sessionUpdate: "tool_call",
+              toolCallId: "call_schedule",
+              kind: "other",
+              title: "Run schedule",
+              status: "in_progress",
+              rawInput: { DurationSeconds: 3600, Prompt: "Continue the task" },
+            },
+          ],
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("61 minutes");
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call_schedule",
+        status: "completed",
+      });
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Picked the task back up." },
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      const run = yield* until((event) => event.type === "turn.terminal");
+      assert.include(
+        JSON.stringify(run),
+        "Picked the task back up.",
+        "the wake reply stays in the run",
+      );
+      assert.lengthOf(offers, 0);
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("keeps an unanswered question open past the command hold bound", () =>
+    Effect.gen(function* () {
+      const { command, usage, send, startTurn, until, throughPromptSettled, requestPermission } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      const question = yield* requestPermission(
+        {
+          sessionId: "mock-session-1",
+          toolCall: { toolCallId: "interaction_1", kind: "other", title: "Which port?" },
+          options: [
+            { optionId: "3000", name: "3000", kind: "allow_once" },
+            { optionId: "8080", name: "8080", kind: "allow_once" },
+          ],
+        },
+        { requestId: "question-1", method: "session/request_permission" },
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* TestClock.adjust("31 minutes");
+      yield* Fiber.interrupt(question);
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Here is the chart." },
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      const run = yield* until((event) => event.type === "turn.terminal");
+      assert.include(JSON.stringify(run), "Here is the chart.", "the question kept the run open");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // Command 2 finishes during reply 1; agy dequeues command 2 after reply 1's usage_update and
+  // needs >3 s before streaming reply 2. Wait for reply 2 (bounded by the 2-minute quiet limit),
+  // but still finalize at 3 s when both commands were batched into reply 1.
+  it.effect.each([
+    { case: "separate second wake", batched: false, stalls: false },
+    { case: "batched into one wake reply", batched: true, stalls: false },
+    { case: "stalled second wake hits quiet limit", batched: false, stalls: true },
+  ])(
+    "handles two parallel background commands finishing 500 ms apart ($case)",
+    ({ batched, stalls }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agy-race-" });
+        const generated = (kind: string) =>
+          path.join(
+            profile,
+            "antigravity-acp",
+            "brain",
+            "mock-session-1",
+            ".system_generated",
+            kind,
+          );
+        const writeFile = (directory: string, name: string, body: string) =>
+          fileSystem
+            .makeDirectory(directory, { recursive: true })
+            .pipe(Effect.andThen(fileSystem.writeFileString(path.join(directory, name), body)));
+        const cmd1 = {
+          toolCallId: "call_gates",
+          kind: "execute",
+          title: "bin/gates back",
+          rawInput: { CommandLine: "bin/gates back", WaitMsBeforeAsync: 10000 },
+        } as const;
+        const cmd2 = {
+          toolCallId: "call_tests",
+          kind: "execute",
+          title: "bin/session test",
+          rawInput: { CommandLine: "bin/session test", WaitMsBeforeAsync: 10000 },
+        } as const;
+        const { usage, offers, scheduledFinalizes, send, startTurn, until, throughPromptSettled } =
+          yield* openSessionWithRunningCommand({}, undefined, undefined, {
+            profileDirectory: profile,
+            initialToolCalls: [
+              { sessionUpdate: "tool_call", ...cmd1, status: "in_progress" },
+              { sessionUpdate: "tool_call", ...cmd2, status: "in_progress" },
+            ],
+          });
+        yield* startTurn(1, false);
+        yield* throughPromptSettled;
+
+        // Command 1 finishes and wakes the model.
+        yield* writeFile(
+          generated("messages"),
+          "msg-1.json",
+          JSON.stringify({
+            id: "msg-1",
+            priority: "MESSAGE_PRIORITY_HIGH",
+            sender: "mock-session-1/task-1",
+          }),
+        );
+        yield* writeFile(generated("messages"), "read.json", JSON.stringify({ "msg-1": true }));
+        yield* writeFile(
+          generated("logs"),
+          "transcript.jsonl",
+          `${JSON.stringify({ step_index: 1, type: "SYSTEM_MESSAGE", status: "DONE", content: "priority=MESSAGE_PRIORITY_HIGH task-1" })}\n`,
+        );
+        yield* send({
+          sessionUpdate: "tool_call_update",
+          ...cmd1,
+          status: "completed",
+          rawOutput: { output: "ok larastan", exit_code: 0 },
+        });
+
+        // 500 ms later, command 2 also finishes while reply 1 is still in flight.
+        yield* TestClock.adjust("500 millis");
+        yield* writeFile(
+          generated("messages"),
+          "msg-2.json",
+          JSON.stringify({
+            id: "msg-2",
+            priority: "MESSAGE_PRIORITY_HIGH",
+            sender: "mock-session-1/task-2",
+          }),
+        );
+        yield* send({
+          sessionUpdate: "tool_call_update",
+          ...cmd2,
+          status: "completed",
+          rawOutput: { output: "34 passed", exit_code: 0 },
+        });
+        assert.equal((yield* Queue.takeAll(scheduledFinalizes)).at(-1), "2 minutes");
+
+        // Reply 1 streams and ends with usage_update #1.
+        yield* TestClock.adjust("8 seconds");
+        yield* send({
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: batched ? "gates and tests both passed." : "gates passed; waiting for tests.",
+          },
+        });
+        assert.equal((yield* Queue.takeAll(scheduledFinalizes)).at(-1), "2 minutes");
+        yield* writeFile(
+          generated("messages"),
+          "read.json",
+          JSON.stringify({ "msg-1": true, "msg-2": true }),
+        );
+        yield* writeFile(
+          generated("logs"),
+          "transcript.jsonl",
+          (batched
+            ? [
+                JSON.stringify({
+                  step_index: 1,
+                  type: "SYSTEM_MESSAGE",
+                  status: "DONE",
+                  content: "priority=MESSAGE_PRIORITY_HIGH task-1 + task-2",
+                }),
+                JSON.stringify({
+                  step_index: 2,
+                  type: "PLANNER_RESPONSE",
+                  status: "DONE",
+                  content: "gates and tests both passed.",
+                }),
+              ]
+            : [
+                JSON.stringify({
+                  step_index: 1,
+                  type: "SYSTEM_MESSAGE",
+                  status: "DONE",
+                  content: "priority=MESSAGE_PRIORITY_HIGH task-1",
+                }),
+                JSON.stringify({
+                  step_index: 2,
+                  type: "PLANNER_RESPONSE",
+                  status: "DONE",
+                  content: "gates passed; waiting for tests.",
+                }),
+                JSON.stringify({
+                  step_index: 3,
+                  type: "SYSTEM_MESSAGE",
+                  status: "DONE",
+                  content: "priority=MESSAGE_PRIORITY_HIGH task-2",
+                }),
+              ]
+          ).join("\n") + "\n",
+        );
+        yield* send(usage);
+        assert.equal(yield* Queue.take(scheduledFinalizes), "3000 millis");
+
+        // Advance past the 3-second debounce.
+        yield* TestClock.adjust("3 seconds");
+        if (batched) {
+          const run = yield* until((event) => event.type === "turn.terminal");
+          const terminal = run.at(-1);
+          assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+          assert.include(JSON.stringify(run), "gates and tests both passed.");
+          assert.lengthOf(offers, 0);
+          return;
+        }
+
+        // Pending wake for command 2 must extend into the 2-minute quiet window before finalizing.
+        assert.equal(yield* Queue.take(scheduledFinalizes), "2 minutes");
+        if (stalls) {
+          yield* TestClock.adjust("2 minutes");
+          const run = yield* until((event) => event.type === "turn.terminal");
+          const terminal = run.at(-1);
+          assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+          assert.lengthOf(offers, 0);
+          return;
+        }
+
+        // Reply 2 arrives 6 seconds later (9 seconds after usage_update #1).
+        yield* TestClock.adjust("6 seconds");
+        yield* send({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "All 34 tests passed." },
+        });
+        assert.equal((yield* Queue.takeAll(scheduledFinalizes)).at(-1), "2 minutes");
+        yield* writeFile(
+          generated("logs"),
+          "transcript.jsonl",
+          [
+            JSON.stringify({
+              step_index: 1,
+              type: "SYSTEM_MESSAGE",
+              status: "DONE",
+              content: "priority=MESSAGE_PRIORITY_HIGH task-1",
+            }),
+            JSON.stringify({
+              step_index: 2,
+              type: "PLANNER_RESPONSE",
+              status: "DONE",
+              content: "gates passed; waiting for tests.",
+            }),
+            JSON.stringify({
+              step_index: 3,
+              type: "SYSTEM_MESSAGE",
+              status: "DONE",
+              content: "priority=MESSAGE_PRIORITY_HIGH task-2",
+            }),
+            JSON.stringify({
+              step_index: 4,
+              type: "PLANNER_RESPONSE",
+              status: "DONE",
+              content: "All 34 tests passed.",
+            }),
+          ].join("\n") + "\n",
+        );
+        yield* send(usage);
+        assert.equal(yield* Queue.take(scheduledFinalizes), "3000 millis");
+        yield* TestClock.adjust("3 seconds");
+
+        const run = yield* until((event) => event.type === "turn.terminal");
+        const terminal = run.at(-1);
+        assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+        assert.include(
+          JSON.stringify(run),
+          "All 34 tests passed.",
+          "reply 2 must stay in the same run",
+        );
+        assert.lengthOf(offers, 0, "the open run needs no continuation");
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  // A background command can finish while the initial prompt's final reply is still in flight,
+  // so the tool is already `completed` when session/prompt returns end_turn while its wake sits
+  // unread in the inbox.
+  it.effect(
+    "keeps the run open when a background command finishes before end_turn with an unread wake",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agy-pre-settle-" });
+        const generated = (kind: string) =>
+          path.join(
+            profile,
+            "antigravity-acp",
+            "brain",
+            "mock-session-1",
+            ".system_generated",
+            kind,
+          );
+        const writeFile = (directory: string, name: string, body: string) =>
+          fileSystem
+            .makeDirectory(directory, { recursive: true })
+            .pipe(Effect.andThen(fileSystem.writeFileString(path.join(directory, name), body)));
+        const cmd = {
+          toolCallId: "call_mix",
+          kind: "execute",
+          title: "python3 voice.py mix",
+          rawInput: { CommandLine: "python3 voice.py mix", WaitMsBeforeAsync: 10000 },
+        } as const;
+        yield* writeFile(
+          generated("messages"),
+          "msg-1.json",
+          JSON.stringify({
+            id: "msg-1",
+            priority: "MESSAGE_PRIORITY_HIGH",
+            sender: "mock-session-1/task-1",
+          }),
+        );
+        const { usage, offers, scheduledFinalizes, send, startTurn, until, throughPromptSettled } =
+          yield* openSessionWithRunningCommand({}, undefined, undefined, {
+            profileDirectory: profile,
+            initialToolCalls: [
+              { sessionUpdate: "tool_call", ...cmd, status: "in_progress" },
+              {
+                sessionUpdate: "tool_call_update",
+                ...cmd,
+                status: "completed",
+                rawOutput: { output: "mixed.mp4", exit_code: 0 },
+              },
+            ],
+          });
+        yield* startTurn(1, false);
+        yield* throughPromptSettled;
+        assert.equal(yield* Queue.take(scheduledFinalizes), "2 minutes");
+
+        yield* TestClock.adjust("9 seconds");
+        yield* send({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Mix finished." },
+        });
+        assert.equal(yield* Queue.take(scheduledFinalizes), "2 minutes");
+        yield* writeFile(generated("messages"), "read.json", JSON.stringify({ "msg-1": true }));
+        yield* writeFile(
+          generated("logs"),
+          "transcript.jsonl",
+          `${JSON.stringify({ step_index: 2, type: "PLANNER_RESPONSE", status: "DONE", content: "Mix finished." })}\n`,
+        );
+        yield* send(usage);
+        assert.equal(yield* Queue.take(scheduledFinalizes), "3000 millis");
+        yield* TestClock.adjust("3 seconds");
+
+        const run = yield* until((event) => event.type === "turn.terminal");
+        const terminal = run.at(-1);
+        assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+        assert.include(JSON.stringify(run), "Mix finished.");
+        assert.lengthOf(offers, 0);
+      }).pipe(Effect.provide(layerSession)),
   );
 
   // agy names its background commands `<session>/task-<n>`; the agent passes that to
@@ -1608,6 +2541,353 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       );
       assert.lengthOf(offers, 0, "the open run needs no continuation");
     }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "projects Antigravity subagent transcript thinking, typed tools, and assistant reply live and keeps them when Idle",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-antigravity-subagent-live-",
+        });
+        const records = (conversationId: string, kind: string) =>
+          path.join(profile, "antigravity-acp", "brain", conversationId, ".system_generated", kind);
+        const writeJson = (directory: string, name: string, value: unknown) =>
+          fileSystem
+            .makeDirectory(directory, { recursive: true })
+            .pipe(
+              Effect.andThen(
+                fileSystem.writeFileString(path.join(directory, name), JSON.stringify(value)),
+              ),
+            );
+        const writeTranscript = (lines: ReadonlyArray<unknown>) => {
+          const directory = records("child-1", "logs");
+          return fileSystem
+            .makeDirectory(directory, { recursive: true })
+            .pipe(
+              Effect.andThen(
+                fileSystem.writeFileString(
+                  path.join(directory, "transcript.jsonl"),
+                  `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+                ),
+              ),
+            );
+        };
+
+        yield* writeJson(records("mock-session-1", "subagents"), "child-1.json", {
+          conversationId: "child-1",
+          subagentDescriptor: { role: "Codebase Researcher" },
+        });
+        yield* writeJson(records("child-1", "messages"), "launch.json", {
+          sender: "mock-session-1",
+          content: "Read README.md",
+          sourceMetadata: {
+            tool: { toolCall: { id: "call_research", name: "invoke_subagent" } },
+          },
+        });
+        // While running, the child has written thinking, a completed read_file, an edit_file, and a running command.
+        yield* writeTranscript([
+          { step_index: 0, type: "SYSTEM_MESSAGE", status: "DONE", content: "Read README.md" },
+          {
+            step_index: 1,
+            type: "PLANNER_RESPONSE",
+            status: "DONE",
+            thinking: "Checking README.md and applying the fix.",
+            tool_calls: [
+              { name: "read_file", args: { Path: '"/project/README.md"' } },
+              {
+                name: "edit_file",
+                args: {
+                  Path: '"/project/README.md"',
+                  Target: '"old"',
+                  Replacement: '"new"',
+                },
+              },
+              {
+                name: "run_command",
+                args: { CommandLine: '"pnpm test"', toolSummary: '"Run tests"' },
+              },
+            ],
+          },
+          {
+            step_index: 2,
+            type: "GENERIC",
+            status: "DONE",
+            content: "Created At: 2026-11-26T02:00:00+01:00\n1: old line",
+          },
+          {
+            step_index: 3,
+            type: "GENERIC",
+            status: "DONE",
+            content: "Updated README.md",
+          },
+        ]);
+
+        const { usage, send, startTurn, until, throughPromptSettled } =
+          yield* openSessionWithRunningCommand({}, profile);
+        yield* startTurn(1, false);
+        const promptEvents = yield* throughPromptSettled;
+
+        const childThread = promptEvents.find((event) => event.type === "app_thread.created");
+        assert.isDefined(childThread);
+        const childThreadId =
+          childThread?.type === "app_thread.created" ? childThread.appThread.id : undefined;
+        assert.isDefined(childThreadId);
+
+        // Give the live transcript follower a poll tick while the subagent is still running.
+        yield* TestClock.adjust("1 second");
+
+        // Now the child completes its command, writes its final assistant reply, and reports back to parent.
+        yield* writeTranscript([
+          { step_index: 0, type: "SYSTEM_MESSAGE", status: "DONE", content: "Read README.md" },
+          {
+            step_index: 1,
+            type: "PLANNER_RESPONSE",
+            status: "DONE",
+            thinking: "Checking README.md and applying the fix.",
+            tool_calls: [
+              { name: "read_file", args: { Path: '"/project/README.md"' } },
+              {
+                name: "edit_file",
+                args: {
+                  Path: '"/project/README.md"',
+                  Target: '"old"',
+                  Replacement: '"new"',
+                },
+              },
+              {
+                name: "run_command",
+                args: { CommandLine: '"pnpm test"', toolSummary: '"Run tests"' },
+              },
+            ],
+          },
+          {
+            step_index: 2,
+            type: "GENERIC",
+            status: "DONE",
+            content: "Created At: 2026-11-26T02:00:00+01:00\n1: old line",
+          },
+          {
+            step_index: 3,
+            type: "GENERIC",
+            status: "DONE",
+            content: "Updated README.md",
+          },
+          {
+            step_index: 4,
+            type: "GENERIC",
+            status: "DONE",
+            content: "All tests passed.",
+          },
+          {
+            step_index: 5,
+            type: "PLANNER_RESPONSE",
+            status: "DONE",
+            content: "Updated README.md and verified all tests pass.",
+          },
+        ]);
+        yield* writeJson(records("mock-session-1", "messages"), "report.json", {
+          sender: "child-1",
+        });
+        yield* send({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "The researcher finished." },
+        });
+        yield* send(usage);
+        yield* TestClock.adjust("3 seconds");
+        const tailEvents = yield* until((event) => event.type === "turn.terminal");
+        const allEvents = [...promptEvents, ...tailEvents];
+
+        const childItemsById = new Map<
+          string,
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn_item.updated" }>["turnItem"]
+        >();
+        for (const event of allEvents) {
+          if (event.type === "turn_item.updated" && event.turnItem.threadId === childThreadId) {
+            childItemsById.set(String(event.turnItem.id), event.turnItem);
+          }
+        }
+        const childItems = [...childItemsById.values()].toSorted((a, b) => a.ordinal - b.ordinal);
+        assert.deepEqual(
+          childItems.map((item) => item.type),
+          [
+            "user_message",
+            "reasoning",
+            "dynamic_tool",
+            "file_change",
+            "command_execution",
+            "assistant_message",
+          ],
+        );
+        const reasoning = childItems[1];
+        assert.equal(
+          reasoning?.type === "reasoning" ? reasoning.text : null,
+          "Checking README.md and applying the fix.",
+        );
+        const readItem = childItems[2];
+        assert.equal(readItem?.type === "dynamic_tool" ? readItem.toolName : null, "Read");
+        assert.equal(readItem?.type === "dynamic_tool" ? readItem.output : null, "1: old line");
+        const fileChange = childItems[3];
+        assert.equal(
+          fileChange?.type === "file_change" ? fileChange.fileName : null,
+          "/project/README.md",
+        );
+        assert.include(
+          fileChange?.type === "file_change" ? (fileChange.diffStr ?? "") : "",
+          "-old",
+        );
+        assert.include(
+          fileChange?.type === "file_change" ? (fileChange.diffStr ?? "") : "",
+          "+new",
+        );
+        const command = childItems[4];
+        assert.equal(command?.type === "command_execution" ? command.input : null, "pnpm test");
+        assert.equal(
+          command?.type === "command_execution" ? command.output : null,
+          "All tests passed.",
+        );
+        assert.equal(command?.status, "completed");
+        const assistant = childItems[5];
+        assert.equal(
+          assistant?.type === "assistant_message" ? assistant.text : null,
+          "Updated README.md and verified all tests pass.",
+        );
+
+        const lastSubagent = allEvents.findLast((event) => event.type === "subagent.updated");
+        assert.equal(
+          lastSubagent?.type === "subagent.updated" ? lastSubagent.subagent.status : null,
+          "idle",
+        );
+        assert.equal(
+          lastSubagent?.type === "subagent.updated" ? lastSubagent.subagent.result : null,
+          "Updated README.md and verified all tests pass.",
+        );
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "captures a subagent's closing assistant reply written shortly after send_message marks it Idle",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-antigravity-subagent-trailing-",
+        });
+        const records = (conversationId: string, kind: string) =>
+          path.join(profile, "antigravity-acp", "brain", conversationId, ".system_generated", kind);
+        const writeJson = (directory: string, name: string, value: unknown) =>
+          fileSystem
+            .makeDirectory(directory, { recursive: true })
+            .pipe(
+              Effect.andThen(
+                fileSystem.writeFileString(path.join(directory, name), JSON.stringify(value)),
+              ),
+            );
+        const writeTranscript = (lines: ReadonlyArray<unknown>) => {
+          const directory = records("child-1", "logs");
+          return fileSystem
+            .makeDirectory(directory, { recursive: true })
+            .pipe(
+              Effect.andThen(
+                fileSystem.writeFileString(
+                  path.join(directory, "transcript.jsonl"),
+                  `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+                ),
+              ),
+            );
+        };
+
+        yield* writeJson(records("mock-session-1", "subagents"), "child-1.json", {
+          conversationId: "child-1",
+          subagentDescriptor: { role: "Rich Format Tester" },
+        });
+        yield* writeJson(records("child-1", "messages"), "launch.json", {
+          sender: "mock-session-1",
+          content: "Format a markdown summary",
+          sourceMetadata: {
+            tool: { toolCall: { id: "call_research", name: "invoke_subagent" } },
+          },
+        });
+        const preReplySteps = [
+          {
+            step_index: 0,
+            type: "SYSTEM_MESSAGE",
+            status: "DONE",
+            content: "Format a markdown summary",
+          },
+          {
+            step_index: 1,
+            type: "PLANNER_RESPONSE",
+            status: "DONE",
+            tool_calls: [{ name: "send_message", args: { Message: '"Done!"' } }],
+          },
+          { step_index: 2, type: "GENERIC", status: "DONE", content: "Message sent." },
+        ];
+        yield* writeTranscript(preReplySteps);
+        yield* writeJson(records("mock-session-1", "messages"), "report.json", {
+          sender: "child-1",
+        });
+
+        const { startTurn, until, throughPromptSettled, session, providerThread } =
+          yield* openSessionWithRunningCommand({}, profile);
+        const runKeepsIngesting = session.hasPendingBackgroundWorkForThread!(providerThread);
+        yield* startTurn(1, false);
+        const promptEvents = yield* throughPromptSettled;
+        const childThread = promptEvents.find((event) => event.type === "app_thread.created");
+        const childThreadId =
+          childThread?.type === "app_thread.created" ? childThread.appThread.id : undefined;
+        assert.isDefined(childThreadId);
+
+        // Child became Idle as soon as report.json landed, before its closing PLANNER_RESPONSE flushed.
+        const idleSubagent = promptEvents.findLast((event) => event.type === "subagent.updated");
+        assert.equal(
+          idleSubagent?.type === "subagent.updated" ? idleSubagent.subagent.status : null,
+          "idle",
+        );
+        // The run reads this probe once the root ends; it must already hold the drain at Idle.
+        assert.isTrue(yield* runKeepsIngesting);
+
+        // Closing reply lands in transcript.jsonl after Idle.
+        yield* writeTranscript([
+          ...preReplySteps,
+          {
+            step_index: 3,
+            type: "PLANNER_RESPONSE",
+            status: "DONE",
+            content: "## Summary\n\n| Check | Status |\n| --- | --- |\n| Diff | Passed |",
+          },
+        ]);
+        yield* TestClock.adjust("2 seconds");
+        const trailingEvents = yield* until(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId === childThreadId &&
+            event.turnItem.type === "assistant_message",
+        );
+        const assistantItem = trailingEvents.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId === childThreadId &&
+            event.turnItem.type === "assistant_message",
+        );
+        assert.equal(
+          assistantItem?.type === "turn_item.updated" &&
+            assistantItem.turnItem.type === "assistant_message"
+            ? assistantItem.turnItem.text
+            : null,
+          "## Summary\n\n| Check | Status |\n| --- | --- |\n| Diff | Passed |",
+        );
+        // The drain ends with a subagent event, so the run re-checks and stops ingesting.
+        let pending = true;
+        for (let attempt = 0; attempt < 2 && pending; attempt += 1) {
+          yield* until((event) => event.type === "subagent.updated");
+          pending = yield* runKeepsIngesting;
+        }
+        assert.isFalse(pending);
+      }).pipe(Effect.provide(layerSession)),
   );
 
   it.effect("ends a continuation run whose replayed reply launched a subagent", () =>
@@ -2040,7 +3320,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
 });
 
 describe("AntigravityAdapterV2 session system prompt", () => {
-  it.effect.each(["1.5.0"])(
+  it.effect.each(["1.5.1"])(
     "carries PR linking once per turn on %s, which does not advertise a system prompt append",
     (agentVersion) =>
       Effect.gen(function* () {
@@ -2162,5 +3442,169 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         assert.notInclude(append, "systemPrompt");
         assert.include(sent, "<pull_request_linking>");
       }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 update_steps checklist", () => {
+  it.effect("shows agy's update_steps calls as the thread's task list, not tool rows", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("antigravity-update-steps-test");
+      const threadId = ThreadId.make("thread-antigravity-update-steps");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1" },
+            },
+          }).pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.map((runtime): RuntimeService => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdate = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              // agy 1.5.15/1.5.16 report the checklist only as tool calls, never as ACP `plan`.
+              prompt: () =>
+                Effect.gen(function* () {
+                  const send = (update: EffectAcpSchema.SessionUpdate) =>
+                    sessionUpdate === undefined
+                      ? Effect.die("the adapter must handle session updates")
+                      : sessionUpdate(
+                          normalizeAntigravitySessionUpdate({
+                            sessionId: "mock-session-1",
+                            update,
+                          }),
+                        );
+                  const calls = [
+                    [
+                      { title: "Create a.txt", status: "in_progress" },
+                      { title: "Create b.txt", status: "pending" },
+                    ],
+                    [
+                      { title: "Create a.txt", status: "done" },
+                      { title: "Create b.txt", status: "in_progress" },
+                    ],
+                  ];
+                  for (const [index, steps] of calls.entries()) {
+                    const toolCallId = `update-steps-${index + 1}`;
+                    yield* send({
+                      sessionUpdate: "tool_call",
+                      toolCallId,
+                      title: "Run update_steps",
+                      kind: "other",
+                      status: "in_progress",
+                      rawInput: { steps },
+                    });
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId,
+                      status: "completed",
+                    });
+                  }
+                  return { stopReason: "end_turn" as const };
+                }),
+            })),
+          ),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-update-steps"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* session.startTurn({
+        appThread: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project-antigravity-update-steps"),
+          title: "Antigravity update_steps",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        threadId,
+        runId: RunId.make("run-antigravity-update-steps"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("attempt-antigravity-update-steps"),
+        rootNodeId: NodeId.make("node-antigravity-update-steps"),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message-antigravity-update-steps"),
+          text: "create a.txt and b.txt",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = Array.from(
+        yield* session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+
+      const toolRows = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [event.turnItem.toolName]
+          : [],
+      );
+      assert.deepEqual(toolRows, []);
+      const plans = events.flatMap((event) =>
+        event.type === "plan.updated" && event.plan.kind === "todo_list"
+          ? [event.plan.steps.map((step) => [step.text, step.status])]
+          : [],
+      );
+      assert.deepEqual(plans.at(-1), [
+        ["Create a.txt", "completed"],
+        ["Create b.txt", "running"],
+      ]);
+    }).pipe(Effect.provide(layerSession)),
   );
 });

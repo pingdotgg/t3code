@@ -22,6 +22,7 @@ import * as LayerMap from "effect/LayerMap";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import type {
   ProjectEntry,
@@ -54,6 +55,7 @@ const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
+const PASSIVE_REFRESH_INTERVAL_MS = 60_000;
 export const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
@@ -149,7 +151,7 @@ export class WorkspaceSearchIndex extends Context.Service<
       ProjectSearchContentsResult,
       WorkspaceSearchIndexScanTimedOut | WorkspaceSearchIndexSearchFailed
     >;
-    readonly refresh: () => Effect.Effect<void, WorkspaceSearchIndexRefreshFailed>;
+    readonly refresh: (mode?: "passive") => Effect.Effect<void, WorkspaceSearchIndexRefreshFailed>;
   }
 >()("t3/workspace/WorkspaceSearchIndex") {}
 
@@ -328,16 +330,25 @@ function escapeRegExp(input: string): string {
 function locateRegexMatches(
   line: string,
   matches: { readonly column: number; readonly texts: ReadonlyArray<string> } | undefined,
-): Array<readonly [number, number]> {
+): Array<{ readonly start: number; readonly end: number }> {
   if (!matches) return [];
   const lineBytes = Buffer.from(line);
-  const ranges: Array<readonly [number, number]> = [];
-  let start = matches.column - 1;
+  const toStringIndex = (byteOffset: number) => lineBytes.subarray(0, byteOffset).toString().length;
+  const ranges: Array<{ readonly start: number; readonly end: number }> = [];
+  // The column counts the file's bytes; invalid UTF-8 decodes to U+FFFD, never fewer bytes, so the
+  // column can only land early and the first match is found by its text from there too.
+  const firstStart = toStringIndex(matches.column - 1);
   for (const text of matches.texts) {
-    const textBytes = Buffer.from(text);
-    if (ranges.length > 0) start = lineBytes.indexOf(textBytes, ranges.at(-1)![1]);
-    if (start < 0) break;
-    ranges.push([start, start + textBytes.length]);
+    const start = line.indexOf(text, ranges.length > 0 ? ranges.at(-1)!.end : firstStart);
+    if (start >= 0) {
+      ranges.push({ start, end: start + text.length });
+    } else if (ranges.length === 0) {
+      // Git outside a UTF-8 locale can match part of a character, whose bytes decode to U+FFFD.
+      const endByte = matches.column - 1 + Buffer.byteLength(text);
+      ranges.push({ start: firstStart, end: toStringIndex(endByte) });
+    } else {
+      break;
+    }
   }
   return ranges;
 }
@@ -749,6 +760,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           "core.quotePath=false",
           "-c",
           "core.fsmonitor=false",
+          "-c",
+          "grep.column=false",
+          "-c",
+          "grep.fullName=false",
+          "-c",
+          "submodule.recurse=false",
           "grep",
           "--untracked",
           "--no-color",
@@ -860,31 +877,26 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         rangesCutOff = true;
         break;
       }
-      const lineContent = (rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine).slice(
-        0,
-        CONTENT_LINE_MAX_LENGTH,
-      );
-      const matchRanges = (
+      const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+      const lineContent = line.slice(0, CONTENT_LINE_MAX_LENGTH);
+      const ranges = (
         literal
-          ? Array.from(lineContent.matchAll(literal), (match) => ({
+          ? Array.from((input.wholeWord ? line : lineContent).matchAll(literal), (match) => ({
               start: match.index,
               end: match.index + match[0].length,
             }))
-          : mapContentMatchRanges(
-              lineContent,
-              locateRegexMatches(lineContent, regexMatches.get(key)),
+          : // A match can take in the `\r` of a CRLF line, which `line` leaves out.
+            locateRegexMatches(rawLine, regexMatches.get(key)).flatMap(({ start, end }) =>
+              start < line.length ? [{ start, end: Math.min(end, line.length) }] : [],
             )
-      ).filter(
-        (range) =>
-          range.end <= lineContent.length &&
-          (!input.wholeWord || isWholeWordRange(lineContent, range)),
-      );
-      if (input.wholeWord && matchRanges.length === 0) continue;
+      ).filter((range) => !input.wholeWord || isWholeWordRange(line, range));
+      if (input.wholeWord && ranges.length === 0) continue;
       matches.push({
         path: relativePath,
         lineNumber: Number(lineNumber),
         lineContent,
-        matchRanges,
+        // Like fff, a match that does not fit in the shown line keeps the line without its range.
+        matchRanges: ranges.filter((range) => range.end <= lineContent.length),
       });
       if (matches.length > input.limit) break;
     }
@@ -956,8 +968,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     repository: string,
     entries: ReadonlyArray<ProjectEntry>,
   ) {
-    const relativePaths = entries.map((entry) =>
-      repository ? entry.path.slice(repository.length + 1) : entry.path,
+    const relativePaths = entries.map(
+      (entry) => `./${repository ? entry.path.slice(repository.length + 1) : entry.path}`,
     );
     const repositoryCwd = path.join(cwd, repository);
     const result = yield* vcsProcess
@@ -965,6 +977,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         operation: "WorkspaceSearchIndex.listGitIgnored",
         command: "git",
         // fff applies ignore rules to tracked paths too, so the index is not consulted.
+        // ./ avoids leading : pathspec magic; check-ignore rejects --literal-pathspecs.
         args: ["-c", "core.fsmonitor=false", "check-ignore", "--no-index", "-z", "--stdin"],
         cwd: repositoryCwd,
         stdin: `${relativePaths.join("\0")}\0`,
@@ -995,7 +1008,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     return result.stdout
       .split("\0")
       .filter(Boolean)
-      .map((relativePath) => (repository ? `${repository}/${relativePath}` : relativePath));
+      .map((ignoredPath) => {
+        const relativePath = ignoredPath.replace(/^\.\//, "");
+        return repository ? `${repository}/${relativePath}` : relativePath;
+      });
   });
 
   const scanSymlinkEntries = Effect.fn("WorkspaceSearchIndex.scanSymlinkEntries")(function* () {
@@ -1174,40 +1190,60 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }
   });
 
+  const refreshPermit = yield* Semaphore.make(1);
+  let lastRefreshStartedAt: number | undefined;
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
     "WorkspaceSearchIndex.refresh",
-  )(function* () {
-    // scanFiles waits on fff's picker lock, which its watcher can hold for seconds.
-    const result = yield* Effect.tryPromise({
-      try: () => finder.scanFilesAsync(),
-      catch: (cause) =>
-        new WorkspaceSearchIndexRefreshFailed({
-          cwd,
-          reason: "FileFinder.scanFilesAsync rejected unexpectedly.",
-          cause,
-        }),
-    });
-    if (!result.ok) {
-      return yield* new WorkspaceSearchIndexRefreshFailed({
-        cwd,
-        reason: result.error,
+  )(
+    function* (mode) {
+      const now = yield* Clock.currentTimeMillis;
+      if (mode === "passive") {
+        if (
+          lastRefreshStartedAt !== undefined &&
+          now - lastRefreshStartedAt < PASSIVE_REFRESH_INTERVAL_MS
+        ) {
+          return;
+        }
+        // The native scan can still be running after the caller's wait expires.
+        if (yield* isScanning) return;
+      }
+      // scanFiles waits on fff's picker lock, which its watcher can hold for seconds.
+      const result = yield* Effect.tryPromise({
+        try: () => finder.scanFilesAsync(),
+        catch: (cause) =>
+          new WorkspaceSearchIndexRefreshFailed({
+            cwd,
+            reason: "FileFinder.scanFilesAsync rejected unexpectedly.",
+            cause,
+          }),
       });
-    }
-    // A rescan that outlasts the wait keeps running, and the finder answers
-    // from its previous index until it finishes, so the index stays usable.
-    yield* waitForIndexReady(
-      cwd,
-      finder,
-      ({ reason, cause }) =>
-        new WorkspaceSearchIndexRefreshFailed({
+      if (!result.ok) {
+        return yield* new WorkspaceSearchIndexRefreshFailed({
           cwd,
-          reason,
-          cause,
-        }),
-    ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
-    ignoredPaths = yield* loadIgnoredPaths();
-    invalidateSymlinkScan();
-  });
+          reason: result.error,
+        });
+      }
+      lastRefreshStartedAt = now;
+      // A rescan that outlasts the wait keeps running, and the finder answers
+      // from its previous index until it finishes, so the index stays usable.
+      yield* waitForIndexReady(
+        cwd,
+        finder,
+        ({ reason, cause }) =>
+          new WorkspaceSearchIndexRefreshFailed({
+            cwd,
+            reason,
+            cause,
+          }),
+      ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
+      ignoredPaths = yield* loadIgnoredPaths();
+      invalidateSymlinkScan();
+    },
+    (effect, mode) =>
+      mode === "passive"
+        ? refreshPermit.withPermitsIfAvailable(1)(effect).pipe(Effect.asVoid)
+        : refreshPermit.withPermit(effect),
+  );
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {

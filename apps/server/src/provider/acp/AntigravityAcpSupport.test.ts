@@ -15,8 +15,8 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   applyAntigravityAcpModelSelection,
-  antigravityClientInfo,
   antigravityPermissionDisposition,
+  antigravityServesT3Code,
   antigravitySessionMeta,
   antigravitySessionMode,
   buildAntigravityPrompt,
@@ -58,35 +58,36 @@ function makeModelRuntime(
   };
 }
 
-describe("Antigravity release gates", () => {
+describe("antigravityServesT3Code", () => {
+  // The model manifest accepts the same `v` and `agy_acp_server_` prefixes.
   it.each([
-    { version: "1.5.0", ownName: false, advertisedAppend: false },
-    { version: "1.5.1", ownName: true, advertisedAppend: false },
-    { version: "1.5.7", ownName: true, advertisedAppend: true },
-    { version: undefined, ownName: false, advertisedAppend: false },
-    { version: "unknown", ownName: false, advertisedAppend: false },
-  ])(
-    "$version: advertised system append $advertisedAppend, own client name $ownName",
-    ({ version, ownName, advertisedAppend }) => {
-      const initialize = {
-        protocolVersion: 1,
-        ...(advertisedAppend
-          ? { agentCapabilities: { _meta: { antigravity: { systemPrompt: { append: true } } } } }
-          : {}),
-        ...(version === undefined
-          ? {}
-          : { agentInfo: { name: "Antigravity ACP Server", version } }),
-      };
-      // Helpers send no append.
-      expect(antigravitySessionMeta(initialize)).toBeUndefined();
-      expect(antigravitySessionMeta(initialize, "<pull_request_linking/>")).toEqual(
-        advertisedAppend
-          ? { antigravity: { systemPrompt: { append: "<pull_request_linking/>" } } }
-          : undefined,
-      );
-      expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
-    },
-  );
+    ["1.5.0", false],
+    ["v1.5.0", false],
+    ["agy_acp_server_1.5.0", false],
+    ["1.5.1", true],
+    ["agy_acp_server_1.5.12", true],
+    ["custom", true],
+  ] as const)("%s → %s", (version, serves) => {
+    expect(antigravityServesT3Code(version)).toBe(serves);
+  });
+});
+
+describe("Antigravity system prompt append", () => {
+  it.each([false, true])("advertised append %s", (advertisedAppend) => {
+    const initialize = {
+      protocolVersion: 1,
+      ...(advertisedAppend
+        ? { agentCapabilities: { _meta: { antigravity: { systemPrompt: { append: true } } } } }
+        : {}),
+    };
+    // Helpers send no append.
+    expect(antigravitySessionMeta(initialize)).toBeUndefined();
+    expect(antigravitySessionMeta(initialize, "<pull_request_linking/>")).toEqual(
+      advertisedAppend
+        ? { antigravity: { systemPrompt: { append: "<pull_request_linking/>" } } }
+        : undefined,
+    );
+  });
 });
 
 describe("Antigravity Auto", () => {
@@ -131,6 +132,73 @@ describe("Antigravity Auto", () => {
           request,
         ),
       ).toBe("deny");
+    },
+  );
+
+  it.each(["auto", "auto-accept-edits"] as const)(
+    "runs only server-qualified T3 MCP calls unasked in %s",
+    (runtimeMode) => {
+      const policy = { runtimeMode, cwd: "/workspace" };
+      const request = (
+        title: string,
+        rawInput?: Record<string, unknown>,
+      ): EffectAcpSchema.RequestPermissionRequest => ({
+        sessionId: "session-1",
+        toolCall: { toolCallId: "call-1", title, kind: "execute", rawInput },
+        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+      });
+      for (const t3Call of [
+        request("Run mcp_t3-code_t3_thread_list?"),
+        request("Run mcp_t3-code_tool_search?"),
+        request("Run mcp_t3-code_tool_call?", { name: "preview_status", arguments: {} }),
+        request("MCP Tool delegate_task", { ServerName: "t3-code", ToolName: "delegate_task" }),
+        request("MCP Tool tool_call", {
+          ServerName: "t3-code",
+          ToolName: "tool_call",
+          Arguments: { name: "preview_status", arguments: {} },
+        }),
+      ]) {
+        expect(antigravityPermissionDisposition(policy, t3Call)).toBe("allow");
+        expect(
+          antigravityPermissionDisposition({ ...policy, approvalPolicy: "on-request" }, t3Call),
+        ).toBe("ask");
+        expect(
+          antigravityPermissionDisposition(
+            { ...policy, sandboxPolicy: { type: "readOnly" } },
+            t3Call,
+          ),
+        ).toBe("deny");
+      }
+      for (const otherCall of [
+        // Names no server, so another MCP server's tool of the same name looks identical.
+        request("Running preview_status"),
+        request("Running tool_call"),
+        request("Run mcp_t3-code_tool_call?"),
+        request("Run mcp_t3-code_tool_call?", { name: "tool_call", arguments: {} }),
+        request("Run mcp_t3-code_tool_call?", { name: "tool_search", arguments: {} }),
+        request("Run mcp_t3-code_tool_call?", { name: "unknown_tool", arguments: {} }),
+        request("MCP Tool tool_call", {
+          ServerName: "t3-code",
+          ToolName: "tool_call",
+          Arguments: { name: "unknown_tool", arguments: {} },
+        }),
+        request("Run mcp_github_create_issue"),
+        request("MCP Tool preview_status", { ServerName: "other", ToolName: "preview_status" }),
+        request("MCP Tool tool_call", { ServerName: "other", ToolName: "tool_call" }),
+        request("Run mcp_t3-code_preview_status", {
+          CommandLine: "Run mcp_t3-code_preview_status",
+        }),
+        // A directly called tool's rawInput is its own arguments, whatever their names.
+        request("Run mcp_github_create_issue", {
+          ServerName: "t3-code",
+          ToolName: "delegate_task",
+        }),
+        request("Running create_issue", { ServerName: "t3-code", ToolName: "delegate_task" }),
+        // call_mcp_tool is titled for the tool it calls.
+        request("MCP Tool create_issue", { ServerName: "t3-code", ToolName: "delegate_task" }),
+      ]) {
+        expect(antigravityPermissionDisposition(policy, otherCall)).toBe("ask");
+      }
     },
   );
 });
@@ -378,6 +446,32 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
     }),
   );
 
+  it.effect("keeps a Shift-JIS CSV as a file path instead of failing the prompt", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeAttachmentFixture();
+      const csv = {
+        ...textAttachment,
+        name: "sample.csv",
+        mimeType: "text/csv",
+      } satisfies ChatAttachment;
+      // "オーダー番号,ステータス\n1001,完了\n" encoded as CP932.
+      const upload = yield* fixture.write(
+        csv,
+        Buffer.from("8349815b835f815b94d48d862c83588365815b835e83580a313030312c8aae97b90a", "hex"),
+      );
+      const input = `How many rows does this CSV have? ${upload.filePath}`;
+
+      const prompt = yield* buildAntigravityPrompt({
+        input,
+        attachments: [csv],
+        resolveAttachmentPath: fixture.resolve,
+        promptCapabilities: { image: true, audio: true, embeddedContext: true },
+      });
+
+      expect(prompt).toEqual([{ type: "text", text: input }]);
+    }),
+  );
+
   it.effect.each([
     { name: "archive.zip", mimeType: "application/zip" },
     { name: "clip.mp4", mimeType: "video/mp4" },
@@ -467,29 +561,31 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       }),
   );
 
-  it.effect("sends supported audio files as native audio content", () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeAttachmentFixture();
-      const audioAttachment = {
-        ...textAttachment,
-        id: "recording-1",
-        name: "recording.wav",
-        mimeType: "audio/wav",
-      } satisfies ChatAttachment;
-      const bytes = Buffer.from("RIFF....WAVEfmt ", "latin1");
-      yield* fixture.write(audioAttachment, bytes);
-      const prompt = yield* buildAntigravityPrompt({
-        input: "Transcribe this.",
-        attachments: [audioAttachment],
-        resolveAttachmentPath: fixture.resolve,
-        promptCapabilities: { image: true, audio: true, embeddedContext: true },
-      });
+  it.effect.each(["audio/wav", "audio/wav;codecs=1", "Audio/WAV \t; codecs=1"])(
+    "sends supported audio files as native audio content (%s)",
+    (mimeType) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeAttachmentFixture();
+        const audioAttachment = {
+          ...textAttachment,
+          id: "recording-1",
+          name: "recording.wav",
+          mimeType,
+        } satisfies ChatAttachment;
+        const bytes = Buffer.from("RIFF....WAVEfmt ", "latin1");
+        yield* fixture.write(audioAttachment, bytes);
+        const prompt = yield* buildAntigravityPrompt({
+          input: "Transcribe this.",
+          attachments: [audioAttachment],
+          resolveAttachmentPath: fixture.resolve,
+          promptCapabilities: { image: true, audio: true, embeddedContext: true },
+        });
 
-      expect(prompt).toEqual([
-        { type: "text", text: "Transcribe this." },
-        { type: "audio", data: bytes.toString("base64"), mimeType: "audio/wav" },
-      ]);
-    }),
+        expect(prompt).toEqual([
+          { type: "text", text: "Transcribe this." },
+          { type: "audio", data: bytes.toString("base64"), mimeType: "audio/wav" },
+        ]);
+      }),
   );
 
   it.effect.each([{ image: true }])(
@@ -639,26 +735,22 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
   );
 
   it.effect.each([
-    { bytes: new Uint8Array([0x80]), message: "is not a UTF-8 text file" },
-    { bytes: new Uint8Array([0xff, 0xfe, 0x61]), message: "is not a UTF-16LE text file" },
-    { bytes: new Uint8Array([0xfe, 0xff, 0x00, 0x00]), message: "contains binary data" },
-    { bytes: new Uint8Array([0x61, 0, 0x62]), message: "contains binary data" },
-  ])("rejects binary data disguised as code: $message", ({ bytes, message }) =>
+    { bytes: new Uint8Array([0x80]), name: "invalid UTF-8" },
+    { bytes: new Uint8Array([0xff, 0xfe, 0x61]), name: "invalid UTF-16LE" },
+    { bytes: new Uint8Array([0xfe, 0xff, 0x00, 0x00]), name: "UTF-16BE NUL" },
+    { bytes: new Uint8Array([0x61, 0, 0x62]), name: "NUL byte" },
+  ])("keeps undecodable code as a file path: $name", ({ bytes }) =>
     Effect.gen(function* () {
       const fixture = yield* makeAttachmentFixture();
       yield* fixture.write(textAttachment, bytes);
-      const error = yield* buildAntigravityPrompt({
-        input: undefined,
+      const prompt = yield* buildAntigravityPrompt({
+        input: "Read this file.",
         attachments: [textAttachment],
         resolveAttachmentPath: fixture.resolve,
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
-      }).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "AcpRequestError",
-        code: -32602,
-        errorMessage: expect.stringContaining(message),
       });
+
+      expect(prompt).toEqual([{ type: "text", text: "Read this file." }]);
     }),
   );
 

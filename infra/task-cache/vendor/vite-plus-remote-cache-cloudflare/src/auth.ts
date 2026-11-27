@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off globalFetch:off - vendored upstream protocol, not an Effect service.
+// @effect-diagnostics globalDate:off globalFetch:off globalTimers:off - vendored upstream protocol, not an Effect service.
 import {
   createRemoteJWKSet,
   customFetch,
@@ -18,23 +18,42 @@ export const JWKS_URL = `${ISSUER}/.well-known/jwks`;
 export function githubKeys(): JWTVerifyGetKey {
   // Only reusable public-key cache state lives across requests. Failed refreshes
   // also have a cooldown; jose's own cooldown starts only after a successful fetch.
+  //
+  // On Workers, jose doesn't share a pending fetch between requests, so every request
+  // that needs keys while a fetch runs calls this too. They share one fetch per 30
+  // seconds instead of failing on the cooldown: a request that arrives during a fetch
+  // waits for it, polling with its own timer so no request resolves another's promise,
+  // then reuses the body it fetched. A fetch whose request was cancelled without
+  // finishing stops counting as running after its five-second timeout.
   let lastAttempt = -Infinity;
+  let fetchingSince: number | undefined;
+  let fetched: { body: Uint8Array; at: number } | undefined;
+  const json = (body: Uint8Array) =>
+    new Response(body.slice(), { headers: { 'Content-Type': 'application/json' } });
   return createRemoteJWKSet(new URL(JWKS_URL), {
     timeoutDuration: 5000,
     cooldownDuration: 30_000,
     cacheMaxAge: 10 * 60_000,
     [customFetch]: async (url, options) => {
-      if (Date.now() - lastAttempt < 30_000) unavailable();
-      lastAttempt = Date.now();
       const deadline = new Deadline(5000, options.signal);
       try {
-        const response = await deadline.run(fetch(url, options));
-        if (response.status !== 200) {
-          void response.body?.cancel();
-          unavailable();
+        while (fetchingSince !== undefined && Date.now() - fetchingSince < 5000)
+          await deadline.run(new Promise((resolve) => setTimeout(resolve, 25)));
+        if (fetched && Date.now() - fetched.at < 30_000) return json(fetched.body);
+        if (Date.now() - lastAttempt < 30_000) unavailable();
+        lastAttempt = fetchingSince = Date.now();
+        try {
+          const response = await deadline.run(fetch(url, options));
+          if (response.status !== 200) {
+            void response.body?.cancel();
+            unavailable();
+          }
+          const bytes = await readBody(response.body, 64 * 1024, deadline);
+          fetched = { body: bytes, at: Date.now() };
+          return json(bytes);
+        } finally {
+          fetchingSince = undefined;
         }
-        const bytes = await readBody(response.body, 64 * 1024, deadline);
-        return new Response(bytes, { headers: { 'Content-Type': 'application/json' } });
       } catch {
         unavailable();
       } finally {

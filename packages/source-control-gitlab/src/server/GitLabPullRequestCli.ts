@@ -645,6 +645,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly verdict: PullRequestReviewVerdict;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+      /** The head the caller reviewed; an approval refuses any other. */
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<void, GitLabPullRequestCliError>;
 
     readonly replyToDiscussion: (input: {
@@ -2978,6 +2980,15 @@ export const make = Effect.gen(function* () {
       }
       if (input.comments.length > 0) {
         const refs = yield* getDiffRefs(input);
+        // Line comments are placed on the head read here, so it must be the one reviewed.
+        if (input.expectedHeadSha !== undefined && refs.headSha !== input.expectedHeadSha) {
+          return yield* new GitLabMutationRefusedError({
+            command: "glab",
+            cwd: input.cwd,
+            operation: "submitReview",
+            reasons: [`the head is now ${refs.headSha}, not ${input.expectedHeadSha}`],
+          });
+        }
         const rangedFileHeaders = input.comments.flatMap((comment) =>
           comment.startPosition !== undefined &&
           (comment.startPosition.kind !== "context" || comment.position.kind !== "context")
@@ -3037,6 +3048,11 @@ export const make = Effect.gen(function* () {
           host: input.host,
           path: `${mergeRequest}/approve`,
           method: "POST",
+          // GitLab answers 409 when `sha` is no longer the merge request's head.
+          ...(input.expectedHeadSha === undefined
+            ? {}
+            : // @effect-diagnostics-next-line globalJsonInEffect:off
+              { stdin: JSON.stringify({ sha: input.expectedHeadSha }) }),
         });
       }
     }),

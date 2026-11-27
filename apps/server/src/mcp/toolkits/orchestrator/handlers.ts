@@ -218,7 +218,7 @@ const handlers = {
   t3_environment_unlink: McpToolAccess.writesEnvironment(({ environmentId }) =>
     Effect.gen(function* () {
       const links = yield* PeerLinks.PeerLinks;
-      const removed = yield* links
+      const result = yield* links
         .unlink(environmentId)
         .pipe(
           Effect.mapError(
@@ -226,7 +226,7 @@ const handlers = {
               new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
           ),
         );
-      return { environmentId, removed };
+      return { environmentId, ...result };
     }),
   ),
   t3_thread_interrupt: McpToolAccess.writesThreads(
