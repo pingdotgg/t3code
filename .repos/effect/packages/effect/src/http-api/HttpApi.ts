@@ -11,6 +11,7 @@
  */
 import type { NonEmptyReadonlyArray } from "../Array.ts"
 import * as Context from "../Context.ts"
+import * as HttpMethod from "../http/HttpMethod.ts"
 import type { PathInput } from "../http/HttpRouter.ts"
 import * as InternalRecord from "../internal/record.ts"
 import { type Pipeable, pipeArguments } from "../Pipeable.ts"
@@ -23,6 +24,7 @@ import * as HttpApiEndpoint from "./HttpApiEndpoint.ts"
 import type * as HttpApiGroup from "./HttpApiGroup.ts"
 import type * as HttpApiMiddleware from "./HttpApiMiddleware.ts"
 import * as HttpApiSchema from "./HttpApiSchema.ts"
+import { getRedactedKeys } from "./internal/redactedKeys.ts"
 
 const TypeId = "~effect/http-api/HttpApi"
 
@@ -512,8 +514,8 @@ export class ErrorParseOptions extends Context.Service<
  *   the names on the group to keep both.
  * - Only URL and header attributes use these names. `user_agent.original` and
  *   the messages of span errors are recorded as is.
- * - `params` apply to server spans and `HttpMiddleware.logger` entries.
- *   Client spans record the path as sent.
+ * - `params` apply to client spans and error messages as well as server spans
+ *   and `HttpMiddleware.logger` entries.
  * - `HttpApiBuilder.endpoint` returns a handler without a route, so set
  *   `redactedParams` on the route it is mounted with.
  *
@@ -590,26 +592,45 @@ export const getEndpointRedactedNames = (
 ): EndpointRedactedNames | undefined => {
   const query: Array<string | RegExp> = []
   const headers: Array<string | RegExp> = []
+  const addQuery = (name: string | RegExp) => {
+    query.push(name)
+    if (typeof name === "string") query.push(new RegExp(`^${RegExp_.escape(name)}\\[`, "i"))
+  }
   for (const annotations of [api.annotations, group.annotations, endpoint.annotations]) {
     const options = Context.getOrUndefined(annotations, RedactedNames)
     if (options === undefined) continue
-    for (const name of options.query ?? []) {
-      query.push(name)
-      if (typeof name === "string") query.push(new RegExp(`^${RegExp_.escape(name)}\\[`, "i"))
-    }
+    options.query?.forEach(addQuery)
     if (options.headers !== undefined) headers.push(...options.headers)
   }
+  // Fields whose schema holds a `Redacted` are redacted without being listed.
+  // Payloads of methods without a body are sent as query parameters.
+  const querySchemas = HttpMethod.hasBody(endpoint.method)
+    ? [endpoint.query]
+    : [endpoint.query, ...HttpApiEndpoint.getPayloadSchemas(endpoint)]
+  for (const schema of querySchemas) (getRedactedKeys(schema) ?? redactAll).forEach(addQuery)
+  headers.push(...(getRedactedKeys(endpoint.headers) ?? redactAll))
   return query.length === 0 && headers.length === 0 ? undefined : { query, headers }
 }
 
 /**
+ * Returns the path param names to redact and whether to redact every param in
+ * the endpoint path (when the schema holds a `Redacted` under unknown wire names).
+ *
  * @internal
  */
 export const getEndpointRedactedParams = (
   api: Pick<Top, "annotations">,
   group: HttpApiGroup.Top,
   endpoint: HttpApiEndpoint.Top
-): ReadonlyArray<string> =>
-  [api.annotations, group.annotations, endpoint.annotations].flatMap((annotations) =>
+): { readonly names: ReadonlyArray<string>; readonly all: boolean } => {
+  const explicit = [api.annotations, group.annotations, endpoint.annotations].flatMap((annotations) =>
     Context.getOrUndefined(annotations, RedactedNames)?.params ?? []
   )
+  const keys = getRedactedKeys(endpoint.params)
+  return keys === undefined
+    ? { names: explicit, all: true }
+    : { names: [...explicit, ...keys], all: false }
+}
+
+// Matches every name, for a schema whose wire names are unknown.
+const redactAll: ReadonlyArray<RegExp> = [/^/]

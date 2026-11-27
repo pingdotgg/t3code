@@ -3701,6 +3701,71 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "truncates commit subjects, toast descriptions, and hook output without splitting an emoji",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        NodeFS.mkdirSync(NodePath.join(repoDir, ".git", "hooks"), { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(repoDir, ".git", "hooks", "pre-commit"),
+          `#!/bin/sh\nprintf '%s\\n' '${"a".repeat(499)}😀bbbb'\n`,
+          { mode: 0o755 },
+        );
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "split emoji\n");
+        const { manager } = yield* makeManager({
+          textGeneration: {
+            generateCommitMessage: () =>
+              Effect.succeed({ subject: `${"a".repeat(71)}😀bb`, body: "" }),
+          },
+        });
+        const events: GitActionProgressEvent[] = [];
+
+        const split = yield* runStackedAction(
+          manager,
+          {
+            cwd: repoDir,
+            action: "commit",
+            commitMessage: `${"a".repeat(68)}😀bbbb`,
+          },
+          {
+            actionId: "action-emoji-toast",
+            progressReporter: {
+              publish: (event) =>
+                Effect.sync(() => {
+                  events.push(event);
+                }),
+            },
+          },
+        );
+
+        expect(split.toast.description).toBe(`${"a".repeat(68)}...`);
+        const hookLines = events
+          .filter(
+            (event): event is Extract<GitActionProgressEvent, { kind: "hook_output" }> =>
+              event.kind === "hook_output",
+          )
+          .map((event) => event.text);
+        expect(hookLines).toContain("a".repeat(499));
+
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "whole emoji\n");
+        const intact = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit",
+          commitMessage: `${"a".repeat(67)}😀bbbb`,
+        });
+
+        expect(intact.toast.description).toBe(`${"a".repeat(67)}😀...`);
+
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "generated emoji\n");
+        const generated = yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+
+        expect(generated.commit.subject).toBe("a".repeat(71));
+        expect(generated.toast.description).toBe("a".repeat(71));
+      }),
+  );
+
   it.effect("lowercases a capitalized Conventional Commits description", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -4106,6 +4171,48 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(mergeBase).toBe(mainSha);
       expect(generatedCount).toBe(1);
     }),
+  );
+
+  it.effect.each([{ indexLocked: false }, { indexLocked: true }])(
+    "reports the branch after a failing post-checkout hook switches HEAD (index locked: $indexLocked)",
+    ({ indexLocked }) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(cwd);
+        yield* runGit(cwd, ["config", "core.hooksPath", ".git/hooks"]);
+        NodeFS.mkdirSync(NodePath.join(cwd, ".git", "hooks"), { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(cwd, ".git", "hooks", "post-checkout"),
+          `#!/bin/sh\n${indexLocked ? ": > .git/index.lock\n" : ""}exit 1\n`,
+          { mode: 0o755 },
+        );
+        NodeFS.writeFileSync(NodePath.join(cwd, "README.md"), "pending change\n");
+        const { manager } = yield* makeManager();
+        const events: GitActionProgressEvent[] = [];
+        const error = yield* runStackedAction(
+          manager,
+          { cwd, action: "commit", featureBranch: true, commitMessage: "Retry checkout" },
+          {
+            progressReporter: {
+              publish: (event) =>
+                Effect.sync(() => {
+                  events.push(event);
+                }),
+            },
+          },
+        ).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(GitCommandError);
+        expect(NodeFS.existsSync(NodePath.join(cwd, ".git", "index.lock"))).toBe(indexLocked);
+        expect((yield* runGit(cwd, ["branch", "--show-current"])).stdout.trim()).toBe(
+          "feature/retry-checkout",
+        );
+        expect(events.at(-1)).toMatchObject({
+          kind: "action_failed",
+          phase: "branch",
+          createdBranch: "feature/retry-checkout",
+        });
+      }),
   );
 
   it.effect.each([
@@ -4853,6 +4960,20 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               exitCode: 1,
             },
             {
+              ...itemBase(6, completedRun.id),
+              type: "command_execution" as const,
+              input: "vp run split-tail",
+              output: `😀${"b".repeat(1_999)}`,
+              exitCode: 0,
+            },
+            {
+              ...itemBase(7, completedRun.id),
+              type: "command_execution" as const,
+              input: "vp run whole-tail",
+              output: `a😀${"c".repeat(1_998)}`,
+              exitCode: 0,
+            },
+            {
               ...itemBase(5, abandonedRun.id),
               type: "command_execution" as const,
               input: "vp run abandoned",
@@ -4885,6 +5006,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(generatedPrompt).toContain("Make the PR writer see the thread");
       expect(generatedPrompt).toContain("Command: vp lint\nExit code: 1");
       expect(generatedPrompt).toContain("2 lint errors");
+      expect(generatedPrompt).toContain(`Exit code: 0\n[truncated]\n${"b".repeat(1_999)}`);
+      expect(generatedPrompt).toContain(`Exit code: 0\n[truncated]\n😀${"c".repeat(1_998)}`);
+      expect(generatedPrompt.isWellFormed()).toBe(true);
       expect(generatedPrompt).not.toContain("vp run abandoned");
       expect(generatedPrompt).not.toContain("abandoned output");
       expect(Buffer.byteLength(generatedThreadContext ?? "")).toBeLessThanOrEqual(16_000);

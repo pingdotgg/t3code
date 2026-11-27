@@ -1960,6 +1960,29 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         });
 
         expect(threads.map((thread) => thread.title)).toEqual(["Renamed chat"]);
+
+        const tailRename = `${encodeTranscriptRecord({
+          id: "named-session",
+          thread_name: "Tail rename",
+          updated_at: "unknown",
+        })}\n`;
+        const tailPadding = `${"x".repeat(1024 * 1024 - Buffer.byteLength(tailRename) - 1)}\n`;
+        yield* fileSystem.writeFileString(
+          path.join(codexHomePath, "session_index.jsonl"),
+          `${encodeTranscriptRecord({
+            id: "named-session",
+            thread_name: "Older name",
+            updated_at: "unknown",
+          })}\n${tailRename}${tailPadding}`,
+        );
+
+        const tailBoundaryThreads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(tailBoundaryThreads.map((thread) => thread.title)).toEqual(["Tail rename"]);
       }),
     );
 

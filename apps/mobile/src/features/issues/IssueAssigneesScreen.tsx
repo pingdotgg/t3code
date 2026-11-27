@@ -2,6 +2,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { useAtom } from "@effect/atom-react";
 import {
   issueAssigneeHeld,
+  issueAssigneeSearchView,
   issueAssigneesAfterPicks,
   issuePicksAfterFailedWrite,
   issuePicksFor,
@@ -17,6 +18,7 @@ import { m } from "../../i18n/messages";
 import * as Dialog from "../../components/ui/Dialog";
 import { issueEnvironment, refreshIssueLists } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
+import { useDebouncedValue } from "../../state/queries";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { PullRequestAvatar } from "../pull-requests/PullRequestPresentation";
 import { IssueCandidatesSheet } from "./IssueCandidatesSheet";
@@ -33,6 +35,21 @@ export function IssueAssigneesScreen({ route }: StaticScreenProps<IssueParams>) 
   const result = useEnvironmentQuery(issueEnvironment.candidates(target));
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query.trim(), 250);
+  const searchable = result.data?.assigneeSearch === true;
+  const hostQuery = searchable && debouncedQuery.length > 0 ? debouncedQuery : null;
+  const search = useEnvironmentQuery(
+    hostQuery === null
+      ? null
+      : issueEnvironment.candidates({ ...target, input: { ...target.input, query: hostQuery } }),
+  );
+  const view = issueAssigneeSearchView({
+    loaded: result.data?.assignees ?? [],
+    searchable,
+    query,
+    debouncedQuery,
+    search,
+  });
   // The atom carries a closed sheet's picks to the next one; this sheet's own live here.
   const [stored, setStored] = useAtom(issueAssigneePicksFamily(issueParamsKey(route.params)));
   // Picks against an older read are dropped once, when the sheet opens.
@@ -47,10 +64,7 @@ export function IssueAssigneesScreen({ route }: StaticScreenProps<IssueParams>) 
   const allowed = access?.assignees === true;
   const held = (candidate: IssueAssigneeCandidate) =>
     detail ? issueAssigneeHeld(detail, candidate) : false;
-  const needle = query.trim().toLowerCase();
-  const candidates = (result.data?.assignees ?? []).filter((candidate) =>
-    `${candidate.login} ${candidate.name ?? ""}`.toLowerCase().includes(needle),
-  );
+  const candidates = view.candidates;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- picks are sent when the sheet leaves the navigation stack, however it is dismissed
   useEffect(
     () =>
@@ -94,9 +108,9 @@ export function IssueAssigneesScreen({ route }: StaticScreenProps<IssueParams>) 
           ? (access?.blocked ?? gt("Changing assignees needs triage access on this tracker."))
           : null
       }
-      pending={result.isPending && !result.data}
-      loadError={result.data ? null : result.error}
-      onRetry={result.refresh}
+      pending={(result.isPending && !result.data) || view.pending}
+      loadError={result.data ? view.error : result.error}
+      onRetry={hostQuery === null ? result.refresh : search.refresh}
       truncated={result.data?.truncated === true}
       onToggle={(id) => {
         const candidate = candidates.find((entry) => entry.id === id);

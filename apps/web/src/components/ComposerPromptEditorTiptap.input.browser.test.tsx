@@ -68,6 +68,7 @@ function Composer({
   importContextFragment,
   literalText = false,
   disabled = false,
+  editorRef = createRef<ComposerPromptEditorHandle>(),
   placeholder = "",
   placeholderSuffix,
 }: {
@@ -79,13 +80,14 @@ function Composer({
   importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
   literalText?: boolean;
   disabled?: boolean;
+  editorRef?: ComposerPromptEditorProps["editorRef"];
   placeholder?: string;
   placeholderSuffix?: ComposerPromptEditorProps["placeholderSuffix"];
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
     <ComposerPromptEditor
-      editorRef={createRef<ComposerPromptEditorHandle>()}
+      editorRef={editorRef}
       value={prompt.value}
       cursor={prompt.cursor}
       richTextEnabled={richTextEnabled}
@@ -419,6 +421,22 @@ it.each([false, true])(
   },
 );
 
+it.each([
+  { code: "echo @prod next", from: 11, to: 16, expected: "echo @prod( next)" },
+  { code: "echo next @prod", from: 1, to: 11, expected: "(echo next )@prod" },
+])(
+  "wraps selected code next to a literal mention in $code",
+  async ({ code, from, to, expected }) => {
+    await using screen = await mountEditor(`\`\`\`\n${code}\n\`\`\``);
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.setTextSelection({ from, to });
+      typeText(editor, from, to, "(");
+    });
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`\`\`\`\n${expected}\n\`\`\``);
+  },
+);
+
 it("lets composition replace selected text without surrounding it", async () => {
   await using screen = await mountEditor("word");
   const { editor } = screen;
@@ -428,6 +446,16 @@ it("lets composition replace selected text without surrounding it", async () => 
     typeText(editor, 1, 5, '"');
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
+});
+
+it("keeps replacement behavior at a prose mention boundary", async () => {
+  await using screen = await mountEditor("echo @prod next");
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection({ from: 7, to: 12 });
+    typeText(editor, 7, 12, "(");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("echo @prod(");
 });
 
 // CDP drives Chrome's own IME path, which skips deleting a range bounded by an uneditable chip.
@@ -567,6 +595,31 @@ it.each([
   expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
 });
 
+// Pasted lines land as if typed: the first continues the caret's line, the last runs into the text after it.
+it.each([
+  {
+    value: "Fix this error: ",
+    caret: "Fix this error: ".length,
+    expected: "Fix this error: foo\nbar",
+  },
+  { value: "before after", caret: "before ".length, expected: "before foo\nbarafter" },
+])("pastes two lines into $value at $caret", async ({ value, caret, expected }) => {
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.setTextSelection(caret + 1);
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "foo\nbar");
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(expected);
+  await act(async () => {
+    const { from, to } = editor.state.selection;
+    typeText(editor, from, to, "!");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(expected.replace("bar", "bar!"));
+});
+
 // regression: #31079 paste rules restyled dropped text, and dropped Markdown skipped the composer's parser
 it.each([
   // Shown bold like the same paste; the sent text stays verbatim.
@@ -592,6 +645,71 @@ it.each([
   expect(serializeEditorDoc(editor.state.doc).value).toBe(dropped);
   expect(editor.state.doc.textContent).toBe(shown);
   expect(editor.view.hasFocus()).toBe(true);
+});
+
+it("does not paste at the end of a disabled code block", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  const value = "```text\nExisting answer\n```";
+  await using screen = await render(
+    <Composer value={value} richTextEnabled skills={[]} disabled editorRef={editorRef} />,
+  );
+  const editor = editorIn(screen.container);
+  const clipboard = new DataTransfer();
+  clipboard.setData("text/plain", " should not appear");
+  await act(async () => {
+    expect(editorRef.current?.pasteAtCodeBlockEnd(clipboard)).toBe(false);
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+});
+
+it("keeps the destination of a link dropped from a web page", async () => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  await act(async () => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "Setup guide");
+    dataTransfer.setData("text/html", '<a href="https://example.com/setup">Setup guide</a>');
+    const { left, top } = editor.view.coordsAtPos(1);
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: left,
+        clientY: top + 1,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(
+    "[Setup guide](https://example.com/setup)",
+  );
+});
+
+it("keeps a pasted web link beside an imported thread chip", async () => {
+  await using screen = await render(
+    <Composer
+      value=""
+      richTextEnabled
+      skills={[]}
+      importContextFragment={(fragment) =>
+        new Map(fragment.records.map((record) => [record.contextId, record.contextId]))
+      }
+    />,
+  );
+  const editor = editorIn(screen.container);
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    const thread = "https://app.t3.codes/threads/env-1/thread-1";
+    clipboardData.setData("text/plain", `${thread} and Setup guide`);
+    clipboardData.setData(
+      "text/html",
+      `<p>${thread} and <a href="https://example.com/setup">Setup guide</a></p>`,
+    );
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toMatch(
+    /^\[Thread\]\(t3-context:\/\/v1\/thread\/[^)]+\) and \[Setup guide\]\(https:\/\/example\.com\/setup\)$/,
+  );
 });
 
 it("parses markdown dropped below the first line of an empty composer", async () => {

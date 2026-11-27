@@ -386,6 +386,33 @@ it.effect("a long run title is cut without leaving half an emoji", () =>
   ),
 );
 
+it.effect("a long reference title is cut without leaving half an emoji", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const issue = { kind: "issue", address: { scope: "me/app", key: "1" } };
+      const split = { ...issue, key: "split", title: `${"a".repeat(299)}\u{1F680}tail` };
+      yield* store.referenceNoted("r1", "read", split);
+      yield* store.referenceNoted("r1", "read", {
+        ...issue,
+        key: "whole",
+        title: `${"a".repeat(298)}\u{1F680}tail`,
+      });
+      assert.deepStrictEqual(
+        (yield* store.references("r1")).map((reference) => reference.title),
+        ["a".repeat(299), `${"a".repeat(298)}\u{1F680}`],
+      );
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const told = yield* PubSub.subscribe(store.changes);
+          yield* store.referenceNoted("r1", "read", split);
+          assert.equal(yield* PubSub.remaining(told), 0);
+        }),
+      );
+    }),
+  ),
+);
+
 it.effect("one buffered signal goes to one wait, and a claimed wait keeps what woke it", () =>
   withStore(
     Effect.gen(function* () {
@@ -493,6 +520,14 @@ it.effect.each([999, 1000])("buffered mail with a 1s TTL claimed after %i ms", (
     Effect.gen(function* () {
       const store = yield* WorkflowStore.WorkflowStore;
       const address = { workflow: "gate", channel: "ready" };
+      yield* store.runStarted({
+        runId: "r1",
+        workflow: address.workflow,
+        version: 1,
+        engineTag: `${address.workflow}@1`,
+        idempotencyKey: "r1",
+        input: {},
+      });
       yield* store.waitOpened({
         runId: "r1",
         name: "go",
@@ -601,6 +636,9 @@ it.effect("tells the milestone hub of each run and question transition once", ()
       });
       yield* store.runEnded("r1", "cancelled", "stopped by a person", null);
       yield* store.runEnded("r1", "completed", null, null);
+      // An ended run opens no wait: it would claim channel mail meant for a live run.
+      yield* ask("too late", { title: "Still there?" });
+      assert.isUndefined(yield* store.waitAt({ runId: "r1", wait: "too late" }));
 
       assert.notInclude(
         (yield* hub.recent()).events.map((event) => event.workflowRunId),
@@ -997,6 +1035,37 @@ const pools = Effect.fnUntraced(function* (runIds: ReadonlyArray<string>) {
   };
 });
 
+it.effect("queue positions count older sibling steps but skip paused runs", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const { ask, pause, leave } = yield* pools(["holder", "queued", "later"]);
+      assert.isTrue(yield* ask("holder", "slot", 1, "builders"));
+      for (const [runId, name] of [
+        ["queued", "left"],
+        ["queued", "right"],
+        ["later", "slot"],
+      ] as const) {
+        yield* store.stepStarted(runId, name, "queue");
+        assert.isFalse(yield* ask(runId, name, 1, "builders"));
+      }
+
+      const siblings = yield* store.steps("queued");
+      yield* pause("queued");
+      const later = yield* store.steps("later");
+      assert.deepStrictEqual(yield* leave("holder", "slot"), ["later/slot"]);
+      assert.deepStrictEqual(
+        [...siblings, ...later].map((step) => [step.name, Number(step.ahead)]),
+        [
+          ["left", 0],
+          ["right", 1],
+          ["slot", 0],
+        ],
+      );
+    }),
+  ),
+);
+
 it.effect("two paused runs that asked for different limits both get back in", () =>
   withStore(
     Effect.gen(function* () {
@@ -1019,9 +1088,13 @@ it.effect("two paused runs that asked for different limits both get back in", ()
 it.effect("resumed the other way round, the lock goes first and the other run after it", () =>
   withStore(
     Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
       const { ask, pause, resume, leave, held } = yield* pools(["a", "b"]);
-      yield* ask("a", "one", 2);
-      yield* ask("a", "two", 2);
+      for (const name of ["one", "two"]) {
+        yield* store.stepStarted("a", name, "queue");
+        yield* ask("a", name, 2);
+        yield* store.stepEnded("a", name, "completed", null);
+      }
       yield* pause("a");
       yield* ask("b", "lock", 1);
       yield* pause("b");
@@ -1029,6 +1102,10 @@ it.effect("resumed the other way round, the lock goes first and the other run af
       // Not one of its two beside the lock: all of them, once the lock is out.
       assert.deepStrictEqual(yield* resume("a"), []);
       assert.deepStrictEqual(yield* held, ["b/lock"]);
+      assert.deepStrictEqual(
+        (yield* store.steps("a")).map((step) => step.ahead),
+        [0, 0],
+      );
       assert.deepStrictEqual(yield* leave("b", "lock"), ["a/one", "a/two"]);
     }),
   ),
