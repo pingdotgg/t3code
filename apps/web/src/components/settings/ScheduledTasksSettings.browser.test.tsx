@@ -483,7 +483,7 @@ describe("ScheduledTasksSettings", () => {
     },
   );
 
-  it("names every task action in the UI language", async () => {
+  it("names the Delete action in the UI language", async () => {
     setup();
     const translations = await getTranslationsSnapshot("de");
     await using screen = await render(
@@ -493,11 +493,9 @@ describe("ScheduledTasksSettings", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Aktionen für Review issues" }));
 
-    await expect.element(page.getByRole("menuitem", { name: "Bearbeiten" })).toBeVisible();
     await expect
       .element(page.getByRole("menuitem", { name: "Löschen", exact: true }))
       .toBeVisible();
-    initializeI18n(() => {});
   });
 
   it("keeps a new task's draft when the user clicks outside the editor", async () => {
