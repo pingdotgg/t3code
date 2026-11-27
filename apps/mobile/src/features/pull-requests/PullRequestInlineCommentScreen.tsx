@@ -34,6 +34,8 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
   const m = useMessages();
   const store = usePullRequestReviewDraft(params);
   const saved = store.draft.comments.find((draft) => draft.id === params.draftId);
+  // A retry after a failed write must replace the comment the first try added.
+  const [commentId] = useState(() => params.draftId ?? uuidv4());
   const [editedBody, setBody] = useState<string | null>(null);
   const body = editedBody ?? saved?.body ?? "";
   const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
@@ -66,9 +68,9 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
     store.update((draft) => ({
       ...draft,
       comments: [
-        ...draft.comments.filter((comment) => comment.id !== params.draftId),
+        ...draft.comments.filter((comment) => comment.id !== commentId),
         {
-          id: params.draftId ?? uuidv4(),
+          id: commentId,
           path: params.path,
           ...(params.oldPath ? { oldPath: params.oldPath } : {}),
           position: params.position,
@@ -78,11 +80,11 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         },
       ],
     }));
-    // flush reports write failures through the draft store's error field.
+    // flush resolves false when the write fails; the draft store's error field says why.
     const result = await settlePromise(() => store.flush());
     pending.current = false;
     setBusy(false);
-    if (AsyncResult.isSuccess(result)) navigation.goBack();
+    if (AsyncResult.isSuccess(result) && result.value) navigation.goBack();
   };
   return (
     <PullRequestSheetContent

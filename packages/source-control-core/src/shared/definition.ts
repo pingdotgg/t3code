@@ -129,8 +129,8 @@ export interface SourceControlMediaUrl {
   readonly fetchUrl: string;
   /** A file name for the media, safe to put in a path or a download. */
   readonly fileName: string;
-  /** Set when the URL alone says what the media is, as an extensionless upload can. */
-  readonly kind?: "image" | "video";
+  /** How to preview a link to this URL. An opaque upload needs a content type check. */
+  readonly kind?: "image" | "video" | "unknown";
   /** Set when the bytes behind `fetchUrl` can never change, so a client may cache them by it. */
   readonly immutable?: true;
 }

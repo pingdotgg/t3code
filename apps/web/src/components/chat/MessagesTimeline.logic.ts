@@ -29,8 +29,9 @@ import {
   toolGroupAction,
   toolGroupSummaryKind,
   contextCompactionTokenCounts,
-  workEntriesViewedImagePaths,
+  workEntriesViewedImages,
   type ToolGroupSummaryKind,
+  type ViewedImage,
   liveThoughtLine,
   workEntryHiddenByToolCallVisibility,
 } from "@t3tools/client-runtime/work-log/presentation";
@@ -382,6 +383,27 @@ export function resolveTimelineMinimapTopPercent(index: number, itemCount: numbe
   return (Math.max(0, Math.min(index, itemCount - 1)) / (itemCount - 1)) * 100;
 }
 
+// Strips are 2px tall; centers 4px apart or closer merge into one bar once layout
+// rounds their positions.
+const TIMELINE_MINIMAP_MIN_MARK_SPACING = 5;
+
+/** Strips that fit the measured rail; past that, neighbouring items share one. */
+export function resolveTimelineMinimapMarkCount(itemCount: number, railHeight: number): number {
+  if (railHeight <= 0) return itemCount;
+  const capacity = Math.floor(railHeight / TIMELINE_MINIMAP_MIN_MARK_SPACING) + 1;
+  return Math.min(itemCount, Math.max(2, capacity));
+}
+
+/** The strip nearest the item's own position on the rail. */
+export function resolveTimelineMinimapMarkIndex(
+  itemIndex: number,
+  itemCount: number,
+  markCount: number,
+): number {
+  if (markCount >= itemCount) return itemIndex;
+  return Math.round((itemIndex / (itemCount - 1)) * (markCount - 1));
+}
+
 export function resolveTimelineMinimapIndexFromPointer(input: {
   readonly itemCount: number;
   readonly railTop: number;
@@ -464,28 +486,18 @@ export function resolveTimelineMinimapCurrentIndex(input: {
   return precedingIndex;
 }
 
-function resolveTimelineSideGutter(viewportWidth: number, contentWidth: number): number {
-  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0 || !Number.isFinite(contentWidth)) {
-    return 0;
-  }
-  return Math.max(0, (viewportWidth - Math.min(viewportWidth, contentWidth)) / 2);
-}
-
-export function resolveTimelineMinimapHasPersistentGutter(
-  viewportWidth: number,
-  contentWidth: number,
-): boolean {
-  return (
-    resolveTimelineSideGutter(viewportWidth, contentWidth) >= TIMELINE_MINIMAP_PERSISTENT_GUTTER
-  );
+export function resolveTimelineMinimapHasPersistentGutter(sideGutter: number): boolean {
+  return sideGutter >= TIMELINE_MINIMAP_PERSISTENT_GUTTER;
 }
 
 const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 32;
 const TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH = 40;
 const TIMELINE_MINIMAP_NAVIGATION_REACH = 14;
 
-export function resolveTimelineMinimapHitStrip(viewportWidth: number, contentWidth: number) {
-  const sideGutter = Math.floor(resolveTimelineSideGutter(viewportWidth, contentWidth));
+export function resolveTimelineMinimapHitStrip(measuredSideGutter: number) {
+  const sideGutter = Number.isFinite(measuredSideGutter)
+    ? Math.max(0, Math.floor(measuredSideGutter))
+    : 0;
   if (sideGutter < TIMELINE_MINIMAP_HIT_STRIP_LEFT + TIMELINE_MINIMAP_NAVIGATION_REACH) {
     // Keep a hover target in the gutter, to the left of the sidebar restore handle.
     return { left: 0, width: Math.min(8, sideGutter) };
@@ -593,7 +605,7 @@ type MessagesTimelineRowContent =
       kind: "viewed-images";
       id: string;
       createdAt: string;
-      paths: ReadonlyArray<string>;
+      images: ReadonlyArray<ViewedImage>;
     }
   | {
       kind: "turn-fold";
@@ -720,10 +732,10 @@ function viewedImagesRows(
   createdAt: string,
   groupedEntries: ReadonlyArray<WorkLogEntry>,
 ): Array<Extract<MessagesTimelineRow, { kind: "viewed-images" }>> {
-  const paths = workEntriesViewedImagePaths(groupedEntries);
-  return paths.length === 0
+  const images = workEntriesViewedImages(groupedEntries);
+  return images.length === 0
     ? []
-    : [{ kind: "viewed-images", id: `${groupId}:viewed-images`, createdAt, paths }];
+    : [{ kind: "viewed-images", id: `${groupId}:viewed-images`, createdAt, images }];
 }
 
 export function resolveAssistantMessageCopyState({
@@ -2839,8 +2851,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       const bv = b as typeof a;
       return (
         a.createdAt === bv.createdAt &&
-        a.paths.length === bv.paths.length &&
-        a.paths.every((path, index) => path === bv.paths[index])
+        a.images.length === bv.images.length &&
+        a.images.every(
+          (image, index) =>
+            image.path === bv.images[index]?.path && image.pending === bv.images[index]?.pending,
+        )
       );
     }
 

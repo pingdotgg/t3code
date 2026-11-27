@@ -351,6 +351,58 @@ describe("WorkflowRunsView", () => {
     await expect.element(screen.getByRole("button", { name: "Hold", exact: true })).toBeDisabled();
   });
 
+  it("shows what a run is about in its row, and opens it from there", async () => {
+    const { steps: _steps, origin: _origin, state: _state, ...subject } = issue101;
+    setup({ runs: [run({ runId: "fix", title: "Fix the minutes", subject })], questions: [] });
+    const reference = vi.fn();
+    await using _desktop = await desktop();
+    await using screen = await render(page(null, { reference }));
+
+    const row = screen
+      .getByRole("navigation", { name: "Workflow runs" })
+      .getByRole("button", { name: "#101 Wrong minutes" });
+    await row.click();
+
+    expect(reference).toHaveBeenCalledWith("fix", subject);
+  });
+
+  it("marks a thread subject as open beside its run, and a subject's state as unknown", async () => {
+    setup({
+      runs: [
+        run({
+          runId: "talk",
+          title: "Talk it through",
+          subject: { kind: "thread", key: "t1", address: { threadId: "t1" }, title: "", url: null },
+        }),
+        run({
+          runId: "land",
+          title: "Land the fix",
+          subject: {
+            kind: "pullRequest",
+            key: "pr7",
+            address: { projectId: "p1", host: "github.com", repository: "acme/app", number: 7 },
+            title: "Fix the minutes",
+            url: "https://github.com/acme/app/pull/7",
+          },
+        }),
+      ],
+      questions: [],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page("talk", {}, { thread: "t1" }));
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect
+      .element(runs.getByRole("button", { name: "thread", exact: true }))
+      .toHaveAttribute("aria-pressed", "true");
+    // A subject does not say where its pull request stands, so it wears no state's ink.
+    const mark = runs
+      .getByRole("button", { name: "#7 Fix the minutes" })
+      .element()
+      .querySelector("svg");
+    expect(mark?.getAttribute("class")).toContain("text-muted-foreground");
+  });
+
   it("says why a run paused at the step that failed, and resumes it", async () => {
     setup(
       {
@@ -647,6 +699,70 @@ describe("WorkflowRunsView", () => {
     await screen.getByRole("option", { name: "report" }).click();
     await expect.element(screen.getByText("Starts on daily at 09:00")).toBeVisible();
     await expect.element(runs).toMatchTextContent("Has not run yet.");
+  });
+
+  it("counts the skipped runs of the workflow picked, not of every workflow", async () => {
+    setup({
+      workflows: [
+        { name: "release", version: 1, triggers: [] },
+        { name: "report", version: 1, triggers: ["webhook pings"] },
+      ],
+      runs: [
+        run({ runId: "rel", title: "Release 1.3", status: "completed", endedAt: at(3) }),
+        run({
+          runId: "s1",
+          workflow: "report",
+          title: "Ping 1",
+          status: "skipped",
+          endedAt: at(1),
+        }),
+        run({
+          runId: "s2",
+          workflow: "report",
+          title: "Ping 2",
+          status: "skipped",
+          endedAt: at(2),
+        }),
+      ],
+      questions: [],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    await screen.getByRole("button", { name: "All", exact: true }).click();
+    await expect.element(screen.getByRole("button", { name: "Show 2 skipped" })).toBeVisible();
+    await screen.getByRole("combobox", { name: "Workflow" }).click();
+    await screen.getByRole("option", { name: "release" }).click();
+    await expect
+      .element(screen.getByRole("navigation", { name: "Workflow runs" }))
+      .not.toMatchTextContent(/skipped/);
+  });
+
+  it("shows a run of the workflow picked, not one of another workflow", async () => {
+    setup({
+      workflows: [
+        { name: "release", version: 1, triggers: [] },
+        { name: "report", version: 1, triggers: ["daily at 09:00"] },
+      ],
+      runs: [
+        run({ runId: "rep", workflow: "report", title: "Nightly report" }),
+        run({ runId: "rel", title: "Release 1.3", status: "completed", endedAt: at(3) }),
+      ],
+      questions: [],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    await expect.element(screen.getByRole("article", { name: "Nightly report" })).toBeVisible();
+    await screen.getByRole("button", { name: "All", exact: true }).click();
+    await screen.getByRole("combobox", { name: "Workflow" }).click();
+    await screen.getByRole("option", { name: "release" }).click();
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect.element(runs.getByRole("button", { name: /Release 1\.3/ })).toBeVisible();
+    await expect
+      .element(screen.getByRole("article", { name: "Nightly report" }))
+      .not.toBeInTheDocument();
+    await expect.element(screen.getByRole("article", { name: "Release 1.3" })).toBeVisible();
   });
 
   const KIND_KEY = "t3code:workflows:question-kind";

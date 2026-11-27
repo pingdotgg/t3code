@@ -54,10 +54,9 @@ export function gitHubLfsMediaUrl(rawUrl: string): string | null {
     : null;
 }
 
-/** GitHub links an uploaded video bare, with no extension, and an image as markdown. */
 function upload(host: string, pathname: string): SourceControlMediaUrl | null {
   if (ATTACHMENT_PATH_PATTERN.test(pathname)) {
-    return media(`https://${host}${pathname}`, { kind: "video", immutable: true });
+    return media(`https://${host}${pathname}`, { kind: "unknown", immutable: true });
   }
   return LEGACY_ATTACHMENT_PATH_PATTERN.test(pathname)
     ? media(`https://${host}${pathname}`, { immutable: true })
