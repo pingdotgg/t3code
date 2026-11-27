@@ -95,9 +95,19 @@ describe("commandProgramName", () => {
     ["timeout 10s python3 script.py", "python3"],
     ["arch -arch arm64 /opt/tools/check", "check"],
     ["timeout 60 script -q /dev/null env CI=1 node app.js", "node"],
+    ["timeout -s KILL 30 npm test", "npm"],
+    ["timeout --signal=TERM -v 60 cargo test", "cargo"],
+    ["gtimeout -fk5 -- 30 node app.js", "node"],
   ])("unwraps process-launch wrappers: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
+
+  it.each(["timeout -x 30 npm test", "timeout -s 30 npm test"])(
+    "keeps the timeout label for invalid timeout options: %s",
+    (command) => {
+      expect(commandProgramName(command)).toBe("timeout");
+    },
+  );
 
   it.each([
     "command -v git",
@@ -212,6 +222,29 @@ describe("commandDisplayText with ANSI-C and locale quoting", () => {
     ['bash -lc $"npm test"', "npm test"],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
+  });
+});
+
+describe("commandDisplayText with line continuations", () => {
+  it.each([
+    ['bash \\\n-lc "git status"', "git status"],
+    ['bash -lc "git status \\\n--short"', "git status --short"],
+  ])("removes them as bash does: %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+
+  it.each([
+    ["bash -lc 'git status \\\n--short'", "git status \\\n--short"],
+    ["bash -c $'git status \\\n--short'", "git status \\\n--short"],
+    ['bash \\\n-lc "git status \\\r\n--short"', "git status \\\r\n--short"],
+  ])("keeps them where bash does: %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+
+  it("keeps Windows shell scripts on separate lines", () => {
+    expect(commandDisplayText('cmd.exe /c "dir C:\\\necho done"')).toMatch(
+      /^dir C:\\?\necho done$/u,
+    );
   });
 });
 

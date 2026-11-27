@@ -66,6 +66,12 @@ function boundedMarkup(value: string): string {
   reserveMarkup(value.length);
   return value;
 }
+function odfListStart(node: XmlNode | undefined): number | undefined {
+  const start = node?.attrs["text:start-value"]?.trim();
+  if (!start || !/^[+-]?\d+$/.test(start)) return undefined;
+  const value = Number(start);
+  return value >= 0 && value <= 2_147_483_647 ? value : undefined;
+}
 async function odfHtml(
   node: XmlNode,
   archive: JSZip,
@@ -73,6 +79,7 @@ async function odfHtml(
   imageAlt = "",
   inRepeatedRow = false,
   list: [string, number] = ["", 0],
+  inOrderedList = false,
 ): Promise<string> {
   if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
   if (node.name === "text:s" || node.name === "text:tab")
@@ -128,23 +135,32 @@ async function odfHtml(
       : node.name === "text:list-item" || node.name === "text:list-header"
         ? list
         : ["", 0];
+  const numberingLevel =
+    node.name === "text:list"
+      ? listStyles
+          .get(nextList[0])
+          ?.children.find(
+            (level) =>
+              level.name === "text:list-level-style-number" &&
+              level.attrs["text:level"] === String(nextList[1]) &&
+              !!level.attrs["style:num-format"],
+          )
+      : undefined;
   for (const child of node.children)
-    children += await odfHtml(child, archive, listStyles, childImageAlt, repeatedRow, nextList);
-  const numbered =
-    node.name === "text:list" &&
-    listStyles
-      .get(nextList[0])
-      ?.children.some(
-        (level) =>
-          level.name === "text:list-level-style-number" &&
-          level.attrs["text:level"] === String(nextList[1]) &&
-          !!level.attrs["style:num-format"],
-      );
+    children += await odfHtml(
+      child,
+      archive,
+      listStyles,
+      childImageAlt,
+      repeatedRow,
+      nextList,
+      numberingLevel !== undefined,
+    );
   const tags: Record<string, string> = {
     "text:p": "p",
     "text:h": "h2",
     "text:span": "span",
-    "text:list": numbered ? "ol" : "ul",
+    "text:list": numberingLevel ? "ol" : "ul",
     "text:list-item": "li",
     "table:table": "table",
     "table:table-row": "tr",
@@ -160,7 +176,8 @@ async function odfHtml(
       : tag === "td"
         ? repeat(node.attrs["table:number-columns-repeated"], TABLE_PREVIEW_MAX_COLUMNS)
         : 1;
-  let spans = "";
+  const start = odfListStart(tag === "li" && inOrderedList ? node : numberingLevel);
+  let attributes = start === undefined ? "" : ` ${tag === "ol" ? "start" : "value"}="${start}"`;
   // Spans on repeated cells or rows would multiply past the preview's table limits.
   if (tag === "td" && count === 1)
     for (const [name, attr, max] of [
@@ -169,9 +186,9 @@ async function odfHtml(
     ] as const) {
       const span = Number(node.attrs[attr]);
       if (max > 1 && Number.isSafeInteger(span) && span > 1)
-        spans += ` ${name}="${Math.min(span, max)}"`;
+        attributes += ` ${name}="${Math.min(span, max)}"`;
     }
-  const markup = `<${tag}${spans}>${children}</${tag}>`;
+  const markup = `<${tag}${attributes}>${children}</${tag}>`;
   reserveMarkup(count * markup.length - children.length);
   return markup.repeat(count);
 }
@@ -304,8 +321,9 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   const notebook = record(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
   if (notebook.nbformat !== 4 || !Array.isArray(notebook.cells) || notebook.cells.length > 500)
     throw new PreviewError({ code: "notebook-unsupported" });
+  const metadata = record(notebook.metadata);
   const language =
-    String(record(record(notebook.metadata).language_info).name ?? "")
+    String(record(metadata.language_info).name || record(metadata.kernelspec).language || "")
       .replaceAll(/[^a-z\d+#-]/gi, "")
       .slice(0, 40) || "text";
   const cells: NotebookCell[] = notebook.cells.map((value) => {
@@ -375,6 +393,9 @@ const RTF_CHARACTERS = new Map([
   ["ltrmark", "\u200e"],
   ["rtlmark", "\u200f"],
 ]);
+
+const RTF_UNDERLINE_WORD =
+  /^(?:ul|uld|uldash|uldashd|uldashdd|uldb|ulhair|ulhwave|ulldash|ulth|ulthd|ulthdash|ulthdashd|ulthdashdd|ulthldash|ululdbwave|ulw|ulwave)$/;
 
 const rtfCodePageLabel = (codePage: number) =>
   (
@@ -591,7 +612,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         }
       } else if (word === "b") state.bold = arg !== 0;
       else if (word === "i") state.italic = arg !== 0;
-      else if (word === "ul") state.underline = arg !== 0;
+      else if (RTF_UNDERLINE_WORD.test(word!)) state.underline = arg !== 0;
       else if (word === "ulnone") state.underline = false;
       else if (word === "deleted") state.deleted = arg !== 0;
       else if (word === "v") state.hiddenText = arg !== 0;
@@ -616,7 +637,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         }
         fallback = state.uc;
       } else if (!hidden() && word === "page") finishPage();
-      else if (word === "cell") emit("\t", state.skip);
+      else if (word === "cell" || word === "nestcell") emit("\t", state.skip);
       else if (
         (!state.skip && word === "row") ||
         (!hidden() && (word === "par" || word === "line"))
