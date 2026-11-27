@@ -23,6 +23,7 @@ export function mediaTime(value: string | undefined): number | undefined {
 const nptTime = /^(?:(?:\d+:)?[0-5]\d:[0-5]\d|\d+)(?:\.\d*)?$/;
 const ttmlContent = new Set(["ttml:tt", "ttml:body", "ttml:div", "ttml:p"]);
 const ttmlParameters = "{http://www.w3.org/ns/ttml#parameter}";
+const dfxpParameters = "{http://www.w3.org/2006/04/ttaf1#parameter}";
 
 export function mediaFragment(href: string) {
   const hash = href.indexOf("#");
@@ -52,19 +53,36 @@ function vttTime(seconds: number) {
 }
 
 export function ttmlCaptions(root: XmlNode) {
-  const document = root.children.find((node) => node.name === "ttml:tt");
-  const rate = document?.attrs[ttmlParameters + "frameRate"]?.trim() ?? "30";
-  const multiplier = document?.attrs[ttmlParameters + "frameRateMultiplier"]?.trim() ?? "1 1";
+  const attributes = root.children.find((node) => node.name === "ttml:tt")?.attrs;
+  function parameter(name: string) {
+    return (attributes?.[ttmlParameters + name] ?? attributes?.[dfxpParameters + name])?.trim();
+  }
+  const rate = parameter("frameRate") ?? "30";
+  const nominalFrameRate = /^\d+$/.test(rate) ? Number(rate) : NaN;
+  const multiplier = parameter("frameRateMultiplier") ?? "1 1";
   const ratio = /^(\d+)\s+(\d+)$/.exec(multiplier);
-  const frameRate = /^\d+$/.test(rate)
-    ? Number(rate) * (Number(ratio?.[1]) / Number(ratio?.[2]))
-    : NaN;
+  const frameRate = nominalFrameRate * (Number(ratio?.[1]) / Number(ratio?.[2]));
+  const subFrameRateText = parameter("subFrameRate") ?? "1";
+  const subFrameRate = /^\d+$/.test(subFrameRateText) ? Number(subFrameRateText) : NaN;
+  const timeBase = parameter("timeBase") ?? "media";
 
   function captionTime(value: string | undefined) {
-    const frames = /^(\d+(?:\.\d+)?)f$/.exec(value?.trim() ?? "");
-    if (!frames) return mediaTime(value);
-    if (!Number.isFinite(frameRate) || frameRate <= 0) return;
-    const seconds = Number(frames[1]) / frameRate;
+    const time = value?.trim() ?? "";
+    const offset = /^(\d+(?:\.\d+)?)f$/.exec(time);
+    const clock = /^(\d{2,}:[0-5]\d:[0-5]\d):(\d{2,})(?:\.(\d+))?$/.exec(time);
+    if (!offset && !clock) return mediaTime(value);
+    if (timeBase !== "media" || !Number.isFinite(frameRate) || frameRate <= 0) return;
+
+    const frames = Number(clock?.[2] ?? offset?.[1]);
+    if (clock && frames >= nominalFrameRate) return;
+    let fractionalFrame = 0;
+    if (clock?.[3] !== undefined) {
+      const subFrames = Number(clock[3]);
+      if (!Number.isFinite(subFrameRate) || subFrames >= subFrameRate) return;
+      fractionalFrame = subFrames / subFrameRate;
+    }
+    const clockSeconds = clock ? (mediaTime(clock[1]) ?? NaN) : 0;
+    const seconds = clockSeconds + (frames + fractionalFrame) / frameRate;
     if (Number.isFinite(seconds * 1000)) return seconds;
   }
 
