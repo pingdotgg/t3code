@@ -320,6 +320,16 @@ describe("question answer paths", () => {
     ],
     ["line break paragraphs", "{\\rtf1\\ansi First\\\nSecond\\\r\nThird}", "First\nSecond\nThird"],
     [
+      "footnote destinations",
+      String.raw`{\rtf1\ansi The north region{\super \chftn{\*\footnote \pard\plain {\super \chftn}\tab Inspect the {\b seals}.\par Do not reopen.\par}} is ready. The south region{\super \chftn}{\footnote \pard\plain \chftn\~Check power.} is ready.}`,
+      "The north region[Note: Inspect the seals.\nDo not reopen.] is ready. The south region[Note: Check power.] is ready.",
+    ],
+    [
+      "hidden footnote bodies",
+      String.raw`{\rtf1\ansi The north region{\*\unknown {\*\footnote \plain Hidden.}}{\*\footnote \v Hidden.} is ready.}`,
+      "The north region is ready.",
+    ],
+    [
       "tracked deletion",
       String.raw`{\rtf1\ansi The fee is {\deleted\revauthdel1\revdttmdel1 $500}{\revised\revauth1 $700}.}`,
       "The fee is $700.",

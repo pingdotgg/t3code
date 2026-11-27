@@ -14,6 +14,8 @@ const CELL_START = Symbol("cell-start");
 const CELL_END = Symbol("cell-end");
 const LINE_START = Symbol("line-start");
 const THEMATIC_BREAK = Symbol("thematic-break");
+const RTF_NOTE_START = Symbol("rtf-note-start");
+const RTF_NOTE_END = Symbol("rtf-note-end");
 const PRESENTATIONML_NAMESPACES = new Set([
   "http://schemas.openxmlformats.org/presentationml/2006/main",
   "http://purl.oclc.org/ooxml/presentationml/main",
@@ -39,6 +41,8 @@ type TextPart =
   | typeof CELL_END
   | typeof LINE_START
   | typeof THEMATIC_BREAK
+  | typeof RTF_NOTE_START
+  | typeof RTF_NOTE_END
   | { columnGap: number }
   | { imageDescription: string }
   | { fallback: string }
@@ -1098,13 +1102,17 @@ function rtfUnicodeDestination(
 
 const RTF_NESTED_CELL_END = Symbol("rtf-nested-cell-end");
 
-function* rtf(source: string): Generator<string, void> {
+function* rtf(source: string): Generator<TextPart, void> {
   // \nestcell ends a nested cell without a delimiter; space it only from adjacent text.
   let last = "";
   let afterNestedCell = false;
   for (const part of rtfParts(source)) {
     if (part === RTF_NESTED_CELL_END) {
       afterNestedCell = true;
+      continue;
+    }
+    if (typeof part !== "string") {
+      yield part;
       continue;
     }
     const text = part.replaceAll("\0", "");
@@ -1117,7 +1125,12 @@ function* rtf(source: string): Generator<string, void> {
   }
 }
 
-function* rtfParts(source: string): Generator<string | typeof RTF_NESTED_CELL_END, void> {
+function* rtfParts(
+  source: string,
+): Generator<
+  string | typeof RTF_NESTED_CELL_END | typeof RTF_NOTE_START | typeof RTF_NOTE_END,
+  void
+> {
   if (!source.startsWith("{\\rtf")) throw new Error("Invalid RTF document");
   let state = {
     skip: false,
@@ -1181,6 +1194,8 @@ function* rtfParts(source: string): Generator<string | typeof RTF_NESTED_CELL_EN
   ]);
   let fallback = 0;
   let verifiedThrough = 0;
+  const footnoteStart = /[\r\n]*(?:\\\*[\r\n]*)?\\footnote(?![a-zA-Z]|-?\d) ?/y;
+  let footnoteDepth: number | undefined;
   for (let i = 0; i < source.length; i++) {
     const char = source[i]!;
     if (char === "{" || char === "}") {
@@ -1189,8 +1204,22 @@ function* rtfParts(source: string): Generator<string | typeof RTF_NESTED_CELL_EN
     }
     if (char === "{") {
       openGroup();
-    } else if (char === "}") state = stack.pop() ?? state;
-    else if (char === "\\") {
+      footnoteStart.lastIndex = i + 1;
+      if (footnoteStart.test(source)) {
+        i = footnoteStart.lastIndex - 1;
+        if (hidden() || footnoteDepth !== undefined) state.skip = true;
+        else {
+          footnoteDepth = stack.length;
+          yield RTF_NOTE_START;
+        }
+      }
+    } else if (char === "}") {
+      if (footnoteDepth === stack.length) {
+        footnoteDepth = undefined;
+        yield RTF_NOTE_END;
+      }
+      state = stack.pop() ?? state;
+    } else if (char === "\\") {
       const rest = source.slice(i + 1, i + 80);
       const hex = /^'([0-9a-f]{2})/i.exec(rest);
       const word = /^([a-z]+)(-?\d+)? ?/i.exec(rest);
@@ -1613,6 +1642,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
   let space = false;
   let midLine = false;
   let pendingThematicBreak: string | undefined;
+  let rtfNote: string | undefined;
   let endsWithWord = false;
   let afterImageDescription = false;
   let truncated = false;
@@ -1624,6 +1654,17 @@ export async function extractDocumentText(path: string, extension: string): Prom
   try {
     // Charge raw text before normalization so repeated whitespace also exhausts the budget.
     for await (let part of document(path, extension)) {
+      if (part === RTF_NOTE_START) {
+        rtfNote = "";
+        continue;
+      }
+      if (part === RTF_NOTE_END) {
+        const note = rtfNote!.trimEnd();
+        rtfNote = undefined;
+        if (!note) continue;
+        result += note;
+        part = "]";
+      }
       if (part === CELL_START) {
         if (cellDepth++ === 0) {
           started = false;
@@ -1707,6 +1748,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
         /^\u00ad*[\p{L}\p{M}\p{N}_]/u.test(raw)
       )
         raw = " " + raw;
+      if (rtfNote === "" && /\S/u.test(raw.replaceAll("\0", ""))) result += takeRaw("[Note: ");
       let value = takeRaw(raw);
       if (cellDepth) {
         value = value.replaceAll(/\s+/g, " ");
@@ -1726,7 +1768,8 @@ export async function extractDocumentText(path: string, extension: string): Prom
         if (!result && !isColumnGap) value = value.trimStart();
         midLine = endsMidLine(value) ?? midLine;
       }
-      result += value;
+      if (rtfNote === undefined) result += value;
+      else rtfNote += rtfNote === "" ? value.trimStart() : value;
       if (extension === ".epub") {
         // Soft hyphens stay in the output but do not decide where a visible word ends.
         let end = value.length;
@@ -1742,6 +1785,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
     if (!(error instanceof Truncation)) throw error;
     truncated = true;
   }
+  if (rtfNote !== undefined) result += rtfNote;
   result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trimEnd();
   if (!result && !truncated) throw new Error("No text extracted");
   return truncated ? result.replace(TRAILING_HIGH_SURROGATE, "").trimEnd() + TRUNCATED : result;
