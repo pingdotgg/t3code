@@ -98,6 +98,7 @@ interface XmlNode {
   mathmlFirstChildSeen?: boolean;
   epubBlock?: boolean;
   odfInlineParagraphs?: boolean;
+  odfParagraphHidden?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -150,6 +151,22 @@ function namespaceOf(tagName: string, scope: readonly XmlNode[]) {
   const colon = tagName.lastIndexOf(":");
   const binding = colon === -1 ? "xmlns" : `xmlns:${tagName.slice(0, colon)}`;
   return scope.findLast((node) => Object.hasOwn(node.attrs, binding))?.attrs[binding];
+}
+
+function isHiddenOdfSection(
+  tagName: string,
+  attributes: Record<string, string>,
+  scope: readonly XmlNode[],
+) {
+  return (
+    namespaceOf(tagName, scope) === ODF_TEXT_NS &&
+    Object.entries(attributes).some(
+      ([name, value]) =>
+        name.endsWith(":display") &&
+        /^[\t\n\r ]*none[\t\n\r ]*$/u.test(value) &&
+        namespaceOf(name, scope) === ODF_TEXT_NS,
+    )
+  );
 }
 
 function isXhtmlElement(
@@ -211,8 +228,9 @@ function xml(source: string, extension: string): XmlNode {
         Object.entries(tag.attributes).flatMap(([key, value]) => {
           const local = key.split(":").at(-1)!;
           // A foreign attribute must not shadow an XHTML table span or a namespace declaration.
-          return extension === ".epub" &&
-            (local === "colspan" || local === "rowspan" || local === "xmlns")
+          return (extension === ".epub" &&
+            (local === "colspan" || local === "rowspan" || local === "xmlns")) ||
+            (extension === ".odt" && local === "xmlns")
             ? [[key, String(value)]]
             : [
                 [key, String(value)],
@@ -228,6 +246,22 @@ function xml(source: string, extension: string): XmlNode {
     stack.push(node);
     if (odf && node.name === "text-box" && namespaceOf(tag.name, stack) === ODF_DRAW_NS)
       node.odfInlineParagraphs = true;
+    if (
+      extension === ".odt" &&
+      node.name === "hidden-paragraph" &&
+      namespaceOf(tag.name, stack) === ODF_TEXT_NS
+    ) {
+      const paragraph = stack.findLast(
+        (ancestor) => ancestor.name === "p" || ancestor.name === "h",
+      );
+      // A visible field keeps the paragraph visible even if another field hides it.
+      if (paragraph && paragraph.odfParagraphHidden !== false) {
+        const visibility = Object.entries(tag.attributes).find(
+          ([name]) => name.endsWith(":is-hidden") && namespaceOf(name, stack) === ODF_TEXT_NS,
+        )?.[1];
+        paragraph.odfParagraphHidden = /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u.test(visibility ?? "");
+      }
+    }
     if (
       extension === ".epub" &&
       node.name === "semantics" &&
@@ -280,6 +314,7 @@ function xml(source: string, extension: string): XmlNode {
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
       node.pptxHidden ||
+      (node.odfParagraphHidden && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) ||
       isMathmlAlternative ||
       (extension === ".epub" &&
         node.name === "template" &&
@@ -298,6 +333,9 @@ function xml(source: string, extension: string): XmlNode {
             (prop) => prop.name === "vanish" && ["true", "1", "on"].includes(prop.attrs.val ?? "1"),
           )) ||
       (odf && node.name === "annotation" && parent.name !== "semantics") ||
+      (extension === ".odt" &&
+        node.name === "section" &&
+        isHiddenOdfSection(tag.name, tag.attributes, [...stack, node])) ||
       (extension === ".pptx" &&
         node.name === "timing" &&
         stack.every((ancestor) =>
@@ -333,6 +371,11 @@ function xml(source: string, extension: string): XmlNode {
         body.odfInlineParagraphs = true;
         node.children = ["[", citation, ": ", body, "]"];
       }
+    }
+    if (odf && node.name === "ruby" && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) {
+      const base = children(node).find((child) => child.name === "ruby-base");
+      const reading = children(node).find((child) => child.name === "ruby-text");
+      if (base?.hasText && reading?.hasText) node.children = [base, "(", reading, ")"];
     }
     if (extension === ".epub" && node.name === "ruby" && stack[1]?.name === "html")
       separateRubyReadings(node);
