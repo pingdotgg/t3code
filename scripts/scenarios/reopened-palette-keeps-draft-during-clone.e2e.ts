@@ -136,7 +136,7 @@ test(
         return null;
       });
       await projectPicker.tap();
-      await screen.getByRole("option", name).waitFor();
+      await screen.getByRole("option", name).first().waitFor();
       await browser.keyboard.press("Escape");
       await expect(projectPicker).toHaveText(originalProject);
     } finally {

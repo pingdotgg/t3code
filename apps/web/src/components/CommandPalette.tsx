@@ -2389,8 +2389,9 @@ function OpenCommandPaletteDialog(props: {
     );
     const palette = useCommandPaletteStore.getState();
     if (
-      palette.open &&
-      (palette !== paletteAtStart || cloneLookupGeneration.current !== flowGeneration)
+      palette.session !== paletteAtStart.session ||
+      (palette.open &&
+        (palette !== paletteAtStart || cloneLookupGeneration.current !== flowGeneration))
     ) {
       return;
     }
@@ -2403,7 +2404,8 @@ function OpenCommandPaletteDialog(props: {
       projectRef,
       addProjectDraftId === null ? 3_000 : 6_000,
     ).catch(() => null);
-    if (useCommandPaletteStore.getState().open) return;
+    const paletteAfterSync = useCommandPaletteStore.getState();
+    if (paletteAfterSync.open || paletteAfterSync.session !== paletteAtStart.session) return;
     const navigationResult = await settlePromise(() => openSyncedProject(projectRef, project));
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);
