@@ -465,7 +465,7 @@ describe("threadSearchPullRequests", () => {
     url: "https://github.com/pingdotgg/t3code/pull/42",
   };
 
-  it("keeps the titled synced entry first and drops a duplicate branch PR", () => {
+  it("drops a branch PR that duplicates a titled link", () => {
     expect(
       threadSearchPullRequests({
         branchPullRequest,
@@ -485,15 +485,15 @@ describe("threadSearchPullRequests", () => {
     ]);
   });
 
-  it("keeps a distinct branch PR after synced entries", () => {
+  it("keeps a branch PR the links do not include", () => {
     expect(
       threadSearchPullRequests({
         branchPullRequest,
         pullRequests: [link(7, { snapshot: snapshot({ title: "Other change" }) })],
       }).map((entry) => [entry.number, entry.title]),
     ).toEqual([
-      [7, "Other change"],
       [42, null],
+      [7, "Other change"],
     ]);
   });
 });
