@@ -1276,6 +1276,34 @@ describe("question answer paths", () => {
         {
           ext: "docx",
           parts: {
+            "word/styles.xml": [
+              '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+              '<w:style w:type="paragraph" w:styleId="ReportSection"><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style>',
+              '<w:style w:type="paragraph" w:styleId="ReportDetail"><w:basedOn w:val="ReportSection"/></w:style>',
+              '<w:style w:type="paragraph" w:styleId="ReportLabel"><w:basedOn w:val="ReportSection"/><w:pPr><w:outlineLvl w:val="9"/></w:pPr></w:style>',
+              '<w:style w:type="paragraph" w:styleId="ReportCaption"><w:name w:val="heading 4"/><w:basedOn w:val="ReportLabel"/></w:style>',
+              '<w:style w:type="paragraph" w:styleId="LoopA"><w:basedOn w:val="LoopB"/></w:style>',
+              '<w:style w:type="paragraph" w:styleId="LoopB"><w:basedOn w:val="LoopA"/></w:style>',
+              "</w:styles>",
+            ].join(""),
+            "word/document.xml": [
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>',
+              '<w:p><w:pPr><w:pStyle w:val="ReportSection"/></w:pPr><w:r><w:t>Quarterly revenue</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="ReportDetail"/></w:pPr><w:r><w:t>Revenue by region</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="ReportLabel"/></w:pPr><w:r><w:t>For internal use</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="ReportCaption"/></w:pPr><w:r><w:t>Caption</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="ReportSection"/><w:outlineLvl w:val="2"/></w:pPr><w:r><w:t>Direct level wins</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="LoopA"/></w:pPr><w:r><w:t>Plain text</w:t></w:r></w:p>',
+              "</w:body></w:document>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "## Quarterly revenue\n## Revenue by region\nFor internal use\nCaption\n### Direct level wins\nPlain text",
+        },
+        {
+          ext: "docx",
+          parts: {
             "word/document.xml":
               '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
               '<w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Overview</w:t></w:r></w:p>' +

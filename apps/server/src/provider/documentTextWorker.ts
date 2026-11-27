@@ -199,11 +199,11 @@ function xml(source: string, extension: string): XmlNode {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
     if (extension === ".docx" && node.name === "outlineLvl" && parent.name === "pPr") {
-      const paragraph = stack.at(-2);
+      const owner = stack.at(-2);
       const outline = Number(node.attrs.val?.match(/^\s*[+-]?\d+\s*$/u)?.[0]);
-      if (paragraph?.name === "p" && outline >= 0 && outline <= 9) {
+      if ((owner?.name === "p" || owner?.name === "style") && outline >= 0 && outline <= 9) {
         // Word's outline is zero-based, with 9 reserved for body text.
-        paragraph.wordOutlineHeadingLevel = outline === 9 ? 0 : outline + 1;
+        owner.wordOutlineHeadingLevel = outline === 9 ? 0 : outline + 1;
       }
     }
     // MathML Core displays only the first element child of semantics by default.
@@ -378,6 +378,23 @@ function hasXstringText(node: XmlNode): boolean {
   return false;
 }
 
+function wordStyleOutlineLevel(
+  outlines: Map<string, number | string | undefined>,
+  id: string,
+): number | undefined {
+  let outline = outlines.get(id);
+  if (typeof outline !== "string") return outline;
+  const visited = new Set<string>();
+  while (typeof outline === "string" && !visited.has(id)) {
+    visited.add(id);
+    id = outline;
+    outline = outlines.get(id);
+  }
+  const level = typeof outline === "number" ? outline : undefined;
+  for (const styleId of visited) outlines.set(styleId, level);
+  return level;
+}
+
 function* paragraphs(node: XmlNode): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
   if (node.imageDescription !== undefined) {
@@ -395,15 +412,15 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield LINE_START;
     } else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
       yield THEMATIC_BREAK;
-      const style =
-        all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value?.attrs.val ?? "";
+      const style = all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value;
       const level =
         child.name === "h"
           ? Number(child.attrs["outline-level"]) || 1
           : /^h[1-6]$/.test(child.name)
             ? Number(child.name[1])
             : (child.wordOutlineHeadingLevel ??
-              (Number(style.match(/^Heading([1-6])$/i)?.[1]) || 0));
+              style?.wordOutlineHeadingLevel ??
+              (Number(style?.attrs.val?.match(/^Heading([1-6])$/i)?.[1]) || 0));
       if (level) yield `${"#".repeat(Math.min(6, level))} `;
       yield* text(child);
       yield "\n";
@@ -1070,19 +1087,30 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       const dir = `/${NodePath.posix.dirname(main)}`;
       const styles = NodePath.posix.resolve(dir, target || "styles.xml").slice(1);
       if (has(styles)) {
-        // Word localizes style ids while keeping built-in English names.
+        const outlines = new Map<string, number | string | undefined>();
         const headings = new Map<string, string>();
         for (const style of all(read(styles), "style")) {
           const id = style.attrs.styleId;
           if ((style.attrs.type ?? "paragraph") !== "paragraph" || !id) continue;
-          const name = children(style).find((c) => c.name === "name")?.attrs.val;
+          const properties = children(style);
+          const outline =
+            style.wordOutlineHeadingLevel ??
+            properties.find((c) => c.name === "basedOn")?.attrs.val;
+          if (outline !== undefined) outlines.set(id, outline);
+          // Word localizes style ids while keeping built-in English names.
+          const name = properties.find((c) => c.name === "name")?.attrs.val;
           const level = name?.match(/^heading ([1-6])$/i)?.[1];
           if (level && id !== `Heading${level}`) headings.set(id, `Heading${level}`);
         }
-        if (headings.size)
-          for (const pStyle of all(doc, "pStyle")) {
-            const heading = headings.get(pStyle.attrs.val ?? "");
-            if (heading) pStyle.attrs.val = heading;
+        if (outlines.size || headings.size)
+          for (const pStyle of all(doc, "pStyle", ["pPrChange"])) {
+            const id = pStyle.attrs.val ?? "";
+            const outline = wordStyleOutlineLevel(outlines, id);
+            if (outline !== undefined) pStyle.wordOutlineHeadingLevel = outline;
+            else {
+              const heading = headings.get(id);
+              if (heading) pStyle.attrs.val = heading;
+            }
           }
       }
       yield* paragraphs(doc);
