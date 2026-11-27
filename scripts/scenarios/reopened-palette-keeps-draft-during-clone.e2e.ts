@@ -2,6 +2,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- The fixture serves a local Git remote.
 import * as NodeHttp from "node:http";
 import { expect } from "e2e";
+import * as Effect from "effect/Effect";
 
 import { test, WEB } from "./t3.ts";
 
@@ -91,9 +92,7 @@ test(
       await browser.locator("html[data-cloned-project=held]").waitFor();
       await palette.waitFor({ state: "hidden" });
       // Let the first project wait expire so a second wait would still be pending.
-      await browser.evaluate(
-        () => new Promise<null>((resolve) => setTimeout(() => resolve(null), 3_100)),
-      );
+      await Effect.runPromise(Effect.sleep("3100 millis"));
       await browser.keyboard.press("Control+k");
       await palette.getByRole("combobox").fill("Keep this draft");
       await browser.evaluate(async () => {
