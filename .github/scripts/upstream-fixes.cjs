@@ -1,7 +1,6 @@
 // Cherry-picks upstream's non-breaking fix and perf commits after the cursor, takes back out
 // any that would undo this fork, reports the rest, and advances the cursor.
 // Usage: node .github/scripts/upstream-fixes.cjs <upstream-ref> [--max N] [--summary FILE]
-//        [--quarantine SHA]
 
 "use strict";
 
@@ -25,6 +24,8 @@ const PROTECTED_FILES = new Set([
   "PRIVACY.md",
   "NOTICE",
   "LICENSE",
+  "apps/server/src/cloud/publicConfig.ts",
+  "apps/web/src/cloud/publicConfig.ts",
   "apps/server/src/telemetry/AnalyticsService.ts",
   "apps/server/src/telemetry/Identify.ts",
   "packages/shared/src/relayTracing.ts",
@@ -32,7 +33,7 @@ const PROTECTED_FILES = new Set([
   "apps/web/src/branding.ts",
   "apps/web/src/legalLinks.ts",
 ]);
-const PROTECTED_PREFIXES = ["assets/"];
+const PROTECTED_PREFIXES = ["assets/", "apps/desktop/resources/startup/"];
 
 // Text a fix must not add: upstream's name and hosts, and analytics or tracing services.
 const FORBIDDEN = [
@@ -55,6 +56,12 @@ function guard(files, addedLines) {
     }
   }
   for (const { file, line } of addedLines) {
+    if (
+      (file === "package.json" || file.endsWith("/package.json")) &&
+      /^\s*"version"\s*:/.test(line)
+    ) {
+      return `changes package version in ${file}, which only this fork sets`;
+    }
     for (const rule of FORBIDDEN) {
       if (rule.outsideTests && TEST_FILE.test(file)) continue;
       if (rule.pattern.test(line)) return `adds ${rule.reason} to ${file}`;
@@ -129,28 +136,27 @@ function readCommit(sha) {
   return { sha, subject, body: body.join("\n"), files };
 }
 
+const MAX_PICKS = 12;
+const MAX_SCANNED = 120;
+
+function batchSize(value) {
+  if (!/^(?:[1-9]|1[0-2])$/.test(value)) {
+    throw new Error(`--max must be an integer from 1 to ${MAX_PICKS}`);
+  }
+  return Number(value);
+}
+
 function main(argv) {
   const upstream = argv[0];
   if (!upstream)
-    throw new Error(
-      "usage: upstream-fixes.cjs <upstream-ref> [--max N] [--summary FILE] [--quarantine SHA]",
-    );
+    throw new Error("usage: upstream-fixes.cjs <upstream-ref> [--max N] [--summary FILE]");
   const option = (name, fallback) => {
     const at = argv.indexOf(name);
     return at >= 0 && argv[at + 1] ? argv[at + 1] : fallback;
   };
-  const max = Number(option("--max", "200"));
+  const max = batchSize(option("--max", String(MAX_PICKS)));
   const summaryFile = option("--summary", "");
-
-  const quarantine = option("--quarantine", "");
-
   const cursor = fs.readFileSync(CURSOR_FILE, "utf8").trim();
-  // A fix that failed CI on its own is skipped from now on, with a note saying why.
-  if (/^[0-9a-f]{7,40}$/.test(quarantine)) {
-    const note = `${quarantine} # failed CI on its own (${new Date().toISOString().slice(0, 10)})\n`;
-    const current = fs.existsSync(SKIP_FILE) ? fs.readFileSync(SKIP_FILE, "utf8") : "";
-    if (!readSkip(current).has(quarantine)) fs.writeFileSync(SKIP_FILE, current + note);
-  }
   const skip = fs.existsSync(SKIP_FILE) ? readSkip(fs.readFileSync(SKIP_FILE, "utf8")) : new Set();
   const range = git([
     "rev-list",
@@ -167,7 +173,7 @@ function main(argv) {
   const guarded = [];
   const filtered = {};
   let last = cursor;
-  for (const sha of range) {
+  for (const sha of range.slice(0, MAX_SCANNED)) {
     if (picked.length >= max) break;
     last = sha;
     const commit = readCommit(sha);
@@ -214,8 +220,6 @@ function main(argv) {
     "",
     `Picked ${picked.length}, did not apply ${conflicted.length}, held back ${guarded.length}, left out ${Object.values(filtered).reduce((a, b) => a + b, 0)}.`,
   ];
-  if (quarantine)
-    lines.push("", `Now skipping \`${quarantine.slice(0, 12)}\`: it failed CI on its own.`);
   if (remaining > 0) lines.push("", `${remaining} upstream commits are left for the next run.`);
   if (picked.length) {
     lines.push("", "### Picked", "");
@@ -240,7 +244,7 @@ function main(argv) {
   return { picked: picked.length, advanced: last !== cursor };
 }
 
-module.exports = { addedLines, classify, guard, readSkip, skipped };
+module.exports = { addedLines, batchSize, classify, guard, readSkip, skipped };
 
 if (require.main === module) {
   main(process.argv.slice(2));

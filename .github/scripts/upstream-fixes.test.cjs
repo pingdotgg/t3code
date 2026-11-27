@@ -2,7 +2,15 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { classify, readSkip, skipped } = require("./upstream-fixes.cjs");
+const { batchSize, classify, readSkip, skipped } = require("./upstream-fixes.cjs");
+
+test("accepts only bounded batch sizes", () => {
+  assert.equal(batchSize("1"), 1);
+  assert.equal(batchSize("12"), 12);
+  for (const invalid of ["0", "13", "400", "1.5", "NaN", ""]) {
+    assert.throws(() => batchSize(invalid), /integer from 1 to 12/);
+  }
+});
 
 const commit = (subject, files = ["apps/web/src/a.ts"], body = "") => ({
   sha: "a".repeat(40),
@@ -103,4 +111,9 @@ test("reads the added lines of a patch with their files", () => {
 test("lets upstream's name stay in test fixtures", () => {
   const fixture = "apps/server/src/testkit/fixtures/run/transcript.ndjson";
   assert.equal(guard([fixture], [{ file: fixture, line: '"T3 Code session"' }]), "");
+});
+
+test("holds back upstream package.json version bumps", () => {
+  const added = [{ file: "apps/desktop/package.json", line: '  "version": "0.1.13",' }];
+  assert.match(guard(["apps/desktop/package.json"], added), /package version/);
 });

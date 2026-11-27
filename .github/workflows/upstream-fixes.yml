@@ -1,34 +1,18 @@
 name: Upstream Fixes
 
-# This fork is its own app; upstream is a source of fixes, not a branch we
-# follow. Every six hours this picks upstream's non-breaking `fix` and `perf` commits
-# that apply cleanly, puts them on the `upstream-fixes` branch, and opens or
-# updates one pull request with what was picked and what did not apply.
-# The same run then waits for CI on that branch and, through
-# .github/scripts/upstream-fixes-land.sh, merges the pull request when CI
-# passes or picks again with half the fixes when it fails, so a broken fix
-# never reaches main and the ones before it still land.
-# The rules live in .github/scripts/upstream-fixes.cjs; commits to never pick go
-# in .github/upstream-fixes/skip.
 on:
   schedule:
-    # Upstream lands a few hundred commits a day, so a daily run is too coarse.
     - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       max:
-        description: Most fixes to pick in one run
+        description: Most fixes to propose (1 to 12)
         required: false
-        default: "400"
-      quarantine:
-        description: Upstream sha that failed CI on its own; skip it from now on
-        required: false
-        default: ""
+        default: "12"
 
 permissions:
   contents: write
   pull-requests: write
-  issues: write
   actions: write
 
 concurrency:
@@ -37,74 +21,66 @@ concurrency:
 
 jobs:
   pick:
-    name: Pick upstream fixes
+    name: Propose upstream fixes
     runs-on: ubuntu-24.04
-    # Picking takes minutes; waiting for CI, and one retry of it, takes the rest.
-    timeout-minutes: 150
+    timeout-minutes: 15
     env:
       BRANCH: upstream-fixes
-      UPSTREAM: https://github.com/pingdotgg/t3code.git
-      HAS_TOKEN: ${{ secrets.UPSTREAM_FIXES_TOKEN != '' }}
+      GH_TOKEN: ${{ secrets.UPSTREAM_FIXES_TOKEN || github.token }}
     steps:
+      - name: Check for an open batch
+        id: batch
+        run: |
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+          if [ -n "$pr" ]; then
+            printf 'Upstream fixes are waiting for review in #%s. No branch changes made.\n' "$pr" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: steps.batch.outputs.number == ''
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: main
           fetch-depth: 0
-          # A personal token lets the pull request start CI by itself; without it
-          # the job dispatches CI on the branch instead.
           token: ${{ secrets.UPSTREAM_FIXES_TOKEN || github.token }}
 
       - name: Fetch upstream
+        if: steps.batch.outputs.number == ''
         run: |
-          git remote add upstream "$UPSTREAM"
+          git remote add upstream https://github.com/pingdotgg/t3code.git
           git fetch --no-tags upstream main
 
       - name: Pick fixes
+        if: steps.batch.outputs.number == ''
         id: pick
         env:
-          MAX: ${{ inputs.max || '400' }}
-          QUARANTINE: ${{ inputs.quarantine || '' }}
+          MAX: ${{ inputs.max || '12' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -C "$BRANCH"
-          node .github/scripts/upstream-fixes.cjs upstream/main --max "$MAX" \
-            --quarantine "$QUARANTINE" --summary "$RUNNER_TEMP/summary.md"
+          node .github/scripts/upstream-fixes.cjs upstream/main --max "$MAX" --summary "$RUNNER_TEMP/summary.md"
           cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$(git rev-list --count origin/main..HEAD)" -eq 0 ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          if [ "$(git rev-list --count origin/main..HEAD)" -gt 0 ]; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Open or update the pull request
+      - name: Open pull request
+        id: publish
         if: steps.pick.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.UPSTREAM_FIXES_TOKEN || github.token }}
         run: |
-          git push --force origin "$BRANCH"
-          # A fork's gh defaults to the parent repository; name ours explicitly.
-          title="Upstream fixes ($(date -u +%Y-%m-%d))"
-          # Only an open pull request is reused; a merged one opens a new one.
           pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')
-          if [ -n "$pr" ]; then
-            gh pr edit "$pr" --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/summary.md"
-          else
-            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/summary.md"
-          fi
+          if [ -n "$pr" ]; then exit 0; fi
+          ref="refs/heads/$BRANCH"
+          previous=$(git ls-remote --heads origin "$ref" | cut -f1)
+          git push --force-with-lease="$ref:$previous" origin "HEAD:$ref"
+          gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
+            --title "Upstream fixes ($(date -u +%Y-%m-%d))" --body-file "$RUNNER_TEMP/summary.md"
+          echo 'created=true' >> "$GITHUB_OUTPUT"
 
-      # Only this dispatched run counts: it covers every job, and the land step
-      # looks for it by event, whatever the pull request itself starts.
-      - name: Run CI on the branch
-        if: steps.pick.outputs.changed == 'true'
+      - name: Run CI on the proposed batch
+        if: steps.publish.outputs.created == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
-
-      - name: Land or narrow
-        if: steps.pick.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: SHA="$(git rev-parse HEAD)" bash .github/scripts/upstream-fixes-land.sh
