@@ -55,6 +55,8 @@ export type SpeechPlayback = {
   words?: (listener: (word: SpokenWord | null) => void) => () => void;
   /** Moves to the word at offset `at` of the text it speaks; false while its time is unknown. */
   seek?: (at: number) => boolean;
+  /** Whether its word times are estimated, as for speech the environment could not time. */
+  estimated?: () => boolean;
   /** Plays at `speed` from now on, for players that can change rate mid-speech. */
   setSpeed?: (speed: number) => void;
   /** Reports how loud what plays is, from 0 to 1, while it plays; returns the unsubscribe. */
@@ -188,6 +190,8 @@ export function createTimedWords(input: {
       };
     },
     refresh,
+    /** Whether the environment sent no timings, so the words are spread by estimate. */
+    estimated: () => estimated,
     /** When the word holding offset `at` starts, once its timing has arrived. */
     secondsAt: (at: number) => {
       // An estimate can land words early or late, so seeking to one skips or repeats speech.
@@ -337,13 +341,16 @@ export function createReadAloudController(
           : readAloudBlockFrom(speech, from)?.spokenStart;
     // Nothing is read after `from`, such as in a skipped closing code block: keep reading.
     if (offset === undefined) return;
+    // A lead-in is cut at the word by its timing; speech the environment could not time, such as
+    // a language its timing model does not hear, would play the lead-in whole, so start at the word.
+    const timeable = playback?.estimated?.() !== true;
     stop();
     if (settings.provider === "off") return;
     reading = { id, markdown, settings, words };
     // Environments make speech picked up mid-sentence from the sentence's start, for context.
     // Platform engines cannot start partway into their audio, so they start at the word.
     const leadIn =
-      fromWord && settings.provider !== "system"
+      fromWord && settings.provider !== "system" && timeable
         ? readAloudSentenceStart(speech.text, offset)
         : offset;
     // Platform speech engines cap utterance length; environments stream a whole reply.

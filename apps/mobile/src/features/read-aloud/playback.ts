@@ -274,6 +274,7 @@ export const readAloudController = createReadAloudController(
         });
         return timed.subscribe(listener);
       },
+      estimated: () => timed?.estimated() === true,
       seek: (at) => {
         const seconds = timed?.secondsAt(at);
         // The synthesis stream has no byte ranges, so its length stays unknown (0) and a seek can

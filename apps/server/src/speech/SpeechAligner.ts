@@ -11,6 +11,7 @@ import { loadNativeSpeechModel } from "./native.ts";
 import { isSpeechPlatformSupported } from "./platform.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 import { estimateWords, matchHeardWords, textWords, type HeardWord } from "./wordAlignment.ts";
+import { MP3_ENCODER_DELAY_SAMPLES } from "./synthesisTimings.ts";
 
 // `lag` is how much later than the spoken word each model places its start, measured against
 // Kokoro's own word timings; both reach the right word over 80% of the time.
@@ -22,8 +23,6 @@ const RATE = 16_000;
 // Later windows are long enough for context; the first is short so highlighting starts early.
 const WINDOW_SECONDS = 20;
 const FIRST_WINDOW_SECONDS = 6;
-// Players keep lame's encoder delay at the start of each MP3 stream these PCM chunks become.
-const MP3_ENCODER_DELAY_SAMPLES = 1105;
 // Share of heard characters the text accounts for: real readings measured 0.67 to 1, speech
 // unrelated to the text 0.3. Judged over the reply so far, as one window of spelled-out
 // numbers can fall below it.
@@ -54,7 +53,13 @@ const ENGLISH_FUNCTION_WORDS = new Set([
 const MIN_ENGLISH_FUNCTION_SHARE = 0.05;
 const IDLE_UNLOAD = "2 minutes";
 const SCRIPTS_WITHOUT_TIMINGS =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu;
+// A few such characters, such as a Chinese word in an English sentence, go untimed while the
+// words around them are timed; more than this share of the letters leaves nothing worth timing.
+const MAX_UNTIMED_SCRIPT_SHARE = 0.2;
+const untimedScripts = (text: string) =>
+  (text.match(SCRIPTS_WITHOUT_TIMINGS)?.length ?? 0) >
+  (text.match(/\p{L}/gu)?.length ?? 0) * MAX_UNTIMED_SCRIPT_SHARE;
 
 export type Transcriber = {
   readonly align: (pcm: Float32Array, language?: string) => Promise<ReadonlyArray<HeardWord>>;
@@ -208,11 +213,7 @@ export const make = Effect.fn("SpeechAligner.make")(function* (
     alignment: SpeechWordAlignment,
   ) {
     const model = definition(alignment);
-    if (
-      !supported ||
-      SCRIPTS_WITHOUT_TIMINGS.test(text) ||
-      !supportsLanguage(model, alignment, language, text)
-    )
+    if (!supported || untimedScripts(text) || !supportsLanguage(model, alignment, language, text))
       return undefined;
     const path = yield* store.installedPath(model);
     if (!path) {

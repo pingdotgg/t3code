@@ -25,7 +25,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
 import * as SpeechAligner from "./SpeechAligner.ts";
-import { mp3Duration, mp3FrameAt } from "./synthesisTimings.ts";
+import { mp3Duration, mp3FrameAt, quietestMoment, type TimedPcm } from "./synthesisTimings.ts";
 
 // A started stream nobody opens is abandoned.
 const UNREAD_GRACE: Duration.Input = "30 seconds";
@@ -37,6 +37,9 @@ const FINISHED_RETENTION: Duration.Input = "2 minutes";
 const TIMINGS_WAIT: Duration.Input = "10 seconds";
 // Audio that starts at a word keeps this much before its timed start, so its onset is not clipped.
 const WORD_ONSET_SECONDS = 0.05;
+// How far before a word to look for the quiet a lead-in is cut at. Words often run together, so
+// a pause further back would sit before the word ahead of it, which the cut would then keep.
+const QUIET_SEARCH_SECONDS = 0.08;
 
 const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
 
@@ -157,6 +160,8 @@ const make = Effect.gen(function* () {
             held: [] as Uint8Array[],
             words: [] as SpeechSynthesisWord[],
             cut: -1,
+            // Its PCM, to find the quiet before the word to cut at.
+            pcm: [] as TimedPcm[],
             // The whole synthesis, lead-in included, which its PCM and timings are measured on.
             total: mp3Duration(),
           }
@@ -177,9 +182,7 @@ const make = Effect.gen(function* () {
         if (target === undefined && !force) return Effect.void;
         const bytes = joined(lead.held);
         const frame =
-          (target === undefined
-            ? undefined
-            : mp3FrameAt(bytes, Math.max(0, target - WORD_ONSET_SECONDS))) ??
+          (target === undefined ? undefined : cutFrame(bytes, target)) ??
           (force ? { offset: 0, seconds: 0 } : undefined);
         if (!frame) return Effect.void;
         lead.cut = frame.seconds;
@@ -191,6 +194,21 @@ const make = Effect.gen(function* () {
           Effect.andThen(publishWords(words)),
         );
       });
+    // The frame boundary nearest the quiet before the word, so the cut catches none of the word
+    // before it; a fixed margin before the word when its PCM is not there.
+    const cutFrame = (bytes: Uint8Array, target: number) => {
+      const previous = lead?.words.findLast((word) => word.startSeconds < target)?.startSeconds;
+      const quiet = quietestMoment(
+        lead?.pcm ?? [],
+        Math.max(previous ?? 0, target - QUIET_SEARCH_SECONDS),
+        target,
+      );
+      const frame = mp3FrameAt(bytes, Math.max(0, quiet ?? target - WORD_ONSET_SECONDS));
+      if (!frame || quiet === undefined) return frame;
+      const later =
+        frame.end.seconds - quiet < quiet - frame.seconds && frame.end.seconds <= target;
+      return later && frame.end.offset < bytes.length ? frame.end : frame;
+    };
     const addWords = (words: ReadonlyArray<SpeechSynthesisWord>) => {
       if (!lead) return publishWords(words);
       if (lead.cut >= 0) return publishWords(shifted(words, lead.cut));
@@ -242,7 +260,10 @@ const make = Effect.gen(function* () {
     );
     job.fiber = yield* source.pipe(
       Stream.runForEach((part) => {
-        if ("pcm" in part) return Queue.offer(pcm, part);
+        if ("pcm" in part) {
+          if (lead && lead.cut < 0) lead.pcm.push(part);
+          return Queue.offer(pcm, part);
+        }
         if (!(part instanceof Uint8Array)) return addWords(part.words);
         return addChunk(part);
       }),
