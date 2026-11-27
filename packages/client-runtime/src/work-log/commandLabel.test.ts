@@ -225,6 +225,34 @@ describe("commandDisplayText with ANSI-C and locale quoting", () => {
   });
 });
 
+describe("commandDisplayText with line continuations", () => {
+  it.each([
+    ['bash \\\n-lc "git status"', "git status"],
+    ['bash\\\n -lc "git status"', "git status"],
+    ['bash -lc "git status \\\n--short"', "git status --short"],
+  ])("removes them as bash does: %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+
+  it.each([
+    ["bash -lc 'git status \\\n--short'", "git status \\\n--short"],
+    ["bash -c $'git status \\\n--short'", "git status \\\n--short"],
+    ['bash -lc "git status \\\r\n--short"', "git status \\\r\n--short"],
+  ])("keeps them where bash does: %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+
+  it.each([
+    ['cmd.exe /c "dir C:\\\necho done"', /^dir C:\\?\necho done$/u],
+    [
+      'pwsh -Command "Get-ChildItem C:\\\nWrite-Host done"',
+      /^Get-ChildItem C:\\?\nWrite-Host done$/u,
+    ],
+  ])("keeps Windows shell scripts on separate lines: %j", (input, shape) => {
+    expect(commandDisplayText(input)).toMatch(shape);
+  });
+});
+
 describe("commandDisplayText control characters", () => {
   it.each([
     ["printf '\u001b[31mred\u001b[0m'", "printf '␛[31mred␛[0m'"],

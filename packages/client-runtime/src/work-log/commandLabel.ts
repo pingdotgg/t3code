@@ -1457,10 +1457,15 @@ function withoutShellWrapper(command: string): string {
   const trimmed = command.trim();
   const split = splitFirstShellCommand(trimmed);
   if (split.remainingCommand !== null) return trimmed;
-  const tokens = tokenizeShellCommand(trimmed);
+  const joined = trimmed.includes("\\\n") ? withoutShellLineContinuations(trimmed) : trimmed;
+  let tokens = tokenizeShellCommand(joined);
   const executable = tokens?.[0]?.split(/[\\/]/u).at(-1)?.toLowerCase();
   const program = executable?.replace(/\.exe$/u, "");
   if (!tokens || !executable || !program) return trimmed;
+  if (joined !== trimmed && WINDOWS_SHELL_PROGRAMS.has(executable)) {
+    tokens = tokenizeShellCommand(trimmed);
+    if (!tokens || tokens[0]?.split(/[\\/]/u).at(-1)?.toLowerCase() !== executable) return trimmed;
+  }
   const scriptIndex = SHELL_PROGRAMS.has(program)
     ? shellCommandArgumentIndex(program, tokens, 1)
     : WINDOWS_SHELL_PROGRAMS.has(executable)
