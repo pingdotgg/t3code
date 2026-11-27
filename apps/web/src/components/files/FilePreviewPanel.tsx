@@ -961,7 +961,9 @@ function useFileLineReveal(
           ) {
             scrollContainer.scrollTop = targetTop;
           }
-          if (scroller === "codeView") state.revealedScrollTop = scrollContainer.scrollTop;
+          // The write's scroll event lands a frame later, and a rebuild before it must save this offset.
+          state.scrollTop = scrollContainer.scrollTop;
+          if (scroller === "codeView") state.revealedScrollTop = state.scrollTop;
           guardFrameId = requestAnimationFrame(holdTarget);
         };
         guardFrameId = requestAnimationFrame(holdTarget);
@@ -993,7 +995,8 @@ function useFileLineReveal(
             // It centers its estimate of the line, and rows it mounts on arrival can still move it.
             instance.scrollToLine(line, "center", (result) => {
               if (result !== "settled") return;
-              state.revealedScrollTop = scrollContainer.scrollTop;
+              state.scrollTop = scrollContainer.scrollTop;
+              state.revealedScrollTop = state.scrollTop;
               guardScrollTarget(line);
             });
             return;
