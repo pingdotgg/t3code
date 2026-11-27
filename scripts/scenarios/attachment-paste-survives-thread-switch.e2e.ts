@@ -56,7 +56,6 @@ test(
           released = true;
           release.resolve();
           await delivered.promise;
-          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         },
       };
     });
