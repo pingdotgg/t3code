@@ -9688,10 +9688,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             flavor.executedModel === undefined
               ? undefined
               : yield* flavor.executedModel(context.nativeThreadId);
-          const turn: OrchestrationV2ProviderTurn = {
-            ...providerTurnPayload(context, settledStatus, now),
-            ...(executedModel === undefined ? {} : { model: executedModel }),
-          };
+          const settledTurn = providerTurnPayload(context, settledStatus, now);
+          const turn: OrchestrationV2ProviderTurn =
+            executedModel === undefined
+              ? settledTurn
+              : {
+                  ...settledTurn,
+                  model: executedModel,
+                  ...(settledTurn.turnTokenUsage === undefined
+                    ? {}
+                    : {
+                        turnTokenUsage: { ...settledTurn.turnTokenUsage, models: [executedModel] },
+                      }),
+                };
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver,
