@@ -376,9 +376,10 @@ describe("BrowserImport.importCookies", () => {
 
       // Default listing skips disk scanning; unscanned discovered IDs are rejected even for a real root on disk.
       const digest = yield* Digest.Digest;
+      const canonicalLibrewolfRoot = yield* fileSystem.realPath(librewolfRoot);
       const librewolfHash = yield* digest.digest(
         Digest.sha256,
-        new TextEncoder().encode(`firefox\0${path.resolve(librewolfRoot).toLowerCase()}`),
+        new TextEncoder().encode(`firefox\0${canonicalLibrewolfRoot.toLowerCase()}`),
       );
       const librewolfRealId =
         `discovered:firefox:${Hex.encode(librewolfHash).slice(0, 16)}` as const;
@@ -461,6 +462,27 @@ describe("BrowserImport.importCookies", () => {
           ["https://librewolf.example/", "token", "lw-value"],
         ],
       );
+
+      // Replacing a cached discovered root with a symlink must not redirect subsequent reads.
+      if (symlinksSupported) {
+        const redirectedRoot = path.join(home, "redirected-librewolf");
+        yield* fileSystem.makeDirectory(path.join(redirectedRoot, "Profiles", "main.default"), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(
+          path.join(redirectedRoot, "profiles.ini"),
+          "[Profile0]\nName=Default\nIsRelative=1\nPath=Profiles/main.default\n",
+        );
+        yield* fileSystem.writeFileString(
+          path.join(redirectedRoot, "Profiles", "main.default", "cookies.sqlite"),
+          "redirected",
+        );
+        yield* fileSystem.remove(librewolfRoot, { recursive: true });
+        yield* fileSystem.symlink(redirectedRoot, librewolfRoot);
+        const afterSwap = (yield* importer.listSources()).find((s) => s.id === librewolf.id)!;
+        assert.equal(afterSwap.unavailable, "notInstalled");
+        assert.deepEqual(afterSwap.profiles, []);
+      }
     }).pipe(
       Effect.provide([
         NodeServices.layer,

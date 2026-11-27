@@ -267,16 +267,38 @@ const isWithinRoot = (path: Path.Path, root: string, candidate: string): boolean
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 };
 
-const databaseFileWithinRoot = Effect.fnUntraced(function* (
+const resolveFileWithinRoot = Effect.fnUntraced(function* (
   root: string,
   candidate: string,
   context: BrowserImportPathContext,
+  requirePinnedRoot: boolean,
 ) {
-  if (!isWithinRoot(context.path, root, candidate)) return false;
-  if (!(yield* databaseFileExists(candidate))) return false;
+  if (!isWithinRoot(context.path, root, candidate)) return undefined;
+  if (!(yield* databaseFileExists(candidate))) return undefined;
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* Effect.all([fileSystem.realPath(root), fileSystem.realPath(candidate)]).pipe(
-    Effect.map(([realRoot, realCandidate]) => isWithinRoot(context.path, realRoot, realCandidate)),
+    Effect.map(([realRoot, realCandidate]) => {
+      if (
+        requirePinnedRoot &&
+        normalizeRootKey(context, realRoot) !== normalizeRootKey(context, root)
+      ) {
+        return undefined;
+      }
+      return isWithinRoot(context.path, realRoot, realCandidate) ? realCandidate : undefined;
+    }),
+    Effect.orElseSucceed(() => undefined),
+  );
+});
+
+const isPinnedRootUnchanged = Effect.fnUntraced(function* (
+  root: string,
+  context: BrowserImportPathContext,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.realPath(root).pipe(
+    Effect.map(
+      (realRoot) => normalizeRootKey(context, realRoot) === normalizeRootKey(context, root),
+    ),
     Effect.orElseSucceed(() => false),
   );
 });
@@ -290,10 +312,12 @@ export const resolveCookieDatabase = Effect.fnUntraced(function* (
   if (root === undefined) return undefined;
   const enforceRootContainment = definition.id.startsWith("discovered:");
   for (const candidate of cookieDatabaseCandidatePaths(definition, context, profileDirectory)) {
-    const exists = enforceRootContainment
-      ? yield* databaseFileWithinRoot(root, candidate, context)
-      : yield* databaseFileExists(candidate);
-    if (exists) return candidate;
+    if (enforceRootContainment) {
+      const canonical = yield* resolveFileWithinRoot(root, candidate, context, true);
+      if (canonical !== undefined) return canonical;
+    } else if (yield* databaseFileExists(candidate)) {
+      return candidate;
+    }
   }
   return undefined;
 });
@@ -510,12 +534,20 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
     return yield* listSafariProfiles(context, root);
   }
 
+  const isDiscovered = definition.id.startsWith("discovered:");
+  if (isDiscovered && !(yield* isPinnedRootUnchanged(root, context))) return [];
+
   if (definition.engine === "firefox") {
-    const allowExternalProfiles = !definition.id.startsWith("discovered:");
-    const declared = yield* fileSystem.readFileString(context.path.join(root, "profiles.ini")).pipe(
-      Effect.map((ini) => parseFirefoxProfiles(ini, context.path, root, allowExternalProfiles)),
-      Effect.orElseSucceed(() => [] as ReadonlyArray<BrowserImportSourceProfile>),
-    );
+    const profilesIniPath = isDiscovered
+      ? yield* resolveFileWithinRoot(root, context.path.join(root, "profiles.ini"), context, true)
+      : context.path.join(root, "profiles.ini");
+    const declared =
+      profilesIniPath === undefined
+        ? ([] as ReadonlyArray<BrowserImportSourceProfile>)
+        : yield* fileSystem.readFileString(profilesIniPath).pipe(
+            Effect.map((ini) => parseFirefoxProfiles(ini, context.path, root, !isDiscovered)),
+            Effect.orElseSucceed(() => [] as ReadonlyArray<BrowserImportSourceProfile>),
+          );
     // Declared profiles may be stale or never launched; scan for unlisted stores if none has a cookie database.
     if (declared.length > 0) {
       const found = yield* Effect.forEach(declared, (profile) =>
@@ -547,17 +579,36 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
     );
   }
 
-  const declared = yield* fileSystem.readFileString(context.path.join(root, "Local State")).pipe(
-    Effect.flatMap(decodeLocalState),
-    Effect.map((state) => Object.entries(state.profile?.info_cache ?? {})),
-    // Browser metadata is user-writable; reject traversal segments before resolving cookie database paths.
-    Effect.map((entries) => entries.filter(([directory]) => isSafeProfileDirectory(directory))),
-    Effect.map((entries) =>
-      entries.map(([directory, info]) => ({ directory, name: info.name?.trim() || directory })),
-    ),
-    Effect.orElseSucceed(() => [] as ReadonlyArray<BrowserImportSourceProfile>),
-  );
-  if (declared.length > 0) return yield* withCookieCounts(definition, context, declared);
+  const localStatePath = isDiscovered
+    ? yield* resolveFileWithinRoot(root, context.path.join(root, "Local State"), context, true)
+    : context.path.join(root, "Local State");
+  const declared =
+    localStatePath === undefined
+      ? ([] as ReadonlyArray<BrowserImportSourceProfile>)
+      : yield* fileSystem.readFileString(localStatePath).pipe(
+          Effect.flatMap(decodeLocalState),
+          Effect.map((state) => Object.entries(state.profile?.info_cache ?? {})),
+          // Browser metadata is user-writable; reject traversal segments before resolving cookie database paths.
+          Effect.map((entries) =>
+            entries.filter(([directory]) => isSafeProfileDirectory(directory)),
+          ),
+          Effect.map((entries) =>
+            entries.map(([directory, info]) => ({
+              directory,
+              name: info.name?.trim() || directory,
+            })),
+          ),
+          Effect.orElseSucceed(() => [] as ReadonlyArray<BrowserImportSourceProfile>),
+        );
+  if (declared.length > 0) {
+    if (!isDiscovered) return yield* withCookieCounts(definition, context, declared);
+    const valid = (yield* Effect.forEach(declared, (profile) =>
+      resolveCookieDatabase(definition, context, profile.directory).pipe(
+        Effect.map((database) => (database === undefined ? undefined : profile)),
+      ),
+    )).filter((profile) => profile !== undefined);
+    return yield* withCookieCounts(definition, context, valid);
+  }
 
   const entries = yield* fileSystem
     .readDirectory(root)
@@ -1020,8 +1071,13 @@ const detectBrowserEngineAtRoot = Effect.fnUntraced(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   let sawMarker = false;
 
-  const profilesIniPath = context.path.join(root, "profiles.ini");
-  if (yield* databaseFileWithinRoot(root, profilesIniPath, context)) {
+  const profilesIniPath = yield* resolveFileWithinRoot(
+    root,
+    context.path.join(root, "profiles.ini"),
+    context,
+    false,
+  );
+  if (profilesIniPath !== undefined) {
     sawMarker = true;
     const ini = yield* fileSystem
       .readFileString(profilesIniPath)
@@ -1031,11 +1087,12 @@ const detectBrowserEngineAtRoot = Effect.fnUntraced(function* (
         ? profile.directory
         : context.path.join(root, profile.directory);
       if (
-        yield* databaseFileWithinRoot(
+        (yield* resolveFileWithinRoot(
           root,
           context.path.join(profilePath, "cookies.sqlite"),
           context,
-        )
+          false,
+        )) !== undefined
       ) {
         return "firefox";
       }
@@ -1046,11 +1103,12 @@ const detectBrowserEngineAtRoot = Effect.fnUntraced(function* (
       .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
     for (const entry of fallbackEntries) {
       if (
-        yield* databaseFileWithinRoot(
+        (yield* resolveFileWithinRoot(
           root,
           context.path.join(fallbackDir, entry, "cookies.sqlite"),
           context,
-        )
+          false,
+        )) !== undefined
       ) {
         return "firefox";
       }
@@ -1058,8 +1116,13 @@ const detectBrowserEngineAtRoot = Effect.fnUntraced(function* (
   }
 
   // Require `Local State` with `profile.info_cache` so Electron apps are excluded.
-  const localStatePath = context.path.join(root, "Local State");
-  if (yield* databaseFileWithinRoot(root, localStatePath, context)) {
+  const localStatePath = yield* resolveFileWithinRoot(
+    root,
+    context.path.join(root, "Local State"),
+    context,
+    false,
+  );
+  if (localStatePath !== undefined) {
     sawMarker = true;
     const contents = yield* fileSystem
       .readFileString(localStatePath)
@@ -1079,12 +1142,18 @@ const detectBrowserEngineAtRoot = Effect.fnUntraced(function* (
     );
     for (const dir of profileDirs) {
       if (
-        (yield* databaseFileWithinRoot(
+        (yield* resolveFileWithinRoot(
           root,
           context.path.join(root, dir, "Network", "Cookies"),
           context,
-        )) ||
-        (yield* databaseFileWithinRoot(root, context.path.join(root, dir, "Cookies"), context))
+          false,
+        )) !== undefined ||
+        (yield* resolveFileWithinRoot(
+          root,
+          context.path.join(root, dir, "Cookies"),
+          context,
+          false,
+        )) !== undefined
       ) {
         return "chromium";
       }
@@ -1234,28 +1303,32 @@ export const discoverBrowserImportSources = Effect.fn(
     }
   }
 
+  const fileSystem = yield* FileSystem.FileSystem;
   const discovered: Array<BrowserImportSourceDefinition> = [];
   for (const candidate of rawCandidates) {
     const name = deriveDiscoveredBrowserName(candidate.segments);
     if (name === undefined) continue;
+    const canonicalRoot = yield* fileSystem
+      .realPath(candidate.root)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (canonicalRoot === undefined) continue;
     const hashed = yield* crypto
       .digest(
         Digest.sha256,
         new TextEncoder().encode(
-          `${candidate.engine}\0${normalizeRootKey(context, candidate.root)}`,
+          `${candidate.engine}\0${normalizeRootKey(context, canonicalRoot)}`,
         ),
       )
       .pipe(Effect.orElseSucceed(() => undefined));
     if (hashed === undefined) continue;
     const id: BrowserImportSourceId = `discovered:${candidate.engine}:${Hex.encode(hashed).slice(0, 16)}`;
-    const rootPath = candidate.root;
     if (candidate.engine === "firefox") {
       discovered.push({
         id,
         name,
         engine: "firefox",
         platforms: [context.platform],
-        userDataDirectory: () => rootPath,
+        userDataDirectory: () => canonicalRoot,
       });
     } else {
       const keychainCandidates = discoveredChromiumKeychainCandidates(name);
@@ -1265,7 +1338,7 @@ export const discoverBrowserImportSources = Effect.fn(
         name,
         engine: "chromium",
         platforms: [context.platform],
-        userDataDirectory: () => rootPath,
+        userDataDirectory: () => canonicalRoot,
         ...(keychainCandidates[0]
           ? {
               keychainService: keychainCandidates[0].service,

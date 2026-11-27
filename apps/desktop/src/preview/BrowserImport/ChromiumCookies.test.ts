@@ -615,6 +615,46 @@ describe("readChromiumCookieDatabase", () => {
         expect(result.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
           { name: "sid", value: "session-from-chromium-key" },
         ]);
+
+        // When no guessed candidate matches, an accidental padding collision is counted as undecryptable rather than returned as garbage.
+        const allWrong = yield* readChromiumCookies({
+          cookieDatabasePath: filename,
+          platform: "linux",
+          keychainService: undefined,
+          keychainAccount: undefined,
+          linuxSecretApplication: "ardia",
+          linuxSecretApplications: ["ardia", "other-wrong"],
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              Layer.succeed(LinuxBrowserSecretPath, "/bundled/browser-secret/t3-browser-secret"),
+              Layer.succeed(
+                ChildProcessSpawner.ChildProcessSpawner,
+                ChildProcessSpawner.make((command) => {
+                  const app = (command as { readonly args: ReadonlyArray<string> }).args[0] ?? "";
+                  const secret = app === "ardia" ? collidingSecret : "also-wrong-secret";
+                  return Effect.succeed(
+                    ChildProcessSpawner.makeHandle({
+                      pid: ChildProcessSpawner.ProcessId(1),
+                      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                      isRunning: Effect.succeed(false),
+                      kill: () => Effect.void,
+                      unref: Effect.succeed(Effect.void),
+                      stdin: Sink.drain,
+                      stdout: Stream.encodeText(Stream.make(secret)),
+                      stderr: Stream.empty,
+                      all: Stream.empty,
+                      getInputFd: () => Sink.drain,
+                      getOutputFd: () => Stream.empty,
+                    }),
+                  );
+                }),
+              ),
+            ),
+          ),
+        );
+        expect(allWrong.cookies).toEqual([]);
+        expect(allWrong.undecryptable).toBe(1);
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
