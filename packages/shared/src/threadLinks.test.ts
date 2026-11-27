@@ -185,6 +185,26 @@ describe("thread links", () => {
   );
 
   it.each([
+    ["a blank line", "Intro\n\n", "    ", "~~~", ""],
+    ["an indented heading", "Intro\n  # Example\n", "    ", "~~~", ""],
+    ["a thematic break", "Intro\n\n***\n", "    ", "~~~", ""],
+    ["a setext heading", "Intro\n=====\n", "    ", "~~~", ""],
+    ["a closed fence", "Intro\n```\nexample\n```\n", "    ", "~~~", ""],
+    ["earlier indented content", "# Example\n    const x = 1;\n", "    ", "~~~", ""],
+    ["a literal list marker", "# Example\n", "    ", "- ```md", ""],
+    ["a literal quote marker", "# Example\n", "    ", "> ```md", ""],
+    ["a heading in a quote", "> # Example\n", ">     ", "~~~", "> "],
+  ])(
+    "keeps indented code literal and rewrites prose after %s",
+    (_name, before, indent, fence, quote) => {
+      const inside = "<t3-thread://v2/local/code>";
+      const outside = "<t3-thread://v2/local/prose>";
+      const example = `${before}${indent}${fence}\n${indent}${inside}\n${quote.trimEnd()}\n${quote}See `;
+      expect(replaceThreadLinks(`${example}${outside}`, () => "linked")).toBe(`${example}linked`);
+    },
+  );
+
+  it.each([
     ["4 spaces", "    ```md\n    <t3-thread://v1/abc>\n    ```", ""],
     ["tab", "\t```md\n\t<t3-thread://v1/abc>\n\t```", ""],
     ["list + 5 spaces", "-     ```md\n      <t3-thread://v1/abc>\n      ```", ""],
