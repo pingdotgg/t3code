@@ -676,6 +676,9 @@ export function TeamsSettings() {
                     setSelectedEnvironmentIdOverride(value as EnvironmentId);
                     setDisplayNameDraft(null);
                     setMyPseudoDraft(null);
+                    setShowInviteForm(false);
+                    setDeleteDialogOpen(false);
+                    setDeleteConfirmNameInput("");
                   }
                 }}
               >
@@ -808,17 +811,42 @@ export function TeamsSettings() {
             className="flex flex-wrap gap-1 rounded-xl border border-border/70 bg-muted/25 p-1"
             data-testid="teams-settings-tabs"
           >
-            {tabs.map((tab) => {
+            {tabs.map((tab, index) => {
               const Icon = tab.icon;
               const isSelected = activeTab === tab.id;
               return (
                 <button
                   key={tab.id}
+                  id={`teams-tab-${tab.id}`}
                   type="button"
                   role="tab"
+                  tabIndex={isSelected ? 0 : -1}
                   aria-selected={isSelected}
+                  aria-controls={`teams-tabpanel-${tab.id}`}
                   data-testid={`teams-tab-${tab.id}`}
                   onClick={() => setActiveTab(tab.id)}
+                  onKeyDown={(event) => {
+                    let nextIndex: number | null = null;
+                    if (event.key === "ArrowRight") {
+                      nextIndex = (index + 1) % tabs.length;
+                    } else if (event.key === "ArrowLeft") {
+                      nextIndex = (index - 1 + tabs.length) % tabs.length;
+                    } else if (event.key === "Home") {
+                      nextIndex = 0;
+                    } else if (event.key === "End") {
+                      nextIndex = tabs.length - 1;
+                    }
+                    if (nextIndex === null) return;
+                    event.preventDefault();
+                    const nextTab = tabs[nextIndex];
+                    if (!nextTab) return;
+                    setActiveTab(nextTab.id);
+                    const tabButtons =
+                      event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(
+                        '[role="tab"]',
+                      );
+                    tabButtons?.[nextIndex]?.focus();
+                  }}
                   className={cn(
                     "inline-flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors",
                     isSelected
@@ -834,7 +862,12 @@ export function TeamsSettings() {
           </div>
 
           {activeTab === "overview" ? (
-            <>
+            <div
+              role="tabpanel"
+              id="teams-tabpanel-overview"
+              aria-labelledby="teams-tab-overview"
+              className="space-y-6"
+            >
               <SettingsSection
                 id="teams-workspace"
                 title={teamState.team.name}
@@ -961,6 +994,7 @@ export function TeamsSettings() {
 
               {selectedEnvironmentId !== null ? (
                 <TeamMembersSettingsSection
+                  key={`members:${selectedEnvironmentId}`}
                   environmentId={selectedEnvironmentId}
                   currentMember={currentMember}
                   members={teamState.members}
@@ -1250,6 +1284,7 @@ export function TeamsSettings() {
 
               {selectedEnvironmentId !== null ? (
                 <TeamMobileCompatSection
+                  key={`mobile:${selectedEnvironmentId}`}
                   environmentId={selectedEnvironmentId}
                   serverBaseUrl={serverBaseUrl}
                   currentMember={currentMember}
@@ -1316,12 +1351,18 @@ export function TeamsSettings() {
                   ) : null}
                 </SettingsSection>
               ) : null}
-            </>
+            </div>
           ) : null}
 
           {activeTab === "access" && selectedEnvironmentId !== null ? (
-            <>
+            <div
+              role="tabpanel"
+              id="teams-tabpanel-access"
+              aria-labelledby="teams-tab-access"
+              className="space-y-6"
+            >
               <TeamViewsSettingsSection
+                key={`views:${selectedEnvironmentId}`}
                 environmentId={selectedEnvironmentId}
                 currentMember={currentMember}
                 members={teamState.members}
@@ -1329,25 +1370,32 @@ export function TeamsSettings() {
                 views={teamState.views}
               />
               <TeamEnvironmentsSettingsSection
+                key={`envs:${selectedEnvironmentId}`}
                 environmentId={selectedEnvironmentId}
                 currentMember={currentMember}
                 members={teamState.members}
                 memberById={teamState.memberById}
                 environments={teamState.environments}
               />
-            </>
+            </div>
           ) : null}
 
           {activeTab === "providers" && selectedEnvironmentId !== null ? (
-            <>
+            <div
+              role="tabpanel"
+              id="teams-tabpanel-providers"
+              aria-labelledby="teams-tab-providers"
+              className="space-y-6"
+            >
               <TeamProvidersSettingsSection
+                key={`providers:${selectedEnvironmentId}`}
                 environmentId={selectedEnvironmentId}
                 currentMember={currentMember}
                 memberById={teamState.memberById}
                 providers={teamState.providers}
               />
               <TeamGitHubSettingsSection
-                key={selectedEnvironmentId}
+                key={`github:${selectedEnvironmentId}`}
                 environmentId={selectedEnvironmentId}
                 serverBaseUrl={serverBaseUrl}
                 currentMember={currentMember}
@@ -1356,18 +1404,26 @@ export function TeamsSettings() {
                 automationGitHubIdentity={teamState.automationGitHubIdentity}
                 githubAppConfig={teamState.githubAppConfig}
               />
-            </>
+            </div>
           ) : null}
 
           {activeTab === "skills" && selectedEnvironmentId !== null ? (
-            <TeamSkillsAndPrepromptsSettingsSection
-              environmentId={selectedEnvironmentId}
-              currentMember={currentMember}
-              memberById={teamState.memberById}
-              skills={teamState.skills}
-              preprompts={teamState.preprompts}
-              assetsRevision={teamState.assetsRevision}
-            />
+            <div
+              role="tabpanel"
+              id="teams-tabpanel-skills"
+              aria-labelledby="teams-tab-skills"
+              className="space-y-6"
+            >
+              <TeamSkillsAndPrepromptsSettingsSection
+                key={`skills:${selectedEnvironmentId}`}
+                environmentId={selectedEnvironmentId}
+                currentMember={currentMember}
+                memberById={teamState.memberById}
+                skills={teamState.skills}
+                preprompts={teamState.preprompts}
+                assetsRevision={teamState.assetsRevision}
+              />
+            </div>
           ) : null}
         </>
       )}

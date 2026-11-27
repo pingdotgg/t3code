@@ -148,12 +148,7 @@ export function TeamViewsSettingsSection({
     const trimmedDescription = draft.description.trim();
     const readRule: TeamAccessRule = {
       roles: draft.isDefault ? [...ALL_TEAM_ROLES] : [...draft.readRoles],
-      memberIds: draft.isDefault
-        ? []
-        : draft.readMemberIds.filter((id) => {
-            const member = memberById.get(id);
-            return member === undefined || !isTeamAdminRole(member.role);
-          }),
+      memberIds: draft.isDefault ? [] : [...draft.readMemberIds],
     };
     const postRule: TeamAccessRule = {
       roles: [...draft.postRoles],

@@ -35,12 +35,14 @@ import {
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "@effect/vitest";
 
 import * as ServerConfig from "../config.ts";
@@ -4395,6 +4397,12 @@ describe("TeamService", () => {
           });
         }
 
+        // Subscribe Alice's stream BEFORE Bob leaves to verify live memberUpserted + viewUpserted broadcast.
+        const bobLeaveEventsFiber = yield* team
+          .streamState(aliceSession.sessionId)
+          .pipe(Stream.take(3), Stream.runCollect, Effect.forkChild);
+        yield* Effect.yieldNow;
+
         // Bob leaves the team: his session is revoked, status becomes removed, and view memberIds cleaned up.
         const bobLeft = yield* team.leaveTeam({ sessionId: bobSession.sessionId });
         expect(bobLeft).toEqual({
@@ -4402,6 +4410,12 @@ describe("TeamService", () => {
           teamId: init.team.id,
           memberId: bobJoined.member.id,
         });
+        const bobLeaveEvents = yield* Fiber.join(bobLeaveEventsFiber);
+        expect(bobLeaveEvents.map((e) => e.type)).toEqual([
+          "snapshot",
+          "memberUpserted",
+          "snapshot",
+        ]);
         expect((yield* Effect.exit(sessions.verify(bobJoined.accessToken)))._tag).toBe("Failure");
         const stateAfterBobLeft = yield* team.getState(aliceSession.sessionId);
         expect(stateAfterBobLeft.members.find((m) => m.id === bobJoined.member.id)?.status).toBe(
@@ -4412,12 +4426,22 @@ describe("TeamService", () => {
         expect(refreshedView?.postRule.memberIds).not.toContain(bobJoined.member.id);
 
         // With Carol as a second active owner, Carol can leave while Alice remains owner.
-        const carolLeft = yield* team.leaveTeam({ sessionId: carolSession.sessionId });
+        // Verify deferred caller session revocation (used by WS handler) marks Carol removed
+        // immediately, returns cleanly before socket close, and revokes the session after flush.
+        const carolLeft = yield* team.leaveTeam({
+          sessionId: carolSession.sessionId,
+          deferCallerSessionRevocation: true,
+        });
         expect(carolLeft).toEqual({
           left: true,
           teamId: init.team.id,
           memberId: carolJoined.member.id,
         });
+        const stateRightAfterCarolLeft = yield* team.getState(aliceSession.sessionId);
+        expect(
+          stateRightAfterCarolLeft.members.find((m) => m.id === carolJoined.member.id)?.status,
+        ).toBe("removed");
+        yield* TestClock.adjust(Duration.millis(100));
         expect((yield* Effect.exit(sessions.verify(carolJoined.accessToken)))._tag).toBe("Failure");
 
         // Invite Dana so we can verify deleteTeam revokes other active members' sessions & emits teamDeleted.
@@ -4447,6 +4471,103 @@ describe("TeamService", () => {
           });
         }
 
+        // Record a team scheduled task and a server-hosted team provider to verify deleteTeam cleans up both.
+        const teamTaskId = ScheduledTaskId.make("sched-team-delete-1");
+        yield* team.saveScheduledTaskMeta({
+          taskId: teamTaskId,
+          teamId: init.team.id,
+          environmentId: EnvironmentId.make("env-delete-1"),
+          viewId: init.team.defaultViewId,
+          actorMemberId: init.owner.id,
+          mcpAccessLevel: "minimal",
+          locked: false,
+        });
+        yield* team.upsertProvider({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            providerInstanceId: ProviderInstanceId.make("team-claude-del"),
+            driver: ProviderDriverKind.make("claudeAgent"),
+            displayName: "Team Claude",
+            deliveryStrategy: "proxy",
+            upstreamBaseUrl: "https://api.anthropic.com",
+            apiKey: "sk-ant-test",
+            enabled: true,
+          },
+        });
+        // Reject virtual team: instance IDs via config.linkedServerInstanceId and conflicting clearSecret + link.
+        const badConfigLinkExit = yield* Effect.exit(
+          team.upsertProvider({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              providerInstanceId: ProviderInstanceId.make("team-bad-link"),
+              driver: ProviderDriverKind.make("claudeAgent"),
+              deliveryStrategy: "token-lease",
+              config: { linkedServerInstanceId: `team:${init.team.id}:claude` },
+              enabled: true,
+            },
+          }),
+        );
+        expect(badConfigLinkExit._tag).toBe("Failure");
+        const conflictClearLinkExit = yield* Effect.exit(
+          team.upsertProvider({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              providerInstanceId: ProviderInstanceId.make("team-bad-link"),
+              driver: ProviderDriverKind.make("claudeAgent"),
+              deliveryStrategy: "token-lease",
+              clearSecret: true,
+              sourceServerProviderInstanceId: ProviderInstanceId.make("claudeAgent"),
+              enabled: true,
+            },
+          }),
+        );
+        expect(conflictClearLinkExit._tag).toBe("Failure");
+
+        const deletedTaskIds: Array<ScheduledTaskId> = [];
+        const purgedWorkspaceCalls: Array<{
+          readonly teamId: string;
+          readonly count: number;
+        }> = [];
+        const fakeScheduledTaskService = {
+          delete: ({ id }: { readonly id: ScheduledTaskId }) =>
+            Effect.sync(() => {
+              deletedTaskIds.push(id);
+              return { deleted: true, id };
+            }),
+        } as never;
+        const fakeProviderManager = {
+          removeLocalTeamBinding: () => Effect.succeed(false),
+          purgeTeamWorkspaceProfiles: (args: {
+            readonly teamId: string;
+            readonly providers: ReadonlyArray<unknown>;
+          }) =>
+            Effect.sync(() => {
+              purgedWorkspaceCalls.push({ teamId: args.teamId, count: args.providers.length });
+            }),
+        } as never;
+
+        // Simulate an offline peer link during deleteTeam so we verify pending remote revocations
+        // survive workspace deletion and still drain once the peer comes back online.
+        const offlinePeerEnvId = EnvironmentId.make("env-offline-peer-1");
+        let peerOnline = false;
+        const revokedRemoteSubjects: Array<{
+          readonly environmentId: EnvironmentId;
+          readonly subjectPrefix: string;
+        }> = [];
+        const fakePeerClientPairing = {
+          revokeSubject: (environmentId: EnvironmentId, subjectPrefix: string) =>
+            Effect.sync(() => {
+              if (!peerOnline) {
+                return { ok: false as const, reason: "offline" as const };
+              }
+              revokedRemoteSubjects.push({ environmentId, subjectPrefix });
+              return { ok: true as const };
+            }),
+        } as never;
+        const fakePeerLinks = {
+          list: Effect.succeed([{ environmentId: offlinePeerEnvId }]),
+        } as never;
+
         // Subscribe Alice's stream to verify `teamDeleted` event broadcast.
         const aliceStreamFiber = yield* team
           .streamState(aliceSession.sessionId)
@@ -4456,8 +4577,15 @@ describe("TeamService", () => {
         const deleted = yield* team.deleteTeam({
           sessionId: aliceSession.sessionId,
           payload: { confirmTeamName: "Acme Engineering" },
+          peerClientPairing: fakePeerClientPairing,
+          peerLinks: fakePeerLinks,
+          scheduledTaskService: fakeScheduledTaskService,
+          teamProviderManager: fakeProviderManager,
         });
         expect(deleted).toEqual({ deleted: true, teamId: init.team.id });
+        expect(deletedTaskIds).toEqual([teamTaskId]);
+        expect(purgedWorkspaceCalls).toEqual([{ teamId: init.team.id, count: 1 }]);
+        expect(revokedRemoteSubjects).toEqual([]);
 
         const aliceEvents = yield* Fiber.join(aliceStreamFiber);
         expect(aliceEvents.map((e) => e.type)).toEqual(["snapshot", "teamDeleted"]);
@@ -4468,6 +4596,20 @@ describe("TeamService", () => {
         expect(emptyState.team).toBeNull();
         expect(emptyState.members).toEqual([]);
         expect(emptyState.views).toEqual([]);
+
+        // Once the offline peer reconnects in personal mode, pending revocation still drains.
+        peerOnline = true;
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: fakePeerClientPairing,
+          peerLinks: fakePeerLinks,
+        });
+        expect(revokedRemoteSubjects).toEqual([
+          {
+            environmentId: offlinePeerEnvId,
+            subjectPrefix: `team-member:${init.team.id}:`,
+          },
+        ]);
+
         // Dana's session ID was revoked (unused variable silence check).
         expect(danaSession.sessionId).toBeTruthy();
       }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),

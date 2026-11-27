@@ -28,6 +28,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import { requestUrl } from "../requestUrl.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as TeamAssetsRepository from "./TeamAssetsRepository.ts";
 import {
   issueEphemeralTeamProviderLease,
@@ -596,12 +597,17 @@ const handleProviderLease = Effect.fn("TeamProviderProxyHttp.lease")(function* (
   const provider = providerOpt.value;
   const linkedServerInstanceId = readLinkedServerInstanceIdFromConfig(provider.config);
   const serverConfigOpt = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+  const serverSettingsOpt = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  const resolvedServerSettings = Option.isSome(serverSettingsOpt)
+    ? yield* serverSettingsOpt.value.getSettings.pipe(Effect.orElseSucceed(() => null))
+    : null;
   const fallbackProfileDir =
     linkedServerInstanceId !== null && Option.isSome(serverConfigOpt)
       ? resolveLinkedServerProviderProfileDir({
           stateDir: serverConfigOpt.value.stateDir,
           driver: provider.driver,
           linkedServerInstanceId,
+          ...(resolvedServerSettings !== null ? { serverSettings: resolvedServerSettings } : {}),
         })
       : null;
   if (

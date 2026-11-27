@@ -223,7 +223,7 @@ export function TeamProvidersSettingsSection({
         apiKeyPrefix: apiKeyPrefixInput.length > 0 ? apiKeyPrefixInput : null,
         enabled: enabledInput,
         ...(clearSecretInput ? { clearSecret: true } : {}),
-        ...(strategyInput === "token-lease"
+        ...(strategyInput === "token-lease" && !clearSecretInput
           ? {
               sourceServerProviderInstanceId:
                 trimmedLinkedId.length > 0 ? ProviderInstanceId.make(trimmedLinkedId) : null,
@@ -645,6 +645,7 @@ export function TeamProvidersSettingsSection({
                         return;
                       }
                       setLinkedServerInstanceId(value);
+                      setClearSecretInput(false);
                     }}
                   >
                     <SelectTrigger
@@ -806,7 +807,12 @@ export function TeamProvidersSettingsSection({
                   <label className="flex items-center gap-2 text-xs text-muted-foreground">
                     <Switch
                       checked={clearSecretInput}
-                      onCheckedChange={setClearSecretInput}
+                      onCheckedChange={(checked) => {
+                        setClearSecretInput(checked);
+                        if (checked) {
+                          setLinkedServerInstanceId("");
+                        }
+                      }}
                       data-testid="team-provider-clear-secret-switch"
                     />
                     <span>

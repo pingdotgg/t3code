@@ -12653,6 +12653,7 @@
   "51f3f1ad0d1bb194": "Código de vinculación móvil creado",
   "f3bec5a4fe329e0e": "Escanea el código QR o introduce el código en la app móvil oficial de T3 Code para conectarte como {pseudo}.",
   "6e2561975e046ebe": "No se pudo crear el código de vinculación móvil",
+  "419ff45930fda415": "¿Revocar este código de emparejamiento móvil?\nLos dispositivos que usen este código pendiente ya no podrán emparejarse.",
   "5891c37a751ae818": "Código de vinculación móvil revocado",
   "c5282ce00f8d353f": "No se pudo revocar el código de vinculación móvil",
   "eb56b3c5a36b9d51": "App móvil oficial",

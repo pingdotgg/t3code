@@ -6,10 +6,13 @@ import * as NodePath from "node:path";
 
 import {
   IsoDateTime,
+  isTeamProviderInstanceId,
   NonNegativeInt,
   TeamOperationError,
   type ProviderDriverKind,
+  type ProviderInstanceConfig,
   type ProviderInstanceId,
+  type ServerSettings,
   type TeamProviderLeaseResponse,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -98,33 +101,99 @@ const decodeCodexAuthFile = Schema.decodeUnknownOption(
   ),
 );
 
+function expandLeadingTilde(rawPath: string): string {
+  const trimmed = rawPath.trim();
+  if (trimmed === "~") return NodeOS.homedir();
+  if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+    return NodePath.join(NodeOS.homedir(), trimmed.slice(2));
+  }
+  return trimmed;
+}
+
+function readInstanceHomePathFromConfig(instance: ProviderInstanceConfig): string | null {
+  const cfg = instance.config;
+  if (cfg !== null && typeof cfg === "object" && "homePath" in cfg) {
+    const raw = (cfg as { readonly homePath?: unknown }).homePath;
+    if (typeof raw === "string" && raw.trim().length > 0) {
+      return expandLeadingTilde(raw);
+    }
+  }
+  return null;
+}
+
+function readInstanceEnvValue(instance: ProviderInstanceConfig, envVarName: string): string | null {
+  const env = instance.environment;
+  if (!Array.isArray(env)) return null;
+  for (const entry of env) {
+    if (
+      entry !== null &&
+      typeof entry === "object" &&
+      "name" in entry &&
+      "value" in entry &&
+      (entry as { readonly name?: unknown }).name === envVarName
+    ) {
+      const value = (entry as { readonly value?: unknown }).value;
+      if (typeof value === "string" && value.trim().length > 0) {
+        return expandLeadingTilde(value);
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Resolves the on-disk profile directory for a signed-in Team Server provider instance
  * referenced by `config.linkedServerInstanceId`.
+ * Rejects virtual `team:` provider instance IDs and validates driver/instance settings when provided.
  */
 export function resolveLinkedServerProviderProfileDir(input: {
   readonly stateDir: string;
   readonly driver: ProviderDriverKind | string;
   readonly linkedServerInstanceId: string;
-  readonly customHomePath?: string | null;
+  readonly serverSettings?: ServerSettings | null;
 }): string | null {
-  const customHome = input.customHomePath?.trim();
-  if (customHome && customHome.length > 0) {
-    return customHome;
+  const trimmedId = input.linkedServerInstanceId.trim();
+  if (trimmedId.length === 0 || isTeamProviderInstanceId(trimmedId)) {
+    return null;
   }
+  let matchedInstance: ProviderInstanceConfig | null = null;
+  if (input.serverSettings !== undefined && input.serverSettings !== null) {
+    const candidate = (
+      input.serverSettings.providerInstances as Readonly<Record<string, ProviderInstanceConfig>>
+    )[trimmedId];
+    if (candidate === undefined || candidate.driver !== input.driver) {
+      return null;
+    }
+    matchedInstance = candidate;
+  }
+
   if (input.driver === "antigravity") {
-    const hash = NodeCrypto.createHash("sha256")
-      .update(input.linkedServerInstanceId, "utf8")
-      .digest("hex");
+    const hash = NodeCrypto.createHash("sha256").update(trimmedId, "utf8").digest("hex");
     return NodePath.join(input.stateDir, "providers", "antigravity", hash);
   }
   if (input.driver === "claudeAgent") {
+    const instanceHome = matchedInstance ? readInstanceHomePathFromConfig(matchedInstance) : null;
+    if (instanceHome) return instanceHome;
+    const instanceEnvDir = matchedInstance
+      ? readInstanceEnvValue(matchedInstance, "CLAUDE_CONFIG_DIR")
+      : null;
+    if (instanceEnvDir) return instanceEnvDir;
     const envDir = process.env.CLAUDE_CONFIG_DIR?.trim();
-    return envDir && envDir.length > 0 ? envDir : NodePath.join(NodeOS.homedir(), ".claude");
+    return envDir && envDir.length > 0
+      ? expandLeadingTilde(envDir)
+      : NodePath.join(NodeOS.homedir(), ".claude");
   }
   if (input.driver === "codex") {
+    const instanceHome = matchedInstance ? readInstanceHomePathFromConfig(matchedInstance) : null;
+    if (instanceHome) return instanceHome;
+    const instanceEnvDir = matchedInstance
+      ? readInstanceEnvValue(matchedInstance, "CODEX_HOME")
+      : null;
+    if (instanceEnvDir) return instanceEnvDir;
     const envDir = process.env.CODEX_HOME?.trim();
-    return envDir && envDir.length > 0 ? envDir : NodePath.join(NodeOS.homedir(), ".codex");
+    return envDir && envDir.length > 0
+      ? expandLeadingTilde(envDir)
+      : NodePath.join(NodeOS.homedir(), ".codex");
   }
   return null;
 }
@@ -133,10 +202,18 @@ export function readLinkedServerInstanceIdFromConfig(
   config: Readonly<Record<string, unknown>> | null | undefined,
 ): string | null {
   const raw = config?.linkedServerInstanceId;
-  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || isTeamProviderInstanceId(trimmed)) return null;
+  return trimmed;
 }
 
-export async function readOAuthCredentialsFromServerProfileDir(input: {
+/**
+ * Reads only the current short-lived access token metadata from a linked server profile directory.
+ * Refresh tokens are deliberately never read or forwarded; the originating server provider adapter
+ * owns token refresh and its upstream endpoint.
+ */
+async function readOAuthCredentialsFromServerProfileDir(input: {
   readonly driver: ProviderDriverKind | string;
   readonly profileDir: string;
 }): Promise<StoredTeamProviderSecret | null> {
@@ -154,7 +231,6 @@ export async function readOAuthCredentialsFromServerProfileDir(input: {
       if (!parsed.token?.access_token) continue;
       return {
         oauthAccessToken: parsed.token.access_token,
-        ...(parsed.token.refresh_token ? { oauthRefreshToken: parsed.token.refresh_token } : {}),
         ...(parsed.token.token_type ? { oauthTokenType: parsed.token.token_type } : {}),
         ...(parsed.token.expiry ? { oauthExpiresAt: parsed.token.expiry } : {}),
         ...(parsed.auth_method ? { oauthAuthMethod: parsed.auth_method } : {}),
@@ -185,7 +261,6 @@ export async function readOAuthCredentialsFromServerProfileDir(input: {
       : undefined;
     return {
       oauthAccessToken: oauth.accessToken,
-      ...(oauth.refreshToken ? { oauthRefreshToken: oauth.refreshToken } : {}),
       ...(expiresAtIso ? { oauthExpiresAt: expiresAtIso } : {}),
     };
   }
@@ -201,7 +276,6 @@ export async function readOAuthCredentialsFromServerProfileDir(input: {
     if (!tokens?.access_token) return null;
     return {
       oauthAccessToken: tokens.access_token,
-      ...(tokens.refresh_token ? { oauthRefreshToken: tokens.refresh_token } : {}),
     };
   }
 
@@ -306,20 +380,18 @@ export const issueEphemeralTeamProviderLease = Effect.fn("TeamProviderLease.issu
     const lock = yield* getRefreshLock(input.secretKey);
     return yield* lock.withPermits(1)(
       Effect.gen(function* () {
-        let stored = yield* readTeamProviderSecret(input.secrets, input.secretKey);
-
-        // Optional fallback: read token metadata from the linked Team Server provider profile directory.
-        if (stored === null && input.fallbackProfileDir) {
-          const imported = yield* Effect.promise(() =>
-            readOAuthCredentialsFromServerProfileDir({
-              driver: input.driver,
-              profileDir: input.fallbackProfileDir!,
-            }),
-          );
-          if (imported !== null) {
-            stored = imported;
-          }
-        }
+        // Linked server profile mode: always read live access token metadata directly from disk
+        // so CLI rotations are picked up immediately and linked refresh tokens never cross to
+        // admin-configured OAuth endpoints.
+        const isLinkedProfileMode = Boolean(input.fallbackProfileDir);
+        let stored: StoredTeamProviderSecret | null = isLinkedProfileMode
+          ? yield* Effect.promise(() =>
+              readOAuthCredentialsFromServerProfileDir({
+                driver: input.driver,
+                profileDir: input.fallbackProfileDir!,
+              }),
+            )
+          : yield* readTeamProviderSecret(input.secrets, input.secretKey);
 
         if (stored === null || (!stored.oauthAccessToken && !stored.oauthRefreshToken)) {
           return yield* new TeamOperationError({
@@ -336,7 +408,12 @@ export const issueEphemeralTeamProviderLease = Effect.fn("TeamProviderLease.issu
           input.forceRefresh === true ||
           remainingMs < TEAM_SERVER_OAUTH_REFRESH_THRESHOLD_MS;
 
-        if (needsRefresh && stored.oauthRefreshToken && stored.oauthTokenEndpoint) {
+        if (
+          !isLinkedProfileMode &&
+          needsRefresh &&
+          stored.oauthRefreshToken &&
+          stored.oauthTokenEndpoint
+        ) {
           const form = new URLSearchParams({
             grant_type: "refresh_token",
             refresh_token: stored.oauthRefreshToken,

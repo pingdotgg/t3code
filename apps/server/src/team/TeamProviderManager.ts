@@ -47,6 +47,7 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { isAntigravitySignInRequiredError } from "../provider/antigravityAuthSupport.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { resolveLocalOrigin } from "../startupAccess.ts";
 import * as TeamAssetsRepository from "./TeamAssetsRepository.ts";
 import {
@@ -259,6 +260,14 @@ export class TeamProviderManager extends Context.Service<
     ) => Effect.Effect<TeamSyncLocalBindingResult>;
     /** Removes a Team Server binding from a member's local t3server and purges isolated profiles & tokens. */
     readonly removeLocalTeamBinding: (teamId: TeamId) => Effect.Effect<boolean>;
+    /** Purges materialized workspace profiles and lease fibers for a deleted server-hosted team. */
+    readonly purgeTeamWorkspaceProfiles: (input: {
+      readonly teamId: TeamId;
+      readonly providers: ReadonlyArray<{
+        readonly providerInstanceId: ProviderInstanceId;
+        readonly driver: ProviderDriverKind;
+      }>;
+    }) => Effect.Effect<void>;
     /** Fetches `GET /api/team/assets?since=<rev>` delta for a local binding and re-materializes profiles. */
     readonly syncLocalAssetsDelta: (
       teamId: TeamId,
@@ -538,12 +547,19 @@ const make = Effect.gen(function* () {
       const linkedServerInstanceId = Option.isSome(serverProviderOpt)
         ? readLinkedServerInstanceIdFromConfig(serverProviderOpt.value.config)
         : null;
+      const serverSettingsOpt = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+      const resolvedServerSettings = Option.isSome(serverSettingsOpt)
+        ? yield* serverSettingsOpt.value.getSettings.pipe(Effect.orElseSucceed(() => null))
+        : null;
       const fallbackProfileDir =
         Option.isSome(serverProviderOpt) && linkedServerInstanceId !== null
           ? resolveLinkedServerProviderProfileDir({
               stateDir: config.stateDir,
               driver: serverProviderOpt.value.driver,
               linkedServerInstanceId,
+              ...(resolvedServerSettings !== null
+                ? { serverSettings: resolvedServerSettings }
+                : {}),
             })
           : null;
       if (
@@ -1424,6 +1440,31 @@ const make = Effect.gen(function* () {
         }
         yield* PubSub.publish(virtualChangesPubSub, undefined);
         return true;
+      },
+    ),
+
+    purgeTeamWorkspaceProfiles: Effect.fn("TeamProviderManager.purgeTeamWorkspaceProfiles")(
+      function* (input) {
+        for (const provider of input.providers) {
+          const virtualId = makeTeamProviderInstanceId(input.teamId, provider.providerInstanceId);
+          yield* cancelRenewalFiber(virtualId);
+          yield* Ref.update(leasesRef, (current) => {
+            if (!current.has(virtualId)) return current;
+            const next = new Map(current);
+            next.delete(virtualId);
+            return next;
+          });
+          yield* purgeTeamProfileDirectory({
+            stateDir: config.stateDir,
+            teamId: input.teamId,
+            virtualInstanceId: virtualId,
+            driver: provider.driver,
+          }).pipe(
+            Effect.provideService(Digest.Digest, digest),
+            Effect.provideService(Path.Path, path),
+          );
+        }
+        yield* PubSub.publish(virtualChangesPubSub, undefined);
       },
     ),
 

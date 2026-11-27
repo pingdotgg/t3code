@@ -630,7 +630,14 @@ export function TeamEnvironmentsSettingsSection({
                 type="button"
                 size="sm"
                 variant="ghost"
-                onClick={() => setShowAttachForm(false)}
+                onClick={() => {
+                  setShowAttachForm(false);
+                  setAttachName("");
+                  setAttachUrl("");
+                  setAttachCode("");
+                  setShowAttachCode(false);
+                  setSelectedExistingPeerId(NEW_PEER_SENTINEL);
+                }}
               >
                 <T>Cancel</T>
               </Button>

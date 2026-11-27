@@ -672,6 +672,43 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
       }
     }),
   },
+  {
+    id: 10,
+    name: "TeamPendingRemoteRevocationsDetached",
+    up: Effect.fn("TeamMigrations.TeamPendingRemoteRevocationsDetached")(function* (
+      sql: SqlClient.SqlClient,
+    ) {
+      // Remove the foreign key on team_workspaces so pending remote peer revocations
+      // survive workspace deletion and still drain once offline peers reconnect.
+      yield* sql`DROP TABLE IF EXISTS team_pending_remote_revocations_v10`;
+      yield* sql`
+        CREATE TABLE team_pending_remote_revocations_v10 (
+          id TEXT PRIMARY KEY,
+          team_id TEXT NOT NULL,
+          environment_id TEXT NOT NULL,
+          subject_prefix TEXT NOT NULL,
+          unlink_after_revoke INTEGER NOT NULL DEFAULT 0 CHECK (unlink_after_revoke IN (0, 1)),
+          created_at TEXT NOT NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO team_pending_remote_revocations_v10 (
+          id, team_id, environment_id, subject_prefix, unlink_after_revoke, created_at
+        )
+        SELECT id, team_id, environment_id, subject_prefix, unlink_after_revoke, created_at
+        FROM team_pending_remote_revocations
+      `;
+      yield* sql`DROP TABLE team_pending_remote_revocations`;
+      yield* sql`
+        ALTER TABLE team_pending_remote_revocations_v10
+        RENAME TO team_pending_remote_revocations
+      `;
+      yield* sql`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_team_pending_remote_revocations_unique
+          ON team_pending_remote_revocations (team_id, environment_id, subject_prefix)
+      `;
+    }),
+  },
 ];
 
 const migrationLocks = new WeakMap<SqlClient.SqlClient, Semaphore.Semaphore>();

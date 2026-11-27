@@ -12658,6 +12658,7 @@
   "51f3f1ad0d1bb194": "Código de pareamento móvel criado",
   "f3bec5a4fe329e0e": "Escaneie o código QR ou digite o código no app móvel oficial do T3 Code para se conectar como {pseudo}.",
   "6e2561975e046ebe": "Não foi possível criar o código de pareamento móvel",
+  "419ff45930fda415": "Revogar este código de pareamento móvel?\nDispositivos usando este código pendente não poderão mais fazer o pareamento.",
   "5891c37a751ae818": "Código de pareamento móvel revogado",
   "c5282ce00f8d353f": "Não foi possível revogar o código de pareamento móvel",
   "eb56b3c5a36b9d51": "App móvel oficial",

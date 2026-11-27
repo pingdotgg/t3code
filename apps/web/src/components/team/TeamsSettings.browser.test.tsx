@@ -392,6 +392,8 @@ describe("TeamsSettings", () => {
     await screen.getByRole("option", { name: /Server B/ }).click();
 
     resolveInvite(AsyncResult.success(makeInviteResult("t3team_server_a_inflight")));
+    // Switching servers resets transient form state; reopening on Server B shows an enabled button.
+    await screen.getByTestId("team-invite-open-form").click();
     await expect.element(screen.getByTestId("team-invite-create")).toBeEnabled();
 
     expect(screen.getByTestId("team-invite-generated").query()).toBeNull();
@@ -696,6 +698,14 @@ describe("TeamsSettings", () => {
 
     // Manual join button opens TeamJoinDialog without needing a pasted invite URL.
     await expect.element(screen.getByTestId("team-join-manual-open")).toBeVisible();
+
+    // WAI-ARIA tabpanel association & keyboard navigation (ArrowRight moves to Access & Environments).
+    await expect.element(screen.getByRole("tabpanel")).toBeVisible();
+    const overviewTab = screen.getByTestId("teams-tab-overview");
+    await overviewTab.click();
+    await expect.element(overviewTab).toHaveAttribute("aria-selected", "true");
+    await expect.element(overviewTab).toHaveAttribute("tabindex", "0");
+    await expect.element(screen.getByTestId("teams-tab-access")).toHaveAttribute("tabindex", "-1");
 
     // Invite form exposes maxUses and expiresInHours.
     await screen.getByTestId("team-invite-open-form").click();

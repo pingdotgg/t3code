@@ -30,6 +30,7 @@ import type { ThreadLaunchResult } from "../orchestration-v2/ThreadLaunchService
 import type * as PeerClientPairing from "../peer/PeerClientPairing.ts";
 import type * as PeerLinks from "../peer/PeerLinks.ts";
 import type * as ProjectService from "../project/ProjectService.ts";
+import type * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import type * as TeamProviderManager from "./TeamProviderManager.ts";
 import * as TeamService from "./TeamService.ts";
 import {
@@ -50,6 +51,7 @@ export interface TeamWsHandlerDeps {
   readonly eventSink?: EventSink.EventSinkV2["Service"];
   readonly projectionStore?: ProjectionStore.ProjectionStoreV2["Service"];
   readonly teamProviderManager?: TeamProviderManager.TeamProviderManager["Service"];
+  readonly scheduledTaskService?: ScheduledTasks.ScheduledTaskService["Service"];
 }
 
 export function makeTeamWsRpcHandlers(
@@ -66,6 +68,7 @@ export function makeTeamWsRpcHandlers(
     [TEAM_WS_METHODS.teamLeave]: () =>
       teamService.leaveTeam({
         sessionId,
+        deferCallerSessionRevocation: true,
         ...(deps?.peerClientPairing !== undefined
           ? { peerClientPairing: deps.peerClientPairing }
           : {}),
@@ -83,6 +86,9 @@ export function makeTeamWsRpcHandlers(
         ...(deps?.peerLinks !== undefined ? { peerLinks: deps.peerLinks } : {}),
         ...(deps?.teamProviderManager !== undefined
           ? { teamProviderManager: deps.teamProviderManager }
+          : {}),
+        ...(deps?.scheduledTaskService !== undefined
+          ? { scheduledTaskService: deps.scheduledTaskService }
           : {}),
       }),
     [TEAM_WS_METHODS.teamUpdateDisplayName]: (

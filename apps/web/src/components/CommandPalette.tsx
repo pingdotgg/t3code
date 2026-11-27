@@ -90,6 +90,7 @@ import {
 } from "lucide-react";
 import { extractProjectRepoIdentityKey } from "@t3tools/client-runtime/team";
 import { useTeamCommandPaletteActions } from "./team/useTeamCommandPaletteActions";
+import { waitForCloneAndAssignProject } from "./team/waitForCloneAndAssignProject";
 import { teamEnvironment, useTeamEnvironmentState } from "../state/team";
 import { canManageTeamProjects } from "@t3tools/contracts";
 import { UsersIcon } from "lucide-react";
@@ -2462,13 +2463,14 @@ function OpenCommandPaletteDialog(props: {
       addProjectCloneFlow.environmentId,
       startResult.value.projectId,
     );
-    const clonedProject = await waitForProject(projectRef, 3_000).catch(() => null);
+    await waitForProject(projectRef, 3_000).catch(() => null);
     if (shouldAssignToTeam) {
-      await assignAddedProjectToTeam(
-        addProjectCloneFlow.environmentId,
-        startResult.value.projectId,
-        clonedProject,
-      );
+      // Wait for the clone to succeed and populate repositoryIdentity before assigning to the team.
+      void waitForCloneAndAssignProject({
+        environmentId: addProjectCloneFlow.environmentId,
+        projectId: startResult.value.projectId,
+        assign: assignAddedProjectToTeam,
+      });
     }
     const navigationResult = await settlePromise(() => openAddedProject(projectRef));
     if (navigationResult._tag === "Failure") {

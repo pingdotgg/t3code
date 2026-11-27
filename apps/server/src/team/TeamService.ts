@@ -218,6 +218,8 @@ import type * as PeerLinks from "../peer/PeerLinks.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import type * as ProjectService from "../project/ProjectService.ts";
 import { rpcInitialItems } from "../rpcInitialItems.ts";
+import type * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as TeamAssetsRepository from "./TeamAssetsRepository.ts";
 import * as TeamGitHubOAuth from "./TeamGitHubOAuth.ts";
 import * as TeamGitHubRepository from "./TeamGitHubRepository.ts";
@@ -228,7 +230,6 @@ import {
 } from "./TeamLocalSyncService.ts";
 import {
   clearTeamProviderRefreshLock,
-  readOAuthCredentialsFromServerProfileDir,
   readTeamProviderSecret,
   removeTeamProviderSecret,
   resolveLinkedServerProviderProfileDir,
@@ -440,6 +441,7 @@ export class TeamService extends Context.Service<
     }) => Effect.Effect<TeamInitializeResult, TeamOperationError>;
     readonly leaveTeam: (input: {
       readonly sessionId: AuthSessionId;
+      readonly deferCallerSessionRevocation?: boolean;
       readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
       readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     }) => Effect.Effect<TeamLeaveResult, TeamOperationError>;
@@ -449,6 +451,7 @@ export class TeamService extends Context.Service<
       readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
       readonly peerLinks?: PeerLinks.PeerLinks["Service"];
       readonly teamProviderManager?: TeamProviderManager.TeamProviderManager["Service"];
+      readonly scheduledTaskService?: ScheduledTasks.ScheduledTaskService["Service"];
     }) => Effect.Effect<TeamDeleteResult, TeamOperationError>;
     readonly updateDisplayName: (input: {
       readonly sessionId: AuthSessionId;
@@ -1184,6 +1187,7 @@ const make = Effect.gen(function* () {
   const authSessionsOption = yield* Effect.serviceOption(AuthSessions.AuthSessionRepository);
   const environmentAuthOption = yield* Effect.serviceOption(EnvironmentAuth.EnvironmentAuth);
   const pairingGrantStoreOption = yield* Effect.serviceOption(PairingGrantStore.PairingGrantStore);
+  const serverSettingsOption = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const providerManagerOption = yield* Effect.serviceOption(
     TeamProviderManager.TeamProviderManager,
   );
@@ -1326,13 +1330,10 @@ const make = Effect.gen(function* () {
       readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     }) {
       if (!input.peerClientPairing) return;
-      const workspaceOption = yield* repository
-        .getWorkspace()
-        .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
-      if (Option.isNone(workspaceOption)) return;
-      const teamId = workspaceOption.value.id;
+      // Drain across both active and deleted team workspaces so offline peers still
+      // have their team-member grants revoked even after team.delete returns to personal mode.
       const pending = yield* repository
-        .listPendingRemoteRevocations(teamId)
+        .listPendingRemoteRevocations()
         .pipe(Effect.orElseSucceed(() => []));
       for (const item of pending) {
         if (input.environmentId !== undefined && item.environmentId !== input.environmentId) {
@@ -1353,13 +1354,13 @@ const make = Effect.gen(function* () {
               yield* remoteEnvLifecycleLock.withPermits(1)(
                 Effect.gen(function* () {
                   const currentRows = yield* repository
-                    .listPendingRemoteRevocations(teamId)
+                    .listPendingRemoteRevocations(item.teamId)
                     .pipe(Effect.orElseSucceed(() => []));
                   const currentItem = currentRows.find((candidate) => candidate.id === item.id);
                   if (!currentItem) return;
                   const attachedEnv = yield* repository
                     .getEnvironmentByEnvironmentId({
-                      teamId,
+                      teamId: item.teamId,
                       environmentId: item.environmentId,
                     })
                     .pipe(Effect.orElseSucceed(() => Option.none<TeamEnvironment>()));
@@ -1792,6 +1793,12 @@ const make = Effect.gen(function* () {
         const liveEvents = Stream.fromSubscription(subscription).pipe(
           Stream.mapEffect((event) =>
             Effect.gen(function* () {
+              if (event.type === "teamDeleted") {
+                currentMember = null;
+                knownReadableThreadIds.clear();
+                knownReadableScheduledTaskIds.clear();
+                return Option.some<TeamStateStreamEvent>(event);
+              }
               if (
                 event.type === "teamUpdated" ||
                 event.type === "viewUpserted" ||
@@ -2503,109 +2510,171 @@ const make = Effect.gen(function* () {
 
   const leaveTeam = Effect.fn("TeamService.leaveTeam")(function* (input: {
     readonly sessionId: AuthSessionId;
+    readonly deferCallerSessionRevocation?: boolean;
     readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
     readonly peerLinks?: PeerLinks.PeerLinks["Service"];
   }) {
-    const team = yield* requireWorkspace();
-    const actor = yield* requireActiveMember(input.sessionId);
-    if (actor.teamId !== team.id) {
-      return yield* new TeamOperationError({
-        code: "forbidden",
-        message: "This session does not belong to the active team.",
-      });
-    }
-    const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    const updatedMember = yield* withMembershipMutationGate(
+    return yield* Effect.uninterruptible(
       Effect.gen(function* () {
-        const left = yield* repository
-          .leaveTeam({
-            teamId: team.id,
-            memberId: actor.id,
-            updatedAt,
-          })
-          .pipe(
-            Effect.catchTags({
-              TeamLastOwnerProtectedError: () =>
-                Effect.fail(
-                  new TeamOperationError({
-                    code: "last_owner",
-                    message:
-                      "You are the last active owner. Transfer ownership to another member before leaving the team.",
-                  }),
-                ),
-              TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
-            }),
-          );
-        if (Option.isNone(left)) {
-          return yield* new TeamOperationError({
-            code: "not_found",
-            message: "Team member could not be found.",
-          });
-        }
-        yield* revokeSessionsForMember(left.value.id);
-        yield* revokePairingLinksForMember(left.value.id);
-        return left.value;
-      }),
-    );
-
-    if (Option.isSome(assetsRepositoryOption)) {
-      yield* assetsRepositoryOption.value
-        .revokeLocalSyncTokensForMember(updatedMember.id, updatedAt)
-        .pipe(Effect.ignore);
-    }
-    yield* TeamGitHubOAuth.withMemberGitHubCredentialMutationLock(
-      team.id,
-      updatedMember.id,
-      Effect.gen(function* () {
-        TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, updatedMember.id);
-        if (Option.isSome(githubRepositoryOption)) {
-          const removedSecretKeyOpt = yield* githubRepositoryOption.value
-            .deleteMemberCredential(updatedMember.id)
-            .pipe(Effect.orElseSucceed(() => Option.none<string>()));
-          if (Option.isSome(removedSecretKeyOpt) && Option.isSome(secretStoreOption)) {
-            yield* TeamGitHubRepository.removeTeamGitHubSecret(
-              secretStoreOption.value,
-              removedSecretKeyOpt.value,
-            ).pipe(Effect.ignore);
-          }
-        }
-        yield* notifyGitHubCredentialChanged({
-          kind: "member",
-          teamId: team.id,
-          memberId: updatedMember.id,
-        });
-      }),
-    );
-    if (input.peerClientPairing) {
-      const envs = yield* repository
-        .listEnvironments(team.id)
-        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
-      const targetEnvIds = envs.filter((env) => !env.isDefault).map((env) => env.environmentId);
-      if (input.peerLinks) {
-        const allPeers = yield* input.peerLinks.list.pipe(Effect.orElseSucceed(() => []));
-        for (const peer of allPeers) {
-          targetEnvIds.push(peer.environmentId);
-        }
-      }
-      const uniqueEnvIds = [...new Set(targetEnvIds)];
-      if (uniqueEnvIds.length > 0) {
-        yield* withRemoteRevocationBarrier(
-          revokeRemoteMemberGrantsForEnvironments({
-            teamId: team.id,
-            peerClientPairing: input.peerClientPairing,
-            environmentIds: uniqueEnvIds,
-            subjectPrefixes: [remoteSubjectForMember(team.id, updatedMember.id)],
+        const updatedAt = DateTime.formatIso(yield* DateTime.now);
+        const { team, leftResult, otherSessionIds } = yield* withMembershipMutationGate(
+          Effect.gen(function* () {
+            const activeTeam = yield* requireWorkspace();
+            const actor = yield* requireActiveMember(input.sessionId);
+            if (actor.teamId !== activeTeam.id) {
+              return yield* new TeamOperationError({
+                code: "forbidden",
+                message: "This session does not belong to the active team.",
+              });
+            }
+            const memberSessionIds = yield* repository
+              .listSessionIdsForMember(actor.id)
+              .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<AuthSessionId>));
+            const left = yield* repository
+              .leaveTeam({
+                teamId: activeTeam.id,
+                memberId: actor.id,
+                updatedAt,
+              })
+              .pipe(
+                Effect.catchTags({
+                  TeamLastOwnerProtectedError: () =>
+                    Effect.fail(
+                      new TeamOperationError({
+                        code: "last_owner",
+                        message:
+                          "You are the last active owner. Transfer ownership to another member before leaving the team.",
+                      }),
+                    ),
+                  TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+                }),
+              );
+            if (Option.isNone(left)) {
+              return yield* new TeamOperationError({
+                code: "not_found",
+                message: "Team member could not be found.",
+              });
+            }
+            yield* revokePairingLinksForMember(left.value.member.id);
+            return {
+              team: activeTeam,
+              leftResult: left.value,
+              otherSessionIds: memberSessionIds.filter((sid) => sid !== input.sessionId),
+            };
           }),
         );
-      }
-    }
-    yield* publish({ version: 1, type: "memberUpserted", payload: updatedMember });
-    yield* publishAccessChange({ type: "member", memberId: updatedMember.id });
-    return {
-      left: true,
-      teamId: team.id,
-      memberId: updatedMember.id,
-    } satisfies TeamLeaveResult;
+
+        const updatedMember = leftResult.member;
+
+        // Revoke all other sessions belonging to the leaving member immediately; revoke the
+        // caller's own session last (or after flushing the WS reply) so socket invalidation
+        // never interrupts cleanup or drops the completion response.
+        const callerJkt = yield* sessionStore
+          .proofKeyThumbprintOf(input.sessionId)
+          .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+        const otherProofKeys = new Set<string>();
+        for (const sid of otherSessionIds) {
+          const maybeJkt = yield* sessionStore
+            .proofKeyThumbprintOf(sid)
+            .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+          if (
+            Option.isSome(maybeJkt) &&
+            (Option.isNone(callerJkt) || maybeJkt.value !== callerJkt.value)
+          ) {
+            otherProofKeys.add(maybeJkt.value);
+          }
+          yield* sessionStore.revoke(sid).pipe(Effect.ignore);
+        }
+        for (const jkt of otherProofKeys) {
+          yield* sessionStore.revokeByProofKey(jkt).pipe(Effect.ignore);
+        }
+
+        if (Option.isSome(assetsRepositoryOption)) {
+          yield* assetsRepositoryOption.value
+            .revokeLocalSyncTokensForMember(updatedMember.id, updatedAt)
+            .pipe(Effect.ignore);
+        }
+        yield* TeamGitHubOAuth.withMemberGitHubCredentialMutationLock(
+          team.id,
+          updatedMember.id,
+          Effect.gen(function* () {
+            TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(
+              githubOAuthFlowStore,
+              updatedMember.id,
+            );
+            if (Option.isSome(githubRepositoryOption)) {
+              const removedSecretKeyOpt = yield* githubRepositoryOption.value
+                .deleteMemberCredential(updatedMember.id)
+                .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+              if (Option.isSome(removedSecretKeyOpt) && Option.isSome(secretStoreOption)) {
+                yield* TeamGitHubRepository.removeTeamGitHubSecret(
+                  secretStoreOption.value,
+                  removedSecretKeyOpt.value,
+                ).pipe(Effect.ignore);
+              }
+            }
+            yield* notifyGitHubCredentialChanged({
+              kind: "member",
+              teamId: team.id,
+              memberId: updatedMember.id,
+            });
+          }),
+        );
+        if (input.peerClientPairing) {
+          const envs = yield* repository
+            .listEnvironments(team.id)
+            .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
+          const targetEnvIds = envs.filter((env) => !env.isDefault).map((env) => env.environmentId);
+          if (input.peerLinks) {
+            const allPeers = yield* input.peerLinks.list.pipe(Effect.orElseSucceed(() => []));
+            for (const peer of allPeers) {
+              targetEnvIds.push(peer.environmentId);
+            }
+          }
+          const uniqueEnvIds = [...new Set(targetEnvIds)];
+          if (uniqueEnvIds.length > 0) {
+            yield* withRemoteRevocationBarrier(
+              revokeRemoteMemberGrantsForEnvironments({
+                teamId: team.id,
+                peerClientPairing: input.peerClientPairing,
+                environmentIds: uniqueEnvIds,
+                subjectPrefixes: [remoteSubjectForMember(team.id, updatedMember.id)],
+              }),
+            );
+          }
+        }
+        yield* publish({ version: 1, type: "memberUpserted", payload: updatedMember });
+        for (const updatedView of leftResult.updatedViews) {
+          yield* publish({ version: 1, type: "viewUpserted", payload: updatedView });
+        }
+        for (const updatedEnvironment of leftResult.updatedEnvironments) {
+          yield* publish({ version: 1, type: "environmentUpserted", payload: updatedEnvironment });
+        }
+        yield* publishAccessChange({ type: "member", memberId: updatedMember.id });
+
+        const revokeCallerSession = Effect.gen(function* () {
+          if (Option.isSome(callerJkt)) {
+            yield* sessionStore.revokeByProofKey(callerJkt.value).pipe(Effect.ignore);
+          }
+          yield* sessionStore.revoke(input.sessionId).pipe(Effect.ignore);
+        });
+        if (input.deferCallerSessionRevocation === true) {
+          // Member is already marked removed in SQLite (so every team guard fails closed);
+          // deferring socket invalidation briefly lets the WS RPC reply flush to the client.
+          yield* Effect.forkDetach(
+            Effect.sleep(Duration.millis(75)).pipe(Effect.andThen(revokeCallerSession)),
+          );
+        } else {
+          yield* revokeCallerSession;
+        }
+
+        return {
+          left: true,
+          teamId: team.id,
+          memberId: updatedMember.id,
+        } satisfies TeamLeaveResult;
+      }),
+    );
   });
 
   const deleteTeam = Effect.fn("TeamService.deleteTeam")(function* (input: {
@@ -2614,146 +2683,220 @@ const make = Effect.gen(function* () {
     readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
     readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     readonly teamProviderManager?: TeamProviderManager.TeamProviderManager["Service"];
+    readonly scheduledTaskService?: ScheduledTasks.ScheduledTaskService["Service"];
   }) {
-    const team = yield* requireWorkspace();
-    const actor = yield* requireActiveMember(input.sessionId);
-    if (actor.teamId !== team.id || actor.role !== "owner") {
-      return yield* new TeamOperationError({
-        code: "forbidden",
-        message: "Only a team owner can delete the team.",
-      });
-    }
-    if (input.payload.confirmTeamName.trim() !== team.name) {
-      return yield* new TeamOperationError({
-        code: "invalid_input",
-        message: `Confirmation text must match the team name "${team.name}".`,
-      });
-    }
-
-    const { members, environments, cleanupResult } = yield* withMembershipMutationGate(
+    return yield* Effect.uninterruptible(
       Effect.gen(function* () {
-        const currentMembers = yield* repository
-          .listMembers(team.id)
-          .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamMember>));
-        const currentEnvs = yield* repository
-          .listEnvironments(team.id)
-          .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
-        const deleted = yield* repository
-          .deleteTeam(team.id)
-          .pipe(Effect.mapError(toInternalError));
-        return {
-          members: currentMembers,
-          environments: currentEnvs,
-          cleanupResult: deleted,
-        };
-      }),
-    );
+        const { team, members, providers, cleanupResult } = yield* withMembershipMutationGate(
+          Effect.gen(function* () {
+            const activeTeam = yield* requireWorkspace();
+            const actor = yield* requireActiveMember(input.sessionId);
+            if (actor.teamId !== activeTeam.id || actor.role !== "owner") {
+              return yield* new TeamOperationError({
+                code: "forbidden",
+                message: "Only a team owner can delete the team.",
+              });
+            }
+            if (input.payload.confirmTeamName.trim() !== activeTeam.name) {
+              return yield* new TeamOperationError({
+                code: "invalid_input",
+                message: `Confirmation text must match the team name "${activeTeam.name}".`,
+              });
+            }
 
-    if (!cleanupResult.deleted) {
-      return yield* new TeamOperationError({
-        code: "not_found",
-        message: "Team workspace could not be found.",
-      });
-    }
+            const targets = yield* repository
+              .collectDeleteCleanupTargets(activeTeam.id)
+              .pipe(Effect.mapError(toInternalError));
+            if (!targets.exists) {
+              return yield* new TeamOperationError({
+                code: "not_found",
+                message: "Team workspace could not be found.",
+              });
+            }
 
-    // Revoke every other team-bound session; keep the owner's current session so the server returns cleanly to personal mode.
-    const proofKeysToRevoke = new Set<string>();
-    const callerJkt = yield* sessionStore
-      .proofKeyThumbprintOf(input.sessionId)
-      .pipe(Effect.orElseSucceed(() => Option.none<string>()));
-    yield* Effect.forEach(
-      cleanupResult.sessionIds,
-      (boundSessionId) => {
-        if (boundSessionId === input.sessionId) return Effect.void;
-        return Effect.gen(function* () {
-          const maybeJkt = yield* sessionStore
-            .proofKeyThumbprintOf(boundSessionId)
-            .pipe(Effect.orElseSucceed(() => Option.none<string>()));
-          if (
-            Option.isSome(maybeJkt) &&
-            (Option.isNone(callerJkt) || maybeJkt.value !== callerJkt.value)
-          ) {
-            proofKeysToRevoke.add(maybeJkt.value);
-          }
-          yield* sessionStore.revoke(boundSessionId).pipe(Effect.ignore);
-        });
-      },
-      { discard: true },
-    );
-    yield* Effect.forEach(
-      [...proofKeysToRevoke],
-      (proofKeyThumbprint) => sessionStore.revokeByProofKey(proofKeyThumbprint).pipe(Effect.ignore),
-      { discard: true },
-    );
+            const currentMembers = yield* repository
+              .listMembers(activeTeam.id)
+              .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamMember>));
+            const currentEnvs = yield* repository
+              .listEnvironments(activeTeam.id)
+              .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
+            const currentProviders = Option.isSome(assetsRepositoryOption)
+              ? yield* assetsRepositoryOption.value
+                  .listProviders(activeTeam.id)
+                  .pipe(Effect.orElseSucceed(() => []))
+              : [];
 
-    if (Option.isSome(pairingGrantStoreOption)) {
-      yield* Effect.forEach(
-        cleanupResult.pairingLinkIds,
-        (pairingLinkId) => pairingGrantStoreOption.value.revoke(pairingLinkId).pipe(Effect.ignore),
-        { discard: true },
-      );
-    }
+            // 1. Delete team scheduled tasks (and revoke their webhooks) BEFORE removing
+            //    team_workspaces so no team schedule can survive into personal mode.
+            if (targets.scheduledTaskIds.length > 0 && input.scheduledTaskService) {
+              for (const taskId of targets.scheduledTaskIds) {
+                yield* input.scheduledTaskService.delete({ id: taskId }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new TeamOperationError({
+                        code: "internal",
+                        message: `Failed to delete team scheduled task before deleting team: ${String(cause)}`,
+                      }),
+                  ),
+                );
+              }
+            }
 
-    for (const member of members) {
-      TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, member.id);
-      yield* notifyGitHubCredentialChanged({
-        kind: "member",
-        teamId: team.id,
-        memberId: member.id,
-      });
-    }
-    yield* notifyGitHubCredentialChanged({
-      kind: "automation",
-      teamId: team.id,
-    });
+            // 2. Revoke every team-bound pairing grant BEFORE deleting team_pairing_meta so
+            //    no surviving pairing grant can be treated as an ordinary personal pairing grant.
+            if (targets.pairingLinkIds.length > 0) {
+              for (const pairingLinkId of targets.pairingLinkIds) {
+                if (Option.isSome(pairingGrantStoreOption)) {
+                  yield* pairingGrantStoreOption.value.revoke(pairingLinkId).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new TeamOperationError({
+                          code: "internal",
+                          message: `Failed to revoke team pairing grant before deleting team: ${String(cause)}`,
+                        }),
+                    ),
+                  );
+                } else if (Option.isSome(environmentAuthOption)) {
+                  yield* environmentAuthOption.value.revokePairingLink(pairingLinkId).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new TeamOperationError({
+                          code: "internal",
+                          message: `Failed to revoke team pairing grant before deleting team: ${String(cause)}`,
+                        }),
+                    ),
+                  );
+                }
+              }
+            }
 
-    if (Option.isSome(secretStoreOption)) {
-      const secrets = secretStoreOption.value;
-      for (const secretKey of cleanupResult.providerSecretKeys) {
-        yield* removeTeamProviderSecret(secrets, secretKey).pipe(Effect.ignore);
-        clearTeamProviderRefreshLock(secretKey);
-      }
-      for (const secretKey of cleanupResult.githubSecretKeys) {
-        yield* TeamGitHubRepository.removeTeamGitHubSecret(secrets, secretKey).pipe(Effect.ignore);
-      }
-      if (cleanupResult.githubAppClientSecretKey) {
-        yield* TeamGitHubRepository.removeTeamGitHubSecret(
-          secrets,
-          cleanupResult.githubAppClientSecretKey,
-        ).pipe(Effect.ignore);
-      }
-    }
+            // 3. Revoke every other team-bound session and proof key BEFORE deleting workspace rows;
+            //    keep the owner's current session so the server returns cleanly to personal mode.
+            const proofKeysToRevoke = new Set<string>();
+            const callerJkt = yield* sessionStore
+              .proofKeyThumbprintOf(input.sessionId)
+              .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+            for (const boundSessionId of targets.sessionIds) {
+              if (boundSessionId === input.sessionId) continue;
+              const maybeJkt = yield* sessionStore
+                .proofKeyThumbprintOf(boundSessionId)
+                .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+              if (
+                Option.isSome(maybeJkt) &&
+                (Option.isNone(callerJkt) || maybeJkt.value !== callerJkt.value)
+              ) {
+                proofKeysToRevoke.add(maybeJkt.value);
+              }
+              yield* sessionStore.revoke(boundSessionId).pipe(Effect.ignore);
+            }
+            for (const proofKeyThumbprint of proofKeysToRevoke) {
+              yield* sessionStore.revokeByProofKey(proofKeyThumbprint).pipe(Effect.ignore);
+            }
 
-    if (input.peerClientPairing) {
-      const remoteEnvIds = environments
-        .filter((env) => !env.isDefault)
-        .map((env) => env.environmentId);
-      if (remoteEnvIds.length > 0) {
-        yield* withRemoteRevocationBarrier(
-          revokeRemoteMemberGrantsForEnvironments({
-            teamId: team.id,
-            peerClientPairing: input.peerClientPairing,
-            environmentIds: [...new Set(remoteEnvIds)],
-            subjectPrefixes: [remoteSubjectPrefixForTeam(team.id)],
+            // 4. Revoke remote peer grants across both attached team environments and any
+            //    still-linked peers BEFORE deleting team_workspaces.
+            if (input.peerClientPairing) {
+              const remoteEnvIds = currentEnvs
+                .filter((env) => !env.isDefault)
+                .map((env) => env.environmentId);
+              if (input.peerLinks) {
+                const allPeers = yield* input.peerLinks.list.pipe(Effect.orElseSucceed(() => []));
+                for (const peer of allPeers) {
+                  remoteEnvIds.push(peer.environmentId);
+                }
+              }
+              const uniqueRemoteEnvIds = [...new Set(remoteEnvIds)];
+              if (uniqueRemoteEnvIds.length > 0) {
+                yield* withRemoteRevocationBarrier(
+                  revokeRemoteMemberGrantsForEnvironments({
+                    teamId: activeTeam.id,
+                    peerClientPairing: input.peerClientPairing,
+                    environmentIds: uniqueRemoteEnvIds,
+                    subjectPrefixes: [remoteSubjectPrefixForTeam(activeTeam.id)],
+                  }),
+                );
+              }
+            }
+
+            // 5. Commit workspace and all team table deletions atomically.
+            const deleted = yield* repository
+              .deleteTeam(activeTeam.id)
+              .pipe(Effect.mapError(toInternalError));
+            return {
+              team: activeTeam,
+              members: currentMembers,
+              providers: currentProviders.map((provider) => ({
+                providerInstanceId: provider.providerInstanceId,
+                driver: provider.driver,
+              })),
+              cleanupResult: deleted,
+            };
           }),
         );
-      }
-    }
 
-    const activeProviderManager =
-      input.teamProviderManager ?? Option.getOrUndefined(providerManagerOption);
-    if (activeProviderManager) {
-      yield* activeProviderManager.removeLocalTeamBinding(team.id).pipe(Effect.ignore);
-    }
+        if (!cleanupResult.deleted) {
+          return yield* new TeamOperationError({
+            code: "not_found",
+            message: "Team workspace could not be found.",
+          });
+        }
 
-    yield* publish({ version: 1, type: "teamDeleted", payload: { teamId: team.id } });
-    yield* publishAccessChange({ type: "workspace" });
-    yield* notifyProviderManagerChanged();
+        for (const member of members) {
+          TeamGitHubOAuth.purgeMemberPendingGitHubOAuthFlows(githubOAuthFlowStore, member.id);
+          yield* notifyGitHubCredentialChanged({
+            kind: "member",
+            teamId: team.id,
+            memberId: member.id,
+          });
+        }
+        yield* notifyGitHubCredentialChanged({
+          kind: "automation",
+          teamId: team.id,
+        });
 
-    return {
-      deleted: true,
-      teamId: team.id,
-    } satisfies TeamDeleteResult;
+        if (Option.isSome(secretStoreOption)) {
+          const secrets = secretStoreOption.value;
+          for (const secretKey of cleanupResult.providerSecretKeys) {
+            yield* removeTeamProviderSecret(secrets, secretKey).pipe(Effect.ignore);
+            clearTeamProviderRefreshLock(secretKey);
+          }
+          for (const secretKey of cleanupResult.githubSecretKeys) {
+            yield* TeamGitHubRepository.removeTeamGitHubSecret(secrets, secretKey).pipe(
+              Effect.ignore,
+            );
+          }
+          if (cleanupResult.githubAppClientSecretKey) {
+            yield* TeamGitHubRepository.removeTeamGitHubSecret(
+              secrets,
+              cleanupResult.githubAppClientSecretKey,
+            ).pipe(Effect.ignore);
+          }
+        }
+
+        const activeProviderManager =
+          input.teamProviderManager ?? Option.getOrUndefined(providerManagerOption);
+        if (activeProviderManager) {
+          yield* activeProviderManager.removeLocalTeamBinding(team.id).pipe(Effect.ignore);
+          if (providers.length > 0) {
+            yield* activeProviderManager
+              .purgeTeamWorkspaceProfiles({
+                teamId: team.id,
+                providers,
+              })
+              .pipe(Effect.ignore);
+          }
+        }
+
+        yield* publish({ version: 1, type: "teamDeleted", payload: { teamId: team.id } });
+        yield* publishAccessChange({ type: "workspace" });
+        yield* notifyProviderManagerChanged();
+
+        return {
+          deleted: true,
+          teamId: team.id,
+        } satisfies TeamDeleteResult;
+      }),
+    );
   });
 
   const createView = Effect.fn("TeamService.createView")(function* (input: {
@@ -9312,6 +9455,21 @@ const make = Effect.gen(function* () {
     const nowIso = DateTime.formatIso(yield* DateTime.now);
     const id = existing?.id ?? TeamProviderId.make(yield* random.uuidV4().pipe(Effect.orDie));
 
+    const rawConfigLinkedId =
+      input.payload.config && "linkedServerInstanceId" in input.payload.config
+        ? input.payload.config.linkedServerInstanceId
+        : undefined;
+    if (
+      rawConfigLinkedId !== undefined &&
+      rawConfigLinkedId !== null &&
+      (typeof rawConfigLinkedId !== "string" || isTeamProviderInstanceId(rawConfigLinkedId.trim()))
+    ) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: "Cannot link a team provider to a virtual team: provider instance.",
+      });
+    }
+
     const sourceServerProviderInstanceId = input.payload.sourceServerProviderInstanceId;
     if (
       sourceServerProviderInstanceId !== undefined &&
@@ -9324,31 +9482,46 @@ const make = Effect.gen(function* () {
       });
     }
 
-    let importedServerOAuthSecret: StoredTeamProviderSecret | null = null;
     if (
-      deliveryStrategy === "token-lease" &&
+      input.payload.clearSecret === true &&
       sourceServerProviderInstanceId !== undefined &&
-      sourceServerProviderInstanceId !== null &&
-      Option.isSome(serverConfigOption)
+      sourceServerProviderInstanceId !== null
     ) {
-      const profileDir = resolveLinkedServerProviderProfileDir({
-        stateDir: serverConfigOption.value.stateDir,
-        driver: input.payload.driver,
-        linkedServerInstanceId: sourceServerProviderInstanceId,
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: "Cannot link a server provider while clearing stored credentials.",
       });
-      if (profileDir !== null) {
-        importedServerOAuthSecret = yield* Effect.promise(() =>
-          readOAuthCredentialsFromServerProfileDir({
-            driver: input.payload.driver,
-            profileDir,
-          }),
-        );
+    }
+
+    const baseConfig: Record<string, unknown> = {
+      ...(input.payload.config ?? existing?.config),
+    };
+    if (input.payload.clearSecret === true || deliveryStrategy !== "token-lease") {
+      delete baseConfig.linkedServerInstanceId;
+    } else if (sourceServerProviderInstanceId !== undefined) {
+      if (sourceServerProviderInstanceId === null) {
+        delete baseConfig.linkedServerInstanceId;
+      } else {
+        baseConfig.linkedServerInstanceId = sourceServerProviderInstanceId;
       }
     }
 
-    const hasIncomingSecret =
-      importedServerOAuthSecret !== null ||
-      input.payload.apiKey !== undefined ||
+    const effectiveLinkedServerInstanceId =
+      typeof baseConfig.linkedServerInstanceId === "string" &&
+      baseConfig.linkedServerInstanceId.trim().length > 0
+        ? baseConfig.linkedServerInstanceId.trim()
+        : null;
+    if (
+      effectiveLinkedServerInstanceId !== null &&
+      isTeamProviderInstanceId(effectiveLinkedServerInstanceId)
+    ) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: "Cannot link a team provider to a virtual team: provider instance.",
+      });
+    }
+
+    const hasIncomingManualOAuthSecret =
       input.payload.oauthAccessToken !== undefined ||
       input.payload.oauthRefreshToken !== undefined ||
       input.payload.oauthTokenEndpoint !== undefined ||
@@ -9358,15 +9531,45 @@ const make = Effect.gen(function* () {
       input.payload.oauthEmail !== undefined ||
       input.payload.oauthAuthMethod !== undefined;
 
+    if (effectiveLinkedServerInstanceId !== null && hasIncomingManualOAuthSecret) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message:
+          "Linked server providers cannot be combined with manual OAuth credentials or custom token endpoints.",
+      });
+    }
+
+    if (effectiveLinkedServerInstanceId !== null && Option.isSome(serverConfigOption)) {
+      const resolvedSettings = Option.isSome(serverSettingsOption)
+        ? yield* serverSettingsOption.value.getSettings.pipe(Effect.orElseSucceed(() => null))
+        : null;
+      const profileDir = resolveLinkedServerProviderProfileDir({
+        stateDir: serverConfigOption.value.stateDir,
+        driver: input.payload.driver,
+        linkedServerInstanceId: effectiveLinkedServerInstanceId,
+        ...(resolvedSettings !== null ? { serverSettings: resolvedSettings } : {}),
+      });
+      if (profileDir === null) {
+        return yield* new TeamOperationError({
+          code: "invalid_input",
+          message: `Server provider instance "${effectiveLinkedServerInstanceId}" does not exist for driver "${input.payload.driver}".`,
+        });
+      }
+    }
+
+    const hasIncomingSecret = input.payload.apiKey !== undefined || hasIncomingManualOAuthSecret;
+
+    // Keep linked server profile credentials strictly separate from manual ServerSecretStore
+    // secrets so linked refresh tokens are never persisted or sent to custom endpoints.
     let secretKey: string | null = existing?.secretKey ?? null;
-    if (input.payload.clearSecret === true) {
+    if (input.payload.clearSecret === true || effectiveLinkedServerInstanceId !== null) {
       if (secretKey !== null && Option.isSome(secretStoreOption)) {
         yield* removeTeamProviderSecret(secretStoreOption.value, secretKey).pipe(Effect.ignore);
         clearTeamProviderRefreshLock(secretKey);
       }
       secretKey = null;
     }
-    if (hasIncomingSecret) {
+    if (hasIncomingSecret && effectiveLinkedServerInstanceId === null) {
       if (Option.isNone(secretStoreOption)) {
         return yield* new TeamOperationError({
           code: "internal",
@@ -9382,7 +9585,6 @@ const make = Effect.gen(function* () {
           : null;
       const nextSecret: StoredTeamProviderSecret = {
         ...previousSecret,
-        ...importedServerOAuthSecret,
         ...(input.payload.apiKey !== undefined ? { apiKey: input.payload.apiKey } : {}),
         ...(input.payload.oauthAccessToken !== undefined
           ? { oauthAccessToken: input.payload.oauthAccessToken }
@@ -9413,19 +9615,6 @@ const make = Effect.gen(function* () {
         Effect.mapError(toInternalError),
       );
       secretKey = key;
-    }
-
-    const baseConfig: Record<string, unknown> = {
-      ...(input.payload.config ?? existing?.config),
-    };
-    if (sourceServerProviderInstanceId !== undefined) {
-      if (sourceServerProviderInstanceId === null) {
-        delete baseConfig.linkedServerInstanceId;
-      } else {
-        baseConfig.linkedServerInstanceId = sourceServerProviderInstanceId;
-      }
-    } else if (deliveryStrategy !== "token-lease") {
-      delete baseConfig.linkedServerInstanceId;
     }
 
     const stored = yield* assetsRepo

@@ -12668,6 +12668,7 @@
   "51f3f1ad0d1bb194": "Mobile pairing code created",
   "f3bec5a4fe329e0e": "Scan the QR code or enter the code in the official T3 Code mobile app to connect as {pseudo}.",
   "6e2561975e046ebe": "Could not create mobile pairing code",
+  "419ff45930fda415": "Revoke this mobile pairing code?\nDevices using this pending code will no longer be able to pair.",
   "5891c37a751ae818": "Mobile pairing code revoked",
   "c5282ce00f8d353f": "Could not revoke mobile pairing code",
   "eb56b3c5a36b9d51": "Upstream mobile app",

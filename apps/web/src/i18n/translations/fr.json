@@ -12658,6 +12658,7 @@
   "51f3f1ad0d1bb194": "Code d’appairage mobile créé",
   "f3bec5a4fe329e0e": "Scannez le QR code ou saisissez le code dans l’application mobile officielle T3 Code pour vous connecter en tant que {pseudo}.",
   "6e2561975e046ebe": "Impossible de créer le code d’appairage mobile",
+  "419ff45930fda415": "Révoquer ce code d’appairage mobile ?\nLes appareils utilisant ce code en attente ne pourront plus s’appairer.",
   "5891c37a751ae818": "Code d’appairage mobile révoqué",
   "c5282ce00f8d353f": "Impossible de révoquer le code d’appairage mobile",
   "eb56b3c5a36b9d51": "Application mobile officielle",

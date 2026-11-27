@@ -630,8 +630,24 @@ export class TeamRepository extends Context.Service<
       readonly memberId: TeamMemberId;
       readonly updatedAt: string;
     }) => Effect.Effect<
-      Option.Option<TeamMember>,
+      Option.Option<{
+        readonly member: TeamMember;
+        readonly updatedViews: ReadonlyArray<TeamView>;
+        readonly updatedEnvironments: ReadonlyArray<TeamEnvironment>;
+      }>,
       TeamRepositoryError | TeamLastOwnerProtectedError
+    >;
+    readonly collectDeleteCleanupTargets: (teamId: TeamId) => Effect.Effect<
+      {
+        readonly exists: boolean;
+        readonly sessionIds: ReadonlyArray<AuthSessionId>;
+        readonly pairingLinkIds: ReadonlyArray<string>;
+        readonly providerSecretKeys: ReadonlyArray<string>;
+        readonly githubSecretKeys: ReadonlyArray<string>;
+        readonly githubAppClientSecretKey: string | null;
+        readonly scheduledTaskIds: ReadonlyArray<ScheduledTaskId>;
+      },
+      TeamRepositoryError
     >;
     readonly deleteTeam: (teamId: TeamId) => Effect.Effect<
       {
@@ -965,7 +981,7 @@ export class TeamRepository extends Context.Service<
       readonly unlinkAfterRevoke: boolean;
       readonly createdAt: string;
     }) => Effect.Effect<void, TeamRepositoryError>;
-    readonly listPendingRemoteRevocations: (teamId: TeamId) => Effect.Effect<
+    readonly listPendingRemoteRevocations: (teamId?: TeamId) => Effect.Effect<
       ReadonlyArray<{
         readonly id: string;
         readonly teamId: TeamId;
@@ -1513,7 +1529,7 @@ const make = Effect.gen(function* () {
             `;
             const current = existingRows[0];
             if (!current || current.status !== "active") {
-              return Option.none<TeamMember>();
+              return Option.none();
             }
             if (current.role === "owner") {
               const owners = yield* sql<{ readonly count: number }>`
@@ -1550,20 +1566,31 @@ const make = Effect.gen(function* () {
               FROM team_views
               WHERE team_id = ${input.teamId}
             `;
+            const updatedViews: Array<TeamView> = [];
             for (const view of views) {
               const readIds = parseMemberIdArray(view.read_member_ids_json);
               const postIds = parseMemberIdArray(view.post_member_ids_json);
               const nextReadIds = readIds.filter((id) => id !== input.memberId);
               const nextPostIds = postIds.filter((id) => id !== input.memberId);
               if (nextReadIds.length !== readIds.length || nextPostIds.length !== postIds.length) {
+                const nextReadJson = encodeStringArrayJson(nextReadIds);
+                const nextPostJson = encodeStringArrayJson(nextPostIds);
                 yield* sql`
                   UPDATE team_views
                   SET
-                    read_member_ids_json = ${encodeStringArrayJson(nextReadIds)},
-                    post_member_ids_json = ${encodeStringArrayJson(nextPostIds)},
+                    read_member_ids_json = ${nextReadJson},
+                    post_member_ids_json = ${nextPostJson},
                     updated_at = ${input.updatedAt}
                   WHERE id = ${view.id}
                 `;
+                updatedViews.push(
+                  mapViewRow({
+                    ...view,
+                    read_member_ids_json: nextReadJson,
+                    post_member_ids_json: nextPostJson,
+                    updated_at: input.updatedAt,
+                  }),
+                );
               }
             }
             const envs = yield* sql<TeamEnvironmentRow>`
@@ -1572,17 +1599,26 @@ const make = Effect.gen(function* () {
               FROM team_environments
               WHERE team_id = ${input.teamId}
             `;
+            const updatedEnvironments: Array<TeamEnvironment> = [];
             for (const env of envs) {
               const accessIds = parseMemberIdArray(env.access_member_ids_json);
               const nextAccessIds = accessIds.filter((id) => id !== input.memberId);
               if (nextAccessIds.length !== accessIds.length) {
+                const nextAccessJson = encodeStringArrayJson(nextAccessIds);
                 yield* sql`
                   UPDATE team_environments
                   SET
-                    access_member_ids_json = ${encodeStringArrayJson(nextAccessIds)},
+                    access_member_ids_json = ${nextAccessJson},
                     updated_at = ${input.updatedAt}
                   WHERE id = ${env.id}
                 `;
+                updatedEnvironments.push(
+                  mapEnvironmentRow({
+                    ...env,
+                    access_member_ids_json: nextAccessJson,
+                    updated_at: input.updatedAt,
+                  }),
+                );
               }
             }
             const updatedRows = yield* sql<MemberRow>`
@@ -1600,7 +1636,13 @@ const make = Effect.gen(function* () {
               WHERE m.id = ${input.memberId} AND m.team_id = ${input.teamId}
               LIMIT 1
             `;
-            return updatedRows[0] ? Option.some(mapMemberRow(updatedRows[0])) : Option.none();
+            return updatedRows[0]
+              ? Option.some({
+                  member: mapMemberRow(updatedRows[0]),
+                  updatedViews,
+                  updatedEnvironments,
+                })
+              : Option.none();
           }),
         )
         .pipe(
@@ -1611,6 +1653,66 @@ const make = Effect.gen(function* () {
           ),
         );
     }),
+
+    collectDeleteCleanupTargets: Effect.fn("TeamRepository.collectDeleteCleanupTargets")(
+      function* (teamId) {
+        return yield* Effect.gen(function* () {
+          const existing = yield* sql<{ readonly id: string }>`
+            SELECT id FROM team_workspaces WHERE id = ${teamId} LIMIT 1
+          `;
+          if (existing.length === 0) {
+            return {
+              exists: false,
+              sessionIds: [],
+              pairingLinkIds: [],
+              providerSecretKeys: [],
+              githubSecretKeys: [],
+              githubAppClientSecretKey: null,
+              scheduledTaskIds: [],
+            };
+          }
+          const sessionRows = yield* sql<{ readonly session_id: string }>`
+            SELECT session_id FROM team_session_meta WHERE team_id = ${teamId}
+          `;
+          const pairingRows = yield* sql<{ readonly pairing_link_id: string }>`
+            SELECT pairing_link_id FROM team_pairing_meta WHERE team_id = ${teamId}
+          `;
+          const providerSecretRows = yield* sql<{ readonly secret_key: string | null }>`
+            SELECT secret_key FROM team_providers WHERE team_id = ${teamId} AND secret_key IS NOT NULL
+          `;
+          const memberGhSecretRows = yield* sql<{ readonly secret_key: string }>`
+            SELECT secret_key FROM team_github_member_credentials WHERE team_id = ${teamId}
+          `;
+          const autoGhSecretRows = yield* sql<{ readonly secret_key: string }>`
+            SELECT secret_key FROM team_github_automation_credentials WHERE team_id = ${teamId}
+          `;
+          const appGhSecretRows = yield* sql<{ readonly client_secret_key: string | null }>`
+            SELECT client_secret_key FROM team_github_app_config WHERE team_id = ${teamId}
+          `;
+          const scheduledTaskRows = yield* sql<{ readonly task_id: string }>`
+            SELECT task_id FROM team_scheduled_task_meta WHERE team_id = ${teamId}
+          `;
+          return {
+            exists: true,
+            sessionIds: sessionRows.map((row) => row.session_id as AuthSessionId),
+            pairingLinkIds: pairingRows.map((row) => row.pairing_link_id),
+            providerSecretKeys: providerSecretRows.flatMap((row) =>
+              row.secret_key ? [row.secret_key] : [],
+            ),
+            githubSecretKeys: [
+              ...memberGhSecretRows.map((row) => row.secret_key),
+              ...autoGhSecretRows.map((row) => row.secret_key),
+            ],
+            githubAppClientSecretKey: appGhSecretRows[0]?.client_secret_key ?? null,
+            scheduledTaskIds: scheduledTaskRows.map((row) => ScheduledTaskId.make(row.task_id)),
+          };
+        }).pipe(
+          Effect.mapError(
+            (cause) => new TeamRepositoryError({ operation: "collectDeleteCleanupTargets", cause }),
+          ),
+        );
+      },
+    ),
 
     deleteTeam: Effect.fn("TeamRepository.deleteTeam")(function* (teamId) {
       return yield* sql
@@ -1667,7 +1769,8 @@ const make = Effect.gen(function* () {
             yield* sql`DELETE FROM team_skills WHERE team_id = ${teamId}`;
             yield* sql`DELETE FROM team_provider_usage WHERE team_id = ${teamId}`;
             yield* sql`DELETE FROM team_providers WHERE team_id = ${teamId}`;
-            yield* sql`DELETE FROM team_pending_remote_revocations WHERE team_id = ${teamId}`;
+            // Preserve team_pending_remote_revocations so offline peer revocations
+            // enqueued before/during team deletion still drain when those peers reconnect.
             yield* sql`
               DELETE FROM team_thread_env_labels
               WHERE thread_id IN (SELECT thread_id FROM team_thread_meta WHERE team_id = ${teamId})
@@ -3570,22 +3673,35 @@ const make = Effect.gen(function* () {
     ),
 
     listPendingRemoteRevocations: Effect.fn("TeamRepository.listPendingRemoteRevocations")(
-      function* (teamId) {
+      function* (teamId?: TeamId) {
         const rows = yield* runSql(
           "listPendingRemoteRevocations",
-          sql<{
-            readonly id: string;
-            readonly team_id: string;
-            readonly environment_id: string;
-            readonly subject_prefix: string;
-            readonly unlink_after_revoke: number;
-            readonly created_at: string;
-          }>`
-            SELECT id, team_id, environment_id, subject_prefix, unlink_after_revoke, created_at
-            FROM team_pending_remote_revocations
-            WHERE team_id = ${teamId}
-            ORDER BY created_at ASC
-          `,
+          teamId !== undefined
+            ? sql<{
+                readonly id: string;
+                readonly team_id: string;
+                readonly environment_id: string;
+                readonly subject_prefix: string;
+                readonly unlink_after_revoke: number;
+                readonly created_at: string;
+              }>`
+                SELECT id, team_id, environment_id, subject_prefix, unlink_after_revoke, created_at
+                FROM team_pending_remote_revocations
+                WHERE team_id = ${teamId}
+                ORDER BY created_at ASC
+              `
+            : sql<{
+                readonly id: string;
+                readonly team_id: string;
+                readonly environment_id: string;
+                readonly subject_prefix: string;
+                readonly unlink_after_revoke: number;
+                readonly created_at: string;
+              }>`
+                SELECT id, team_id, environment_id, subject_prefix, unlink_after_revoke, created_at
+                FROM team_pending_remote_revocations
+                ORDER BY created_at ASC
+              `,
         );
         return rows.map((row) => ({
           id: row.id,

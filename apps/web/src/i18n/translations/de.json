@@ -12660,6 +12660,7 @@
   "51f3f1ad0d1bb194": "Mobiler Pairing-Code erstellt",
   "f3bec5a4fe329e0e": "Scanne den QR-Code oder gib den Code in der offiziellen T3 Code Mobile-App ein, um dich als {pseudo} zu verbinden.",
   "6e2561975e046ebe": "Mobiler Pairing-Code konnte nicht erstellt werden",
+  "419ff45930fda415": "Diesen mobilen Kopplungscode widerrufen?\nGeräte mit diesem ausstehenden Code können nicht mehr gekoppelt werden.",
   "5891c37a751ae818": "Mobiler Pairing-Code widerrufen",
   "c5282ce00f8d353f": "Mobiler Pairing-Code konnte nicht widerrufen werden",
   "eb56b3c5a36b9d51": "Offizielle Mobile-App",

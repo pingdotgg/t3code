@@ -17,7 +17,9 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import {
   issueEphemeralTeamProviderLease,
+  readLinkedServerInstanceIdFromConfig,
   readTeamProviderSecret,
+  resolveLinkedServerProviderProfileDir,
   teamProviderSecretKey,
   writeTeamProviderSecret,
 } from "./TeamProviderLeaseService.ts";
@@ -151,9 +153,118 @@ describe("TeamProviderLeaseService", () => {
 
           expect(lease.accessToken).toBe("linked-server-access-token");
           expect(JSON.stringify(lease)).not.toContain("linked-server-secret-refresh");
+
+          // Subsequent CLI rotation on disk is picked up immediately without serving a stale snapshot,
+          // and linked mode never forwards linked refresh tokens to a manual oauthTokenEndpoint.
+          let unexpectedEndpointHits = 0;
+          const rogueServer = NodeHttp.createServer((_req, res) => {
+            unexpectedEndpointHits += 1;
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ access_token: "should-not-happen", expires_in: 3600 }));
+          });
+          yield* Effect.promise(
+            () =>
+              new Promise<void>((resolve) => rogueServer.listen(0, "127.0.0.1", () => resolve())),
+          );
+          try {
+            const rogueAddr = rogueServer.address() as { port: number };
+            yield* writeTeamProviderSecret(secrets, secretKey, {
+              oauthAccessToken: "stale-manual-snapshot",
+              oauthRefreshToken: "manual-refresh",
+              oauthTokenEndpoint: `http://127.0.0.1:${rogueAddr.port}/steal`,
+            });
+            yield* Effect.promise(() =>
+              NodeFSP.writeFile(
+                NodePath.join(tempDir, ".credentials.json"),
+                JSON.stringify({
+                  claudeAiOauth: {
+                    accessToken: "rotated-live-disk-token",
+                    refreshToken: "linked-server-secret-refresh-2",
+                    expiresAt,
+                  },
+                }),
+                "utf8",
+              ),
+            );
+            const rotatedLease = yield* issueEphemeralTeamProviderLease({
+              secrets,
+              httpClient,
+              secretKey,
+              providerInstanceId: ProviderInstanceId.make("team-linked-claude"),
+              driver: ProviderDriverKind.make("claudeAgent"),
+              fallbackProfileDir: tempDir,
+              forceRefresh: true,
+            });
+            expect(rotatedLease.accessToken).toBe("rotated-live-disk-token");
+            expect(unexpectedEndpointHits).toBe(0);
+          } finally {
+            yield* Effect.promise(
+              () => new Promise<void>((resolve) => rogueServer.close(() => resolve())),
+            );
+          }
         } finally {
           yield* Effect.promise(() => NodeFSP.rm(tempDir, { recursive: true, force: true }));
         }
       }).pipe(Effect.provide(makeTestLayer())),
   );
+
+  it("rejects virtual team: instance IDs and resolves per-instance custom homePath/env for linked profiles", () => {
+    expect(
+      readLinkedServerInstanceIdFromConfig({ linkedServerInstanceId: "team:t1:claude" }),
+    ).toBeNull();
+    expect(
+      resolveLinkedServerProviderProfileDir({
+        stateDir: "/state",
+        driver: "claudeAgent",
+        linkedServerInstanceId: "team:t1:claude",
+      }),
+    ).toBeNull();
+
+    const serverSettings = {
+      providerInstances: {
+        "claude-work": {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { homePath: "/custom/claude-work" },
+        },
+        "codex-work": {
+          driver: ProviderDriverKind.make("codex"),
+          environment: [{ name: "CODEX_HOME", value: "/custom/codex-work", sensitive: false }],
+        },
+      },
+    } as never;
+
+    expect(
+      resolveLinkedServerProviderProfileDir({
+        stateDir: "/state",
+        driver: "claudeAgent",
+        linkedServerInstanceId: "claude-work",
+        serverSettings,
+      }),
+    ).toBe("/custom/claude-work");
+    expect(
+      resolveLinkedServerProviderProfileDir({
+        stateDir: "/state",
+        driver: "codex",
+        linkedServerInstanceId: "codex-work",
+        serverSettings,
+      }),
+    ).toBe("/custom/codex-work");
+    // Driver mismatch or unknown instance ID must return null.
+    expect(
+      resolveLinkedServerProviderProfileDir({
+        stateDir: "/state",
+        driver: "codex",
+        linkedServerInstanceId: "claude-work",
+        serverSettings,
+      }),
+    ).toBeNull();
+    expect(
+      resolveLinkedServerProviderProfileDir({
+        stateDir: "/state",
+        driver: "claudeAgent",
+        linkedServerInstanceId: "non-existent",
+        serverSettings,
+      }),
+    ).toBeNull();
+  });
 });

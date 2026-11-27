@@ -5221,6 +5221,7 @@ export const layerWsRpc = (
           peerLinks,
           peerClientPairing,
           projectService,
+          scheduledTaskService: scheduledTasks,
           ...(Option.isSome(eventSinkOption) ? { eventSink: eventSinkOption.value } : {}),
           ...(Option.isSome(projectionStoreOption)
             ? { projectionStore: projectionStoreOption.value }

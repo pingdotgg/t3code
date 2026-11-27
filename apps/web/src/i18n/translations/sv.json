@@ -12666,6 +12666,7 @@
   "51f3f1ad0d1bb194": "Mobilparkopplingskod skapad",
   "f3bec5a4fe329e0e": "Skanna QR-koden eller ange koden i den officiella T3 Code-mobilappen för att ansluta som {pseudo}.",
   "6e2561975e046ebe": "Kunde inte skapa mobilparkopplingskod",
+  "419ff45930fda415": "Återkalla den här mobila parkopplingskoden?\nEnheter som använder den väntande koden kommer inte längre att kunna parkopplas.",
   "5891c37a751ae818": "Mobilparkopplingskod återkallad",
   "c5282ce00f8d353f": "Kunde inte återkalla mobilparkopplingskoden",
   "eb56b3c5a36b9d51": "Officiell mobilapp",
