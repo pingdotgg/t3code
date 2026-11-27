@@ -1267,6 +1267,138 @@ describe("waitForRevertedMessage", () => {
       vi.useRealTimers();
     }
   });
+
+  it("does not resolve on a shallower rewind in a three-provider history or when a rolled-back run is paged out", async () => {
+    vi.useFakeTimers();
+    const { state, projection } = projectionAtom();
+    const threadA = ProviderThreadId.make("provider-thread-a");
+    const threadB = ProviderThreadId.make("provider-thread-b");
+    const threadC = projection.providerThreads[0]!.id;
+    const baseThread = projection.providerThreads[0]!;
+    const threeProviderInitial = {
+      ...projection,
+      thread: { ...projection.thread, activeProviderThreadId: threadC },
+      providerThreads: [
+        {
+          ...baseThread,
+          id: threadA,
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+        },
+        {
+          ...baseThread,
+          id: threadB,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          firstRunOrdinal: 2,
+          lastRunOrdinal: 2,
+        },
+        {
+          ...baseThread,
+          id: threadC,
+          providerInstanceId: ProviderInstanceId.make("acp"),
+          firstRunOrdinal: 3,
+          lastRunOrdinal: 3,
+        },
+      ],
+      attempts: [
+        { id: "attempt-1", providerTurnId: null },
+        { id: "attempt-2", providerTurnId: null },
+        { id: "attempt-3", providerTurnId: null },
+      ],
+      providerTurns: [
+        { id: "turn-1", runAttemptId: "attempt-1", ordinal: 1, providerThreadId: threadA },
+        { id: "turn-2", runAttemptId: "attempt-2", ordinal: 1, providerThreadId: threadB },
+        { id: "turn-3", runAttemptId: "attempt-3", ordinal: 1, providerThreadId: threadC },
+      ],
+      runs: projection.runs.slice(0, 3).map((run) => ({
+        ...run,
+        activeAttemptId: `attempt-${run.ordinal}`,
+        providerThreadId: run.ordinal === 1 ? threadA : run.ordinal === 2 ? threadB : threadC,
+      })),
+    };
+    appAtomRegistry.set(state, { data: Option.some(threeProviderInitial as never) });
+
+    let outcome = "pending";
+    const waiting = waitForRevertedMessage(threadRef, 1, requestId, async () => {}).then(
+      () => {
+        outcome = "reverted";
+      },
+      (error: Error) => {
+        outcome = error.message;
+      },
+    );
+
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(outcome).toBe("pending");
+
+      // Another client rewinds only to B2 (rolls back C3, leaves B2 completed and active).
+      appAtomRegistry.set(state, {
+        data: Option.some({
+          ...threeProviderInitial,
+          thread: { ...threeProviderInitial.thread, activeProviderThreadId: threadB },
+          providerThreads: [
+            threeProviderInitial.providerThreads[0]!,
+            threeProviderInitial.providerThreads[1]!,
+            {
+              ...threeProviderInitial.providerThreads[2]!,
+              status: "closed" as const,
+              lastRunOrdinal: null,
+            },
+          ],
+          runs: threeProviderInitial.runs.map((run) =>
+            run.ordinal === 3 ? { ...run, status: "rolled_back" as const } : run,
+          ),
+        } as never),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(outcome).toBe("pending");
+
+      // A paged projection omitting run 2 must not treat missing run 2 as rolled back.
+      appAtomRegistry.set(state, {
+        data: Option.some({
+          ...threeProviderInitial,
+          thread: { ...threeProviderInitial.thread, activeProviderThreadId: threadA },
+          runs: threeProviderInitial.runs
+            .filter((run) => run.ordinal !== 2)
+            .map((run) => (run.ordinal === 3 ? { ...run, status: "rolled_back" as const } : run)),
+        } as never),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(outcome).toBe("pending");
+
+      // Full rewind to A1 confirms both B2 and C3 rolled back and activates threadA.
+      appAtomRegistry.set(state, {
+        data: Option.some({
+          ...threeProviderInitial,
+          thread: { ...threeProviderInitial.thread, activeProviderThreadId: threadA },
+          providerThreads: [
+            threeProviderInitial.providerThreads[0]!,
+            {
+              ...threeProviderInitial.providerThreads[1]!,
+              status: "closed" as const,
+              lastRunOrdinal: null,
+            },
+            {
+              ...threeProviderInitial.providerThreads[2]!,
+              status: "closed" as const,
+              lastRunOrdinal: null,
+            },
+          ],
+          runs: threeProviderInitial.runs.map((run) =>
+            run.ordinal > 1 ? { ...run, status: "rolled_back" as const } : run,
+          ),
+        } as never),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(outcome).toBe("reverted");
+      await waiting;
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("mergeDirectPreviewAnnotation", () => {
@@ -1758,6 +1890,165 @@ describe("deriveAvailableRevertTurnCounts", () => {
     });
     // Run 1 needs Grok rollback (forbidden); run 2 is Grok's last turn before Codex (allowed).
     expect([...available].toSorted()).toEqual([0, 2, 3]);
+  });
+
+  it("ignores held queued and unstarted cancelled runs, and groups shared native conversations", () => {
+    const base = makeThreadProjectionFixture();
+    const grokInstance = ProviderInstanceId.make("grok");
+    const grokAltInstance = ProviderInstanceId.make("grok-alt");
+    const codexInstance = ProviderInstanceId.make("codex");
+    const grokThreadId = ProviderThreadId.make("provider-thread-grok");
+    const grokAltThreadId = ProviderThreadId.make("provider-thread-grok-alt");
+    const baseThread = base.providerThreads[0]!;
+
+    // 1. Held queued + unstarted cancelled Grok runs after Codex 3 do not block boundary rewind to Grok 2.
+    const withUnstartedRuns = {
+      ...base,
+      thread: {
+        ...base.thread,
+        activeProviderThreadId: otherProviderThreadId,
+        providerInstanceId: codexInstance,
+        modelSelection: { instanceId: codexInstance, model: "gpt-5.4" },
+      },
+      providerThreads: [
+        {
+          ...baseThread,
+          id: grokThreadId,
+          driver: "acp" as const,
+          providerInstanceId: grokInstance,
+          providerSessionId: ProviderSessionId.make("session-grok"),
+          status: "idle" as const,
+          ownerNodeId: null,
+          nativeThreadRef: {
+            driver: "acp" as const,
+            nativeId: "grok:1",
+            strength: "strong" as const,
+          },
+        },
+        {
+          ...baseThread,
+          id: otherProviderThreadId,
+          driver: "codex" as const,
+          providerInstanceId: codexInstance,
+          providerSessionId: ProviderSessionId.make("session-codex"),
+          status: "idle" as const,
+          ownerNodeId: null,
+          nativeThreadRef: {
+            driver: "codex" as const,
+            nativeId: "codex:1",
+            strength: "strong" as const,
+          },
+        },
+      ],
+      attempts: [
+        { id: "attempt-1", providerTurnId: null },
+        { id: "attempt-2", providerTurnId: null },
+        { id: "attempt-3", providerTurnId: null },
+      ],
+      providerTurns: [
+        { id: "turn-1", runAttemptId: "attempt-1", ordinal: 1, providerThreadId: grokThreadId },
+        { id: "turn-2", runAttemptId: "attempt-2", ordinal: 2, providerThreadId: grokThreadId },
+        {
+          id: "turn-3",
+          runAttemptId: "attempt-3",
+          ordinal: 1,
+          providerThreadId: otherProviderThreadId,
+        },
+      ],
+      runs: [
+        {
+          id: RunId.make("run-1"),
+          ordinal: 1,
+          status: "completed" as const,
+          startedAt: now,
+          activeAttemptId: "attempt-1",
+          providerThreadId: grokThreadId,
+        },
+        {
+          id: RunId.make("run-2"),
+          ordinal: 2,
+          status: "completed" as const,
+          startedAt: now,
+          activeAttemptId: "attempt-2",
+          providerThreadId: grokThreadId,
+        },
+        {
+          id: RunId.make("run-3"),
+          ordinal: 3,
+          status: "completed" as const,
+          startedAt: now,
+          activeAttemptId: "attempt-3",
+          providerThreadId: otherProviderThreadId,
+        },
+        {
+          id: RunId.make("run-4-cancelled-unstarted"),
+          ordinal: 4,
+          status: "cancelled" as const,
+          startedAt: null,
+          activeAttemptId: null,
+          providerThreadId: grokThreadId,
+        },
+        {
+          id: RunId.make("run-5-queued-held"),
+          ordinal: 5,
+          status: "queued" as const,
+          startedAt: null,
+          queueHeld: true,
+          activeAttemptId: null,
+          providerThreadId: grokThreadId,
+        },
+      ],
+    } as unknown as ReturnType<typeof makeThreadProjectionFixture>;
+
+    expect(
+      [
+        ...deriveAvailableRevertTurnCounts(withUnstartedRuns, {
+          supportsConversationRollback: (instanceId) => instanceId !== grokInstance,
+        }),
+      ].toSorted(),
+    ).toEqual([0, 2, 3]);
+
+    // 2. A delivered run on another instance sharing the same native conversation requires rollback.
+    const withSharedNativeConversation = {
+      ...withUnstartedRuns,
+      providerThreads: [
+        ...withUnstartedRuns.providerThreads,
+        {
+          ...baseThread,
+          id: grokAltThreadId,
+          driver: "acp" as const,
+          providerInstanceId: grokAltInstance,
+          providerSessionId: ProviderSessionId.make("session-grok-alt"),
+          status: "idle" as const,
+          ownerNodeId: null,
+          nativeThreadRef: {
+            driver: "acp" as const,
+            nativeId: "grok:1",
+            strength: "strong" as const,
+          },
+        },
+      ],
+      runs: [
+        ...withUnstartedRuns.runs.slice(0, 3),
+        {
+          id: RunId.make("run-4-delivered-same-native"),
+          ordinal: 4,
+          status: "completed" as const,
+          startedAt: now,
+          activeAttemptId: null,
+          providerThreadId: grokAltThreadId,
+        },
+      ],
+    } as unknown as ReturnType<typeof makeThreadProjectionFixture>;
+
+    expect(
+      [
+        ...deriveAvailableRevertTurnCounts(withSharedNativeConversation, {
+          supportsConversationRollback: (instanceId) =>
+            instanceId !== grokInstance && instanceId !== grokAltInstance,
+        }),
+      ].toSorted(),
+    ).toEqual([0, 3]);
   });
 });
 

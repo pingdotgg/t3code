@@ -26,6 +26,7 @@ import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type ChatAttachment,
   CommandId,
+  didRunReachProvider,
   type GuestMessageId,
   isCompactionCommandMessage,
   isDeliveredProviderTurn,
@@ -187,6 +188,7 @@ import {
 } from "./DispatchModeLimit.ts";
 import {
   applyToProjection,
+  classifyRollbackProviderThreads,
   emptyProjection,
   threadShellFromProjection,
   ProjectionStoreV2,
@@ -201,7 +203,6 @@ import {
   type ActiveThreadListEntry,
   type OlderSettledThreadsQuery,
   type ShellSnapshotOptions,
-  rollbackAbandonment,
 } from "./ProjectionStore.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -1614,13 +1615,7 @@ function rootProviderThreadsForProvider(
 }
 
 function isHandoffSourceRun(run: OrchestrationV2Run): boolean {
-  return (
-    run.status === "completed" ||
-    run.status === "failed" ||
-    run.status === "interrupted" ||
-    // A queued request cancelled before it started never reached any provider.
-    (run.status === "cancelled" && run.startedAt !== null)
-  );
+  return didRunReachProvider(run);
 }
 
 function lastDeliveredRunForProviderThread(
@@ -2773,12 +2768,47 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         freshContext && queuedMessage.scheduledTaskId === undefined
           ? pendingForkTransferForThread(projection)
           : undefined;
+      // A pending rollback may close the provider thread this queued run points to.
+      if (
+        projection.thread.rollbackRequestId != null &&
+        projection.thread.rollbackFailure == null
+      ) {
+        const rollbackEffects = yield* effectOutbox
+          .listByCommandId(projection.thread.rollbackRequestId)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestratorDispatchError({
+                  commandId,
+                  commandType: "message.dispatch",
+                  cause,
+                }),
+            ),
+          );
+        if (
+          rollbackEffects.some(
+            (effect) =>
+              effect.threadId === threadId &&
+              effect.request.type === "provider-thread.rollback" &&
+              (effect.status === "pending" || effect.status === "running"),
+          )
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId,
+            commandType: "message.dispatch",
+            cause:
+              "This thread is currently rewinding. Wait for the rewind to finish before starting a queued message.",
+          });
+        }
+      }
       const activeProviderThread = dispatchProviderThread(projection, queuedMessage, freshContext);
       const contextBoundary = freshContext ? ordinal : contextBoundaryOrdinal(projection);
-      // A run queued before a fresh run started is bound to the conversation that run left behind.
+      // A run queued before a fresh run or rollback is bound to the conversation left behind.
+      const storedThreadRetired = isRetiredProviderThread(storedProviderThread);
       const followsLatestContext =
         !freshContext &&
         (followsCurrent ||
+          storedThreadRetired ||
           storedProviderThread.providerInstanceId !== queuedRun.providerInstanceId ||
           providerThreadPredatesBoundary(storedProviderThread, contextBoundary));
       const targetProviderThread = followsLatestContext
@@ -2788,7 +2818,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : rootProviderThreadsForProvider(projection, queuedRun.providerInstanceId)[0]
         : freshContext &&
             // The reserved row belongs to the instance the run queued on, which may have changed.
-            (storedProviderThread.providerInstanceId !== queuedRun.providerInstanceId ||
+            (storedThreadRetired ||
+              storedProviderThread.providerInstanceId !== queuedRun.providerInstanceId ||
               storedProviderThread.firstRunOrdinal !== null ||
               storedProviderThread.nativeThreadRef !== null)
           ? undefined
@@ -2800,9 +2831,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // that moved the run to another instance of the same driver must not replace that row.
           nativeThreadId: freshContext
             ? `pending:${queuedRun.id}:fresh`
-            : storedProviderThread.providerInstanceId === queuedRun.providerInstanceId
-              ? `pending:${queuedRun.id}`
-              : `pending:${queuedRun.id}:${queuedRun.providerInstanceId}`,
+            : storedThreadRetired
+              ? `pending:${queuedRun.id}:rebound`
+              : storedProviderThread.providerInstanceId === queuedRun.providerInstanceId
+                ? `pending:${queuedRun.id}`
+                : `pending:${queuedRun.id}:${queuedRun.providerInstanceId}`,
         }),
         driver: targetAdapter.driver,
         providerInstanceId: queuedRun.providerInstanceId,
@@ -8072,6 +8105,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         forceRestart: dispatchMode.type === "restart_active",
       });
       return;
+    }
+
+    // A pending rollback may close the currently active provider thread; reject new sends until it settles.
+    if (projection.thread.rollbackRequestId != null && projection.thread.rollbackFailure == null) {
+      const rollbackEffects = yield* effectOutbox
+        .listByCommandId(projection.thread.rollbackRequestId)
+        .pipe(mapDispatchError(command));
+      if (
+        rollbackEffects.some(
+          (effect) =>
+            effect.threadId === command.threadId &&
+            effect.request.type === "provider-thread.rollback" &&
+            (effect.status === "pending" || effect.status === "running"),
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "This thread is currently rewinding. Wait for the rewind to finish before sending a message.",
+        });
+      }
     }
 
     const activeProviderThread = dispatchProviderThread(
@@ -14917,10 +14972,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             run.status === "failed" ||
             run.status === "cancelled"),
       );
-      const needsTargetProviderRollback =
-        runsToRollback.some((run) => run.providerThreadId === providerThread.id) ||
-        (targetOrdinal === 0 && runsToRollback.length === 0);
-      if (needsTargetProviderRollback) {
+      const retainedRuns = projection.runs.filter(
+        (run) =>
+          run.ordinal <= targetOrdinal &&
+          (run.status === "completed" ||
+            run.status === "interrupted" ||
+            run.status === "failed" ||
+            run.status === "cancelled"),
+      );
+      const rootProviderThreads = projection.providerThreads.filter(
+        (candidate) => candidate.appThreadId === command.threadId && candidate.ownerNodeId === null,
+      );
+      const classified = classifyRollbackProviderThreads({
+        targetProviderThread: providerThread,
+        activeProviderThreadId: projection.thread.activeProviderThreadId,
+        targetOrdinal,
+        rootProviderThreads,
+        runsToRollback,
+        retainedRuns,
+        sessions: projection.providerSessions,
+      });
+      if (classified.needsTargetProviderRollback) {
         const capabilities = yield* providerAdapters.get(providerThread.providerInstanceId).pipe(
           Effect.flatMap((adapter) => adapter.getCapabilities()),
           Effect.mapError(
@@ -14942,19 +15014,48 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       }
 
-      const abandonment = rollbackAbandonment({
-        target: providerThread,
-        targetOrdinal,
-        activeProviderThreadId: projection.thread.activeProviderThreadId,
-        rootProviderThreads: projection.providerThreads.filter(
-          (candidate) =>
-            candidate.appThreadId === command.threadId && candidate.ownerNodeId === null,
+      if (
+        classified.backgroundCheckProviderThreads.some(
+          (candidate) => (candidate.pendingBackgroundTasks?.length ?? 0) > 0,
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "A session being rewound is still running background agents or commands. Wait for them to finish, or press Stop, then rewind again.",
+        });
+      }
+      const backgroundCheckSessionIds = new Set(
+        classified.backgroundCheckProviderThreads.flatMap((candidate) =>
+          candidate.providerSessionId === null ? [] : [candidate.providerSessionId],
         ),
-        runsToRollback,
-        sessions: projection.providerSessions,
-      });
-      for (const session of abandonment.sessions) {
-        if (yield* sessionHasBackgroundWork(session, projection.providerThreads)) {
+      );
+      const spanningRollbackSessionIds = new Set(
+        classified.spanningProviderThreads.flatMap((entry) =>
+          entry.needsRollback && entry.providerThread.providerSessionId !== null
+            ? [entry.providerThread.providerSessionId]
+            : [],
+        ),
+      );
+      for (const session of projection.providerSessions) {
+        if (
+          !backgroundCheckSessionIds.has(session.id) ||
+          session.status === "stopped" ||
+          session.status === "error"
+        ) {
+          continue;
+        }
+        const isMultiThread =
+          session.capabilities.sessions.supportsMultipleProviderThreadsPerSession;
+        if (
+          !isMultiThread &&
+          !classified.abandonedSessionIds.has(session.id) &&
+          !spanningRollbackSessionIds.has(session.id)
+        ) {
+          continue;
+        }
+        if (yield* sessionHasBackgroundWork(session, classified.backgroundCheckProviderThreads)) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,

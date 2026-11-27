@@ -1426,6 +1426,41 @@ export function isRetiredProviderThread(
   return providerThread.status === "closed" || providerThread.status === "archived";
 }
 
+/** Whether two provider thread rows belong to the same underlying native provider conversation. */
+export function sameNativeConversation(
+  left: Pick<OrchestrationV2ProviderThread, "id" | "driver" | "nativeThreadRef">,
+  right: Pick<OrchestrationV2ProviderThread, "id" | "driver" | "nativeThreadRef">,
+): boolean {
+  if (left.id === right.id) return true;
+  return (
+    left.driver === right.driver &&
+    left.nativeThreadRef != null &&
+    right.nativeThreadRef != null &&
+    left.nativeThreadRef.nativeId === right.nativeThreadRef.nativeId
+  );
+}
+
+/** Stable key grouping provider thread rows that share one native provider conversation. */
+export function providerThreadNativeConversationKey(
+  providerThread: Pick<OrchestrationV2ProviderThread, "id" | "driver" | "nativeThreadRef">,
+): string {
+  return providerThread.nativeThreadRef != null
+    ? `${providerThread.driver}:${providerThread.nativeThreadRef.nativeId}`
+    : providerThread.id;
+}
+
+/** Runs cancelled before starting (or still queued) never reached any provider conversation. */
+export function didRunReachProvider(
+  run: Pick<OrchestrationV2Run, "status" | "startedAt">,
+): boolean {
+  return (
+    run.status === "completed" ||
+    run.status === "failed" ||
+    run.status === "interrupted" ||
+    (run.status === "cancelled" && run.startedAt !== null)
+  );
+}
+
 export const OrchestrationV2RuntimeRequest = Schema.Struct({
   id: RuntimeRequestId,
   nodeId: NodeId,

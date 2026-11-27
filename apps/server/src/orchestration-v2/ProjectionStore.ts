@@ -55,6 +55,7 @@ import type {
   RunAttemptId,
 } from "@t3tools/contracts";
 import {
+  didRunReachProvider,
   IDLE_COMPACTION_TEXT,
   idleCompactionOf,
   isQueuedProviderThreadPlaceholder,
@@ -76,6 +77,8 @@ import {
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
+  providerThreadNativeConversationKey,
+  sameNativeConversation,
   RunId,
   MessageId,
   RuntimeRequestId,
@@ -304,12 +307,209 @@ export interface ProjectionCheckpointCaptureContext {
 }
 
 const RollbackTargetAttempts = Schema.Array(
-  OrchestrationV2RunAttemptJsonSchema.mapFields(({ id, providerTurnId }) => ({
-    id,
-    providerTurnId,
-  })),
+  Schema.Struct({
+    ordinal: Schema.Number,
+    id: OrchestrationV2RunAttemptJsonSchema.fields.id,
+    providerTurnId: OrchestrationV2RunAttemptJsonSchema.fields.providerTurnId,
+  }),
 );
 const decodeRollbackTargetAttempts = Schema.decodeUnknownEffect(RollbackTargetAttempts);
+
+export type RollbackTargetAttempt = (typeof RollbackTargetAttempts.Type)[number];
+
+export interface RollbackSpanningProviderThread {
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly providerSession: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
+  readonly targetRun: OrchestrationV2Run;
+  readonly targetAttempt: RollbackTargetAttempt | undefined;
+  readonly targetCheckpointId: CheckpointId | null;
+  readonly conversationThreadIds: ReadonlyArray<ProviderThreadId>;
+  readonly needsRollback: boolean;
+}
+
+function capabilitiesSupportRollback(
+  capabilities: OrchestrationV2ThreadProjection["providerSessions"][number]["capabilities"],
+): boolean {
+  return (
+    capabilities.threads.canRollbackThread &&
+    (capabilities.checkpointing.providerCanRollbackConversation ||
+      capabilities.context.canConsumeHandoffSummaries) &&
+    capabilities.checkpointing.providerRollbackReturnsSnapshot
+  );
+}
+
+/**
+ * Classifies root provider threads for rollback into target-conversation rows, spanning rows
+ * with retained checkpoints, and abandoned rows that must be closed.
+ */
+export function classifyRollbackProviderThreads(input: {
+  readonly targetProviderThread: OrchestrationV2ProviderThread;
+  readonly activeProviderThreadId: ProviderThreadId | null;
+  readonly targetOrdinal: number;
+  readonly rootProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
+  readonly runsToRollback: ReadonlyArray<OrchestrationV2Run>;
+  readonly retainedRuns: ReadonlyArray<OrchestrationV2Run>;
+  readonly sessions: ReadonlyArray<OrchestrationV2ThreadProjection["providerSessions"][number]>;
+  readonly attemptByOrdinal?: ReadonlyMap<number, RollbackTargetAttempt>;
+  readonly canRollbackProvider?: (providerThread: OrchestrationV2ProviderThread) => boolean;
+}): {
+  readonly targetConversationThreadIds: ReadonlySet<ProviderThreadId>;
+  readonly needsTargetProviderRollback: boolean;
+  readonly spanningProviderThreads: ReadonlyArray<RollbackSpanningProviderThread>;
+  readonly abandonedProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
+  readonly abandonedSessionIds: ReadonlySet<
+    OrchestrationV2ThreadProjection["providerSessions"][number]["id"]
+  >;
+  readonly backgroundCheckProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
+} {
+  const sessionsById = new Map(input.sessions.map((session) => [session.id, session]));
+  const threadIdsByConvKey = new Map<string, Array<ProviderThreadId>>();
+  const convKeyByThreadId = new Map<ProviderThreadId, string>();
+  for (const candidate of input.rootProviderThreads) {
+    const key = providerThreadNativeConversationKey(candidate);
+    convKeyByThreadId.set(candidate.id, key);
+    const existing = threadIdsByConvKey.get(key);
+    if (existing === undefined) {
+      threadIdsByConvKey.set(key, [candidate.id]);
+    } else {
+      existing.push(candidate.id);
+    }
+  }
+  const targetConvKey = providerThreadNativeConversationKey(input.targetProviderThread);
+  const targetConversationThreadIds = new Set<ProviderThreadId>([
+    input.targetProviderThread.id,
+    ...(threadIdsByConvKey.get(targetConvKey) ?? []),
+  ]);
+
+  const deliveredDiscardedConvKeys = new Set<string>();
+  let targetHasDeliveredDiscardedRun = false;
+  for (const run of input.runsToRollback) {
+    if (!didRunReachProvider(run) || run.providerThreadId === null) continue;
+    if (targetConversationThreadIds.has(run.providerThreadId)) {
+      targetHasDeliveredDiscardedRun = true;
+    }
+    const key = convKeyByThreadId.get(run.providerThreadId) ?? run.providerThreadId;
+    deliveredDiscardedConvKeys.add(key);
+  }
+  const needsTargetProviderRollback =
+    targetHasDeliveredDiscardedRun ||
+    (input.targetOrdinal === 0 && input.runsToRollback.length === 0);
+
+  const retainedRunByThreadId = new Map<ProviderThreadId, OrchestrationV2Run>();
+  const latestRetainedByConvKey = new Map<
+    string,
+    { readonly threadId: ProviderThreadId; readonly ordinal: number }
+  >();
+  for (const run of input.retainedRuns) {
+    if (!didRunReachProvider(run) || run.providerThreadId === null) continue;
+    const prevThread = retainedRunByThreadId.get(run.providerThreadId);
+    if (prevThread === undefined || run.ordinal > prevThread.ordinal) {
+      retainedRunByThreadId.set(run.providerThreadId, run);
+    }
+    const convKey = convKeyByThreadId.get(run.providerThreadId) ?? run.providerThreadId;
+    const prevConv = latestRetainedByConvKey.get(convKey);
+    if (prevConv === undefined || run.ordinal > prevConv.ordinal) {
+      latestRetainedByConvKey.set(convKey, {
+        threadId: run.providerThreadId,
+        ordinal: run.ordinal,
+      });
+    }
+  }
+
+  const canRollback = (candidate: OrchestrationV2ProviderThread): boolean => {
+    if (candidate.providerSessionId === null) return false;
+    if (input.canRollbackProvider !== undefined) return input.canRollbackProvider(candidate);
+    const session = sessionsById.get(candidate.providerSessionId);
+    return session !== undefined && capabilitiesSupportRollback(session.capabilities);
+  };
+
+  const spanningProviderThreads: Array<RollbackSpanningProviderThread> = [];
+  const abandonedProviderThreads: Array<OrchestrationV2ProviderThread> = [];
+
+  for (const candidate of input.rootProviderThreads) {
+    if (candidate.id === input.targetProviderThread.id || isRetiredProviderThread(candidate)) {
+      continue;
+    }
+    const convKey = convKeyByThreadId.get(candidate.id) ?? candidate.id;
+    const hasDiscardedDeliveredRun = deliveredDiscardedConvKeys.has(convKey);
+    const hasPostTargetActivity =
+      hasDiscardedDeliveredRun ||
+      candidate.id === input.activeProviderThreadId ||
+      (candidate.lastRunOrdinal !== null && candidate.lastRunOrdinal > input.targetOrdinal) ||
+      (candidate.firstRunOrdinal !== null && candidate.firstRunOrdinal > input.targetOrdinal);
+    if (!hasPostTargetActivity) continue;
+
+    const retainedRun = retainedRunByThreadId.get(candidate.id);
+    if (retainedRun === undefined) {
+      abandonedProviderThreads.push(candidate);
+      continue;
+    }
+
+    const sharesTargetConversation = sameNativeConversation(candidate, input.targetProviderThread);
+    const isLatestRetainedInConversation =
+      latestRetainedByConvKey.get(convKey)?.threadId === candidate.id;
+    const needsNativeRollback =
+      !sharesTargetConversation && hasDiscardedDeliveredRun && isLatestRetainedInConversation;
+    const targetAttempt = input.attemptByOrdinal?.get(retainedRun.ordinal);
+    const hasRollbackTarget =
+      retainedRun.checkpointId !== null &&
+      (input.attemptByOrdinal === undefined || targetAttempt !== undefined);
+
+    if (needsNativeRollback && (!canRollback(candidate) || !hasRollbackTarget)) {
+      abandonedProviderThreads.push(candidate);
+      continue;
+    }
+
+    spanningProviderThreads.push({
+      providerThread: candidate,
+      providerSession:
+        candidate.providerSessionId === null
+          ? undefined
+          : sessionsById.get(candidate.providerSessionId),
+      targetRun: retainedRun,
+      targetAttempt,
+      targetCheckpointId: retainedRun.checkpointId,
+      conversationThreadIds: threadIdsByConvKey.get(convKey) ?? [candidate.id],
+      needsRollback: needsNativeRollback,
+    });
+  }
+
+  const abandonedIds = new Set(abandonedProviderThreads.map((candidate) => candidate.id));
+  const retainedSessionIds = new Set(
+    input.rootProviderThreads.flatMap((candidate) =>
+      !isRetiredProviderThread(candidate) &&
+      !abandonedIds.has(candidate.id) &&
+      candidate.providerSessionId !== null
+        ? [candidate.providerSessionId]
+        : [],
+    ),
+  );
+  if (input.targetProviderThread.providerSessionId !== null) {
+    retainedSessionIds.add(input.targetProviderThread.providerSessionId);
+  }
+  const abandonedSessionIds = new Set(
+    abandonedProviderThreads.flatMap((candidate) =>
+      candidate.providerSessionId !== null && !retainedSessionIds.has(candidate.providerSessionId)
+        ? [candidate.providerSessionId]
+        : [],
+    ),
+  );
+  const backgroundCheckProviderThreads = [
+    ...abandonedProviderThreads,
+    ...spanningProviderThreads
+      .filter((entry) => entry.needsRollback)
+      .map((entry) => entry.providerThread),
+  ];
+
+  return {
+    targetConversationThreadIds,
+    needsTargetProviderRollback,
+    spanningProviderThreads,
+    abandonedProviderThreads,
+    abandonedSessionIds,
+    backgroundCheckProviderThreads,
+  };
+}
 
 export interface ProjectionCheckpointRollbackContext {
   readonly thread: OrchestrationV2AppThread;
@@ -318,17 +518,24 @@ export interface ProjectionCheckpointRollbackContext {
   readonly checkpoint: OrchestrationV2Checkpoint | undefined;
   readonly scope: OrchestrationV2CheckpointScope | undefined;
   readonly targetRun: OrchestrationV2Run | undefined;
-  readonly targetAttempt: (typeof RollbackTargetAttempts.Type)[number] | undefined;
+  readonly targetAttempt: RollbackTargetAttempt | undefined;
+  readonly targetConversationThreadIds: ReadonlyArray<ProviderThreadId>;
   readonly providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
   readonly rolledBackAttemptIds: ReadonlyArray<RunAttemptId>;
   readonly runsToRollback: ReadonlyArray<OrchestrationV2Run>;
   readonly rootNodes: ReadonlyArray<OrchestrationV2ExecutionNode>;
   /** Ready checkpoints of the target scope and of repository scopes that the rollback discards. */
   readonly staleCheckpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
+  /** Non-target root provider threads spanning the rewind point whose retained checkpoints stay usable. */
+  readonly spanningProviderThreads: ReadonlyArray<RollbackSpanningProviderThread>;
   /** Non-retired root provider threads discarded when rewinding past their runs. */
   readonly abandonedProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
   /** Exclusive non-shared live sessions owned only by abandoned provider threads. */
   readonly abandonedSessions: ReadonlyArray<
+    OrchestrationV2ThreadProjection["providerSessions"][number]
+  >;
+  /** Live sessions referenced by abandoned or spanning threads whose background work must be checked. */
+  readonly backgroundCheckSessions: ReadonlyArray<
     OrchestrationV2ThreadProjection["providerSessions"][number]
   >;
 }
@@ -1023,52 +1230,6 @@ function preserveCompletionDelivery(
     return next;
   }
   return { ...next, completionDelivery: current.completionDelivery };
-}
-
-/**
- * Root provider threads a rewind to `targetOrdinal` discards in favour of `target`, and the live
- * sessions only they hold. Shared sessions host other provider threads and stay attached.
- */
-export function rollbackAbandonment(input: {
-  readonly target: OrchestrationV2ProviderThread;
-  readonly targetOrdinal: number;
-  readonly activeProviderThreadId: ProviderThreadId | null;
-  readonly rootProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
-  readonly runsToRollback: ReadonlyArray<Pick<OrchestrationV2Run, "providerThreadId">>;
-  readonly sessions: ReadonlyArray<OrchestrationV2ThreadProjection["providerSessions"][number]>;
-}) {
-  const rolledBackProviderThreadIds = new Set(
-    input.runsToRollback.map((run) => run.providerThreadId),
-  );
-  const providerThreads = input.rootProviderThreads.filter(
-    (candidate) =>
-      candidate.id !== input.target.id &&
-      !isRetiredProviderThread(candidate) &&
-      (rolledBackProviderThreadIds.has(candidate.id) ||
-        candidate.id === input.activeProviderThreadId ||
-        (candidate.lastRunOrdinal ?? 0) > input.targetOrdinal ||
-        (candidate.firstRunOrdinal ?? 0) > input.targetOrdinal),
-  );
-  const abandonedIds = new Set(providerThreads.map((candidate) => candidate.id));
-  const retainedSessionIds = new Set([
-    input.target.providerSessionId,
-    ...input.rootProviderThreads
-      .filter((candidate) => !isRetiredProviderThread(candidate) && !abandonedIds.has(candidate.id))
-      .map((candidate) => candidate.providerSessionId),
-  ]);
-  const abandonedSessionIds = new Set(
-    providerThreads
-      .map((candidate) => candidate.providerSessionId)
-      .filter((id) => id !== null && !retainedSessionIds.has(id)),
-  );
-  const sessions = input.sessions.filter(
-    (session) =>
-      abandonedSessionIds.has(session.id) &&
-      session.status !== "stopped" &&
-      session.status !== "error" &&
-      !session.capabilities.sessions.supportsMultipleProviderThreadsPerSession,
-  );
-  return { providerThreads, sessions };
 }
 
 export function emptyProjection(
@@ -6607,13 +6768,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               providerSession: undefined,
               targetRun: undefined,
               targetAttempt: undefined,
+              targetConversationThreadIds: providerThread === undefined ? [] : [providerThread.id],
               providerTurns: [],
               rolledBackAttemptIds: [],
               runsToRollback: [],
               rootNodes: [],
               staleCheckpoints: [],
+              spanningProviderThreads: [],
               abandonedProviderThreads: [],
               abandonedSessions: [],
+              backgroundCheckSessions: [],
             };
             if (
               providerThread === undefined ||
@@ -6636,7 +6800,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               rolledBackAttempts,
               staleRows,
             ] = yield* Effect.all([
-              sql`SELECT attempt.attempt_id AS id, attempt.provider_turn_id AS "providerTurnId"
+              sql`SELECT run.ordinal AS ordinal, attempt.attempt_id AS id, attempt.provider_turn_id AS "providerTurnId"
             FROM orchestration_v2_projection_run_attempts AS attempt
             JOIN orchestration_v2_projection_runs AS run
               ON attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId')
@@ -6671,7 +6835,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   WHERE thread_id = ${threadId} AND kind = 'manual')))
             ORDER BY scope_id = ${scope.id} DESC, scope_id ASC, ordinal_within_scope ASC`,
             ]);
-            const targetAttempt = (yield* decodeRollbackTargetAttempts(attemptRows))[0];
+            const targetAttempts = yield* decodeRollbackTargetAttempts(attemptRows);
+            const attemptByOrdinal = new Map(
+              targetAttempts.map((attempt) => [attempt.ordinal, attempt]),
+            );
+            const targetAttempt = attemptByOrdinal.get(targetOrdinal);
             const targetRun = (yield* decodeRows(decodeRunPayload, threadId)(targetRunRows))[0];
             const runsToRollback = yield* decodeRows(decodeRunPayload, threadId)(runRows);
             const allSessions = yield* decodeRows(
@@ -6682,14 +6850,92 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               decodeProviderThreadPayload,
               threadId,
             )(rootProviderThreadRows);
-            const abandonment = rollbackAbandonment({
-              target: providerThread,
-              targetOrdinal,
+            // Only read earlier runs for non-target open provider threads that could span the rewind point,
+            // so unrelated obsolete run payloads earlier in the thread are never decoded.
+            const potentialSpanningThreadIds = rootProviderThreads.flatMap((candidate) =>
+              candidate.id !== providerThread.id &&
+              !isRetiredProviderThread(candidate) &&
+              (candidate.firstRunOrdinal === null || candidate.firstRunOrdinal <= targetOrdinal)
+                ? [candidate.id]
+                : [],
+            );
+            const retainedRuns: Array<OrchestrationV2Run> =
+              targetRun === undefined ? [] : [targetRun];
+            if (potentialSpanningThreadIds.length > 0 && targetOrdinal > 0) {
+              const [spanningRunRows, spanningAttemptRows] = yield* Effect.all([
+                sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId} AND ordinal < ${targetOrdinal}
+                AND status IN ('completed', 'interrupted', 'failed', 'cancelled')
+                AND json_extract(payload_json, '$.providerThreadId') IN ${sql.in(potentialSpanningThreadIds)}
+              ORDER BY ordinal ASC`,
+                sql`SELECT run.ordinal AS ordinal, attempt.attempt_id AS id, attempt.provider_turn_id AS "providerTurnId"
+              FROM orchestration_v2_projection_run_attempts AS attempt
+              JOIN orchestration_v2_projection_runs AS run
+                ON attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId')
+              WHERE run.thread_id = ${threadId} AND run.ordinal < ${targetOrdinal}
+                AND run.status != 'rolled_back'
+                AND json_extract(run.payload_json, '$.providerThreadId') IN ${sql.in(potentialSpanningThreadIds)}
+                AND attempt.thread_id = ${threadId}`,
+              ]);
+              retainedRuns.push(
+                ...(yield* decodeRows(decodeRunPayload, threadId)(spanningRunRows)),
+              );
+              for (const attempt of yield* decodeRollbackTargetAttempts(spanningAttemptRows)) {
+                attemptByOrdinal.set(attempt.ordinal, attempt);
+              }
+            }
+            const classified = classifyRollbackProviderThreads({
+              targetProviderThread: providerThread,
               activeProviderThreadId: thread.activeProviderThreadId,
+              targetOrdinal,
               rootProviderThreads,
               runsToRollback,
+              retainedRuns,
               sessions: allSessions,
+              attemptByOrdinal,
             });
+            const abandonedSessions = allSessions.filter(
+              (session) =>
+                classified.abandonedSessionIds.has(session.id) &&
+                session.status !== "stopped" &&
+                session.status !== "error" &&
+                !session.capabilities.sessions.supportsMultipleProviderThreadsPerSession,
+            );
+            const backgroundCheckSessionIds = new Set(
+              classified.backgroundCheckProviderThreads.flatMap((candidate) =>
+                candidate.providerSessionId === null ? [] : [candidate.providerSessionId],
+              ),
+            );
+            const backgroundCheckSessions = allSessions.filter(
+              (session) =>
+                backgroundCheckSessionIds.has(session.id) &&
+                session.status !== "stopped" &&
+                session.status !== "error",
+            );
+            const turnProviderThreadIds = Array.from(
+              new Set([
+                ...classified.targetConversationThreadIds,
+                ...classified.spanningProviderThreads.flatMap(
+                  (entry) => entry.conversationThreadIds,
+                ),
+              ]),
+            );
+            const relevantAttempts = [
+              ...(targetAttempt === undefined ? [] : [targetAttempt]),
+              ...classified.spanningProviderThreads.flatMap((entry) =>
+                entry.targetAttempt === undefined ? [] : [entry.targetAttempt],
+              ),
+            ];
+            const relevantAttemptIds = Array.from(
+              new Set(relevantAttempts.map((attempt) => attempt.id)),
+            );
+            const relevantTurnIds = Array.from(
+              new Set(
+                relevantAttempts.flatMap((attempt) =>
+                  attempt.providerTurnId === null ? [] : [attempt.providerTurnId],
+                ),
+              ),
+            );
             const [nodeRows, turnRows] = yield* Effect.all([
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_nodes
             WHERE thread_id = ${threadId} AND ${sql.in(
@@ -6699,15 +6945,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY node_id ASC`,
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_turns
             WHERE thread_id = ${threadId} AND (
-              provider_thread_id = ${providerThread.id}
-              OR provider_turn_id = ${targetAttempt?.providerTurnId ?? null}
-              OR run_attempt_id = ${targetAttempt?.id ?? null})
+              ${sql.in("provider_thread_id", turnProviderThreadIds)}
+              OR ${sql.in("provider_turn_id", relevantTurnIds)}
+              OR ${sql.in("run_attempt_id", relevantAttemptIds)})
             ORDER BY provider_thread_id ASC, ordinal ASC`,
             ]);
             return {
               ...context,
               targetRun,
               targetAttempt,
+              targetConversationThreadIds: Array.from(classified.targetConversationThreadIds),
               runsToRollback,
               providerSession: allSessions.find(
                 (session) => session.id === providerThread.providerSessionId,
@@ -6716,8 +6963,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               rootNodes: yield* decodeRows(decodeNodePayload, threadId)(nodeRows),
               providerTurns: yield* decodeRows(decodeProviderTurnPayload, threadId)(turnRows),
               staleCheckpoints: yield* decodeRows(decodeCheckpointPayload, threadId)(staleRows),
-              abandonedProviderThreads: abandonment.providerThreads,
-              abandonedSessions: abandonment.sessions,
+              spanningProviderThreads: classified.spanningProviderThreads,
+              abandonedProviderThreads: classified.abandonedProviderThreads,
+              abandonedSessions,
+              backgroundCheckSessions,
             };
           }),
         )

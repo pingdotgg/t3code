@@ -18,6 +18,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   isDeliveredProviderTurn,
+  isRetiredProviderThread,
   parseGoalCommand,
   RunId,
   RunAttemptId,
@@ -1122,6 +1123,18 @@ export const layer: Layer.Layer<
             .getThreadRecords(threadId, ["checkpoints"], { checkpointIds: [checkpointId] })
             .pipe(Effect.orElseSucceed(() => ({ checkpoints: [] }))),
       );
+      if (isRetiredProviderThread(providerThread)) {
+        yield* settleStartFailure({
+          signal: "provider-thread-retired",
+          title: "Conversation rewound",
+          error: new Error(
+            `Provider thread ${providerThread.id} was closed before this turn could start.`,
+          ),
+          message:
+            "This conversation was rewound before the message could start. Send the message again.",
+        });
+        return;
+      }
       // Opening a session does not prompt the provider, so the workspace is still unchanged.
       const baseline = yield* runExecution.forkBaseline({
         appThread: projection.thread,

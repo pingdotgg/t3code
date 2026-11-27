@@ -2,9 +2,11 @@ import {
   CheckpointId,
   CheckpointScopeId,
   CommandId,
+  didRunReachProvider,
   isRetiredProviderThread,
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderThread,
   ProviderThreadId,
   repositoryRewindCheckpoint,
   ThreadId,
@@ -48,6 +50,9 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 export const ROLLBACK_FAILED_MESSAGE =
   "The provider could not roll back this conversation. Try again; if it keeps failing, check the provider and server logs.";
 
+const ROLLBACK_BACKGROUND_WORK_MESSAGE =
+  "A session being rewound is still running background agents or commands. Wait for them to finish, or press Stop, then rewind again.";
+
 export class CheckpointRollbackExecutionError extends Schema.TaggedError<CheckpointRollbackExecutionError>()(
   "CheckpointRollbackExecutionError",
   {
@@ -57,6 +62,7 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
       "provider-turn-unavailable",
       "unexpected-failure",
       "shared-workspace",
+      "background-work-active",
     ]),
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
@@ -74,6 +80,8 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
         return `Provider turn for rollback target ${this.checkpointId} is unavailable on provider thread ${this.providerThreadId}.`;
       case "shared-workspace":
         return SHARED_WORKSPACE_RESTORE_MESSAGE;
+      case "background-work-active":
+        return ROLLBACK_BACKGROUND_WORK_MESSAGE;
       case "unexpected-failure":
         return ROLLBACK_FAILED_MESSAGE;
     }
@@ -87,10 +95,11 @@ const isRuntimePolicyAboveCeilingError = Schema.is(RuntimePolicyAboveCeilingErro
 
 /**
  * The message clients see when a rollback fails. Only a held Git index lock
- * gets its own explanation; other reasons carry internal ids or raw Git
- * output, so they fall back to the generic message.
+ * or active background work gets its own explanation; other reasons carry
+ * internal ids or raw Git output, so they fall back to the generic message.
  */
 export function rollbackFailureClientMessage(error: CheckpointRollbackExecutionError): string {
+  if (error.reason === "background-work-active") return ROLLBACK_BACKGROUND_WORK_MESSAGE;
   if (isRuntimePolicyAboveCeilingError(error.cause)) return error.cause.message;
   const restoreCause = isCheckpointRestoreError(error.cause) ? error.cause.cause : undefined;
   return isVcsProcessExitError(restoreCause) && restoreCause.detail === GIT_INDEX_LOCKED_DETAIL
@@ -391,11 +400,171 @@ export const layer: Layer.Layer<
       ];
       if (restoreFiles && restoreTargets.length === 0) return yield* invalidTarget();
 
+      const {
+        abandonedProviderThreads,
+        spanningProviderThreads,
+        backgroundCheckSessions,
+        abandonedSessions,
+      } = context;
+      const backgroundCheckProviderThreads = [
+        ...abandonedProviderThreads,
+        ...spanningProviderThreads
+          .filter((entry) => entry.needsRollback)
+          .map((entry) => entry.providerThread),
+      ];
+      const backgroundWorkActive = () =>
+        new CheckpointRollbackExecutionError({
+          reason: "background-work-active",
+          threadId: input.threadId,
+          providerThreadId: input.providerThreadId,
+          checkpointId: input.checkpointId,
+        });
+      if (
+        backgroundCheckProviderThreads.some(
+          (candidate) => (candidate.pendingBackgroundTasks?.length ?? 0) > 0,
+        )
+      ) {
+        return yield* backgroundWorkActive();
+      }
+      if (backgroundCheckProviderThreads.length > 0 && backgroundCheckSessions.length > 0) {
+        const abandonedSessionIds = new Set(abandonedSessions.map((session) => session.id));
+        const spanningRollbackSessionIds = new Set(
+          spanningProviderThreads.flatMap((entry) =>
+            entry.needsRollback && entry.providerThread.providerSessionId !== null
+              ? [entry.providerThread.providerSessionId]
+              : [],
+          ),
+        );
+        for (const checkSession of backgroundCheckSessions) {
+          const isMultiThread =
+            checkSession.capabilities.sessions.supportsMultipleProviderThreadsPerSession;
+          if (
+            !isMultiThread &&
+            !abandonedSessionIds.has(checkSession.id) &&
+            !spanningRollbackSessionIds.has(checkSession.id)
+          ) {
+            continue;
+          }
+          const runtimeOption = yield* sessions
+            .get(checkSession.id)
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          if (Option.isNone(runtimeOption)) continue;
+          const runtime = runtimeOption.value;
+          const probes =
+            !isMultiThread && runtime.hasPendingBackgroundWork !== undefined
+              ? [runtime.hasPendingBackgroundWork]
+              : backgroundCheckProviderThreads.flatMap((candidate) =>
+                  candidate.providerSessionId === checkSession.id &&
+                  runtime.hasPendingBackgroundWorkForThread !== undefined
+                    ? [runtime.hasPendingBackgroundWorkForThread(candidate)]
+                    : [],
+                );
+          for (const probe of probes) {
+            if (yield* probe.pipe(Effect.catchCause(() => Effect.succeed(true)))) {
+              return yield* backgroundWorkActive();
+            }
+          }
+        }
+      }
+
+      const rolledBackAttemptIds = new Set(context.rolledBackAttemptIds);
+      const spanningSnapshots: Array<{
+        readonly providerThread: OrchestrationV2ProviderThread;
+        readonly lastRunOrdinal: number;
+      }> = [];
+      for (const spanning of spanningProviderThreads) {
+        if (!spanning.needsRollback) {
+          spanningSnapshots.push({
+            providerThread: spanning.providerThread,
+            lastRunOrdinal: spanning.targetRun.ordinal,
+          });
+          continue;
+        }
+        const spanningAttempt = spanning.targetAttempt;
+        const spanningTurn =
+          latestProviderTurnForAttempt(context.providerTurns, spanningAttempt?.id) ??
+          context.providerTurns.find((turn) => turn.id === spanningAttempt?.providerTurnId);
+        if (
+          spanning.providerThread.providerSessionId === null ||
+          spanning.targetCheckpointId === null ||
+          spanningAttempt === undefined ||
+          spanningTurn === undefined ||
+          spanningTurn.providerThreadId !== spanning.providerThread.id
+        ) {
+          return yield* new CheckpointRollbackExecutionError({
+            reason: "provider-turn-unavailable",
+            threadId: input.threadId,
+            providerThreadId: spanning.providerThread.id,
+            checkpointId: spanning.targetCheckpointId ?? input.checkpointId,
+          });
+        }
+        const { attempt } = yield* projections.getProviderControlContext(input.threadId, {
+          providerThreadId: spanning.providerThread.id,
+          providerTurnId: spanningTurn.id,
+          attemptId: spanningAttempt.id,
+        });
+        const message =
+          attempt === undefined
+            ? undefined
+            : yield* projections.getRunMessage(input.threadId, attempt.runId);
+        const spanningModelSelection =
+          spanning.providerThread.providerInstanceId === context.thread.modelSelection.instanceId
+            ? context.thread.modelSelection
+            : spanning.targetRun.modelSelection;
+        const spanningRuntimePolicy = yield* runtimePolicy.resolve({
+          thread: context.thread,
+          modelSelection: spanningModelSelection,
+        });
+        const spanningSession = yield* sessions.open({
+          threadId: input.threadId,
+          providerSessionId: spanning.providerThread.providerSessionId,
+          modelSelection: spanningModelSelection,
+          runtimePolicy: spanningRuntimePolicy,
+          ...(spanning.providerSession === undefined
+            ? {}
+            : { resumeFromSession: spanning.providerSession }),
+          ...(spanning.providerThread.nativeThreadRef?.nativeId == null
+            ? {}
+            : { initialNativeThreadId: spanning.providerThread.nativeThreadRef.nativeId }),
+          ...(spanning.providerThread.nativeMetadata?.itemIdentityVersion === undefined
+            ? {}
+            : {
+                initialProviderItemIdentityVersion:
+                  spanning.providerThread.nativeMetadata.itemIdentityVersion,
+              }),
+        });
+        const spanningConversationIds = new Set(spanning.conversationThreadIds);
+        const spanningTurns = context.providerTurns.filter(
+          (turn) =>
+            spanningConversationIds.has(turn.providerThreadId) &&
+            (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
+        );
+        const spanningResult = yield* spanningSession.rollbackThread({
+          providerThread: spanning.providerThread,
+          target: {
+            type: "provider_turn",
+            checkpointId: spanning.targetCheckpointId,
+            appRunOrdinal: spanning.targetRun.ordinal,
+            providerTurn: spanningTurn,
+            ...(message === undefined ? {} : { message }),
+          },
+          providerThreadTurns: spanningTurns,
+        });
+        spanningSnapshots.push({
+          providerThread: spanningResult.providerThread,
+          lastRunOrdinal: spanning.targetRun.ordinal,
+        });
+      }
+
+      const targetConversationThreadIds = new Set(context.targetConversationThreadIds);
       const targetRunsToRollback = runsToRollback.filter(
-        (run) => run.providerThreadId === providerThread.id,
+        (run) =>
+          didRunReachProvider(run) &&
+          run.providerThreadId !== null &&
+          targetConversationThreadIds.has(run.providerThreadId),
       );
-      // Cross-provider boundary rewind: every discarded run belonged to other provider threads,
-      // so the target provider conversation already stands at `targetOrdinal`.
+      // Cross-provider boundary rewind: every discarded delivered run belonged to other native
+      // conversations, so the target provider conversation already stands at `targetOrdinal`.
       const isCrossProviderBoundaryRewind =
         runsToRollback.length > 0 && targetRunsToRollback.length === 0;
       const snapshot = isCrossProviderBoundaryRewind
@@ -434,10 +603,9 @@ export const layer: Layer.Layer<
             }
 
             // Rolled-back turns remain in audit history but no longer exist in the provider conversation.
-            const rolledBackAttemptIds = new Set(context.rolledBackAttemptIds);
             const providerThreadTurns = context.providerTurns.filter(
               (turn) =>
-                turn.providerThreadId === providerThread.id &&
+                targetConversationThreadIds.has(turn.providerThreadId) &&
                 (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
             );
 
@@ -497,7 +665,23 @@ export const layer: Layer.Layer<
               }),
             );
           }
-          for (const abandoned of context.abandonedProviderThreads) {
+          for (const spanning of spanningSnapshots) {
+            events.push(
+              yield* makeEvent({
+                type: "provider-thread.updated",
+                threadId: input.threadId,
+                driver: spanning.providerThread.driver,
+                providerInstanceId: spanning.providerThread.providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  ...spanning.providerThread,
+                  lastRunOrdinal: spanning.lastRunOrdinal,
+                  updatedAt: now,
+                },
+              }),
+            );
+          }
+          for (const abandoned of abandonedProviderThreads) {
             events.push(
               yield* makeEvent({
                 type: "provider-thread.updated",

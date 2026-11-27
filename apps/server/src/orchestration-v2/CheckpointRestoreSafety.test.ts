@@ -87,10 +87,13 @@ it.effect.each([
       providerTurns: [],
       rootNodes: [],
       targetAttempt: undefined,
+      targetConversationThreadIds: [providerThreadId],
       rolledBackAttemptIds: [],
       staleCheckpoints: [],
+      spanningProviderThreads: [],
       abandonedProviderThreads: [],
       abandonedSessions: [],
+      backgroundCheckSessions: [],
       checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: null },
       scope: { id: scopeId, cwd },
       runsToRollback: [

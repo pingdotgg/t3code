@@ -4,8 +4,11 @@ import { replaceComposerContextReferences } from "@t3tools/shared/composerContex
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
 import {
+  didRunReachProvider,
   isRetiredProviderThread,
   type OrchestrationV2ProviderTurn,
+  type OrchestrationV2Run,
+  providerThreadNativeConversationKey,
   type RunAttemptId,
 } from "@t3tools/contracts";
 import {
@@ -939,6 +942,15 @@ export function getStartedThreadModelChangeBlockReason(
   };
 }
 
+function isRollbackableSettledRunStatus(status: OrchestrationV2Run["status"]): boolean {
+  return (
+    status === "completed" ||
+    status === "interrupted" ||
+    status === "failed" ||
+    status === "cancelled"
+  );
+}
+
 export async function waitForRevertedMessage(
   threadRef: ScopedThreadRef,
   turnCount: number,
@@ -954,23 +966,15 @@ export async function waitForRevertedMessage(
     (providerThread) => providerThread.id === initialActiveProviderThreadId,
   );
   const initialProviderThreadIds = new Set(initial?.providerThreads.map((thread) => thread.id));
-  const targetProviderThreadId =
+  const resolvedTargetProviderThreadId =
     turnCount === 0 || initial === null
       ? initialActiveProviderThreadId
-      : (resolveTargetProviderThreadIdForRun(initial, turnCount) ?? initialActiveProviderThreadId);
-  // Paging can omit the source run. Rollback commits the entire settled suffix atomically.
-  const witness = initial?.runs.reduce<(typeof initial.runs)[number] | undefined>((latest, run) => {
-    if (
-      run.ordinal <= turnCount ||
-      (run.status !== "completed" &&
-        run.status !== "interrupted" &&
-        run.status !== "failed" &&
-        run.status !== "cancelled")
-    )
-      return latest;
-    return latest === undefined || run.ordinal > latest.ordinal ? run : latest;
-  }, undefined);
-  if (witness === undefined) {
+      : resolveTargetProviderThreadIdForRun(initial, turnCount);
+  const expectedRolledBackRunIds =
+    initial?.runs
+      .filter((run) => run.ordinal > turnCount && isRollbackableSettledRunStatus(run.status))
+      .map((run) => run.id) ?? [];
+  if (expectedRolledBackRunIds.length === 0) {
     throw new Error(m(msg("The thread has changed. Select a message to rewind again.")));
   }
   return new Promise<ReadonlyArray<string>>((resolve, reject) => {
@@ -1000,20 +1004,25 @@ export async function waitForRevertedMessage(
         thread.providerThreads.some(
           (providerThread) =>
             !isRetiredProviderThread(providerThread) &&
-            (providerThread.id === targetProviderThreadId ||
-              // When the target run was paged out, cross-provider rewind activates its provider thread.
-              (turnCount > 0 &&
-                providerThread.id === thread.thread.activeProviderThreadId &&
-                providerThread.ownerNodeId === null) ||
-              // Claude resets to a fresh root session when rewinding to thread start.
-              (turnCount === 0 &&
-                providerThread.ownerNodeId === null &&
-                providerThread.appThreadId === initial?.thread.id &&
-                providerThread.providerInstanceId === initialProviderThread?.providerInstanceId &&
-                !initialProviderThreadIds.has(providerThread.id))) &&
+            (turnCount === 0
+              ? providerThread.id === resolvedTargetProviderThreadId ||
+                // Claude resets to a fresh root session when rewinding to thread start.
+                (providerThread.ownerNodeId === null &&
+                  providerThread.appThreadId === initial?.thread.id &&
+                  providerThread.providerInstanceId === initialProviderThread?.providerInstanceId &&
+                  !initialProviderThreadIds.has(providerThread.id))
+              : providerThread.id === thread.thread.activeProviderThreadId &&
+                (resolvedTargetProviderThreadId !== undefined
+                  ? providerThread.id === resolvedTargetProviderThreadId
+                  : providerThread.ownerNodeId === null)) &&
             providerThread.lastRunOrdinal === (turnCount === 0 ? null : turnCount),
         ) &&
-        thread.runs.some((run) => run.id === witness.id && run.status === "rolled_back")
+        expectedRolledBackRunIds.every((id) =>
+          thread.runs.some((run) => run.id === id && run.status === "rolled_back"),
+        ) &&
+        !thread.runs.some(
+          (run) => run.ordinal > turnCount && isRollbackableSettledRunStatus(run.status),
+        )
       )
         finish();
     };
@@ -1761,16 +1770,18 @@ export function deriveAvailableRevertTurnCounts(
       latestTurnByAttempt.set(turn.runAttemptId, turn);
     }
   }
-  const maxRollbackableOrdinalByProviderThread = new Map<ProviderThreadId, number>();
+  const maxDeliveredOrdinalByConversation = new Map<string, number>();
   let maxRollbackableOrdinal = 0;
   for (const run of projection.runs) {
-    if (run.status === "rolled_back") continue;
+    if (!isRollbackableSettledRunStatus(run.status)) continue;
     if (run.ordinal > maxRollbackableOrdinal) maxRollbackableOrdinal = run.ordinal;
-    if (run.providerThreadId != null) {
-      const current = maxRollbackableOrdinalByProviderThread.get(run.providerThreadId) ?? 0;
-      if (run.ordinal > current) {
-        maxRollbackableOrdinalByProviderThread.set(run.providerThreadId, run.ordinal);
-      }
+    if (!didRunReachProvider(run) || run.providerThreadId === null) continue;
+    const runOwner = providerThreadsById.get(run.providerThreadId);
+    const conversationKey =
+      runOwner === undefined ? run.providerThreadId : providerThreadNativeConversationKey(runOwner);
+    const current = maxDeliveredOrdinalByConversation.get(conversationKey) ?? 0;
+    if (run.ordinal > current) {
+      maxDeliveredOrdinalByConversation.set(conversationKey, run.ordinal);
     }
   }
   for (const run of projection.runs) {
@@ -1789,8 +1800,9 @@ export function deriveAvailableRevertTurnCounts(
     ) {
       continue;
     }
+    const conversationKey = providerThreadNativeConversationKey(owner);
     const needsOwnerRollback =
-      (maxRollbackableOrdinalByProviderThread.get(owner.id) ?? 0) > run.ordinal;
+      (maxDeliveredOrdinalByConversation.get(conversationKey) ?? 0) > run.ordinal;
     const canBoundaryRewind = !needsOwnerRollback && maxRollbackableOrdinal > run.ordinal;
     if (supportsRollback(owner.providerInstanceId) || canBoundaryRewind) {
       available.add(run.ordinal);
