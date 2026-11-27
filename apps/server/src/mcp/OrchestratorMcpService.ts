@@ -1,5 +1,4 @@
 import {
-  isHomeThreadId,
   CommandId,
   type RunId,
   idleCompactionOf,
@@ -3334,12 +3333,6 @@ const make = Effect.gen(function* () {
     createThreads: Effect.fn("OrchestratorMcpService.createThreads")(
       function* (callerScope, input) {
         const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads");
-        if (isHomeThreadId(parent.thread.id)) {
-          return yield* failure(
-            "invalid_request",
-            "Home's folder takes no other threads. Use `t3_thread_launch` with a `projectId` or `scratch: true`.",
-          );
-        }
         const parentRun = ThreadManagementService.latestActiveRun(parent);
         if (
           parentRun === undefined ||

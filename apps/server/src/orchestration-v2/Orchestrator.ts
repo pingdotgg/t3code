@@ -4134,7 +4134,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       leader === null ||
       leader.deletedAt !== null ||
-      // A Bot's crew may work in any project; Home's always does.
+      // A Bot's crew may work in any project.
       (leader.projectId !== projectId && leader.botConfig == null) ||
       leader.lineage.parentThreadId !== null ||
       leader.groupedUnderThreadId != null

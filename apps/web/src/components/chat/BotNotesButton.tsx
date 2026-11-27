@@ -92,7 +92,7 @@ function BotFilesForm(props: {
   );
 }
 
-/** A Bot's memory files and crew muting, reachable from its header; Home's too. */
+/** A Bot's memory files and crew muting, reachable from its header. */
 export function BotNotesButton(props: { threadRef: ScopedThreadRef }) {
   const gt = useGT();
   const thread = useThreadShell(props.threadRef);

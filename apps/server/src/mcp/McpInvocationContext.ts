@@ -35,7 +35,7 @@ export interface McpThreadCaller {
   /** A delegated child task; its parent owns the work it hands back. */
   readonly subagent?: boolean;
   /**
-   * The thread was created as a Bot (Home among them). Fixed for its life, so it decides what is
+   * The thread was created as a Bot. Fixed for its life, so it decides what is
    * listed; Bot tools still check on every call that it is a live Bot right now.
    */
   readonly bot?: boolean;

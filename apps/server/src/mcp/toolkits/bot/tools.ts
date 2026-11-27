@@ -12,7 +12,7 @@ import * as BotService from "../../../bots/BotService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
-/** Listed only to Bot threads (Home among them); tool search never offers them to others. */
+/** Listed only to Bot threads; tool search never offers them to others. */
 export const BOT_TOOL_PREFIX = "t3_bot_";
 
 const shared = {

@@ -15,7 +15,7 @@ New to T3 Code? Start with the **[User Guide & Index](./user/README.md)** for ho
 
 - [Built-in browser](./user/browser.md) ([import sessions](./user/browser-import.md) · [default browser](./user/default-browser.md)) · [Devices](./user/devices.md)
 - [Terminal](./user/terminal.md) · [Visual replies & MCP apps](./user/html-renders.md) · [SnapShots](./user/snap-shot.md) · [Voice input](./user/voice-input.md)
-- [Workflows](./user/workflows.md) · [Bots and Home](./user/bots.md) · [Text generation models](./user/text-generation.md) · [Prompt links](./user/prompt-links.md)
+- [Workflows](./user/workflows.md) · [Bots](./user/bots.md) · [Text generation models](./user/text-generation.md) · [Prompt links](./user/prompt-links.md)
 - [Activity log](./user/activity-log.md) · [Appearance and themes](./user/appearance.md) · [Keybindings](./user/keybindings.md) · [Keyboard focus](./user/keyboard-focus.md)
 
 ### Remote, security & operations
@@ -61,7 +61,7 @@ anything.
 - [15 · Testing](./internals/15_testing.md)
 - [16 · Performance regression checks](./internals/16_performance-regressions.md)
 - [17 · Scripts](./internals/17_scripts.md)
-- [Bots and Home](./internals/bots.md)
+- [Bots](./internals/bots.md)
 
 ### Runbooks
 

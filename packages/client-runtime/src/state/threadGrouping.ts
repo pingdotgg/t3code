@@ -1,5 +1,3 @@
-import { isHomeThreadId } from "@t3tools/contracts";
-
 import type { EnvironmentThreadShell } from "./models.ts";
 import { threadRuntimeIsActive } from "./models.ts";
 import { scopedThreadKey, scopeThreadRef } from "../environment/scoped.ts";
@@ -53,7 +51,7 @@ export function crewStatus(thread: GroupableThread): CrewStatus {
 /**
  * Groups crew under their leader, one level deep. Crew whose leader is missing from `threads`
  * (archived, filtered out) or settled keep their own row: settling or archiving a Bot lets its
- * crew go, and reopening it takes them back. Home never settles its crew away.
+ * crew go, and reopening it takes them back.
  */
 export function groupThreads<T extends GroupableThread>(
   threads: ReadonlyArray<T>,
@@ -68,7 +66,7 @@ export function groupThreads<T extends GroupableThread>(
     if (
       leader === undefined ||
       leader.groupedUnderThreadId != null ||
-      (leader.settledOverride === "settled" && !isHomeThreadId(leader.id))
+      leader.settledOverride === "settled"
     ) {
       continue;
     }

@@ -20,9 +20,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import * as ProjectService from "../project/ProjectService.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import * as HomeService from "../home/HomeService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 
 export const model: ModelSelection = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -35,7 +33,7 @@ export interface SentMessage {
   readonly text: string;
 }
 
-/** The thread fields Bots and Home read; tests change them in place. */
+/** The thread fields Bots read; tests change them in place. */
 export interface FakeThread {
   readonly id: ThreadId;
   readonly projectId: ProjectId;
@@ -57,7 +55,7 @@ export interface LaunchedThread {
   readonly text: string | undefined;
 }
 
-/** The orchestration Bots and Home drive, recording what they were asked to do. */
+/** The orchestration Bots drive, recording what they were asked to do. */
 export const makeOrchestration = () => {
   const threads = new Map<ThreadId, FakeThread>();
   const dispatched: Array<OrchestrationV2ServerCommand & { readonly threadId?: ThreadId }> = [];
@@ -132,9 +130,9 @@ export const makeOrchestration = () => {
         ),
       getThreadRecords: () => Effect.succeed({ turnItems: [] } as never),
     }),
-    Layer.mock(ProjectService.ProjectService)({
-      bootstrap: (input) =>
-        Effect.succeed({ project: { id: input.projectId }, created: true } as never),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/unused",
+      ensureScratchProject: Effect.succeed({ projectId: ProjectId.make("project:scratch") }),
     }),
     Layer.mock(ServerEnvironment.ServerEnvironment)({
       getEnvironmentId: Effect.succeed(EnvironmentId.make("env:here")),
@@ -143,13 +141,11 @@ export const makeOrchestration = () => {
   return { threads, dispatched, sent, launched, addThread, layer };
 };
 
-/** Home and the Bot service over one fake orchestration and a fresh base directory. */
+/** The Bot service over one fake orchestration and a fresh base directory. */
 export const provideBots = (orchestration: ReturnType<typeof makeOrchestration>) =>
   Effect.provide(
-    HomeService.layer.pipe(
-      Layer.provideMerge(BotService.layer),
+    BotService.layer.pipe(
       Layer.provideMerge(orchestration.layer),
-      Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-bots-test-" })),
       Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),

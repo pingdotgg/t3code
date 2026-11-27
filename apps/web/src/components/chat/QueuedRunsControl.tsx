@@ -15,7 +15,6 @@ import {
   parseGoalCommand,
   type ChatAttachment as ContractChatAttachment,
   type EnvironmentId,
-  isHomeThreadId,
   type MessageId,
   type RunId,
   type ThreadId,
@@ -27,7 +26,6 @@ import {
   CalendarClockIcon,
   ChevronDownIcon,
   Clock3Icon,
-  HouseIcon,
   MessagesSquareIcon,
   PencilIcon,
   XIcon,
@@ -505,23 +503,16 @@ function QueuedMessage(props: {
           fitLabel: true,
           summary: taskTitle ?? props.previewText.split(/\r?\n/, 1)[0] ?? "",
         }
-      : attribution === "agent" && senderRef !== null && isHomeThreadId(senderRef.threadId)
+      : attribution === "agent"
         ? {
-            icon: HouseIcon,
-            label: gt("Home", { $context: "sender of a message from the Home agent" }),
-            fitLabel: true,
+            icon: MessagesSquareIcon,
+            label:
+              senderTitle ||
+              gt("Agent", { $context: "fallback name of the agent that sent a message" }),
+            fitLabel: !senderTitle,
             summary: props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? "",
           }
-        : attribution === "agent"
-          ? {
-              icon: MessagesSquareIcon,
-              label:
-                senderTitle ||
-                gt("Agent", { $context: "fallback name of the agent that sent a message" }),
-              fitLabel: !senderTitle,
-              summary: props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? "",
-            }
-          : null;
+        : null;
   const bodyVisible = fold === null || expanded;
 
   return (

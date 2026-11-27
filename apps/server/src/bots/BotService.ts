@@ -3,6 +3,7 @@ import {
   BotError,
   type BotFileKind,
   type BotFilesReadResult,
+  type BotCreateInput,
   type BotStartResult,
   type BotWatch,
   type BotWatchReason,
@@ -11,7 +12,6 @@ import {
   BotWatch as BotWatchSchema,
   CommandId,
   type EnvironmentId,
-  isHomeThreadId,
   MessageId,
   type MilestoneEvent,
   type OrchestrationV2Notification,
@@ -38,7 +38,7 @@ import {
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import * as ServerSettings from "../serverSettings.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 
 export interface BotWake {
   readonly botThreadId: ThreadId;
@@ -53,10 +53,7 @@ export interface BotWake {
 export class BotService extends Context.Service<
   BotService,
   {
-    /**
-     * Whether the thread is a live Bot right now. Home's threads count only while they are the
-     * active Home, so a Home that was started fresh loses its Bot tools and memory at once.
-     */
+    /** Whether the thread is a live Bot right now: not archived or deleted. */
     readonly isBot: (threadId: ThreadId) => Effect.Effect<boolean>;
     /** Both memory files, empty when not written yet. */
     readonly readFiles: (input: {
@@ -82,19 +79,19 @@ export class BotService extends Context.Service<
       botThreadId: ThreadId,
       target: BotWatchTarget,
     ) => Effect.Effect<ReadonlyArray<BotWatch>, BotError>;
-    /** Drops every watch of a Bot that stopped being one, such as a Home started fresh. */
-    readonly clearWatches: (botThreadId: ThreadId) => Effect.Effect<void>;
     /** Regroups a leader's crew under another Bot. */
     readonly moveCrew: (from: ThreadId, to: ThreadId) => Effect.Effect<void, BotError>;
     /** Wakes the Bots that `event` is news for: the leader of its crew thread, and its watchers. */
     readonly handleMilestone: (event: MilestoneEvent) => Effect.Effect<void>;
     /**
-     * Starts a new Bot in the thread's project, seeded with a summary of it, and makes the thread
+     * Starts a new Bot outside any project, seeded with a summary of the thread, and makes the thread
      * (and any crew it led) the Bot's crew. The thread itself never changes role.
      */
     readonly start: (input: {
       readonly threadId: ThreadId;
     }) => Effect.Effect<BotStartResult, BotError>;
+    /** Starts a new Bot with no source thread, from the user's instructions. */
+    readonly create: (input: BotCreateInput) => Effect.Effect<BotStartResult, BotError>;
   }
 >()("t3/bots/BotService") {}
 
@@ -105,9 +102,7 @@ const escapeId = (threadId: ThreadId) =>
     (char) => `~${char.codePointAt(0)!.toString(16).padStart(2, "0")}`,
   );
 
-/** Every Home shares one memory, so notes survive Start fresh. Other Bots own theirs. */
-const memoryFolderName = (threadId: ThreadId) =>
-  isHomeThreadId(threadId) ? "home" : `thread-${escapeId(threadId)}`;
+const memoryFolderName = (threadId: ThreadId) => `thread-${escapeId(threadId)}`;
 
 const WatchesFile = Schema.fromJsonString(
   Schema.Record(Schema.String, Schema.Array(BotWatchSchema)),
@@ -237,7 +232,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
-  const settings = yield* ServerSettings.ServerSettingsService;
+  const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const launches = yield* ThreadLaunchService.ThreadLaunchService;
@@ -307,13 +302,6 @@ const make = Effect.gen(function* () {
   });
 
   const isBot: BotService["Service"]["isBot"] = Effect.fn("BotService.isBot")(function* (threadId) {
-    if (isHomeThreadId(threadId)) {
-      const home = yield* settings.getSettings.pipe(
-        Effect.map((current) => current.home),
-        Effect.orElseSucceed(() => null),
-      );
-      return home?.enabled === true && home.threadId === threadId;
-    }
     const thread = yield* projectionStore
       .findThread(threadId)
       .pipe(Effect.orElseSucceed(() => null));
@@ -426,13 +414,6 @@ const make = Effect.gen(function* () {
     locked,
   );
 
-  const clearWatches: BotService["Service"]["clearWatches"] = (botThreadId) =>
-    updateWatches(botThreadId, (current) => (current.length === 0 ? current : [])).pipe(
-      Effect.ignoreCause({ log: true }),
-      locked,
-      Effect.withSpan("BotService.clearWatches"),
-    );
-
   const regroup = (threadId: ThreadId, leaderId: ThreadId) =>
     newId.pipe(
       Effect.flatMap((id) =>
@@ -455,10 +436,9 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** A Bot that is settled has let its crew go, so it is not woken. Home is always woken. */
+  /** A Bot that is settled has let its crew go, so it is not woken. */
   const wakeable = Effect.fn("BotService.wakeable")(function* (threadId: ThreadId) {
     if (!(yield* isBot(threadId))) return false;
-    if (isHomeThreadId(threadId)) return true;
     const thread = yield* projectionStore
       .findThread(threadId)
       .pipe(Effect.orElseSucceed(() => null));
@@ -550,7 +530,7 @@ const make = Effect.gen(function* () {
     if (thread.lineage.parentThreadId !== null) {
       return yield* cannot("A Bot starts only from a top-level thread.");
     }
-    if (thread.botConfig != null || isHomeThreadId(thread.id)) {
+    if (thread.botConfig != null) {
       return yield* cannot("That thread is a Bot already.");
     }
     const lastRun = source.runs.reduce<(typeof source.runs)[number] | undefined>(
@@ -579,11 +559,16 @@ const make = Effect.gen(function* () {
     ].join("\n");
     const id = yield* newId;
     const botThreadId = ThreadId.make(id);
+    const launchFailed = (cause: unknown) =>
+      new BotError({ threadId, reason: "launch_failed", cause });
+    const { projectId } = yield* managedFolders.ensureScratchProject.pipe(
+      Effect.mapError(launchFailed),
+    );
     yield* launches
       .launch({
         commandId: CommandId.make(`bot-start:${id}`),
         threadId: botThreadId,
-        projectId: thread.projectId,
+        projectId,
         title: thread.title,
         generateTitle: false,
         modelSelection: thread.modelSelection,
@@ -595,10 +580,47 @@ const make = Effect.gen(function* () {
         creationSource: "server",
         botConfig: { enabled: true, muteChildren: false },
       })
-      .pipe(Effect.mapError((cause) => new BotError({ threadId, reason: "launch_failed", cause })));
+      .pipe(Effect.mapError(launchFailed));
     // Its crew first: a thread that still leads crew cannot join a group.
     yield* moveCrew(threadId, botThreadId);
     yield* regroup(threadId, botThreadId);
+    return { threadId: botThreadId };
+  });
+
+  const create: BotService["Service"]["create"] = Effect.fn("BotService.create")(function* (input) {
+    const id = yield* newId;
+    const botThreadId = ThreadId.make(id);
+    const failed = (cause: unknown) =>
+      new BotError({ threadId: botThreadId, reason: "launch_failed", cause });
+    const instructions = input.instructions.trim();
+    if (instructions !== "") yield* store(botThreadId, "preferences", `${instructions}\n`);
+    // A Bot belongs to no project: it runs in a scratch folder and sends crew anywhere.
+    const { projectId } = yield* managedFolders.ensureScratchProject.pipe(Effect.mapError(failed));
+    const text = [
+      `You are a new Bot named "${input.title}".`,
+      instructions === ""
+        ? "The user gave you no instructions yet. Introduce yourself in a few lines and ask what your job is, then save it with t3_bot_preferences_append."
+        : "Your instructions from the user, also in your preferences.md:\n\n" +
+          instructions +
+          "\n\nIntroduce yourself in a few lines: what you understand your job to be and how you will work.",
+    ].join("\n");
+    yield* launches
+      .launch({
+        commandId: CommandId.make(`bot-create:${id}`),
+        threadId: botThreadId,
+        projectId,
+        title: input.title,
+        generateTitle: false,
+        modelSelection: input.modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+        initialMessage: { text, attachments: [] },
+        createdBy: "user",
+        creationSource: "server",
+        botConfig: { enabled: true, muteChildren: false },
+      })
+      .pipe(Effect.mapError(failed));
     return { threadId: botThreadId };
   });
 
@@ -610,10 +632,10 @@ const make = Effect.gen(function* () {
     watches,
     addWatch,
     removeWatch,
-    clearWatches,
     moveCrew,
     handleMilestone,
     start,
+    create,
   });
 });
 

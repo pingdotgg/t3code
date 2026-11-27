@@ -97,16 +97,9 @@ describe("RPC authorization scopes", () => {
     );
   });
 
-  it("lets readers see a Bot's memory but only operators change it, start Bots, or steer Home", () => {
+  it("lets readers see a Bot's memory but only operators change it or start Bots", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.botFilesRead)).toBe(AuthOrchestrationReadScope);
-    for (const method of [
-      WS_METHODS.botFilesWrite,
-      WS_METHODS.botStart,
-      WS_METHODS.homeEnable,
-      WS_METHODS.homeDisable,
-      WS_METHODS.homeReset,
-      WS_METHODS.homeSetModel,
-    ]) {
+    for (const method of [WS_METHODS.botFilesWrite, WS_METHODS.botStart, WS_METHODS.botCreate]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
     }
   });

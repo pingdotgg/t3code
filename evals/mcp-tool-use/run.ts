@@ -381,8 +381,8 @@ export const McpToolUseCase = Schema.Struct({
     shellMocks: Schema.optional(
       Schema.Array(Schema.Struct({ match: Schema.String, output: Schema.String })),
     ),
-    /** The thread is a Bot (`home` for Home): T3 lists Bot tools and adds Bot instructions to each turn. */
-    bot: Schema.optional(Schema.Literals(["home", "project"])),
+    /** The thread is a Bot: T3 lists Bot tools and adds Bot instructions to each turn. */
+    bot: Schema.optional(Schema.Literal(true)),
     /** The thread is a side chat's first turn: T3 puts the parent's digest ahead of `prompt`. */
     sideChat: Schema.optional(
       Schema.Struct({ parentThreadId: Schema.String, digest: Schema.Array(Schema.String) }),
@@ -578,7 +578,7 @@ const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff
 const hiddenWhileFeedbackOff = enabledWhen(McpInvocationContext.hiddenWhileFeedbackOff);
 // T3 lists PR and CI tools only to a thread whose project is on a forge it reads.
 const hiddenWithoutForge = enabledWhen(McpInvocationContext.hiddenWithoutForge);
-// T3 lists these only to a Bot thread (Home among them).
+// T3 lists these only to a Bot thread.
 const botOnly = new Set([
   ...enabledWhen(McpInvocationContext.hiddenFromNonBots),
   ...enabledWhen(McpInvocationContext.hiddenFromThreadsExceptBots),
@@ -1277,13 +1277,7 @@ export const buildMessages = (sample: Sample) => {
     testCase.promptContext === undefined
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
-  const botText =
-    testCase.setup.bot === undefined
-      ? userText
-      : withBotInstructions(
-          ThreadId.make(testCase.setup.bot === "home" ? "home:eval" : "eval-bot"),
-          userText,
-        );
+  const botText = testCase.setup.bot === undefined ? userText : withBotInstructions(userText);
   const prompt =
     sideChatContext === undefined ? botText : withInlineContext(sideChatContext, botText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });

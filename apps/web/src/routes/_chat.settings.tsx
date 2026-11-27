@@ -151,9 +151,7 @@ function SettingsContentLayout() {
   const pathname = useRenderedSettingsPathname();
   const { search, environment } = useSettingsScope();
   const contentScopeKey =
-    pathname === "/settings/diagnostics" ||
-    pathname === "/settings/providers" ||
-    pathname === "/settings/home"
+    pathname === "/settings/diagnostics" || pathname === "/settings/providers"
       ? environment?.environmentId
       : JSON.stringify(search);
   const [restoreSignal, setRestoreSignal] = useState(0);
@@ -193,11 +191,7 @@ function SettingsRouteLayout() {
   return (
     <SettingsScopeProvider
       search={rawSearch}
-      singleEnvironment={
-        pathname === "/settings/providers" ||
-        pathname === "/settings/secrets" ||
-        pathname === "/settings/home"
-      }
+      singleEnvironment={pathname === "/settings/providers" || pathname === "/settings/secrets"}
       deviceOnly={SETTINGS_DEVICE_ONLY_PATHS.has(pathname)}
       onChange={(next) => {
         // Send every axis so retain middleware recognizes "all" as an explicit target.

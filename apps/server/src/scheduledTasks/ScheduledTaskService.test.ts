@@ -217,7 +217,6 @@ it.effect(
                 }),
                 Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
                   namedProjectsRoot: "/projects",
-                  homeRoot: "/unused-home",
                   isScratchProject: () => Effect.succeed(false),
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
@@ -316,7 +315,6 @@ it.effect(
                 }),
                 Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
                   namedProjectsRoot: "/projects",
-                  homeRoot: "/unused-home",
                   isScratchProject: () => Effect.succeed(false),
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
@@ -375,7 +373,6 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            homeRoot: "/unused-home",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
@@ -476,7 +473,6 @@ it.effect.each([
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            homeRoot: "/unused-home",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
@@ -548,7 +544,6 @@ it.effect("a one-time task is removed once its turn completes", () =>
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            homeRoot: "/unused-home",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
@@ -622,7 +617,6 @@ it.effect("a paused one-time task run by hand before its time is kept", () =>
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            homeRoot: "/unused-home",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
@@ -695,7 +689,6 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            homeRoot: "/unused-home",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
@@ -767,7 +760,6 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            homeRoot: "/unused-home",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
@@ -861,7 +853,6 @@ it.effect("a refused dispatch records its refusal, and opaque causes stay generi
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            homeRoot: "/unused-home",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
@@ -915,7 +906,6 @@ it.effect("a first run whose thread was deleted before it bound removes the task
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            homeRoot: "/unused-home",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
@@ -968,7 +958,6 @@ it.effect.each(["recreated under the same id", "moved to another project"] as co
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
               namedProjectsRoot: "/projects",
-              homeRoot: "/unused-home",
               isScratchProject: () => Effect.succeed(false),
             }),
             NodeCrypto.layer,
@@ -1027,7 +1016,6 @@ it.effect("refuses saving an enabled task above the policy ceiling", () =>
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            homeRoot: "/unused-home",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
@@ -1110,7 +1098,6 @@ it.effect("checks a task's destination thread only when the destination changes"
           }),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            homeRoot: "/unused-home",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,
@@ -1189,7 +1176,6 @@ it.effect("a run interrupted right after it reserves the task does not block the
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            homeRoot: "/unused-home",
             isScratchProject: () => Effect.succeed(false),
           }),
           NodeCrypto.layer,

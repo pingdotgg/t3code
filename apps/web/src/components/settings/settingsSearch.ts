@@ -32,7 +32,6 @@ export type SettingsPath =
   | "/settings/browser"
   | "/settings/devices"
   | "/settings/scheduled-tasks"
-  | "/settings/home"
   | "/settings/source-control"
   | "/settings/worktrees"
   | "/settings/connections"
@@ -111,7 +110,6 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/browser": msg("Browser"),
   "/settings/devices": msg("Devices"),
   "/settings/scheduled-tasks": msg("Scheduled tasks"),
-  "/settings/home": msg("Home"),
   "/settings/source-control": msg("Source control & issues"),
   "/settings/worktrees": msg("Worktrees"),
   "/settings/connections": msg("Environments"),
@@ -162,7 +160,6 @@ const ALL_SETTINGS_NAV_GROUPS: ReadonlyArray<SettingsNavGroup> = [
       "/settings/browser",
       "/settings/devices",
       "/settings/scheduled-tasks",
-      "/settings/home",
     ],
   },
   {
@@ -1134,12 +1131,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/scheduled-tasks",
   },
   {
-    id: "home",
-    title: msg("Home"),
-    to: "/settings/home",
-    searchTerms: [msg("coordinator agent across projects linked environments turn on off model")],
-  },
-  {
     id: "agent-browser-access",
     title: msg("Agent browser access"),
     to: "/settings/browser",
@@ -1560,7 +1551,6 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/access": "connections",
   "/settings/secrets": null,
   "/settings/scheduled-tasks": null,
-  "/settings/home": null,
   "/settings/maintenance": null,
   "/settings/labs": null,
   "/settings/about": null,

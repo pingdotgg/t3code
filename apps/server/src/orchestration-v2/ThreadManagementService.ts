@@ -11,7 +11,6 @@ import type {
   ShellSnapshotOptions,
 } from "./ProjectionStore.ts";
 import {
-  isHomeThreadId,
   type ChatAttachment,
   CommandId,
   isDelegatedAppThread,
@@ -850,41 +849,11 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const rejectHome = (command: OrchestrationV2ServerCommand, cause: string) =>
-    Effect.fail(
-      new Orchestrator.OrchestratorCommandRejectedError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause,
-      }),
-    );
-
-  // Home always exists while it is on: Start fresh replaces it and turning it off ends it.
-  const assertNotRemovingHome = (command: OrchestrationV2ServerCommand) =>
-    (command.type === "thread.archive" || command.type === "thread.delete") &&
-    isHomeThreadId(command.threadId)
-      ? serverSettings.getSettings.pipe(
-          Effect.orElseSucceed(() => null),
-          Effect.flatMap((settings) =>
-            settings?.home.enabled === true && settings.home.threadId === command.threadId
-              ? rejectHome(
-                  command,
-                  "Home cannot be archived or deleted. Start it fresh or turn it off in Settings.",
-                )
-              : Effect.void,
-          ),
-        )
-      : Effect.void;
-
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
-    // A fork of Home would land in Home's folder and act as Home there.
-    command.type === "thread.fork" && isHomeThreadId(command.sourceThreadId)
-      ? rejectHome(command, "Home cannot be forked.")
-      : assertNotRemovingHome(command).pipe(
-          Effect.andThen(ensureCommandTranscripts(command)),
-          Effect.andThen(assertDispatchTargetEnabled(command)),
-          Effect.andThen(orchestrator.dispatch(command)),
-        );
+    ensureCommandTranscripts(command).pipe(
+      Effect.andThen(assertDispatchTargetEnabled(command)),
+      Effect.andThen(orchestrator.dispatch(command)),
+    );
 
   const getProjectThreadRecords: ThreadManagementServiceShape["getProjectThreadRecords"] = (
     input,

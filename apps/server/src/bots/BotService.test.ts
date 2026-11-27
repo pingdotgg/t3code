@@ -6,7 +6,7 @@ import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
 import * as BotService from "./BotService.ts";
-import { makeOrchestration, provideBots } from "./BotTestkit.ts";
+import { makeOrchestration, model, provideBots } from "./BotTestkit.ts";
 
 const bot = { enabled: true, muteChildren: false } as const;
 
@@ -169,7 +169,7 @@ it.effect(
       const [launched] = orchestration.launched;
       assert.deepStrictEqual(
         [launched?.threadId, launched?.projectId],
-        [threadId, source.projectId],
+        [threadId, ProjectId.make("project:scratch")],
       );
       assert.include(launched?.text, "Context handoff (full_thread_summary)");
       assert.deepStrictEqual(orchestration.threads.get(threadId)?.botConfig, bot);
@@ -188,3 +188,27 @@ it.effect(
     }).pipe(provideBots(orchestration));
   },
 );
+
+it.effect("creates a Bot outside any project, its instructions saved as its preferences", () => {
+  const orchestration = makeOrchestration();
+  return Effect.gen(function* () {
+    const bots = yield* BotService.BotService;
+    const { threadId } = yield* bots.create({
+      title: "Chief of staff",
+      instructions: "  Keep me posted on every project.  ",
+      modelSelection: model,
+    });
+
+    const [launched] = orchestration.launched;
+    assert.deepStrictEqual(
+      [launched?.threadId, launched?.projectId],
+      [threadId, ProjectId.make("project:scratch")],
+    );
+    assert.include(launched?.text, "Keep me posted on every project.");
+    assert.isTrue(yield* bots.isBot(threadId));
+    assert.strictEqual(
+      (yield* bots.readFiles({ threadId })).preferences,
+      "Keep me posted on every project.\n",
+    );
+  }).pipe(provideBots(orchestration));
+});

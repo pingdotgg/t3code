@@ -58,7 +58,6 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
   type ScopedProjectRef,
-  isHomeThreadId,
 } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -73,7 +72,6 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
-  HouseIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -130,6 +128,7 @@ import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
+import { botFilesEnvironment } from "../state/botFiles";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
@@ -283,6 +282,7 @@ import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
+import { openNewBotDialog } from "./chat/NewBotDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
@@ -782,6 +782,9 @@ function OpenCommandPaletteDialog(props: {
       .map((environment) => environment.environmentId),
     supportsTriage,
   });
+  const canCreateBot = useAtomValue(
+    botFilesEnvironment.create.permissionAtom(scratchTargetEnvironmentId),
+  );
   const canTriage =
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
     supportsTriage(triageEnvironmentId);
@@ -1544,8 +1547,22 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (scratchTargetEnvironmentId !== null && canCreateBot) {
+    const environmentId = scratchTargetEnvironmentId;
+    actionItems.push({
+      kind: "action",
+      value: "action:new-bot",
+      searchTerms: ["bot", "new bot", "coordinator", "crew", "chief of staff", "assistant"],
+      title: gt("New Bot"),
+      icon: <BotIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openNewBotDialog(environmentId);
+      },
+    });
+  }
+
   // The server refuses a thread a Bot cannot start from, such as a subagent.
-  if (activeThread != null && activeThread.botConfig == null && !isHomeThreadId(activeThread.id)) {
+  if (activeThread != null && activeThread.botConfig == null) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
     actionItems.push({
       kind: "action",
@@ -1818,18 +1835,6 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
-
-  actionItems.push({
-    kind: "action",
-    value: "action:home",
-    searchTerms: ["home", "coordinator", "agent", "across projects"],
-    title: gt("Open Home"),
-    icon: <HouseIcon className={ITEM_ICON_CLASS} />,
-    shortcutCommand: "home.open",
-    run: async () => {
-      await navigate({ to: "/home" });
-    },
-  });
 
   actionItems.push({
     kind: "action",

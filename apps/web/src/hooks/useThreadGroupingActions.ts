@@ -5,12 +5,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import {
-  isHomeThreadId,
-  isListedThreadLineage,
-  type ScopedThreadRef,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { isListedThreadLineage, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { msg } from "gt-react";
 
@@ -49,7 +44,7 @@ export function threadGroupingMenuState(
 ): ThreadActionMenuState["grouping"] {
   if (!isListedThreadLineage(thread.lineage)) return undefined;
   return {
-    isBot: thread.botConfig != null || isHomeThreadId(thread.id),
+    isBot: thread.botConfig != null,
     isGrouped: thread.groupedUnderThreadId != null,
     hasCrew: crewOf(thread, threads).length > 0,
   };

@@ -267,8 +267,6 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
-import { SidebarHomeEntry } from "./sidebar/SidebarHomeEntry";
-import { homeThreads, withoutHomeThreads } from "./sidebar/homeSidebar.logic";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipScrollDismissArea } from "./ui/tooltip";
 import {
@@ -1153,9 +1151,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             ),
           ),
         );
-  const allThreads = useQuietThreadShells();
-  const threads = withoutHomeThreads(allThreads);
-  const homeCrewThreads = homeThreads(allThreads);
+  const threads = useQuietThreadShells();
   const promotingDraftThreadKeys = usePromotingDraftThreadKeys();
   const listedThreads =
     promotingDraftThreadKeys.length === 0
@@ -3143,14 +3139,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         className="min-h-full"
         fixedHeader={
           <SidebarGroup className="z-[1]">
-            <SidebarHomeEntry
-              threads={homeCrewThreads}
-              routeThreadKey={routeThreadKey}
-              isCrewFolded={isCrewFolded}
-              onToggleCrew={toggleCrewFold}
-              onNavigate={navigateToThread}
-              onContextMenu={handleThreadContextMenu}
-            />
             <SidebarThreadHeader
               hasProjects={projectGroups.length > 0}
               projectScope={

@@ -30,7 +30,6 @@ const dependencies = Layer.mergeAll(
   }),
   Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
     namedProjectsRoot: "/projects",
-    homeRoot: "/unused-home",
     isScratchProject: () => Effect.succeed(false),
   }),
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
@@ -223,7 +222,6 @@ it.effect.each([
           const sql = yield* SqlClient.SqlClient;
           return Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            homeRoot: "/unused-home",
             isScratchProject: () =>
               sql`UPDATE scheduled_tasks SET next_run_at = ${MOVED}, enabled = ${pause ? 0 : 1}`.pipe(
                 Effect.as(false),

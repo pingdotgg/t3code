@@ -10,7 +10,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
 } from "./runtime.ts";
 
-/** A Bot's notes.md and preferences.md (a save refreshes the read), and starting a Bot. */
+/** A Bot's notes.md and preferences.md (a save refreshes the read), and starting or creating a Bot. */
 export function createBotFilesEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Persistence.EnvironmentCacheStore | R, E>,
 ) {
@@ -41,6 +41,11 @@ export function createBotFilesEnvironmentAtoms<R, E>(
         mode: "singleFlight",
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
       },
+    }),
+    create: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:bot:create",
+      tag: WS_METHODS.botCreate,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
   };
 }

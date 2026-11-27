@@ -59,8 +59,6 @@ describe("groupThreads", () => {
       thread("nested", { under: "a" }),
       thread("settled-bot", { settled: true }),
       thread("released", { under: "settled-bot" }),
-      thread("home:1", { settled: true }),
-      thread("home-crew", { under: "home:1" }),
     ]);
     expect(ids(grouped.listed)).toEqual([
       "bot",
@@ -69,9 +67,7 @@ describe("groupThreads", () => {
       "nested",
       "settled-bot",
       "released",
-      "home:1",
     ]);
-    expect(ids(grouped.groupByLeaderKey.get("environment-1:home:1")!.crew)).toEqual(["home-crew"]);
     expect(ids(grouped.groupByLeaderKey.get("environment-1:bot")!.crew)).toEqual(["a"]);
   });
 

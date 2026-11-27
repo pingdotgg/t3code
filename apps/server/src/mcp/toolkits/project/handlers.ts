@@ -317,15 +317,6 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   }),
                 ),
               );
-        if (
-          project !== undefined &&
-          project.workspaceRoot === (yield* ManagedProjectFolders.ManagedProjectFolders).homeRoot
-        )
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message:
-              "Home's folder takes no other threads. Pass a `projectId` (see `t3_project_list`) or `scratch: true`.",
-          });
         const workspaceStrategy =
           project !== undefined && input.workspaceStrategy?.type === "existing_worktree"
             ? {

@@ -59,6 +59,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // A Bot's notes steer its later turns, as a message to it does.
   [WS_METHODS.botFilesWrite]: AuthOrchestrationOperateScope,
   [WS_METHODS.botStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.botCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlCloneRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlPublishRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlStar]: AuthSourceControlWriteScope,
@@ -108,11 +109,6 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksPairLink]: AuthAccessWriteScope,
   // Send stores and sends a report from a thread's turn: the bar of running that thread.
   [WS_METHODS.agentFeedbackAnswerRequest]: AuthOrchestrationOperateScope,
-  // Home is a full-access agent that acts across projects; turning it on or steering it is operating.
-  [WS_METHODS.homeEnable]: AuthOrchestrationOperateScope,
-  [WS_METHODS.homeDisable]: AuthOrchestrationOperateScope,
-  [WS_METHODS.homeReset]: AuthOrchestrationOperateScope,
-  [WS_METHODS.homeSetModel]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

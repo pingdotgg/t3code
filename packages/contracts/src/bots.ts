@@ -1,10 +1,11 @@
 import * as Schema from "effect/Schema";
 
 import { EnvironmentId, IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ModelSelection } from "./modelSelection.ts";
 
 /**
  * A Bot is a coordinator thread: it keeps notes, leads the crew grouped under it, and is woken
- * when its crew or what it watches reaches a milestone. Home is the Bot for a whole environment.
+ * when its crew or what it watches reaches a milestone.
  * Set when the thread is created; a thread never changes role mid-conversation.
  */
 export const ThreadBotConfig = Schema.Struct({
@@ -38,6 +39,14 @@ export type BotFileWriteInput = typeof BotFileWriteInput.Type;
 /** Starts a new Bot seeded with a handoff of `threadId`, which becomes its first crew member. */
 export const BotStartInput = Schema.Struct({ threadId: ThreadId });
 export type BotStartInput = typeof BotStartInput.Type;
+
+/** Starts a new Bot with no source thread. `instructions` seeds its preferences.md. */
+export const BotCreateInput = Schema.Struct({
+  title: TrimmedNonEmptyString,
+  instructions: Schema.String.check(Schema.isMaxLength(BOT_FILE_MAX_CHARS)),
+  modelSelection: ModelSelection,
+});
+export type BotCreateInput = typeof BotCreateInput.Type;
 
 export const BotStartResult = Schema.Struct({ threadId: ThreadId });
 export type BotStartResult = typeof BotStartResult.Type;

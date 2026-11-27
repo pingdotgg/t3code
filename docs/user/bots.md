@@ -1,21 +1,19 @@
-# Bots and Home
+# Bots
 
 A Bot is a conversation that coordinates instead of coding. It starts threads for the work, follows
-them, and keeps notes. The threads it starts are its crew and show under it in the sidebar. Home is
-the Bot for everything: one per environment, across all your projects and linked environments.
-
-## Home
-
-Open **Home** at the top of the sidebar (or press `⌘⇧0`, `Ctrl+Shift+0` on Windows and Linux) and
-choose **Enable Home**. Pick its model in **Settings → Home**; without one, Home uses the
-environment's default model. **Start fresh** gives Home a new conversation; its notes, preferences
-and crew carry over. Home always starts work in a real project or a scratch folder. Turning Home off
-stops its current turn.
+them, and keeps notes. The threads it starts are its crew and show under it in the sidebar. A Bot
+belongs to no project: it sends each crew thread to the project the work is in, and can reach your
+linked environments.
 
 ## Starting a Bot
 
-In a thread's menu or the command palette, choose **Start a Bot from this thread**. A new Bot starts
-in the same project with a summary of the thread, and that thread becomes its first crew member.
+- **From scratch:** open the command palette and choose **New Bot**. Give it a name and instructions
+  that describe its job, such as "Chief of staff: keep track of everything I have going on across my
+  projects and tell me what needs me." The instructions are saved as the Bot's preferences, which
+  you can edit later.
+- **From a thread:** in a thread's menu or the command palette, choose **Start a Bot from this
+  thread**. The new Bot starts with a summary of the thread, and that thread becomes its first crew
+  member.
 
 ## Working with a Bot
 

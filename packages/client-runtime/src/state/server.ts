@@ -2027,29 +2027,6 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: workflowDefinitionScheduler,
       concurrency: workflowDefinitionConcurrency,
     }),
-    // Enable and reset start a thread, so they stay off the settings lane and run once at a time.
-    enableHome: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:home:enable",
-      tag: WS_METHODS.homeEnable,
-      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
-    }),
-    disableHome: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:home:disable",
-      tag: WS_METHODS.homeDisable,
-      scheduler: configScheduler,
-      concurrency: configConcurrency,
-    }),
-    resetHome: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:home:reset",
-      tag: WS_METHODS.homeReset,
-      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
-    }),
-    setHomeModel: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:home:set-model",
-      tag: WS_METHODS.homeSetModel,
-      scheduler: configScheduler,
-      concurrency: configConcurrency,
-    }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",
       tag: WS_METHODS.guestShareCreate,
