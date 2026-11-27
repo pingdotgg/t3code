@@ -8731,7 +8731,7 @@
   "a6a6dc235b108747": "Allow agents to use the shared browser. Projects can override it.",
   "ea5fed973bfc1aca": "Reset default browser access to default",
   "19e1f74805f4a1fb": "Agent browser access",
-  "b395b88284e3bca2": "Show the floating preview when an agent opens a browser or device unless the agent says otherwise.",
+  "d6ccca83a1676fcb": "Show the floating preview when an agent opens a browser or device unless the agent says otherwise, and when you close the right panel.",
   "6aadfd59cf60b4b5": "Reset auto-show floating preview to default",
   "e4a7ec61190bc1f9": "Auto-show floating preview",
   "3705c53cb3e76a28": "Could not clear {name}''s data",

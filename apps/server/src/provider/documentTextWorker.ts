@@ -71,6 +71,7 @@ interface XmlNode {
   children: Array<XmlNode | string>;
   imageDescription?: string;
   spaceCount?: number;
+  wordOutlineHeadingLevel?: number;
   hasText?: boolean;
   hasTextChoice?: boolean;
   markupCompatibility?: boolean;
@@ -197,6 +198,14 @@ function xml(source: string, extension: string): XmlNode {
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (extension === ".docx" && node.name === "outlineLvl" && parent.name === "pPr") {
+      const paragraph = stack.at(-2);
+      const outline = Number(node.attrs.val?.match(/^\s*[+-]?\d+\s*$/u)?.[0]);
+      if (paragraph?.name === "p" && outline >= 0 && outline <= 9) {
+        // Word's outline is zero-based, with 9 reserved for body text.
+        paragraph.wordOutlineHeadingLevel = outline === 9 ? 0 : outline + 1;
+      }
+    }
     // MathML Core displays only the first element child of semantics by default.
     const isMathmlAlternative = parent.mathmlFirstChildSeen === true;
     if (parent.mathmlFirstChildSeen === false) parent.mathmlFirstChildSeen = true;
@@ -393,7 +402,8 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
           ? Number(child.attrs["outline-level"]) || 1
           : /^h[1-6]$/.test(child.name)
             ? Number(child.name[1])
-            : Number(style.match(/^Heading([1-6])$/i)?.[1]) || 0;
+            : (child.wordOutlineHeadingLevel ??
+              (Number(style.match(/^Heading([1-6])$/i)?.[1]) || 0));
       if (level) yield `${"#".repeat(Math.min(6, level))} `;
       yield* text(child);
       yield "\n";
@@ -995,7 +1005,33 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       return main && has(main) ? main : fallback;
     };
     if (extension === ".docx") {
-      yield* paragraphs(read(mainPart("word/document.xml")));
+      const main = mainPart("word/document.xml");
+      const doc = read(main);
+      const rels = partRels(main);
+      const target = has(rels)
+        ? all(read(rels), "Relationship").find(
+            (rel) => rel.attrs.Type?.endsWith("/styles") && rel.attrs.TargetMode !== "External",
+          )?.attrs.Target
+        : undefined;
+      const dir = `/${NodePath.posix.dirname(main)}`;
+      const styles = NodePath.posix.resolve(dir, target || "styles.xml").slice(1);
+      if (has(styles)) {
+        // Word localizes style ids while keeping built-in English names.
+        const headings = new Map<string, string>();
+        for (const style of all(read(styles), "style")) {
+          const id = style.attrs.styleId;
+          if ((style.attrs.type ?? "paragraph") !== "paragraph" || !id) continue;
+          const name = children(style).find((c) => c.name === "name")?.attrs.val;
+          const level = name?.match(/^heading ([1-6])$/i)?.[1];
+          if (level && id !== `Heading${level}`) headings.set(id, `Heading${level}`);
+        }
+        if (headings.size)
+          for (const pStyle of all(doc, "pStyle")) {
+            const heading = headings.get(pStyle.attrs.val ?? "");
+            if (heading) pStyle.attrs.val = heading;
+          }
+      }
+      yield* paragraphs(doc);
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
       const content = read("content.xml");
       if (extension === ".odt")

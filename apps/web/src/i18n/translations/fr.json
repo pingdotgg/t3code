@@ -8723,7 +8723,7 @@
   "a6a6dc235b108747": "Autorise les agents à utiliser le navigateur partagé. Les projets peuvent remplacer ce paramètre.",
   "ea5fed973bfc1aca": "Réinitialiser l’accès par défaut au navigateur à la valeur par défaut",
   "19e1f74805f4a1fb": "Accès des agents au navigateur",
-  "b395b88284e3bca2": "Affiche l’aperçu flottant quand un agent ouvre un navigateur ou un appareil, sauf si l’agent indique le contraire.",
+  "d6ccca83a1676fcb": "Affiche l’aperçu flottant quand un agent ouvre un navigateur ou un appareil, sauf si l’agent indique le contraire, et quand vous fermez le panneau de droite.",
   "6aadfd59cf60b4b5": "Réinitialiser l’affichage automatique de l’aperçu flottant à la valeur par défaut",
   "e4a7ec61190bc1f9": "Afficher automatiquement l’aperçu flottant",
   "3705c53cb3e76a28": "Impossible d’effacer les données de {name}",
