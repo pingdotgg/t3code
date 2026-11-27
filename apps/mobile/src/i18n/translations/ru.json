@@ -913,7 +913,7 @@
   "1c7254ae11bf7cdc": "{days} д",
   "352655bb7a196642": "{kind, select, sideChat {{need, select, input {Боковому чату нужен ввод} approval {Боковому чату нужно подтверждение} other {Боковой чат ждёт вас}}} other {{need, select, input {Субагенту нужен ввод} approval {Субагенту нужно подтверждение} other {Субагент ждёт вас}}}}",
   "e931fd397ade526b": "{kind, select, sideChat {{need, select, input {Боковых чатов, ожидающих ввода: {count}} approval {Боковых чатов, ожидающих подтверждения: {count}} other {Боковых чатов, ожидающих вас: {count}}}} subagent {{need, select, input {Субагентов, ожидающих ввода: {count}} approval {Субагентов, ожидающих подтверждения: {count}} other {Субагентов, ожидающих вас: {count}}}} other {{need, select, input {Тредов, ожидающих ввода: {count}} approval {Тредов, ожидающих подтверждения: {count}} other {Тредов, ожидающих вас: {count}}}}}",
-  "4bed196a655ab14f": "Работают {live} из {total} агентов",
+  "f7b40089dae502b6": "В работе: {live} из {total} {total, plural, one {агента} few {агентов} many {агентов} other {агента}}",
   "ba1727ddc7a0a0b6": "{count, plural, one {Готов {count} агент} few {Готовы {count} агента} many {Готовы {count} агентов} other {Готовы {count} агента}}",
   "4dd09c829329a994": "Сообщение в очереди",
   "3f0b962160edbe6d": "Не удалось синхронизировать тред.",

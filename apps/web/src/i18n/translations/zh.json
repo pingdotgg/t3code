@@ -914,7 +914,7 @@
   "1c7254ae11bf7cdc": "{days} 天",
   "352655bb7a196642": "{kind, select, sideChat {{need, select, input {侧聊需要输入} approval {侧聊需要批准} other {侧聊需要你处理}}} other {{need, select, input {子智能体需要输入} approval {子智能体需要批准} other {子智能体需要你处理}}}}",
   "e931fd397ade526b": "{kind, select, sideChat {{need, select, input {{count} 个侧聊需要输入} approval {{count} 个侧聊需要批准} other {{count} 个侧聊需要你处理}}} subagent {{need, select, input {{count} 个子智能体需要输入} approval {{count} 个子智能体需要批准} other {{count} 个子智能体需要你处理}}} other {{need, select, input {{count} 个会话需要输入} approval {{count} 个会话需要批准} other {{count} 个会话需要你处理}}}}",
-  "4bed196a655ab14f": "{total} 个智能体中有 {live} 个正在工作",
+  "f7b40089dae502b6": "{total} 个智能体中有 {live} 个正在工作",
   "ba1727ddc7a0a0b6": "{count, plural, other {{count} 个智能体已完成}}",
   "4dd09c829329a994": "排队消息",
   "3f0b962160edbe6d": "无法同步会话。",

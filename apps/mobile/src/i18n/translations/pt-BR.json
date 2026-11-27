@@ -913,7 +913,7 @@
   "1c7254ae11bf7cdc": "{days}d",
   "352655bb7a196642": "{kind, select, sideChat {{need, select, input {O chat paralelo precisa de uma resposta} approval {O chat paralelo precisa de aprovação} other {O chat paralelo precisa de você}}} other {{need, select, input {O subagente precisa de uma resposta} approval {O subagente precisa de aprovação} other {O subagente precisa de você}}}}",
   "e931fd397ade526b": "{kind, select, sideChat {{need, select, input {{count} chats paralelos precisam de uma resposta} approval {{count} chats paralelos precisam de aprovação} other {{count} chats paralelos precisam de você}}} subagent {{need, select, input {{count} subagentes precisam de uma resposta} approval {{count} subagentes precisam de aprovação} other {{count} subagentes precisam de você}}} other {{need, select, input {{count} threads precisam de uma resposta} approval {{count} threads precisam de aprovação} other {{count} threads precisam de você}}}}",
-  "4bed196a655ab14f": "{live} de {total} agentes trabalhando",
+  "f7b40089dae502b6": "{total, plural, one {{live} de {total} agente trabalhando} other {{live} de {total} agentes trabalhando}}",
   "ba1727ddc7a0a0b6": "{count, plural, one {{count} agente concluído} other {{count} agentes concluídos}}",
   "4dd09c829329a994": "Mensagem na fila",
   "3f0b962160edbe6d": "Não foi possível sincronizar a thread.",
