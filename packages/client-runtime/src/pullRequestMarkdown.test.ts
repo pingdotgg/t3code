@@ -528,6 +528,25 @@ describe("change request reference autolinks", () => {
   it("links nothing on a host whose grammar is not applied", () => {
     expect(urls("forgejo", "https://codeberg.org/acme/web/pulls/7", "#5")).toBeNull();
   });
+
+  it("resolves issue URLs for GitHub, GHES, and GitLab while ignoring standalone trackers", () => {
+    expect(
+      urls("github", "https://github.com/Acme/Web/issues/42", "Fix in #38661 and other/repo#9."),
+    ).toEqual([
+      "https://github.com/Acme/Web/issues/38661",
+      "https://github.com/other/repo/issues/9",
+    ]);
+    expect(urls("github", "https://git.corp.example/Acme/Web/issues/42", "See #7")).toEqual([
+      "https://git.corp.example/Acme/Web/issues/7",
+    ]);
+    expect(
+      urls("gitlab", "https://gitlab.example/group/sub/Web/-/issues/7", "Fix in !15 for #12"),
+    ).toEqual([
+      "https://gitlab.example/group/sub/Web/-/merge_requests/15",
+      "https://gitlab.example/group/sub/Web/-/issues/12",
+    ]);
+    expect(urls("linear", "https://linear.app/acme/issue/ENG-1", "See #7")).toBeNull();
+  });
 });
 
 describe("change request media urls", () => {

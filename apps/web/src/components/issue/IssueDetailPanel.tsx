@@ -62,7 +62,9 @@ import { PullRequestDetailTitleRow } from "../pullRequest/PullRequestDetailLayou
 import { PullRequestEditButton } from "../pullRequest/PullRequestEditButton";
 import {
   PullRequestMarkdown,
+  PullRequestMarkdownContext,
   PullRequestMarkdownPanelContext,
+  pullRequestMarkdownContext,
 } from "../pullRequest/PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "../pullRequest/PullRequestMarkdownEditor";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
@@ -631,6 +633,13 @@ export function IssueDetailPanel({
       </span>
     );
 
+  const markdownContext = pullRequestMarkdownContext(
+    detail.tracker,
+    detail.url,
+    detail.scope,
+    threadRef,
+  );
+
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <div
@@ -847,166 +856,174 @@ export function IssueDetailPanel({
           </div>
         </div>
 
-        <PullRequestSection
-          key={`description:${detail.url}`}
-          title={gt("Description")}
-          keepMounted
-          actions={
-            canEdit && editing !== "body" ? (
-              <PullRequestEditButton
-                aria-label={gt("Edit description")}
-                onClick={() => setEditing("body")}
-              />
-            ) : null
-          }
-        >
-          <div className="flex flex-col gap-2">
-            {editing === "body" ? (
-              <PullRequestMarkdownEditor
-                value={detail.body}
-                cwd={cwd}
-                environmentId={environmentId}
-                threadRef={threadRef}
-                label={gt("Description")}
-                completionScope={null}
-                saving={saving}
-                allowEmpty
-                onSave={(next) => void save({ body: next })}
-                onCancel={() => setEditing(null)}
-              />
-            ) : (
-              <PullRequestMarkdown
-                text={
-                  detail.body.trim().length > 0 ? detail.body : gt("_No description provided._")
-                }
-                cwd={cwd}
-                environmentId={environmentId}
-                threadRef={threadRef}
-              />
-            )}
-            {detail.reactions !== undefined ? (
-              <IssueReactionBar
-                reactions={detail.reactions}
-                canReact={canReact}
-                environmentId={environmentId}
-                reference={reference}
-              />
-            ) : null}
-          </div>
-        </PullRequestSection>
-
-        {detail.linkedPullRequests.length > 0 ? (
-          <PullRequestSection key={`linked:${detail.url}`} title={gt("Linked pull requests")}>
-            <div className="flex flex-col gap-1">
-              {detail.linkedPullRequests.map((link) => (
-                <LinkedPullRequestRow
-                  key={`${link.repository}#${link.number}`}
-                  link={link}
-                  scope={detail.scope}
-                  onSelect={
-                    onSelectPullRequest
-                      ? () =>
-                          onSelectPullRequest({
-                            projectId: reference.projectId,
-                            ...(reference.host === undefined ? {} : { host: reference.host }),
-                            repository: link.repository,
-                            number: link.number,
-                          })
-                      : null
-                  }
+        <PullRequestMarkdownContext value={markdownContext}>
+          <PullRequestSection
+            key={`description:${detail.url}`}
+            title={gt("Description")}
+            keepMounted
+            actions={
+              canEdit && editing !== "body" ? (
+                <PullRequestEditButton
+                  aria-label={gt("Edit description")}
+                  onClick={() => setEditing("body")}
                 />
-              ))}
+              ) : null
+            }
+          >
+            <div className="flex flex-col gap-2">
+              {editing === "body" ? (
+                <PullRequestMarkdownEditor
+                  value={detail.body}
+                  cwd={cwd}
+                  environmentId={environmentId}
+                  threadRef={threadRef}
+                  label={gt("Description")}
+                  completionScope={null}
+                  saving={saving}
+                  allowEmpty
+                  onSave={(next) => void save({ body: next })}
+                  onCancel={() => setEditing(null)}
+                />
+              ) : (
+                <PullRequestMarkdown
+                  text={
+                    detail.body.trim().length > 0 ? detail.body : gt("_No description provided._")
+                  }
+                  cwd={cwd}
+                  environmentId={environmentId}
+                  threadRef={threadRef}
+                />
+              )}
+              {detail.reactions !== undefined ? (
+                <IssueReactionBar
+                  reactions={detail.reactions}
+                  canReact={canReact}
+                  environmentId={environmentId}
+                  reference={reference}
+                />
+              ) : null}
             </div>
           </PullRequestSection>
-        ) : null}
 
-        <PullRequestSection
-          key={`activity:${detail.url}`}
-          title={
-            detail.commentCount > 0
-              ? gt("Activity ({count})", { count: detail.commentCount })
-              : gt("Activity")
-          }
-        >
-          <div className="flex flex-col gap-3">
-            {nextCursor !== null ? (
-              <Button
-                size="sm"
-                variant="outline"
-                className="self-start"
-                disabled={!canLoadOlder}
-                onClick={() => void loadOlder()}
-              >
-                {loadingOlder ? <T>Loading…</T> : <T>Load older comments</T>}
-              </Button>
-            ) : null}
-            {timeline.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                <T>Nothing has happened here yet.</T>
-              </p>
-            ) : null}
-            {timeline.map((item) =>
-              item.kind === "comment" ? (
-                <article
-                  key={`c:${item.comment.id}`}
-                  className="flex flex-col gap-2 rounded-lg border border-border/60 p-3"
-                >
-                  <h3>
-                    <PullRequestMetaLine className="text-xs text-muted-foreground">
-                      <PullRequestActorLabel actor={item.comment.author} />
-                      {item.comment.url ? (
-                        <InlineButton
-                          tone="muted"
-                          render={
-                            <a href={item.comment.url} target="_blank" rel="noopener noreferrer" />
-                          }
-                          onClick={(event) => {
-                            event.preventDefault();
-                            void openLink(item.comment.url!, { event }).catch(console.error);
-                          }}
-                        >
-                          {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
-                        </InlineButton>
-                      ) : (
-                        <span>
-                          {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
-                        </span>
-                      )}
-                    </PullRequestMetaLine>
-                  </h3>
-                  <PullRequestCommentBody
-                    text={item.comment.body}
-                    cwd={cwd}
-                    environmentId={environmentId}
-                    threadRef={threadRef}
+          {detail.linkedPullRequests.length > 0 ? (
+            <PullRequestSection key={`linked:${detail.url}`} title={gt("Linked pull requests")}>
+              <div className="flex flex-col gap-1">
+                {detail.linkedPullRequests.map((link) => (
+                  <LinkedPullRequestRow
+                    key={`${link.repository}#${link.number}`}
+                    link={link}
+                    scope={detail.scope}
+                    onSelect={
+                      onSelectPullRequest
+                        ? () =>
+                            onSelectPullRequest({
+                              projectId: reference.projectId,
+                              ...(reference.host === undefined ? {} : { host: reference.host }),
+                              repository: link.repository,
+                              number: link.number,
+                            })
+                        : null
+                    }
                   />
-                  {item.comment.reactions !== undefined ? (
-                    <IssueReactionBar
-                      reactions={item.comment.reactions}
-                      canReact={canReact}
-                      subjectId={item.comment.id}
+                ))}
+              </div>
+            </PullRequestSection>
+          ) : null}
+
+          <PullRequestSection
+            key={`activity:${detail.url}`}
+            title={
+              detail.commentCount > 0
+                ? gt("Activity ({count})", { count: detail.commentCount })
+                : gt("Activity")
+            }
+          >
+            <div className="flex flex-col gap-3">
+              {nextCursor !== null ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="self-start"
+                  disabled={!canLoadOlder}
+                  onClick={() => void loadOlder()}
+                >
+                  {loadingOlder ? <T>Loading…</T> : <T>Load older comments</T>}
+                </Button>
+              ) : null}
+              {timeline.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  <T>Nothing has happened here yet.</T>
+                </p>
+              ) : null}
+              {timeline.map((item) =>
+                item.kind === "comment" ? (
+                  <article
+                    key={`c:${item.comment.id}`}
+                    className="flex flex-col gap-2 rounded-lg border border-border/60 p-3"
+                  >
+                    <h3>
+                      <PullRequestMetaLine className="text-xs text-muted-foreground">
+                        <PullRequestActorLabel actor={item.comment.author} />
+                        {item.comment.url ? (
+                          <InlineButton
+                            tone="muted"
+                            render={
+                              <a
+                                href={item.comment.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              />
+                            }
+                            onClick={(event) => {
+                              event.preventDefault();
+                              void openLink(item.comment.url!, { event }).catch(console.error);
+                            }}
+                          >
+                            {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
+                          </InlineButton>
+                        ) : (
+                          <span>
+                            {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
+                          </span>
+                        )}
+                      </PullRequestMetaLine>
+                    </h3>
+                    <PullRequestCommentBody
+                      text={item.comment.body}
+                      cwd={cwd}
                       environmentId={environmentId}
-                      reference={reference}
+                      threadRef={threadRef}
                     />
-                  ) : null}
-                </article>
-              ) : (
-                <PullRequestMetaLine
-                  key={`e:${item.event.id}`}
-                  className="px-1 text-xs text-muted-foreground"
-                >
-                  <PullRequestActorLabel actor={item.event.actor} />
-                  <IssueEventText
-                    event={item.event}
-                    sentence={issueEventSentence(item.event, messages)}
-                    onOpen={openEventSource}
-                  />
-                  <span>{formatRelativeTimeLabel(item.event.createdAt, undefined, messages)}</span>
-                </PullRequestMetaLine>
-              ),
-            )}
-          </div>
-        </PullRequestSection>
+                    {item.comment.reactions !== undefined ? (
+                      <IssueReactionBar
+                        reactions={item.comment.reactions}
+                        canReact={canReact}
+                        subjectId={item.comment.id}
+                        environmentId={environmentId}
+                        reference={reference}
+                      />
+                    ) : null}
+                  </article>
+                ) : (
+                  <PullRequestMetaLine
+                    key={`e:${item.event.id}`}
+                    className="px-1 text-xs text-muted-foreground"
+                  >
+                    <PullRequestActorLabel actor={item.event.actor} />
+                    <IssueEventText
+                      event={item.event}
+                      sentence={issueEventSentence(item.event, messages)}
+                      onOpen={openEventSource}
+                    />
+                    <span>
+                      {formatRelativeTimeLabel(item.event.createdAt, undefined, messages)}
+                    </span>
+                  </PullRequestMetaLine>
+                ),
+              )}
+            </div>
+          </PullRequestSection>
+        </PullRequestMarkdownContext>
       </div>
 
       {detail.capabilities.comment ? (

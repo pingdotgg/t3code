@@ -20,7 +20,11 @@ import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 import ChatMarkdown from "../ChatMarkdown";
 import { markdownImageCopy } from "../chat/ChatMarkdownMedia";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
-import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequestMarkdown.logic";
+import {
+  pullRequestMarkdownExtensions,
+  splitPullRequestBody,
+  type PullRequestBodySegment,
+} from "./pullRequestMarkdown.logic";
 
 export const PullRequestMarkdownContext = createContext<{
   /** Stable per repository, so comments share one renderer and its parse cache. */
@@ -30,6 +34,25 @@ export const PullRequestMarkdownContext = createContext<{
   /** The change request's `owner/name`, which can differ from the checkout the body renders in. */
   repository: string | null;
 } | null>(null);
+
+// Takes the fields, not the detail: the detail is rebuilt whenever any of its queries changes
+// state, and a new context value re-renders every markdown block in the panel.
+export function pullRequestMarkdownContext(
+  provider: string | null,
+  url: string | null,
+  repository: string | null,
+  threadRef: ScopedThreadRef | null,
+) {
+  const client = provider === null ? undefined : sourceControlClients.find(provider);
+  return {
+    extensions: pullRequestMarkdownExtensions(
+      provider === null || url === null ? null : { provider, url },
+    ),
+    lineBreaks: client?.hardLineBreaks ?? false,
+    threadRef,
+    repository: client ? repository : null,
+  };
+}
 
 /** The list page panel that links in thread-less markdown open in; the Issues page provides its own. */
 export const PullRequestMarkdownPanelContext =

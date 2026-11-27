@@ -120,8 +120,7 @@ import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel } from "./pullRequestLinkContextMenu";
-import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
-import { pullRequestMarkdownExtensions } from "./pullRequestMarkdown.logic";
+import { PullRequestMarkdownContext, pullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { PullRequestComposer } from "./PullRequestComposer";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
@@ -302,24 +301,6 @@ function resolvePullRequestReference(
         repository: requestedReference.repository,
         number: requestedReference.number,
       };
-}
-
-// Takes the fields, not the detail: the detail is rebuilt whenever any of its queries changes
-// state, and a new context value re-renders every markdown block in the panel.
-function pullRequestMarkdownContext(
-  provider: string | null,
-  url: string | null,
-  repository: string | null,
-  threadRef: ScopedThreadRef | null,
-) {
-  return {
-    extensions: pullRequestMarkdownExtensions(
-      provider === null || url === null ? null : { provider, url },
-    ),
-    lineBreaks: sourceControlClients.find(provider ?? "")?.hardLineBreaks ?? false,
-    threadRef,
-    repository,
-  };
 }
 
 function pullRequestStackReference(
