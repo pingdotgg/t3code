@@ -797,8 +797,9 @@ describe("AntigravityAdapterV2 silent prompts", () => {
               // The reply streams and the session log records it DONE; session/prompt never answers.
               prompt: (request, promptOptions) =>
                 Effect.gen(function* () {
-                  const prompt = runtime.prompt(request, promptOptions).pipe(Effect.forkScoped);
-                  const fiber = yield* prompt;
+                  const fiber = yield* runtime
+                    .prompt(request, promptOptions)
+                    .pipe(Effect.forkChild);
                   yield* Deferred.await(promptOptions!.dispatched!);
                   yield* sessionUpdate!(
                     normalizeAntigravitySessionUpdate({
