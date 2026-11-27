@@ -316,6 +316,35 @@ describe("resource monitor retry", () => {
   });
 });
 
+it.each([
+  [1, 0, "1 start · 0 exits"],
+  [2, 1, "2 starts · 1 exit"],
+])(
+  "pluralizes process starts and exits independently (%i, %i)",
+  async (processStarts, processExits, detail) => {
+    using fixture = setup();
+    const { groups } = fixture.snapshot;
+    const liveTelemetry = Atom.make<
+      AsyncResult.AsyncResult<ResourceTelemetrySnapshot, MonitorError>
+    >(
+      AsyncResult.success({
+        ...fixture.snapshot,
+        groups: { ...groups, allT3: { ...groups.allT3, processStarts, processExits } },
+      }),
+    ).pipe(Atom.keepAlive);
+    monitor.telemetry.mockImplementation(() => liveTelemetry);
+
+    await using screen = await render(
+      <RegistryContext.Provider value={fixture.registry}>
+        <ResourceTelemetryDiagnostics environmentId={environmentId} />
+      </RegistryContext.Provider>,
+    );
+    const processDetail = screen.getByText(/^\d+ starts? · \d+ exits?$/);
+    await expect.element(processDetail).toBeVisible();
+    expect(processDetail.element().textContent).toBe(detail);
+  },
+);
+
 it("shows process counts, I/O totals and the process scan in German", async () => {
   using fixture = setup();
   const { groups, health } = fixture.snapshot;
