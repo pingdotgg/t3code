@@ -4,7 +4,7 @@ const ICNS_HEADER_BYTES = 8;
 const ICNS_MAGIC = 0x69636e73;
 const PNG_MAGIC = 0x89504e47;
 
-/** Returns a copy to avoid retaining the whole .icns buffer. */
+/** Returns a copy: `Buffer#slice` is a view that would retain the whole .icns file. */
 export function extractIcnsPng(bytes: Uint8Array, minSize: number): Uint8Array | null {
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes.length < ICNS_HEADER_BYTES || data.getUint32(0) !== ICNS_MAGIC) return null;
@@ -23,5 +23,5 @@ export function extractIcnsPng(bytes: Uint8Array, minSize: number): Uint8Array |
       (best.width < minSize ? width > best.width : width >= minSize && width < best.width);
     if (isBetter) best = { png: entry, width };
   }
-  return best === null ? null : Uint8Array.from(best.png);
+  return best === null ? null : new Uint8Array(best.png);
 }
