@@ -771,9 +771,18 @@ function transparentWrapperCommandIndex(
   }
 
   if (wrapper === "timeout" || wrapper === "gtimeout") {
-    return /^(?:\d+(?:\.\d*)?|\.\d+)[smhd]?$/u.test(tokens[index + 1] ?? "") &&
-      tokens[index + 2] !== undefined
-      ? index + 2
+    let pos = index + 1;
+    const singleOption =
+      /^(?:-(?:[fpv]+|[fpv]*[ks].+)|--(?:foreground|preserve-status|verbose)|--(?:kill-after|signal)=.+)$/u;
+    while (tokens[pos]?.startsWith("-") && tokens[pos] !== "--") {
+      if (/^(?:-[fpv]*[ks]|--(?:kill-after|signal))$/u.test(tokens[pos]!)) pos += 2;
+      else if (singleOption.test(tokens[pos]!)) pos += 1;
+      else return null;
+    }
+    if (tokens[pos] === "--") pos += 1;
+    return /^(?:\d+(?:\.\d*)?|\.\d+)[smhd]?$/u.test(tokens[pos] ?? "") &&
+      tokens[pos + 1] !== undefined
+      ? pos + 1
       : null;
   }
 
