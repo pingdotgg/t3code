@@ -1271,6 +1271,72 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("preserves postBody on in-place window-open navigations", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        const setWindowOpenHandler = vi.fn<Electron.WebContents["setWindowOpenHandler"]>();
+        Object.assign(preview.webContents, { setWindowOpenHandler });
+        fromId.mockReturnValue(preview.webContents);
+
+        yield* manager.createTab("tab_window_open_post");
+        yield* manager.registerWebview("tab_window_open_post", 42);
+
+        const openWindow = setWindowOpenHandler.mock.calls[0]![0];
+        const detailsBase = {
+          frameName: "",
+          features: "",
+          referrer: { url: "", policy: "default" as const },
+        };
+        const multipartData: Electron.PostBody["data"] = [
+          { type: "rawData", bytes: Buffer.from("a=1") },
+        ];
+
+        expect(
+          openWindow({
+            ...detailsBase,
+            url: "http://localhost:5173/submit",
+            disposition: "foreground-tab",
+            postBody: {
+              contentType: "multipart/form-data",
+              boundary: "----x",
+              data: multipartData,
+            },
+          }),
+        ).toEqual({ action: "deny" });
+        expect(
+          openWindow({
+            ...detailsBase,
+            url: "https://example.com/submit",
+            disposition: "background-tab",
+            postBody: {
+              contentType: "application/x-www-form-urlencoded",
+              data: [],
+            },
+          }),
+        ).toEqual({ action: "deny" });
+        yield* Effect.yieldNow;
+
+        expect(preview.loadURL.mock.calls).toEqual([
+          [
+            "http://localhost:5173/submit",
+            {
+              postData: multipartData,
+              extraHeaders: "content-type: multipart/form-data; boundary=----x",
+            },
+          ],
+          [
+            "https://example.com/submit",
+            {
+              postData: [],
+              extraHeaders: "content-type: application/x-www-form-urlencoded",
+            },
+          ],
+        ]);
+      }),
+    ),
+  );
+
   effectIt.effect("treats a load superseded by a page redirect as a successful navigation", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -2430,6 +2496,67 @@ describe("PreviewManager", () => {
       expect(yield* nextType).toBe("attached");
       yield* manager.closeTab("tab_1");
       expect(yield* nextType).toBe("detached");
+    }).pipe(Effect.provide(managerLayer())),
+  );
+
+  effectIt.effect("holds relayed input off a server tab while its annotation is open", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+      const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+      const lines = yield* Queue.unbounded<string>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) => Queue.offer(lines, new TextDecoder().decode(line))),
+        Effect.forkScoped,
+      );
+      const contents = Object.assign(
+        makeTestPreviewWebContents(async () => {
+          throw new Error("unused");
+        }, 42),
+        {
+          isDevToolsOpened: () => false,
+          getUserAgent: () => "Electron",
+          isFocused: () => true,
+          focusedFrame: {},
+          once: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn(), removeListener: vi.fn() },
+        },
+      );
+      fromId.mockReturnValue(contents);
+      const manager = yield* PreviewManager.PreviewManager;
+      yield* manager.createTab("tab_1", { serverTab });
+      yield* manager.registerWebview("tab_1", 42);
+      expect(yield* Queue.take(lines)).toContain('"type":"attached"');
+      const typeText = (id: number) =>
+        host.handleCommandLine(
+          JSON.stringify({
+            type: "cdp",
+            ...serverTab,
+            message: JSON.stringify({
+              id,
+              method: "Input.insertText",
+              params: { text: "x" },
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+      const typed = () =>
+        vi
+          .mocked(contents.debugger.sendCommand)
+          .mock.calls.filter(([method]) => method === "Input.insertText").length;
+
+      const pick = yield* manager.pickElement("tab_1").pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* typeText(1);
+      const refused = yield* Queue.take(lines);
+      expect(refused).toContain('\\"id\\":1');
+      expect(refused).toContain("being annotated");
+      expect(typed()).toBe(0);
+
+      yield* manager.cancelPickElement("tab_1");
+      expect(yield* Fiber.join(pick)).toBeNull();
+      yield* typeText(2);
+      expect(yield* Queue.take(lines)).toContain('\\"id\\":2');
+      expect(typed()).toBe(1);
     }).pipe(Effect.provide(managerLayer())),
   );
 

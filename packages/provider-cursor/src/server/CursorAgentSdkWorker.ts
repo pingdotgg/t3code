@@ -1,3 +1,4 @@
+import { stripAppImageRuntimeEnv } from "@t3tools/shared/appImageRuntimeEnv";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -586,11 +587,20 @@ const runCursorSdkWorkerWithStdio = Effect.fn("CursorAgentSdkWorker.run")(functi
   yield* Fiber.await(writerFiber).pipe(Effect.timeoutOption(CLOSE_GRACE), Effect.ignore);
 });
 
+// The worker has already booted, so agent shells can drop Electron's Node flag and the AppImage env.
+export function scrubCursorWorkerEnvironment(env: NodeJS.ProcessEnv): void {
+  delete env.ELECTRON_RUN_AS_NODE;
+  const scrubbed = stripAppImageRuntimeEnv(env);
+  for (const key of Object.keys(env)) {
+    if (!Object.hasOwn(scrubbed, key)) delete env[key];
+  }
+  Object.assign(env, scrubbed);
+}
+
 export async function runCursorSdkWorker(
   platformLayer: Layer.Layer<FileSystem.FileSystem | Path.Path | Stdio.Stdio>,
 ): Promise<void> {
-  // Electron has already booted in Node mode; strip the flag so agent shells do not inherit it.
-  delete process.env.ELECTRON_RUN_AS_NODE;
+  scrubCursorWorkerEnvironment(process.env);
 
   // Reserve fd 1 exclusively for NDJSON frames; redirect stray SDK logs to stderr.
   const rawStdoutWrite = process.stdout.write.bind(process.stdout);

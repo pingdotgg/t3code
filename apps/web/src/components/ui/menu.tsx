@@ -102,7 +102,9 @@ function MenuSearchInput({
           unstyled
           onKeyDown={(event) => {
             // Menu typeahead would otherwise take the letters; arrows still reach the items.
-            if (event.key !== "ArrowDown" && event.key !== "Escape") event.stopPropagation();
+            if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Escape") {
+              event.stopPropagation();
+            }
             onKeyDown?.(event);
           }}
         />

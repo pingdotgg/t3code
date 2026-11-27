@@ -21,6 +21,11 @@ function normalizeSanitizedFragmentId(id: string): string {
   return normalizedId;
 }
 
+export function normalizeMarkdownFragmentId(hrefOrId: string): string {
+  const raw = hrefOrId.startsWith("#") ? decodeMarkdownFragmentId(hrefOrId) : hrefOrId;
+  return normalizeSanitizedFragmentId(raw);
+}
+
 function findMarkdownFragmentTarget(anchor: HTMLAnchorElement, href: string): HTMLElement | null {
   const decodedId = decodeMarkdownFragmentId(href);
   const normalizedId = normalizeSanitizedFragmentId(decodedId);

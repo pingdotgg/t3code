@@ -279,6 +279,7 @@ export interface ProviderSessionManagerV2Shape {
     readonly threadId: ThreadId;
     readonly detail?: string;
     readonly revokeMcpCredential?: boolean;
+    readonly handoffProviderThread?: OrchestrationV2ProviderThread;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   /**
    * Releases the session unless, at the moment of removal, a turn is busy on it other than one
@@ -2532,6 +2533,80 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
+        // A start, continuation or compaction keeps the session busy until its turn.terminal.
+        const busyTurn = <E>(
+          input: Pick<
+            ProviderAdapter.ProviderAdapterV2TurnInput,
+            "threadId" | "providerThread" | "runOrdinal" | "runId"
+          >,
+          run: () => Effect.Effect<void, E>,
+        ) =>
+          observeActivity(
+            providerSessionId,
+            ensureThreadAttached({
+              providerSessionId,
+              threadId: input.threadId,
+              providerInstanceId: runtime.instanceId,
+            }),
+          ).pipe(
+            // Failed or stopped starts may omit turn.terminal; clear their turns so sessions can idle.
+            Effect.andThen(
+              holdThreadLoaded({
+                providerSessionId,
+                threadId: input.threadId,
+                providerThread: input.providerThread,
+              }),
+            ),
+            Effect.andThen(
+              Effect.acquireUseRelease(
+                markBusy(
+                  providerSessionId,
+                  busyTurnKey(input.providerThread.id, input.runOrdinal),
+                  runtime,
+                ).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("orchestration-v2.driver-session.activity-failed", {
+                      providerSessionId,
+                      cause,
+                    }).pipe(Effect.as(true)),
+                  ),
+                  // A release between attach and markBusy leaves nothing to mark: fail the
+                  // start instead of running it on a runtime being torn down.
+                  Effect.flatMap((marked) =>
+                    marked
+                      ? Effect.void
+                      : Effect.fail(
+                          new ProviderAdapter.ProviderAdapterTurnStartError({
+                            driver: runtime.driver,
+                            threadId: input.threadId,
+                            providerThreadId: input.providerThread.id,
+                            runId: input.runId,
+                            cause: "The provider session was released while the turn started.",
+                          }),
+                        ),
+                  ),
+                ),
+                run,
+                (_, exit) =>
+                  Exit.isFailure(exit)
+                    ? observeActivity(
+                        providerSessionId,
+                        markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
+                      ).pipe(
+                        // A failed start can leave its native thread gone (Claude rejecting a
+                        // resume), so the next start must ask the adapter to resume it again.
+                        Effect.andThen(
+                          forgetProviderThreadLoaded({
+                            providerSessionId,
+                            threadId: input.threadId,
+                            runtime,
+                          }),
+                        ),
+                      )
+                    : Effect.void,
+              ),
+            ),
+          );
         return {
           ...runtime,
           // Pi replaces its session snapshot as metadata changes.
@@ -2663,78 +2738,32 @@ export const layerWithOptions = (
               Effect.map(({ loaded }) => loaded),
             ),
           startTurn: (input) =>
-            observeActivity(
-              providerSessionId,
-              ensureThreadAttached({
-                providerSessionId,
-                threadId: input.threadId,
-                providerInstanceId: runtime.instanceId,
-              }),
-            ).pipe(
-              // Failed or stopped starts may omit turn.terminal; clear their turns so sessions can idle.
-              Effect.andThen(
-                holdThreadLoaded({
-                  providerSessionId,
-                  threadId: input.threadId,
-                  providerThread: input.providerThread,
-                }),
-              ),
-              Effect.andThen(
-                Effect.acquireUseRelease(
-                  markBusy(
-                    providerSessionId,
-                    busyTurnKey(input.providerThread.id, input.runOrdinal),
-                    runtime,
-                  ).pipe(
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning("orchestration-v2.driver-session.activity-failed", {
-                        providerSessionId,
-                        cause,
-                      }).pipe(Effect.as(true)),
-                    ),
-                    // A release between attach and markBusy leaves nothing to mark: fail the
-                    // start instead of running it on a runtime being torn down.
-                    Effect.flatMap((marked) =>
-                      marked
-                        ? Effect.void
-                        : Effect.fail(
-                            new ProviderAdapter.ProviderAdapterTurnStartError({
-                              driver: runtime.driver,
-                              threadId: input.threadId,
-                              providerThreadId: input.providerThread.id,
-                              runId: input.runId,
-                              cause: "The provider session was released while the turn started.",
-                            }),
-                          ),
-                    ),
-                  ),
-                  () =>
-                    agentFeedbackMode.pipe(
-                      Effect.flatMap((agentFeedback) =>
-                        runtime.startTurn({ ...input, agentFeedback }),
-                      ),
-                      turnMetrics("send", input.modelSelection.model),
-                    ),
-                  (_, exit) =>
-                    Exit.isFailure(exit)
-                      ? observeActivity(
-                          providerSessionId,
-                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
-                        ).pipe(
-                          // A failed start can leave its native thread gone (Claude rejecting a
-                          // resume), so the next start must ask the adapter to resume it again.
-                          Effect.andThen(
-                            forgetProviderThreadLoaded({
-                              providerSessionId,
-                              threadId: input.threadId,
-                              runtime,
-                            }),
-                          ),
-                        )
-                      : Effect.void,
-                ),
+            busyTurn(input, () =>
+              agentFeedbackMode.pipe(
+                Effect.flatMap((agentFeedback) => runtime.startTurn({ ...input, agentFeedback })),
+                turnMetrics("send", input.modelSelection.model),
               ),
             ),
+          ...(runtime.resumeTurn === undefined
+            ? {}
+            : {
+                resumeTurn: (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
+                  busyTurn(input, () =>
+                    runtime.resumeTurn!(input).pipe(
+                      turnMetrics("resume", input.modelSelection.model),
+                    ),
+                  ),
+              }),
+          ...(runtime.compactThread === undefined
+            ? {}
+            : {
+                compactThread: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+                  busyTurn(input, () =>
+                    runtime.compactThread!(input).pipe(
+                      turnMetrics("compact", input.modelSelection.model),
+                    ),
+                  ),
+              }),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
@@ -3553,6 +3582,23 @@ export const layerWithOptions = (
                 );
               }
             }
+            const handoff = input.handoffProviderThread;
+            // Keep the source attached until it confirms release so a retry can still find it.
+            if (handoff?.nativeThreadRef != null) {
+              yield* threadAttachment.withLock(
+                threadAttachmentKey(input),
+                Effect.gen(function* () {
+                  const entry = (yield* Ref.get(sessions)).get(key);
+                  if (!entry?.supportsMultipleProviderThreads) return;
+                  const unloadThread = entry.exposedRuntime.unloadThread;
+                  if (unloadThread !== undefined) {
+                    yield* unloadThread({ providerThread: handoff, awaitClosed: true }).pipe(
+                      Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                    );
+                  }
+                }),
+              );
+            }
             const detachResult = yield* Ref.modify(sessions, (current) => {
               const entry = current.get(key);
               if (entry === undefined || !entry.attachedThreadIds.has(input.threadId)) {
@@ -3610,17 +3656,17 @@ export const layerWithOptions = (
                 discard: true,
               });
             }
-            const detached = Option.map(detachResult, (result) => result.entry);
             // Plain detaches preserve credentials held by live shared providers across workspace handoffs.
             if (input.revokeMcpCredential === true) {
               yield* clearMcpSession(input.threadId);
             }
-            if (Option.isNone(detached)) {
+            if (Option.isNone(detachResult)) {
               return;
             }
+            const detached = detachResult.value.entry;
             if (
-              detached.value.attachedThreadIds.size === 0 &&
-              !detached.value.supportsMultipleProviderThreads
+              detached.attachedThreadIds.size === 0 &&
+              !detached.supportsMultipleProviderThreads
             ) {
               yield* releaseEntry({
                 providerSessionId: input.providerSessionId,
@@ -3630,12 +3676,13 @@ export const layerWithOptions = (
               });
               return;
             }
-            const unloadThread = detached.value.exposedRuntime.unloadThread;
-            if (detached.value.supportsMultipleProviderThreads && unloadThread !== undefined) {
+            const unloadThread = detached.exposedRuntime.unloadThread;
+            if (detached.supportsMultipleProviderThreads && unloadThread !== undefined) {
               // The projection includes native children owned by other app threads;
               // lock each owner so an attached child stays loaded and later attaches wait.
               for (const providerThread of detachedProviderThreads) {
-                if (providerThread.nativeThreadRef === null) continue;
+                if (providerThread.nativeThreadRef === null || providerThread.id === handoff?.id)
+                  continue;
                 const ownerThreadId = providerThread.appThreadId ?? input.threadId;
                 yield* threadAttachment.withLock(
                   threadAttachmentKey({
@@ -3645,8 +3692,18 @@ export const layerWithOptions = (
                   Effect.gen(function* () {
                     const entry = (yield* Ref.get(sessions)).get(key);
                     if (
-                      entry?.runtime !== detached.value.runtime ||
+                      entry?.runtime !== detached.runtime ||
                       entry.attachedThreadIds.has(ownerThreadId)
+                    ) {
+                      return;
+                    }
+                    if (
+                      handoff !== undefined &&
+                      (providerThread.ownerNodeId !== null || ownerThreadId !== input.threadId) &&
+                      entry.runtime.hasPendingBackgroundWorkForThread !== undefined &&
+                      (yield* entry.runtime
+                        .hasPendingBackgroundWorkForThread(providerThread)
+                        .pipe(Effect.orElseSucceed(() => true)))
                     ) {
                       return;
                     }

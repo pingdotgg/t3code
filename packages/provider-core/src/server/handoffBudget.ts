@@ -101,7 +101,11 @@ export function estimateTextTokens(text: string): number {
   return Math.ceil(Buffer.byteLength(text) / 4);
 }
 
-// One UTF-8 byte per token keeps the new turn and imported history pessimistic.
+export function handoffByteCap(tokenCap: number): number {
+  return Math.min(HANDOFF_BYTE_CAP, tokenCap * 4);
+}
+
+// One UTF-8 byte per remaining token keeps the native context window reservation pessimistic.
 export function handoffBudget(input: {
   readonly tokenCap: number;
   readonly userText: string;
@@ -123,12 +127,7 @@ export function handoffBudget(input: {
   const workReserve = Math.min(Math.max(16_000, Math.ceil(window / 4)), Math.ceil(window / 2));
   return Math.max(
     0,
-    Math.min(
-      input.tokenCap,
-      // Cap imported history only; adapters own attachment transport limits.
-      HANDOFF_BYTE_CAP,
-      window - native - current - workReserve,
-    ),
+    Math.min(handoffByteCap(input.tokenCap), window - native - current - workReserve),
   );
 }
 
