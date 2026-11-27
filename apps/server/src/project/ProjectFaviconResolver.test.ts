@@ -300,6 +300,7 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
           ["/brand/logo.svg&#35;mark", "logo.svg"],
           ["/brand/design&amp;dev.svg&#x3f;v=2", "design&dev.svg"],
           ["/brand/logo%23mark.svg&quest;v=2", "logo#mark.svg"],
+          ["/brand/&#128;.svg", "\u20ac.svg"],
         ] as const) {
           const entityCwd = yield* makeTempDir;
           yield* writeTextFile(entityCwd, "index.html", `<link rel="icon" href="${href}">`);
