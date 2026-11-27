@@ -28,19 +28,18 @@ export function mp3Kbps(sampleRate: number) {
   return sampleRate > 32000 ? 64 : 48;
 }
 /**
- * The lines of read-aloud text, one sentence or block each, spoken one at a time as Kokoro's
- * reference pipeline splits them, so the first arrives before the model reaches the rest.
- * Self-contained so the synthesis worker can inline it.
+ * The sentences of `text`'s lines, and where each sits in `text`. Each is spoken and timed on its
+ * own, so its first audio comes sooner and its words are timed once it is said, not its paragraph.
  */
-/** The lines of `text` with words in them, and where each sits in `text`. */
-export function speechLineSpans(text: string) {
-  return [...text.matchAll(/[^\n]+/g)]
-    .filter((line) => line[0].trim())
-    .map((line) => ({ text: line[0], start: line.index, end: line.index + line[0].length }));
-}
-
-export function speechLines(text: string) {
-  return text.split(/\n+/).filter((line) => line.trim());
+export function speechSentenceSpans(text: string, locale?: string) {
+  const sentences = new Intl.Segmenter(locale, { granularity: "sentence" });
+  return [...text.matchAll(/[^\n]+/g)].flatMap((line) =>
+    [...sentences.segment(line[0])].flatMap(({ segment, index }) => {
+      const sentence = segment.trim();
+      const start = line.index + index + segment.length - segment.trimStart().length;
+      return sentence ? [{ text: sentence, start, end: start + sentence.length }] : [];
+    }),
+  );
 }
 
 /**

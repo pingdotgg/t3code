@@ -16,7 +16,7 @@ import {
   encodeMp3,
   pcm16Mono,
   peakLimiter,
-  speechLines,
+  speechSentenceSpans,
   splitAtPunctuation,
   supertonicText,
   wavAudio,
@@ -80,12 +80,15 @@ it("encodes model samples as clipped mono 16-bit PCM", () => {
   expect([...pcm16Mono(Float32Array.of(1, -1, 0.5, 0.5), 2)]).toEqual([0, 16383]);
 });
 
-it("speaks one line at a time and halves a refused line at its latest break before the middle", () => {
-  expect(speechLines("Fixed it.\n\nThe cause was a race.\nDone.")).toEqual([
-    "Fixed it.",
-    "The cause was a race.",
-    "Done.",
-  ]);
+it("speaks one sentence at a time and halves a refused one at its latest break before the middle", () => {
+  const text = "Fixed it.\n\nIt took 2.06 min. Version v1.2.3 ships.\n设定已确认。好的";
+  expect(
+    speechSentenceSpans(text, "en").map((span) => [span.text, text.slice(span.start, span.end)]),
+  ).toEqual(
+    ["Fixed it.", "It took 2.06 min.", "Version v1.2.3 ships.", "设定已确认。", "好的"].map(
+      (sentence) => [sentence, sentence],
+    ),
+  );
   // Kokoro's reference waterfall: sentence ends, then clauses, then commas, then any space.
   expect(splitAtPunctuation("It took 2 min. Memory fell 66%. Version 1.2.3 ships today.")).toEqual([
     "It took 2 min. ",

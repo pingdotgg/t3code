@@ -39,7 +39,7 @@ import {
   type LocalAlignmentModel,
   type LocalSynthesisModel,
 } from "./localSynthesisWorker.ts";
-import { speechLineSpans, supertonicText } from "./synthesisAudio.ts";
+import { speechSentenceSpans, supertonicText } from "./synthesisAudio.ts";
 
 /** A preset the model names itself, one it reads from its own file, or a speaker it imitates. */
 type LocalVoice = {
@@ -1806,7 +1806,7 @@ const make = Effect.gen(function* () {
       definition.takesLanguage === false
         ? undefined
         : localSynthesisLanguage(request.language, model.languages);
-    const lines = speechLineSpans(request.text)
+    const lines = speechSentenceSpans(request.text, language)
       .map((line) => ({ ...line, text: definition.speakable?.(line.text) ?? line.text }))
       .filter((line) => line.text.trim());
     // One encoder spans the whole reply, so PCM time is MP3 time.
