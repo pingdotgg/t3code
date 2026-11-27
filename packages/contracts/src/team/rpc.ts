@@ -12,7 +12,10 @@ import {
   TeamAssignProjectInput,
   TeamAttachEnvironmentInput,
   TeamAutomationGitHubIdentity,
+  TeamCancelGitHubDeviceFlowInput,
+  TeamCancelGitHubDeviceFlowResult,
   TeamClearAutomationGitHubResult,
+  TeamClearGitHubAppConfigResult,
   TeamConnectMyGitHubInput,
   TeamConsumeAcceptedNotesInput,
   TeamConsumeAcceptedNotesResult,
@@ -36,6 +39,7 @@ import {
   TeamDisconnectMyGitHubResult,
   TeamEditThreadNoteInput,
   TeamEnvironment,
+  TeamGitHubAppConfig,
   TeamGitHubIdentity,
   TeamInitializeInput,
   TeamInitializeResult,
@@ -51,6 +55,8 @@ import {
   TeamNotifyLocalAssetsUpdatedInput,
   TeamNotifyLocalAssetsUpdatedResult,
   TeamOperationError,
+  TeamPollGitHubDeviceFlowInput,
+  TeamPollGitHubDeviceFlowResult,
   TeamPreprompt,
   TeamProjectAssignment,
   TeamProvider,
@@ -66,9 +72,14 @@ import {
   TeamRevokeMobilePairingLinkInput,
   TeamRevokeMobilePairingLinkResult,
   TeamSetAutomationGitHubInput,
+  TeamSetGitHubAppConfigInput,
   TeamSetThreadLockedInput,
   TeamSetThreadViewInput,
   TeamSkill,
+  TeamStartGitHubDeviceFlowInput,
+  TeamStartGitHubDeviceFlowResult,
+  TeamStartGitHubOAuthInput,
+  TeamStartGitHubOAuthResult,
   TeamStateSnapshot,
   TeamStateStreamEvent,
   TeamSyncLocalBindingInput,
@@ -147,6 +158,12 @@ export const TEAM_WS_METHODS = {
   teamDisconnectMyGitHub: "team.disconnectMyGitHub",
   teamSetAutomationGitHub: "team.setAutomationGitHub",
   teamClearAutomationGitHub: "team.clearAutomationGitHub",
+  teamSetGitHubAppConfig: "team.setGitHubAppConfig",
+  teamClearGitHubAppConfig: "team.clearGitHubAppConfig",
+  teamStartGitHubOAuth: "team.startGitHubOAuth",
+  teamStartGitHubDeviceFlow: "team.startGitHubDeviceFlow",
+  teamPollGitHubDeviceFlow: "team.pollGitHubDeviceFlow",
+  teamCancelGitHubDeviceFlow: "team.cancelGitHubDeviceFlow",
 } as const;
 
 export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
@@ -194,6 +211,12 @@ export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamDisconnectMyGitHub]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamSetAutomationGitHub]: AuthAccessWriteScope,
   [TEAM_WS_METHODS.teamClearAutomationGitHub]: AuthAccessWriteScope,
+  [TEAM_WS_METHODS.teamSetGitHubAppConfig]: AuthAccessWriteScope,
+  [TEAM_WS_METHODS.teamClearGitHubAppConfig]: AuthAccessWriteScope,
+  [TEAM_WS_METHODS.teamStartGitHubOAuth]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamStartGitHubDeviceFlow]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamPollGitHubDeviceFlow]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamCancelGitHubDeviceFlow]: AuthOrchestrationOperateScope,
 } as const;
 
 export const TEAM_RPC_REQUIRED_SCOPES = {
@@ -516,6 +539,42 @@ const WsTeamClearAutomationGitHubRpc = Rpc.make(TEAM_WS_METHODS.teamClearAutomat
   error: TeamRpcError,
 });
 
+const WsTeamSetGitHubAppConfigRpc = Rpc.make(TEAM_WS_METHODS.teamSetGitHubAppConfig, {
+  payload: TeamSetGitHubAppConfigInput,
+  success: TeamGitHubAppConfig,
+  error: TeamRpcError,
+});
+
+const WsTeamClearGitHubAppConfigRpc = Rpc.make(TEAM_WS_METHODS.teamClearGitHubAppConfig, {
+  payload: Schema.Struct({}),
+  success: TeamClearGitHubAppConfigResult,
+  error: TeamRpcError,
+});
+
+const WsTeamStartGitHubOAuthRpc = Rpc.make(TEAM_WS_METHODS.teamStartGitHubOAuth, {
+  payload: TeamStartGitHubOAuthInput,
+  success: TeamStartGitHubOAuthResult,
+  error: TeamRpcError,
+});
+
+const WsTeamStartGitHubDeviceFlowRpc = Rpc.make(TEAM_WS_METHODS.teamStartGitHubDeviceFlow, {
+  payload: TeamStartGitHubDeviceFlowInput,
+  success: TeamStartGitHubDeviceFlowResult,
+  error: TeamRpcError,
+});
+
+const WsTeamPollGitHubDeviceFlowRpc = Rpc.make(TEAM_WS_METHODS.teamPollGitHubDeviceFlow, {
+  payload: TeamPollGitHubDeviceFlowInput,
+  success: TeamPollGitHubDeviceFlowResult,
+  error: TeamRpcError,
+});
+
+const WsTeamCancelGitHubDeviceFlowRpc = Rpc.make(TEAM_WS_METHODS.teamCancelGitHubDeviceFlow, {
+  payload: TeamCancelGitHubDeviceFlowInput,
+  success: TeamCancelGitHubDeviceFlowResult,
+  error: TeamRpcError,
+});
+
 export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamGetStateRpc,
   WsTeamSubscribeStateRpc,
@@ -568,4 +627,10 @@ export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamDisconnectMyGitHubRpc,
   WsTeamSetAutomationGitHubRpc,
   WsTeamClearAutomationGitHubRpc,
+  WsTeamSetGitHubAppConfigRpc,
+  WsTeamClearGitHubAppConfigRpc,
+  WsTeamStartGitHubOAuthRpc,
+  WsTeamStartGitHubDeviceFlowRpc,
+  WsTeamPollGitHubDeviceFlowRpc,
+  WsTeamCancelGitHubDeviceFlowRpc,
 );

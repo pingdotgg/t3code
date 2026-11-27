@@ -336,6 +336,7 @@ describe("team notification gating helpers", () => {
       assetsRevision: 0,
       myGitHubIdentity: null,
       automationGitHubIdentity: null,
+      githubAppConfig: null,
       scheduledTaskMetas: [],
       scheduledTaskMetaByTaskId: new Map(),
       queuedMessageNotifications: [],

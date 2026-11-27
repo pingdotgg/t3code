@@ -39,6 +39,7 @@ import * as Scope from "effect/Scope";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as TeamGitHubOAuth from "./TeamGitHubOAuth.ts";
 import * as TeamGitHubRepository from "./TeamGitHubRepository.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 import * as TeamService from "./TeamService.ts";
@@ -1602,31 +1603,34 @@ const make = Effect.gen(function* () {
           }
         }
       }
-      const recordOpt = yield* githubRepoOption.value
-        .getMemberCredential(input.authorMemberId)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isNone(recordOpt) || recordOpt.value.teamId !== input.teamId) {
+      const resolved = yield* TeamGitHubOAuth.resolveFreshMemberGitHubCredential({
+        teamId: input.teamId,
+        memberId: input.authorMemberId,
+        githubRepo: githubRepoOption.value,
+        secrets: secretsOption.value,
+        ...(Option.isSome(httpClientOption) ? { httpClient: httpClientOption.value } : {}),
+        ...(input.expectedUpdatedAt !== undefined
+          ? { expectedUpdatedAt: input.expectedUpdatedAt }
+          : {}),
+        onIdentityUpdated: (identity) =>
+          Option.isSome(teamServiceOption)
+            ? teamServiceOption.value.publishMemberGitHubIdentityUpdate({
+                memberId: input.authorMemberId!,
+                identity,
+              })
+            : Effect.void,
+        onRefreshRevoked: (revokedMemberId) => revokeMemberLeases(revokedMemberId),
+      });
+      if (resolved === null) {
         return null;
       }
-      if (
-        input.expectedUpdatedAt !== undefined &&
-        input.expectedUpdatedAt !== null &&
-        recordOpt.value.updatedAt !== input.expectedUpdatedAt
-      ) {
-        return null;
-      }
-      const secret = yield* TeamGitHubRepository.readTeamGitHubSecret(
-        secretsOption.value,
-        recordOpt.value.secretKey,
-      ).pipe(Effect.orElseSucceed(() => null));
-      if (!secret || secret.accessToken.trim().length === 0) return null;
       return {
-        token: secret.accessToken,
-        authMethod: secret.authMethod,
-        githubLogin: recordOpt.value.githubLogin,
-        githubName: recordOpt.value.githubName,
-        githubEmail: recordOpt.value.githubEmail,
-        apiBaseUrl: recordOpt.value.apiBaseUrl,
+        token: resolved.token,
+        authMethod: resolved.authMethod,
+        githubLogin: resolved.githubLogin,
+        githubName: resolved.githubName,
+        githubEmail: resolved.githubEmail,
+        apiBaseUrl: resolved.apiBaseUrl,
       };
     },
   );
@@ -2449,7 +2453,11 @@ const make = Effect.gen(function* () {
                 const credOpt = yield* githubRepoOption.value
                   .getMemberCredential(input.authorMemberId)
                   .pipe(Effect.orElseSucceed(() => Option.none()));
-                if (Option.isSome(credOpt) && credOpt.value.teamId === workspaceOpt.value.id) {
+                if (
+                  Option.isSome(credOpt) &&
+                  credOpt.value.teamId === workspaceOpt.value.id &&
+                  credOpt.value.needsReconnect !== true
+                ) {
                   identity = credOpt.value;
                   configuredApiBaseUrl = credOpt.value.apiBaseUrl;
                 }
@@ -2662,11 +2670,31 @@ const make = Effect.gen(function* () {
             .pipe(Effect.orElseSucceed(() => Option.none()));
           credentialUpdatedAt = Option.isSome(autoOpt) ? autoOpt.value.updatedAt : null;
         } else if (input.authorMemberId !== null) {
+          // Proactively refresh expiring GitHub App user-to-server tokens before activating a local turn lease.
+          if (Option.isSome(secretsOption)) {
+            yield* TeamGitHubOAuth.resolveFreshMemberGitHubCredential({
+              teamId,
+              memberId: input.authorMemberId,
+              githubRepo: githubRepoOption.value,
+              secrets: secretsOption.value,
+              ...(Option.isSome(httpClientOption) ? { httpClient: httpClientOption.value } : {}),
+              onIdentityUpdated: (identity) =>
+                Option.isSome(teamServiceOption)
+                  ? teamServiceOption.value.publishMemberGitHubIdentityUpdate({
+                      memberId: input.authorMemberId!,
+                      identity,
+                    })
+                  : Effect.void,
+              onRefreshRevoked: (revokedMemberId) => revokeMemberLeases(revokedMemberId),
+            });
+          }
           const memberCredOpt = yield* githubRepoOption.value
             .getMemberCredential(input.authorMemberId)
             .pipe(Effect.orElseSucceed(() => Option.none()));
           credentialUpdatedAt =
-            Option.isSome(memberCredOpt) && memberCredOpt.value.teamId === teamId
+            Option.isSome(memberCredOpt) &&
+            memberCredOpt.value.teamId === teamId &&
+            memberCredOpt.value.needsReconnect !== true
               ? memberCredOpt.value.updatedAt
               : null;
         }
@@ -2941,10 +2969,32 @@ const make = Effect.gen(function* () {
             } satisfies TeamGitHubRemoteLeaseIssueResponse;
           }
         }
+        // Proactively refresh near-expiry tokens server-side before minting a remote single-turn lease.
+        // refresh_token and client_secret stay strictly on the Team Server.
+        const freshCred = yield* TeamGitHubOAuth.resolveFreshMemberGitHubCredential({
+          teamId: input.teamId,
+          memberId: input.authorMemberId,
+          githubRepo: githubRepoOption.value,
+          secrets: secretsOption.value,
+          ...(Option.isSome(httpClientOption) ? { httpClient: httpClientOption.value } : {}),
+          onIdentityUpdated: (updatedIdentity) =>
+            Option.isSome(teamServiceOption)
+              ? teamServiceOption.value.publishMemberGitHubIdentityUpdate({
+                  memberId: input.authorMemberId!,
+                  identity: updatedIdentity,
+                })
+              : Effect.void,
+          onRefreshRevoked: (revokedMemberId) => revokeMemberLeases(revokedMemberId),
+        });
         const memberCredOpt = yield* githubRepoOption.value
           .getMemberCredential(input.authorMemberId)
           .pipe(Effect.orElseSucceed(() => Option.none()));
-        if (Option.isSome(memberCredOpt) && memberCredOpt.value.teamId === input.teamId) {
+        if (
+          freshCred !== null &&
+          Option.isSome(memberCredOpt) &&
+          memberCredOpt.value.teamId === input.teamId &&
+          memberCredOpt.value.needsReconnect !== true
+        ) {
           identity = TeamGitHubRepository.stripMemberGitHubSecretKey(memberCredOpt.value);
           credentialUpdatedAt = memberCredOpt.value.updatedAt;
         }

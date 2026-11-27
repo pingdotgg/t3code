@@ -23,16 +23,28 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as TeamAssetsRepository from "./TeamAssetsRepository.ts";
 import * as TeamGitHubBroker from "./TeamGitHubBroker.ts";
+import * as TeamGitHubOAuth from "./TeamGitHubOAuth.ts";
 import * as TeamRepository from "./TeamRepository.ts";
+import * as TeamService from "./TeamService.ts";
 
 const GITHUB_LEASE_ISSUE_PATH = "/api/team/github-lease/issue";
 const GITHUB_LEASE_RESOLVE_PATH = "/api/team/github-lease/resolve";
 const GITHUB_LEASE_RENEW_PATH = "/api/team/github-lease/renew";
 const GITHUB_LEASE_REVOKE_PATH = "/api/team/github-lease/revoke";
+const GITHUB_OAUTH_CALLBACK_PATH = TeamGitHubOAuth.TEAM_GITHUB_OAUTH_CALLBACK_PATH;
 
 const NO_STORE_HEADERS = {
   "cache-control": "no-store",
   pragma: "no-cache",
+} as const;
+
+const OAUTH_HTML_HEADERS = {
+  "cache-control": "no-store",
+  pragma: "no-cache",
+  "referrer-policy": "no-referrer",
+  "x-frame-options": "DENY",
+  "content-security-policy":
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 } as const;
 
 const decodeIssueRequest = Schema.decodeUnknownOption(
@@ -366,9 +378,63 @@ const handleRevokeRemoteLease = Effect.fn("TeamGitHubHttp.revoke")(function* () 
   return jsonResponse(200, { revoked });
 });
 
+const handleGitHubOAuthCallback = Effect.fn("TeamGitHubHttp.oauthCallback")(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const teamService = yield* TeamService.TeamService;
+  const parsedUrl = new URL(request.url, "http://localhost");
+  const code = parsedUrl.searchParams.get("code");
+  const state = parsedUrl.searchParams.get("state");
+  const error = parsedUrl.searchParams.get("error");
+  const errorDescription = parsedUrl.searchParams.get("error_description");
+
+  const result = yield* Effect.result(
+    teamService.completeGitHubOAuthCallback({
+      code,
+      state,
+      error,
+      errorDescription,
+    }),
+  );
+
+  if (result._tag === "Success") {
+    const html = TeamGitHubOAuth.renderGitHubOAuthCallbackHtml({
+      ok: true,
+      githubLogin: result.success.identity.githubLogin,
+      mode: result.success.mode,
+    });
+    return HttpServerResponse.text(html, {
+      status: 200,
+      contentType: "text/html; charset=utf-8",
+      headers: OAUTH_HTML_HEADERS,
+    });
+  }
+
+  const err = result.failure;
+  const status =
+    err.code === "forbidden"
+      ? 403
+      : err.code === "github_oauth_state_invalid" ||
+          err.code === "invalid_input" ||
+          err.code === "github_oauth_not_configured"
+        ? 400
+        : err.code === "github_oauth_failed" || err.code === "github_verification_failed"
+          ? 502
+          : 500;
+  const html = TeamGitHubOAuth.renderGitHubOAuthCallbackHtml({
+    ok: false,
+    message: err.message,
+  });
+  return HttpServerResponse.text(html, {
+    status,
+    contentType: "text/html; charset=utf-8",
+    headers: OAUTH_HTML_HEADERS,
+  });
+});
+
 export const layer = Layer.mergeAll(
   HttpRouter.add("POST", GITHUB_LEASE_ISSUE_PATH, handleIssueRemoteLease()),
   HttpRouter.add("POST", GITHUB_LEASE_RESOLVE_PATH, handleResolveRemoteLease()),
   HttpRouter.add("POST", GITHUB_LEASE_RENEW_PATH, handleRenewRemoteLease()),
   HttpRouter.add("POST", GITHUB_LEASE_REVOKE_PATH, handleRevokeRemoteLease()),
+  HttpRouter.add("GET", GITHUB_OAUTH_CALLBACK_PATH, handleGitHubOAuthCallback()),
 );

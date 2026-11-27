@@ -309,6 +309,23 @@ export function makeTeamWsRpcHandlers(
     ) => teamService.setAutomationGitHub({ sessionId, payload }),
     [TEAM_WS_METHODS.teamClearAutomationGitHub]: () =>
       teamService.clearAutomationGitHub({ sessionId }),
+    [TEAM_WS_METHODS.teamSetGitHubAppConfig]: (
+      payload: Parameters<typeof teamService.setGitHubAppConfig>[0]["payload"],
+    ) => teamService.setGitHubAppConfig({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamClearGitHubAppConfig]: () =>
+      teamService.clearGitHubAppConfig({ sessionId }),
+    [TEAM_WS_METHODS.teamStartGitHubOAuth]: (
+      payload: Parameters<typeof teamService.startGitHubOAuth>[0]["payload"],
+    ) => teamService.startGitHubOAuth({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamStartGitHubDeviceFlow]: (
+      payload: Parameters<typeof teamService.startGitHubDeviceFlow>[0]["payload"],
+    ) => teamService.startGitHubDeviceFlow({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamPollGitHubDeviceFlow]: (
+      payload: Parameters<typeof teamService.pollGitHubDeviceFlow>[0]["payload"],
+    ) => teamService.pollGitHubDeviceFlow({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamCancelGitHubDeviceFlow]: (
+      payload: Parameters<typeof teamService.cancelGitHubDeviceFlow>[0]["payload"],
+    ) => teamService.cancelGitHubDeviceFlow({ sessionId, payload }),
   };
 }
 

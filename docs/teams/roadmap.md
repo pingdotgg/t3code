@@ -302,5 +302,4 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 >
 > **Remaining optional future follow-ups (explicitly deferred):**
 >
-> - **Milestone 7 Phase 7b:** GitHub OAuth / GitHub App user-to-server token flow (Phase 7a fine-grained PATs + extensible `authMethod` schema are shipped).
 > - **Release packaging dry-run:** Trigger `teams-release.yml` to verify signed/unsigned desktop + CLI release artifacts before cutting `v0.1.13-teams.1`.

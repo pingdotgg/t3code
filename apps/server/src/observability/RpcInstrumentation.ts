@@ -329,6 +329,12 @@ const RPC_AGGREGATES = {
   [TEAM_WS_METHODS.teamDisconnectMyGitHub]: "team",
   [TEAM_WS_METHODS.teamSetAutomationGitHub]: "team",
   [TEAM_WS_METHODS.teamClearAutomationGitHub]: "team",
+  [TEAM_WS_METHODS.teamSetGitHubAppConfig]: "team",
+  [TEAM_WS_METHODS.teamClearGitHubAppConfig]: "team",
+  [TEAM_WS_METHODS.teamStartGitHubOAuth]: "team",
+  [TEAM_WS_METHODS.teamStartGitHubDeviceFlow]: "team",
+  [TEAM_WS_METHODS.teamPollGitHubDeviceFlow]: "team",
+  [TEAM_WS_METHODS.teamCancelGitHubDeviceFlow]: "team",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

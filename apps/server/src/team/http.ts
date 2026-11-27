@@ -54,6 +54,9 @@ const mapTeamHttpError = (error: TeamOperationError) => {
     case "team_access_revoked":
     case "remote_only_provider":
     case "github_verification_failed":
+    case "github_oauth_not_configured":
+    case "github_oauth_failed":
+    case "github_oauth_state_invalid":
       return new TeamHttpBadRequestError({ code: error.code, message: error.message });
     case "internal":
       return new TeamHttpInternalError({ code: error.code, message: error.message });

@@ -6,6 +6,7 @@ import {
   type ScheduledTaskId,
   type TeamAutomationGitHubIdentity,
   type TeamEnvironment,
+  type TeamGitHubAppConfig,
   type TeamGitHubIdentity,
   type TeamInvite,
   type TeamMember,
@@ -79,6 +80,7 @@ export interface TeamEnvironmentState {
   readonly assetsRevision: number;
   readonly myGitHubIdentity: TeamGitHubIdentity | null;
   readonly automationGitHubIdentity: TeamAutomationGitHubIdentity | null;
+  readonly githubAppConfig: TeamGitHubAppConfig | null;
   readonly scheduledTaskMetas: ReadonlyArray<TeamScheduledTaskMeta>;
   readonly scheduledTaskMetaByTaskId: ReadonlyMap<ScheduledTaskId, TeamScheduledTaskMeta>;
   readonly queuedMessageNotifications: ReadonlyArray<TeamQueuedMessageNotification>;
@@ -109,6 +111,7 @@ export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
   assetsRevision: 0,
   myGitHubIdentity: null,
   automationGitHubIdentity: null,
+  githubAppConfig: null,
   scheduledTaskMetas: [],
   scheduledTaskMetaByTaskId: new Map(),
   queuedMessageNotifications: [],
@@ -215,6 +218,7 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
     assetsRevision: snapshot.assetsRevision ?? 0,
     myGitHubIdentity: snapshot.myGitHubIdentity ?? null,
     automationGitHubIdentity: snapshot.automationGitHubIdentity ?? null,
+    githubAppConfig: snapshot.githubAppConfig ?? null,
     scheduledTaskMetas,
     scheduledTaskMetaByTaskId,
     queuedMessageNotifications: [],
@@ -656,6 +660,13 @@ export function applyTeamStreamEvent(
       };
     }
 
+    case "githubAppConfigUpdated": {
+      return {
+        ...current,
+        githubAppConfig: event.payload.config,
+      };
+    }
+
     case "scheduledTaskMetaUpserted": {
       const meta = event.payload;
       const scheduledTaskMetaByTaskId = new Map(current.scheduledTaskMetaByTaskId);
@@ -916,6 +927,30 @@ export function createTeamEnvironmentAtoms<R, E>(
     clearAutomationGitHub: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:clear-automation-github",
       tag: TEAM_WS_METHODS.teamClearAutomationGitHub,
+    }),
+    setGitHubAppConfig: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:set-github-app-config",
+      tag: TEAM_WS_METHODS.teamSetGitHubAppConfig,
+    }),
+    clearGitHubAppConfig: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:clear-github-app-config",
+      tag: TEAM_WS_METHODS.teamClearGitHubAppConfig,
+    }),
+    startGitHubOAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:start-github-oauth",
+      tag: TEAM_WS_METHODS.teamStartGitHubOAuth,
+    }),
+    startGitHubDeviceFlow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:start-github-device-flow",
+      tag: TEAM_WS_METHODS.teamStartGitHubDeviceFlow,
+    }),
+    pollGitHubDeviceFlow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:poll-github-device-flow",
+      tag: TEAM_WS_METHODS.teamPollGitHubDeviceFlow,
+    }),
+    cancelGitHubDeviceFlow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:cancel-github-device-flow",
+      tag: TEAM_WS_METHODS.teamCancelGitHubDeviceFlow,
     }),
   };
 }

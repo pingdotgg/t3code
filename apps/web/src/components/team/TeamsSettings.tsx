@@ -894,10 +894,12 @@ export function TeamsSettings() {
               <TeamGitHubSettingsSection
                 key={selectedEnvironmentId}
                 environmentId={selectedEnvironmentId}
+                serverBaseUrl={serverBaseUrl}
                 currentMember={currentMember}
                 memberById={teamState.memberById}
                 myGitHubIdentity={teamState.myGitHubIdentity}
                 automationGitHubIdentity={teamState.automationGitHubIdentity}
+                githubAppConfig={teamState.githubAppConfig}
               />
               <TeamProvidersSettingsSection
                 environmentId={selectedEnvironmentId}

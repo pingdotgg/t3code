@@ -1952,6 +1952,7 @@ describe("TeamGitHubBroker", () => {
           const localSyncToken = (yield* team.issueLocalSyncToken(aliceSession.sessionId)).token;
 
           const teamContext = yield* Effect.context<
+            | TeamService.TeamService
             | TeamRepository.TeamRepository
             | TeamAssetsRepository.TeamAssetsRepository
             | TeamGitHubBroker.TeamGitHubBroker

@@ -1439,6 +1439,55 @@ describe("team client-runtime state and presentation", () => {
       payload: { identity: null },
     });
     expect(state.automationGitHubIdentity).toBeNull();
+
+    // GitHub App OAuth config updated & cleared, plus reconnect-required identity update
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "githubAppConfigUpdated",
+      payload: {
+        config: {
+          enabled: true,
+          mode: "github_app",
+          clientId: "Iv1.test",
+          webBaseUrl: "https://github.com",
+          apiBaseUrl: "https://api.github.com",
+          scopes: "",
+          hasClientSecret: true,
+          updatedAt: now,
+        },
+      },
+    });
+    expect(state.githubAppConfig?.clientId).toBe("Iv1.test");
+    expect(state.githubAppConfig?.hasClientSecret).toBe(true);
+
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "myGitHubIdentityUpdated",
+      payload: {
+        memberId: aliceId,
+        identity: {
+          authMethod: "github_app",
+          githubLogin: "alice-gh",
+          githubName: "Alice",
+          githubEmail: "alice@acme.dev",
+          apiBaseUrl: "https://api.github.com",
+          connectedAt: now,
+          updatedAt: now,
+          hasRefreshToken: false,
+          needsReconnect: true,
+          reconnectReason: "GitHub authorization revoked.",
+        },
+      },
+    });
+    expect(state.myGitHubIdentity?.needsReconnect).toBe(true);
+    expect(state.myGitHubIdentity?.reconnectReason).toBe("GitHub authorization revoked.");
+
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "githubAppConfigUpdated",
+      payload: { config: null },
+    });
+    expect(state.githubAppConfig).toBeNull();
   });
 
   it("handles Milestone 8 team displayName updates, team-owned threads, and scheduled-task metadata/RBAC", () => {
