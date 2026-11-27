@@ -43,6 +43,7 @@ function PullRequestHostMedia({
   url,
   fetchUrl,
   repository,
+  label,
   image,
   fallback,
 }: {
@@ -51,6 +52,7 @@ function PullRequestHostMedia({
   url: string;
   fetchUrl: string;
   repository: string | undefined;
+  label: string | undefined;
   image?: ReactNode;
   fallback?: ReactNode;
 }) {
@@ -81,7 +83,7 @@ function PullRequestHostMedia({
     <MediaVideoPlayer
       src={src === null ? null : src + markdownImageSourceFragment(url)}
       originalUrl={url}
-      label={gt("Pull request video")}
+      label={label ?? gt("Pull request video")}
       className="w-full"
       videoClassName="rounded-lg border border-border/60"
       onRetry={refreshAssetUrl}
@@ -189,6 +191,7 @@ function PullRequestBodySegmentView({
         url={segment.url}
         fetchUrl={hostMedia.fetchUrl}
         repository={repository}
+        label={segment.label}
         image={markdown}
         fallback={fallback}
       />
@@ -203,6 +206,7 @@ function PullRequestBodySegmentView({
         url={segment.url}
         fetchUrl={hostMedia.fetchUrl}
         repository={repository}
+        label={segment.label}
       />
     );
   }
@@ -211,7 +215,7 @@ function PullRequestBodySegmentView({
       key={`${segment.id}:${segment.url}`}
       src={segment.url}
       originalUrl={segment.url}
-      label={gt("Pull request video")}
+      label={segment.label ?? gt("Pull request video")}
       className="w-full"
       videoClassName="rounded-lg border border-border/60"
     />

@@ -393,11 +393,15 @@ describe("reference links around lifted media", () => {
 
 describe("media on custom hosts", () => {
   it.each([
-    ["https://drop.example.com/capture.PNG?token=abc#preview", "image"],
-    ["[Recording](https://drop.example.com/recording.mov)", "video"],
-    ["<https://drop.example.com/shot.webp>", "image"],
-  ])("recognizes %s without a request", (body, media) => {
-    expect(split(body)).toEqual([expect.objectContaining({ kind: "attachment", media })]);
+    ["https://drop.example.com/capture.PNG?token=abc#preview", "image", undefined],
+    ["[Recording](https://drop.example.com/recording.mov)", "video", "Recording"],
+    ["[Screenshot](https://drop.example.com/shot.webp)", "image", "Screenshot"],
+    ["<https://drop.example.com/shot.webp>", "image", undefined],
+  ])("recognizes %s without a request and preserves its label", (body, media, label) => {
+    const segments = split(body);
+    expect(segments).toEqual([expect.objectContaining({ kind: "attachment", media })]);
+    const [segment] = segments;
+    expect(segment?.kind === "attachment" ? segment.label : null).toBe(label);
   });
 
   it.each([

@@ -90,9 +90,11 @@ function attachmentFromLine(
   // Only the path names the file: `report?file=demo.mp4` is a page, not a video.
   const path = webUrl(url)?.pathname;
   if (path === undefined) return null;
-  if (VIDEO_EXTENSION_PATTERN.test(path)) return { url, media: "video" };
-  if (IMAGE_EXTENSION_PATTERN.test(path)) return { url, media: "image" };
-  const media = sourceControlClients.mediaUrl(url)?.kind;
+  const media = VIDEO_EXTENSION_PATTERN.test(path)
+    ? "video"
+    : IMAGE_EXTENSION_PATTERN.test(path)
+      ? "image"
+      : sourceControlClients.mediaUrl(url)?.kind;
   if (media === undefined) return null;
   const label = link?.[1]?.trim();
   return label ? { url, media, label } : { url, media };
