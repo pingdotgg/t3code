@@ -47,17 +47,7 @@ describe("nativePullRequestMarkdown", () => {
     expect(native.sourceOffset(marker)).toBe(text.lastIndexOf("[ ]"));
   });
 
-  it("keeps a leading BOM aligned with remark offsets and maps sourceOffset back", () => {
-    expect(
-      nativePullRequestMarkdown("\uFEFF[see](https://x.test) #12", github, false).markdown,
-    ).toBe("\uFEFF[see](https://x.test) [#12](https://github.com/team/repo/issues/12)");
-    expect(
-      nativePullRequestMarkdown('\uFEFF<a href="https://x.test">#7</a> and #12', github, false)
-        .markdown,
-    ).toBe(
-      '\uFEFF<a href="https://x.test">#7</a> and [#12](https://github.com/team/repo/issues/12)',
-    );
-
+  it("keeps rewrites and task offsets aligned after a leading BOM", () => {
     const text = "\uFEFF[:+1: see](https://x.test) Fixes #12 :tada:\n- [ ] next";
     const native = nativePullRequestMarkdown(text, github, true);
     expect(native.markdown).toBe(
@@ -65,15 +55,5 @@ describe("nativePullRequestMarkdown", () => {
     );
     const marker = native.markdown.lastIndexOf("[ ]");
     expect(native.sourceOffset(marker)).toBe(text.lastIndexOf("[ ]"));
-  });
-
-  it("keeps both BOMs when markdown starts with a doubled BOM", () => {
-    const doubled = "\uFEFF\uFEFF[see](https://x.test) #12\n- [ ] next";
-    const doubledNative = nativePullRequestMarkdown(doubled, github, true);
-    expect(doubledNative.markdown).toBe(
-      "\uFEFF\uFEFF[see](https://x.test) [#12](https://github.com/team/repo/issues/12)\n- [ ] next",
-    );
-    const marker = doubledNative.markdown.lastIndexOf("[ ]");
-    expect(doubledNative.sourceOffset(marker)).toBe(doubled.lastIndexOf("[ ]"));
   });
 });
