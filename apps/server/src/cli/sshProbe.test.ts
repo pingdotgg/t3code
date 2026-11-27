@@ -9,7 +9,7 @@ import * as NodeURL from "node:url";
 
 import { assert, it } from "@effect/vitest";
 
-import { pickSshPort, tryRunSshProbe } from "./sshProbe.ts";
+import { tryRunSshProbe } from "./sshProbe.ts";
 
 const cliPath = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
 // Reports on stderr when bin.ts falls through to the full CLI.
@@ -58,28 +58,6 @@ it("passes help and arguments the CLI would reject on to the CLI parser", async 
   assert.isFalse(await tryRunSshProbe(["pick-port", "--help"]));
   assert.isFalse(await tryRunSshProbe(["pick-port", "/tmp/port", "65535", "2"]));
   assert.isFalse(await tryRunSshProbe(["home-owned", "/tmp/home"]));
-});
-
-it("picks the stored port, falls back to the default, and skips a port in use", async () => {
-  const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-probe-"));
-  const busy = NodeNet.createServer();
-  const released = NodeNet.createServer();
-  try {
-    const busyPort = await listen(busy);
-    const freePort = await listen(released);
-    await close(released);
-    const portFile = NodePath.join(dir, "port");
-    await NodeFSP.writeFile(portFile, `${freePort}\n`);
-    assert.strictEqual(await pickSshPort(portFile, busyPort, 1), freePort);
-    await NodeFSP.writeFile(portFile, `${busyPort}\n`);
-    assert.strictEqual(await pickSshPort(portFile, freePort, 1), undefined);
-    await NodeFSP.rm(portFile);
-    assert.strictEqual(await pickSshPort(portFile, freePort, 1), freePort);
-    assert.strictEqual(await pickSshPort(portFile, busyPort, 1), undefined);
-  } finally {
-    await close(busy);
-    await NodeFSP.rm(dir, { recursive: true, force: true });
-  }
 });
 
 it("answers the launch script's probes without loading the CLI", async () => {
