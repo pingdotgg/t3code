@@ -35,6 +35,7 @@ const PPTX_DRAWING_PROPERTIES = new Map([
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 const ODF_DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+const ODF_STYLE_NS = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 const ODF_TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
 type TextPart =
   | string
@@ -104,6 +105,8 @@ interface XmlNode {
   epubBlock?: boolean;
   odfInlineParagraphs?: boolean;
   odfParagraphHidden?: boolean;
+  odfStyleHidden?: boolean;
+  odfSpanHidden?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -158,19 +161,60 @@ function namespaceOf(tagName: string, scope: readonly XmlNode[]) {
   return scope.findLast((node) => Object.hasOwn(node.attrs, binding))?.attrs[binding];
 }
 
-function odfTextAttribute(
+function odfAttribute(
   attributes: Record<string, string>,
   localName: string,
   scope: readonly XmlNode[],
+  namespace = ODF_TEXT_NS,
 ) {
   return Object.entries(attributes).find(
-    ([name]) => name.endsWith(`:${localName}`) && namespaceOf(name, scope) === ODF_TEXT_NS,
+    ([name]) => name.endsWith(`:${localName}`) && namespaceOf(name, scope) === namespace,
   )?.[1];
+}
+
+interface OdfTextStyle {
+  parent: string | undefined;
+  hidden: boolean | undefined;
+  resolved?: boolean | undefined;
+}
+
+// ODF 1.3 Part 3 §19.510: parent-style-name names a common style, never an automatic one.
+interface OdfTextStyles {
+  common: Map<string, OdfTextStyle>;
+  automatic: Map<string, OdfTextStyle>;
+}
+
+function odfTextStyleHidden(styles: OdfTextStyles, name: string) {
+  const automatic = styles.automatic.get(name);
+  if (!automatic) return odfCommonTextStyleHidden(styles.common, name);
+  if (automatic.hidden !== undefined) return automatic.hidden;
+  return automatic.parent === undefined
+    ? undefined
+    : odfCommonTextStyleHidden(styles.common, automatic.parent);
+}
+
+function odfCommonTextStyleHidden(styles: Map<string, OdfTextStyle>, name: string) {
+  let style = styles.get(name);
+  if (!style || "resolved" in style) return style?.resolved;
+  const visited = new Set<OdfTextStyle>();
+  let hidden: boolean | undefined;
+  while (style && !visited.has(style)) {
+    if ("resolved" in style) {
+      hidden = style.resolved;
+      break;
+    }
+    visited.add(style);
+    hidden = style.hidden;
+    if (hidden !== undefined) break;
+    style = style.parent === undefined ? undefined : styles.get(style.parent);
+  }
+  for (const visitedStyle of visited) visitedStyle.resolved = hidden;
+  return hidden;
 }
 
 function isHiddenOdfField(attributes: Record<string, string>, scope: readonly XmlNode[]) {
   return /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u.test(
-    odfTextAttribute(attributes, "is-hidden", scope) ?? "",
+    odfAttribute(attributes, "is-hidden", scope) ?? "",
   );
 }
 
@@ -234,7 +278,12 @@ function hasImportantDisplayNone(style: string): boolean {
 
 type WordStyleRunHidden = (id: string, ancestors: readonly XmlNode[]) => boolean;
 
-function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRunHidden): XmlNode {
+function xml(
+  source: string,
+  extension: string,
+  wordStyleRunHidden?: WordStyleRunHidden,
+  odfTextStyles?: OdfTextStyles,
+): XmlNode {
   const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
   const stack = [root];
@@ -265,8 +314,29 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
     };
     if (extension === ".epub" && node.name === "table") node.epubTable = true;
     if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
-    stack.at(-1)!.children.push(node);
+    const parent = stack.at(-1)!;
+    parent.children.push(node);
     stack.push(node);
+    if (odfTextStyles) {
+      if (parent.odfSpanHidden) node.odfSpanHidden = true;
+      if (
+        node.name === "span" &&
+        odfTextStyles.common.size + odfTextStyles.automatic.size > 0 &&
+        namespaceOf(tag.name, stack) === ODF_TEXT_NS
+      ) {
+        const style = odfAttribute(tag.attributes, "style-name", stack);
+        const hidden = style === undefined ? undefined : odfTextStyleHidden(odfTextStyles, style);
+        if (hidden !== undefined) node.odfSpanHidden = hidden;
+      }
+      if (
+        node.name === "text-properties" &&
+        parent.name === "style" &&
+        namespaceOf(tag.name, stack) === ODF_STYLE_NS
+      ) {
+        const display = odfAttribute(tag.attributes, "display", stack)?.trim();
+        if (display === "none" || display === "true") parent.odfStyleHidden = display === "none";
+      }
+    }
     if (odf && node.name === "text-box" && namespaceOf(tag.name, stack) === ODF_DRAW_NS)
       node.odfInlineParagraphs = true;
     if (
@@ -303,6 +373,25 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (
+      odfTextStyles &&
+      node.name === "style" &&
+      (parent.name === "styles" || parent.name === "automatic-styles")
+    ) {
+      const scope = [...stack, node];
+      if (
+        namespaceOf(tag.name, scope) === ODF_STYLE_NS &&
+        odfAttribute(tag.attributes, "family", scope, ODF_STYLE_NS) === "text"
+      ) {
+        const name = odfAttribute(tag.attributes, "name", scope, ODF_STYLE_NS);
+        if (name !== undefined) {
+          odfTextStyles[parent.name === "styles" ? "common" : "automatic"].set(name, {
+            parent: odfAttribute(tag.attributes, "parent-style-name", scope, ODF_STYLE_NS),
+            hidden: node.odfStyleHidden,
+          });
+        }
+      }
+    }
     const isOdfHiddenText =
       extension === ".odt" &&
       node.name === "hidden-text" &&
@@ -350,8 +439,10 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
       parent.name === "AlternateContent" &&
       parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
+    // Hidden spans may contain a nested style that explicitly makes its text visible.
     if (
       node.pptxHidden ||
+      (node.odfSpanHidden && node.children.length === 0) ||
       (node.odfParagraphHidden && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) ||
       isMathmlAlternative ||
       (extension === ".epub" &&
@@ -405,9 +496,9 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
         node.children = ["[", citation, ": ", body, "]"];
       }
     }
-    if (isOdfHiddenText) {
+    if (isOdfHiddenText && !node.odfSpanHidden) {
       // ODF stores the visible field value in text:string-value when present.
-      const value = odfTextAttribute(tag.attributes, "string-value", [...stack, node]);
+      const value = odfAttribute(tag.attributes, "string-value", [...stack, node]);
       if (value !== undefined) {
         node.children = [value];
         node.hasText = value.trim() !== "";
@@ -449,6 +540,7 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
   });
   const text = (value: string) => {
     const node = stack.at(-1)!;
+    if (node.odfSpanHidden) return;
     node.children.push(value);
     if (value.trim() !== "") node.hasText = true;
   };
@@ -1381,11 +1473,15 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
     const notes: string[] = [];
     const skip = (name: string) =>
       notes.push(`\n[Skipped document part: ${name} (missing or invalid XML).]\n`);
-    const read = (name: string, wordStyleRunHidden?: WordStyleRunHidden): XmlNode => {
+    const read = (
+      name: string,
+      wordStyleRunHidden?: WordStyleRunHidden,
+      odfTextStyles?: OdfTextStyles,
+    ): XmlNode => {
       try {
         const data = files.get(part(name));
         if (!data) throw new Error("Missing document part");
-        return xml(data, extension, wordStyleRunHidden);
+        return xml(data, extension, wordStyleRunHidden, odfTextStyles);
       } catch (error) {
         if (error instanceof Truncation) throw error;
         skip(name);
@@ -1456,7 +1552,21 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       }
       yield* paragraphs(doc);
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
-      const content = read("content.xml");
+      const odfTextStyles: OdfTextStyles | undefined =
+        extension === ".odt" ? { common: new Map(), automatic: new Map() } : undefined;
+      if (odfTextStyles) {
+        const namedStyles = files.get(part("styles.xml"));
+        if (namedStyles !== undefined) {
+          try {
+            xml(namedStyles, extension, undefined, odfTextStyles);
+          } catch {
+            // A partial or oversized optional styles part must not hide otherwise readable text.
+            odfTextStyles.common.clear();
+            odfTextStyles.automatic.clear();
+          }
+        }
+      }
+      const content = read("content.xml", undefined, odfTextStyles);
       if (extension === ".odt")
         yield* paragraphs(
           children(children(content)[0]).find((child) => child.name === "body") ?? content,
