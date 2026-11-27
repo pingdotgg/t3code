@@ -1956,7 +1956,7 @@ class SummaryMetric extends Metric$<readonly [value: number, timestamp: number],
     const observations = Arr.allocate<[number, number]>(this.#maxSize)
 
     for (const quantile of this.#quantiles) {
-      if (quantile < 0 || quantile > 1) {
+      if (!(quantile >= 0 && quantile <= 1)) {
         throw new Error(`Quantile must be between 0 and 1, found: ${quantile}`)
       }
     }

@@ -1,8 +1,8 @@
 import type { ManagedPolicySummary } from "@t3tools/contracts";
+import { T, Var } from "gt-react";
 import { BuildingIcon } from "lucide-react";
 import type { ReactNode } from "react";
-
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 /**
  * A control an administrator's policy turns off: shown inert, with the policy's reason on hover
@@ -17,24 +17,22 @@ export function ManagedControl({
 }) {
   if (reason === undefined) return children;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            tabIndex={0}
-            role="group"
-            aria-disabled="true"
-            aria-label={reason}
-            className="inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          />
-        }
-      >
-        <span inert className="inline-flex opacity-50">
-          {children}
-        </span>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{reason}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <span
+          tabIndex={0}
+          role="group"
+          aria-disabled="true"
+          aria-label={reason}
+          className="inline-flex rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        />
+      }
+      label={reason}
+    >
+      <span inert className="inline-flex opacity-50">
+        {children}
+      </span>
+    </SharedTooltipTrigger>
   );
 }
 
@@ -52,7 +50,9 @@ export function ManagedNotice({ children }: { children: ReactNode }) {
 export function ManagedByOrganization({ policy }: { policy: ManagedPolicySummary }) {
   return (
     <ManagedNotice>
-      This environment is managed by {policy.organization}.
+      <T>
+        This environment is managed by <Var>{policy.organization}</Var>.
+      </T>
       {policy.supportUrl ? (
         <>
           {" "}
@@ -62,7 +62,7 @@ export function ManagedByOrganization({ policy }: { policy: ManagedPolicySummary
             rel="noreferrer"
             className="text-foreground underline underline-offset-2"
           >
-            Get help
+            <T>Get help</T>
           </a>
         </>
       ) : null}

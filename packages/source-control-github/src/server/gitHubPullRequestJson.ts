@@ -131,6 +131,13 @@ interface LatestReviewFields {
   readonly isMinimized?: boolean | undefined;
 }
 
+/** Run numbers count up per workflow file, whatever its name; database ids exceed int32. */
+interface WorkflowRunFields {
+  readonly event: string;
+  readonly runNumber: number;
+  readonly workflow: { readonly id: string };
+}
+
 /** Check runs use status/conclusion; commit statuses use a single state. */
 interface CheckFields {
   readonly name?: string | null | undefined;
@@ -143,6 +150,8 @@ interface CheckFields {
   readonly targetUrl?: string | null | undefined;
   /** Empty for app-owned runs; absent for commit statuses. */
   readonly workflowName?: string | null | undefined;
+  /** Absent for commit statuses and app-owned runs. */
+  readonly workflowRun?: WorkflowRunFields | null | undefined;
   readonly startedAt?: string | null | undefined;
   readonly completedAt?: string | null | undefined;
   /** Branch protection requires this check; asked for on github.com only. */
@@ -191,7 +200,7 @@ export function gitHubReactionContent(
 }
 
 /** Keep the viewer in counts, not actors, to avoid duplicating 'You'. */
-function toReactions(
+export function toReactions(
   groups: ReadonlyArray<ReactionGroup> | null | undefined,
   viewer: string | null,
 ): ReadonlyArray<PullRequestReaction> {
@@ -218,6 +227,7 @@ const RawWorkflowRunsSchema = Schema.Struct({
   workflow_runs: Schema.Array(
     Schema.Struct({
       id: Schema.Int,
+      pull_requests: Schema.optional(Schema.Array(Schema.Struct({ number: Schema.Int }))),
       name: Schema.optional(Schema.NullOr(Schema.String)),
       html_url: Schema.optional(Schema.NullOr(Schema.String)),
       status: Schema.optional(Schema.NullOr(Schema.String)),
@@ -271,11 +281,15 @@ export function isSubjectOfPullRequest(result: PullRequestSubject.Result): boole
           ? node.reviewCommentPullRequest.id
           : node.__typename === "PullRequestReview"
             ? node.reviewPullRequest.id
-            : node.id;
+            : node.__typename === "PullRequestReviewThread"
+              ? node.threadPullRequest.id
+              : node.id;
   return expected !== null && actual !== null && expected === actual;
 }
 
 const ReviewSubmissionSchema = Schema.Struct({
+  /** Without it GitHub records the review against whatever the head is when it arrives. */
+  commit_id: Schema.optional(Schema.String),
   event: Schema.Literals(["COMMENT", "APPROVE", "REQUEST_CHANGES"]),
   body: Schema.String,
   comments: Schema.Array(
@@ -316,8 +330,10 @@ export function buildReviewSubmission(input: {
   readonly verdict: PullRequestReviewVerdict;
   readonly body: string;
   readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+  readonly expectedHeadSha?: string | undefined;
 }): typeof ReviewSubmissionSchema.Type {
   return {
+    ...(input.expectedHeadSha === undefined ? {} : { commit_id: input.expectedHeadSha }),
     event: REVIEW_EVENTS[input.verdict],
     body: input.body,
     comments: input.comments.map((comment) => {
@@ -373,6 +389,7 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
 }
 
 export interface GitHubWorkflowRunApproval {
+  readonly pullRequestNumbers: ReadonlyArray<number>;
   readonly id: number;
   readonly name: string;
   readonly url: string | null;
@@ -617,16 +634,42 @@ function isNamelessCheck(raw: CheckFields): boolean {
   return trimmed(raw.name) === null && trimmed(raw.context) === null;
 }
 
-/** Unfinished runs outrank finished runs of the same check across push/PR workflows. */
+const PULL_REQUEST_EVENTS = new Set(["pull_request", "pull_request_target"]);
+
+/**
+ * Unfinished runs outrank finished runs of the same check across push/PR workflows. A newer pull
+ * request run of a workflow supersedes the older one's cancelled checks, whose names can differ
+ * (an unexpanded matrix). Other events can run one commit in different scopes (a branch and a
+ * tag, dispatch inputs), so their runs replace nothing.
+ */
 function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): ReadonlyArray<{
   readonly check: PullRequestCheck;
   readonly workflowName: string | null;
   readonly at: string | null;
 }> {
+  const lineageOf = (run: WorkflowRunFields) => `${run.workflow.id} ${run.event}`;
+  const newestRunNumber = new Map<string, number>();
+  const note = (key: string, runNumber: number) => {
+    if (runNumber > (newestRunNumber.get(key) ?? Number.NEGATIVE_INFINITY)) {
+      newestRunNumber.set(key, runNumber);
+    }
+  };
+  for (const check of raw ?? []) {
+    const run = check.workflowRun;
+    if (run == null || !PULL_REQUEST_EVENTS.has(run.event)) continue;
+    note(lineageOf(run), run.runNumber);
+    note(`${lineageOf(run)} ${trimmed(check.name) ?? ""}`, run.runNumber);
+  }
   return (raw ?? []).flatMap((check) => {
     const name = trimmed(check.name) ?? trimmed(check.context);
     if (name === null) return [];
     const status = toCheckStatus(check);
+    const run = check.workflowRun;
+    if (status === "cancelled" && run != null) {
+      // Branch protection names required checks, so only a newer same-name check replaces one.
+      const replacedBy = check.isRequired === true ? `${lineageOf(run)} ${name}` : lineageOf(run);
+      if (run.runNumber < (newestRunNumber.get(replacedBy) ?? run.runNumber)) return [];
+    }
     return [
       {
         check: {
@@ -1031,6 +1074,8 @@ export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
   readonly mergeQueueRemoval?: PullRequestMergeQueueRemoval;
   readonly maintainerCanModify: boolean;
   readonly canEditMaintainerEdits: boolean;
+  readonly mergeCommitSha?: string | null;
+  readonly mergedBy?: PullRequestActor | null;
   readonly reviewRequestTeams: ReadonlyArray<PullRequestActor>;
   readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
   readonly comparison: GitHubBaseComparison | null;
@@ -1094,6 +1139,8 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
       pr.headRepositoryOwner?.__typename === "User" &&
       pr.headRepository !== null &&
       pr.headRef !== null,
+    mergeCommitSha: trimmed(pr.mergeCommit?.oid),
+    mergedBy: toActor(pr.mergedBy),
     viewerAccess: {
       canWrite: toCanWrite(repository.viewerPermission),
       canDeleteBranch: toCanWrite(pr.headRepository?.viewerPermission) && pr.headRef !== null,
@@ -1130,6 +1177,7 @@ export function decodeWorkflowRunsJson(
   if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
   return Result.succeed({
     runs: decoded.success.workflow_runs.map((run) => ({
+      pullRequestNumbers: run.pull_requests?.map((pr) => pr.number) ?? [],
       id: run.id,
       name: trimmed(run.name) ?? `Workflow run ${run.id}`,
       url: trimmed(run.html_url),
@@ -1157,6 +1205,7 @@ export function decodeUnfinishedWorkflowRunsJson(
     decoded.success.workflow_runs
       .filter((run) => UNFINISHED_WORKFLOW_RUN_STATUSES.has(run.status ?? ""))
       .map((run) => ({
+        pullRequestNumbers: run.pull_requests?.map((pr) => pr.number) ?? [],
         id: run.id,
         name: trimmed(run.name) ?? `Workflow run ${run.id}`,
         url: trimmed(run.html_url),
@@ -1228,6 +1277,9 @@ export function toPullRequestCommitStats(result: PullRequestCommitStats.Result) 
               {
                 additions: Math.max(0, commit.additions),
                 deletions: Math.max(0, commit.deletions),
+                ...(commit.changedFilesIfAvailable === null
+                  ? {}
+                  : { changedFiles: Math.max(0, commit.changedFilesIfAvailable) }),
               },
             ] as const,
           ]
@@ -1242,7 +1294,11 @@ export type GitHubCheckContext = CheckFields;
 function toCheckContexts(nodes: ReadonlyArray<CheckContext>): ReadonlyArray<GitHubCheckContext> {
   return nodes.map((check) =>
     check.__typename === "CheckRun"
-      ? { ...check, workflowName: check.checkSuite.workflowRun?.workflow.name ?? null }
+      ? {
+          ...check,
+          workflowName: check.checkSuite.workflowRun?.workflow.name ?? null,
+          workflowRun: check.checkSuite.workflowRun,
+        }
       : check,
   );
 }
@@ -1810,10 +1866,11 @@ function toFilesPatch(entries: ReadonlyArray<unknown>): GitHubPullRequestFilesPa
     const hunks = value.patch ?? "";
     const status = value.status?.trim().toLowerCase();
     if (hunks.length === 0) {
-      // Hunkless renames are complete; omitted binary changes leave a patch gap.
+      // Hunkless renames are complete; omitted binary changes leave a patch gap. GitHub's
+      // larger file pages also drop a modified file's patch and report it as 0/0.
       const additions = value.additions ?? 0;
       const deletions = value.deletions ?? 0;
-      if (additions + deletions > 0) {
+      if (additions + deletions > 0 || status === "modified") {
         truncated = true;
         omittedFileStats.push({ path: value.filename, additions, deletions });
       }

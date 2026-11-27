@@ -6,19 +6,6 @@ import type {
 
 import { BUNDLED_MODEL_MANIFEST } from "../provider/ModelManifest.ts";
 
-/**
- * Drivers whose model catalogs are published by the vendor. Other drivers
- * (OpenCode, Pi, ACP agents) list models from the user's own configuration,
- * such as local Ollama tags, so their model names stay out of analytics.
- */
-const VENDOR_CATALOG_DRIVERS: ReadonlySet<string> = new Set([
-  "codex",
-  "claudeAgent",
-  "cursor",
-  "grok",
-  "antigravity",
-]);
-
 export interface ProviderDimensions {
   readonly provider: string;
   readonly model?: string;
@@ -26,8 +13,7 @@ export interface ProviderDimensions {
 
 /**
  * Anonymous provider and model for a model selection. Instance ids are
- * user-defined, so only the driver kind is reported. The model is reported
- * only when it comes from a vendor catalog and is not a user-added custom model.
+ * user-defined, so only the driver kind is reported.
  */
 export function providerDimensions(
   providers: ReadonlyArray<ServerProvider>,
@@ -35,16 +21,15 @@ export function providerDimensions(
 ): ProviderDimensions {
   const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
   if (provider === undefined) return { provider: "unknown" };
-  const model = provider.models.find((candidate) => candidate.slug === selection.model);
-  return VENDOR_CATALOG_DRIVERS.has(provider.driver) && model !== undefined && !model.isCustom
-    ? { provider: provider.driver, model: model.slug }
-    : { provider: provider.driver };
+  if (selection.model === "") return { provider: provider.driver };
+  return {
+    provider: provider.driver,
+    model: modelLabel(providers, provider.driver, selection.model),
+  };
 }
 
 const DATED_SNAPSHOT = /-\d{8}$/u;
 
-// The bundled manifest is reviewed in this repo. Codex lists whatever its configured
-// model provider serves, so only the manifest vouches for Codex, Claude, and Antigravity.
 const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
   Object.values(BUNDLED_MODEL_MANIFEST.providers ?? {}).flatMap((catalog) =>
     catalog.models.flatMap((model) =>
@@ -52,17 +37,41 @@ const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
     ),
   ),
 );
-const REGISTRY_LABEL_DRIVERS: ReadonlySet<string> = new Set(["cursor", "grok"]);
+
+// Drivers whose model lists come from the vendor. OpenCode, Pi, fx, and ACP agents list
+// the user's own configuration, such as local Ollama tags or GGUF paths.
+const VENDOR_CATALOG_DRIVERS: ReadonlySet<string> = new Set([
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "antigravity",
+  "kiro",
+  "muse",
+]);
+
+// A custom endpoint, gateway, or Bedrock serves whatever names its owner chose.
+const listsVendorModels = ({ driver, auth }: ServerProvider) =>
+  VENDOR_CATALOG_DRIVERS.has(driver) &&
+  auth.endpoint === undefined &&
+  auth.type !== "customEndpoint" &&
+  auth.type !== "bedrock";
 
 /**
- * The vendor catalog slug that a native or routed model id names, such as
- * `anthropic/claude-opus-5-5` or a dated snapshot. Models outside the bundled
- * manifest and the Cursor and Grok catalogs, including user-added ones, return undefined.
+ * The model name analytics reports. A routed id, alias, or dated snapshot that the
+ * bundled manifest or a vendor's own model list knows, such as `anthropic/claude-opus-5-5`
+ * or `antigravity-default`, maps to its catalog slug. Any other id can name a user, a
+ * deployment, or a local file, so it reports only the driver as `custom:<driver>`.
  */
-export function catalogModelLabel(
+export function modelLabel(
   providers: ReadonlyArray<ServerProvider>,
+  driver: string,
   model: string,
-): string | undefined {
+): string {
+  return catalogSlug(providers, model) ?? `custom:${driver}`;
+}
+
+function catalogSlug(providers: ReadonlyArray<ServerProvider>, model: string) {
   const leaf = model.slice(model.lastIndexOf("/") + 1);
   const candidates = [model, leaf, leaf.replace(DATED_SNAPSHOT, "")];
   for (const candidate of candidates) {
@@ -70,9 +79,12 @@ export function catalogModelLabel(
     if (label !== undefined) return label;
   }
   for (const provider of providers) {
-    if (!REGISTRY_LABEL_DRIVERS.has(provider.driver)) continue;
+    if (!listsVendorModels(provider)) continue;
     const match = provider.models.find(
-      (entry) => !entry.isCustom && candidates.includes(entry.slug),
+      (entry) =>
+        !entry.isCustom &&
+        (candidates.includes(entry.slug) ||
+          entry.aliases?.some((alias) => candidates.includes(alias)) === true),
     );
     if (match !== undefined) return match.slug;
   }
@@ -163,7 +175,14 @@ export function handoffSettings(tool: string, args: unknown, result: unknown): F
               ]) ?? "root"),
       });
     case "t3_thread_send":
-      return defined({ delivery: stringField(output, "delivery") });
+      return defined({
+        delivery: oneOf(stringField(output, "delivery"), [
+          "started",
+          "queued",
+          "steered",
+          "restarted",
+        ]),
+      });
     case "t3_thread_send_attachments":
       return { delivery: "auto" };
     case "schedule_task": {
@@ -178,6 +197,8 @@ export function handoffSettings(tool: string, args: unknown, result: unknown): F
   }
 }
 
+const ERROR_CODE_SHAPE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
 /** Outcome of a tool call, with the stable failure code when the call failed. */
 export function toolOutcome(
   result:
@@ -190,7 +211,12 @@ export function toolOutcome(
   // closed `code`; the MCP layer does not always set isError for them.
   const code = stringField(content, "code") ?? stringField(asFields(content.error), "_tag");
   if (result.isError === true || (content._tag !== undefined && code !== undefined)) {
-    return { outcome: "error", errorCode: code ?? "unknown" };
+    // Codes and tags are identifiers; anything else may be a message or a value, which stays in
+    // local traces rather than analytics.
+    return {
+      outcome: "error",
+      errorCode: code !== undefined && ERROR_CODE_SHAPE.test(code) ? code : "unknown",
+    };
   }
   return { outcome: "ok" };
 }

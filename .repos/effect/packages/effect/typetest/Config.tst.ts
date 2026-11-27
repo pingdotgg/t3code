@@ -2,6 +2,27 @@ import { Config, ConfigProvider, Schema } from "effect"
 import { describe, expect, it } from "tstyche"
 
 describe("Config", () => {
+  it("all checks symbol fields and accepts object type aliases", () => {
+    const key = Symbol()
+    type Fields = {
+      text: Config.Config<string>
+      [key]: Config.Config<number>
+    }
+    const fields: Fields = { text: Config.String("text"), [key]: Config.Number("number") }
+    expect(Config.all(fields)).type.toBe<Config.Config<{ text: string; [key]: number }>>()
+    type IndexedFields = {
+      [key: string]: Config.Config<number>
+    }
+    const indexed: IndexedFields = { value: fields[key] }
+    expect(Config.all(indexed)).type.toBe<Config.Config<{ [key: string]: number }>>()
+    expect(Config.all([fields.text, fields[key]])).type.toBe<Config.Config<[string, number]>>()
+    expect(Config.all(new Set([fields[key]]))).type.toBe<Config.Config<Array<number>>>()
+    expect(Config.all).type.not.toBeCallableWith({ [key]: 42 })
+    expect(Config.all).type.not.toBeCallableWith(42)
+    expect(Config.all).type.not.toBeCallableWith("value")
+    expect(Config.all).type.not.toBeCallableWith({ text: fields.text, [key]: 42 })
+  })
+
   it("literals", () => {
     const c = Config.Literals(["a", "b"])
 

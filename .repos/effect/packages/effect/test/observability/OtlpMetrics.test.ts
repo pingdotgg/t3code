@@ -443,11 +443,15 @@ describe("OtlpMetrics", () => {
     Effect.gen(function*() {
       yield* Metric.update(Metric.timer("unit_timer_test", { boundaries: [10, 100] }), Duration.millis(5))
       yield* Metric.update(Metric.gauge("unit_custom_test", { attributes: { unit: "{request}" } }), 1)
+      yield* Metric.update(Metric.gauge("unit_dimensionless_test", { attributes: { unit: "1" } }), 1)
+      yield* Metric.update(Metric.gauge("unit_unspecified_test"), 1)
       yield* triggerExport
 
       const [request] = yield* MockHttpClient.requests
       assert.strictEqual(findMetric(request, "unit_timer_test")?.unit, "ms")
       assert.strictEqual(findMetric(request, "unit_custom_test")?.unit, "{request}")
+      assert.strictEqual(findMetric(request, "unit_dimensionless_test")?.unit, "1")
+      assert.strictEqual(findMetric(request, "unit_unspecified_test")?.unit, "")
     }).pipe(Effect.provide(TestLayerCumulative), Effect.provideService(Metric.MetricRegistry, new Map())))
 
   it.effect("keeps bigint precision beyond 2^53", () =>

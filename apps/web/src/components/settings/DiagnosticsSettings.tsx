@@ -1,3 +1,5 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m as resolveMessage } from "~/i18n/messages";
 import { ProcessSignalActions } from "./ProcessSignalActions";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import { environmentSession } from "../../state/session";
@@ -18,6 +20,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useRef, useState, type ReactNode } from "react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
+import type { MessageResolver } from "../../i18n/messages";
 import type {
   ServerProcessDiagnosticsEntry,
   ServerProcessResourceHistorySummary,
@@ -37,9 +41,12 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import { formatDiagnosticsDuration } from "./DiagnosticsSettings.logic";
+import {
+  formatDiagnosticsDuration,
+  formatProcessName,
+  formatShortProcessName,
+} from "./DiagnosticsSettings.logic";
 import { ExpandableText } from "./ExpandableText";
 import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
 import { formatCpuTime } from "./ResourceTelemetryDiagnostics.logic";
@@ -47,6 +54,7 @@ import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { TelemetryExportSettings } from "./TelemetryExportSettings";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const NUMBER_FORMAT = new Intl.NumberFormat();
 
@@ -57,7 +65,7 @@ function formatCount(value: number): string {
 function RelativeTimeNoWrap(props: { value: DateTime.Utc }) {
   const relative = useRelativeTimeState(DateTime.formatIso(props.value));
   if (relative.status !== "relative") return null;
-  return relative.suffix ? `${relative.value}\u00a0${relative.suffix}` : relative.value;
+  return relative.label.replaceAll(" ", "\u00a0");
 }
 
 function shortenTraceId(traceId: string): string {
@@ -85,20 +93,18 @@ function StatBlock({
       <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium uppercase tracking-widest text-muted-foreground/70">
         <span className="min-w-0 truncate">{label}</span>
         {tooltip ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  className="cursor-pointer inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 hover:text-foreground"
-                  aria-label={`${label} details`}
-                >
-                  <InfoIcon className="size-3" />
-                </button>
-              }
-            />
-            <TooltipPopup side="top">{tooltip}</TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <button
+                type="button"
+                className="cursor-pointer inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 hover:text-foreground"
+                aria-label={`${label} details`}
+              >
+                <InfoIcon className="size-3" />
+              </button>
+            }
+            label={tooltip}
+          />
         ) : null}
       </div>
       <div
@@ -193,56 +199,52 @@ function DiagnosticsTable({
 }
 
 function TraceIdCell({ traceId }: { traceId: string }) {
+  const gt = useGT();
   const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
-    target: "trace ID",
+    target: {
+      target: "trace ID",
+      unavailableMessage: msg("Clipboard API is unavailable while copying trace ID."),
+      failureMessage: msg("Failed to copy trace ID to the clipboard."),
+    },
     timeout: 1_200,
   });
 
   return (
     <div className="flex w-full min-w-0 max-w-full items-center gap-2">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span className="min-w-0 flex-1 truncate font-mono text-2xs">
-              {shortenTraceId(traceId)}
-            </span>
-          }
-        />
-        <TooltipPopup side="top" variant="code">
-          {traceId}
-        </TooltipPopup>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              size="icon-micro"
-              variant="ghost-muted"
-              aria-label={copied ? "Copied trace ID" : "Copy trace ID"}
-              onClick={() => copyToClipboard(traceId)}
-            >
-              <CopyIcon className="size-3" />
-            </Button>
-          }
-        />
-        <TooltipPopup side="top">{copied ? "Copied" : "Copy full trace ID"}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <span className="min-w-0 flex-1 truncate font-mono text-2xs">
+            {shortenTraceId(traceId)}
+          </span>
+        }
+        label={traceId}
+        variant="code"
+      />
+      <SharedTooltipTrigger
+        render={
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
+            aria-label={copied ? gt("Copied trace ID") : gt("Copy trace ID")}
+            onClick={() => copyToClipboard(traceId)}
+          >
+            <CopyIcon className="size-3" />
+          </Button>
+        }
+        label={copied ? gt("Copied") : gt("Copy full trace ID")}
+      />
     </div>
   );
 }
 
-function formatProcessName(command: string): string {
-  const firstToken = command.trim().split(/\s+/)[0];
-  if (!firstToken) return command;
-  const normalized = firstToken.replace(/^['"]|['"]$/g, "");
-  const segments = normalized.split(/[\\/]/).filter(Boolean);
-  return segments.at(-1) ?? normalized;
-}
-
-function formatProcessType(process: ServerProcessDiagnosticsEntry): string {
-  if (process.depth > 0) return "Subprocess";
-  if (/\b(codex|claude|opencode|cursor)\b/i.test(process.command)) return "Agent";
-  return "Process";
+function formatProcessType(
+  process: ServerProcessDiagnosticsEntry,
+  resolve: MessageResolver,
+): string {
+  if (process.depth > 0) return resolve(msg("Subprocess"));
+  if (/\b(codex|claude|opencode|cursor)\b/i.test(process.command))
+    return resolve(msg("Agent", { $context: "process type" }));
+  return resolve(msg("Process", { $context: "process type" }));
 }
 
 function ProcessNameCell({
@@ -254,6 +256,7 @@ function ProcessNameCell({
   isExpanded: boolean;
   onToggle: (pid: number) => void;
 }) {
+  const gt = useGT();
   const name = formatProcessName(process.command);
   const hasChildren = process.childPids.length > 0;
 
@@ -266,7 +269,7 @@ function ProcessNameCell({
         <Button
           size="icon-micro"
           variant="ghost-muted"
-          aria-label={isExpanded ? `Collapse ${name}` : `Expand ${name}`}
+          aria-label={isExpanded ? gt("Collapse {name}", { name }) : gt("Expand {name}", { name })}
           onClick={() => onToggle(process.pid)}
         >
           {isExpanded ? (
@@ -279,14 +282,11 @@ function ProcessNameCell({
         <span className="size-5 shrink-0" aria-hidden="true" />
       )}
       <span className="size-1.5 shrink-0 rounded-full bg-success/80" />
-      <Tooltip>
-        <TooltipTrigger
-          render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
-        />
-        <TooltipPopup side="top" variant="code">
-          {process.command}
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
+        label={process.command}
+        variant="code"
+      />
     </div>
   );
 }
@@ -326,6 +326,8 @@ function ProcessDiagnosticsTable({
   onSignal: (pid: number, signal: ServerProcessSignal) => void;
   emptyLabel?: string;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const [collapsedPids, setCollapsedPids] = useState<ReadonlySet<number>>(() => new Set());
   const visibleProcesses = visibleProcessTree(processes, collapsedPids);
 
@@ -362,20 +364,34 @@ function ProcessDiagnosticsTable({
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs uppercase tracking-widest text-muted-foreground/70">
             <tr>
-              <th className="px-4 py-2 font-semibold sm:pl-5">Name</th>
-              <th className="px-3 py-2 text-right font-semibold">CPU</th>
-              <th className="px-3 py-2 text-right font-semibold">Memory</th>
-              <th className="px-3 py-2 font-semibold">Command</th>
-              <th className="px-3 py-2 text-right font-semibold">PID</th>
-              <th className="px-3 py-2 font-semibold">Type</th>
-              <th className="p-2 text-right font-semibold sm:pr-4">Kill</th>
+              <th className="px-4 py-2 font-semibold sm:pl-5">
+                <T>Name</T>
+              </th>
+              <th className="px-3 py-2 text-right font-semibold">
+                <T>CPU</T>
+              </th>
+              <th className="px-3 py-2 text-right font-semibold">
+                <T>Memory</T>
+              </th>
+              <th className="px-3 py-2 font-semibold">
+                <T>Command</T>
+              </th>
+              <th className="px-3 py-2 text-right font-semibold">
+                <T>PID</T>
+              </th>
+              <th className="px-3 py-2 font-semibold">
+                <T>Type</T>
+              </th>
+              <th className="p-2 text-right font-semibold sm:pr-4">
+                <T>Kill</T>
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
             {visibleProcesses.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-4 text-xs text-muted-foreground sm:px-5">
-                  {emptyLabel ?? "No live descendant processes found."}
+                  {emptyLabel ?? gt("No live descendant processes found.")}
                 </td>
               </tr>
             ) : null}
@@ -395,20 +411,17 @@ function ProcessDiagnosticsTable({
                   {formatBytes(process.rssBytes)}
                 </td>
                 <td className="px-3 py-2 align-middle text-muted-foreground">
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<span className="block truncate">{process.command}</span>}
-                    />
-                    <TooltipPopup side="top" variant="code">
-                      {process.command}
-                    </TooltipPopup>
-                  </Tooltip>
+                  <SharedTooltipTrigger
+                    render={<span className="block truncate">{process.command}</span>}
+                    label={process.command}
+                    variant="code"
+                  />
                 </td>
                 <td className="px-3 py-2 text-right align-middle font-mono tabular-nums text-muted-foreground">
                   {process.pid}
                 </td>
                 <td className="truncate px-3 py-2 align-middle text-muted-foreground">
-                  {formatProcessType(process)}
+                  {formatProcessType(process, m)}
                 </td>
                 <td className="p-2 align-middle sm:pr-4">
                   <ProcessSignalActions
@@ -432,11 +445,6 @@ const RESOURCE_HISTORY_WINDOWS = [
   { label: "1h", windowMs: 60 * 60_000, bucketMs: 5 * 60_000 },
 ] as const;
 
-function formatShortProcessName(command: string): string {
-  const name = formatProcessName(command);
-  return name.length > 42 ? `${name.slice(0, 39)}...` : name;
-}
-
 function ResourceHistoryProcessNameCell({
   process,
   visualDepth,
@@ -444,13 +452,18 @@ function ResourceHistoryProcessNameCell({
   process: ServerProcessResourceHistorySummary;
   visualDepth: number;
 }) {
+  const gt = useGT();
   const name = formatShortProcessName(process.command);
 
   return (
     <div
       className="grid min-w-0 grid-cols-[1.25rem_0.375rem_minmax(0,1fr)] items-center gap-2"
       style={{ paddingLeft: `${Math.min(visualDepth, 6) * 10}px` }}
-      aria-label={`${process.isServerRoot ? "Root" : "Child"} process ${name}`}
+      aria-label={
+        process.isServerRoot
+          ? gt("Root process {name}", { name })
+          : gt("Child process {name}", { name })
+      }
     >
       <span className="size-5 shrink-0" aria-hidden="true" />
       <span
@@ -459,14 +472,11 @@ function ResourceHistoryProcessNameCell({
           process.isServerRoot ? "bg-warning/90" : "bg-success/80",
         )}
       />
-      <Tooltip>
-        <TooltipTrigger
-          render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
-        />
-        <TooltipPopup side="top" variant="code">
-          {process.command}
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
+        label={process.command}
+        variant="code"
+      />
     </div>
   );
 }
@@ -480,6 +490,7 @@ function ProcessResourceHistoryChart({
     readonly maxCpuPercent: number;
   }>;
 }) {
+  const gt = useGT();
   const maxCpuPercent = Math.max(1, ...buckets.map((bucket) => bucket.maxCpuPercent));
 
   return (
@@ -489,30 +500,33 @@ function ProcessResourceHistoryChart({
           const peakHeight = Math.max(2, (bucket.maxCpuPercent / maxCpuPercent) * 100);
           const averageHeight = Math.max(2, (bucket.avgCpuPercent / maxCpuPercent) * 100);
           return (
-            <Tooltip key={DateTime.formatIso(bucket.startedAt)}>
-              <TooltipTrigger
-                render={
-                  <div className="flex h-full min-w-1 flex-1 items-end">
+            <SharedTooltipTrigger
+              key={DateTime.formatIso(bucket.startedAt)}
+              render={
+                <div className="flex h-full min-w-1 flex-1 items-end">
+                  <div className="relative h-full w-full">
+                    <span className="sr-only">
+                      {gt("Average CPU {average}%, peak CPU {peak}%", {
+                        average: bucket.avgCpuPercent.toFixed(1),
+                        peak: bucket.maxCpuPercent.toFixed(1),
+                      })}
+                    </span>
                     <div
-                      className="relative h-full w-full"
-                      aria-label={`Average CPU ${bucket.avgCpuPercent.toFixed(1)}%, peak CPU ${bucket.maxCpuPercent.toFixed(1)}%`}
-                    >
-                      <div
-                        className="absolute inset-x-0 bottom-0 rounded-t-sm bg-foreground/15 transition-colors"
-                        style={{ height: `${peakHeight}%` }}
-                      />
-                      <div
-                        className="absolute inset-x-0 bottom-0 rounded-t-sm bg-foreground/60 transition-colors"
-                        style={{ height: `${averageHeight}%` }}
-                      />
-                    </div>
+                      className="absolute inset-x-0 bottom-0 rounded-t-sm bg-foreground/15 transition-colors"
+                      style={{ height: `${peakHeight}%` }}
+                    />
+                    <div
+                      className="absolute inset-x-0 bottom-0 rounded-t-sm bg-foreground/60 transition-colors"
+                      style={{ height: `${averageHeight}%` }}
+                    />
                   </div>
-                }
-              />
-              <TooltipPopup side="top">
-                Avg {bucket.avgCpuPercent.toFixed(1)}%, peak {bucket.maxCpuPercent.toFixed(1)}%
-              </TooltipPopup>
-            </Tooltip>
+                </div>
+              }
+              label={gt("Avg {average}%, peak {peak}%", {
+                average: bucket.avgCpuPercent.toFixed(1),
+                peak: bucket.maxCpuPercent.toFixed(1),
+              })}
+            />
           );
         })}
       </div>
@@ -527,9 +541,10 @@ function ResourceHistoryWindowSelector({
   selectedWindowMs: number;
   onSelect: (windowMs: number) => void;
 }) {
+  const gt = useGT();
   return (
     <ToggleGroup
-      aria-label="Process history period"
+      aria-label={gt("Process history period")}
       variant="segmented"
       value={[String(selectedWindowMs)]}
       onValueChange={(next) => {
@@ -555,6 +570,7 @@ function ProcessResourceHistoryTable({
   processes: ReadonlyArray<ServerProcessResourceHistorySummary>;
   emptyLabel: string;
 }) {
+  const m = useMessages();
   const shallowestChildDepth = processes.reduce<number | null>((minDepth, process) => {
     if (process.isServerRoot) return minDepth;
     return minDepth === null ? process.depth : Math.min(minDepth, process.depth);
@@ -581,14 +597,30 @@ function ProcessResourceHistoryTable({
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs uppercase tracking-widest text-muted-foreground/70">
             <tr>
-              <th className="px-4 py-2 font-semibold sm:pl-5">Process</th>
-              <th className="px-3 py-2 text-right font-semibold">CPU Time</th>
-              <th className="px-3 py-2 text-right font-semibold">Current</th>
-              <th className="px-3 py-2 text-right font-semibold">Average</th>
-              <th className="px-3 py-2 text-right font-semibold">Peak</th>
-              <th className="px-3 py-2 text-right font-semibold">Max Mem</th>
-              <th className="px-3 py-2 font-semibold">Command</th>
-              <th className="px-3 py-2 text-right font-semibold sm:pr-5">PID</th>
+              <th className="px-4 py-2 font-semibold sm:pl-5">
+                <T>Process</T>
+              </th>
+              <th className="px-3 py-2 text-right font-semibold">
+                <T>CPU Time</T>
+              </th>
+              <th className="px-3 py-2 text-right font-semibold">
+                <T>Current</T>
+              </th>
+              <th className="px-3 py-2 text-right font-semibold">
+                <T>Average</T>
+              </th>
+              <th className="px-3 py-2 text-right font-semibold">
+                <T>Peak</T>
+              </th>
+              <th className="px-3 py-2 text-right font-semibold">
+                <T>Max Mem</T>
+              </th>
+              <th className="px-3 py-2 font-semibold">
+                <T>Command</T>
+              </th>
+              <th className="px-3 py-2 text-right font-semibold sm:pr-5">
+                <T>PID</T>
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
@@ -612,7 +644,7 @@ function ProcessResourceHistoryTable({
                   />
                 </td>
                 <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
-                  {formatCpuTime(process.cpuSecondsApprox)}
+                  {formatCpuTime(process.cpuSecondsApprox, m)}
                 </td>
                 <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
                   {process.currentCpuPercent.toFixed(1)}%
@@ -627,14 +659,11 @@ function ProcessResourceHistoryTable({
                   {formatBytes(process.maxRssBytes)}
                 </td>
                 <td className="px-3 py-2 align-middle text-muted-foreground">
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<span className="block truncate">{process.command}</span>}
-                    />
-                    <TooltipPopup side="top" variant="code">
-                      {process.command}
-                    </TooltipPopup>
-                  </Tooltip>
+                  <SharedTooltipTrigger
+                    render={<span className="block truncate">{process.command}</span>}
+                    label={process.command}
+                    variant="code"
+                  />
                 </td>
                 <td className="px-3 py-2 text-right align-middle font-mono tabular-nums text-muted-foreground sm:pr-5">
                   {process.pid}
@@ -649,24 +678,37 @@ function ProcessResourceHistoryTable({
 }
 
 function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null }) {
+  const gt = useGT();
   const relative = useRelativeTimeState(checkedAt ? DateTime.formatIso(checkedAt) : null);
 
   if (relative.status === "missing") {
-    return <span className="text-2xs text-muted-foreground/50">Checking</span>;
+    return (
+      <span className="text-2xs text-muted-foreground/50">
+        <T>Checking</T>
+      </span>
+    );
   }
 
   if (relative.status === "invalid") {
-    return <span className="text-2xs text-muted-foreground/50">Checked unavailable</span>;
+    return (
+      <span className="text-2xs text-muted-foreground/50">
+        <T>Checked unavailable</T>
+      </span>
+    );
   }
 
   return (
     <span className="text-2xs text-muted-foreground/60">
       {relative.suffix ? (
-        <>
-          Checked <span className="font-mono tabular-nums">{relative.value}</span> {relative.suffix}
-        </>
+        <T context="the time is an elapsed time such as 5m">
+          Checked{" "}
+          <span className="font-mono tabular-nums">
+            <Var>{relative.value}</Var>
+          </span>{" "}
+          ago
+        </T>
       ) : (
-        <>Checked {relative.value}</>
+        gt("Checked {time}", { time: relative.value })
       )}
     </span>
   );
@@ -682,22 +724,20 @@ function DiagnosticsRefreshButton({
   onClick: () => void;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            disabled={isPending}
-            onClick={onClick}
-            aria-label={label}
-          >
-            <RefreshIcon refreshing={isPending} />
-          </Button>
-        }
-      />
-      <TooltipPopup side="top">{label}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          size="icon-xs"
+          variant="ghost-muted"
+          disabled={isPending}
+          onClick={onClick}
+          aria-label={label}
+        >
+          <RefreshIcon refreshing={isPending} />
+        </Button>
+      }
+      label={label}
+    />
   );
 }
 
@@ -708,6 +748,8 @@ export function DiagnosticsSettingsPanel() {
 }
 
 function DiagnosticsSettingsBody() {
+  const gt = useGT();
+  const m = useMessages();
   const { environment } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const canMaintainEnvironment = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
@@ -716,12 +758,16 @@ function DiagnosticsSettingsBody() {
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const session = useEnvironmentQuery(
     environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
+    m,
   );
-  const diagnosticsAccess = resolveUsageAccess({
-    connectionPhase: environment?.connection.phase ?? "available",
-    session: session.data,
-    hasSessionError: session.error !== null,
-  });
+  const diagnosticsAccess = resolveUsageAccess(
+    {
+      connectionPhase: environment?.connection.phase ?? "available",
+      session: session.data,
+      hasSessionError: session.error !== null,
+    },
+    m,
+  );
   const canReadDiagnostics = diagnosticsAccess.canReadDiagnostics;
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
@@ -735,6 +781,7 @@ function DiagnosticsSettingsBody() {
     environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.traceDiagnostics({ environmentId, input: {} }),
+    m,
   );
   const {
     data: processData,
@@ -745,6 +792,7 @@ function DiagnosticsSettingsBody() {
     environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.processDiagnostics({ environmentId, input: {} }),
+    m,
   );
   const {
     data: resourceData,
@@ -761,6 +809,7 @@ function DiagnosticsSettingsBody() {
             bucketMs: selectedResourceWindow.bucketMs,
           },
         }),
+    m,
   );
   const [isOpeningLogsDirectory, setIsOpeningLogsDirectory] = useState(false);
   const [openLogsDirectoryError, setOpenLogsDirectoryError] = useState<string | null>(null);
@@ -786,7 +835,9 @@ function DiagnosticsSettingsBody() {
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         setOpenLogsDirectoryError(
-          error instanceof Error ? error.message : "Unable to open logs folder.",
+          error instanceof Error
+            ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
+            : gt("Unable to open logs folder."),
         );
       }
     })();
@@ -827,15 +878,18 @@ function DiagnosticsSettingsBody() {
       let confirmed = false;
       try {
         confirmed = await ensureLocalApi().dialogs.confirm(
-          `Send SIGKILL to process ${pid}? This cannot be handled by the process.`,
+          gt("Send SIGKILL to process {pid}? This cannot be handled by the process.", { pid }),
           { variant: "destructive" },
         );
       } catch (error) {
         clearSignaling();
         toastManager.add({
           type: "error",
-          title: "Could not confirm signal",
-          description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+          title: gt("Could not confirm signal"),
+          description:
+            error instanceof Error
+              ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
+              : gt("Failed to send {signal}.", { signal }),
         });
         return;
       }
@@ -861,8 +915,11 @@ function DiagnosticsSettingsBody() {
         const error = squashAtomCommandFailure(result);
         toastManager.add({
           type: "error",
-          title: `Could not send ${signal}`,
-          description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+          title: gt("Could not send {signal}", { signal }),
+          description:
+            error instanceof Error
+              ? (thrownErrorMessage(error, resolveMessage) ?? error.message)
+              : gt("Failed to send {signal}.", { signal }),
         });
       }
       return;
@@ -873,16 +930,18 @@ function DiagnosticsSettingsBody() {
       if (isStaleProcessSignalMessage(message)) {
         toastManager.add({
           type: "info",
-          title: "Process already exited",
-          description: "The process is not a child of the T3 Server. It might already have exited.",
+          title: gt("Process already exited"),
+          description: gt(
+            "The process is not a child of the T3 Server. It might already have exited.",
+          ),
         });
         return;
       }
 
       toastManager.add({
         type: "error",
-        title: `Could not send ${signal}`,
-        description: message ?? `Failed to send ${signal}.`,
+        title: gt("Could not send {signal}", { signal }),
+        description: message ?? gt("Failed to send {signal}.", { signal }),
       });
       return;
     }
@@ -901,9 +960,9 @@ function DiagnosticsSettingsBody() {
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
           {environmentId === null
-            ? "Connect an environment to see diagnostics."
+            ? gt("Connect an environment to see diagnostics.")
             : diagnosticsAccess.isPending
-              ? "Checking diagnostics access…"
+              ? gt("Checking diagnostics access…")
               : diagnosticsAccess.error}
         </p>
       </SettingsPageContainer>
@@ -915,13 +974,13 @@ function DiagnosticsSettingsBody() {
       <ResourceTelemetryDiagnostics environmentId={environmentId} />
 
       <SettingsSection
-        title="Live Processes"
+        title={gt("Live Processes")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <DiagnosticsLastChecked checkedAt={processData?.readAt ?? null} />
             <DiagnosticsRefreshButton
               isPending={isProcessPending}
-              label="Refresh process diagnostics"
+              label={gt("Refresh process diagnostics")}
               onClick={refreshProcesses}
             />
           </div>
@@ -929,21 +988,25 @@ function DiagnosticsSettingsBody() {
       >
         <StatsGrid>
           <StatBlock
-            label="Child Processes"
+            label={gt("Child Processes")}
             value={processData ? formatCount(processData.processCount) : "..."}
           />
           <StatBlock
-            label="CPU"
+            label={gt("CPU")}
             value={processData ? `${processData.totalCpuPercent.toFixed(1)}%` : "..."}
-            tooltip="Total CPU across live child processes of the current server process. The desktop shell and other parent processes are not included."
+            tooltip={gt(
+              "Total CPU across live child processes of the current server process. The desktop shell and other parent processes are not included.",
+            )}
           />
           <StatBlock
-            label="Memory"
+            label={gt("Memory")}
             value={processData ? formatBytes(processData.totalRssBytes) : "..."}
-            tooltip="Total resident memory across live child processes of the current server process. The desktop shell and other parent processes are not included."
+            tooltip={gt(
+              "Total resident memory across live child processes of the current server process. The desktop shell and other parent processes are not included.",
+            )}
           />
           <StatBlock
-            label="Server PID"
+            label={gt("Server PID")}
             value={processData ? String(processData.serverPid) : "..."}
           />
         </StatsGrid>
@@ -970,14 +1033,14 @@ function DiagnosticsSettingsBody() {
           onSignal={signalProcess}
           emptyLabel={
             isProcessInitialLoading
-              ? "Loading live processes..."
-              : "No live descendant processes found."
+              ? gt("Loading live processes...")
+              : gt("No live descendant processes found.")
           }
         />
       </SettingsSection>
 
       <SettingsSection
-        title="Resource History"
+        title={gt("Resource History")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <ResourceHistoryWindowSelector
@@ -987,7 +1050,7 @@ function DiagnosticsSettingsBody() {
             <DiagnosticsLastChecked checkedAt={resourceData?.readAt ?? null} />
             <DiagnosticsRefreshButton
               isPending={isResourcePending}
-              label="Refresh resource history"
+              label={gt("Refresh resource history")}
               onClick={refreshResources}
             />
           </div>
@@ -995,27 +1058,31 @@ function DiagnosticsSettingsBody() {
       >
         <StatsGrid>
           <StatBlock
-            label="CPU Time"
-            value={resourceData ? formatCpuTime(resourceData.totalCpuSecondsApprox) : "..."}
-            tooltip="Approximate active CPU time for the T3 server root process and its descendants during the selected window. It grows only while sampled processes use CPU and older samples leave as the window moves."
+            label={gt("CPU Time")}
+            value={resourceData ? formatCpuTime(resourceData.totalCpuSecondsApprox, m) : "..."}
+            tooltip={gt(
+              "Approximate active CPU time for the T3 server root process and its descendants during the selected window. It grows only while sampled processes use CPU and older samples leave as the window moves.",
+            )}
           />
           <StatBlock
-            label="Samples"
+            label={gt("Samples")}
             value={resourceData ? formatCount(resourceData.retainedSampleCount) : "..."}
-            tooltip="In-memory process samples retained by the server. The server samples only while diagnostics is open, and this resets when the server restarts."
+            tooltip={gt(
+              "In-memory process samples retained by the server. The server samples only while diagnostics is open, and this resets when the server restarts.",
+            )}
           />
           <StatBlock
-            label="Interval"
+            label={gt("Interval")}
             value={
               resourceData
                 ? resourceData.sampleIntervalMs === 0
-                  ? "On demand"
+                  ? gt("On demand")
                   : formatDiagnosticsDuration(resourceData.sampleIntervalMs)
                 : "..."
             }
           />
           <StatBlock
-            label="Processes"
+            label={gt("Processes")}
             value={resourceData ? formatCount(resourceData.topProcesses.length) : "..."}
           />
         </StatsGrid>
@@ -1040,64 +1107,68 @@ function DiagnosticsSettingsBody() {
           processes={resourceData?.topProcesses ?? []}
           emptyLabel={
             isResourceInitialLoading
-              ? "Collecting process resource samples..."
-              : "No process resource samples found for this window."
+              ? gt("Collecting process resource samples...")
+              : gt("No process resource samples found for this window.")
           }
         />
       </SettingsSection>
 
       <SettingsSection
-        title="Trace Diagnostics"
+        title={gt("Trace Diagnostics")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <DiagnosticsLastChecked checkedAt={data?.readAt ?? null} />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost-muted"
-                    disabled={
-                      !canOpenHostEditor ||
-                      !observability?.logsDirectoryPath ||
-                      isOpeningLogsDirectory
-                    }
-                    onClick={openLogsDirectory}
-                    aria-label="Open logs folder"
-                  >
-                    <FolderOpenIcon />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Open logs folder</TooltipPopup>
-            </Tooltip>
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  disabled={
+                    !canOpenHostEditor ||
+                    !observability?.logsDirectoryPath ||
+                    isOpeningLogsDirectory
+                  }
+                  onClick={openLogsDirectory}
+                  aria-label={gt("Open logs folder")}
+                >
+                  <FolderOpenIcon />
+                </Button>
+              }
+              label={
+                <>
+                  <T>Open logs folder</T>
+                </>
+              }
+            />
             <DiagnosticsRefreshButton
               isPending={isPending}
-              label="Refresh trace diagnostics"
+              label={gt("Refresh trace diagnostics")}
               onClick={refresh}
             />
           </div>
         }
       >
         <StatsGrid>
-          <StatBlock label="Spans" value={data ? formatCount(data.recordCount) : "..."} />
+          <StatBlock label={gt("Spans")} value={data ? formatCount(data.recordCount) : "..."} />
           <StatBlock
-            label="Failures"
+            label={gt("Failures")}
             value={data ? formatCount(data.failureCount) : "..."}
             tone={data && data.failureCount > 0 ? "danger" : "default"}
           />
           <StatBlock
-            label="Slow Spans"
+            label={gt("Slow Spans")}
             value={data ? formatCount(data.slowSpanCount) : "..."}
             tooltip={
               data
-                ? `Spans with a duration of ${formatDiagnosticsDuration(data.slowSpanThresholdMs)} or longer.`
-                : "Spans at or above the configured slow-span threshold."
+                ? gt("Spans with a duration of {duration} or longer.", {
+                    duration: formatDiagnosticsDuration(data.slowSpanThresholdMs),
+                  })
+                : gt("Spans at or above the configured slow-span threshold.")
             }
             tone={data && data.slowSpanCount > 0 ? "warning" : "default"}
           />
           <StatBlock
-            label="Parse Errors"
+            label={gt("Parse Errors")}
             value={data ? formatCount(data.parseErrorCount) : "..."}
             tone={data && data.parseErrorCount > 0 ? "warning" : "default"}
           />
@@ -1120,7 +1191,10 @@ function DiagnosticsSettingsBody() {
                 <AlertTriangleIcon className="size-3.5 h-lh shrink-0" />
                 <span>
                   {traceDiagnosticsPartialFailure
-                    ? `Some trace files could not be read, so diagnostics may be incomplete. ${traceDiagnosticsError.message}`
+                    ? gt(
+                        "Some trace files could not be read, so diagnostics may be incomplete. {message}",
+                        { message: traceDiagnosticsError.message },
+                      )
                     : traceDiagnosticsError.message}
                 </span>
               </div>
@@ -1135,9 +1209,9 @@ function DiagnosticsSettingsBody() {
         ) : null}
       </SettingsSection>
 
-      <SettingsSection title="Latest Failures">
+      <SettingsSection title={gt("Latest Failures")}>
         {data && data.latestFailures.length > 0 ? (
-          <DiagnosticsTable headers={["Span", "Cause", "Duration", "Ended"]}>
+          <DiagnosticsTable headers={[gt("Span"), gt("Cause"), gt("Duration"), gt("Ended")]}>
             {data.latestFailures.map((failure) => (
               <tr key={`${failure.traceId}:${failure.spanId}`}>
                 <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:pl-5">
@@ -1156,14 +1230,16 @@ function DiagnosticsSettingsBody() {
             ))}
           </DiagnosticsTable>
         ) : (
-          <EmptyRows label={isInitialLoading ? "Loading failures..." : "No failed spans found."} />
+          <EmptyRows
+            label={isInitialLoading ? gt("Loading failures...") : gt("No failed spans found.")}
+          />
         )}
       </SettingsSection>
 
-      <SettingsSection title="Most Common Failures">
+      <SettingsSection title={gt("Most Common Failures")}>
         {data && data.commonFailures.length > 0 ? (
           <DiagnosticsTable
-            headers={["Span", "Count", "Cause", "Last Seen"]}
+            headers={[gt("Span"), gt("Count"), gt("Cause"), gt("Last Seen")]}
             minTableWidth="min-w-[760px]"
           >
             {data.commonFailures.map((failure) => (
@@ -1185,15 +1261,17 @@ function DiagnosticsSettingsBody() {
           </DiagnosticsTable>
         ) : (
           <EmptyRows
-            label={isInitialLoading ? "Loading failure groups..." : "No repeated failures found."}
+            label={
+              isInitialLoading ? gt("Loading failure groups...") : gt("No repeated failures found.")
+            }
           />
         )}
       </SettingsSection>
 
-      <SettingsSection title="Slowest Spans">
+      <SettingsSection title={gt("Slowest Spans")}>
         {data && data.slowestSpans.length > 0 ? (
           <DiagnosticsTable
-            headers={["Span", "Duration", "Ended", "Trace"]}
+            headers={[gt("Span"), gt("Duration"), gt("Ended"), gt("Trace")]}
             minTableWidth="min-w-[900px]"
             columnWidths={["w-[44%]", "w-[14%]", "w-[12%]", "w-[30%]"]}
           >
@@ -1215,11 +1293,13 @@ function DiagnosticsSettingsBody() {
             ))}
           </DiagnosticsTable>
         ) : (
-          <EmptyRows label={isInitialLoading ? "Loading slow spans..." : "No spans found."} />
+          <EmptyRows
+            label={isInitialLoading ? gt("Loading slow spans...") : gt("No spans found.")}
+          />
         )}
       </SettingsSection>
 
-      <SettingsSection title="Span Logs">
+      <SettingsSection title={gt("Span Logs")}>
         {data && data.latestWarningAndErrorLogs.length > 0 ? (
           <ScrollArea
             radius="none"
@@ -1238,11 +1318,21 @@ function DiagnosticsSettingsBody() {
               </colgroup>
               <thead className="border-b border-border/60 text-2xs uppercase tracking-widest text-muted-foreground/70">
                 <tr>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pl-5">Time</th>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">Level</th>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">Span</th>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">Message</th>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pr-5">Trace</th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pl-5">
+                    <T>Time</T>
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">
+                    <T>Level</T>
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">
+                    <T>Span</T>
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">
+                    <T>Message</T>
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pr-5">
+                    <T>Trace</T>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
@@ -1265,7 +1355,7 @@ function DiagnosticsSettingsBody() {
                     <td className="px-4 py-3 align-top text-muted-foreground">
                       <ExpandableText
                         collapsedClassName="line-clamp-2"
-                        expandLabel="Show full message"
+                        expandLabel={gt("Show full message")}
                         text={event.message}
                       />
                     </td>
@@ -1279,15 +1369,17 @@ function DiagnosticsSettingsBody() {
           </ScrollArea>
         ) : (
           <EmptyRows
-            label={isInitialLoading ? "Loading recent logs..." : "No warnings or errors found."}
+            label={
+              isInitialLoading ? gt("Loading recent logs...") : gt("No warnings or errors found.")
+            }
           />
         )}
       </SettingsSection>
 
-      <SettingsSection title="Top Span Names">
+      <SettingsSection title={gt("Top Span Names")}>
         {data && data.topSpansByCount.length > 0 ? (
           <DiagnosticsTable
-            headers={["Span", "Count", "Failures", "Average", "Max"]}
+            headers={[gt("Span"), gt("Count"), gt("Failures"), gt("Average"), gt("Max")]}
             minTableWidth="min-w-[760px]"
             columnWidths={["w-[48%]", "w-[13%]", "w-[13%]", "w-[13%]", "w-[13%]"]}
           >
@@ -1312,7 +1404,9 @@ function DiagnosticsSettingsBody() {
             ))}
           </DiagnosticsTable>
         ) : (
-          <EmptyRows label={isInitialLoading ? "Loading span names..." : "No spans found."} />
+          <EmptyRows
+            label={isInitialLoading ? gt("Loading span names...") : gt("No spans found.")}
+          />
         )}
       </SettingsSection>
       {exportFormEnvironmentId === environmentId && <TelemetryExportSettings />}
