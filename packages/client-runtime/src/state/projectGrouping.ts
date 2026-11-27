@@ -243,17 +243,13 @@ export function deriveProjectGroupLabel(input: {
 }): string {
   // A rename reaches only the checkouts that exist at that moment; one added later, on any
   // environment, still has its folder title. A renamed subfolder doesn't name the repository.
+  const isSubfolderOfRepositoryGroup = (member: (typeof input.members)[number]) =>
+    member.repositoryIdentity != null &&
+    input.groupKey === repositoryGroupingKeyOf(member.repositoryIdentity) &&
+    Boolean(deriveRepositoryRelativeProjectPath(member));
   const renamedTitles = uniqueNonEmptyValues(
     input.members
-      .filter(
-        (member) =>
-          member.hasCustomTitle === true &&
-          !(
-            member.repositoryIdentity &&
-            deriveRepositoryRelativeProjectPath(member) &&
-            input.groupKey === repositoryGroupingKeyOf(member.repositoryIdentity)
-          ),
-      )
+      .filter((member) => member.hasCustomTitle === true && !isSubfolderOfRepositoryGroup(member))
       .map((member) => member.title),
   );
   if (renamedTitles.length === 1) {
