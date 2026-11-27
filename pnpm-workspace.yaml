@@ -23,7 +23,7 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
-  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.19-3757a449.tgz": true
+  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.19-9a8bc858.tgz": true
   sharp: true
   utf-8-validate: false
   workerd: false
@@ -123,6 +123,7 @@ overrides:
   "@react-navigation/native-stack": 7.21.0
   dbus-next: 0.10.2
   node-pty: 1.2.0-beta.15
+  "@vitest/browser": 5.1.1
   react-native-gesture-handler: 3.5.0
   react-native-reanimated: 4.8.0
   react-native-keyboard-controller: 1.23.0
@@ -295,6 +296,10 @@ patchedDependencies:
   effect@4.1.5: patches/effect@4.1.5.patch
   "@generaltranslation/format@0.1.9": patches/@generaltranslation__format@0.1.9.patch
   gt-i18n@1.0.40: patches/gt-i18n@1.0.40.patch
+  # A browser test's first tester socket can close before opening on a busy runner; the
+  # reconnect then opens but the tester keeps waiting on the dead attempt and fails after 60s.
+  # https://github.com/vitest-dev/vitest/issues/10166
+  "@vitest/browser@5.1.1": patches/@vitest__browser@5.1.1.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.

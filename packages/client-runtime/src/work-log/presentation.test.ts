@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { compactT3McpToolOutput } from "@t3tools/shared/toolOutput";
 
 import {
   resolveViewedImageAsset,
@@ -158,6 +159,28 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "t3-code", tool: "preview_snapshot", result: { title: "Example" } },
       }),
     ).toEqual({ displayName: "Taking a snapshot of the preview page", icon: "browser" });
+  });
+
+  it("names the reported outcome when it contradicts the row's verb", () => {
+    const row = (tool: string, output: unknown) =>
+      resolveWorkEntryToolPresentation({
+        label: `T3-code.${tool}`,
+        toolLifecycleStatus: "completed",
+        toolData: { output: compactT3McpToolOutput(`t3-code.${tool}`, output) },
+      })?.displayName;
+    expect(row("pull_request_create", { number: 470, created: false })).toBe(
+      "Found 1 open pull request",
+    );
+    expect(row("pull_request_create", { number: 470, created: true })).toBe(
+      "Opened a pull request",
+    );
+    expect(row("ci_rerun", { number: 883, checks: [] })).toBe("Found no failed checks to re-run");
+    expect(row("ci_rerun", { number: 883, checks: [{ name: "ci", rerun: true }] })).toBe(
+      "Re-ran CI",
+    );
+    expect(row("pull_request_merge", { number: 1, state: "open" })).toBe(
+      "Queued 1 pull request to merge",
+    );
   });
 
   it("uses the summary's state only when the provider omitted a lifecycle status", () => {

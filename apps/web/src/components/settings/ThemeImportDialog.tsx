@@ -15,6 +15,7 @@ import {
 } from "../../themePalette";
 import {
   humanizeThemeName,
+  numberedThemeName,
   pairVsCodeThemes,
   parseThemeImport,
   resolveThemeLabelCollisions,
@@ -277,7 +278,7 @@ function ThemeImportBody({
     for (const file of files) {
       const oversized = describeOversizedThemeFile(file.size);
       if (oversized) {
-        failures.push(`${file.name}: too large`);
+        failures.push(`${file.name}: ${oversized}`);
         continue;
       }
       try {
@@ -362,10 +363,7 @@ function ThemeImportBody({
       if (!isThemeIdTaken(candidate.id)) return candidate;
     }
     for (let copy = 1; copy < 100; copy += 1) {
-      const candidate = renameTheme(
-        theme,
-        `${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`,
-      );
+      const candidate = renameTheme(theme, numberedThemeName(theme.label, ` (${copy})`));
       if (!isThemeIdTaken(candidate.id)) return candidate;
     }
     throw new Error(m(msg('Too many copies of "{label}".', { label: theme.label })));

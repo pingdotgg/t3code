@@ -26,6 +26,7 @@ import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
   summarizeT3ToolCalls,
+  t3ToolOutcomeLabel,
   t3ToolResultIndicatesFailure,
   type T3ToolSummaryCall,
 } from "@t3tools/client-runtime/t3ToolSummary";
@@ -304,13 +305,24 @@ export function resolveWorkEntryToolPresentation(
     workEntryToolName(entry),
     workEntryToolInput(entry),
   );
+  const output = workEntryToolOutput(entry);
+  const failed = definition !== null && t3ToolResultIndicatesFailure(output);
   const status = entry.toolLifecycleStatus ?? fallbackStatus;
-  return resolveT3McpToolPresentation(
+  const presentation = resolveT3McpToolPresentation(
     definition,
-    definition && t3ToolResultIndicatesFailure(workEntryToolOutput(entry)) ? "failed" : status,
+    failed ? "failed" : status,
     entry.toolData,
     resolve,
   );
+  if (definition === null || presentation === null || failed || status !== "completed") {
+    return presentation;
+  }
+  const outcomeLabel = t3ToolOutcomeLabel(
+    definition.summaryAction,
+    { input: workEntryToolInput(entry), output, outcome: "completed" },
+    resolve,
+  );
+  return outcomeLabel === undefined ? presentation : { ...presentation, displayName: outcomeLabel };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
