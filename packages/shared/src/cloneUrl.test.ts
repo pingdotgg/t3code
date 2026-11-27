@@ -154,6 +154,23 @@ describe("cloneUrlForProtocol", () => {
     );
   });
 
+  it("recognizes uppercase and mixed-case HTTP, HTTPS, and SSH schemes", () => {
+    expect(cloneUrlProtocol("HTTPS://github.com/pingdotgg/t3code.git")).toBe("https");
+    expect(cloneUrlProtocol("HTTP://github.com/pingdotgg/t3code.git")).toBe("https");
+    expect(cloneUrlProtocol("Https://github.com/pingdotgg/t3code.git")).toBe("https");
+    expect(cloneUrlProtocol("SSH://git@github.com/pingdotgg/t3code.git")).toBe("ssh");
+    expect(cloneUrlProtocol("Ssh://git@github.com/pingdotgg/t3code.git")).toBe("ssh");
+    expect(cloneUrlForProtocol("HTTPS://github.com/pingdotgg/t3code.git", "ssh")).toBe(
+      "git@github.com:pingdotgg/t3code.git",
+    );
+    expect(cloneUrlForProtocol("HTTP://github.com/pingdotgg/t3code.git", "ssh")).toBe(
+      "git@github.com:pingdotgg/t3code.git",
+    );
+    expect(cloneUrlForProtocol("SSH://git@github.com/pingdotgg/t3code.git", "https")).toBe(
+      "https://github.com/pingdotgg/t3code.git",
+    );
+  });
+
   it("keeps the URL as is for its own protocol and drops HTTPS credentials on switch", () => {
     expect(cloneUrlForProtocol("https://token@github.com/a/b.git", "https")).toBe(
       "https://token@github.com/a/b.git",
@@ -205,6 +222,15 @@ describe("cloneUrlRepositoryPath", () => {
       expect(cloneUrlRepositoryPath(`https://github.com/owner/${segment}.git`)).toBeNull();
     }
     expect(cloneUrlRepositoryPath("https://github.com/acme/repo.git")).toBe("github.com/acme/repo");
+    expect(cloneUrlRepositoryPath("HTTPS://github.com/pingdotgg/t3code.git")).toBe(
+      "github.com/pingdotgg/t3code",
+    );
+    expect(cloneUrlRepositoryPath("HTTP://github.com/pingdotgg/t3code.git")).toBe(
+      "github.com/pingdotgg/t3code",
+    );
+    expect(cloneUrlRepositoryPath("SSH://git@github.com/pingdotgg/t3code.git")).toBe(
+      "github.com/pingdotgg/t3code",
+    );
     expect(cloneUrlRepositoryPath("ssh://git@gitlab.com:2222/group/sub/repo.git")).toBe(
       "gitlab.com/group/sub/repo",
     );
