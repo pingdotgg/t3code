@@ -57,7 +57,11 @@ if (
     // Single executables host the launcher here; other builds start process-launcher.mjs directly.
     const { runProcessLauncher } = await import("./process/processLauncherWorker.ts");
     runProcessLauncher();
-  } else {
+  } else if (
+    // SSH launches run these probes several times per connect, before anything needs the CLI.
+    process.argv[2] !== "__ssh-helper" ||
+    !(await (await import("./cli/sshProbe.ts")).tryRunSshProbe(process.argv.slice(3)))
+  ) {
     const { runCliCommand } = await loadCliMain();
     await runCliCommand();
   }

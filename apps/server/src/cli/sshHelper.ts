@@ -1,9 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-// @effect-diagnostics globalTimers:off
-// @effect-diagnostics globalDateInEffect:off
 import * as NodeFS from "node:fs";
-import * as NodeHttp from "node:http";
-import * as NodeNet from "node:net";
 
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -14,32 +10,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
 import * as DesktopUpdateMarker from "../desktopUpdate/DesktopUpdateMarker.ts";
 import { serviceLauncherIsServing, stateDirOwned } from "../serviceLauncher.ts";
-
-const canBind = (port: number) =>
-  new Promise<boolean>((resolve) => {
-    const server = NodeNet.createServer();
-    server.unref();
-    server.once("error", () => resolve(false));
-    server.listen(port, "127.0.0.1", () => {
-      server.close((error) => resolve(!error));
-    });
-  });
-
-// macOS permits this bind over a wildcard listener, so also check loopback connectivity.
-const answersOnLoopback = (port: number) =>
-  new Promise<boolean>((resolve) => {
-    const socket = NodeNet.connect({ port, host: "127.0.0.1" });
-    socket.setTimeout(1000);
-    socket.once("connect", () => {
-      socket.destroy();
-      resolve(true);
-    });
-    socket.once("timeout", () => {
-      socket.destroy();
-      resolve(true);
-    });
-    socket.once("error", () => resolve(false));
-  });
+import { pickSshPort, readSshRuntimePort, waitForSshServer } from "./sshProbe.ts";
 
 const pickPort = Command.make("pick-port", {
   portFile: Argument.String("port-file"),
@@ -48,40 +19,12 @@ const pickPort = Command.make("pick-port", {
 }).pipe(
   Command.withHandler(({ portFile, defaultPort, scanWindow }) =>
     Effect.promise(async () => {
-      const raw = NodeFS.existsSync(portFile) ? NodeFS.readFileSync(portFile, "utf8").trim() : "";
-      const preferred = Number.parseInt(raw, 10);
-      const start = Number.isInteger(preferred) ? preferred : defaultPort;
-      for (let port = start; port < start + scanWindow; port += 1) {
-        if ((await canBind(port)) && !(await answersOnLoopback(port))) {
-          process.stdout.write(String(port));
-          return;
-        }
-      }
-      process.exitCode = 1;
+      const port = await pickSshPort(portFile, defaultPort, scanWindow);
+      if (port === undefined) process.exitCode = 1;
+      else process.stdout.write(String(port));
     }),
   ),
 );
-
-const probe = (port: number, probeTimeoutMs: number) =>
-  new Promise<"ready" | "refused" | "not-ready">((resolve) => {
-    const request = NodeHttp.get(
-      { hostname: "127.0.0.1", port, path: "/", timeout: probeTimeoutMs },
-      (response) => {
-        response.resume();
-        response.once("end", () => {
-          const status = response.statusCode ?? 0;
-          resolve(status >= 200 && status < 300 ? "ready" : "not-ready");
-        });
-      },
-    );
-    request.once("timeout", () => {
-      request.destroy();
-      resolve("not-ready");
-    });
-    request.once("error", (error: NodeJS.ErrnoException) =>
-      resolve(error.code === "ECONNREFUSED" ? "refused" : "not-ready"),
-    );
-  });
 
 const waitReady = Command.make("wait-ready", {
   port: Argument.Int("port"),
@@ -90,16 +33,7 @@ const waitReady = Command.make("wait-ready", {
 }).pipe(
   Command.withHandler(({ port, timeoutMs, probeTimeoutMs }) =>
     Effect.promise(async () => {
-      const deadline = Date.now() + timeoutMs;
-      let refusedOnly = true;
-      while (Date.now() < deadline) {
-        const result = await probe(port, probeTimeoutMs);
-        if (result === "ready") return;
-        refusedOnly &&= result === "refused";
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      // The launcher reads 2 as "nothing listens on this port".
-      process.exitCode = refusedOnly ? 2 : 1;
+      process.exitCode = await waitForSshServer(port, timeoutMs, probeTimeoutMs);
     }),
   ),
 );
@@ -110,29 +44,9 @@ const runtimePort = Command.make("runtime-port", {
 }).pipe(
   Command.withHandler(({ runtimeFile }) =>
     Effect.sync(() => {
-      try {
-        // @effect-diagnostics-next-line globalJsonInEffect:off - mirrors the shell snippet's loose parse.
-        const runtime = JSON.parse(NodeFS.readFileSync(runtimeFile, "utf8")) as {
-          pid?: unknown;
-          port?: unknown;
-          origin?: unknown;
-        };
-        const pid = Number(runtime.pid);
-        const port = Number(runtime.port);
-        if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) {
-          process.exitCode = 1;
-          return;
-        }
-        const origin = new URL(String(runtime.origin ?? ""));
-        if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
-          process.exitCode = 1;
-          return;
-        }
-        process.kill(pid, 0);
-        process.stdout.write(`${pid} ${port}`);
-      } catch {
-        process.exitCode = 1;
-      }
+      const result = readSshRuntimePort(runtimeFile);
+      if (result === undefined) process.exitCode = 1;
+      else process.stdout.write(result);
     }),
   ),
 );
