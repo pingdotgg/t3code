@@ -11435,6 +11435,7 @@
   "a3d6cb2d2df7ba2c": "Sortera teman",
   "10410b403844f02a": "Söker teman...",
   "5b96cf033ef08594": "{count, plural, one {{count} tema som stöds hittades.} other {{count} teman som stöds hittades.}}",
+  "90d1efbdea5f026b": "{count, plural, one {{formatted} nedladdning} other {{formatted} nedladdningar}}",
   "9fa117e7d44abcb0": "Ett färgtema från communityn för din redigerare.",
   "0b3502b77bb8e870": "Visa källa för {name}",
   "5b9eab168f1435c0": "Uppdaterar {name}",
