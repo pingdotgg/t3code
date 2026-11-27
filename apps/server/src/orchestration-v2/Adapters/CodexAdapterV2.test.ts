@@ -3071,6 +3071,180 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  // regression: #40756 removing a stdio MCP server from a loaded Codex chat breaks its next turn
+  it.effect(
+    "completes the next turn after a stdio MCP server is removed from a loaded thread",
+    () =>
+      Effect.gen(function* () {
+        const scenario = "removed-stdio-mcp";
+        const nativeThreadId = `native-${scenario}`;
+        const threadId = ThreadId.make(`thread-${scenario}`);
+        const input = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+        const emit = (frame: unknown) =>
+          Queue.offer(input, new TextEncoder().encode(JSON.stringify(frame) + "\n"));
+        let configuredMcpServers: Record<string, unknown> = {
+          alpha: { command: "python3" },
+          beta: { command: "node" },
+        };
+        // Codex keeps a loaded thread's config overrides until the thread is unloaded.
+        let loadedConfig: Record<string, unknown> | undefined;
+        const turnConfigs: Array<Record<string, unknown>> = [];
+        let turnSeq = 0;
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: "unused",
+          prompt: "unused",
+        });
+        const threadPayload =
+          preamble[4]?.type === "emit_inbound" &&
+          Predicate.isObject(preamble[4].frame) &&
+          Predicate.isObject(preamble[4].frame["result"])
+            ? preamble[4].frame["result"]
+            : {};
+        const client = yield* CodexClient.make(
+          Stdio.make({
+            args: Effect.succeed([]),
+            stdin: Stream.fromQueue(input),
+            stdout: () =>
+              Sink.forEach((chunk: string | Uint8Array) =>
+                Effect.gen(function* () {
+                  const frame = JSON.parse(
+                    typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk),
+                  ) as {
+                    readonly id?: number;
+                    readonly method: string;
+                    readonly params?: Record<string, unknown>;
+                  };
+                  if (frame.id === undefined) return;
+                  const params = frame.params ?? {};
+                  const requestConfig = Predicate.isObject(params["config"])
+                    ? { ...params["config"] }
+                    : {};
+                  switch (frame.method) {
+                    case "initialize":
+                      return yield* emit({
+                        id: frame.id,
+                        result: {
+                          userAgent: "T3 Code/0.172.0",
+                          codexHome: "/tmp/codex-home",
+                          platformFamily: "unix",
+                          platformOs: "linux",
+                        },
+                      });
+                    case "config/read":
+                      return yield* emit({
+                        id: frame.id,
+                        result: { config: { mcp_servers: configuredMcpServers }, origins: {} },
+                      });
+                    case "thread/start":
+                      loadedConfig = requestConfig;
+                      return yield* emit({ id: frame.id, result: threadPayload });
+                    case "thread/unsubscribe":
+                      loadedConfig = undefined;
+                      return yield* emit({ id: frame.id, result: { status: "unsubscribed" } });
+                    case "thread/resume":
+                      loadedConfig ??= requestConfig;
+                      return yield* emit({
+                        id: frame.id,
+                        result: { thread: { id: nativeThreadId, updatedAt: 1782622441 } },
+                      });
+                    case "turn/start": {
+                      const config = loadedConfig ?? {};
+                      turnConfigs.push(config);
+                      // Codex rejects an mcp_servers.<name>.env override for a server it no longer has.
+                      const orphan = Object.keys(config).some((key) => {
+                        const name = /^mcp_servers\.([^.]+)\.env\./.exec(key)?.[1];
+                        return name !== undefined && !(name in configuredMcpServers);
+                      });
+                      if (orphan) {
+                        return yield* emit({
+                          id: frame.id,
+                          error: {
+                            code: -32603,
+                            message: "failed to load workspace requirements: invalid data",
+                          },
+                        });
+                      }
+                      turnSeq += 1;
+                      const turnId = `turn-${turnSeq}`;
+                      yield* emit({
+                        id: frame.id,
+                        result: { turn: makeCodexReplayTurn({ id: turnId, status: "inProgress" }) },
+                      });
+                      return yield* emit({
+                        method: "turn/completed",
+                        params: {
+                          threadId: nativeThreadId,
+                          turn: makeCodexReplayTurn({ id: turnId, status: "completed" }),
+                        },
+                      });
+                    }
+                    default:
+                      return yield* emit({ id: frame.id, result: {} });
+                  }
+                }),
+              ),
+            stderr: () => Sink.drain,
+          }),
+          {},
+          Effect.never,
+        );
+        const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
+          instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CODEX_SETTINGS,
+          environment: {},
+          clientFactory: { open: () => Effect.succeed(client) },
+          digest: yield* Digest.Digest,
+          fileSystem: yield* FileSystem.FileSystem,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          serverConfig: yield* ProviderReplayHarness.makeReplayServerConfig(scenario).pipe(
+            Effect.orDie,
+          ),
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`session-${scenario}`),
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        const startTurn = (attempt: string) =>
+          Effect.gen(function* () {
+            return yield* runtime.startTurn(
+              makeCodexTestTurnInput({
+                threadId,
+                providerThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make(attempt),
+                text: attempt,
+              }),
+            );
+          });
+
+        yield* startTurn("first");
+        configuredMcpServers = { alpha: { command: "python3" } };
+        const second = yield* startTurn("second").pipe(Effect.result);
+
+        assert.equal(second._tag, "Success");
+        assert.equal(turnSeq, 2);
+        assert.equal(turnConfigs.at(-1)?.["mcp_servers.alpha.env.T3CODE_THREAD_ID"], threadId);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   // regression: #36520 MCP servers can tell a delegate_task child from a user thread
   it.effect("starts delegate_task children with the subagent thread source", () =>
     Effect.gen(function* () {
