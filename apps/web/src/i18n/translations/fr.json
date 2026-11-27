@@ -3130,7 +3130,7 @@
   "c646366e142ba05f": "L’état WSL de l’app desktop n’est pas disponible.",
   "228dcd284ea651b3": "Échec du chargement de l’état WSL.",
   "b08d105dd2553f8d": "Le projet n’est pas apparu dans l’app desktop.",
-  "7a4b3f3b83e121d7": "{organization} a désactivé les données d’utilisation anonymes.",
+  "bf45d68027d21097": "{organization} a désactivé les données d’utilisation du produit.",
   "d85822b18e9475df": "Géré par {organization}.",
   "a6dd531d58080010": "Connectez-vous à ce serveur pour vérifier les versions.",
   "314cdccee9c14774": "Ce serveur ne prend pas en charge les recherches dans le registre. Mettez-le à jour avant de changer de canal.",
@@ -4236,6 +4236,7 @@
   "ac242b57dbfa5259": "Gérer les tâches planifiées",
   "d93c0db04f4c8e46": "Modifier l’automatisation",
   "3fe420ed9b5bdb75": "Exécuter maintenant",
+  "fdf273ca647a967f": "Supprimer",
   "0c433351a8606e50": [
     "Impossible de charger les automatisations : ",
     {
@@ -5369,7 +5370,9 @@
   "4cb21672153c1f18": "Aucun simulateur ni émulateur trouvé dans cet environnement.",
   "c82410197256eb53": "Simulateurs iOS",
   "31a71fec6b5f2bf3": "Appareils Android",
+  "1bd21d5284dc2d8e": "Appareils iOS",
   "ac18a5e35195a258": "Émulateurs Android",
+  "f28d1d2b5f30a8cd": "Physique",
   "94215375ea2558b8": "En cours",
   "f8a65d4d662389b0": "Arrêté",
   "b1687c7b2b91e569": "Ouvrir {name}",
@@ -6272,8 +6275,8 @@
   ],
   "216ab7514aea1d61": "Commencer sans agent",
   "501ce2d99da8bfd1": "Configurez un agent pour commencer.",
-  "71f3822326109c8e": [
-    "T3 Code collecte des données d’utilisation anonymes pour améliorer l’app. Pour vous désinscrire, consultez la",
+  "b089e0792d542bed": [
+    "T3 Code collecte des données d’utilisation du produit pseudonymisées pour améliorer l’app. Pour vous désinscrire, consultez la",
     " ",
     {
       "t": "a",
@@ -10287,7 +10290,7 @@
   "c424bee294b9f778": "Cet environnement est géré par {organization}. Certains paramètres et fonctionnalités suivent sa politique.",
   "82d9538af590f58c": "Voyez vos agents, importez des projets et configurez votre téléphone.",
   "6a48fd0a37e725a1": "Mentions légales",
-  "d6d3ea46ac979e1c": "Comment nous traitons vos données, y compris les données d’utilisation anonymes collectées par T3 Code.",
+  "bcbd81fcef7fff67": "Comment nous traitons vos données, y compris les données d’utilisation du produit pseudonymisées collectées par T3 Code.",
   "e741b1ab9396053a": "Comment nous traitons vos données. {telemetryOff}",
   "0bffbbf4d7f780c0": "Mentions relatives aux dépendances, ressources et outils facultatifs utilisés par T3 Code.",
   "e39a57514be028e9": "Consulter",
@@ -13043,5 +13046,7 @@
   "95435f0b59cb2193": "Aperçu audio",
   "4a12506938295127": "Saisissez d’abord {field}.",
   "5807c08e225c6b3d": "Télécharger",
-  "0d50b5bfe7151ece": "Impossible de télécharger le fichier"
+  "0d50b5bfe7151ece": "Impossible de télécharger le fichier",
+  "eb1fd384ad5919dd": "Note interne",
+  "b45f0b467e9406d0": "Répondre au client"
 }

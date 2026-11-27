@@ -1,3 +1,5 @@
+import * as NodeSqlite from "node:sqlite";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -33,6 +35,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -355,6 +358,25 @@ describe("AntigravityAdapterV2 compaction", () => {
           .filter((request) => request.method === "session/prompt")
           .map((request) => request.params?.prompt);
         assert.deepEqual(prompts, compact ? [[{ type: "text", text: "/compact" }]] : []);
+
+        const goalEvents = yield* session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* session.startTurn({
+          ...turnInput,
+          message: { ...turnInput.message, text: "/goal Count to 3" },
+        });
+        const goals = Array.from(yield* Fiber.join(goalEvents)).flatMap((event) =>
+          event.type === "provider_thread.updated" && event.providerThread.goal !== undefined
+            ? [event.providerThread.goal]
+            : [],
+        );
+        assert.deepEqual(
+          goals,
+          nativeGoals ? [{ objective: "Count to 3", status: "active" }, null] : [],
+        );
       }).pipe(Effect.provide(layerSession)),
   );
 });
@@ -777,6 +799,137 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(fromA), "the previous workspace is no longer readable");
     }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 silent prompts", () => {
+  // regression: #44286 agy finished the reply but never answered session/prompt
+  it.effect("completes a silent prompt whose session log already records the finished reply", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const profileDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-silent-",
+      });
+      const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
+      yield* fileSystem.makeDirectory(conversations, { recursive: true });
+      const appendStep = (type: number, status: number, payload: string) => {
+        const database = new NodeSqlite.DatabaseSync(path.join(conversations, "mock-session-1.db"));
+        try {
+          database.exec(
+            "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER, step_payload BLOB)",
+          );
+          database
+            .prepare("INSERT INTO steps (step_type, status, step_payload) VALUES (?, ?, ?)")
+            .run(type, status, Buffer.from(payload));
+        } finally {
+          database.close();
+        }
+      };
+      // USER_INPUT before the prompt, so the outcome check reads only this turn's steps.
+      appendStep(14, 3, "Summarize the README.");
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const replied = yield* Deferred.make<void>();
+      const instanceId = ProviderInstanceId.make("antigravity-silent-reply-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        profileDirectory,
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_HANG_PROMPT_FOREVER: "1" },
+            },
+          }).pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.map((runtime): RuntimeService => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdate = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              // The reply streams and the session log records it DONE; session/prompt never answers.
+              prompt: (request, promptOptions) =>
+                Effect.gen(function* () {
+                  const fiber = yield* runtime
+                    .prompt(request, promptOptions)
+                    .pipe(Effect.forkChild);
+                  yield* Deferred.await(promptOptions!.dispatched!);
+                  yield* sessionUpdate!(
+                    normalizeAntigravitySessionUpdate({
+                      sessionId: "mock-session-1",
+                      update: {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "The README describes T3 Code." },
+                      },
+                    }),
+                  );
+                  appendStep(15, 3, "The README describes T3 Code.");
+                  yield* Deferred.succeed(replied, undefined);
+                  return yield* Fiber.join(fiber);
+                }),
+            })),
+          ),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const threadId = ThreadId.make("thread-antigravity-silent-reply");
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-silent-reply"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const terminal = yield* session.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      const now = yield* DateTime.now;
+      yield* session
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            modelSelection,
+            runtimePolicy,
+            now,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(replied);
+      // Exactly the deadline: a longer jump would also fire the outcome check's own timeout.
+      yield* TestClock.adjust("15 minutes");
+      const ended = Option.getOrUndefined(yield* Fiber.join(terminal));
+      assert.equal(
+        ended?.type === "turn.terminal" && ended.status,
+        "completed",
+        ended?.type === "turn.terminal" ? ended.failure?.message : undefined,
+      );
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
 
@@ -3069,6 +3222,112 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         assert.equal(terminal?.type === "turn.terminal" && terminal.status, status);
         assert.equal(opened.cancels(), cancels);
       }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 executed model", () => {
+  // agy names the model that answered on each PLANNER_RESPONSE step of its native transcript;
+  // delegate_task's executedModel reads it from the completed provider turn.
+  it.effect("records the model agy's transcript reports on the completed provider turn", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agy-model-" });
+      const logs = path.join(
+        profile,
+        "antigravity-acp",
+        "brain",
+        "mock-session-1",
+        ".system_generated",
+        "logs",
+      );
+      yield* fileSystem.makeDirectory(logs, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(logs, "transcript.jsonl"),
+        [
+          { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE" },
+          {
+            step_index: 1,
+            source: "MODEL",
+            type: "PLANNER_RESPONSE",
+            status: "DONE",
+            model: "gemini-test-high",
+            content: "T3 READY",
+          },
+        ]
+          .map((line) => JSON.stringify(line))
+          .join("\n") + "\n",
+      );
+      const { startTurn, throughTerminal } = yield* openSessionWithRunningCommand(
+        {},
+        undefined,
+        undefined,
+        { profileDirectory: profile, initialToolCalls: [] },
+      );
+      yield* startTurn(1, false);
+      const run = yield* throughTerminal;
+      const terminal = run.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+      const completed = run.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.equal(
+        completed?.type === "provider_turn.updated" && completed.providerTurn.model,
+        "gemini-test-high",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // Token analytics read observedModel only from turnTokenUsage.models.
+  it.effect("reports the executed model in the completed provider turn's token usage", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agy-model-" });
+      const logs = path.join(
+        profile,
+        "antigravity-acp",
+        "brain",
+        "mock-session-1",
+        ".system_generated",
+        "logs",
+      );
+      yield* fileSystem.makeDirectory(logs, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(logs, "transcript.jsonl"),
+        [
+          { step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE" },
+          {
+            step_index: 1,
+            source: "MODEL",
+            type: "PLANNER_RESPONSE",
+            status: "DONE",
+            model: "gemini-test-high",
+            content: "T3 READY",
+          },
+        ]
+          .map((line) => JSON.stringify(line))
+          .join("\n") + "\n",
+      );
+      const { startTurn, throughTerminal } = yield* openSessionWithRunningCommand(
+        {},
+        undefined,
+        undefined,
+        { profileDirectory: profile, initialToolCalls: [] },
+      );
+      yield* startTurn(1, false);
+      const run = yield* throughTerminal;
+      const completed = run.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      const models =
+        completed?.type === "provider_turn.updated"
+          ? completed.providerTurn.turnTokenUsage?.models
+          : undefined;
+      assert.equal(models?.length, 1);
+    }).pipe(Effect.provide(layerSession)),
   );
 });
 

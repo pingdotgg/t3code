@@ -3130,7 +3130,7 @@
   "c646366e142ba05f": "O estado do WSL do desktop não está disponível.",
   "228dcd284ea651b3": "Falha ao carregar o estado do WSL.",
   "b08d105dd2553f8d": "O projeto não apareceu no app para desktop.",
-  "7a4b3f3b83e121d7": "{organization} desativou os dados de uso anônimos.",
+  "bf45d68027d21097": "{organization} desativou os dados de uso do produto.",
   "d85822b18e9475df": "Gerenciado por {organization}.",
   "a6dd531d58080010": "Conecte-se a este servidor para verificar as versões.",
   "314cdccee9c14774": "Este servidor não permite consultas ao registro. Atualize-o antes de trocar de canal.",
@@ -4236,6 +4236,7 @@
   "ac242b57dbfa5259": "Gerenciar tarefas agendadas",
   "d93c0db04f4c8e46": "Editar automação",
   "3fe420ed9b5bdb75": "Executar agora",
+  "fdf273ca647a967f": "Excluir",
   "0c433351a8606e50": [
     "Não foi possível carregar as automações: ",
     {
@@ -5368,7 +5369,9 @@
   "4cb21672153c1f18": "Nenhum simulador ou emulador foi encontrado neste ambiente.",
   "c82410197256eb53": "Simuladores iOS",
   "31a71fec6b5f2bf3": "Dispositivos Android",
+  "1bd21d5284dc2d8e": "Dispositivos iOS",
   "ac18a5e35195a258": "Emuladores Android",
+  "f28d1d2b5f30a8cd": "Físico",
   "94215375ea2558b8": "Em execução",
   "f8a65d4d662389b0": "Parado",
   "b1687c7b2b91e569": "Abrir {name}",
@@ -6271,8 +6274,8 @@
   ],
   "216ab7514aea1d61": "Começar sem agente",
   "501ce2d99da8bfd1": "Configure um agente para começar.",
-  "71f3822326109c8e": [
-    "O T3 Code coleta dados de uso anônimos para melhorar o app. Para recusar, consulte a",
+  "b089e0792d542bed": [
+    "O T3 Code coleta dados de uso do produto pseudonimizados para melhorar o app. Para recusar, consulte a",
     " ",
     {
       "t": "a",
@@ -10287,7 +10290,7 @@
   "c424bee294b9f778": "Este ambiente é gerenciado por {organization}. Algumas configurações e recursos seguem a política dela.",
   "82d9538af590f58c": "Veja seus agentes, importe projetos e configure seu celular.",
   "6a48fd0a37e725a1": "Jurídico",
-  "d6d3ea46ac979e1c": "Como tratamos seus dados, incluindo os dados de uso anônimos que o T3 Code coleta.",
+  "bcbd81fcef7fff67": "Como tratamos seus dados, incluindo os dados de uso do produto pseudonimizados que o T3 Code coleta.",
   "e741b1ab9396053a": "Como tratamos seus dados. {telemetryOff}",
   "0bffbbf4d7f780c0": "Avisos de dependências, recursos e ferramentas opcionais usados pelo T3 Code.",
   "e39a57514be028e9": "Revisar",
@@ -13043,5 +13046,7 @@
   "95435f0b59cb2193": "Prévia de áudio",
   "4a12506938295127": "Informe primeiro {field}.",
   "5807c08e225c6b3d": "Baixar",
-  "0d50b5bfe7151ece": "Não foi possível baixar o arquivo"
+  "0d50b5bfe7151ece": "Não foi possível baixar o arquivo",
+  "eb1fd384ad5919dd": "Nota interna",
+  "b45f0b467e9406d0": "Responder ao cliente"
 }

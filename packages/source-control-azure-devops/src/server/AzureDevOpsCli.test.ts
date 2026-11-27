@@ -587,6 +587,27 @@ describe("scopeAzureCliArgs", () => {
     ]);
   });
 
+  it.each([
+    ["https://dev.azure.com/acme/_git/My%20Repo", "https://dev.azure.com/acme", "My Repo"],
+    ["https://acme.visualstudio.com/_git/My%20Repo", "https://acme.visualstudio.com", "My Repo"],
+    [
+      "https://acme.visualstudio.com/DefaultCollection/_git/My%20Repo",
+      "https://acme.visualstudio.com",
+      "My Repo",
+    ],
+  ])("reads shorthand %s as a project named after its repository", (url, organization, name) => {
+    expect(scopeAzureCliArgs(show, url)).toEqual([
+      "repos",
+      "show",
+      "--detect",
+      "false",
+      "--organization",
+      organization,
+      `--project=${name}`,
+      `--repository=${name}`,
+    ]);
+  });
+
   it("joins names starting with `-` to their options", () => {
     expect(
       scopeAzureCliArgs(
@@ -649,6 +670,10 @@ describe("primaryRemoteUrl", () => {
     [
       remotes(azure("upstream"), ["origin", "https://github.com/acme/repo"]),
       "https://github.com/acme/repo",
+    ],
+    [
+      `origin\t${azure("origin")[1]} (fetch) [blob:none]\norigin\tpush-url (push)\n`,
+      azure("origin")[1],
     ],
     [remotes(), null],
     [`origin\t${azure("origin")[1]} (fetch)`, null],
