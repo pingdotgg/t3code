@@ -5,6 +5,7 @@ import * as NodeUtil from "node:util";
 import { characterEntities } from "character-entities";
 import { SaxesParser } from "saxes";
 import * as Yauzl from "yauzl";
+import { notebookOutputGroups } from "@t3tools/shared/notebookOutput";
 import { terminalOutputCollapseRedraws } from "@t3tools/shared/terminalOutput";
 
 const MAX_INPUT = 16 * 1024 * 1024;
@@ -1003,7 +1004,13 @@ function* notebook(source: string): Generator<TextPart, void> {
     return stream ? terminalOutputCollapseRedraws(plain) : plain;
   }
   function* cellOutputParts(outputs: readonly unknown[]): Generator<string, void> {
-    for (const output of outputs) {
+    for (const group of notebookOutputGroups(outputs, (value) => [...lines(value)].join(""))) {
+      if (group.kind === "stream") {
+        yield outputText(group.text, true);
+        yield "\n";
+        continue;
+      }
+      const output = group.output;
       if (!output || typeof output !== "object") continue;
       if ("text" in output)
         yield outputText(output.text, "output_type" in output && output.output_type === "stream");
