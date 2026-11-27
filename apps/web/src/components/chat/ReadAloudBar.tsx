@@ -31,6 +31,15 @@ export function ReadAloudBar() {
   const [level, setLevel] = useState(0);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Follows the playing audio's loudness, which only the player reports.
   useEffect(() => (shown ? readAloudController.subscribeLevel(setLevel) : undefined), [shown]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Holds a document listener that pauses reading when a page video or audio starts.
+  useEffect(() => {
+    if (!shown) return;
+    // Media events do not bubble, so only a capture listener hears every page video start.
+    // The read-aloud audio is never in the document, so it does not pause itself.
+    const pauseForMedia = () => readAloudController.pause();
+    document.addEventListener("play", pauseForMedia, true);
+    return () => document.removeEventListener("play", pauseForMedia, true);
+  }, [shown]);
   if (!shown) return null;
   const paused = state.status === "paused";
   const toggle = paused ? gt("Resume reading") : gt("Pause reading");
