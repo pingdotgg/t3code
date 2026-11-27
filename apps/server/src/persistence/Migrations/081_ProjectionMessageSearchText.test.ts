@@ -37,6 +37,16 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
     it.effect("backfills readable text only for messages whose citations read differently", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: 68 });
+        // Search triggers added in migration 69 reject malformed JSON payloads.
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_messages (
+            message_id, thread_id, role, streaming, created_at, updated_at, payload_json
+          ) VALUES (
+            'damaged', 'thread:quote', 'assistant', 1, ${createdAt}, ${createdAt},
+            ${'{"text":"[Assistant quote](t3-citation://v1/'}
+          )
+        `;
         yield* runMigrations({ toMigrationInclusive: 80 });
         const insertMessage = (messageId: string, text: unknown) => sql`
           INSERT INTO orchestration_v2_projection_messages (
@@ -82,6 +92,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
         assert.isNull(searchText.get("plain"));
         assert.isNull(searchText.get("invalid"));
         assert.isNull(searchText.get("unreadable"));
+        assert.isNull(searchText.get("damaged"));
         assert.equal(searchText.get("page-000"), readable);
         assert.equal(searchText.get("page-500"), readable);
 
