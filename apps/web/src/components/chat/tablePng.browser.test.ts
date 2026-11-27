@@ -151,6 +151,34 @@ describe("renderTablePng", () => {
     expect(pixels.at(icon.left + 10, icon.top + 10)).toEqual([0, 255, 0]);
   });
 
+  it("draws an image the page loaded from another origin without CORS", async () => {
+    // Another loopback name for the same server is another origin, as desktop's asset URLs are.
+    // The server listens on one of the two loopback addresses, depending on the machine.
+    const sources = ["127.0.0.1", "[::1]"].map((hostname) => {
+      const url = new URL("/favicon-32x32.png", location.href);
+      url.hostname = hostname;
+      return url.href;
+    });
+    using mounted = mountTable(`<tr><td><img id="image" width="32" height="32"></td></tr>`);
+    const { table } = mounted;
+    const image = document.getElementById("image") as HTMLImageElement;
+    for (const source of sources) {
+      image.src = source;
+      if (
+        await image.decode().then(
+          () => true,
+          () => false,
+        )
+      )
+        break;
+    }
+    const probe = new OffscreenCanvas(1, 1).getContext("2d")!;
+    probe.drawImage(image, 0, 0);
+    expect(() => probe.getImageData(0, 0, 1, 1)).toThrow();
+    const pixels = await readPng(await renderTablePng(table), table);
+    expect(pixels.hasInk(image.getBoundingClientRect())).toBe(true);
+  });
+
   it("leaves visually hidden text out", async () => {
     using mounted = mountTable(
       `<tr><td id="cell" style="position: relative; width: 80px; height: 20px"><span style="position: absolute; inset: 0; clip-path: inset(50%)">hidden label</span></td></tr>`,
