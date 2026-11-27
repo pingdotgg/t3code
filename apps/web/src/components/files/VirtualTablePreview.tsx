@@ -313,7 +313,13 @@ function ScaledRows(
       : [];
     scrollModel.current = { scale, maxFirst, heights };
     const node = ref.current;
-    if (!node || (previous.scale === scale && previous.maxFirst === maxFirst)) return;
+    if (!node) return;
+    // A pending restore starts at the top and has no scroll position to rebase.
+    if (pendingRestore.current !== undefined) {
+      if (node.scrollTop === 0) return;
+      pendingRestore.current = undefined;
+    }
+    if (previous.scale === scale && previous.maxFirst === maxFirst) return;
     const previousEnd = previous.maxFirst * 29 * previous.scale;
     let logicalTop = Math.min(previous.maxFirst * 29, node.scrollTop / previous.scale);
     let remaining = Math.max(0, node.scrollTop - previousEnd);
@@ -374,7 +380,6 @@ function ScaledRows(
       event.deltaY * (event.deltaMode === 1 ? 29 : event.deltaMode === 2 ? node.clientHeight : 1);
     if (!delta) return;
     event.preventDefault();
-    pendingRestore.current = undefined;
     pendingEnd.current = false;
     node.scrollTop += delta * (nativeTail ? 1 : (scale * 29) / rowHeight());
   });
@@ -559,11 +564,6 @@ function ScaledRows(
       ref={ref}
       tabIndex={0}
       className="min-h-0 flex-1 overflow-auto"
-      onPointerDown={(event) => {
-        if (event.target === event.currentTarget || event.pointerType === "touch") {
-          pendingRestore.current = undefined;
-        }
-      }}
       onKeyDown={(event) => {
         const node = event.currentTarget;
         const delta =
@@ -577,13 +577,11 @@ function ScaledRows(
                   ? -node.clientHeight
                   : null;
         if (delta !== null) {
-          pendingRestore.current = undefined;
           pendingEnd.current = false;
           event.preventDefault();
           node.scrollTop += delta * (nativeTail ? 1 : (scale * 29) / rowHeight());
         } else if (event.key === "Home" || event.key === "End") {
           event.preventDefault();
-          pendingRestore.current = undefined;
           pendingEnd.current = event.key === "End";
           pendingReveal.current = null;
           node.scrollTop = event.key === "Home" ? 0 : node.scrollHeight;
@@ -593,7 +591,8 @@ function ScaledRows(
       onScroll={(event) => {
         const scrolled = event.currentTarget.scrollTop;
         setTop(scrolled);
-        if (pendingRestore.current !== undefined) return;
+        if (pendingRestore.current !== undefined && scrolled === 0) return;
+        pendingRestore.current = undefined;
         savedFirstRows.set(positionKey, {
           row: Math.min(maxFirst, Math.floor(scrolled / scale / 29)) + headerRows,
           revealKey: handledReveal.current,
