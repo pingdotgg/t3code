@@ -2488,6 +2488,8 @@ export const layerWsRpc = (
             workspaceSnapshotsOnDemand: false,
             deferNetworkDiscovery: false,
           }),
+        [WS_METHODS.serverGetKeybindings]: () =>
+          Effect.map(keybindings.getSnapshot, ({ keybindings }) => ({ keybindings })),
         [WS_METHODS.serverSearchAcpRegistry]: (input) =>
           acpRegistryCatalog
             .search(input)

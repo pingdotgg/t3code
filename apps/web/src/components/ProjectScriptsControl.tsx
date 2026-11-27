@@ -18,7 +18,11 @@ import { ChevronDownIcon, DownloadIcon, PlusIcon, SettingsIcon, WrenchIcon } fro
 import React, { useState } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
 
-import { commandForProjectScript, primaryProjectScript } from "~/projectScripts";
+import {
+  commandForProjectScript,
+  hasMatchingProjectScript,
+  primaryProjectScript,
+} from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
 import { serverEnvironment } from "~/state/server";
 import { readEnvironmentScope } from "~/state/session";
@@ -73,6 +77,7 @@ interface ProjectScriptsControlProps {
   preferredScriptId?: string | null;
   onRunScript?: ((script: ProjectScript) => void) | undefined;
   onAddScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
+  onImportScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateScript: (
     scriptId: string,
     input: NewProjectScriptInput,
@@ -91,6 +96,7 @@ export default function ProjectScriptsControl({
   preferredScriptId = null,
   onRunScript,
   onAddScript,
+  onImportScript,
   onUpdateScript,
   onDeleteScript,
 }: ProjectScriptsControlProps) {
@@ -121,12 +127,7 @@ export default function ProjectScriptsControl({
     (preferredScriptId ? scripts.find((script) => script.id === preferredScriptId) : undefined) ??
     primaryProjectScript(scripts);
   const importableScripts = fileScripts.filter(
-    (fileScript) =>
-      !scripts.some(
-        (script) =>
-          script.command === fileScript.command ||
-          script.name.toLowerCase() === fileScript.name.toLowerCase(),
-      ),
+    (fileScript) => !hasMatchingProjectScript(scripts, fileScript),
   );
 
   const openAddDialog = () => {
@@ -158,7 +159,7 @@ export default function ProjectScriptsControl({
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
     };
-    const result = await onAddScript(payload);
+    const result = await onImportScript(payload);
     if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
 
     const message = thrownErrorMessage(squashAtomCommandFailure(result), m);

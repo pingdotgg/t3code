@@ -19,7 +19,7 @@ export interface ProjectScriptInput {
   readonly autoOpenPreview: boolean;
 }
 
-export function buildProjectScript(id: string, input: ProjectScriptInput): ProjectScript {
+function buildProjectScript(id: string, input: ProjectScriptInput): ProjectScript {
   return {
     id,
     name: input.name,
@@ -50,6 +50,29 @@ export function releaseClaimedRoles(
     ...(releaseSetup ? { runOnWorktreeCreate: false } : {}),
     ...(releaseSettle ? { runOnSettle: false } : {}),
   };
+}
+
+export function saveProjectScriptToList(
+  scripts: readonly ProjectScript[],
+  id: string,
+  input: ProjectScriptInput,
+  mode: "add" | "edit",
+): ProjectScript[] {
+  const next = buildProjectScript(id, input);
+  const updated = scripts.map((script) =>
+    script.id === id ? next : releaseClaimedRoles(script, input),
+  );
+  return mode === "add" ? [...updated, next] : updated;
+}
+
+export function hasMatchingProjectScript(
+  scripts: readonly ProjectScript[],
+  candidate: Pick<ProjectScript, "command" | "name">,
+): boolean {
+  const name = candidate.name.toLowerCase();
+  return scripts.some(
+    (script) => script.command === candidate.command || script.name.toLowerCase() === name,
+  );
 }
 
 function normalizeScriptId(value: string): string {
