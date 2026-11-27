@@ -706,13 +706,15 @@ describe("question answer paths", () => {
             "book.opf":
               '<package><manifest><item id="a" href="a.xhtml"/></manifest><spine><itemref idref="a"/></spine></package>',
             "a.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Intro<p>Body paragraph</p></div><ul><li>Summary<p>Details</p></li></ul><div>Intro<h2>Section Title</h2></div><table><tr><td>First<p>Second</p></td><td>Neighbor</td></tr></table></body></html>',
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Intro<p>Body paragraph</p></div><ul><li>Summary<p>Details</p></li></ul><div>Intro<h2>Section Title</h2></div><table><tr><td>First<p>Second</p></td><td>Neighbor</td></tr></table>' +
+              '<div>Intro<details open="open"><summary><strong>Supported</strong> files</summary>JPEG <em>files</em> only.</details>Next section</div></body></html>',
           },
           expected: [
             "## Chapter 1\nIntro\nBody paragraph",
             "Summary\nDetails",
             "Intro\n## Section Title",
             "First Second\tNeighbor",
+            "Intro\nSupported files\nJPEG files only.\nNext section",
           ],
         },
         {
