@@ -893,20 +893,28 @@ const MATH_SCROLL = [
 function mathWrapper(svg: Element): Element {
   const tex = String(svg.properties.ariaLabel ?? "").trim();
   const display = /display:\s*block/.test(String(svg.properties.style ?? ""));
+  // Read aloud tints the formula whose words it is saying by this markdown range.
+  const source = svg.position && {
+    dataMathStart: svg.position.start.offset,
+    dataMathEnd: svg.position.end.offset,
+  };
   return {
     type: "element",
     tagName: "span",
-    properties: display
-      ? {
-          className: ["chat-markdown-math-display", "block", ...MATH_SCROLL],
-          dataMarkdownMath: "display",
-          dataMarkdownCopy: `\\[\n${tex}\n\\]\n\n`,
-        }
-      : {
-          className: ["inline-block", "align-middle", ...MATH_SCROLL],
-          dataMarkdownMath: "inline",
-          dataMarkdownCopy: `\\(${tex}\\)`,
-        },
+    properties: {
+      ...source,
+      ...(display
+        ? {
+            className: ["chat-markdown-math-display", "block", ...MATH_SCROLL],
+            dataMarkdownMath: "display",
+            dataMarkdownCopy: `\\[\n${tex}\n\\]\n\n`,
+          }
+        : {
+            className: ["inline-block", "align-middle", ...MATH_SCROLL],
+            dataMarkdownMath: "inline",
+            dataMarkdownCopy: `\\(${tex}\\)`,
+          }),
+    },
     children: [svg],
   };
 }

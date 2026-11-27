@@ -348,8 +348,23 @@ it("finds a paragraph whose last word is a rendered formula, not an earlier head
   const word = [...(CSS.highlights.get("t3-read-aloud-word") ?? [])][0];
   expect(String(word)).toBe("The");
   expect(word?.startContainer.parentElement?.tagName).toBe("P");
+
+  // A formula's words tint it whole; no text highlight runs through math, whose glyphs it covers.
+  const hat = spoken.lastIndexOf("y hat sub i");
+  await act(() => readAloudWords.emit({ start: hat, end: hat + 1 }));
+  const tinted = (level: string) =>
+    [...document.querySelectorAll(`[data-read-aloud="${level}"]`)].map((element) =>
+      element.querySelector("svg")?.getAttribute("aria-label"),
+    );
+  expect(tinted("word")).toEqual(["\\hat{y}_i"]);
+  expect(tinted("block")).toHaveLength(3);
+  expect([...(CSS.highlights.get("t3-read-aloud-word") ?? [])]).toEqual([]);
+  const svgs = [...document.querySelectorAll("svg")];
+  for (const painted of CSS.highlights.get("t3-read-aloud-block") ?? [])
+    expect(svgs.some((svg) => (painted as Range).intersectsNode(svg))).toBe(false);
   readAloudController.stop();
   await reading;
+  expect(document.querySelector("[data-read-aloud]")).toBeNull();
   readAloudMath.words = undefined;
 });
 

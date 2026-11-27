@@ -459,6 +459,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   background-color: var(--read-aloud-word);
 }
 
+/* Formulas take the read-aloud tint whole; a text highlight through their SVG hides glyphs. */
+[data-read-aloud="block"] {
+  background-color: var(--read-aloud-block);
+}
+[data-read-aloud="word"] {
+  background-color: var(--read-aloud-word);
+}
+
 /* The word a click reads from while a reply is read aloud. */
 ::highlight(t3-read-aloud-hover) {
   text-decoration-line: underline;
